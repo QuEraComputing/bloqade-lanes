@@ -17,6 +17,28 @@ def intra_hypercube(dim: int) -> tuple[IntraLane, ...]:
 
 
 def partition_grid(sites: Grid, num_x: int, num_y: int, row_major: bool = True):
+    """Split a grid into blocks of equal size.
+
+    This function takes a grid of sites and partitions it into smaller blocks
+    of the specified size. The blocks can be arranged in either row-major or
+    column-major order.
+
+    Args:
+        sites: The grid of sites to partition.
+        num_x: The number of blocks in the x direction.
+        num_y: The number of blocks in the y direction.
+        row_major: Whether to arrange blocks in row-major order. Default is True.
+
+    Returns:
+        A list of Block objects representing the partitioned blocks. Each block
+        contains the sites within that block. if row_major is True, blocks are
+        arranged in row-major order; otherwise, they are arranged in column-major
+        order.
+
+    Raises:
+        ValueError: If the number of sites is not divisible by the number of
+        blocks in either direction.
+    """
     if sites.shape[0] % num_x != 0:
         raise ValueError("Number of x sites must be divisible by num_x")
     if sites.shape[1] % num_y != 0:
@@ -52,35 +74,53 @@ Ny = TypeVar("Ny")
 def holobyte_geometry(
     compute_sites: Grid[Nx, Ny], cache_sites: Grid[Nx, Ny], *memory_sites: Grid[Nx, Ny]
 ):
-    num_compute_bytes_x = compute_sites.shape[0] // 16
-    num_compute_bytes_y = compute_sites.shape[1]
+    """Generate a holobyte architecture specification.
+
+    This function takes the compute, cache, and memory sites and generates a
+    holobyte architecture specification. Note that the holobytes are stored
+    in 16x1 blocks to make inter block connections easier.
+
+    Args:
+        compute_sites: The grid of compute sites.
+        cache_sites: The grid of cache sites.
+        *memory_sites: One or more grids of memory sites.
+
+    Returns:
+        An ArchSpec object representing the holobyte architecture.
+
+    Raises:
+        ValueError: If the compute and cache sites do not have the same shape, or if
+        the memory sites do not match the required dimensions.
+    """
+    if compute_sites.shape[0] % 4 != 0 or compute_sites.shape[1] % 4 != 0:
+        raise ValueError("Compute sites x/y dimension must be multiple of 4")
 
     if compute_sites.shape != cache_sites.shape:
         raise ValueError("Compute sites and cache sites must have the same shape")
 
     for mem_sites in memory_sites:
         # make sure each memory block matches compute block dimensions
-        if mem_sites.shape[0] % 16 != num_compute_bytes_x * 16:
-            raise ValueError(
-                "Memory sites x dimension must be an integer multiple of compute sites x dimension"
-            )
-        if mem_sites.shape[1] != num_compute_bytes_y:
-            raise ValueError(
-                "Memory block sites y dimension must match compute sites y dimension"
-            )
+        if mem_sites.shape != compute_sites.shape:
+            raise ValueError("Memory sites must match compute sites dimensions")
 
-    compute_sites = compute_sites[: num_compute_bytes_x * 16, :]
-    cache_sites = cache_sites[: num_compute_bytes_x * 16, :]
-
-    compute_blocks = partition_grid(compute_sites, 16, 1)
-    cache_blocks = partition_grid(cache_sites, 16, 1)
+    compute_blocks = partition_grid(compute_sites, 4, 4)
+    cache_blocks = partition_grid(cache_sites, 4, 4)
 
     blocks = compute_blocks + cache_blocks
     has_intra_blocks = frozenset(compute_blocks)
 
     inter_lanes = []
+    for compute_block, cache_block in zip(compute_blocks, cache_blocks):
+        for site_id in range(len(cache_block.sites)):
+            inter_lane = InterLane(
+                block_1=compute_block,
+                block_2=cache_block,
+                site=site_id,
+            )
+            inter_lanes.append(inter_lane)
+
     for mem_sites in memory_sites:
-        memory_blocks = partition_grid(mem_sites, 16, 1)
+        memory_blocks = partition_grid(mem_sites, 4, 4)
         blocks.extend(memory_blocks)
         for mem_block, cache_block in zip(memory_blocks, cache_blocks):
             for site_id in range(len(cache_block.sites)):
