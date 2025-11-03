@@ -4,19 +4,37 @@ from typing import TypeVar
 from .types import ArchSpec, Block, Grid, InterLane, IntraLane
 
 
-def intra_hypercube(dim: int) -> tuple[IntraLane, ...]:
-    num_sites = 2**dim
-    intra_lanes = []
-    for i in range(num_sites):
-        for d in range(dim):
-            if ((i >> d) & 1) == 0:
-                neighbor = i | (1 << d)
-                lane = IntraLane(site_1=i, site_2=neighbor)
-                intra_lanes.append(lane)
-    return tuple(intra_lanes)
+def tesseract_intra():
+    def iter_x(src_y, dst_y):
+        for sx in range(4):
+            for sy, dy in zip(src_y, dst_y):
+                site_1 = 16 * sy + sx
+                site_2 = 16 * dy + sx
+                yield IntraLane(
+                    site_1=site_1,
+                    site_2=site_2,
+                )
+
+    def iter_y(src_x, dst_x):
+        for sy in range(4):
+            for sx, dx in zip(src_x, dst_x):
+                site_1 = 16 * sy + sx
+                site_2 = 16 * sy + dx
+                yield IntraLane(
+                    site_1=site_1,
+                    site_2=site_2,
+                )
+
+    ix = range(4)
+    iy = range(4)
+
+    yield from iter_x(iy[0::2], iy[1::2])
+    yield from iter_y(ix[0::2], ix[1::2])
+    yield from iter_x(iy[:2], iy[2:])
+    yield from iter_y(ix[:2], ix[2:])
 
 
-def partition_grid(sites: Grid, num_x: int, num_y: int, row_major: bool = True):
+def partition_grid(sites: Grid, num_x: int, num_y: int):
     """Split a grid into blocks of equal size.
 
     This function takes a grid of sites and partitions it into smaller blocks
@@ -49,20 +67,12 @@ def partition_grid(sites: Grid, num_x: int, num_y: int, row_major: bool = True):
 
     blocks: list[Block[tuple[float, float]]] = []
 
-    if row_major:
-        for by, bx in product(range(num_y), range(num_x)):
-            x_start = bx * block_size_x
-            x_end = x_start + block_size_x
-            y_start = by * block_size_y
-            y_end = y_start + block_size_y
-            blocks.append(Block(sites=sites[x_start:x_end, y_start:y_end].positions))
-    else:
-        for bx, by in product(range(num_x), range(num_y)):
-            x_start = bx * block_size_x
-            x_end = x_start + block_size_x
-            y_start = by * block_size_y
-            y_end = y_start + block_size_y
-            blocks.append(Block(sites=sites[x_start:x_end, y_start:y_end].positions))
+    for by, bx in product(range(num_y), range(num_x)):
+        x_start = bx * block_size_x
+        x_end = x_start + block_size_x
+        y_start = by * block_size_y
+        y_end = y_start + block_size_y
+        blocks.append(Block(sites=sites[x_start:x_end, y_start:y_end].positions))
 
     return blocks
 
@@ -78,7 +88,7 @@ def holobyte_geometry(
 
     This function takes the compute, cache, and memory sites and generates a
     holobyte architecture specification. Note that the holobytes are stored
-    in 4x4 blocks to make inter block connections easier.
+    in 16x1 blocks to make inter block connections easier.
 
     Args:
         compute_sites: The grid of compute sites.
@@ -133,7 +143,7 @@ def holobyte_geometry(
 
     return ArchSpec(
         blocks=tuple(blocks),
-        intra_lanes=intra_hypercube(4),
+        intra_lanes=tuple(tesseract_intra()),
         allowed_inter_lanes=tuple(inter_lanes),
         has_intra_lanes=has_intra_blocks,
     )

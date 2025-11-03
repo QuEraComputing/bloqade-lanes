@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from functools import cached_property
 from itertools import product
 
 # from bloqade.geometry.dialects import grid
@@ -22,13 +23,13 @@ class Grid(Generic[Nx, Ny]):
     x_positions: tuple[float, ...]
     y_positions: tuple[float, ...]
 
-    @property
+    @cached_property
     def shape(self) -> tuple[int, int]:
         return (len(self.x_positions), len(self.y_positions))
 
-    @property
+    @cached_property
     def positions(self) -> tuple[tuple[float, float], ...]:
-        return tuple(product(self.x_positions, self.y_positions))
+        return tuple((x, y) for y, x in product(self.y_positions, self.x_positions))
 
     @staticmethod
     def slice_pos(
