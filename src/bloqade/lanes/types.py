@@ -2,16 +2,16 @@ from dataclasses import dataclass, field
 from itertools import product
 
 # from bloqade.geometry.dialects import grid
-from typing import Any, Sequence, TypeVar, Generic
-# from bloqade.shuttle.arch import Layout
-from kirin.dialects.ilist import IList
-from kirin.ir.attrs.types import is_tuple_of
-from matplotlib import pyplot as plt
+from typing import Any, Generic, Sequence, TypeVar
+
 import networkx as nx
 import numpy as np
 import scipy
 
-
+# from bloqade.shuttle.arch import Layout
+from kirin.dialects.ilist import IList
+from kirin.ir.attrs.types import is_tuple_of
+from matplotlib import pyplot as plt
 
 Nx = TypeVar("Nx")
 Ny = TypeVar("Ny")
@@ -31,7 +31,9 @@ class Grid(Generic[Nx, Ny]):
         return tuple(product(self.x_positions, self.y_positions))
 
     @staticmethod
-    def slice_pos(positions: tuple[float, ...], slice_obj: slice | int | IList[int, Any]):
+    def slice_pos(
+        positions: tuple[float, ...], slice_obj: slice | int | IList[int, Any]
+    ):
         match slice_obj:
             case slice():
                 return positions[slice_obj]
@@ -47,18 +49,17 @@ class Grid(Generic[Nx, Ny]):
             self.slice_pos(self.x_positions, key[0]),
             self.slice_pos(self.y_positions, key[1]),
         )
-    
-    def plot(self, ax = None, **scatter_kwargs):
+
+    def plot(self, ax=None, **scatter_kwargs):
         if ax is None:
             ax = plt.gca()
         xx, yy = np.meshgrid(self.x_positions, self.y_positions)
         ax.scatter(xx.flatten(), yy.flatten(), **scatter_kwargs)
         return ax
-    
 
-    
 
 SiteType = TypeVar("SiteType", bound=Grid[Any, Any] | tuple[float, float])
+
 
 @dataclass(frozen=True)
 class Block(Generic[SiteType]):
@@ -78,16 +79,18 @@ class Block(Generic[SiteType]):
 
     def all_positions(self):
         for site_index in range(len(self.sites)):
-            yield from self.subblock_positions(site_index)  
+            yield from self.subblock_positions(site_index)
 
-    def plot(self, ax = None, **scatter_kwargs):
+    def plot(self, ax=None, **scatter_kwargs):
         if ax is None:
             ax = plt.gca()
         x_positions, y_positions = zip(*self.all_positions())
         ax.scatter(x_positions, y_positions, **scatter_kwargs)
         return ax
 
+
 BlockType = TypeVar("BlockType", bound=Block[Any])
+
 
 @dataclass(frozen=True)
 class BlockSite(Generic[BlockType]):
@@ -96,6 +99,7 @@ class BlockSite(Generic[BlockType]):
 
     def positions(self):
         yield from self.block.subblock_positions(self.site_index)
+
 
 @dataclass(frozen=True)
 class IntraLane:
@@ -110,13 +114,14 @@ class InterLane(Generic[BlockType]):
     site: int
 
 
-
 @dataclass(frozen=True)
 class ArchSpec(Generic[SiteType]):
     blocks: tuple[Block[SiteType], ...]
     intra_lanes: tuple[IntraLane, ...]
     allowed_inter_lanes: tuple[InterLane[Block[SiteType]], ...]
-    has_intra_lanes: frozenset[Block[SiteType]] # the block indices that have intra-lanes
+    has_intra_lanes: frozenset[
+        Block[SiteType]
+    ]  # the block indices that have intra-lanes
     _block_id: dict[Block[SiteType], int] = field(
         init=False, default_factory=dict, repr=False, compare=False, hash=False
     )
@@ -125,14 +130,20 @@ class ArchSpec(Generic[SiteType]):
         assert len(self.blocks) == len(set(self.blocks)), "Blocks must be unique"
         self._block_id.update({block: i for i, block in enumerate(self.blocks)})
 
-
     def get_graph(self):
         g: nx.Graph[tuple[int, int, int]] = nx.Graph()
         raise NotImplementedError("Graph generation not implemented yet")
 
         return g
 
-    def plot(self, ax = None, show_blocks: Sequence[int] = (), show_intra: Sequence[int] = (), show_inter: Sequence[int] = (), **scatter_kwargs):
+    def plot(
+        self,
+        ax=None,
+        show_blocks: Sequence[int] = (),
+        show_intra: Sequence[int] = (),
+        show_inter: Sequence[int] = (),
+        **scatter_kwargs,
+    ):
         if ax is None:
             ax = plt.gca()
 
@@ -151,11 +162,13 @@ class ArchSpec(Generic[SiteType]):
             block = self.blocks[block_id]
             for lane_id in show_intra:
                 lane = self.intra_lanes[lane_id]
-                
+
                 start = block[lane.site_1]
                 end = block[lane.site_2]
 
-                for (x_start, y_start), (x_end, y_end) in zip(start.positions(), end.positions()):
+                for (x_start, y_start), (x_end, y_end) in zip(
+                    start.positions(), end.positions()
+                ):
                     mid_x = (x_start + x_end) / 2
                     mid_y = (y_start + y_end) / 2
 
@@ -164,10 +177,16 @@ class ArchSpec(Generic[SiteType]):
                     elif y_start == y_end:
                         mid_y += bow_x
 
-                    interp = scipy.interpolate.interp1d([x_start, mid_x , x_end], [y_start, mid_y, y_end], kind='quadratic')
+                    interp = scipy.interpolate.interp1d(
+                        [x_start, mid_x, x_end],
+                        [y_start, mid_y, y_end],
+                        kind="quadratic",
+                    )
                     x_vals = np.linspace(x_start, x_end, num=10)
                     y_vals = interp(x_vals)
-                    ln, =ax.plot(x_vals, y_vals, color=colors.get(lane), linestyle='--')
+                    (ln,) = ax.plot(
+                        x_vals, y_vals, color=colors.get(lane), linestyle="--"
+                    )
                     if lane not in colors:
                         colors[lane] = ln.get_color()
 
@@ -176,7 +195,9 @@ class ArchSpec(Generic[SiteType]):
             start = lane.block_1[lane.site]
             end = lane.block_2[lane.site]
 
-            for (x_start, y_start), (x_end, y_end) in zip(start.positions(), end.positions()):
+            for (x_start, y_start), (x_end, y_end) in zip(
+                start.positions(), end.positions()
+            ):
                 mid_x = (x_start + x_end) / 2
                 mid_y = (y_start + y_end) / 2
 
@@ -185,19 +206,30 @@ class ArchSpec(Generic[SiteType]):
                 elif y_start == y_end:
                     mid_y += bow_x
 
-                interp = scipy.interpolate.interp1d([x_start, mid_x , x_end], [y_start, mid_y, y_end], kind='quadratic')
+                interp = scipy.interpolate.interp1d(
+                    [x_start, mid_x, x_end], [y_start, mid_y, y_end], kind="quadratic"
+                )
                 x_vals = np.linspace(x_start, x_end, num=10)
                 y_vals = interp(x_vals)
-                ln, =ax.plot(x_vals, y_vals, color=colors.get(lane), linestyle='-')
+                (ln,) = ax.plot(x_vals, y_vals, color=colors.get(lane), linestyle="-")
                 if lane not in colors:
                     colors[lane] = ln.get_color()
 
         return ax
 
-    def show(self, ax = None, show_blocks: Sequence[int] = (), show_intra: Sequence[int] = (), show_inter: Sequence[int] = (), **scatter_kwargs):
-        self.plot(ax, show_blocks=show_blocks, show_intra=show_intra, show_inter=show_inter, **scatter_kwargs)
+    def show(
+        self,
+        ax=None,
+        show_blocks: Sequence[int] = (),
+        show_intra: Sequence[int] = (),
+        show_inter: Sequence[int] = (),
+        **scatter_kwargs,
+    ):
+        self.plot(
+            ax,
+            show_blocks=show_blocks,
+            show_intra=show_intra,
+            show_inter=show_inter,
+            **scatter_kwargs,
+        )
         plt.show()
-            
-
-
-
