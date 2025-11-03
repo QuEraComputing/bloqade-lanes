@@ -71,14 +71,11 @@ def holobyte_geometry(
     cache_sites = cache_sites[: num_compute_bytes_x * 16, :]
     memory_sites = memory_sites[: num_mem_bytes_x * 16, :]
 
-    # intra-holobyte lanes for compute_blocks only
-    intra_lanes = intra_hypercube(4)
-
     compute_blocks = partition_grid(compute_sites, 16, 1)
     cache_blocks = partition_grid(cache_sites, 16, 1)
     memory_blocks = partition_grid(memory_sites, 16, 1)
 
-    blocks = tuple(chain.from_iterable(compute_blocks + cache_blocks + memory_blocks))
+    blocks = chain.from_iterable(compute_blocks + cache_blocks + memory_blocks)
     has_intra_blocks = frozenset(chain.from_iterable(compute_blocks))
 
     inter_lanes = []
@@ -98,7 +95,7 @@ def holobyte_geometry(
 
     return ArchSpec(
         blocks=tuple(blocks),
-        intra_lanes=intra_lanes,
+        intra_lanes=intra_hypercube(4),
         allowed_inter_lanes=tuple(inter_lanes),
         has_intra_lanes=has_intra_blocks,
     )
