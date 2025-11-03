@@ -78,7 +78,7 @@ def holobyte_geometry(
 
     This function takes the compute, cache, and memory sites and generates a
     holobyte architecture specification. Note that the holobytes are stored
-    in 16x1 blocks to make inter block connections easier.
+    in 4x4 blocks to make inter block connections easier.
 
     Args:
         compute_sites: The grid of compute sites.
