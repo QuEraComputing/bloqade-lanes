@@ -35,8 +35,9 @@ def logical_arch(physical: bool = False):
     
     inter_lanes = [
         InterLane(
-            site_1=block_0[2*y],
-            site_2=block_1[2*y],
+            block_1=block_0,
+            block_2=block_1,
+            site=2*y+1,
         )
         for y in range(block_size_y)
         
@@ -44,15 +45,16 @@ def logical_arch(physical: bool = False):
     intra_lanes = [
         IntraLane(
             site_1=2*y,
-            site_2=2*y+1,
+            site_2=2*(y+i)+1,
         )
-        for y in range(block_size_y)
+        for i in range(block_size_y)
+        for y in range(block_size_y - i)
     ]
 
     return ArchSpec(
         (block_0, block_1),
         tuple(intra_lanes),
         tuple(inter_lanes),
-        frozenset({0, 1}),
+        frozenset({block_0, block_1}),
     )
 
