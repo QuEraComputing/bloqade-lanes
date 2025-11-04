@@ -1,37 +1,21 @@
-from itertools import product
+from itertools import chain
 from typing import TypeVar
 
-from .types import ArchSpec, Block, Grid, InterLane, IntraLane
+import numpy as np
+
+from .types import ArchSpec, Block, Grid, InterGroup, IntraGroup, as_tuple_int
 
 
 def tesseract_intra():
-    def iter_x(src_y, dst_y):
-        for sx in range(4):
-            for sy, dy in zip(src_y, dst_y):
-                site_1 = 16 * sy + sx
-                site_2 = 16 * dy + sx
-                yield IntraLane(
-                    site_1=site_1,
-                    site_2=site_2,
-                )
 
-    def iter_y(src_x, dst_x):
-        for sy in range(4):
-            for sx, dx in zip(src_x, dst_x):
-                site_1 = 16 * sy + sx
-                site_2 = 16 * sy + dx
-                yield IntraLane(
-                    site_1=site_1,
-                    site_2=site_2,
-                )
+    sites = np.arange(16).reshape((4, 4))
 
-    ix = range(4)
-    iy = range(4)
-
-    yield from iter_x(iy[0::2], iy[1::2])
-    yield from iter_y(ix[0::2], ix[1::2])
-    yield from iter_x(iy[:2], iy[2:])
-    yield from iter_y(ix[:2], ix[2:])
+    return (
+        IntraGroup(as_tuple_int(sites[::2, :]), as_tuple_int(sites[1::2, :])),
+        IntraGroup(as_tuple_int(sites[:, ::2]), as_tuple_int(sites[:, 1::2])),
+        IntraGroup(as_tuple_int(sites[:2, :]), as_tuple_int(sites[2:, :])),
+        IntraGroup(as_tuple_int(sites[:, :2]), as_tuple_int(sites[:, 2:])),
+    )
 
 
 def partition_grid(sites: Grid, num_x: int, num_y: int):
@@ -65,16 +49,26 @@ def partition_grid(sites: Grid, num_x: int, num_y: int):
     block_size_x = sites.shape[0] // num_x
     block_size_y = sites.shape[1] // num_y
 
-    blocks: list[Block[tuple[float, float]]] = []
+    blocks: list[list[Block[tuple[float, float]]]] = []
 
-    for by, bx in product(range(num_y), range(num_x)):
-        x_start = bx * block_size_x
-        x_end = x_start + block_size_x
-        y_start = by * block_size_y
-        y_end = y_start + block_size_y
-        blocks.append(Block(sites=sites[x_start:x_end, y_start:y_end].positions))
+    for by in range(num_y):
+        row: list[Block[tuple[float, float]]] = []
+        for bx in range(num_x):
+            x_start = bx * block_size_x
+            x_end = x_start + block_size_x
+            y_start = by * block_size_y
+            y_end = y_start + block_size_y
+            row.append(Block(sites=sites[x_start:x_end, y_start:y_end].positions))
+        blocks.append(row)
 
-    return blocks
+    return np.asarray(blocks)
+
+
+T = TypeVar("T")
+
+
+def flatten(blocks: list[list[T]]) -> list[T]:
+    return list(chain.from_iterable(blocks))
 
 
 Nx = TypeVar("Nx")
@@ -110,24 +104,31 @@ def holobyte_geometry(shuttle_sites: Grid[Nx, Ny], cache_sites: Grid[Nx, Ny]):
     if shuttle_sites.shape != cache_sites.shape:
         raise ValueError("Compute sites and cache sites must have the same shape")
 
-    compute_blocks = partition_grid(shuttle_sites, 4, 4)
+    shuttle_blocks = partition_grid(shuttle_sites, 4, 4)
     cache_blocks = partition_grid(cache_sites, 4, 4)
 
-    blocks = compute_blocks + cache_blocks
-    has_intra_blocks = frozenset(compute_blocks)
+    block_ids = np.arange(shuttle_blocks.size).reshape(shuttle_blocks.shape)
 
     inter_lanes = []
-    for compute_block, cache_block in zip(compute_blocks, cache_blocks):
-        for site_id in range(len(cache_block.sites)):
-            inter_lane = InterLane(
-                (compute_block, cache_block),
-                site_id,
-            )
-            inter_lanes.append(inter_lane)
+
+    num_rows = shuttle_blocks.shape[0]
+    num_cols = shuttle_blocks.shape[1]
+
+    for row_shift in range(num_rows):
+        src_blocks = tuple(map(int, block_ids[: num_rows - row_shift, :].flatten()))
+        dst_blocks = tuple(map(int, block_ids[row_shift:, :].flatten()))
+        inter_lanes.append(InterGroup(src_blocks, dst_blocks))
+
+    for col_shift in range(num_cols):
+        src_blocks = tuple(map(int, block_ids[:, : num_cols - col_shift].flatten()))
+        dst_blocks = tuple(map(int, block_ids[:, col_shift:].flatten()))
+        inter_lanes.append(InterGroup(src_blocks, dst_blocks))
 
     return ArchSpec(
-        blocks=tuple(blocks),
+        blocks=tuple(
+            shuttle_blocks.flatten().tolist() + cache_blocks.flatten().tolist()
+        ),
         intra_lanes=tuple(tesseract_intra()),
-        allowed_inter_lanes=tuple(inter_lanes),
-        has_intra_lanes=has_intra_blocks,
+        inter_lanes=tuple(inter_lanes),
+        has_intra_lanes=frozenset(shuttle_blocks.flatten()),
     )

@@ -1,21 +1,22 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
-from itertools import combinations, product
-
-# from bloqade.geometry.dialects import grid
+from itertools import product
 from typing import Any, Generic, Sequence, TypeVar
 
-import networkx as nx
 import numpy as np
+import numpy.typing as npt
 import scipy
 
 # from bloqade.shuttle.arch import Layout
 from kirin.dialects.ilist import IList
-from kirin.ir.attrs.types import is_tuple_of
 from matplotlib import pyplot as plt
 
 Nx = TypeVar("Nx")
 Ny = TypeVar("Ny")
+
+
+def as_tuple_int(arr: npt.NDArray) -> tuple[int, ...]:
+    return tuple(map(int, arr.flatten()))
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ class Grid(Generic[Nx, Ny]):
         return ax
 
 
-SiteType = TypeVar("SiteType")
+SiteType = TypeVar("SiteType", bound=Grid | tuple[float, float] | tuple[int, int])
 
 
 @dataclass(frozen=True)
@@ -73,12 +74,15 @@ class Block(Generic[SiteType]):
 
     def subblock_positions(self, site_index: int):
         site = self.sites[site_index]
-        if isinstance(site, Grid):
-            yield from product(site.x_positions, site.y_positions)
-        elif is_tuple_of(site, float) or is_tuple_of(site, int) and len(site) == 2:
-            yield site
-        else:
-            raise TypeError(f"Invalid site type: {type(site)}")
+        match site:
+            case Grid(x_positions, y_positions):
+                yield from ((x, y) for y, x in product(y_positions, x_positions))
+            case (float(), float()):
+                yield site
+            case (int() as x, int() as y):
+                yield (float(x), float(y))
+            case _:
+                raise TypeError(f"Unsupported site type: {type(site)}")
 
     def all_positions(self):
         for site_index in range(len(self.sites)):
@@ -105,38 +109,46 @@ class BlockSite(Generic[BlockType]):
 
 
 @dataclass(frozen=True)
-class IntraLane:
-    site_1: int
-    site_2: int
+class IntraGroup:
+    """A group of intra-lanes that can be executed in parallel.
+
+    For intra-lanes, src are the source site indices and dst are the destination site indices.
+
+    """
+
+    src: tuple[int, ...]
+    dst: tuple[int, ...]
+
+    def __post_init__(self):
+        assert len(self.src) == len(
+            self.dst
+        ), "Source and destination lengths must match"
 
 
 @dataclass(frozen=True)
-class InterLane(Generic[BlockType]):
-    blocks: tuple[BlockType, ...]
-    site: int
+class InterGroup:
+    """A group of inter-lanes that can be executed in parallel.
+
+    For inter-lanes, src and dst are the block indices involved in the inter-lane.
+    sites is which site indices can be accessed in this inter-lane move if None
+    all sites are accessible.
+
+    """
+
+    src: tuple[int, ...]
+    dst: tuple[int, ...]
+    sites: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
 class ArchSpec(Generic[SiteType]):
     blocks: tuple[Block[SiteType], ...]
-    intra_lanes: tuple[IntraLane, ...]
-    allowed_inter_lanes: tuple[InterLane[Block[SiteType]], ...]
-    has_intra_lanes: frozenset[
-        Block[SiteType]
-    ]  # the block indices that have intra-lanes
-    _block_id: dict[Block[SiteType], int] = field(
-        init=False, default_factory=dict, repr=False, compare=False, hash=False
-    )
-
-    def __post_init__(self):
-        assert len(self.blocks) == len(set(self.blocks)), "Blocks must be unique"
-        self._block_id.update({block: i for i, block in enumerate(self.blocks)})
+    has_intra_lanes: frozenset[Block[SiteType]]
+    intra_lanes: tuple[IntraGroup, ...]
+    inter_lanes: tuple[InterGroup, ...]
 
     def get_graph(self):
-        g: nx.Graph[tuple[int, int, int]] = nx.Graph()
         raise NotImplementedError("Graph generation not implemented yet")
-
-        return g
 
     def plot(
         self,
@@ -165,62 +177,70 @@ class ArchSpec(Generic[SiteType]):
             for lane_id in show_intra:
                 lane = self.intra_lanes[lane_id]
 
-                start = block[lane.site_1]
-                end = block[lane.site_2]
+                for start, end in zip(lane.src, lane.dst):
+                    start = block[start]
+                    end = block[end]
 
-                for (x_start, y_start), (x_end, y_end) in zip(
-                    start.positions(), end.positions()
-                ):
-                    mid_x = (x_start + x_end) / 2
-                    mid_y = (y_start + y_end) / 2
+                    for (x_start, y_start), (x_end, y_end) in zip(
+                        start.positions(), end.positions()
+                    ):
+                        mid_x = (x_start + x_end) / 2
+                        mid_y = (y_start + y_end) / 2
 
-                    if x_start == x_end:
-                        mid_x += bow_y
-                    elif y_start == y_end:
-                        mid_y += bow_x
+                        if x_start == x_end:
+                            mid_x += bow_y
+                        elif y_start == y_end:
+                            mid_y += bow_x
 
-                    interp = scipy.interpolate.interp1d(
-                        [x_start, mid_x, x_end],
-                        [y_start, mid_y, y_end],
-                        kind="quadratic",
-                    )
-                    x_vals = np.linspace(x_start, x_end, num=10)
-                    y_vals = interp(x_vals)
-                    (ln,) = ax.plot(
-                        x_vals, y_vals, color=colors.get(lane), linestyle="--"
-                    )
-                    if lane not in colors:
-                        colors[lane] = ln.get_color()
+                        interp = scipy.interpolate.interp1d(
+                            [x_start, mid_x, x_end],
+                            [y_start, mid_y, y_end],
+                            kind="quadratic",
+                        )
+                        x_vals = np.linspace(x_start, x_end, num=10)
+                        y_vals = interp(x_vals)
+                        (ln,) = ax.plot(
+                            x_vals, y_vals, color=colors.get(lane), linestyle="--"
+                        )
+                        if lane not in colors:
+                            colors[lane] = ln.get_color()
 
         for lane in show_inter:
-            lane = self.allowed_inter_lanes[lane]
-            for block_1, block_2 in combinations(lane.blocks, 2):
-                start = block_1[lane.site]
-                end = block_2[lane.site]
+            lane = self.inter_lanes[lane]
+            for start_block_id, end_block_id in zip(lane.src, lane.dst):
+                start_block = self.blocks[start_block_id]
+                end_block = self.blocks[end_block_id]
+                if lane.sites is None:
+                    site_indices = range(len(start_block.sites))
+                else:
+                    site_indices = lane.sites
 
-                for (x_start, y_start), (x_end, y_end) in zip(
-                    start.positions(), end.positions()
-                ):
-                    mid_x = (x_start + x_end) / 2
-                    mid_y = (y_start + y_end) / 2
+                for site in site_indices:
+                    start = start_block[site]
+                    end = end_block[site]
+                    for (x_start, y_start), (x_end, y_end) in zip(
+                        start.positions(), end.positions()
+                    ):
+                        mid_x = (x_start + x_end) / 2
+                        mid_y = (y_start + y_end) / 2
 
-                    if x_start == x_end:
-                        mid_x += bow_y
-                    elif y_start == y_end:
-                        mid_y += bow_x
+                        if x_start == x_end:
+                            mid_x += bow_y
+                        elif y_start == y_end:
+                            mid_y += bow_x
 
-                    interp = scipy.interpolate.interp1d(
-                        [x_start, mid_x, x_end],
-                        [y_start, mid_y, y_end],
-                        kind="quadratic",
-                    )
-                    x_vals = np.linspace(x_start, x_end, num=10)
-                    y_vals = interp(x_vals)
-                    (ln,) = ax.plot(
-                        x_vals, y_vals, color=colors.get(lane), linestyle="-"
-                    )
-                    if lane not in colors:
-                        colors[lane] = ln.get_color()
+                        interp = scipy.interpolate.interp1d(
+                            [x_start, mid_x, x_end],
+                            [y_start, mid_y, y_end],
+                            kind="quadratic",
+                        )
+                        x_vals = np.linspace(x_start, x_end, num=10)
+                        y_vals = interp(x_vals)
+                        (ln,) = ax.plot(
+                            x_vals, y_vals, color=colors.get(lane), linestyle="-"
+                        )
+                        if lane not in colors:
+                            colors[lane] = ln.get_color()
 
         return ax
 

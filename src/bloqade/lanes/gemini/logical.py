@@ -1,4 +1,6 @@
-from ..types import ArchSpec, Block, Grid, InterLane, IntraLane
+import numpy as np
+
+from ..types import ArchSpec, Block, Grid, InterGroup, IntraGroup, as_tuple_int
 
 
 def logical_arch(physical: bool = False):
@@ -24,26 +26,24 @@ def logical_arch(physical: bool = False):
     block_0 = Block(sites_0)
     block_1 = Block(sites_1)
 
+    intra_ids = np.arange(block_size_y * 2).reshape((block_size_y, 2))
+
+    intra_lanes = []
+    for shift in range(block_size_y):
+        intra_lanes.append(
+            IntraGroup(
+                src=as_tuple_int(intra_ids[: block_size_y - shift, 0]),
+                dst=as_tuple_int(intra_ids[shift:, 1]),
+            )
+        )
+
     inter_lanes = [
-        InterLane(
-            block_1=block_0,
-            block_2=block_1,
-            site=2 * y + 1,
-        )
-        for y in range(block_size_y)
-    ]
-    intra_lanes = [
-        IntraLane(
-            site_1=2 * y,
-            site_2=2 * (y + i) + 1,
-        )
-        for i in range(block_size_y)
-        for y in range(block_size_y - i)
+        InterGroup((0,), (1,), as_tuple_int(intra_ids[:, 1])),
     ]
 
     return ArchSpec(
-        (block_0, block_1),
-        tuple(intra_lanes),
-        tuple(inter_lanes),
-        frozenset({block_0, block_1}),
+        blocks=(block_0, block_1),
+        has_intra_lanes=frozenset({block_0, block_1}),
+        intra_lanes=tuple(intra_lanes),
+        inter_lanes=tuple(inter_lanes),
     )
