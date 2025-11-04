@@ -115,13 +115,13 @@ def holobyte_geometry(shuttle_sites: Grid[Nx, Ny], cache_sites: Grid[Nx, Ny]):
     num_cols = shuttle_blocks.shape[1]
 
     for row_shift in range(num_rows):
-        src_blocks = tuple(map(int, block_ids[: num_rows - row_shift, :].flatten()))
-        dst_blocks = tuple(map(int, block_ids[row_shift:, :].flatten()))
+        src_blocks = as_tuple_int(block_ids[: num_rows - row_shift, :].flatten())
+        dst_blocks = as_tuple_int(block_ids[row_shift:, :].flatten())
         inter_lanes.append(InterGroup(src_blocks, dst_blocks))
 
     for col_shift in range(num_cols):
-        src_blocks = tuple(map(int, block_ids[:, : num_cols - col_shift].flatten()))
-        dst_blocks = tuple(map(int, block_ids[:, col_shift:].flatten()))
+        src_blocks = as_tuple_int(block_ids[:, : num_cols - col_shift].flatten())
+        dst_blocks = as_tuple_int(block_ids[:, col_shift:].flatten())
         inter_lanes.append(InterGroup(src_blocks, dst_blocks))
 
     return ArchSpec(
