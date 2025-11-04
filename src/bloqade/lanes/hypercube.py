@@ -81,19 +81,21 @@ Nx = TypeVar("Nx")
 Ny = TypeVar("Ny")
 
 
-def holobyte_geometry(
-    compute_sites: Grid[Nx, Ny], cache_sites: Grid[Nx, Ny], *memory_sites: Grid[Nx, Ny]
-):
-    """Generate a holobyte architecture specification.
+def holobyte_geometry(shuttle_sites: Grid[Nx, Ny], cache_sites: Grid[Nx, Ny]):
+    """Generate a holobyte architecture specification from geometric information.
 
     This function takes the compute, cache, and memory sites and generates a
     holobyte architecture specification. Note that the holobytes are stored
-    in 16x1 blocks to make inter block connections easier.
+    in 4x4 blocks to make inter block connections easier.
+
+    The idea is that each shuttle and cache site are paired in the gate zone. The cache
+    doesn't have intra zone moves.
+
+
 
     Args:
-        compute_sites: The grid of compute sites.
-        cache_sites: The grid of cache sites.
-        *memory_sites: One or more grids of memory sites.
+        shuttle_sites: The grid of sites that is used for shuttling throughout the gate zone
+        cache_sites: The sites for storing stationary atoms
 
     Returns:
         An ArchSpec object representing the holobyte architecture.
@@ -102,18 +104,13 @@ def holobyte_geometry(
         ValueError: If the compute and cache sites do not have the same shape, or if
         the memory sites do not match the required dimensions.
     """
-    if compute_sites.shape[0] % 4 != 0 or compute_sites.shape[1] % 4 != 0:
+    if shuttle_sites.shape[0] % 4 != 0 or shuttle_sites.shape[1] % 4 != 0:
         raise ValueError("Compute sites x/y dimension must be multiple of 4")
 
-    if compute_sites.shape != cache_sites.shape:
+    if shuttle_sites.shape != cache_sites.shape:
         raise ValueError("Compute sites and cache sites must have the same shape")
 
-    for mem_sites in memory_sites:
-        # make sure each memory block matches compute block dimensions
-        if mem_sites.shape != compute_sites.shape:
-            raise ValueError("Memory sites must match compute sites dimensions")
-
-    compute_blocks = partition_grid(compute_sites, 4, 4)
+    compute_blocks = partition_grid(shuttle_sites, 4, 4)
     cache_blocks = partition_grid(cache_sites, 4, 4)
 
     blocks = compute_blocks + cache_blocks
@@ -123,23 +120,10 @@ def holobyte_geometry(
     for compute_block, cache_block in zip(compute_blocks, cache_blocks):
         for site_id in range(len(cache_block.sites)):
             inter_lane = InterLane(
-                block_1=compute_block,
-                block_2=cache_block,
-                site=site_id,
+                (compute_block, cache_block),
+                site_id,
             )
             inter_lanes.append(inter_lane)
-
-    for mem_sites in memory_sites:
-        memory_blocks = partition_grid(mem_sites, 4, 4)
-        blocks.extend(memory_blocks)
-        for mem_block, cache_block in zip(memory_blocks, cache_blocks):
-            for site_id in range(len(cache_block.sites)):
-                inter_lane = InterLane(
-                    block_1=mem_block,
-                    block_2=cache_block,
-                    site=site_id,
-                )
-                inter_lanes.append(inter_lane)
 
     return ArchSpec(
         blocks=tuple(blocks),

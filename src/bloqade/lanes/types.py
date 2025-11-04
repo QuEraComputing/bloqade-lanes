@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import cached_property
-from itertools import product
+from itertools import combinations, product
 
 # from bloqade.geometry.dialects import grid
 from typing import Any, Generic, Sequence, TypeVar
@@ -59,11 +59,13 @@ class Grid(Generic[Nx, Ny]):
         return ax
 
 
-SiteType = TypeVar("SiteType", bound=Grid[Any, Any] | tuple[float, float])
+SiteType = TypeVar("SiteType")
 
 
 @dataclass(frozen=True)
 class Block(Generic[SiteType]):
+    # note that the `SiteType` is really just here for visualization purposes
+    # you can simply ignore the site in general
     sites: tuple[SiteType, ...]
 
     def __getitem__(self, index: int):
@@ -110,8 +112,7 @@ class IntraLane:
 
 @dataclass(frozen=True)
 class InterLane(Generic[BlockType]):
-    block_1: BlockType
-    block_2: BlockType
+    blocks: tuple[BlockType, ...]
     site: int
 
 
@@ -193,28 +194,33 @@ class ArchSpec(Generic[SiteType]):
 
         for lane in show_inter:
             lane = self.allowed_inter_lanes[lane]
-            start = lane.block_1[lane.site]
-            end = lane.block_2[lane.site]
+            for block_1, block_2 in combinations(lane.blocks, 2):
+                start = block_1[lane.site]
+                end = block_2[lane.site]
 
-            for (x_start, y_start), (x_end, y_end) in zip(
-                start.positions(), end.positions()
-            ):
-                mid_x = (x_start + x_end) / 2
-                mid_y = (y_start + y_end) / 2
+                for (x_start, y_start), (x_end, y_end) in zip(
+                    start.positions(), end.positions()
+                ):
+                    mid_x = (x_start + x_end) / 2
+                    mid_y = (y_start + y_end) / 2
 
-                if x_start == x_end:
-                    mid_x += bow_y
-                elif y_start == y_end:
-                    mid_y += bow_x
+                    if x_start == x_end:
+                        mid_x += bow_y
+                    elif y_start == y_end:
+                        mid_y += bow_x
 
-                interp = scipy.interpolate.interp1d(
-                    [x_start, mid_x, x_end], [y_start, mid_y, y_end], kind="quadratic"
-                )
-                x_vals = np.linspace(x_start, x_end, num=10)
-                y_vals = interp(x_vals)
-                (ln,) = ax.plot(x_vals, y_vals, color=colors.get(lane), linestyle="-")
-                if lane not in colors:
-                    colors[lane] = ln.get_color()
+                    interp = scipy.interpolate.interp1d(
+                        [x_start, mid_x, x_end],
+                        [y_start, mid_y, y_end],
+                        kind="quadratic",
+                    )
+                    x_vals = np.linspace(x_start, x_end, num=10)
+                    y_vals = interp(x_vals)
+                    (ln,) = ax.plot(
+                        x_vals, y_vals, color=colors.get(lane), linestyle="-"
+                    )
+                    if lane not in colors:
+                        colors[lane] = ln.get_color()
 
         return ax
 
