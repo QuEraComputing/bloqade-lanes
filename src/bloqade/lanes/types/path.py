@@ -44,6 +44,16 @@ class PathFinder:
                         self.site_map[src_site], self.site_map[dst_site], lane_addr
                     )
 
+    def extract_lanes_from_path(self, path: list[int], encoding: EncodingType):
+        """Given a path as a list of node indices, extract the lane addresses."""
+        if len(path) < 2:
+            raise ValueError("Path must have at least two nodes to extract lanes.")
+        lanes: list[int] = []
+        for src, dst in zip(path[:-1], path[1:]):
+            lane: MoveType = self.site_graph.get_edge_data(src, dst)
+            lanes.append(lane.get_address(encoding))
+        return lanes
+
     def find_path(
         self,
         start: tuple[int, int],
@@ -63,18 +73,10 @@ class PathFinder:
 
         path_nodes = nx.all_shortest_paths(subgraph, start_node, end_node)
         if len(path_nodes) == 0:
+            # no path found
             return None, occupied
 
+        # TODO: Pick best path based on some heuristic
         path = path_nodes[0]
-        lanes: list[int] = []
-        new_occupied = set(occupied)
-
-        for src, dst in zip(path[:-1], path[1:]):
-            lane: MoveType = subgraph.get_edge_data(src, dst)
-            new_occupied.update((src_site := self.all_sites[src], self.all_sites[dst]))
-            if lane.src_site() != src_site:
-                lane = lane.reverse()
-
-            lanes.append(lane.get_address(encoding))
-
-        return lanes, frozenset(new_occupied)
+        lanes = self.extract_lanes_from_path(path, encoding)
+        return lanes, occupied.union(frozenset(self.all_sites[n] for n in path))
