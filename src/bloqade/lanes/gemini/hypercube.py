@@ -3,7 +3,10 @@ from typing import TypeVar
 
 import numpy as np
 
-from .types import ArchSpec, Block, Grid, InterGroup, IntraGroup, as_tuple_int
+from .types.arch import ArchSpec, Lane
+from .types.block import Block
+from .types.grid import Grid
+from .types.numpy_compat import as_tuple_int
 
 
 def tesseract_intra():
@@ -11,10 +14,10 @@ def tesseract_intra():
     sites = np.arange(16).reshape((4, 4))
 
     return (
-        IntraGroup(as_tuple_int(sites[::2, :]), as_tuple_int(sites[1::2, :])),
-        IntraGroup(as_tuple_int(sites[:, ::2]), as_tuple_int(sites[:, 1::2])),
-        IntraGroup(as_tuple_int(sites[:2, :]), as_tuple_int(sites[2:, :])),
-        IntraGroup(as_tuple_int(sites[:, :2]), as_tuple_int(sites[:, 2:])),
+        Lane(as_tuple_int(sites[::2, :]), as_tuple_int(sites[1::2, :])),
+        Lane(as_tuple_int(sites[:, ::2]), as_tuple_int(sites[:, 1::2])),
+        Lane(as_tuple_int(sites[:2, :]), as_tuple_int(sites[2:, :])),
+        Lane(as_tuple_int(sites[:, :2]), as_tuple_int(sites[:, 2:])),
     )
 
 
@@ -117,18 +120,22 @@ def holobyte_geometry(shuttle_sites: Grid[Nx, Ny], cache_sites: Grid[Nx, Ny]):
     for row_shift in range(num_rows):
         src_blocks = as_tuple_int(block_ids[: num_rows - row_shift, :].flatten())
         dst_blocks = as_tuple_int(block_ids[row_shift:, :].flatten())
-        inter_lanes.append(InterGroup(src_blocks, dst_blocks))
+        inter_lanes.append(Lane(src_blocks, dst_blocks))
 
     for col_shift in range(num_cols):
         src_blocks = as_tuple_int(block_ids[:, : num_cols - col_shift].flatten())
         dst_blocks = as_tuple_int(block_ids[:, col_shift:].flatten())
-        inter_lanes.append(InterGroup(src_blocks, dst_blocks))
+        inter_lanes.append(Lane(src_blocks, dst_blocks))
+
+    blocks = tuple(shuttle_blocks.flatten().tolist() + cache_blocks.flatten().tolist())
+
+    block_ids = {i: block for i, block in enumerate(blocks)}
+    has_intra_lanes = frozenset(range(shuttle_blocks.size))
 
     return ArchSpec(
-        blocks=tuple(
-            shuttle_blocks.flatten().tolist() + cache_blocks.flatten().tolist()
-        ),
+        blocks=blocks,
         intra_lanes=tuple(tesseract_intra()),
         inter_lanes=tuple(inter_lanes),
-        has_intra_lanes=frozenset(shuttle_blocks.flatten()),
+        has_intra_lanes=has_intra_lanes,
+        has_inter_lanes=frozenset(range(shuttle_blocks.size)),
     )

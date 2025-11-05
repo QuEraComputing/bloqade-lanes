@@ -9,6 +9,7 @@ authors = [
 dependencies = [
     "kirin-toolchain~=0.20.0",
     "numpy>=2.2.6",
+    "rustworkx>=0.17.1",
 ]
 requires-python = ">= 3.10"
 

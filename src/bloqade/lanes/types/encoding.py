@@ -1,6 +1,6 @@
 import abc
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 class Direction(enum.Enum):
@@ -18,18 +18,35 @@ class EncodingType(enum.Enum):
     BIT64 = 1
 
 
+@dataclass(frozen=True)
 class MoveType(abc.ABC):
+    direction: Direction
+
     @abc.abstractmethod
     def get_address(self, encoding: EncodingType) -> int:
         pass
 
+    @abc.abstractmethod
+    def src_site(self) -> tuple[int, int]:
+        pass
+
+    def reverse(self):
+        new_direction = (
+            Direction.BACKWARD
+            if self.direction == Direction.FORWARD
+            else Direction.FORWARD
+        )
+        return replace(self, direction=new_direction)
+
 
 @dataclass(frozen=True)
 class IntraMove(MoveType):
-    direction: Direction
     block_id: int
-    side_id: int
+    site_id: int
     lane_id: int
+
+    def src_site(self) -> tuple[int, int]:
+        return self.block_id, self.site_id
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -45,11 +62,11 @@ class IntraMove(MoveType):
 
         block_id_enc = mask & self.block_id
         lane_id_enc = mask & self.lane_id
-        site_id_enc = mask & self.side_id
+        site_id_enc = mask & self.site_id
 
         assert block_id_enc == self.block_id, "Block ID too large to encode"
         assert lane_id_enc == self.lane_id, "Lane ID too large to encode"
-        assert site_id_enc == self.side_id, "Site ID too large to encode"
+        assert site_id_enc == self.site_id, "Site ID too large to encode"
 
         address = lane_id_enc
         address |= site_id_enc << shift
@@ -64,10 +81,12 @@ class IntraMove(MoveType):
 
 @dataclass(frozen=True)
 class InterMove(MoveType):
-    direction: Direction
     start_block_id: int
     end_block_id: int
     lane_id: int
+
+    def src_site(self) -> tuple[int, int]:
+        return self.start_block_id, self.lane_id
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
