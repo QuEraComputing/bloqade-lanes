@@ -3,10 +3,10 @@ from typing import TypeVar
 
 import numpy as np
 
-from .types.arch import ArchSpec, Lane
-from .types.block import Block
-from .types.grid import Grid
-from .types.numpy_compat import as_tuple_int
+from ..types.arch import ArchSpec, Lane
+from ..types.block import Block
+from ..types.grid import Grid
+from ..types.numpy_compat import as_tuple_int
 
 
 def tesseract_intra():
