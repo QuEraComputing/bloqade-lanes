@@ -10,44 +10,39 @@ from .encoding import Direction, EncodingType, InterMove, IntraMove, MoveType
 @dataclass(frozen=True)
 class PathFinder:
     spec: ArchSpec
-    site_graph: nx.PyGraph
-    all_sites: list[tuple[int, int]]  # site-node (int) -> (block_id, site_index)
+    site_graph: nx.PyGraph = field(init=False, default_factory=nx.PyGraph)
+    all_sites: list[tuple[int, int]] = field(init=False, default_factory=list)
     site_map: dict[tuple[int, int], int] = field(init=False, default_factory=dict)
 
     def __post_init__(self):
         self.site_map.update({site: i for i, site in enumerate(self.all_sites)})
 
-    @classmethod
-    def new(cls, spec: ArchSpec):
-        block_ids = range(len(spec.blocks))
-        site_ids = range(len(spec.blocks[0].sites))
-        all_sites = list(product(block_ids, site_ids))
-        site_map = {site: i for i, site in enumerate(all_sites)}
-        site_graph = nx.PyGraph()
+        block_ids = range(len(self.spec.blocks))
+        site_ids = range(len(self.spec.blocks[0].sites))
+        self.all_sites.extend(product(block_ids, site_ids))
+        self.site_map.update({site: i for i, site in enumerate(self.all_sites)})
 
-        for lane_id, lane in enumerate(spec.intra_lanes):
-            for block_id in spec.has_intra_lanes:
+        for lane_id, lane in enumerate(self.spec.intra_lanes):
+            for block_id in self.spec.has_intra_lanes:
                 for src, dst in zip(lane.src, lane.dst):
                     src_site = (block_id, src)
                     dst_site = (block_id, dst)
                     lane_addr = IntraMove(Direction.FORWARD, block_id, src, lane_id)
-                    site_graph.add_edge(
-                        site_map[src_site], site_map[dst_site], lane_addr
+                    self.site_graph.add_edge(
+                        self.site_map[src_site], self.site_map[dst_site], lane_addr
                     )
 
-        for lane_id, lane in enumerate(spec.inter_lanes):
+        for lane_id, lane in enumerate(self.spec.inter_lanes):
             for src_block, dst_block in zip(lane.src, lane.dst):
-                for site in spec.has_inter_lanes:
+                for site in self.spec.has_inter_lanes:
                     src_site = (src_block, site)
                     dst_site = (dst_block, site)
                     lane_addr = InterMove(
                         Direction.FORWARD, src_block, dst_block, lane_id
                     )
-                    site_graph.add_edge(
-                        site_map[src_site], site_map[dst_site], lane_addr
+                    self.site_graph.add_edge(
+                        self.site_map[src_site], self.site_map[dst_site], lane_addr
                     )
-
-        return cls(spec, site_graph, all_sites)
 
     def find_path(
         self,
