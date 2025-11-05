@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from itertools import product
+from typing import Callable
 
 import rustworkx as nx
 
@@ -64,12 +65,30 @@ class PathFinder:
         end: tuple[int, int],
         occupied: frozenset[tuple[int, int]] = frozenset(),
         encoding: EncodingType = EncodingType.BIT64,
+        path_heuristic: Callable[[list[tuple[int, int]]], float] = lambda _: 0.0,
     ):
+        """Find a path from start to end avoiding occupied sites.
+
+        Args:
+            start: The starting site as a (block_id, site_id) tuple.
+            end: The ending site as a (block_id, site_id) tuple.
+            occupied: A frozenset of sites (block_id, site_id) that are occupied.
+            encoding: The encoding type for the lane addresses.
+            path_heuristic: A heuristic function that takes a list of sites and returns a float
+                cost for the path. Used to select among multiple shortest paths.
+
+        Returns:
+            A tuple containing:
+                - A list of lane addresses representing the path, or None if no path found.
+                - An updated frozenset of occupied sites including those used in the path.
+        Raises:
+            ValueError: If start or end sites are already occupied.
+        """
         start_node = self.site_map[start]
         end_node = self.site_map[end]
 
         if start_node in occupied or end_node in occupied:
-            return None, occupied
+            raise ValueError("Start or end site is already occupied.")
 
         subgraph = self.site_graph.subgraph(
             [n for n, ele in enumerate(self.all_sites) if ele not in occupied]
@@ -80,7 +99,8 @@ class PathFinder:
             # no path found
             return None, occupied
 
-        # TODO: Pick best path based on some heuristic
-        path = path_nodes[0]
+        path = min(
+            path_nodes, key=lambda p: path_heuristic([self.all_sites[n] for n in p])
+        )
         lanes = self.extract_lanes_from_path(path, encoding)
         return lanes, occupied.union(frozenset(self.all_sites[n] for n in path))
