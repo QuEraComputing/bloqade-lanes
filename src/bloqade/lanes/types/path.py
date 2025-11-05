@@ -50,7 +50,11 @@ class PathFinder:
             raise ValueError("Path must have at least two nodes to extract lanes.")
         lanes: list[int] = []
         for src, dst in zip(path[:-1], path[1:]):
+            if not self.site_graph.has_edge(src, dst):
+                raise ValueError(f"No lane between nodes {src} and {dst}")
+
             lane: MoveType = self.site_graph.get_edge_data(src, dst)
+
             lanes.append(lane.get_address(encoding))
         return lanes
 
