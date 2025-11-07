@@ -60,7 +60,7 @@ class Encoder(abc.ABC):
 
 
 @dataclass(frozen=True)
-class PhysicalAddress(Encoder):
+class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 
     word_id: int
@@ -101,7 +101,7 @@ class MoveType(Encoder):
     direction: Direction
 
     @abc.abstractmethod
-    def src_site(self) -> PhysicalAddress:
+    def src_site(self) -> LocationAddress:
         """Get the source site as a PhysicalAddress."""
         pass
 
@@ -121,7 +121,7 @@ class IntraMove(MoveType):
     lane_id: int
 
     def src_site(self):
-        return PhysicalAddress(self.word_id, self.site_id)
+        return LocationAddress(self.word_id, self.site_id)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -166,7 +166,7 @@ class InterMove(MoveType):
     lane_id: int
 
     def src_site(self):
-        return PhysicalAddress(self.start_word_id, self.lane_id)
+        return LocationAddress(self.start_word_id, self.lane_id)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:

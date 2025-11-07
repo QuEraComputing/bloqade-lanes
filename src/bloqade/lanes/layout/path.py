@@ -5,7 +5,7 @@ from typing import Callable
 import rustworkx as nx
 
 from .arch import ArchSpec
-from .encoding import Direction, InterMove, IntraMove, MoveType, PhysicalAddress
+from .encoding import Direction, InterMove, IntraMove, LocationAddress, MoveType
 
 
 @dataclass(frozen=True)
@@ -13,9 +13,9 @@ class PathFinder:
     spec: ArchSpec
     site_graph: nx.PyGraph = field(init=False, default_factory=nx.PyGraph)
     """Graph representing all sites and edges as lanes."""
-    physical_addresses: list[PhysicalAddress] = field(init=False, default_factory=list)
+    physical_addresses: list[LocationAddress] = field(init=False, default_factory=list)
     """Map from graph node index to (word_id, site_id) tuple."""
-    physical_address_map: dict[PhysicalAddress, int] = field(
+    physical_address_map: dict[LocationAddress, int] = field(
         init=False, default_factory=dict
     )
     """Map from (word_id, site_id) tuple to graph node index."""
@@ -24,7 +24,7 @@ class PathFinder:
         word_ids = range(len(self.spec.words))
         site_ids = range(len(self.spec.words[0].sites))
         self.physical_addresses.extend(
-            starmap(PhysicalAddress, product(word_ids, site_ids))
+            starmap(LocationAddress, product(word_ids, site_ids))
         )
         self.physical_address_map.update(
             {site: i for i, site in enumerate(self.physical_addresses)}
@@ -33,8 +33,8 @@ class PathFinder:
         for bus_id, bus in enumerate(self.spec.site_buses):
             for word_id in self.spec.has_site_buses:
                 for src, dst in zip(bus.src, bus.dst):
-                    src_site = PhysicalAddress(word_id, src)
-                    dst_site = PhysicalAddress(word_id, dst)
+                    src_site = LocationAddress(word_id, src)
+                    dst_site = LocationAddress(word_id, dst)
                     lane_addr = IntraMove(Direction.FORWARD, word_id, src, bus_id)
                     self.site_graph.add_edge(
                         self.physical_address_map[src_site],
@@ -45,8 +45,8 @@ class PathFinder:
         for bus_id, bus in enumerate(self.spec.word_buses):
             for src_word, dst_word in zip(bus.src, bus.dst):
                 for site in self.spec.has_word_buses:
-                    src_site = PhysicalAddress(src_word, site)
-                    dst_site = PhysicalAddress(dst_word, site)
+                    src_site = LocationAddress(src_word, site)
+                    dst_site = LocationAddress(dst_word, site)
                     lane_addr = InterMove(Direction.FORWARD, src_word, dst_word, bus_id)
                     self.site_graph.add_edge(
                         self.physical_address_map[src_site],
@@ -70,10 +70,10 @@ class PathFinder:
 
     def find_path(
         self,
-        start: PhysicalAddress,
-        end: PhysicalAddress,
-        occupied: frozenset[PhysicalAddress] = frozenset(),
-        path_heuristic: Callable[[list[PhysicalAddress]], float] = lambda _: 0.0,
+        start: LocationAddress,
+        end: LocationAddress,
+        occupied: frozenset[LocationAddress] = frozenset(),
+        path_heuristic: Callable[[list[LocationAddress]], float] = lambda _: 0.0,
     ):
         """Find a path from start to end avoiding occupied sites.
 

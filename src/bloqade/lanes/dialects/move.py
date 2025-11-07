@@ -1,7 +1,7 @@
 from kirin import ir, types
 from kirin.decl import info, statement
 
-from ..layout.encoding import MoveType, PhysicalAddress
+from ..layout.encoding import LocationAddress, MoveType
 from .bytecode import ByteCodeStmt, ExitRegion
 
 dialect = ir.Dialect(name="bytecode.move")
@@ -14,7 +14,7 @@ class CZ(ByteCodeStmt):
 
 @statement(dialect=dialect)
 class LocalR(ByteCodeStmt):
-    physical_addr: tuple[PhysicalAddress, ...] = info.attribute()
+    physical_addr: tuple[LocationAddress, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -28,7 +28,7 @@ class GlobalR(ByteCodeStmt):
 
 @statement(dialect=dialect)
 class localRz(ByteCodeStmt):
-    physical_addr: tuple[PhysicalAddress, ...] = info.attribute()
+    physical_addr: tuple[LocationAddress, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
@@ -43,4 +43,4 @@ class Move(ByteCodeStmt):
 
 @statement(dialect=dialect)
 class TerminalMeasure(ExitRegion):
-    physical_addr: tuple[PhysicalAddress, ...] = info.attribute()
+    physical_addr: tuple[LocationAddress, ...] = info.attribute()
