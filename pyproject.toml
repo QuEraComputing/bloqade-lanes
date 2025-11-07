@@ -7,6 +7,7 @@ authors = [
     { name = "Phillip Weinberg", email = "pweinberg@quera.com" }
 ]
 dependencies = [
+    "bloqade-circuit",
     "kirin-toolchain~=0.20.0",
     "numpy>=2.2.6",
     "rustworkx>=0.17.1",
@@ -37,6 +38,9 @@ dev-dependencies = [
     "ruff>=0.7.3",
     "rust-just>=1.36.0",
 ]
+
+[tool.uv.sources]
+bloqade-circuit = { workspace = true }
 
 [dependency-groups]
 doc = [
