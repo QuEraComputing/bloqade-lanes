@@ -2,9 +2,9 @@ from kirin import ir, types
 from kirin.decl import info, statement
 
 from ..layout.encoding import LocationAddress, MoveType
-from .lowlevel import ExitLowLevel, LowLevelStmt
+from .execute import ExitLowLevel, LowLevelStmt
 
-dialect = ir.Dialect(name="bytecode.move")
+dialect = ir.Dialect(name="lowlevel.move")
 
 
 @statement(dialect=dialect)
@@ -27,7 +27,7 @@ class GlobalR(LowLevelStmt):
 
 
 @statement(dialect=dialect)
-class localRz(LowLevelStmt):
+class LocalRz(LowLevelStmt):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
