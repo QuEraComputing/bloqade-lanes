@@ -5,34 +5,34 @@ from bloqade import types as bloqade_types
 from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
-dialect = ir.Dialect("bytecode")
+dialect = ir.Dialect("lowlevel")
 
 
 @statement
-class ByteCodeStmt(ir.Statement):
-    """This is a base class for all byte code statements."""
+class LowLevelStmt(ir.Statement):
+    """This is a base class for all low level statements."""
 
     state_before: ir.SSAValue = info.argument(StateType)
     result: ir.ResultValue = info.result(StateType)
 
 
 @statement
-class ExitRegion(ir.Statement):
-    """This is base class for terminal statements in the byte code."""
+class ExitLowLevel(ir.Statement):
+    """This is base class for terminal statements in the low level code."""
 
     traits = frozenset({ir.IsTerminator()})
     state: ir.SSAValue = info.argument(StateType)
 
 
 @statement(dialect=dialect)
-class ExecuteCode(ir.Statement):
-    """This statement represents executing a block of byte code instructions.
+class LowLevel(ir.Statement):
+    """This statement represents executing a block of low-level code instructions.
 
-    The body region contains the byte code instructions to be executed.
+    The body region contains the low-level instructions to be executed.
     The inputs are the squin qubits to be used in the execution.
 
     The region always terminates with an ExitRegion statement, which provides the
-    the measurement results for the qubits depending on which byte code was executed.
+    the measurement results for the qubits depending on which low-level code was executed.
     """
 
     traits = frozenset({ir.SSACFG()})
@@ -74,14 +74,14 @@ class ExecuteCode(ir.Statement):
 
         body_block = self.body.blocks[0]
         last_stmt = body_block.last_stmt
-        if not isinstance(last_stmt, ExitRegion):
+        if not isinstance(last_stmt, ExitLowLevel):
             raise exception.StaticCheckError(
                 "ShuttleAtoms body must end with an ExitRegion statement"
             )
 
         stmt = body_block.first_stmt
         while stmt is not last_stmt:
-            if not isinstance(stmt, ByteCodeStmt):
+            if not isinstance(stmt, LowLevelStmt):
                 raise exception.StaticCheckError(
                     "All statements in ShuttleAtoms body must be ByteCodeStmt"
                 )

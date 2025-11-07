@@ -2,18 +2,18 @@ from kirin import ir, types
 from kirin.decl import info, statement
 
 from ..layout.encoding import LocationAddress, MoveType
-from .bytecode import ByteCodeStmt, ExitRegion
+from .lowlevel import ExitLowLevel, LowLevelStmt
 
 dialect = ir.Dialect(name="bytecode.move")
 
 
 @statement(dialect=dialect)
-class CZ(ByteCodeStmt):
+class CZ(LowLevelStmt):
     pass
 
 
 @statement(dialect=dialect)
-class LocalR(ByteCodeStmt):
+class LocalR(LowLevelStmt):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -21,26 +21,26 @@ class LocalR(ByteCodeStmt):
 
 
 @statement(dialect=dialect)
-class GlobalR(ByteCodeStmt):
+class GlobalR(LowLevelStmt):
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class localRz(ByteCodeStmt):
+class localRz(LowLevelStmt):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class GlobalRz(ByteCodeStmt):
+class GlobalRz(LowLevelStmt):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
-class Move(ByteCodeStmt):
+class Move(LowLevelStmt):
     lanes: tuple[MoveType, ...] = info.attribute()
 
 
 @statement(dialect=dialect)
-class TerminalMeasure(ExitRegion):
+class TerminalMeasure(ExitLowLevel):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()

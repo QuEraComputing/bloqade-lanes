@@ -1,18 +1,18 @@
 from kirin import ir, types
 from kirin.decl import info, statement
 
-from .bytecode import ByteCodeStmt, ExitRegion
+from .lowlevel import ExitLowLevel, LowLevelStmt
 
 dialect = ir.Dialect(name="bytecode.circuit")
 
 
 @statement(dialect=dialect)
-class CZ(ByteCodeStmt):
+class CZ(LowLevelStmt):
     pairs: tuple[tuple[int, int], ...] = info.attribute()
 
 
 @statement(dialect=dialect)
-class R(ByteCodeStmt):
+class R(LowLevelStmt):
     inputs: tuple[int, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -20,11 +20,11 @@ class R(ByteCodeStmt):
 
 
 @statement(dialect=dialect)
-class Rz(ByteCodeStmt):
+class Rz(LowLevelStmt):
     inputs: tuple[int, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class TerminalMeasure(ExitRegion):
+class TerminalMeasure(ExitLowLevel):
     qubits: tuple[int, ...] = info.attribute()
