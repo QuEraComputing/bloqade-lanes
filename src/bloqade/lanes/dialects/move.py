@@ -4,7 +4,7 @@ from kirin.decl import info, statement
 from ..layout.encoding import MoveType, PhysicalAddress
 from .bytecode import ByteCodeStmt, ExitRegion
 
-dialect = ir.Dialect(name="bytecode.circuit")
+dialect = ir.Dialect(name="bytecode.move")
 
 
 @statement(dialect=dialect)
