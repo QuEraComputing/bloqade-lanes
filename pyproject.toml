@@ -16,6 +16,7 @@ requires-python = ">= 3.10"
 [project.optional-dependencies]
 visualization = [
     "matplotlib>=3.9.4",
+    "scipy>=1.15.3",
 ]
 
 [build-system]
