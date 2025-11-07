@@ -1,16 +1,10 @@
-from kirin import exception, ir, types
+from kirin import exception, ir
 from kirin.decl import info, statement
 
 from bloqade import types as bloqade_types
+from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect("bytecode")
-
-
-class State:
-    pass
-
-
-StateType = types.PyClass(State)
 
 
 @statement
