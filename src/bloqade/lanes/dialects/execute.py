@@ -5,7 +5,7 @@ from bloqade import types as bloqade_types
 from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
-dialect = ir.Dialect("lowlevel")
+dialect = ir.Dialect("lowlevel.execute")
 
 
 @statement
@@ -25,7 +25,7 @@ class ExitLowLevel(ir.Statement):
 
 
 @statement(dialect=dialect)
-class LowLevel(ir.Statement):
+class ExecuteLowLevel(ir.Statement):
     """This statement represents executing a block of low-level code instructions.
 
     The body region contains the low-level instructions to be executed.

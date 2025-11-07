@@ -1,9 +1,9 @@
 from kirin import ir, types
 from kirin.decl import info, statement
 
-from .lowlevel import ExitLowLevel, LowLevelStmt
+from .execute import ExitLowLevel, LowLevelStmt
 
-dialect = ir.Dialect(name="bytecode.circuit")
+dialect = ir.Dialect(name="lowlevel.circuit")
 
 
 @statement(dialect=dialect)
