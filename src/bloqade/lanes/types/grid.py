@@ -51,3 +51,9 @@ class Grid(Generic[Nx, Ny]):
         xx, yy = np.meshgrid(self.x_positions, self.y_positions)
         ax.scatter(xx.flatten(), yy.flatten(), **scatter_kwargs)
         return ax
+
+    def shift(self, dx: float = 0.0, dy: float = 0.0):
+        return Grid(
+            tuple(x + dx for x in self.x_positions),
+            tuple(y + dy for y in self.y_positions),
+        )
