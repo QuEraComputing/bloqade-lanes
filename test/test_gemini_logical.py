@@ -1,7 +1,7 @@
 from matplotlib import pyplot as plt
 
 from bloqade.lanes.gemini import generate_arch
-from bloqade.lanes.types.encoding import EncodingType
+from bloqade.lanes.layout.encoding import EncodingType
 
 
 def test_architecture_generation():

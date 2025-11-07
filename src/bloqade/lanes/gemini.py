@@ -1,9 +1,9 @@
 import numpy as np
 
-from bloqade.lanes.types.arch import ArchSpec, Bus
-from bloqade.lanes.types.grid import Grid
-from bloqade.lanes.types.numpy_compat import as_flat_tuple_int
-from bloqade.lanes.types.word import Word
+from bloqade.lanes.layout.arch import ArchSpec, Bus
+from bloqade.lanes.layout.grid import Grid
+from bloqade.lanes.layout.numpy_compat import as_flat_tuple_int
+from bloqade.lanes.layout.word import Word
 
 
 def site_buses(word_size_y: int):

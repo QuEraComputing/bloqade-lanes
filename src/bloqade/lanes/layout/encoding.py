@@ -14,8 +14,8 @@ class MoveTypeEnum(enum.Enum):
 
 
 class EncodingType(enum.Enum):
-    BIT32 = 0
-    BIT64 = 1
+    BIT32 = 32
+    BIT64 = 64
 
     @staticmethod
     def infer(spec) -> "EncodingType":
@@ -39,16 +39,70 @@ class EncodingType(enum.Enum):
             raise ValueError("Architecture too large to encode with 64-bit addresses")
 
 
-@dataclass(frozen=True)
-class MoveType(abc.ABC):
-    direction: Direction
+class Encoder(abc.ABC):
+    """Base class of all encodable entities."""
 
     @abc.abstractmethod
     def get_address(self, encoding: EncodingType) -> int:
+        """Return the encoded physical address as an integer.
+
+        Args:
+            encoding: The encoding type to use (BIT32 or BIT64).
+
+        Returns:
+            The encoded physical address as an integer.
+
+        Raises:
+            ValueError: If the word_id or site_id is too large to encode.
+
+        """
         pass
 
+
+@dataclass(frozen=True)
+class LocationAddress(Encoder):
+    """Data class representing a physical address in the architecture."""
+
+    word_id: int
+    """The ID of the word."""
+    site_id: int
+    """The ID of the site within the word."""
+
+    def get_address(self, encoding: EncodingType):
+
+        if encoding == EncodingType.BIT32:
+            mask = 0xFF
+            shift = 8
+        elif encoding == EncodingType.BIT64:
+            mask = 0xFFFF
+            shift = 16
+        else:
+            raise ValueError("Unsupported encoding type")
+
+        word_id_enc = mask & self.word_id
+        site_id_enc = mask & self.site_id
+
+        if word_id_enc != self.word_id:
+            raise ValueError("Word ID too large to encode")
+
+        if site_id_enc != self.site_id:
+            raise ValueError("Site ID too large to encode")
+
+        address = site_id_enc
+        address |= word_id_enc << shift
+        assert address.bit_length() <= (
+            32 if encoding == EncodingType.BIT32 else 64
+        ), "Bug in encoding"
+        return address
+
+
+@dataclass(frozen=True)
+class MoveType(Encoder):
+    direction: Direction
+
     @abc.abstractmethod
-    def src_site(self) -> tuple[int, int]:
+    def src_site(self) -> LocationAddress:
+        """Get the source site as a PhysicalAddress."""
         pass
 
     def reverse(self):
@@ -66,8 +120,8 @@ class IntraMove(MoveType):
     site_id: int
     lane_id: int
 
-    def src_site(self) -> tuple[int, int]:
-        return self.word_id, self.site_id
+    def src_site(self):
+        return LocationAddress(self.word_id, self.site_id)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -85,9 +139,14 @@ class IntraMove(MoveType):
         lane_id_enc = mask & self.lane_id
         site_id_enc = mask & self.site_id
 
-        assert word_id_enc == self.word_id, "word ID too large to encode"
-        assert lane_id_enc == self.lane_id, "Lane ID too large to encode"
-        assert site_id_enc == self.site_id, "Site ID too large to encode"
+        if lane_id_enc != self.lane_id:
+            raise ValueError("Lane ID too large to encode")
+
+        if site_id_enc != self.site_id:
+            raise ValueError("Site ID too large to encode")
+
+        if word_id_enc != self.word_id:
+            raise ValueError("Word ID too large to encode")
 
         address = lane_id_enc
         address |= site_id_enc << shift
@@ -106,8 +165,8 @@ class InterMove(MoveType):
     end_word_id: int
     lane_id: int
 
-    def src_site(self) -> tuple[int, int]:
-        return self.start_word_id, self.lane_id
+    def src_site(self):
+        return LocationAddress(self.start_word_id, self.lane_id)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -125,9 +184,14 @@ class InterMove(MoveType):
         start_word_id = mask & self.start_word_id
         end_word_id = mask & self.end_word_id
 
-        assert lane_id_enc == self.lane_id, "Lane ID too large to encode"
-        assert start_word_id == self.start_word_id, "Start word ID too large to encode"
-        assert end_word_id == self.end_word_id, "End word ID too large to encode"
+        if lane_id_enc != self.lane_id:
+            raise ValueError("Lane ID too large to encode")
+
+        if start_word_id != self.start_word_id:
+            raise ValueError("Start word ID too large to encode")
+
+        if end_word_id != self.end_word_id:
+            raise ValueError("End word ID too large to encode")
 
         address = lane_id_enc
         address |= end_word_id << shift
