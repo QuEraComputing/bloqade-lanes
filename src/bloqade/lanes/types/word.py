@@ -8,15 +8,15 @@ SiteType = TypeVar("SiteType", bound=Grid | tuple[float, float] | tuple[int, int
 
 
 @dataclass(frozen=True)
-class Block(Generic[SiteType]):
+class Word(Generic[SiteType]):
     # note that the `SiteType` is really just here for visualization purposes
     # you can simply ignore the site in general
     sites: tuple[SiteType, ...]
 
     def __getitem__(self, index: int):
-        return BlockSite(block=self, site_index=index)
+        return WordSite(word=self, site_index=index)
 
-    def subblock_positions(self, site_index: int):
+    def site_positions(self, site_index: int):
         site = self.sites[site_index]
         match site:
             case Grid(x_positions, y_positions):
@@ -30,7 +30,7 @@ class Block(Generic[SiteType]):
 
     def all_positions(self):
         for site_index in range(len(self.sites)):
-            yield from self.subblock_positions(site_index)
+            yield from self.site_positions(site_index)
 
     def plot(self, ax=None, **scatter_kwargs):
         import matplotlib.pyplot as plt  # pyright: ignore[reportMissingModuleSource]
@@ -42,13 +42,13 @@ class Block(Generic[SiteType]):
         return ax
 
 
-BlockType = TypeVar("BlockType", bound=Block[Any])
+WordType = TypeVar("WordType", bound=Word[Any])
 
 
 @dataclass(frozen=True)
-class BlockSite(Generic[BlockType]):
-    block: BlockType
+class WordSite(Generic[WordType]):
+    word: WordType
     site_index: int
 
     def positions(self):
-        yield from self.block.subblock_positions(self.site_index)
+        yield from self.word.site_positions(self.site_index)

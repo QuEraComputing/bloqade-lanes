@@ -12,37 +12,48 @@ from .encoding import Direction, EncodingType, InterMove, IntraMove, MoveType
 class PathFinder:
     spec: ArchSpec
     site_graph: nx.PyGraph = field(init=False, default_factory=nx.PyGraph)
-    all_sites: list[tuple[int, int]] = field(init=False, default_factory=list)
-    site_map: dict[tuple[int, int], int] = field(init=False, default_factory=dict)
+    """Graph representing all sites and edges as lanes."""
+    physical_addresses: list[tuple[int, int]] = field(init=False, default_factory=list)
+    """Map from graph node index to (word_id, site_id) tuple."""
+    physical_address_map: dict[tuple[int, int], int] = field(
+        init=False, default_factory=dict
+    )
+    """Map from (word_id, site_id) tuple to graph node index."""
 
     def __post_init__(self):
-        self.site_map.update({site: i for i, site in enumerate(self.all_sites)})
+        self.physical_address_map.update(
+            {site: i for i, site in enumerate(self.physical_addresses)}
+        )
 
-        block_ids = range(len(self.spec.blocks))
-        site_ids = range(len(self.spec.blocks[0].sites))
-        self.all_sites.extend(product(block_ids, site_ids))
-        self.site_map.update({site: i for i, site in enumerate(self.all_sites)})
+        word_ids = range(len(self.spec.words))
+        site_ids = range(len(self.spec.words[0].sites))
+        self.physical_addresses.extend(product(word_ids, site_ids))
+        self.physical_address_map.update(
+            {site: i for i, site in enumerate(self.physical_addresses)}
+        )
 
-        for lane_id, lane in enumerate(self.spec.intra_lanes):
-            for block_id in self.spec.has_intra_lanes:
-                for src, dst in zip(lane.src, lane.dst):
-                    src_site = (block_id, src)
-                    dst_site = (block_id, dst)
-                    lane_addr = IntraMove(Direction.FORWARD, block_id, src, lane_id)
+        for bus_id, bus in enumerate(self.spec.site_buses):
+            for word_id in self.spec.has_site_buses:
+                for src, dst in zip(bus.src, bus.dst):
+                    src_site = (word_id, src)
+                    dst_site = (word_id, dst)
+                    lane_addr = IntraMove(Direction.FORWARD, word_id, src, bus_id)
                     self.site_graph.add_edge(
-                        self.site_map[src_site], self.site_map[dst_site], lane_addr
+                        self.physical_address_map[src_site],
+                        self.physical_address_map[dst_site],
+                        lane_addr,
                     )
 
-        for lane_id, lane in enumerate(self.spec.inter_lanes):
-            for src_block, dst_block in zip(lane.src, lane.dst):
-                for site in self.spec.has_inter_lanes:
-                    src_site = (src_block, site)
-                    dst_site = (dst_block, site)
-                    lane_addr = InterMove(
-                        Direction.FORWARD, src_block, dst_block, lane_id
-                    )
+        for bus_id, bus in enumerate(self.spec.word_buses):
+            for src_word, dst_word in zip(bus.src, bus.dst):
+                for site in self.spec.has_word_buses:
+                    src_site = (src_word, site)
+                    dst_site = (dst_word, site)
+                    lane_addr = InterMove(Direction.FORWARD, src_word, dst_word, bus_id)
                     self.site_graph.add_edge(
-                        self.site_map[src_site], self.site_map[dst_site], lane_addr
+                        self.physical_address_map[src_site],
+                        self.physical_address_map[dst_site],
+                        lane_addr,
                     )
 
     def extract_lanes_from_path(self, path: list[int], encoding: EncodingType):
@@ -70,9 +81,9 @@ class PathFinder:
         """Find a path from start to end avoiding occupied sites.
 
         Args:
-            start: The starting site as a (block_id, site_id) tuple.
-            end: The ending site as a (block_id, site_id) tuple.
-            occupied: A frozenset of sites (block_id, site_id) that are occupied.
+            start: The starting site as a (word_id, site_id) tuple.
+            end: The ending site as a (word_id, site_id) tuple.
+            occupied: A frozenset of sites (word_id, site_id) that are occupied.
             encoding: The encoding type for the lane addresses.
             path_heuristic: A heuristic function that takes a list of sites and returns a float
                 cost for the path. Used to select among multiple shortest paths.
@@ -84,14 +95,14 @@ class PathFinder:
         Raises:
             ValueError: If start or end sites are already occupied.
         """
-        start_node = self.site_map[start]
-        end_node = self.site_map[end]
+        start_node = self.physical_address_map[start]
+        end_node = self.physical_address_map[end]
 
         if start_node in occupied or end_node in occupied:
             raise ValueError("Start or end site is already occupied.")
 
         subgraph = self.site_graph.subgraph(
-            [n for n, ele in enumerate(self.all_sites) if ele not in occupied]
+            [n for n, ele in enumerate(self.physical_addresses) if ele not in occupied]
         )
 
         path_nodes = nx.all_shortest_paths(subgraph, start_node, end_node)
@@ -100,7 +111,10 @@ class PathFinder:
             return None, occupied
 
         path = min(
-            path_nodes, key=lambda p: path_heuristic([self.all_sites[n] for n in p])
+            path_nodes,
+            key=lambda p: path_heuristic([self.physical_addresses[n] for n in p]),
         )
         lanes = self.extract_lanes_from_path(path, encoding)
-        return lanes, occupied.union(frozenset(self.all_sites[n] for n in path))
+        return lanes, occupied.union(
+            frozenset(self.physical_addresses[n] for n in path)
+        )

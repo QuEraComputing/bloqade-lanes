@@ -41,12 +41,12 @@ class MoveType(abc.ABC):
 
 @dataclass(frozen=True)
 class IntraMove(MoveType):
-    block_id: int
+    word_id: int
     site_id: int
     lane_id: int
 
     def src_site(self) -> tuple[int, int]:
-        return self.block_id, self.site_id
+        return self.word_id, self.site_id
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -60,17 +60,17 @@ class IntraMove(MoveType):
         else:
             raise ValueError("Unsupported encoding type")
 
-        block_id_enc = mask & self.block_id
+        word_id_enc = mask & self.word_id
         lane_id_enc = mask & self.lane_id
         site_id_enc = mask & self.site_id
 
-        assert block_id_enc == self.block_id, "Block ID too large to encode"
+        assert word_id_enc == self.word_id, "word ID too large to encode"
         assert lane_id_enc == self.lane_id, "Lane ID too large to encode"
         assert site_id_enc == self.site_id, "Site ID too large to encode"
 
         address = lane_id_enc
         address |= site_id_enc << shift
-        address |= block_id_enc << (2 * shift)
+        address |= word_id_enc << (2 * shift)
         address |= MoveTypeEnum.INTRA.value << (3 * shift + padding)
         address |= self.direction.value << (3 * shift + padding + 1)
         assert address.bit_length() <= (
@@ -81,12 +81,12 @@ class IntraMove(MoveType):
 
 @dataclass(frozen=True)
 class InterMove(MoveType):
-    start_block_id: int
-    end_block_id: int
+    start_word_id: int
+    end_word_id: int
     lane_id: int
 
     def src_site(self) -> tuple[int, int]:
-        return self.start_block_id, self.lane_id
+        return self.start_word_id, self.lane_id
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -101,18 +101,16 @@ class InterMove(MoveType):
             raise ValueError("Unsupported encoding type")
 
         lane_id_enc = mask & self.lane_id
-        start_block_id = mask & self.start_block_id
-        end_block_id = mask & self.end_block_id
+        start_word_id = mask & self.start_word_id
+        end_word_id = mask & self.end_word_id
 
         assert lane_id_enc == self.lane_id, "Lane ID too large to encode"
-        assert (
-            start_block_id == self.start_block_id
-        ), "Start Block ID too large to encode"
-        assert end_block_id == self.end_block_id, "End Block ID too large to encode"
+        assert start_word_id == self.start_word_id, "Start word ID too large to encode"
+        assert end_word_id == self.end_word_id, "End word ID too large to encode"
 
         address = lane_id_enc
-        address |= end_block_id << shift
-        address |= start_block_id << (2 * shift)
+        address |= end_word_id << shift
+        address |= start_word_id << (2 * shift)
         address |= MoveTypeEnum.INTER.value << (3 * shift + padding)
         address |= self.direction.value << (3 * shift + padding + 1)
         assert address.bit_length() <= (
