@@ -14,8 +14,8 @@ class MoveTypeEnum(enum.Enum):
 
 
 class EncodingType(enum.Enum):
-    BIT32 = 0
-    BIT64 = 1
+    BIT32 = 32
+    BIT64 = 64
 
     @staticmethod
     def infer(spec) -> "EncodingType":
