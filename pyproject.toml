@@ -7,6 +7,7 @@ authors = [
     { name = "Phillip Weinberg", email = "pweinberg@quera.com" }
 ]
 dependencies = [
+    "bloqade-circuit~=0.9.0",
     "kirin-toolchain~=0.20.0",
     "numpy>=2.2.6",
     "rustworkx>=0.17.1",

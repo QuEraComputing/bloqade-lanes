@@ -3,7 +3,7 @@ from typing import Generic, Sequence
 
 import numpy as np
 
-from bloqade.lanes.types.encoding import EncodingType
+from bloqade.lanes.layout.encoding import EncodingType
 
 from .word import SiteType, Word
 
