@@ -5,7 +5,7 @@ from typing import Callable
 import rustworkx as nx
 
 from .arch import ArchSpec
-from .encoding import Direction, EncodingType, InterMove, IntraMove, MoveType
+from .encoding import Direction, InterMove, IntraMove, MoveType
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ class PathFinder:
                         lane_addr,
                     )
 
-    def extract_lanes_from_path(self, path: list[int], encoding: EncodingType):
+    def extract_lanes_from_path(self, path: list[int]):
         """Given a path as a list of node indices, extract the lane addresses."""
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
@@ -67,7 +67,7 @@ class PathFinder:
 
             lane: MoveType = self.site_graph.get_edge_data(src, dst)
 
-            lanes.append(lane.get_address(encoding))
+            lanes.append(lane.get_address(self.spec.encoding))
         return lanes
 
     def find_path(
@@ -75,7 +75,6 @@ class PathFinder:
         start: tuple[int, int],
         end: tuple[int, int],
         occupied: frozenset[tuple[int, int]] = frozenset(),
-        encoding: EncodingType = EncodingType.BIT64,
         path_heuristic: Callable[[list[tuple[int, int]]], float] = lambda _: 0.0,
     ):
         """Find a path from start to end avoiding occupied sites.
@@ -114,7 +113,7 @@ class PathFinder:
             path_nodes,
             key=lambda p: path_heuristic([self.physical_addresses[n] for n in p]),
         )
-        lanes = self.extract_lanes_from_path(path, encoding)
+        lanes = self.extract_lanes_from_path(path)
         return lanes, occupied.union(
             frozenset(self.physical_addresses[n] for n in path)
         )

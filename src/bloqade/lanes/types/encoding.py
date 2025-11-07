@@ -17,6 +17,27 @@ class EncodingType(enum.Enum):
     BIT32 = 0
     BIT64 = 1
 
+    @staticmethod
+    def infer(spec) -> "EncodingType":
+        num_words = len(spec.words)
+        num_sites = len(spec.words[0].sites)
+        num_site_buses = len(spec.site_buses)
+        num_word_buses = len(spec.word_buses)
+
+        max_id = max(
+            num_words - 1,
+            num_sites - 1,
+            num_site_buses - 1,
+            num_word_buses - 1,
+        )
+
+        if max_id < 256:
+            return EncodingType.BIT32
+        elif max_id < 65536:
+            return EncodingType.BIT64
+        else:
+            raise ValueError("Architecture too large to encode with 64-bit addresses")
+
 
 @dataclass(frozen=True)
 class MoveType(abc.ABC):

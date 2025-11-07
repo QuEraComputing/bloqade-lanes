@@ -1,7 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Generic, Sequence
 
 import numpy as np
+
+from bloqade.lanes.types.encoding import EncodingType
 
 from .word import SiteType, Word
 
@@ -33,6 +35,10 @@ class ArchSpec(Generic[SiteType]):
     """List of all word buses in the architecture by word address."""
     site_bus_compatibility: tuple[frozenset[int], ...]
     """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
+    encoding: EncodingType = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
 
     def plot(
         self,
