@@ -1,18 +1,18 @@
 from kirin import ir, types
 from kirin.decl import info, statement
 
-from .execute import ExitLowLevel, LowLevelStmt
+from .execute import ExitLowLevel, QuantumStmt
 
 dialect = ir.Dialect(name="lowlevel.circuit")
 
 
 @statement(dialect=dialect)
-class CZ(LowLevelStmt):
+class CZ(QuantumStmt):
     pairs: tuple[tuple[int, int], ...] = info.attribute()
 
 
 @statement(dialect=dialect)
-class R(LowLevelStmt):
+class R(QuantumStmt):
     inputs: tuple[int, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -20,7 +20,7 @@ class R(LowLevelStmt):
 
 
 @statement(dialect=dialect)
-class Rz(LowLevelStmt):
+class Rz(QuantumStmt):
     inputs: tuple[int, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 

@@ -2,18 +2,18 @@ from kirin import ir, types
 from kirin.decl import info, statement
 
 from ..layout.encoding import LocationAddress, MoveType
-from .execute import ExitLowLevel, LowLevelStmt
+from .execute import ExitLowLevel, QuantumStmt
 
 dialect = ir.Dialect(name="lowlevel.move")
 
 
 @statement(dialect=dialect)
-class CZ(LowLevelStmt):
+class CZ(QuantumStmt):
     pass
 
 
 @statement(dialect=dialect)
-class LocalR(LowLevelStmt):
+class LocalR(QuantumStmt):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -21,23 +21,23 @@ class LocalR(LowLevelStmt):
 
 
 @statement(dialect=dialect)
-class GlobalR(LowLevelStmt):
+class GlobalR(QuantumStmt):
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class LocalRz(LowLevelStmt):
+class LocalRz(QuantumStmt):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class GlobalRz(LowLevelStmt):
+class GlobalRz(QuantumStmt):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
-class Move(LowLevelStmt):
+class Move(QuantumStmt):
     lanes: tuple[MoveType, ...] = info.attribute()
 
 
