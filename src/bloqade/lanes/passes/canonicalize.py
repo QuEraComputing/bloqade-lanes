@@ -26,11 +26,11 @@ class HoistClassicalStatements(abc.RewriteRule):
         )
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
-        if (
-            not isinstance(node, (gates.CZ, gates.R, gates.Rz))
-            or (next_node := node.next_stmt) is None
-            or next_node.has_trait(ir.IsTerminator)
-            or not self.is_pure(next_node)
+        if not (
+            isinstance(node, (gates.CZ, gates.R, gates.Rz))
+            and (next_node := node.next_stmt) is not None
+            and not next_node.has_trait(ir.IsTerminator)
+            and self.is_pure(next_node)
         ):
             return abc.RewriteResult()
 
