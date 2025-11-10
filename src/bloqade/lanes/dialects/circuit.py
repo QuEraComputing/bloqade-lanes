@@ -8,12 +8,13 @@ dialect = ir.Dialect(name="lowlevel.circuit")
 
 @statement(dialect=dialect)
 class CZ(QuantumStmt):
-    pairs: tuple[tuple[int, int], ...] = info.attribute()
+    targets: tuple[int, ...] = info.attribute()
+    controls: tuple[int, ...] = info.attribute()
 
 
 @statement(dialect=dialect)
 class R(QuantumStmt):
-    inputs: tuple[int, ...] = info.attribute()
+    qubits: tuple[int, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -21,7 +22,7 @@ class R(QuantumStmt):
 
 @statement(dialect=dialect)
 class Rz(QuantumStmt):
-    inputs: tuple[int, ...] = info.attribute()
+    qubits: tuple[int, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 

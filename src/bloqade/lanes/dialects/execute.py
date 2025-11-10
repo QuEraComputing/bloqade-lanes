@@ -39,7 +39,6 @@ class ExecuteLowLevel(ir.Statement):
     qubits: tuple[ir.SSAValue, ...] = info.argument(bloqade_types.QubitType)
     body: ir.Region = info.region(multi=False)
     starting_addresses: tuple[LocationAddress, ...] | None = info.attribute()
-    measure_result: tuple[ir.ResultValue, ...] = info.result()
 
     def __init__(
         self,

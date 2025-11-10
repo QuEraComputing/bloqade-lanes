@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-from bloqade.analysis.address import Address
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir
 from kirin.dialects import ilist, py
@@ -17,15 +16,13 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
     This is a placeholder for the actual implementation.
     """
 
-    qubit_address: dict[ir.SSAValue, Address]
+    def default_(self, node: ir.Statement) -> abc.RewriteResult:
+        return abc.RewriteResult()
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         rewrite_method_name = f"rewrite_{type(node).__name__}"
-        if rewrite_method_name:
-            rewrite_method = getattr(self, rewrite_method_name)
-            return rewrite_method(node)
-
-        return abc.RewriteResult()
+        rewrite_method = getattr(self, rewrite_method_name, self.default_)
+        return rewrite_method(node)
 
     def prep_region(self) -> tuple[ir.Region, ir.Block, ir.SSAValue]:
         body = ir.Region(block := ir.Block())
@@ -56,10 +53,14 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         if len(targets) != len(controls):
             return abc.RewriteResult()
 
+        all_qubits = tuple(range(len(targets) + len(controls)))
+        n_controls = len(controls)
+
         body, block, entry_state = self.prep_region()
         stmt = circuit.CZ(
             entry_state,
-            pairs=tuple(zip(range(len(controls)), range(len(targets)))),
+            controls=all_qubits[:n_controls],
+            targets=all_qubits[n_controls:],
         )
 
         node.replace_by(
@@ -79,7 +80,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         body, block, entry_state = self.prep_region()
         gate_stmt = circuit.R(
             entry_state,
-            inputs=tuple(range(len(inputs))),
+            qubits=tuple(range(len(inputs))),
             axis_angle=node.axis_angle,
             rotation_angle=node.rotation_angle,
         )
@@ -100,7 +101,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
 
         gate_stmt = circuit.Rz(
             entry_state,
-            inputs=tuple(range(len(inputs))),
+            qubits=tuple(range(len(inputs))),
             rotation_angle=node.rotation_angle,
         )
 
@@ -140,13 +141,14 @@ class MergePlacementRegions(abc.RewriteRule):
         if isinstance(node, circuit.CZ):
             return circuit.CZ(
                 node.state_before,
-                pairs=tuple((input_map[i], input_map[j]) for i, j in node.pairs),
+                targets=tuple(input_map[i] for i in node.targets),
+                controls=tuple(input_map[i] for i in node.controls),
             )
         else:
             return node.from_stmt(
                 node,
                 attributes={
-                    "inputs": ir.PyAttr(tuple(input_map[i] for i in node.inputs))
+                    "qubits": ir.PyAttr(tuple(input_map[i] for i in node.qubits))
                 },
             )
 
