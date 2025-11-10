@@ -9,11 +9,11 @@ dialect = ir.Dialect("lowlevel.execute")
 
 
 @statement
-class LowLevelStmt(ir.Statement):
+class QuantumStmt(ir.Statement):
     """This is a base class for all low level statements."""
 
     state_before: ir.SSAValue = info.argument(StateType)
-    result: ir.ResultValue = info.result(StateType)
+    state_after: ir.ResultValue = info.result(StateType)
 
 
 @statement
@@ -39,7 +39,6 @@ class ExecuteLowLevel(ir.Statement):
     qubits: tuple[ir.SSAValue, ...] = info.argument(bloqade_types.QubitType)
     body: ir.Region = info.region(multi=False)
     starting_addresses: tuple[LocationAddress, ...] | None = info.attribute()
-    measure_result: tuple[ir.ResultValue, ...] = info.result()
 
     def __init__(
         self,
@@ -81,7 +80,7 @@ class ExecuteLowLevel(ir.Statement):
 
         stmt = body_block.first_stmt
         while stmt is not last_stmt:
-            if not isinstance(stmt, LowLevelStmt):
+            if not isinstance(stmt, QuantumStmt):
                 raise exception.StaticCheckError(
                     "All statements in ShuttleAtoms body must be ByteCodeStmt"
                 )
