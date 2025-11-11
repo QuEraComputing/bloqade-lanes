@@ -60,6 +60,73 @@ class Encoder(abc.ABC):
 
 
 @dataclass(frozen=True)
+class ZoneAddress(Encoder):
+    zone_id: int
+    """The ID of the zone."""
+
+    def get_address(self, encoding: EncodingType) -> int:
+        if encoding == EncodingType.BIT32:
+            mask = 0xFF
+        elif encoding == EncodingType.BIT64:
+            mask = 0xFFFF
+        else:
+            raise ValueError("Unsupported encoding type")
+
+        zone_id_enc = mask & self.zone_id
+
+        if zone_id_enc != self.zone_id:
+            raise ValueError("Zone ID too large to encode")
+        
+        return zone_id_enc
+
+
+@dataclass(frozen=True)
+class WordAddress(Encoder):
+    """Data class representing a word address in the architecture."""
+
+    word_id: int
+    """The ID of the word."""
+
+    def get_address(self, encoding: EncodingType) -> int:
+        if encoding == EncodingType.BIT32:
+            mask = 0xFF
+        elif encoding == EncodingType.BIT64:
+            mask = 0xFFFF
+        else:
+            raise ValueError("Unsupported encoding type")
+
+        word_id_enc = mask & self.word_id
+
+        if word_id_enc != self.word_id:
+            raise ValueError("Word ID too large to encode")
+        
+        return word_id_enc
+    
+
+@dataclass(frozen=True)
+class SiteAddress(Encoder):
+    """Data class representing a site address in the architecture."""
+
+    site_id: int
+    """The ID of the site."""
+
+    def get_address(self, encoding: EncodingType) -> int:
+        if encoding == EncodingType.BIT32:
+            mask = 0xFF
+        elif encoding == EncodingType.BIT64:
+            mask = 0xFFFF
+        else:
+            raise ValueError("Unsupported encoding type")
+
+        site_id_enc = mask & self.site_id
+
+        if site_id_enc != self.site_id:
+            raise ValueError("Site ID too large to encode")
+        
+        return site_id_enc
+
+
+@dataclass(frozen=True)
 class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 

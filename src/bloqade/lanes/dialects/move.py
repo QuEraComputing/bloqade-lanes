@@ -1,19 +1,27 @@
 from kirin import ir, types
 from kirin.decl import info, statement
 
-from ..layout.encoding import LocationAddress, MoveType
-from .execute import ExitLowLevel, QuantumStmt
+
+from bloqade import types as bloqade_types
+from ..layout.encoding import LocationAddress, MoveType, ZoneAddress
+from ..types import MeasurementFutureType
+
 
 dialect = ir.Dialect(name="lowlevel.move")
 
 
 @statement(dialect=dialect)
-class CZ(QuantumStmt):
-    pass
+class Initialize(ir.Statement):
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
 
 
 @statement(dialect=dialect)
-class LocalR(QuantumStmt):
+class CZ(ir.Statement):
+    zone_address: int = info.attribute()
+
+
+@statement(dialect=dialect)
+class LocalR(ir.Statement):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
 
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -21,26 +29,37 @@ class LocalR(QuantumStmt):
 
 
 @statement(dialect=dialect)
-class GlobalR(QuantumStmt):
+class GlobalR(ir.Statement):
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class LocalRz(QuantumStmt):
+class LocalRz(ir.Statement):
     physical_addr: tuple[LocationAddress, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
-class GlobalRz(QuantumStmt):
+class GlobalRz(ir.Statement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
-class Move(QuantumStmt):
+@statement(dialect=dialect)
+class Move(ir.Statement):
     lanes: tuple[MoveType, ...] = info.attribute()
 
 
 @statement(dialect=dialect)
-class TerminalMeasure(ExitLowLevel):
-    physical_addr: tuple[LocationAddress, ...] = info.attribute()
+class EndMeasure(ir.Statement):
+    zone_address: ZoneAddress = info.attribute()
+
+    result: ir.ResultValue = info.result(MeasurementFutureType)
+
+
+@statement(dialect=dialect)
+class GetMeasurementResult(ir.Statement):
+    measurement_future: ir.SSAValue = info.argument(MeasurementFutureType)
+    index: int = info.attribute()
+
+    result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)

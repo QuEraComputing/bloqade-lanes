@@ -25,7 +25,7 @@ def test_cz():
         [
             targets := ilist.New(values=(q0, q1)),
             controls := ilist.New(values=(c0, c1)),
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=(c0, c1, q0, q1), body=ir.Region(block := ir.Block())
             ),
         ]
@@ -35,7 +35,7 @@ def test_cz():
     block.stmts.append(
         gate_stmt := circuit.CZ(entry_state, controls=(0, 1), targets=(2, 3))
     )
-    block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    block.stmts.append(execute.ExitStaticCircuit(state=gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
@@ -64,7 +64,7 @@ def test_r():
     expected_block = ir.Block(
         [
             inputs := ilist.New(values=(q0, q1)),
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=(q0, q1), body=ir.Region(block := ir.Block())
             ),
         ]
@@ -79,7 +79,7 @@ def test_r():
             rotation_angle=rotation_angle,
         )
     )
-    block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    block.stmts.append(execute.ExitStaticCircuit(state=gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
@@ -100,7 +100,7 @@ def test_rz():
     expected_block = ir.Block(
         [
             qubits := ilist.New(values=(q0, q1)),
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=(q0, q1), body=ir.Region(block := ir.Block())
             ),
         ]
@@ -112,7 +112,7 @@ def test_rz():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle
         )
     )
-    block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    block.stmts.append(execute.ExitStaticCircuit(state=gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
@@ -128,11 +128,11 @@ def test_merge_regions():
     test_block = ir.Block(
         [
             rotation_angle := py.Constant(0.5),
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=(qubits[0], qubits[1]),
                 body=ir.Region(body_block := ir.Block()),
             ),
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=(qubits[2], qubits[3]),
                 body=ir.Region(second_block := ir.Block()),
             ),
@@ -145,7 +145,7 @@ def test_merge_regions():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
-    body_block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    body_block.stmts.append(execute.ExitStaticCircuit(state=gate_stmt.state_after))
 
     entry_state = second_block.args.append_from(types.StateType, name="entry_state")
     second_block.stmts.append(
@@ -153,12 +153,12 @@ def test_merge_regions():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
-    second_block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    second_block.stmts.append(execute.ExitStaticCircuit(state=gate_stmt.state_after))
 
     expected_block = ir.Block(
         [
             rotation_angle := py.Constant(0.5),
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=(qubits[0], qubits[1], qubits[2], qubits[3]),
                 body=ir.Region(body_block := ir.Block()),
             ),
@@ -178,7 +178,7 @@ def test_merge_regions():
             gate_stmt.state_after, qubits=(2, 3), rotation_angle=rotation_angle.result
         )
     )
-    body_block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    body_block.stmts.append(execute.ExitStaticCircuit(state=gate_stmt.state_after))
 
     rewrite.Walk(MergePlacementRegions()).rewrite(test_block)
 

@@ -5,7 +5,7 @@ from kirin import ir
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
-from bloqade.lanes.dialects import circuit, cpu, execute
+from bloqade.lanes.dialects import circuit, execute
 from bloqade.lanes.types import StateType
 
 
@@ -31,16 +31,16 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
 
     def construct_execute(
         self,
-        gate_stmt: execute.QuantumStmt,
+        gate_stmt: circuit.QuantumStmt,
         *,
         qubits: tuple[ir.SSAValue, ...],
         body: ir.Region,
         block: ir.Block,
-    ) -> execute.ExecuteLowLevel:
+    ) -> circuit.StaticCircuit:
         block.stmts.append(gate_stmt)
-        block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+        block.stmts.append(circuit.Exit(state=gate_stmt.state_after))
 
-        return execute.ExecuteLowLevel(qubits=qubits, body=body)
+        return circuit.StaticCircuit(qubits=qubits, body=body)
 
     def rewrite_CZ(self, node: gate.CZ) -> abc.RewriteResult:
         if not isinstance(
@@ -124,7 +124,7 @@ class RewriteConstantToStatic(abc.RewriteRule):
         ):
             return abc.RewriteResult()
 
-        node.replace_by(cpu.StaticFloat(value=value))
+        node.replace_by(circuit.StaticFloat(value=value))
 
         return abc.RewriteResult(has_done_something=True)
 
@@ -154,13 +154,13 @@ class MergePlacementRegions(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, execute.ExecuteLowLevel)
-            and isinstance(next_node := node.next_stmt, execute.ExecuteLowLevel)
+            isinstance(node, circuit.StaticCircuit)
+            and isinstance(next_node := node.next_stmt, circuit.StaticCircuit)
         ):
             return abc.RewriteResult()
 
         new_qubits = node.qubits
-        new_input_map = {}
+        new_input_map: dict[int, int] = {}
         for old_qid, qbit in enumerate(next_node.qubits):
             if qbit not in new_qubits:
                 new_input_map[old_qid] = len(new_qubits)
@@ -172,7 +172,13 @@ class MergePlacementRegions(abc.RewriteRule):
 
         curr_state = None
         stmt = (curr_block := new_body.blocks[0]).last_stmt
-        assert isinstance(stmt, execute.ExitLowLevel)
+        assert isinstance(stmt, circuit.Exit)
+        
+        if (exit_qubits := stmt.qubits) is None:
+            exit_qubits = tuple(range(len(node.qubits)))
+
+        exit_qubits = tuple(new_input_map[q] for q in exit_qubits)
+
         curr_state = stmt.state
         stmt.delete()
 
@@ -188,8 +194,13 @@ class MergePlacementRegions(abc.RewriteRule):
                     new_stmt := self.remap_qubits(stmt, new_input_map)
                 )
                 curr_state = new_stmt.state_after
-            elif isinstance(stmt, execute.ExitLowLevel):
-                curr_block.stmts.append(type(stmt)(state=curr_state))
+            elif isinstance(stmt, circuit.Exit):
+                if (other_exit_qubits := stmt.qubits) is None:
+                    other_exit_qubits = tuple(range(len(next_node.qubits)))
+
+                exit_qubits = exit_qubits + tuple(new_input_map[q] for q in other_exit_qubits)
+
+                curr_block.stmts.append(type(stmt)(state=curr_state, qubits=exit_qubits))
             else:
                 curr_block.stmts.append(stmt)
 
@@ -197,7 +208,7 @@ class MergePlacementRegions(abc.RewriteRule):
 
         # replace next node with the new merged region
         next_node.replace_by(
-            execute.ExecuteLowLevel(
+            execute.StaticCircuit(
                 qubits=new_qubits,
                 body=new_body,
             )
