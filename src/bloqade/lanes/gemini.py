@@ -57,8 +57,10 @@ def generate_arch():
     site_bus_compatibility = tuple(
         frozenset(j for j in range(num_word_x) if j != i) for i in range(num_word_x)
     )
+    gate_zone = tuple(range(len(words)))
     return ArchSpec(
         words,
+        (gate_zone,),
         frozenset(range(num_word_x)),
         frozenset(as_flat_tuple_int(word_ids[:, 1])),
         site_buses(word_size_y),

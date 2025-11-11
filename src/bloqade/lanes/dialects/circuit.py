@@ -1,14 +1,13 @@
 from kirin import exception, interp, ir, types
 from kirin.decl import info, statement
 
-from bloqade.lanes.analysis.placement import PlacementAnalysis, LocalID
-
-
 from bloqade import types as bloqade_types
+from bloqade.lanes.analysis.placement import LocalID, PlacementAnalysis
 from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lowlevel.circuit")
+
 
 @statement(dialect=dialect)
 class StaticFloat(ir.Statement):
@@ -47,12 +46,11 @@ class Rz(QuantumStmt):
 
 
 @statement(dialect=dialect)
-class Exit(ir.Statement):
+class Yield(ir.Statement):
     traits = frozenset({ir.IsTerminator()})
 
     qubits: tuple[int, ...] | None = info.attribute(default=None)
     state: ir.SSAValue = info.argument(StateType)
-    
 
 
 @statement(dialect=dialect)
@@ -96,7 +94,7 @@ class StaticCircuit(ir.Statement):
 
         body_block = self.body.blocks[0]
         last_stmt = body_block.last_stmt
-        if not isinstance(last_stmt, Exit):
+        if not isinstance(last_stmt, Yield):
             raise exception.StaticCheckError(
                 "ShuttleAtoms body must end with an EndMeasure statement"
             )
@@ -110,14 +108,9 @@ class StaticCircuit(ir.Statement):
             stmt = stmt.next_stmt
 
 
-
-
-
-
-
 @dialect.register(key="runtime.placement")
 class PlacementMethods(interp.MethodTable):
-    
+
     @interp.impl(CZ)
     def impl_cz(self, _interp: PlacementAnalysis, frame, stmt: CZ):
 

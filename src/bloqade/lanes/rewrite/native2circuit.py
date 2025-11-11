@@ -5,7 +5,7 @@ from kirin import ir
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
-from bloqade.lanes.dialects import circuit, execute
+from bloqade.lanes.dialects import circuit
 from bloqade.lanes.types import StateType
 
 
@@ -38,7 +38,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         block: ir.Block,
     ) -> circuit.StaticCircuit:
         block.stmts.append(gate_stmt)
-        block.stmts.append(circuit.Exit(state=gate_stmt.state_after))
+        block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
 
         return circuit.StaticCircuit(qubits=qubits, body=body)
 
@@ -172,8 +172,8 @@ class MergePlacementRegions(abc.RewriteRule):
 
         curr_state = None
         stmt = (curr_block := new_body.blocks[0]).last_stmt
-        assert isinstance(stmt, circuit.Exit)
-        
+        assert isinstance(stmt, circuit.Yield)
+
         if (exit_qubits := stmt.qubits) is None:
             exit_qubits = tuple(range(len(node.qubits)))
 
@@ -194,13 +194,17 @@ class MergePlacementRegions(abc.RewriteRule):
                     new_stmt := self.remap_qubits(stmt, new_input_map)
                 )
                 curr_state = new_stmt.state_after
-            elif isinstance(stmt, circuit.Exit):
+            elif isinstance(stmt, circuit.Yield):
                 if (other_exit_qubits := stmt.qubits) is None:
                     other_exit_qubits = tuple(range(len(next_node.qubits)))
 
-                exit_qubits = exit_qubits + tuple(new_input_map[q] for q in other_exit_qubits)
+                exit_qubits = exit_qubits + tuple(
+                    new_input_map[q] for q in other_exit_qubits
+                )
 
-                curr_block.stmts.append(type(stmt)(state=curr_state, qubits=exit_qubits))
+                curr_block.stmts.append(
+                    type(stmt)(state=curr_state, qubits=exit_qubits)
+                )
             else:
                 curr_block.stmts.append(stmt)
 
@@ -208,7 +212,7 @@ class MergePlacementRegions(abc.RewriteRule):
 
         # replace next node with the new merged region
         next_node.replace_by(
-            execute.StaticCircuit(
+            circuit.StaticCircuit(
                 qubits=new_qubits,
                 body=new_body,
             )
