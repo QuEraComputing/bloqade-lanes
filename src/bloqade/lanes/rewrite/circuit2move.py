@@ -1,5 +1,5 @@
 import abc
-import dataclasses
+from dataclasses import dataclass, field
 
 from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
@@ -10,12 +10,10 @@ from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import LocationAddress, MoveType, ZoneAddress
 
 
-@dataclasses.dataclass
+@dataclass
 class MoveHeuristicABC(abc.ABC):
     arch_spec: ArchSpec
-    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = (
-        dataclasses.field(init=False)
-    )
+    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(init=False)
 
     def __post_init__(self):
         for zone_id, zone in enumerate(self.arch_spec.zones):
@@ -46,7 +44,7 @@ class MoveHeuristicABC(abc.ABC):
         pass
 
 
-@dataclasses.dataclass
+@dataclass
 class InsertMoves(RewriteRule):
     move_heuristic: MoveHeuristicABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
@@ -88,7 +86,7 @@ class InsertPalindromeMoves(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-@dataclasses.dataclass
+@dataclass
 class RewriteCZ(RewriteRule):
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
@@ -116,7 +114,7 @@ class RewriteCZ(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-@dataclasses.dataclass
+@dataclass
 class RewriteR(RewriteRule):
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
@@ -158,7 +156,7 @@ class RewriteR(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-@dataclasses.dataclass
+@dataclass
 class RewriteRz(RewriteRule):
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
