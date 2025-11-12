@@ -25,6 +25,8 @@ class Bus:
 class ArchSpec(Generic[SiteType]):
     words: tuple[Word[SiteType], ...]
     """tuple of all words in the architecture. words[i] gives the word at word address i."""
+    zones: tuple[tuple[int, ...], ...]
+    """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
     has_site_buses: frozenset[int]
     """Set of words that have site-lane moves."""
     has_word_buses: frozenset[int]  # set of sites in word that have inter-lanes moves

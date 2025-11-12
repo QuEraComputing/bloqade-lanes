@@ -1,0 +1,57 @@
+from dataclasses import dataclass, field
+from typing import final
+
+from kirin.lattice import (
+    BoundedLattice,
+    SimpleJoinMixin,
+    SimpleMeetMixin,
+    SingletonMeta,
+)
+
+from bloqade.lanes.layout.encoding import LocationAddress
+
+
+@dataclass
+class AtomState(
+    SimpleJoinMixin["AtomState"],
+    SimpleMeetMixin["AtomState"],
+    BoundedLattice["AtomState"],
+):
+
+    @classmethod
+    def bottom(cls) -> "AtomState":
+        return NotState()
+
+    @classmethod
+    def top(cls) -> "AtomState":
+        return AnyState()
+
+
+@final
+@dataclass
+class NotState(AtomState, metaclass=SingletonMeta):
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return True
+
+
+@final
+@dataclass
+class AnyState(AtomState, metaclass=SingletonMeta):
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return isinstance(other, AnyState)
+
+
+@final
+@dataclass
+class ConcreteState(AtomState):
+    occupied: frozenset[LocationAddress]
+    """Stores the set of occupied locations with atoms not participating in this static circuit."""
+    layout: tuple[LocationAddress, ...]
+    """Stores the current location of the ith qubit argument in layout[i]."""
+    move_count: tuple[int, ...] = field(compare=False)
+    """Stores the number of moves each atom has undergone."""
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return self == other

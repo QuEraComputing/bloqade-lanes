@@ -5,7 +5,7 @@ from kirin import ir
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
-from bloqade.lanes.dialects import circuit, cpu, execute
+from bloqade.lanes.dialects import circuit
 from bloqade.lanes.types import StateType
 
 
@@ -31,16 +31,18 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
 
     def construct_execute(
         self,
-        gate_stmt: execute.QuantumStmt,
+        quantum_stmt: circuit.QuantumStmt,
         *,
         qubits: tuple[ir.SSAValue, ...],
         body: ir.Region,
         block: ir.Block,
-    ) -> execute.ExecuteLowLevel:
-        block.stmts.append(gate_stmt)
-        block.stmts.append(execute.ExitLowLevel(state=gate_stmt.state_after))
+    ) -> circuit.StaticCircuit:
+        block.stmts.append(quantum_stmt)
+        block.stmts.append(
+            circuit.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:])
+        )
 
-        return execute.ExecuteLowLevel(qubits=qubits, body=body)
+        return circuit.StaticCircuit(qubits=qubits, body=body)
 
     def rewrite_CZ(self, node: gate.CZ) -> abc.RewriteResult:
         if not isinstance(
@@ -124,7 +126,7 @@ class RewriteConstantToStatic(abc.RewriteRule):
         ):
             return abc.RewriteResult()
 
-        node.replace_by(cpu.StaticFloat(value=value))
+        node.replace_by(circuit.ConstantFloat(value=value))
 
         return abc.RewriteResult(has_done_something=True)
 
@@ -136,17 +138,21 @@ class MergePlacementRegions(abc.RewriteRule):
     """
 
     def remap_qubits(
-        self, node: circuit.R | circuit.Rz | circuit.CZ, input_map: dict[int, int]
-    ) -> circuit.R | circuit.Rz | circuit.CZ:
+        self,
+        curr_state: ir.SSAValue,
+        node: circuit.R | circuit.Rz | circuit.CZ | circuit.EndMeasure,
+        input_map: dict[int, int],
+    ):
         if isinstance(node, circuit.CZ):
             return circuit.CZ(
-                node.state_before,
+                curr_state,
                 targets=tuple(input_map[i] for i in node.targets),
                 controls=tuple(input_map[i] for i in node.controls),
             )
         else:
             return node.from_stmt(
                 node,
+                args=(curr_state,),
                 attributes={
                     "qubits": ir.PyAttr(tuple(input_map[i] for i in node.qubits))
                 },
@@ -154,13 +160,13 @@ class MergePlacementRegions(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, execute.ExecuteLowLevel)
-            and isinstance(next_node := node.next_stmt, execute.ExecuteLowLevel)
+            isinstance(node, circuit.StaticCircuit)
+            and isinstance(next_node := node.next_stmt, circuit.StaticCircuit)
         ):
             return abc.RewriteResult()
 
         new_qubits = node.qubits
-        new_input_map = {}
+        new_input_map: dict[int, int] = {}
         for old_qid, qbit in enumerate(next_node.qubits):
             if qbit not in new_qubits:
                 new_input_map[old_qid] = len(new_qubits)
@@ -169,40 +175,48 @@ class MergePlacementRegions(abc.RewriteRule):
                 new_input_map[old_qid] = new_qubits.index(qbit)
 
         new_body = node.body.clone()
+        new_block = new_body.blocks[0]
 
-        curr_state = None
-        stmt = (curr_block := new_body.blocks[0]).last_stmt
-        assert isinstance(stmt, execute.ExitLowLevel)
-        curr_state = stmt.state
-        stmt.delete()
+        curr_yield = new_block.last_stmt
+        assert isinstance(curr_yield, circuit.Yield)
 
-        # make sure to copy list of blocks since the loop body will
-        # mutate the list contained inside of `next_node.body.blocks`
-        next_block = next_node.body.blocks[0]
-        stmt = next_block.first_stmt
-        while stmt:
-            next_stmt = stmt.next_stmt
-            stmt.detach()
-            if isinstance(stmt, (circuit.CZ, circuit.R, circuit.Rz)):
-                curr_block.stmts.append(
-                    new_stmt := self.remap_qubits(stmt, new_input_map)
-                )
-                curr_state = new_stmt.state_after
-            elif isinstance(stmt, execute.ExitLowLevel):
-                curr_block.stmts.append(type(stmt)(state=curr_state))
-            else:
-                curr_block.stmts.append(stmt)
+        curr_state = curr_yield.final_state
+        current_yields = list(curr_yield.classical_results)
+        curr_yield.delete()
 
-            stmt = next_stmt
+        for stmt in next_node.body.blocks[0].stmts:
+            if isinstance(
+                stmt, (circuit.R, circuit.Rz, circuit.CZ, circuit.EndMeasure)
+            ):
+                remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
+                curr_state = remapped_stmt.results[0]
+                new_block.stmts.append(remapped_stmt)
+                # Removed duplicate append of remapped_stmt
+                for old_result, new_result in zip(
+                    stmt.results[1:], remapped_stmt.results[1:]
+                ):
+                    current_yields.append(new_result)
 
-        # replace next node with the new merged region
-        next_node.replace_by(
-            execute.ExecuteLowLevel(
-                qubits=new_qubits,
-                body=new_body,
-            )
+        new_yield = circuit.Yield(
+            curr_state,
+            *current_yields,
         )
-        # delete the node
+        new_block.stmts.append(new_yield)
+
+        # create the new static circuit
+        new_static_circuit = circuit.StaticCircuit(
+            new_qubits,
+            new_body,
+        )
+        new_static_circuit.insert_before(node)
+
+        # replace old results with new results from new static circuit
+        old_results = list(node.results) + list(next_node.results)
+        for old_result, new_result in zip(old_results, new_static_circuit.results):
+            old_result.replace_by(new_result)
+
+        # delete the old nodes
         node.delete()
+        next_node.delete()  # this will be skipped if it is the next item in the Walk worklist
 
         return abc.RewriteResult(has_done_something=True)

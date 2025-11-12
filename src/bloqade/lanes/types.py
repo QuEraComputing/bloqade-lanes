@@ -6,3 +6,10 @@ class State:
 
 
 StateType = types.PyClass(State)
+
+
+class MeasurementFuture:
+    pass
+
+
+MeasurementFutureType = types.PyClass(MeasurementFuture)

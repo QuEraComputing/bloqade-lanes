@@ -5,7 +5,13 @@ from typing import Callable
 import rustworkx as nx
 
 from .arch import ArchSpec
-from .encoding import Direction, InterMove, IntraMove, LocationAddress, MoveType
+from .encoding import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class PathFinder:
                 for src, dst in zip(bus.src, bus.dst):
                     src_site = LocationAddress(word_id, src)
                     dst_site = LocationAddress(word_id, dst)
-                    lane_addr = IntraMove(Direction.FORWARD, word_id, src, bus_id)
+                    lane_addr = SiteLaneAddress(Direction.FORWARD, word_id, src, bus_id)
                     self.site_graph.add_edge(
                         self.physical_address_map[src_site],
                         self.physical_address_map[dst_site],
@@ -47,7 +53,9 @@ class PathFinder:
                 for site in self.spec.has_word_buses:
                     src_site = LocationAddress(src_word, site)
                     dst_site = LocationAddress(dst_word, site)
-                    lane_addr = InterMove(Direction.FORWARD, src_word, dst_word, bus_id)
+                    lane_addr = WordLaneAddress(
+                        Direction.FORWARD, src_word, dst_word, bus_id
+                    )
                     self.site_graph.add_edge(
                         self.physical_address_map[src_site],
                         self.physical_address_map[dst_site],
@@ -63,7 +71,7 @@ class PathFinder:
             if not self.site_graph.has_edge(src, dst):
                 raise ValueError(f"No lane between nodes {src} and {dst}")
 
-            lane: MoveType = self.site_graph.get_edge_data(src, dst)
+            lane: LaneAddress = self.site_graph.get_edge_data(src, dst)
 
             lanes.append(lane.get_address(self.spec.encoding))
         return lanes
