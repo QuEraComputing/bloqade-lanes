@@ -191,7 +191,7 @@ class MergePlacementRegions(abc.RewriteRule):
                 remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)
-                new_block.stmts.append(remapped_stmt)
+                # Removed duplicate append of remapped_stmt
                 for old_result, new_result in zip(
                     stmt.results[1:], remapped_stmt.results[1:]
                 ):
