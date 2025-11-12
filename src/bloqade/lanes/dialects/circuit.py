@@ -84,7 +84,7 @@ class Yield(ir.Statement):
 
 @statement(dialect=dialect)
 class StaticCircuit(ir.Statement):
-    """This statement represents A static circuit to be executed on the hardware.
+    """This statement represents a static circuit to be executed on the hardware.
 
     The body region contains the low-level instructions to be executed.
     The inputs are the squin qubits to be used in the execution.
@@ -117,14 +117,14 @@ class StaticCircuit(ir.Statement):
     def check(self) -> None:
         if len(self.body.blocks) != 1:
             raise exception.StaticCheckError(
-                "ShuttleAtoms body must have exactly one block"
+                "StaticCircuit body must have exactly one block"
             )
 
         body_block = self.body.blocks[0]
         last_stmt = body_block.last_stmt
         if not isinstance(last_stmt, Yield):
             raise exception.StaticCheckError(
-                "ShuttleAtoms body must end with an EndMeasure statement"
+                "StaticCircuit body must end with a Yield statement"
             )
 
         if len(last_stmt.classical_results) != len(self.results):
@@ -172,5 +172,5 @@ class PlacementMethods(interp.MethodTable):
         frame: ForwardFrame[AtomState],
         stmt: StaticCircuit,
     ):
-        initial_state = _interp.get_inintial_state(stmt.qubits)
+        initial_state = _interp.get_initial_state(stmt.qubits)
         _interp.frame_call_region(frame, stmt, stmt.body, initial_state)

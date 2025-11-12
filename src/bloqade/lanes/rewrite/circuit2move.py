@@ -172,7 +172,7 @@ class RewriteR(RewriteRule):
 class RewriteRz(RewriteRule):
     """Rewrite Rz circuit statements to move Rz statements.
 
-    requires placement analysis to know where the qubits are located to do the rewrite.
+    Requires placement analysis to know where the qubits are located to do the rewrite.
 
     """
 
@@ -213,6 +213,7 @@ class RewriteRz(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
+@dataclass
 class InsertMeasure(RewriteRule):
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
