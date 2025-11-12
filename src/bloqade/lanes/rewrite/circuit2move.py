@@ -7,7 +7,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import circuit, move
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LocationAddress, LaneAddress, ZoneAddress
+from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 
 @dataclass

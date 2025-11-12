@@ -3,7 +3,7 @@ from kirin.decl import info, statement
 
 from bloqade import types as bloqade_types
 
-from ..layout.encoding import LocationAddress, LaneAddress, ZoneAddress
+from ..layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from ..types import MeasurementFutureType
 
 dialect = ir.Dialect(name="lowlevel.move")

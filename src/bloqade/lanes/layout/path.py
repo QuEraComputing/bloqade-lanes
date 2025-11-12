@@ -5,7 +5,13 @@ from typing import Callable
 import rustworkx as nx
 
 from .arch import ArchSpec
-from .encoding import Direction, WordLaneAddress, SiteLaneAddress, LocationAddress, LaneAddress
+from .encoding import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +53,9 @@ class PathFinder:
                 for site in self.spec.has_word_buses:
                     src_site = LocationAddress(src_word, site)
                     dst_site = LocationAddress(dst_word, site)
-                    lane_addr = WordLaneAddress(Direction.FORWARD, src_word, dst_word, bus_id)
+                    lane_addr = WordLaneAddress(
+                        Direction.FORWARD, src_word, dst_word, bus_id
+                    )
                     self.site_graph.add_edge(
                         self.physical_address_map[src_site],
                         self.physical_address_map[dst_site],
