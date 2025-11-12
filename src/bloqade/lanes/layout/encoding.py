@@ -164,7 +164,7 @@ class LocationAddress(Encoder):
 
 
 @dataclass(frozen=True)
-class MoveType(Encoder):
+class LaneAddress(Encoder):
     direction: Direction
 
     @abc.abstractmethod
@@ -182,7 +182,7 @@ class MoveType(Encoder):
 
 
 @dataclass(frozen=True)
-class IntraMove(MoveType):
+class SiteLaneAddress(LaneAddress):
     word_id: int
     site_id: int
     lane_id: int
@@ -227,7 +227,7 @@ class IntraMove(MoveType):
 
 
 @dataclass(frozen=True)
-class InterMove(MoveType):
+class WordLaneAddress(LaneAddress):
     start_word_id: int
     end_word_id: int
     lane_id: int

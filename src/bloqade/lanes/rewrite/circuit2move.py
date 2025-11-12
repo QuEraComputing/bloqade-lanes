@@ -7,7 +7,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import circuit, move
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LocationAddress, MoveType, ZoneAddress
+from bloqade.lanes.layout.encoding import LocationAddress, LaneAddress, ZoneAddress
 
 
 @dataclass
@@ -40,7 +40,7 @@ class MoveHeuristicABC(abc.ABC):
         self,
         state_before: placement.AtomState,
         state_after: placement.AtomState,
-    ) -> list[tuple[MoveType, ...]]:
+    ) -> list[tuple[LaneAddress, ...]]:
         pass
 
 

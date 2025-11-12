@@ -3,7 +3,7 @@ from kirin.decl import info, statement
 
 from bloqade import types as bloqade_types
 
-from ..layout.encoding import LocationAddress, MoveType, ZoneAddress
+from ..layout.encoding import LocationAddress, LaneAddress, ZoneAddress
 from ..types import MeasurementFutureType
 
 dialect = ir.Dialect(name="lowlevel.move")
@@ -45,7 +45,7 @@ class GlobalRz(ir.Statement):
 
 @statement(dialect=dialect)
 class Move(ir.Statement):
-    lanes: tuple[MoveType, ...] = info.attribute()
+    lanes: tuple[LaneAddress, ...] = info.attribute()
 
 
 @statement(dialect=dialect)
