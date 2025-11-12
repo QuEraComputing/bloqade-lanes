@@ -76,7 +76,7 @@ class ZoneAddress(Encoder):
 
         if zone_id_enc != self.zone_id:
             raise ValueError("Zone ID too large to encode")
-        
+
         return zone_id_enc
 
 
@@ -99,9 +99,9 @@ class WordAddress(Encoder):
 
         if word_id_enc != self.word_id:
             raise ValueError("Word ID too large to encode")
-        
+
         return word_id_enc
-    
+
 
 @dataclass(frozen=True)
 class SiteAddress(Encoder):
@@ -122,7 +122,7 @@ class SiteAddress(Encoder):
 
         if site_id_enc != self.site_id:
             raise ValueError("Site ID too large to encode")
-        
+
         return site_id_enc
 
 

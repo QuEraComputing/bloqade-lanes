@@ -1,11 +1,10 @@
 from kirin import ir, types
 from kirin.decl import info, statement
 
-
 from bloqade import types as bloqade_types
+
 from ..layout.encoding import LocationAddress, MoveType, ZoneAddress
 from ..types import MeasurementFutureType
-
 
 dialect = ir.Dialect(name="lowlevel.move")
 
@@ -17,13 +16,12 @@ class Initialize(ir.Statement):
 
 @statement(dialect=dialect)
 class CZ(ir.Statement):
-    zone_address: int = info.attribute()
+    zone_address: ZoneAddress = info.attribute()
 
 
 @statement(dialect=dialect)
 class LocalR(ir.Statement):
-    physical_addr: tuple[LocationAddress, ...] = info.attribute()
-
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
@@ -36,7 +34,7 @@ class GlobalR(ir.Statement):
 
 @statement(dialect=dialect)
 class LocalRz(ir.Statement):
-    physical_addr: tuple[LocationAddress, ...] = info.attribute()
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 

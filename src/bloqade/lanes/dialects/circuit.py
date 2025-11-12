@@ -1,16 +1,16 @@
 from kirin import exception, interp, ir, types
+from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
 
 from bloqade import types as bloqade_types
-from bloqade.lanes.analysis.placement import LocalID, PlacementAnalysis
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.analysis.placement import AtomState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lowlevel.circuit")
 
 
 @statement(dialect=dialect)
-class StaticFloat(ir.Statement):
+class ConstantFloat(ir.Statement):
     traits = frozenset({ir.ConstantLike()})
 
     value: float = info.attribute(type=types.Float)
@@ -23,6 +23,15 @@ class QuantumStmt(ir.Statement):
 
     state_before: ir.SSAValue = info.argument(StateType)
     state_after: ir.ResultValue = info.result(StateType)
+
+    def __init__(
+        self, state_before: ir.SSAValue, *extra_result_types: types.TypeAttribute
+    ):
+        super().__init__(
+            args=(state_before,),
+            args_slice={"state_before": 0},
+            result_types=(StateType,) + extra_result_types,
+        )
 
 
 @statement(dialect=dialect)
@@ -46,11 +55,31 @@ class Rz(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class EndMeasure(QuantumStmt):
+    state_before: ir.SSAValue = info.argument(StateType)
+
+    qubits: tuple[int, ...] = info.attribute()
+
+    def __init__(self, state: ir.SSAValue, *, qubits: tuple[int, ...]):
+        result_types = tuple(bloqade_types.MeasurementResultType for _ in qubits)
+        super().__init__(state, *result_types)
+        self.qubits = qubits
+
+
+@statement(dialect=dialect)
 class Yield(ir.Statement):
     traits = frozenset({ir.IsTerminator()})
 
-    qubits: tuple[int, ...] | None = info.attribute(default=None)
-    state: ir.SSAValue = info.argument(StateType)
+    final_state: ir.SSAValue = info.argument(StateType)
+    classical_results: tuple[ir.SSAValue, ...] = info.result(
+        bloqade_types.MeasurementResultType
+    )
+
+    def __init__(self, final_state: ir.SSAValue, *classical_results: ir.SSAValue):
+        super().__init__(
+            args=(final_state,),
+            args_slice={"final_state": 0, "classical_results": slice(1, None)},
+        )
 
 
 @statement(dialect=dialect)
@@ -72,18 +101,17 @@ class StaticCircuit(ir.Statement):
         self,
         qubits: tuple[ir.SSAValue, ...],
         body: ir.Region,
-        *,
-        starting_addresses: tuple[LocationAddress, ...] | None = None,
     ):
-
-        result_types = tuple(bloqade_types.MeasurementResultType for _ in qubits)
+        if isinstance(last_stmt := body.blocks[0].last_stmt, Yield):
+            result_types = tuple(value.type for value in last_stmt.classical_results)
+        else:
+            result_types = ()
 
         super().__init__(
             args=qubits,
             args_slice={"qubits": slice(0, None)},
             regions=(body,),
             result_types=result_types,
-            attributes={"starting_addresses": ir.PyAttr(starting_addresses)},
         )
 
     def check(self) -> None:
@@ -110,25 +138,42 @@ class StaticCircuit(ir.Statement):
 
 @dialect.register(key="runtime.placement")
 class PlacementMethods(interp.MethodTable):
-
     @interp.impl(CZ)
-    def impl_cz(self, _interp: PlacementAnalysis, frame, stmt: CZ):
-
-        current_state = frame.get(stmt.state_before)
-        new_state = _interp.get_placement_cz(
-            current_state,
-            tuple(map(LocalID, stmt.controls)),
-            tuple(map(LocalID, stmt.targets)),
+    def impl_cz(
+        self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: CZ
+    ):
+        return (
+            _interp.placement_strategy.cz_placements(
+                frame.get(stmt.state_before),
+                stmt.controls,
+                stmt.targets,
+            ),
         )
-        return (new_state,)
 
     @interp.impl(R)
     @interp.impl(Rz)
-    def impl_single_qubit_gate(self, _interp: PlacementAnalysis, frame, stmt: R | Rz):
-        current_state = frame.get(stmt.state_before)
+    def impl_single_qubit_gate(
+        self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: R | Rz
+    ):
         return (
-            _interp.get_placement_sq(
-                current_state,
-                tuple(map(LocalID, stmt.qubits)),
+            _interp.placement_strategy.sq_placements(
+                frame.get(stmt.state_before),
+                stmt.qubits,
             ),
         )
+
+    @interp.impl(Yield)
+    def impl_yield(
+        self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: Yield
+    ):
+        return interp.YieldValue((frame.get(stmt.final_state),))
+
+    @interp.impl(StaticCircuit)
+    def impl_static_circuit(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: StaticCircuit,
+    ):
+        initial_state = _interp.get_inintial_state(stmt.qubits)
+        _interp.frame_call_region(frame, stmt, stmt.body, initial_state)

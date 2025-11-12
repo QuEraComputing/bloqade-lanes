@@ -1,62 +1,57 @@
+from dataclasses import dataclass, field
 from typing import final
-from dataclasses import dataclass
 
-from bloqade.analysis.address.lattice import Address, AddressQubit
 from kirin.lattice import (
-    SingletonMeta,
     BoundedLattice,
     SimpleJoinMixin,
     SimpleMeetMixin,
+    SingletonMeta,
 )
-from bloqade.lanes.layout.encoding import LocationAddress, MoveType
+
+from bloqade.lanes.layout.encoding import LocationAddress
+
 
 @dataclass
-class AtomsState(
-    SimpleJoinMixin["AtomsState"],
-    SimpleMeetMixin["AtomsState"],
-    BoundedLattice["AtomsState"],
+class AtomState(
+    SimpleJoinMixin["AtomState"],
+    SimpleMeetMixin["AtomState"],
+    BoundedLattice["AtomState"],
 ):
 
     @classmethod
-    def bottom(cls) -> "AtomsState":
+    def bottom(cls) -> "AtomState":
         return NotState()
 
     @classmethod
-    def top(cls) -> "AtomsState":
+    def top(cls) -> "AtomState":
         return AnyState()
 
 
 @final
 @dataclass
-class NotState(AtomsState, metaclass=SingletonMeta):
+class NotState(AtomState, metaclass=SingletonMeta):
 
-    def is_subseteq(self, other: AtomsState) -> bool:
+    def is_subseteq(self, other: AtomState) -> bool:
         return True
 
 
 @final
 @dataclass
-class AnyState(AtomsState, metaclass=SingletonMeta):
+class AnyState(AtomState, metaclass=SingletonMeta):
 
-    def is_subseteq(self, other: AtomsState) -> bool:
+    def is_subseteq(self, other: AtomState) -> bool:
         return isinstance(other, AnyState)
 
 
-@dataclass(frozen=True)
-class LocalID:
-    index: int
-        
-
 @final
 @dataclass
-class ConcreteState(AtomsState):
+class ConcreteState(AtomState):
     occupied: frozenset[LocationAddress]
-    layout: dict[LocalID, LocationAddress]
-    moves: dict[LocalID, list[MoveType]]
+    """Stores the set of occupied locations with atoms not participating in this static circuit."""
+    layout: tuple[LocationAddress, ...]
+    """Stores the current location of the ith qubit argument in layout[i]."""
+    move_count: tuple[int, ...] = field(compare=False)
+    """Stores the number of moves each atom has undergone."""
 
-    def is_subseteq(self, other: AtomsState) -> bool:
+    def is_subseteq(self, other: AtomState) -> bool:
         return self == other
-
-    @property
-    def num_qubits(self):
-        return len(self.layout)

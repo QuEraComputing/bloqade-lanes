@@ -31,14 +31,16 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
 
     def construct_execute(
         self,
-        gate_stmt: circuit.QuantumStmt,
+        quantum_stmt: circuit.QuantumStmt,
         *,
         qubits: tuple[ir.SSAValue, ...],
         body: ir.Region,
         block: ir.Block,
     ) -> circuit.StaticCircuit:
-        block.stmts.append(gate_stmt)
-        block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
+        block.stmts.append(quantum_stmt)
+        block.stmts.append(
+            circuit.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:])
+        )
 
         return circuit.StaticCircuit(qubits=qubits, body=body)
 
@@ -124,7 +126,7 @@ class RewriteConstantToStatic(abc.RewriteRule):
         ):
             return abc.RewriteResult()
 
-        node.replace_by(circuit.StaticFloat(value=value))
+        node.replace_by(circuit.ConstantFloat(value=value))
 
         return abc.RewriteResult(has_done_something=True)
 
@@ -136,17 +138,21 @@ class MergePlacementRegions(abc.RewriteRule):
     """
 
     def remap_qubits(
-        self, node: circuit.R | circuit.Rz | circuit.CZ, input_map: dict[int, int]
-    ) -> circuit.R | circuit.Rz | circuit.CZ:
+        self,
+        curr_state: ir.SSAValue,
+        node: circuit.R | circuit.Rz | circuit.CZ | circuit.EndMeasure,
+        input_map: dict[int, int],
+    ):
         if isinstance(node, circuit.CZ):
             return circuit.CZ(
-                node.state_before,
+                curr_state,
                 targets=tuple(input_map[i] for i in node.targets),
                 controls=tuple(input_map[i] for i in node.controls),
             )
         else:
             return node.from_stmt(
                 node,
+                args=(curr_state,),
                 attributes={
                     "qubits": ir.PyAttr(tuple(input_map[i] for i in node.qubits))
                 },
@@ -169,55 +175,48 @@ class MergePlacementRegions(abc.RewriteRule):
                 new_input_map[old_qid] = new_qubits.index(qbit)
 
         new_body = node.body.clone()
+        new_block = new_body.blocks[0]
 
-        curr_state = None
-        stmt = (curr_block := new_body.blocks[0]).last_stmt
-        assert isinstance(stmt, circuit.Yield)
+        curr_yield = new_block.last_stmt
+        assert isinstance(curr_yield, circuit.Yield)
 
-        if (exit_qubits := stmt.qubits) is None:
-            exit_qubits = tuple(range(len(node.qubits)))
+        curr_state = curr_yield.final_state
+        current_yields = list(curr_yield.classical_results)
+        curr_yield.delete()
 
-        exit_qubits = tuple(new_input_map[q] for q in exit_qubits)
+        for stmt in next_node.body.blocks[0].stmts:
+            if isinstance(
+                stmt, (circuit.R, circuit.Rz, circuit.CZ, circuit.EndMeasure)
+            ):
+                remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
+                curr_state = remapped_stmt.results[0]
+                new_block.stmts.append(remapped_stmt)
+                new_block.stmts.append(remapped_stmt)
+                for old_result, new_result in zip(
+                    stmt.results[1:], remapped_stmt.results[1:]
+                ):
+                    current_yields.append(new_result)
 
-        curr_state = stmt.state
-        stmt.delete()
-
-        # make sure to copy list of blocks since the loop body will
-        # mutate the list contained inside of `next_node.body.blocks`
-        next_block = next_node.body.blocks[0]
-        stmt = next_block.first_stmt
-        while stmt:
-            next_stmt = stmt.next_stmt
-            stmt.detach()
-            if isinstance(stmt, (circuit.CZ, circuit.R, circuit.Rz)):
-                curr_block.stmts.append(
-                    new_stmt := self.remap_qubits(stmt, new_input_map)
-                )
-                curr_state = new_stmt.state_after
-            elif isinstance(stmt, circuit.Yield):
-                if (other_exit_qubits := stmt.qubits) is None:
-                    other_exit_qubits = tuple(range(len(next_node.qubits)))
-
-                exit_qubits = exit_qubits + tuple(
-                    new_input_map[q] for q in other_exit_qubits
-                )
-
-                curr_block.stmts.append(
-                    type(stmt)(state=curr_state, qubits=exit_qubits)
-                )
-            else:
-                curr_block.stmts.append(stmt)
-
-            stmt = next_stmt
-
-        # replace next node with the new merged region
-        next_node.replace_by(
-            circuit.StaticCircuit(
-                qubits=new_qubits,
-                body=new_body,
-            )
+        new_yield = circuit.Yield(
+            curr_state,
+            *current_yields,
         )
-        # delete the node
+        new_block.stmts.append(new_yield)
+
+        # create the new static circuit
+        new_static_circuit = circuit.StaticCircuit(
+            new_qubits,
+            new_body,
+        )
+        new_static_circuit.insert_before(node)
+
+        # replace old results with new results from new static circuit
+        old_results = list(node.results) + list(next_node.results)
+        for old_result, new_result in zip(old_results, new_static_circuit.results):
+            old_result.replace_by(new_result)
+
+        # delete the old nodes
         node.delete()
+        next_node.delete()
 
         return abc.RewriteResult(has_done_something=True)

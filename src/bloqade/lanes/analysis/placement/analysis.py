@@ -1,88 +1,62 @@
 import abc
-from typing import Callable
-from dataclasses import field, dataclass
+from dataclasses import dataclass
 
 from bloqade.analysis.address.lattice import Address, AddressQubit
-from kirin.analysis import Forward
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LocationAddress
-from kirin.interp.exceptions import InterpreterError
-from .lattice import AtomsState, ConcreteState, LocalID
-
 from kirin import ir
+from kirin.analysis import Forward
+from kirin.interp.exceptions import InterpreterError
+
+from bloqade.lanes.layout.encoding import LocationAddress
+
+from .lattice import AtomState, ConcreteState
 
 
-class MoveStrategy(abc.ABC):
+class PlacementStrategy(abc.ABC):
     @abc.abstractmethod
-    def calculate_cz_placements(
+    def cz_placements(
         self,
-        state: ConcreteState,
-        controls: tuple[LocalID, ...],
-        targets: tuple[LocalID, ...],
-    ) -> ConcreteState:
+        state: AtomState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> AtomState:
         pass
 
     @abc.abstractmethod
-    def calculate_sq_placements(
+    def sq_placements(
         self,
-        state: ConcreteState,
-        qubits: tuple[LocalID, ...],
-    ) -> ConcreteState:
+        state: AtomState,
+        qubits: tuple[int, ...],
+    ) -> AtomState:
         pass
-
-
-
 
 
 @dataclass
-class PlacementAnalysis(Forward[AtomsState]):
+class PlacementAnalysis(Forward[AtomState]):
     keys = ["runtime.placement"]
 
-    initial_layout: dict[int, LocationAddress]
+    initial_layout: tuple[LocationAddress, ...]
     address_analysis: dict[ir.SSAValue, Address]
 
-    move_strategy: MoveStrategy
+    placement_strategy: PlacementStrategy
     """The strategy function to use for calculating placements."""
-    lattice = AtomsState
+    lattice = AtomState
 
     def get_inintial_state(self, qubits: tuple[ir.SSAValue, ...]):
-        occupied = set(self.initial_layout.values())
-        layout = {}
-        for i, q in enumerate(qubits):
-            addr = self.address_analysis[q]
-            if not isinstance(addr, AddressQubit):
+        occupied = set(self.initial_layout)
+        layout = []
+        for q in qubits:
+            if not isinstance(addr := self.address_analysis.get(q), AddressQubit):
                 raise InterpreterError(f"Qubit {q} does not have a qubit address.")
-            
+
             loc_addr = self.initial_layout[addr.data]
             occupied.discard(loc_addr)
-            layout[LocalID(i)] = loc_addr
+            layout.append(loc_addr)
 
         return ConcreteState(
-            layout=layout,
-            moves={LocalID(i): [] for i in range(len(qubits))},
+            layout=tuple(layout),
             occupied=frozenset(occupied),
+            move_count=tuple(0 for _ in layout),
         )
 
-    def get_placement_cz(self, state: ConcreteState, controls: tuple[LocalID, ...], targets: tuple[LocalID, ...]) -> ConcreteState:
-        return self.move_strategy.calculate_cz_placements(
-            state,
-            controls,
-            targets,
-        )
-    
-    def get_placement_sq(self, state: ConcreteState, qubits: tuple[LocalID, ...]) -> ConcreteState:
-        return self.move_strategy.calculate_sq_placements(
-            state,
-            qubits,
-        )
-    
-    
-
-    def method_self(self, method: ir.Method) -> AtomsState:
-        return AtomsState.bottom()
-    
-
-
-            
-
-    
+    def method_self(self, method: ir.Method) -> AtomState:
+        return AtomState.bottom()
