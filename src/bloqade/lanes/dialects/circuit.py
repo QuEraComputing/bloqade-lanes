@@ -71,7 +71,7 @@ class Yield(ir.Statement):
     traits = frozenset({ir.IsTerminator()})
 
     final_state: ir.SSAValue = info.argument(StateType)
-    classical_results: tuple[ir.SSAValue, ...] = info.result(
+    classical_results: tuple[ir.SSAValue, ...] = info.argument(
         bloqade_types.MeasurementResultType
     )
 

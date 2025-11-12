@@ -35,7 +35,7 @@ def test_cz():
     block.stmts.append(
         gate_stmt := circuit.CZ(entry_state, controls=(0, 1), targets=(2, 3))
     )
-    block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
+    block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
@@ -77,7 +77,7 @@ def test_r():
             rotation_angle=rotation_angle,
         )
     )
-    block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
+    block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
@@ -108,7 +108,7 @@ def test_rz():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle
         )
     )
-    block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
+    block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
@@ -141,7 +141,7 @@ def test_merge_regions():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
-    body_block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
+    body_block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     entry_state = second_block.args.append_from(types.StateType, name="entry_state")
     second_block.stmts.append(
@@ -149,7 +149,7 @@ def test_merge_regions():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
-    second_block.stmts.append(circuit.Yield(state=gate_stmt.state_after))
+    second_block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     expected_block = ir.Block(
         [
@@ -174,9 +174,7 @@ def test_merge_regions():
             gate_stmt.state_after, qubits=(2, 3), rotation_angle=rotation_angle.result
         )
     )
-    body_block.stmts.append(
-        circuit.Yield(state=gate_stmt.state_after, qubits=(0, 1, 2, 3))
-    )
+    body_block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     rewrite.Walk(MergePlacementRegions()).rewrite(test_block)
 
