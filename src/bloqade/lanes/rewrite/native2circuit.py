@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Callable
 
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir
@@ -131,11 +132,20 @@ class RewriteConstantToStatic(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+def _default_merge_heuristic(r1: ir.Region, r2: ir.Region) -> bool:
+    # placeholder heuristic: always merge
+    return True
+
+
+@dataclass
 class MergePlacementRegions(abc.RewriteRule):
     """
     Merge adjacent placement regions into a single region.
     This is a placeholder for the actual implementation.
     """
+
+    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = _default_merge_heuristic
+    """Heuristic function to decide whether to merge two circuit regions."""
 
     def remap_qubits(
         self,
@@ -163,6 +173,9 @@ class MergePlacementRegions(abc.RewriteRule):
             isinstance(node, circuit.StaticCircuit)
             and isinstance(next_node := node.next_stmt, circuit.StaticCircuit)
         ):
+            return abc.RewriteResult()
+
+        if not self.merge_heuristic(node.body, next_node.body):
             return abc.RewriteResult()
 
         new_qubits = node.qubits
