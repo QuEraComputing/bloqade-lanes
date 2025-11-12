@@ -68,6 +68,12 @@ class InsertMoves(RewriteRule):
 
 
 class InsertPalindromeMoves(RewriteRule):
+    """This rewrite goes through a static circuit and for every move statement,
+    it inserts a reverse move statement at the end of the circuit to undo the move.
+
+    The idea here you can cancel out some systematic move errors by playing moves backwards.
+
+    """
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, circuit.StaticCircuit):
@@ -88,6 +94,12 @@ class InsertPalindromeMoves(RewriteRule):
 
 @dataclass
 class RewriteCZ(RewriteRule):
+    """Rewrite CZ circuit statements to move CZ statements.
+
+    Requires placement analysis to know where the qubits are located and a move heuristic
+    to determine which zone addresses to use for the CZ moves.
+
+    """
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
     move_heuristic: MoveHeuristicABC
@@ -116,9 +128,9 @@ class RewriteCZ(RewriteRule):
 
 @dataclass
 class RewriteR(RewriteRule):
+    """Rewrite R circuit statements to move R statements."""
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
-    move_heuristic: MoveHeuristicABC
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, circuit.R):
@@ -158,9 +170,13 @@ class RewriteR(RewriteRule):
 
 @dataclass
 class RewriteRz(RewriteRule):
+    """Rewrite Rz circuit statements to move Rz statements.
+
+    requires placement analysis to know where the qubits are located to do the rewrite.
+
+    """
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
-    move_heuristic: MoveHeuristicABC
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, circuit.Rz):
@@ -169,6 +185,7 @@ class RewriteRz(RewriteRule):
         state_after = self.placement_analysis.get(node.state_after)
 
         if not isinstance(state_after, placement.ConcreteState):
+            # do not know the location of the qubits, cannot rewrite
             return RewriteResult()
 
         is_global = len(
@@ -237,7 +254,7 @@ class InsertMeasure(RewriteRule):
 class LiftMoveStatements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
-            node.dialect is move.dialect
+            type(node) in move.dialect.stmts
             and (parent_stmt := node.parent_stmt) is not None
         ):
             return RewriteResult()
