@@ -217,6 +217,6 @@ class MergePlacementRegions(abc.RewriteRule):
 
         # delete the old nodes
         node.delete()
-        next_node.delete()
+        next_node.delete()  # this will be skipped if it is the next item in the Walk worklist
 
         return abc.RewriteResult(has_done_something=True)

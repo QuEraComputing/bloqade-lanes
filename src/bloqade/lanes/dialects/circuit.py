@@ -127,13 +127,10 @@ class StaticCircuit(ir.Statement):
                 "ShuttleAtoms body must end with an EndMeasure statement"
             )
 
-        stmt = body_block.first_stmt
-        while stmt is not last_stmt:
-            if not isinstance(stmt, QuantumStmt):
-                raise exception.StaticCheckError(
-                    "All statements in ShuttleAtoms body must be ByteCodeStmt"
-                )
-            stmt = stmt.next_stmt
+        if len(last_stmt.classical_results) != len(self.results):
+            raise exception.StaticCheckError(
+                "Number of yielded classical results in Yield does not match number of results in StaticCircuit"
+            )
 
 
 @dialect.register(key="runtime.placement")
