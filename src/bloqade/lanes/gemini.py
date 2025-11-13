@@ -21,11 +21,10 @@ def site_buses(word_size_y: int):
     return tuple(site_buses)
 
 
-def generate_arch():
-
+def generate_arch(hypercube_dims: int = 4):
     word_size_y = 5
     word_size_x = 2
-    num_word_x = 16
+    num_word_x = 2**hypercube_dims
 
     x_positions = (0.0, 2.0)
     y_positions = tuple(10.0 * i for i in range(word_size_y))
@@ -55,7 +54,7 @@ def generate_arch():
     word_ids = np.arange(word_size_x * word_size_y).reshape(word_size_y, word_size_x)
 
     site_bus_compatibility = tuple(
-        frozenset(j for j in range(num_word_x) if j != i) for i in range(num_word_x)
+        frozenset(range(num_word_x)) for _ in range(num_word_x)
     )
     gate_zone = tuple(range(len(words)))
     return ArchSpec(
