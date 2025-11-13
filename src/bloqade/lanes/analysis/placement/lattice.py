@@ -63,3 +63,9 @@ class ConcreteState(AtomState):
 
     def is_subseteq(self, other: AtomState) -> bool:
         return self == other
+
+    def get_qubit_id(self, location: LocationAddress) -> int | None:
+        try:
+            return self.layout.index(location)
+        except ValueError:
+            return None

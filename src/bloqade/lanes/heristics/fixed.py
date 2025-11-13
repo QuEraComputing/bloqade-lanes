@@ -2,8 +2,11 @@ from dataclasses import dataclass, field, replace
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
+from bloqade.lanes.gemini import generate_arch
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
+    LaneAddress,
     LocationAddress,
     SiteLaneAddress,
     WordLaneAddress,
@@ -14,6 +17,22 @@ from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
 
 @dataclass
 class LogicalPlacementStrategy(PlacementStrategyABC):
+    """A placement strategy that assumes a logical architecture.
+
+    The logical architecture assumes 2 word buses (word_id 0 and 1) and a single word bus.
+    This is equivalent to the generic architecture but with a hypercube dimension of 1,
+
+    The idea is to keep the initial locations of the qubits are all on even site ids. Then when
+    two qubits need to be entangled via a cz gate, one qubit (the control or target) is moved to the
+    odd site id next to the other qubit. This ensures that no two qubits ever occupy the same
+    location address and that there is always a clear path for qubits to traverse the architecture.
+
+    The placement heuristic prioritizes balancing the number of moves each qubit has made, instead
+    of prioritizing parallelism of moves.
+
+
+    The hope is that this should balance out the number of moves across all qubits in the circuit.
+    """
 
     def validate_initial_layout(
         self,
@@ -45,64 +64,63 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         # since cz gates are symmetric swap controls and targets based on
         # word_id and site_id the idea being to minimize the directions
         # needed to rearrange qubits.
+        new_positions = {}
 
-        new_controls = []
-        new_targets = []
+        diff_word_id_pairs = [
+            (c, t)
+            for c, t in zip(controls, targets)
+            if state.layout[c].word_id != state.layout[t].word_id
+        ]
 
-        for control, target in zip(controls, targets):
-            control_addr = state.layout[control]
-            target_addr = state.layout[target]
+        word_move_counts = {0: 0, 1: 0}
+        for c, t in diff_word_id_pairs:
+            c_addr = state.layout[c]
+            t_addr = state.layout[t]
+            word_move_counts[c_addr.word_id] += state.move_count[c]
+            word_move_counts[t_addr.word_id] += state.move_count[t]
 
-            if control_addr.word_id > target_addr.word_id or (
-                control_addr.word_id == target_addr.word_id
-                and control_addr.site_id > target_addr.site_id
-            ):
-                new_controls.append(target)
-                new_targets.append(control)
-            else:
-                new_controls.append(control)
-                new_targets.append(target)
+        # prioritize word move that reduces the max move count
+        if word_move_counts[0] <= word_move_counts[1]:
+            start_word_id = 0
+        else:
+            start_word_id = 1
 
-        total_control_moves = sum(state.move_count[control] for control in new_controls)
+        for c, t in diff_word_id_pairs:
+            c_addr = state.layout[c]
+            t_addr = state.layout[t]
 
-        total_target_moves = sum(state.move_count[target] for target in new_targets)
-
-        move_controls = total_control_moves <= total_target_moves
-
-        updates = {}
-        for control, target in zip(new_controls, new_targets):
-            control_addr = state.layout[control]
-            target_addr = state.layout[target]
-
-            # moving the non-static qubit to the location of the static qubit but
-            # the next odd site over to avoid collisions
-
-            if move_controls:
-                new_addr = LocationAddress(
-                    word_id=target_addr.word_id,
-                    site_id=target_addr.site_id + 1,
+            if c_addr.word_id == start_word_id:
+                if state.move_count[c] <= state.move_count[t]:
+                    # move control to target
+                    new_positions[c] = LocationAddress(
+                        word_id=t_addr.word_id,
+                        site_id=t_addr.site_id + 1,
+                    )
+                else:
+                    # move target to control
+                    new_positions[t] = LocationAddress(
+                        word_id=c_addr.word_id,
+                        site_id=c_addr.site_id + 1,
+                    )
+            elif t_addr.word_id == start_word_id:
+                new_positions[t] = LocationAddress(
+                    word_id=c_addr.word_id,
+                    site_id=c_addr.site_id + 1,
                 )
-                assert (
-                    new_addr not in state.occupied
-                ), "Attempting to move control qubit to an occupied location"
-                updates[control] = new_addr
             else:
-                new_addr = LocationAddress(
-                    word_id=control_addr.word_id,
-                    site_id=control_addr.site_id - 1,
+                new_positions[c] = LocationAddress(
+                    word_id=t_addr.word_id,
+                    site_id=t_addr.site_id + 1,
                 )
-                assert (
-                    new_addr not in state.occupied
-                ), "Attempting to move target qubit to an occupied location"
-                updates[target] = new_addr
 
-        new_layout = tuple(updates.get(i, addr) for i, addr in enumerate(state.layout))
-        new_move_count = tuple(
-            state.move_count[i] + (1 if i in updates else 0)
-            for i in range(len(state.layout))
+        new_layout = tuple(
+            new_positions.get(i, loc) for i, loc in enumerate(state.layout)
         )
+        new_move_count = list(state.move_count)
+        for qid in new_positions.keys():
+            new_move_count[qid] += 1
 
-        next_state = replace(state, layout=new_layout, move_count=new_move_count)
+        next_state = replace(state, layout=new_layout, move_count=tuple(new_move_count))
         return next_state
 
     def sq_placements(
@@ -115,6 +133,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
 
 @dataclass
 class LogicalMoveScheduler(MoveSchedulerABC):
+    arch_spec: ArchSpec = field(init=False, default=generate_arch(1))
     path_finder: PathFinder = field(init=False)
 
     def __post_init__(self):
@@ -125,6 +144,16 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             return Direction.FORWARD
         else:
             return Direction.BACKWARD
+
+    def get_site_y(self, location: LocationAddress) -> int:
+        return location.site_id // 2
+
+    def get_site_bus_id(self, src: LocationAddress, dst: LocationAddress):
+        diff_y = self.get_site_y(dst) - self.get_site_y(src)
+        if diff_y >= 0:
+            return diff_y, Direction.FORWARD
+        else:
+            return -diff_y, Direction.BACKWARD
 
     def compute_moves(self, state_before: AtomState, state_after: AtomState):
         if not (
@@ -139,49 +168,65 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             if ele[0] != ele[1]
         ]
 
-        moves_dict = {}
+        diff_moves_dict: dict[
+            tuple[int, int],
+            dict[tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]],
+        ] = {}
 
+        same_moves_dict = dict(diff_moves_dict)
         for src, dst in diffs:
-            assert dst.word_id < 2, "Destination word id out of range for logical arch"
-            assert src.word_id < 2, "Source word id out of range for logical arch"
-            assert (
-                src.site_id + dst.site_id
-            ) % 2 != 1, "Invalid move between incompatible sites"
+            if src.word_id != dst.word_id:
+                site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
+                diff_moves_dict.setdefault((dst.word_id, src.word_id), {}).setdefault(
+                    (site_bus_id, site_bus_direction), []
+                ).append((src, dst))
+            else:
+                site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
+                same_moves_dict.setdefault((src.word_id, src.word_id), {}).setdefault(
+                    (site_bus_id, site_bus_direction), []
+                ).append((src, dst))
 
-            word_diff = dst.word_id - src.word_id
-            site_diff = dst.site_id - src.site_id
-            site_bus_id = abs(site_diff)
-            site_bus_direction = self.get_direction(site_diff)
+        assert (
+            len(diff_moves_dict) <= 1
+        ), "Multiple word bus moves detected, which should not happen in logical architecture"
 
-            moves_dict.setdefault((site_bus_id, site_bus_direction), {}).setdefault(
-                word_diff, []
-            ).append(src)
-
-        moves = []
-        for (site_bus_id, site_bus_direction), word_dict in moves_dict.items():
-            for word_diff, src_sites in word_dict.items():
-                site_lanes = tuple(
-                    SiteLaneAddress(
-                        site_bus_direction,
-                        src.word_id,
-                        src.site_id,
-                        site_bus_id,
-                    )
-                    for src in src_sites
-                )
-                moves.append(site_lanes)
-                if word_diff != 0:
-                    # Add word bus move
-                    word_bus_direction = self.get_direction(word_diff)
-                    word_lanes = tuple(
-                        WordLaneAddress(
-                            word_bus_direction,
-                            src.word_id,
-                            src.word_id + word_diff,
-                            src.site_id,
+        moves: list[tuple[LaneAddress, ...]] = []
+        for (src_word_id, dst_word_id), sites_dict in diff_moves_dict.items():
+            for (site_bus_id, site_bus_direction), sites in sites_dict.items():
+                moves.append(
+                    tuple(
+                        SiteLaneAddress(
+                            site_bus_direction,
+                            src_word_id,
+                            srd.site_id,
+                            site_bus_id,
                         )
-                        for src in src_sites
+                        for srd, _ in sites
                     )
-                    moves.append(word_lanes)
+                )
+
+            direction = self.get_direction(dst_word_id - src_word_id)
+            moves.append(
+                tuple(
+                    WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
+                    for sites in sites_dict.values()
+                    for _, dst in sites
+                )
+            )
+
+        for (src_word_id, dst_word_id), sites_dict in same_moves_dict.items():
+            for (site_bus_id, site_bus_direction), sites in sites_dict.items():
+                moves.append(
+                    tuple(
+                        SiteLaneAddress(
+                            site_bus_direction,
+                            src_word_id,
+                            srd.site_id,
+                            site_bus_id,
+                        )
+                        for srd, _ in sites
+                    )
+                )
+            # no word bus move needed here
 
         return moves
