@@ -6,7 +6,7 @@ from bloqade import types as bloqade_types
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
-dialect = ir.Dialect(name="lowlevel.circuit")
+dialect = ir.Dialect(name="lanes.circuit")
 
 
 @statement(dialect=dialect)
@@ -117,14 +117,14 @@ class StaticCircuit(ir.Statement):
     def check(self) -> None:
         if len(self.body.blocks) != 1:
             raise exception.StaticCheckError(
-                "ShuttleAtoms body must have exactly one block"
+                "StaticCircuit body must have exactly one block"
             )
 
         body_block = self.body.blocks[0]
         last_stmt = body_block.last_stmt
         if not isinstance(last_stmt, Yield):
             raise exception.StaticCheckError(
-                "ShuttleAtoms body must end with an EndMeasure statement"
+                "StaticCircuit body must end with an EndMeasure statement"
             )
 
         if len(last_stmt.classical_results) != len(self.results):
