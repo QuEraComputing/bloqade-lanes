@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field, replace
+from typing import Any, Generator
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
@@ -165,7 +166,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         site_dict: dict[
             tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]
         ],
-    ):
+    ) -> Generator[tuple[LaneAddress, ...], Any, None]:
         for (site_bus_id, site_bus_direction), sites in site_dict.items():
             yield tuple(
                 SiteLaneAddress(
@@ -210,8 +211,6 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         assert (
             len(diff_moves_dict) <= 1
         ), "Multiple word bus moves detected, which should not happen in logical architecture"
-
-        moves: list[tuple[LaneAddress, ...]] = []
 
         ((src_word_id, dst_word_id),) = diff_moves_dict.keys()
         diff_sites_dict = diff_moves_dict[(src_word_id, dst_word_id)]
