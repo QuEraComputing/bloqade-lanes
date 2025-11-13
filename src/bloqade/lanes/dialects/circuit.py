@@ -1,10 +1,9 @@
-from bloqade.internal.analysis.placement.lattice import ConcreteState
 from kirin import exception, interp, ir, types
 from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
 
 from bloqade import types as bloqade_types
-from bloqade.lanes.analysis.placement import AtomState, PlacementAnalysis
+from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lowlevel.circuit")
