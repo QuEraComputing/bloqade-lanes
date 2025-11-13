@@ -66,14 +66,14 @@ class PathFinder:
         """Given a path as a list of node indices, extract the lane addresses."""
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
-        lanes: list[int] = []
+        lanes: list[LaneAddress] = []
         for src, dst in zip(path[:-1], path[1:]):
             if not self.site_graph.has_edge(src, dst):
                 raise ValueError(f"No lane between nodes {src} and {dst}")
 
             lane: LaneAddress = self.site_graph.get_edge_data(src, dst)
 
-            lanes.append(lane.get_address(self.spec.encoding))
+            lanes.append(lane)
         return lanes
 
     def find_path(
@@ -81,8 +81,8 @@ class PathFinder:
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[list[LocationAddress]], float] = lambda _: 0.0,
-    ):
+        path_heuristic: Callable[[list[LaneAddress]], float] = lambda _: 0.0,
+    ) -> tuple[list[LaneAddress] | None, frozenset[LocationAddress]]:
         """Find a path from start to end avoiding occupied sites.
 
         Args:
@@ -116,7 +116,7 @@ class PathFinder:
 
         path = min(
             path_nodes,
-            key=lambda p: path_heuristic([self.physical_addresses[n] for n in p]),
+            key=lambda p: path_heuristic(self.extract_lanes_from_path(p)),
         )
         lanes = self.extract_lanes_from_path(path)
         return lanes, occupied.union(
