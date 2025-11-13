@@ -65,6 +65,41 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         else:
             return 1
 
+    def _pick_mover_and_location(
+        self,
+        state: ConcreteState,
+        start_word_id: int,
+        control: int,
+        target: int,
+    ):
+        c_addr = state.layout[control]
+        t_addr = state.layout[target]
+        if c_addr.word_id == start_word_id:
+            if (
+                state.move_count[control] <= state.move_count[target]
+            ):  # move control to target
+                return control, t_addr
+            else:  # move target to control
+                return target, c_addr
+        elif t_addr.word_id == start_word_id:
+            return target, c_addr
+        else:
+            return control, t_addr
+
+    def _update_positions(
+        self,
+        state: ConcreteState,
+        new_positions: dict[int, LocationAddress],
+    ) -> ConcreteState:
+        new_layout = tuple(
+            new_positions.get(i, loc) for i, loc in enumerate(state.layout)
+        )
+        new_move_count = list(state.move_count)
+        for qid in new_positions.keys():
+            new_move_count[qid] += 1
+
+        return replace(state, layout=new_layout, move_count=tuple(new_move_count))
+
     def cz_placements(
         self,
         state: AtomState,
@@ -84,42 +119,14 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         new_positions: dict[int, LocationAddress] = {}
         start_word_id = self._word_balance(state, controls, targets)
         for c, t in zip(controls, targets):
-            c_addr = state.layout[c]
-            t_addr = state.layout[t]
+            mover, dst_addr = self._pick_mover_and_location(state, start_word_id, c, t)
 
-            if c_addr.word_id == start_word_id:
-                if state.move_count[c] <= state.move_count[t]:
-                    # move control to target
-                    new_positions[c] = LocationAddress(
-                        word_id=t_addr.word_id,
-                        site_id=t_addr.site_id + 1,
-                    )
-                else:
-                    # move target to control
-                    new_positions[t] = LocationAddress(
-                        word_id=c_addr.word_id,
-                        site_id=c_addr.site_id + 1,
-                    )
-            elif t_addr.word_id == start_word_id:
-                new_positions[t] = LocationAddress(
-                    word_id=c_addr.word_id,
-                    site_id=c_addr.site_id + 1,
-                )
-            else:
-                new_positions[c] = LocationAddress(
-                    word_id=t_addr.word_id,
-                    site_id=t_addr.site_id + 1,
-                )
+            new_positions[mover] = LocationAddress(
+                word_id=dst_addr.word_id,
+                site_id=dst_addr.site_id + 1,
+            )
 
-        new_layout = tuple(
-            new_positions.get(i, loc) for i, loc in enumerate(state.layout)
-        )
-        new_move_count = list(state.move_count)
-        for qid in new_positions.keys():
-            new_move_count[qid] += 1
-
-        next_state = replace(state, layout=new_layout, move_count=tuple(new_move_count))
-        return next_state
+        return self._update_positions(state, new_positions)
 
     def sq_placements(
         self,
@@ -152,6 +159,23 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             return diff_y, Direction.FORWARD
         else:
             return -diff_y, Direction.BACKWARD
+
+    def _yield_site_moves(
+        self,
+        site_dict: dict[
+            tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]
+        ],
+    ):
+        for (site_bus_id, site_bus_direction), sites in site_dict.items():
+            yield tuple(
+                SiteLaneAddress(
+                    site_bus_direction,
+                    src.word_id,
+                    src.site_id,
+                    site_bus_id,
+                )
+                for src, _ in sites
+            )
 
     def compute_moves(self, state_before: AtomState, state_after: AtomState):
         if not (
@@ -188,42 +212,23 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         ), "Multiple word bus moves detected, which should not happen in logical architecture"
 
         moves: list[tuple[LaneAddress, ...]] = []
-        for (src_word_id, dst_word_id), sites_dict in diff_moves_dict.items():
-            for (site_bus_id, site_bus_direction), sites in sites_dict.items():
-                moves.append(
-                    tuple(
-                        SiteLaneAddress(
-                            site_bus_direction,
-                            src_word_id,
-                            srd.site_id,
-                            site_bus_id,
-                        )
-                        for srd, _ in sites
-                    )
-                )
 
-            direction = self.get_direction(dst_word_id - src_word_id)
-            moves.append(
-                tuple(
-                    WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
-                    for sites in sites_dict.values()
-                    for _, dst in sites
-                )
+        ((src_word_id, dst_word_id),) = diff_moves_dict.keys()
+        diff_sites_dict = diff_moves_dict[(src_word_id, dst_word_id)]
+
+        moves = list(self._yield_site_moves(diff_sites_dict))
+
+        direction = self.get_direction(dst_word_id - src_word_id)
+        moves.append(
+            tuple(
+                WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
+                for sites in diff_sites_dict.values()
+                for _, dst in sites
             )
+        )
 
-        for (src_word_id, dst_word_id), sites_dict in same_moves_dict.items():
-            for (site_bus_id, site_bus_direction), sites in sites_dict.items():
-                moves.append(
-                    tuple(
-                        SiteLaneAddress(
-                            site_bus_direction,
-                            src_word_id,
-                            srd.site_id,
-                            site_bus_id,
-                        )
-                        for srd, _ in sites
-                    )
-                )
+        for sites_dict in same_moves_dict.values():
+            moves.extend(self._yield_site_moves(sites_dict))
             # no word bus move needed here
 
         return moves
