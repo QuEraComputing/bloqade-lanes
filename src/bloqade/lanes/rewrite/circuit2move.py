@@ -11,7 +11,7 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 
 
 @dataclass
-class MoveHeuristicABC(abc.ABC):
+class MoveSchedulerABC(abc.ABC):
     arch_spec: ArchSpec
     zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(init=False)
 
@@ -46,7 +46,7 @@ class MoveHeuristicABC(abc.ABC):
 
 @dataclass
 class InsertMoves(RewriteRule):
-    move_heuristic: MoveHeuristicABC
+    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
@@ -102,7 +102,7 @@ class RewriteCZ(RewriteRule):
     """
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
-    move_heuristic: MoveHeuristicABC
+    move_heuristic: MoveSchedulerABC
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, circuit.CZ):
@@ -217,7 +217,7 @@ class RewriteRz(RewriteRule):
 class InsertMeasure(RewriteRule):
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
-    move_heuristic: MoveHeuristicABC
+    move_heuristic: MoveSchedulerABC
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, circuit.EndMeasure):
