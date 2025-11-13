@@ -48,6 +48,23 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
                     "Initial layout should only contain even site ids for fixed home location strategy"
                 )
 
+    def _word_balance(
+        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
+    ) -> int:
+        word_move_counts = {0: 0, 1: 0}
+        for c, t in zip(controls, targets):
+            c_addr = state.layout[c]
+            t_addr = state.layout[t]
+            if c_addr.word_id != t_addr.word_id:
+                word_move_counts[c_addr.word_id] += state.move_count[c]
+                word_move_counts[t_addr.word_id] += state.move_count[t]
+
+        # prioritize word move that reduces the max move count
+        if word_move_counts[0] <= word_move_counts[1]:
+            return 0
+        else:
+            return 1
+
     def cz_placements(
         self,
         state: AtomState,
@@ -64,28 +81,9 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         # since cz gates are symmetric swap controls and targets based on
         # word_id and site_id the idea being to minimize the directions
         # needed to rearrange qubits.
-        new_positions = {}
-
-        diff_word_id_pairs = [
-            (c, t)
-            for c, t in zip(controls, targets)
-            if state.layout[c].word_id != state.layout[t].word_id
-        ]
-
-        word_move_counts = {0: 0, 1: 0}
-        for c, t in diff_word_id_pairs:
-            c_addr = state.layout[c]
-            t_addr = state.layout[t]
-            word_move_counts[c_addr.word_id] += state.move_count[c]
-            word_move_counts[t_addr.word_id] += state.move_count[t]
-
-        # prioritize word move that reduces the max move count
-        if word_move_counts[0] <= word_move_counts[1]:
-            start_word_id = 0
-        else:
-            start_word_id = 1
-
-        for c, t in diff_word_id_pairs:
+        new_positions: dict[int, LocationAddress] = {}
+        start_word_id = self._word_balance(state, controls, targets)
+        for c, t in zip(controls, targets):
             c_addr = state.layout[c]
             t_addr = state.layout[t]
 
@@ -162,11 +160,11 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         ):
             return []
 
-        diffs = [
+        diffs = (
             ele
             for ele in zip(state_before.layout, state_after.layout)
             if ele[0] != ele[1]
-        ]
+        )
 
         diff_moves_dict: dict[
             tuple[int, int],
@@ -175,13 +173,12 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         same_moves_dict = dict(diff_moves_dict)
         for src, dst in diffs:
+            site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
             if src.word_id != dst.word_id:
-                site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
                 diff_moves_dict.setdefault((dst.word_id, src.word_id), {}).setdefault(
                     (site_bus_id, site_bus_direction), []
                 ).append((src, dst))
             else:
-                site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
                 same_moves_dict.setdefault((src.word_id, src.word_id), {}).setdefault(
                     (site_bus_id, site_bus_direction), []
                 ).append((src, dst))
