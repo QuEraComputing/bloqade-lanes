@@ -167,11 +167,6 @@ class LocationAddress(Encoder):
 class LaneAddress(Encoder):
     direction: Direction
 
-    @abc.abstractmethod
-    def src_site(self) -> LocationAddress:
-        """Get the source site as a PhysicalAddress."""
-        pass
-
     def reverse(self):
         new_direction = (
             Direction.BACKWARD
@@ -179,6 +174,11 @@ class LaneAddress(Encoder):
             else Direction.FORWARD
         )
         return replace(self, direction=new_direction)
+
+    @abc.abstractmethod
+    def src_site(self) -> LocationAddress:
+        """Get the source site as a PhysicalAddress."""
+        pass
 
 
 @dataclass(frozen=True)
