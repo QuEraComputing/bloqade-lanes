@@ -1,3 +1,4 @@
+from bloqade.internal.analysis.placement.lattice import ConcreteState
 from kirin import exception, interp, ir, types
 from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
@@ -173,4 +174,12 @@ class PlacementMethods(interp.MethodTable):
         stmt: StaticCircuit,
     ):
         initial_state = _interp.get_inintial_state(stmt.qubits)
-        _interp.frame_call_region(frame, stmt, stmt.body, initial_state)
+        final_state = _interp.frame_call_region(frame, stmt, stmt.body, initial_state)
+
+        ret = (AtomState.bottom(),) * len(stmt.results)
+
+        if isinstance(final_state, ConcreteState):
+            for qid, qubit in enumerate(stmt.qubits):
+                _interp.move_count[qubit] += final_state.move_count[qid]
+
+        return ret
