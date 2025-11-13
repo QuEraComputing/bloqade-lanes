@@ -53,5 +53,13 @@ class ConcreteState(AtomState):
     move_count: tuple[int, ...] = field(compare=False)
     """Stores the number of moves each atom has undergone."""
 
+    def __post_init__(self):
+        assert self.occupied.isdisjoint(
+            self.layout
+        ), "layout can't containe occupied location addresses"
+        assert len(set(self.layout)) == len(
+            self.layout
+        ), "Atoms can't occupy the same location"
+
     def is_subseteq(self, other: AtomState) -> bool:
         return self == other
