@@ -41,7 +41,7 @@ class PlacementAnalysis(Forward[AtomState]):
     """The strategy function to use for calculating placements."""
     lattice = AtomState
 
-    def get_initial_state(self, qubits: tuple[ir.SSAValue, ...]):
+    def get_inintial_state(self, qubits: tuple[ir.SSAValue, ...]):
         occupied = set(self.initial_layout)
         layout = []
         for q in qubits:

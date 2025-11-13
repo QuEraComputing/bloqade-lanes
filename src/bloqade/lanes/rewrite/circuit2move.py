@@ -172,7 +172,7 @@ class RewriteR(RewriteRule):
 class RewriteRz(RewriteRule):
     """Rewrite Rz circuit statements to move Rz statements.
 
-    Requires placement analysis to know where the qubits are located to do the rewrite.
+    requires placement analysis to know where the qubits are located to do the rewrite.
 
     """
 
