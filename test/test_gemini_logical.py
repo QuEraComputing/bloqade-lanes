@@ -35,7 +35,3 @@ def plot():
     arch_physical.plot(show_words=tuple(range(16)), show_inter=(3,), ax=axs[1, 1])
 
     plt.show()
-
-
-if __name__ == "__main__":
-    test_architecture_generation()
