@@ -35,6 +35,7 @@ class PathFinder:
         self.physical_address_map.update(
             {site: i for i, site in enumerate(self.physical_addresses)}
         )
+        self.site_graph.add_nodes_from(range(len(self.physical_addresses)))
 
         for bus_id, bus in enumerate(self.spec.site_buses):
             for word_id in self.spec.has_site_buses:

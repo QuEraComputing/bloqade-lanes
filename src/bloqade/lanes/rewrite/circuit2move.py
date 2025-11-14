@@ -13,7 +13,9 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 @dataclass
 class MoveSchedulerABC(abc.ABC):
     arch_spec: ArchSpec
-    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(init=False)
+    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(
+        init=False, default_factory=dict
+    )
 
     def __post_init__(self):
         for zone_id, zone in enumerate(self.arch_spec.zones):

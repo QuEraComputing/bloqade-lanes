@@ -15,7 +15,6 @@ def test_architecture_generation():
 
 def plot():
     arch_physical = generate_arch()
-
     f, axs = plt.subplots(1, 1)
 
     ax = arch_physical.plot(
@@ -36,3 +35,7 @@ def plot():
     arch_physical.plot(show_words=tuple(range(16)), show_inter=(3,), ax=axs[1, 1])
 
     plt.show()
+
+
+if __name__ == "__main__":
+    test_architecture_generation()

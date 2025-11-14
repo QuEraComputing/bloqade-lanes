@@ -1,10 +1,9 @@
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any, Generator
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
 from bloqade.lanes.gemini import generate_arch
-from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
@@ -12,7 +11,6 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
-from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
 
 
@@ -137,13 +135,11 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         return state  # No movement for single-qubit gates
 
 
-@dataclass
+@dataclass(init=False)
 class LogicalMoveScheduler(MoveSchedulerABC):
-    arch_spec: ArchSpec = field(init=False, default=generate_arch(1))
-    path_finder: PathFinder = field(init=False)
 
-    def __post_init__(self):
-        self.path_finder = PathFinder(self.arch_spec)
+    def __init__(self):
+        super().__init__(generate_arch(1))
 
     def get_direction(self, diff: int) -> Direction:
         if diff > 0:

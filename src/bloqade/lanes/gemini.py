@@ -36,7 +36,7 @@ def generate_arch(hypercube_dims: int = 4):
     )
 
     word_buses: list[Bus] = []
-    for shift in range(4):
+    for shift in range(hypercube_dims):
         m = 1 << shift
 
         srcs = []
