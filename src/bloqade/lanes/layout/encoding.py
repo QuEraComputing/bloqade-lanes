@@ -185,7 +185,7 @@ class LaneAddress(Encoder):
 class SiteLaneAddress(LaneAddress):
     word_id: int
     site_id: int
-    lane_id: int
+    bus_id: int
 
     def src_site(self):
         return LocationAddress(self.word_id, self.site_id)
@@ -203,10 +203,10 @@ class SiteLaneAddress(LaneAddress):
             raise ValueError("Unsupported encoding type")
 
         word_id_enc = mask & self.word_id
-        lane_id_enc = mask & self.lane_id
+        lane_id_enc = mask & self.bus_id
         site_id_enc = mask & self.site_id
 
-        if lane_id_enc != self.lane_id:
+        if lane_id_enc != self.bus_id:
             raise ValueError("Lane ID too large to encode")
 
         if site_id_enc != self.site_id:

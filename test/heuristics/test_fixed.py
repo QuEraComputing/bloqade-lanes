@@ -259,10 +259,10 @@ def test_move_scheduler_compute_moves():
     assert moves == [
         (
             SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=0, lane_id=0
+                direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=0
             ),
             SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=2, lane_id=0
+                direction=Direction.FORWARD, word_id=0, site_id=2, bus_id=0
             ),
         ),
         (
@@ -301,14 +301,6 @@ def test_move_scheduler_compute_moves_same_word():
 
     moves = move_scheduler.compute_moves(state_before, state_after)
     assert moves == [
-        (
-            SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=0, lane_id=1
-            ),
-        ),
-        (
-            SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=1, site_id=0, lane_id=1
-            ),
-        ),
+        (SiteLaneAddress(direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=1),),
+        (SiteLaneAddress(direction=Direction.FORWARD, word_id=1, site_id=0, bus_id=1),),
     ]
