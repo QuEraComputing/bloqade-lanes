@@ -173,14 +173,11 @@ class ArchSpec(Generic[SiteType]):
                     and bus1 == bus2
                 )
             case (
-                WordLaneAddress(dir1, start1, end1, site1),
-                WordLaneAddress(dir2, start2, end2, site2),
+                WordLaneAddress(dir1, word1, site1, bus1),
+                WordLaneAddress(dir2, word2, site2, bus2),
             ):
                 return (
-                    dir1 == dir2
-                    and start1 == start2
-                    and end1 == end2
-                    and site1 != site2
+                    dir1 == dir2 and word1 == word2 and site1 != site2 and bus1 == bus2
                 )
             case _:
                 return False
