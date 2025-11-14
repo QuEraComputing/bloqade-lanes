@@ -2,7 +2,12 @@ import pytest
 
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
 from bloqade.lanes.heuristics import fixed
-from bloqade.lanes.layout.encoding import Direction, LocationAddress
+from bloqade.lanes.layout.encoding import (
+    Direction,
+    LocationAddress,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 
 
 def cz_placement_cases():
@@ -225,3 +230,85 @@ def test_move_scheduler_get_site_bus_id():
     bus_id, direction = move_scheduler.get_site_bus_id(loc3, loc4)
     assert bus_id == 2
     assert direction == Direction.BACKWARD
+
+
+def test_move_scheduler_compute_moves():
+    move_scheduler = fixed.LogicalMoveScheduler()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 0),
+            LocationAddress(0, 2),
+            LocationAddress(1, 0),
+            LocationAddress(1, 2),
+        ),
+        move_count=(0, 0, 0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(1, 1),
+            LocationAddress(1, 3),
+            LocationAddress(1, 0),
+            LocationAddress(1, 2),
+        ),
+        move_count=(1, 1, 0, 0),
+    )
+
+    moves = move_scheduler.compute_moves(state_before, state_after)
+    assert moves == [
+        (
+            SiteLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=0, lane_id=0
+            ),
+            SiteLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=2, lane_id=0
+            ),
+        ),
+        (
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=2, bus_id=0
+            ),
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=4, bus_id=0
+            ),
+        ),
+    ]
+
+
+def test_move_scheduler_compute_moves_same_word():
+    move_scheduler = fixed.LogicalMoveScheduler()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 0),
+            LocationAddress(0, 2),
+            LocationAddress(1, 0),
+            LocationAddress(1, 2),
+        ),
+        move_count=(0, 0, 0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 3),
+            LocationAddress(0, 2),
+            LocationAddress(1, 3),
+            LocationAddress(1, 2),
+        ),
+        move_count=(1, 1, 0, 0),
+    )
+
+    moves = move_scheduler.compute_moves(state_before, state_after)
+    assert moves == [
+        (
+            SiteLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=0, lane_id=1
+            ),
+        ),
+        (
+            SiteLaneAddress(
+                direction=Direction.FORWARD, word_id=1, site_id=0, lane_id=1
+            ),
+        ),
+    ]

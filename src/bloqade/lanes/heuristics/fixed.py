@@ -196,7 +196,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         for src, dst in diffs:
             site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
             if src.word_id != dst.word_id:
-                diff_moves_dict.setdefault((dst.word_id, src.word_id), {}).setdefault(
+                diff_moves_dict.setdefault((src.word_id, dst.word_id), {}).setdefault(
                     (site_bus_id, site_bus_direction), []
                 ).append((src, dst))
             else:
@@ -208,19 +208,20 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             len(diff_moves_dict) <= 1
         ), "Multiple word bus moves detected, which should not happen in logical architecture"
 
-        ((src_word_id, dst_word_id),) = diff_moves_dict.keys()
-        diff_sites_dict = diff_moves_dict[(src_word_id, dst_word_id)]
+        moves: list[tuple[LaneAddress, ...]] = []
+        if len(diff_moves_dict) > 0:
+            ((src_word_id, dst_word_id),) = diff_moves_dict.keys()
+            diff_sites_dict = diff_moves_dict[(src_word_id, dst_word_id)]
 
-        moves = list(self._yield_site_moves(diff_sites_dict))
-
-        direction = self.get_direction(dst_word_id - src_word_id)
-        moves.append(
-            tuple(
-                WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
-                for sites in diff_sites_dict.values()
-                for _, dst in sites
+            moves.extend(self._yield_site_moves(diff_sites_dict))
+            direction = self.get_direction(dst_word_id - src_word_id)
+            moves.append(
+                tuple(
+                    WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
+                    for sites in diff_sites_dict.values()
+                    for _, dst in sites
+                )
             )
-        )
 
         for sites_dict in same_moves_dict.values():
             moves.extend(self._yield_site_moves(sites_dict))
