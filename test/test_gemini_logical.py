@@ -15,7 +15,6 @@ def test_architecture_generation():
 
 def plot():
     arch_physical = generate_arch()
-
     f, axs = plt.subplots(1, 1)
 
     ax = arch_physical.plot(

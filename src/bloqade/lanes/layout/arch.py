@@ -3,7 +3,12 @@ from typing import Generic, Sequence
 
 import numpy as np
 
-from bloqade.lanes.layout.encoding import EncodingType
+from bloqade.lanes.layout.encoding import (
+    EncodingType,
+    LaneAddress,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 
 from .word import SiteType, Word
 
@@ -153,3 +158,29 @@ class ArchSpec(Generic[SiteType]):
             **scatter_kwargs,
         )
         plt.show()
+
+    def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
+        """Check if two lanes are compatible (can be executed in parallel)."""
+        match (lane1, lane2):
+            case (
+                SiteLaneAddress(dir1, word1, site1, bus1),
+                SiteLaneAddress(dir2, word2, site2, bus2),
+            ):
+                return (
+                    dir1 == dir2
+                    and (word2 in self.site_bus_compatibility[word1])
+                    and site1 != site2
+                    and bus1 == bus2
+                )
+            case (
+                WordLaneAddress(dir1, start1, end1, site1),
+                WordLaneAddress(dir2, start2, end2, site2),
+            ):
+                return (
+                    dir1 == dir2
+                    and start1 == start2
+                    and end1 == end2
+                    and site1 != site2
+                )
+            case _:
+                return False

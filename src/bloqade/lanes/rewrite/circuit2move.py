@@ -11,9 +11,11 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 
 
 @dataclass
-class MoveHeuristicABC(abc.ABC):
+class MoveSchedulerABC(abc.ABC):
     arch_spec: ArchSpec
-    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(init=False)
+    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(
+        init=False, default_factory=dict
+    )
 
     def __post_init__(self):
         for zone_id, zone in enumerate(self.arch_spec.zones):
@@ -46,7 +48,7 @@ class MoveHeuristicABC(abc.ABC):
 
 @dataclass
 class InsertMoves(RewriteRule):
-    move_heuristic: MoveHeuristicABC
+    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
@@ -102,7 +104,7 @@ class RewriteCZ(RewriteRule):
     """
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
-    move_heuristic: MoveHeuristicABC
+    move_heuristic: MoveSchedulerABC
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, circuit.CZ):
@@ -172,7 +174,7 @@ class RewriteR(RewriteRule):
 class RewriteRz(RewriteRule):
     """Rewrite Rz circuit statements to move Rz statements.
 
-    Requires placement analysis to know where the qubits are located to do the rewrite.
+    requires placement analysis to know where the qubits are located to do the rewrite.
 
     """
 
@@ -217,7 +219,7 @@ class RewriteRz(RewriteRule):
 class InsertMeasure(RewriteRule):
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
-    move_heuristic: MoveHeuristicABC
+    move_heuristic: MoveSchedulerABC
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, circuit.EndMeasure):

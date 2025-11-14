@@ -167,11 +167,6 @@ class LocationAddress(Encoder):
 class LaneAddress(Encoder):
     direction: Direction
 
-    @abc.abstractmethod
-    def src_site(self) -> LocationAddress:
-        """Get the source site as a PhysicalAddress."""
-        pass
-
     def reverse(self):
         new_direction = (
             Direction.BACKWARD
@@ -179,6 +174,11 @@ class LaneAddress(Encoder):
             else Direction.FORWARD
         )
         return replace(self, direction=new_direction)
+
+    @abc.abstractmethod
+    def src_site(self) -> LocationAddress:
+        """Get the source site as a PhysicalAddress."""
+        pass
 
 
 @dataclass(frozen=True)
@@ -228,12 +228,12 @@ class SiteLaneAddress(LaneAddress):
 
 @dataclass(frozen=True)
 class WordLaneAddress(LaneAddress):
-    start_word_id: int
-    end_word_id: int
-    lane_id: int
+    word_id: int
+    site_id: int
+    bus_id: int
 
     def src_site(self):
-        return LocationAddress(self.start_word_id, self.lane_id)
+        return LocationAddress(self.word_id, self.bus_id)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -247,22 +247,22 @@ class WordLaneAddress(LaneAddress):
         else:
             raise ValueError("Unsupported encoding type")
 
-        lane_id_enc = mask & self.lane_id
-        start_word_id = mask & self.start_word_id
-        end_word_id = mask & self.end_word_id
+        bus_id_enc = mask & self.bus_id
+        word_id_enc = mask & self.word_id
+        site_id_enc = mask & self.site_id
 
-        if lane_id_enc != self.lane_id:
+        if bus_id_enc != self.bus_id:
             raise ValueError("Lane ID too large to encode")
 
-        if start_word_id != self.start_word_id:
-            raise ValueError("Start word ID too large to encode")
+        if word_id_enc != self.word_id:
+            raise ValueError("Word ID too large to encode")
 
-        if end_word_id != self.end_word_id:
-            raise ValueError("End word ID too large to encode")
+        if site_id_enc != self.site_id:
+            raise ValueError("Site ID too large to encode")
 
-        address = lane_id_enc
-        address |= end_word_id << shift
-        address |= start_word_id << (2 * shift)
+        address = bus_id_enc
+        address |= word_id_enc << shift
+        address |= site_id_enc << (2 * shift)
         address |= MoveTypeEnum.INTER.value << (3 * shift + padding)
         address |= self.direction.value << (3 * shift + padding + 1)
         assert address.bit_length() <= (

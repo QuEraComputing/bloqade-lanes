@@ -3,10 +3,10 @@ from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
 
 from bloqade import types as bloqade_types
-from bloqade.lanes.analysis.placement import AtomState, PlacementAnalysis
+from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
-dialect = ir.Dialect(name="lowlevel.circuit")
+dialect = ir.Dialect(name="lanes.circuit")
 
 
 @statement(dialect=dialect)
@@ -84,7 +84,7 @@ class Yield(ir.Statement):
 
 @statement(dialect=dialect)
 class StaticCircuit(ir.Statement):
-    """This statement represents a static circuit to be executed on the hardware.
+    """This statement represents A static circuit to be executed on the hardware.
 
     The body region contains the low-level instructions to be executed.
     The inputs are the squin qubits to be used in the execution.
@@ -124,7 +124,7 @@ class StaticCircuit(ir.Statement):
         last_stmt = body_block.last_stmt
         if not isinstance(last_stmt, Yield):
             raise exception.StaticCheckError(
-                "StaticCircuit body must end with a Yield statement"
+                "StaticCircuit body must end with an EndMeasure statement"
             )
 
         if len(last_stmt.classical_results) != len(self.results):
@@ -172,5 +172,13 @@ class PlacementMethods(interp.MethodTable):
         frame: ForwardFrame[AtomState],
         stmt: StaticCircuit,
     ):
-        initial_state = _interp.get_initial_state(stmt.qubits)
-        _interp.frame_call_region(frame, stmt, stmt.body, initial_state)
+        initial_state = _interp.get_inintial_state(stmt.qubits)
+        final_state = _interp.frame_call_region(frame, stmt, stmt.body, initial_state)
+
+        ret = (AtomState.bottom(),) * len(stmt.results)
+
+        if isinstance(final_state, ConcreteState):
+            for qid, qubit in enumerate(stmt.qubits):
+                _interp.move_count[qubit] += final_state.move_count[qid]
+
+        return ret

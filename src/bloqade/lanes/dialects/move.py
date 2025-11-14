@@ -6,7 +6,7 @@ from bloqade import types as bloqade_types
 from ..layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from ..types import MeasurementFutureType
 
-dialect = ir.Dialect(name="lowlevel.move")
+dialect = ir.Dialect(name="lanes.move")
 
 
 @statement(dialect=dialect)
