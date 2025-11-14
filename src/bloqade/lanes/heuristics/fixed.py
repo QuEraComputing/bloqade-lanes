@@ -75,7 +75,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
     ):
         c_addr = state.layout[control]
         t_addr = state.layout[target]
-        if c_addr.word_id == start_word_id:
+        if c_addr.word_id == t_addr.word_id:
             if (
                 state.move_count[control] <= state.move_count[target]
             ):  # move control to target
