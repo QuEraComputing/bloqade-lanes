@@ -15,10 +15,10 @@ from .word import SiteType, Word
 
 @dataclass(frozen=True)
 class Bus:
-    """A group of inter-lanes that can be executed in parallel.
+    """A group of word-buses that can be executed in parallel.
 
-    For inter-lanes, src and dst are the word indices involved in the inter-lane.
-    For intra-lanes, src are the source site indices and dst are the destination site indices.
+    For word-buses, src and dst are the word indices involved in the word-bus.
+    For site-buses, src are the source site indices and dst are the destination site indices.
 
     """
 
@@ -33,9 +33,9 @@ class ArchSpec(Generic[SiteType]):
     zones: tuple[tuple[int, ...], ...]
     """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
     has_site_buses: frozenset[int]
-    """Set of words that have site-lane moves."""
-    has_word_buses: frozenset[int]  # set of sites in word that have inter-lanes moves
-    """Set of sites (by index) that have word-lane moves. These sites are the same across all words."""
+    """Set of words that have site-bus moves."""
+    has_word_buses: frozenset[int]
+    """Set of sites (by index) that have word-bus moves. These sites are the same across all words."""
     site_buses: tuple[Bus, ...]
     """List of all site buses in the architecture by site address."""
     word_buses: tuple[Bus, ...]
