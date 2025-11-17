@@ -2,7 +2,7 @@ from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Any, Generator
 
-import rustworkx as rx
+from kirin import interp
 
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
@@ -239,70 +239,96 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
     arch_spec: ArchSpec = field(default=generate_arch(1))
 
-    def compute_layout(
+    def layout_from_weights(
         self,
-        stages: list[tuple[tuple[int, int], ...]],
+        edges: dict[tuple[int, int], int],
+        largest_address: int,
     ) -> tuple[LocationAddress, ...]:
-        graph = rx.PyGraph()
+        left_atoms = []
+        right_atoms = []
 
-        largest_address = max(
-            node for edge in chain.from_iterable(stages) for node in edge
+        weighted_degrees = {i: 0 for i in range(largest_address + 1)}
+
+        for (n, m), weight in edges.items():
+            weighted_degrees[n] += weight
+            weighted_degrees[m] += weight
+
+        unassigned = sorted(
+            weighted_degrees.keys(),
+            key=lambda x: (weighted_degrees[x], x),
         )
 
-        edges = {}
+        def get_weight(addr: int, curr_atoms: list[int], other_atoms: list[int]):
 
-        for control, target in chain.from_iterable(stages):
-            edge_weight = edges.get((control, target), 0)
-            edges[(control, target)] = edge_weight + 1
-            edges[(target, control)] = edge_weight + 1
+            weight = 0
+            for same in curr_atoms:
+                edge = (min(addr, same), max(addr, same))
+                weight += 2 * edges.get(edge, 0)
 
-        graph.add_nodes_from(range(largest_address + 1))
+            for other in other_atoms:
+                edge = (min(addr, other), max(addr, other))
+                weight += edges.get(edge, 0)
 
-        for (src, dst), weight in edges.items():
-            graph.add_edge(src, dst, weight)
+            return weight
 
-        left_sides = list()
-        right_sides = list()
-        current_side, other_side = left_sides, right_sides
-        stack = [0]
-        visited = set()
-        while stack:
-            addr = stack.pop()
-            current_side.append(addr)
-            visited.add(addr)
+        while unassigned:
+            addr = unassigned.pop()
 
-            def get_weight(n):
-                data: int = graph.get_edge_data(addr, n)
-                if data is None:
-                    return 0
-                return data
+            left_weight = get_weight(addr, left_atoms, right_atoms)
+            right_weight = get_weight(addr, right_atoms, left_atoms)
 
-            neighbors = sorted(graph.neighbors(addr), key=get_weight, reverse=False)
-
-            for neighbor in neighbors:
-                if neighbor not in visited:
-                    stack.append(neighbor)
-                    break
-
-            # swap sides
-            current_side, other_side = other_side, current_side
-
-        missing = visited.symmetric_difference(range(largest_address + 1))
-        for i, addr in enumerate(missing):
-            if i % 2 == 0:
-                left_sides.append(addr)
+            if right_weight < left_weight:
+                is_best_list, not_best_list = left_atoms, right_atoms
             else:
-                right_sides.append(addr)
+                is_best_list, not_best_list = right_atoms, left_atoms
+
+            if len(is_best_list) < 5:
+                is_best_list.append(addr)
+            else:
+                not_best_list.append(addr)
 
         layout_map = {}
-        for i, addr in enumerate(left_sides):
-            layout_map[LocationAddress(word_id=0, site_id=i * 2)] = addr
+        for i, addr in enumerate(left_atoms):
+            layout_map[
+                LocationAddress(
+                    word_id=0,
+                    site_id=i * 2,
+                )
+            ] = addr
 
-        for i, addr in enumerate(right_sides):
-            layout_map[LocationAddress(word_id=1, site_id=i * 2)] = addr
+        for i, addr in enumerate(right_atoms):
+            layout_map[
+                LocationAddress(
+                    word_id=1,
+                    site_id=i * 2,
+                )
+            ] = addr
 
         # invert layout
         final_layout = list(layout_map.keys())
         final_layout.sort(key=lambda x: layout_map[x])
 
         return tuple(final_layout)
+
+    def compute_layout(
+        self,
+        stages: list[tuple[tuple[int, int], ...]],
+    ) -> tuple[LocationAddress, ...]:
+
+        largest_address = max(
+            node for edge in chain.from_iterable(stages) for node in edge
+        )
+
+        if largest_address >= self.arch_spec.max_qubits:
+            raise interp.InterpreterError(
+                "Number of qubits in circuit exceeds maximum supported by logical architecture"
+            )
+
+        edges = {}
+
+        for control, target in chain.from_iterable(stages):
+            n, m = min(control, target), max(control, target)
+            edge_weight = edges.get((n, m), 0)
+            edges[(n, m)] = edge_weight + 1
+
+        return self.layout_from_weights(edges, largest_address)

@@ -47,6 +47,12 @@ class ArchSpec(Generic[SiteType]):
     def __post_init__(self):
         object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
 
+    @property
+    def max_qubits(self) -> int:
+        """Get the maximum number of qubits supported by this architecture."""
+        num_sites_per_word = len(self.words[0].sites)
+        return len(self.words) * num_sites_per_word // 2
+
     def plot(
         self,
         ax=None,

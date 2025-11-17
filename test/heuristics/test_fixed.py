@@ -316,14 +316,28 @@ def test_move_scheduler_compute_moves_same_word():
 
 def test_initial_layout():
     layout_heuristic = fixed.LogicalLayoutHeuristic()
-    stages = [
-        ((0, 2), (1, 3)),
-        ((0, 1), (2, 3)),
-        ((0, 2), (1, 3)),
-    ]
+    edges = {(i, j): 1 for i in range(10) for j in range(i + 1, 10, 1)}
+    edges[(0, 1)] = 10
+    edges[(2, 3)] = 9
+    edges[(4, 5)] = 8
+    edges[(6, 7)] = 7
+    edges[(8, 9)] = 6
 
-    layout = layout_heuristic.compute_layout(stages)
-    print(layout)
+    edges = sum((weight * ((edge),) for edge, weight in edges.items()), ())
+
+    layout = layout_heuristic.compute_layout([edges])
+    assert layout == (
+        LocationAddress(word_id=1, site_id=2),
+        LocationAddress(word_id=1, site_id=0),
+        LocationAddress(word_id=1, site_id=6),
+        LocationAddress(word_id=1, site_id=4),
+        LocationAddress(word_id=0, site_id=0),
+        LocationAddress(word_id=1, site_id=8),
+        LocationAddress(word_id=0, site_id=4),
+        LocationAddress(word_id=0, site_id=2),
+        LocationAddress(word_id=0, site_id=8),
+        LocationAddress(word_id=0, site_id=6),
+    )
 
 
 if __name__ == "__main__":
