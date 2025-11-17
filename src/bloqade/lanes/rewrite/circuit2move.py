@@ -2,6 +2,7 @@ import abc
 from dataclasses import dataclass, field
 
 from kirin import ir
+from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
@@ -283,4 +284,23 @@ class RemoveNoOpCircuits(RewriteRule):
 
         node.delete()
 
+        return RewriteResult(has_done_something=True)
+
+
+@dataclass
+class InsertInitialize(RewriteRule):
+    initial_layout: tuple[LocationAddress, ...]
+
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not isinstance(node, func.Function):
+            return RewriteResult()
+
+        first_stmt = node.body.blocks[0].first_stmt
+
+        if first_stmt is None or isinstance(first_stmt, move.Initialize):
+            return RewriteResult()
+
+        move.Initialize(location_addresses=self.initial_layout).insert_before(
+            first_stmt
+        )
         return RewriteResult(has_done_something=True)

@@ -15,10 +15,10 @@ from .word import SiteType, Word
 
 @dataclass(frozen=True)
 class Bus:
-    """A group of inter-lanes that can be executed in parallel.
+    """A group of word-buses that can be executed in parallel.
 
-    For inter-lanes, src and dst are the word indices involved in the inter-lane.
-    For intra-lanes, src are the source site indices and dst are the destination site indices.
+    For word-buses, src and dst are the word indices involved in the word-bus.
+    For site-buses, src are the source site indices and dst are the destination site indices.
 
     """
 
@@ -33,15 +33,17 @@ class ArchSpec(Generic[SiteType]):
     zones: tuple[tuple[int, ...], ...]
     """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
     has_site_buses: frozenset[int]
-    """Set of words that have site-lane moves."""
-    has_word_buses: frozenset[int]  # set of sites in word that have inter-lanes moves
-    """Set of sites (by index) that have word-lane moves. These sites are the same across all words."""
+    """Set of words that have site-bus moves."""
+    has_word_buses: frozenset[int]
+    """Set of sites (by index) that have word-bus moves. These sites are the same across all words."""
     site_buses: tuple[Bus, ...]
     """List of all site buses in the architecture by site address."""
     word_buses: tuple[Bus, ...]
     """List of all word buses in the architecture by word address."""
     site_bus_compatibility: tuple[frozenset[int], ...]
     """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
+    wird_bus_compatibility: tuple[frozenset[int], ...]
+    """Mapping from site id indicating which other site ids can execute word-buses in parallel."""
     encoding: EncodingType = field(init=False)
 
     def __post_init__(self):
@@ -167,26 +169,15 @@ class ArchSpec(Generic[SiteType]):
 
     def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
         """Check if two lanes are compatible (can be executed in parallel)."""
-        match (lane1, lane2):
-            case (
-                SiteLaneAddress(dir1, word1, site1, bus1),
-                SiteLaneAddress(dir2, word2, site2, bus2),
-            ):
-                return (
-                    dir1 == dir2
-                    and (word2 in self.site_bus_compatibility[word1])
-                    and site1 != site2
-                    and bus1 == bus2
-                )
-            case (
-                WordLaneAddress(dir1, start1, end1, site1),
-                WordLaneAddress(dir2, start2, end2, site2),
-            ):
-                return (
-                    dir1 == dir2
-                    and start1 == start2
-                    and end1 == end2
-                    and site1 != site2
-                )
-            case _:
-                return False
+        if isinstance(lane1, (WordLaneAddress, SiteLaneAddress)) and isinstance(
+            lane2, (WordLaneAddress, SiteLaneAddress)
+        ):
+            return (
+                type(lane1) is type(lane2)
+                and lane1.direction == lane2.direction
+                and (lane2.word_id in self.site_bus_compatibility[lane1.word_id])
+                and lane1.site_id != lane2.site_id
+                and lane1.bus_id == lane2.bus_id
+            )
+
+        return False
