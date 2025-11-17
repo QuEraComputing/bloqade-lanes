@@ -245,15 +245,9 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
     ) -> tuple[LocationAddress, ...]:
         graph = rx.PyGraph()
 
-        all_global_addresses = sorted(
-            set(node for edge in chain.from_iterable(stages) for node in edge)
+        largest_address = max(
+            node for edge in chain.from_iterable(stages) for node in edge
         )
-        assert all_global_addresses == list(
-            range(len(all_global_addresses))
-        ), f"{all_global_addresses} does not form a contiguous set starting from 0"
-
-        for global_addr in all_global_addresses:
-            graph.add_node(global_addr)
 
         edges = {}
 
@@ -261,6 +255,8 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             edge_weight = edges.get((control, target), 0)
             edges[(control, target)] = edge_weight + 1
             edges[(target, control)] = edge_weight + 1
+
+        graph.add_nodes_from(range(largest_address + 1))
 
         for (src, dst), weight in edges.items():
             graph.add_edge(src, dst, weight)
@@ -291,8 +287,14 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             # swap sides
             current_side, other_side = other_side, current_side
 
-        layout_map = {}
+        missing = visited.symmetric_difference(range(largest_address + 1))
+        for i, addr in enumerate(missing):
+            if i % 2 == 0:
+                left_sides.append(addr)
+            else:
+                right_sides.append(addr)
 
+        layout_map = {}
         for i, addr in enumerate(left_sides):
             layout_map[LocationAddress(word_id=0, site_id=i * 2)] = addr
 
