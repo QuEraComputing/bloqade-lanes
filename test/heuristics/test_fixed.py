@@ -312,3 +312,19 @@ def test_move_scheduler_compute_moves_same_word():
             ),
         ),
     ]
+
+
+def test_initial_layout():
+    layout_heuristic = fixed.LogicalLayoutHeuristic()
+    stages = [
+        ((0, 2), (1, 3)),
+        ((0, 1), (2, 3)),
+        ((0, 2), (1, 3)),
+    ]
+
+    layout = layout_heuristic.compute_layout(stages)
+    print(layout)
+
+
+if __name__ == "__main__":
+    test_initial_layout()

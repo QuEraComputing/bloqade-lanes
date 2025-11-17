@@ -1,9 +1,14 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from itertools import chain
 from typing import Any, Generator
 
+import rustworkx as rx
+
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
 from bloqade.lanes.gemini import generate_arch
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
@@ -228,3 +233,74 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             # no word bus move needed here
 
         return moves
+
+
+@dataclass
+class LogicalLayoutHeuristic(LayoutHeuristicABC):
+    arch_spec: ArchSpec = field(default=generate_arch(1))
+
+    def compute_layout(
+        self,
+        stages: list[tuple[tuple[int, int], ...]],
+    ) -> tuple[LocationAddress, ...]:
+        graph = rx.PyGraph()
+
+        all_global_addresses = sorted(
+            set(node for edge in chain.from_iterable(stages) for node in edge)
+        )
+        assert all_global_addresses == list(
+            range(len(all_global_addresses))
+        ), f"{all_global_addresses} does not form a contiguous set starting from 0"
+
+        for global_addr in all_global_addresses:
+            graph.add_node(global_addr)
+
+        edges = {}
+
+        for control, target in chain.from_iterable(stages):
+            edge_weight = edges.get((control, target), 0)
+            edges[(control, target)] = edge_weight + 1
+            edges[(target, control)] = edge_weight + 1
+
+        for (src, dst), weight in edges.items():
+            graph.add_edge(src, dst, weight)
+
+        left_sides = list()
+        right_sides = list()
+        current_side, other_side = left_sides, right_sides
+        stack = [0]
+        visited = set()
+        while stack:
+            addr = stack.pop()
+            current_side.append(addr)
+            visited.add(addr)
+
+            def get_weight(n):
+                data: int = graph.get_edge_data(addr, n)
+                if data is None:
+                    return 0
+                return data
+
+            neighbors = sorted(graph.neighbors(addr), key=get_weight, reverse=False)
+
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    stack.append(neighbor)
+                    break
+
+            # swap sides
+            current_side, other_side = other_side, current_side
+
+        layout_map = {}
+
+        for i, addr in enumerate(left_sides):
+            layout_map[LocationAddress(word_id=0, site_id=i * 2)] = addr
+
+        for i, addr in enumerate(right_sides):
+            layout_map[LocationAddress(word_id=1, site_id=i * 2)] = addr
+
+        # invert layout
+        final_layout = list(layout_map.keys())
+        final_layout.sort(key=lambda x: layout_map[x])
+
+        return tuple(final_layout)
