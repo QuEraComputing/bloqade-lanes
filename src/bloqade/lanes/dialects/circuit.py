@@ -1,8 +1,11 @@
+from bloqade.analysis import address
 from kirin import exception, interp, ir, types
 from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
+from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
+from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
@@ -182,3 +185,41 @@ class PlacementMethods(interp.MethodTable):
                 _interp.move_count[qubit] += final_state.move_count[qid]
 
         return ret
+
+
+@dialect.register(key="circuit.layout")
+class InitialLayoutMethods(interp.MethodTable):
+
+    @interp.impl(CZ)
+    def cz(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: CZ,
+    ):
+        _interp.add_stage(stmt.controls, stmt.targets)
+
+        return ()
+
+    @interp.impl(StaticCircuit)
+    def static_circuit(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: StaticCircuit,
+    ):
+        initial_addresses = tuple(
+            _interp.address_entries[qubit] for qubit in stmt.qubits
+        )
+
+        if not types.is_tuple_of(initial_addresses, address.AddressQubit):
+            raise interp.InterpreterError(
+                "All qubits in StaticCircuit must have a valid address"
+            )
+
+        _interp.global_address_stack.extend(addr.data for addr in initial_addresses)
+        _interp.frame_call(frame, stmt, stmt.body, EmptyLattice.top())
+        # no nested circuits, so we can clear the stack here
+        _interp.global_address_stack.clear()
+
+        return tuple(EmptyLattice.bottom() for _ in stmt.results)

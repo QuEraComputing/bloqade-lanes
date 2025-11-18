@@ -1,9 +1,14 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from itertools import chain
 from typing import Any, Generator
 
+from kirin import interp
+
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
 from bloqade.lanes.gemini import generate_arch
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
@@ -228,3 +233,104 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             # no word bus move needed here
 
         return moves
+
+
+@dataclass
+class LogicalLayoutHeuristic(LayoutHeuristicABC):
+    arch_spec: ArchSpec = field(default=generate_arch(1))
+
+    def layout_from_weights(
+        self,
+        edges: dict[tuple[int, int], int],
+        weighted_degrees: dict[int, int],
+    ) -> tuple[LocationAddress, ...]:
+        left_atoms = []
+        right_atoms = []
+
+        unassigned = sorted(
+            weighted_degrees.keys(),
+            key=lambda x: (weighted_degrees[x], x),
+        )
+
+        def get_weight(addr: int, curr_atoms: list[int], other_atoms: list[int]):
+
+            weight = 0
+            for same in curr_atoms:
+                edge = (min(addr, same), max(addr, same))
+                weight += 2 * edges.get(edge, 0)
+
+            for other in other_atoms:
+                edge = (min(addr, other), max(addr, other))
+                weight += edges.get(edge, 0)
+
+            return weight
+
+        while unassigned:
+            addr = unassigned.pop()
+
+            left_weight = get_weight(addr, left_atoms, right_atoms)
+            right_weight = get_weight(addr, right_atoms, left_atoms)
+
+            if right_weight < left_weight:
+                best_list, not_best_list = left_atoms, right_atoms
+            else:
+                best_list, not_best_list = right_atoms, left_atoms
+
+            if len(best_list) < 5:
+                best_list.append(addr)
+            else:
+                not_best_list.append(addr)
+
+        layout_map = {}
+        for i, addr in enumerate(left_atoms):
+            layout_map[
+                LocationAddress(
+                    word_id=0,
+                    site_id=i * 2,
+                )
+            ] = addr
+
+        for i, addr in enumerate(right_atoms):
+            layout_map[
+                LocationAddress(
+                    word_id=1,
+                    site_id=i * 2,
+                )
+            ] = addr
+
+        # invert layout
+        final_layout = list(layout_map.keys())
+        final_layout.sort(key=lambda x: layout_map[x])
+
+        return tuple(final_layout)
+
+    def compute_layout(
+        self,
+        stages: list[tuple[tuple[int, int], ...]],
+    ) -> tuple[LocationAddress, ...]:
+
+        if not stages or not any(stages):
+            return ()
+        largest_address = max(
+            node for edge in chain.from_iterable(stages) for node in edge
+        )
+
+        if largest_address >= self.arch_spec.max_qubits:
+            raise interp.InterpreterError(
+                f"Number of qubits in circuit ({largest_address + 1}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
+            )
+
+        edges = {}
+
+        for control, target in chain.from_iterable(stages):
+            n, m = min(control, target), max(control, target)
+            edge_weight = edges.get((n, m), 0)
+            edges[(n, m)] = edge_weight + 1
+
+        weighted_degrees = {i: 0 for i in range(largest_address + 1)}
+
+        for (n, m), weight in edges.items():
+            weighted_degrees[n] += weight
+            weighted_degrees[m] += weight
+
+        return self.layout_from_weights(edges, weighted_degrees)

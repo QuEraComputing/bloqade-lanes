@@ -42,12 +42,18 @@ class ArchSpec(Generic[SiteType]):
     """List of all word buses in the architecture by word address."""
     site_bus_compatibility: tuple[frozenset[int], ...]
     """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
-    wird_bus_compatibility: tuple[frozenset[int], ...]
+    word_bus_compatibility: tuple[frozenset[int], ...]
     """Mapping from site id indicating which other site ids can execute word-buses in parallel."""
     encoding: EncodingType = field(init=False)
 
     def __post_init__(self):
         object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
+
+    @property
+    def max_qubits(self) -> int:
+        """Get the maximum number of qubits supported by this architecture."""
+        num_sites_per_word = len(self.words[0].sites)
+        return len(self.words) * num_sites_per_word // 2
 
     def plot(
         self,

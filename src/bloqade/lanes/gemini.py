@@ -56,6 +56,9 @@ def generate_arch(hypercube_dims: int = 4):
     site_bus_compatibility = tuple(
         frozenset(range(num_word_x)) for _ in range(num_word_x)
     )
+    word_bus_compatibility = tuple(
+        frozenset(range(num_word_x)) for _ in range(word_size_x)
+    )
     gate_zone = tuple(range(len(words)))
     return ArchSpec(
         words,
@@ -65,4 +68,5 @@ def generate_arch(hypercube_dims: int = 4):
         site_buses(word_size_y),
         tuple(word_buses),
         site_bus_compatibility,
+        word_bus_compatibility,
     )
