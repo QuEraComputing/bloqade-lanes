@@ -242,16 +242,10 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
     def layout_from_weights(
         self,
         edges: dict[tuple[int, int], int],
-        largest_address: int,
+        weighted_degrees: dict[int, int],
     ) -> tuple[LocationAddress, ...]:
         left_atoms = []
         right_atoms = []
-
-        weighted_degrees = {i: 0 for i in range(largest_address + 1)}
-
-        for (n, m), weight in edges.items():
-            weighted_degrees[n] += weight
-            weighted_degrees[m] += weight
 
         unassigned = sorted(
             weighted_degrees.keys(),
@@ -278,12 +272,12 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             right_weight = get_weight(addr, right_atoms, left_atoms)
 
             if right_weight < left_weight:
-                is_best_list, not_best_list = left_atoms, right_atoms
+                best_list, not_best_list = left_atoms, right_atoms
             else:
-                is_best_list, not_best_list = right_atoms, left_atoms
+                best_list, not_best_list = right_atoms, left_atoms
 
-            if len(is_best_list) < 5:
-                is_best_list.append(addr)
+            if len(best_list) < 5:
+                best_list.append(addr)
             else:
                 not_best_list.append(addr)
 
@@ -333,4 +327,10 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             edge_weight = edges.get((n, m), 0)
             edges[(n, m)] = edge_weight + 1
 
-        return self.layout_from_weights(edges, largest_address)
+        weighted_degrees = {i: 0 for i in range(largest_address + 1)}
+
+        for (n, m), weight in edges.items():
+            weighted_degrees[n] += weight
+            weighted_degrees[m] += weight
+
+        return self.layout_from_weights(edges, weighted_degrees)
