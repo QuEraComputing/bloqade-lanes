@@ -315,7 +315,7 @@ def test_initial_layout():
     edges[(6, 7)] = 7
     edges[(8, 9)] = 6
 
-    edges = sum((weight * ((edge),) for edge, weight in edges.items()), ())
+    edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
 
     layout = layout_heuristic.compute_layout([edges])
     assert layout == (

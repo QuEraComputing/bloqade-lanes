@@ -18,7 +18,21 @@ class LayoutHeuristicABC(abc.ABC):
         self,
         stages: list[tuple[tuple[int, int], ...]],
     ) -> tuple[LocationAddress, ...]:
-        """Run the placement heuristic algorithm."""
+        """
+        Compute the initial qubit layout from circuit stages.
+
+        Args:
+            stages: List of circuit stages, where each stage is a tuple of (control, target)
+                qubit pairs representing two-qubit gates. For example:
+                [
+                    ((control1, target1), (control2, target2)),  # stage 1
+                    ((control3, target3),),                      # stage 2
+                    ...
+                ]
+
+        Returns:
+            A tuple of LocationAddress objects mapping logical qubit indices to physical locations.
+        """
         ...  # pragma: no cover
 
 
