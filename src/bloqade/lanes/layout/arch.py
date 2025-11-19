@@ -4,8 +4,10 @@ from typing import Generic, Sequence
 import numpy as np
 
 from bloqade.lanes.layout.encoding import (
+    Direction,
     EncodingType,
     LaneAddress,
+    LocationAddress,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -181,3 +183,32 @@ class ArchSpec(Generic[SiteType]):
             )
 
         return False
+
+    def get_dst(self, lane_address: LaneAddress):
+        src = lane_address.src_site()
+        if isinstance(lane_address, WordLaneAddress):
+            bus = self.word_buses[lane_address.bus_id]
+            check_ids = (
+                bus.src if lane_address.direction is Direction.FORWARD else bus.dst
+            )
+            other_ids = (
+                bus.dst if lane_address.direction is Direction.FORWARD else bus.src
+            )
+            if src.word_id not in check_ids:
+                return None
+
+            dst_word = other_ids[check_ids.index(src.word_id)]
+            return LocationAddress(dst_word, src.site_id)
+        elif isinstance(lane_address, SiteLaneAddress):
+            bus = self.site_buses[lane_address.bus_id]
+            check_ids = (
+                bus.src if lane_address.direction is Direction.FORWARD else bus.dst
+            )
+            other_ids = (
+                bus.dst if lane_address.direction is Direction.FORWARD else bus.src
+            )
+            if src.site_id not in check_ids:
+                return None
+
+            dst_site = other_ids[check_ids.index(src.site_id)]
+            return LocationAddress(src.word_id, dst_site)
