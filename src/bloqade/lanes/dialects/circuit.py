@@ -75,7 +75,7 @@ class ConvertToPhysicalMeasurements(ir.Statement):
     """Convert logical measurement results to physical measurement results.
 
     This is a placeholder for a rewrite pass that will explicitly extract physical
-    measurement results from the future returned,
+    measurement results from the future returned, in the move dialect.
     """
 
     logical_measurements: tuple[ir.SSAValue, ...] = info.argument(
