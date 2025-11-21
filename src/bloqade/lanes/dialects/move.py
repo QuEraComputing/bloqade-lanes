@@ -58,6 +58,6 @@ class EndMeasure(ir.Statement):
 @statement(dialect=dialect)
 class GetMeasurementResult(ir.Statement):
     measurement_future: ir.SSAValue = info.argument(MeasurementFutureType)
-    index: int = info.attribute()
+    location_address: LocationAddress = info.attribute()
 
     result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)

@@ -245,7 +245,7 @@ class InsertMeasure(RewriteRule):
             zone_address, index = self.move_heuristic.zone_address_map[loc_addr]
             get_result_stmt = move.GetMeasurementResult(
                 measurement_future=futures[zone_address],
-                index=index,
+                location_address=loc_addr,
             )
             get_result_stmt.insert_before(node)
             result.replace_by(get_result_stmt.result)

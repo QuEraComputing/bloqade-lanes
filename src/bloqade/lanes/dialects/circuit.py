@@ -2,6 +2,7 @@ from bloqade.analysis import address
 from kirin import exception, interp, ir, types
 from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
+from kirin.dialects import ilist
 from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
@@ -67,6 +68,25 @@ class EndMeasure(QuantumStmt):
         result_types = tuple(bloqade_types.MeasurementResultType for _ in qubits)
         super().__init__(state, *result_types)
         self.qubits = qubits
+
+
+@statement(dialect=dialect)
+class ConvertToPhysicalMeasurements(ir.Statement):
+    """Convert logical measurement results to physical measurement results.
+
+    This is a placeholder for a rewrite pass that will explicitly extract physical
+    measurement results from the future returned,
+    """
+
+    logical_measurements: tuple[ir.SSAValue, ...] = info.argument(
+        type=bloqade_types.MeasurementResultType
+    )
+
+    result: ir.ResultValue = info.result(
+        type=ilist.IListType[
+            ilist.IListType[bloqade_types.MeasurementResultType, types.Any], types.Any
+        ]
+    )
 
 
 @statement(dialect=dialect)
