@@ -83,9 +83,7 @@ class ConvertToPhysicalMeasurements(ir.Statement):
     )
 
     result: ir.ResultValue = info.result(
-        type=ilist.IListType[
-            ilist.IListType[bloqade_types.MeasurementResultType, types.Any], types.Any
-        ]
+        type=ilist.IListType[ilist.IListType[bloqade_types.MeasurementResultType]]
     )
 
 
