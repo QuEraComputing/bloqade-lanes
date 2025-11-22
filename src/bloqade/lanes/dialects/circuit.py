@@ -12,14 +12,6 @@ from bloqade.lanes.types import StateType
 dialect = ir.Dialect(name="lanes.circuit")
 
 
-@statement(dialect=dialect)
-class ConstantFloat(ir.Statement):
-    traits = frozenset({ir.ConstantLike()})
-
-    value: float = info.attribute(type=types.Float)
-    result: ir.ResultValue = info.result(type=types.Float)
-
-
 @statement
 class QuantumStmt(ir.Statement):
     """This is a base class for all low level statements."""
@@ -96,7 +88,7 @@ class StaticCircuit(ir.Statement):
     the measurement results for the qubits depending on which low-level code was executed.
     """
 
-    traits = frozenset({ir.SSACFG()})
+    traits = frozenset({ir.SSACFG(), ir.HasCFG()})
     qubits: tuple[ir.SSAValue, ...] = info.argument(bloqade_types.QubitType)
     body: ir.Region = info.region(multi=False)
 
@@ -176,6 +168,7 @@ class PlacementMethods(interp.MethodTable):
         stmt: StaticCircuit,
     ):
         initial_state = _interp.get_inintial_state(stmt.qubits)
+
         final_state = _interp.frame_call_region(frame, stmt, stmt.body, initial_state)
 
         ret = (AtomState.bottom(),) * len(stmt.results)
@@ -218,7 +211,7 @@ class InitialLayoutMethods(interp.MethodTable):
             )
 
         _interp.global_address_stack.extend(addr.data for addr in initial_addresses)
-        _interp.frame_call(frame, stmt, stmt.body, EmptyLattice.top())
+        _interp.frame_call_region(frame, stmt, stmt.body, EmptyLattice.top())
         # no nested circuits, so we can clear the stack here
         _interp.global_address_stack.clear()
 

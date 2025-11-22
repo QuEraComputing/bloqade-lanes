@@ -317,7 +317,7 @@ def test_initial_layout():
 
     edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
 
-    layout = layout_heuristic.compute_layout([edges])
+    layout = layout_heuristic.compute_layout(tuple(range(10)), [edges])
     assert layout == (
         LocationAddress(word_id=1, site_id=2),
         LocationAddress(word_id=1, site_id=0),

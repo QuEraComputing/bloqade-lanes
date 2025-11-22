@@ -5,6 +5,7 @@ from kirin import ir
 from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
+from bloqade import qubit
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import circuit, move
 from bloqade.lanes.layout.arch import ArchSpec
@@ -104,8 +105,8 @@ class RewriteCZ(RewriteRule):
 
     """
 
-    placement_analysis: dict[ir.SSAValue, placement.AtomState]
     move_heuristic: MoveSchedulerABC
+    placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, circuit.CZ):
@@ -133,6 +134,7 @@ class RewriteCZ(RewriteRule):
 class RewriteR(RewriteRule):
     """Rewrite R circuit statements to move R statements."""
 
+    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
@@ -179,6 +181,7 @@ class RewriteRz(RewriteRule):
 
     """
 
+    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
@@ -219,8 +222,8 @@ class RewriteRz(RewriteRule):
 @dataclass
 class InsertMeasure(RewriteRule):
 
-    placement_analysis: dict[ir.SSAValue, placement.AtomState]
     move_heuristic: MoveSchedulerABC
+    placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, circuit.EndMeasure):
@@ -259,7 +262,7 @@ class LiftMoveStatements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
             type(node) in move.dialect.stmts
-            and (parent_stmt := node.parent_stmt) is not None
+            and isinstance((parent_stmt := node.parent_stmt), circuit.StaticCircuit)
         ):
             return RewriteResult()
 
@@ -299,8 +302,17 @@ class InsertInitialize(RewriteRule):
 
         if first_stmt is None or isinstance(first_stmt, move.Initialize):
             return RewriteResult()
-
         move.Initialize(location_addresses=self.initial_layout).insert_before(
             first_stmt
         )
+        return RewriteResult(has_done_something=True)
+
+
+class DeleteQubitNew(RewriteRule):
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not (isinstance(node, qubit.stmts.New) and len(node.result.uses) == 0):
+            return RewriteResult()
+
+        node.delete()
+
         return RewriteResult(has_done_something=True)

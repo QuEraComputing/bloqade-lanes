@@ -3,7 +3,7 @@ from typing import Callable
 
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir
-from kirin.dialects import ilist, py
+from kirin.dialects import ilist
 from kirin.rewrite import abc
 
 from bloqade.lanes.dialects import circuit
@@ -111,23 +111,6 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         node.replace_by(
             self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
         )
-
-        return abc.RewriteResult(has_done_something=True)
-
-
-class RewriteConstantToStatic(abc.RewriteRule):
-    """
-    Rewrite rule to convert constant values to static float values.
-    """
-
-    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
-        if not (
-            isinstance(node, py.Constant)
-            and isinstance(value := node.value.unwrap(), float)
-        ):
-            return abc.RewriteResult()
-
-        node.replace_by(circuit.ConstantFloat(value=value))
 
         return abc.RewriteResult(has_done_something=True)
 

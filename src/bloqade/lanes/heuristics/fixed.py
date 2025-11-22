@@ -306,18 +306,13 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
 
     def compute_layout(
         self,
+        all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
     ) -> tuple[LocationAddress, ...]:
 
-        if not stages or not any(stages):
-            return ()
-        largest_address = max(
-            node for edge in chain.from_iterable(stages) for node in edge
-        )
-
-        if largest_address >= self.arch_spec.max_qubits:
+        if len(all_qubits) > self.arch_spec.max_qubits:
             raise interp.InterpreterError(
-                f"Number of qubits in circuit ({largest_address + 1}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
+                f"Number of qubits in circuit ({len(all_qubits)}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
             )
 
         edges = {}
@@ -327,7 +322,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             edge_weight = edges.get((n, m), 0)
             edges[(n, m)] = edge_weight + 1
 
-        weighted_degrees = {i: 0 for i in range(largest_address + 1)}
+        weighted_degrees = {i: 0 for i in all_qubits}
 
         for (n, m), weight in edges.items():
             weighted_degrees[n] += weight
