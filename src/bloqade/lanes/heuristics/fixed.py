@@ -310,7 +310,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         stages: list[tuple[tuple[int, int], ...]],
     ) -> tuple[LocationAddress, ...]:
 
-        if len(all_qubits) >= self.arch_spec.max_qubits:
+        if len(all_qubits) > self.arch_spec.max_qubits:
             raise interp.InterpreterError(
                 f"Number of qubits in circuit ({len(all_qubits)}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
             )
