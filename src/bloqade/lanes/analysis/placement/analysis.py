@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from bloqade.analysis.address.lattice import Address, AddressQubit
 from kirin import ir
 from kirin.analysis import Forward
+from kirin.analysis.forward import ForwardFrame
 from kirin.interp.exceptions import InterpreterError
 from typing_extensions import Self
 
@@ -42,7 +43,7 @@ class PlacementStrategyABC(abc.ABC):
 
 @dataclass
 class PlacementAnalysis(Forward[AtomState]):
-    keys = ["runtime.placement"]
+    keys = ("runtime.placement",)
 
     initial_layout: tuple[LocationAddress, ...]
     address_analysis: dict[ir.SSAValue, Address]
@@ -81,3 +82,6 @@ class PlacementAnalysis(Forward[AtomState]):
 
     def method_self(self, method: ir.Method) -> AtomState:
         return AtomState.bottom()
+
+    def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
+        return tuple(AtomState.bottom() for _ in node.results)

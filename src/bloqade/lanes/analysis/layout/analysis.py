@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 from bloqade.analysis import address
 from kirin import ir
-from kirin.analysis.forward import Forward
+from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice import EmptyLattice
 from typing_extensions import Self
 
@@ -16,6 +16,7 @@ class LayoutHeuristicABC(abc.ABC):
     @abc.abstractmethod
     def compute_layout(
         self,
+        all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
     ) -> tuple[LocationAddress, ...]:
         """
@@ -38,13 +39,26 @@ class LayoutHeuristicABC(abc.ABC):
 
 @dataclass
 class LayoutAnalysis(Forward):
-    keys = ["circuit.layout"]
+    keys = ("circuit.layout",)
     lattice = EmptyLattice
 
     heuristic: LayoutHeuristicABC
     address_entries: dict[ir.SSAValue, address.Address]
+    all_qubits: tuple[int, ...] = field(init=False)
     stages: list[tuple[tuple[int, int], ...]] = field(default_factory=list, init=False)
     global_address_stack: list[int] = field(default_factory=list, init=False)
+
+    def __post_init__(self) -> None:
+        self.all_qubits = tuple(
+            sorted(
+                set(
+                    ele.data
+                    for ele in self.address_entries.values()
+                    if isinstance(ele, address.AddressQubit)
+                )
+            )
+        )
+        super().__post_init__()
 
     def initialize(self) -> Self:
         self.stages.clear()
@@ -55,16 +69,22 @@ class LayoutAnalysis(Forward):
         return (self.lattice.bottom(),)
 
     def add_stage(self, control: tuple[int, ...], target: tuple[int, ...]):
-        global_controls = tuple(self.global_address_stack.index(c) for c in control)
-        global_targets = tuple(self.global_address_stack.index(t) for t in target)
+        global_controls = tuple(self.global_address_stack[c] for c in control)
+        global_targets = tuple(self.global_address_stack[t] for t in target)
         self.stages.append(tuple(zip(global_controls, global_targets)))
+
+    def method_self(self, method: ir.Method):
+        return EmptyLattice.bottom()
 
     def get_layout_no_raise(self, method: ir.Method) -> tuple[LocationAddress, ...]:
         """Get the layout for a given method."""
         self.run_no_raise(method)
-        return self.heuristic.compute_layout(self.stages)
+        return self.heuristic.compute_layout(self.all_qubits, self.stages)
 
     def get_layout(self, method: ir.Method) -> tuple[LocationAddress, ...]:
         """Get the layout for a given method."""
         self.run(method)
-        return self.heuristic.compute_layout(self.stages)
+        return self.heuristic.compute_layout(self.all_qubits, self.stages)
+
+    def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
+        return tuple(EmptyLattice.bottom() for _ in node.results)
