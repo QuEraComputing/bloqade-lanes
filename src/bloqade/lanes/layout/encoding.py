@@ -163,7 +163,7 @@ class LocationAddress(Encoder):
         return address
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class LaneAddress(Encoder):
     direction: Direction
     move_type: MoveType
@@ -223,13 +223,7 @@ class LaneAddress(Encoder):
 class SiteLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.SITE, init=False)
 
-    def __repr__(self) -> str:
-        return super().__repr__()
-
 
 @dataclass(frozen=True)
 class WordLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.WORD, init=False)
-
-    def __repr__(self) -> str:
-        return super().__repr__()

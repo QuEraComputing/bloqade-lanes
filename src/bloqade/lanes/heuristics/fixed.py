@@ -52,23 +52,6 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
                     "Initial layout should only contain even site ids for fixed home location strategy"
                 )
 
-    def _word_balance(
-        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
-    ) -> int:
-        word_move_counts = {0: 0, 1: 0}
-        for c, t in zip(controls, targets):
-            c_addr = state.layout[c]
-            t_addr = state.layout[t]
-            if c_addr.word_id != t_addr.word_id:
-                word_move_counts[c_addr.word_id] += state.move_count[c]
-                word_move_counts[t_addr.word_id] += state.move_count[t]
-
-        # prioritize word move that reduces the max move count
-        if word_move_counts[0] <= word_move_counts[1]:
-            return 0
-        else:
-            return 1
-
     def _pick_mover_and_location(
         self,
         state: ConcreteState,
@@ -189,6 +172,87 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             bus_id,
         )
 
+    def site_moves(
+        self, diffs: list[tuple[LocationAddress, LocationAddress]], word_id: int
+    ) -> list[tuple[LaneAddress, ...]]:
+        bus_moves = {}
+        for before, end in diffs:
+            bus_id = end.site_id // 2 - before.site_id // 2
+            assert bus_id >= 0, "Bus id should be non-negative"
+
+            bus_moves.setdefault(bus_id, []).append(
+                self.assert_valid_site_bus_move(
+                    Direction.FORWARD,
+                    word_id,
+                    before.site_id,
+                    bus_id,
+                )
+            )
+
+        return list(map(tuple, bus_moves.values()))
+
+    def moves_00(
+        self, diffs: list[tuple[LocationAddress, LocationAddress]]
+    ) -> list[tuple[LaneAddress, ...]]:
+        if len(diffs) == 0:
+            return []
+        return self.site_moves(diffs, word_id=0)
+
+    def moves_11(
+        self, diffs: list[tuple[LocationAddress, LocationAddress]]
+    ) -> list[tuple[LaneAddress, ...]]:
+        if len(diffs) == 0:
+            return []
+        return self.site_moves(diffs, word_id=1)
+
+    def moves_01(
+        self, diffs: list[tuple[LocationAddress, LocationAddress]]
+    ) -> list[tuple[LaneAddress, ...]]:
+        if len(diffs) == 0:
+            return []
+
+        first_moves = self.site_moves(diffs, word_id=0)
+        second_moves = tuple(
+            WordLaneAddress(
+                Direction.FORWARD,
+                0,
+                end.site_id,
+                0,
+            )
+            for _, end in diffs
+        )
+
+        return first_moves + [second_moves]
+
+    def moves_10(
+        self, diffs: list[tuple[LocationAddress, LocationAddress]]
+    ) -> list[tuple[LaneAddress, ...]]:
+        if len(diffs) == 0:
+            return []
+        last_moves = self.site_moves(diffs, word_id=0)
+
+        first_moves = tuple(
+            SiteLaneAddress(
+                Direction.FORWARD,
+                1,
+                before.site_id,
+                0,
+            )
+            for before, _ in diffs
+        )
+
+        middle_moves = tuple(
+            WordLaneAddress(
+                Direction.BACKWARD,
+                0,
+                before.site_id,
+                0,
+            )
+            for before, _ in diffs
+        )
+
+        return [first_moves, middle_moves] + last_moves
+
     def compute_moves(self, state_before: AtomState, state_after: AtomState):
         if not (
             isinstance(state_before, ConcreteState)
@@ -202,28 +266,27 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             if ele[0] != ele[1]
         ]
 
-        curr_state = state_before
-        paths: list[tuple[LaneAddress, ...]] = []
-        for start, end in diffs:
-            path, _ = self.path_finder.find_path(
-                start,
-                end,
-                frozenset(curr_state.layout),
-            )
+        groups = {}
+
+        for before, after in diffs:
+            assert before.site_id % 2 == 0, "Before site id should be even"
+            assert after.site_id % 2 == 1, "After site id should be odd"
             assert (
-                path is not None
-            ), f"No path found from {start} to {end} with occupied {curr_state.layout}"
-            curr_state = replace(
-                curr_state,
-                layout=tuple(
-                    end if addr == start else addr for addr in curr_state.layout
-                ),
+                before.site_id < after.site_id
+            ), "After site id should be greater than before site id"
+
+            groups.setdefault((before.word_id, after.word_id), []).append(
+                (before, after)
             )
-            paths.append(path)
 
-        moves = [(lane,) for lane in chain.from_iterable(paths)]
-
-        return moves
+        return list(
+            chain(
+                self.moves_00(groups.get((0, 0), [])),
+                self.moves_11(groups.get((1, 1), [])),
+                self.moves_01(groups.get((0, 1), [])),
+                self.moves_10(groups.get((1, 0), [])),
+            )
+        )
 
 
 @dataclass

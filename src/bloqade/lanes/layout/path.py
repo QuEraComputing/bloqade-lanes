@@ -61,7 +61,6 @@ class PathFinder:
 
         for bus_id, bus in enumerate(self.spec.word_buses):
             for src_word, dst_word in zip(bus.src, bus.dst):
-                print(src_word, dst_word, bus_id)
                 for site in self.spec.has_word_buses:
                     src_site = LocationAddress(src_word, site)
                     dst_site = LocationAddress(dst_word, site)
@@ -93,7 +92,6 @@ class PathFinder:
             lane: LaneAddress = self.site_graph.get_edge_data(src, dst)
             lanes.append(lane)
 
-        print(f"Extracted lanes: {lanes}")
         return tuple(lanes)
 
     def get_endpoints(self, lane: LaneAddress):
