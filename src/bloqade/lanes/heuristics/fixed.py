@@ -21,7 +21,22 @@ from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
 
 @dataclass
 class LogicalPlacementStrategy(PlacementStrategyABC):
-    """A placement strategy that assumes a logical architecture."""
+    """A placement strategy that assumes a logical architecture.
+
+    The logical architecture assumes 2 word buses (word_id 0 and 1) and a single word bus.
+    This is equivalent to the generic architecture but with a hypercube dimension of 1,
+
+    The idea is to keep the initial locations of the qubits are all on even site ids. Then when
+    two qubits need to be entangled via a cz gate, one qubit (the control or target) is moved to the
+    odd site id next to the other qubit. This ensures that no two qubits ever occupy the same
+    location address and that there is always a clear path for qubits to traverse the architecture.
+
+    The placement heuristic prioritizes balancing the number of moves each qubit has made, instead
+    of prioritizing parallelism of moves.
+
+
+    The hope is that this should balance out the number of moves across all qubits in the circuit.
+    """
 
     def validate_initial_layout(
         self,
@@ -37,24 +52,43 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
                     "Initial layout should only contain even site ids for fixed home location strategy"
                 )
 
+    def _word_balance(
+        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
+    ) -> int:
+        word_move_counts = {0: 0, 1: 0}
+        for c, t in zip(controls, targets):
+            c_addr = state.layout[c]
+            t_addr = state.layout[t]
+            if c_addr.word_id != t_addr.word_id:
+                word_move_counts[c_addr.word_id] += state.move_count[c]
+                word_move_counts[t_addr.word_id] += state.move_count[t]
+
+        # prioritize word move that reduces the max move count
+        if word_move_counts[0] <= word_move_counts[1]:
+            return 0
+        else:
+            return 1
+
     def _pick_mover_and_location(
         self,
         state: ConcreteState,
+        start_word_id: int,
         control: int,
         target: int,
     ):
         c_addr = state.layout[control]
         t_addr = state.layout[target]
-        if c_addr.site_id <= t_addr.site_id:
-            return control, LocationAddress(
-                word_id=t_addr.word_id,
-                site_id=t_addr.site_id + 1,
-            )
+        if c_addr.word_id == t_addr.word_id:
+            if (
+                state.move_count[control] <= state.move_count[target]
+            ):  # move control to target
+                return control, t_addr
+            else:  # move target to control
+                return target, c_addr
+        elif t_addr.word_id == start_word_id:
+            return target, c_addr
         else:
-            return target, LocationAddress(
-                word_id=c_addr.word_id,
-                site_id=c_addr.site_id + 1,
-            )
+            return control, t_addr
 
     def _update_positions(
         self,
@@ -87,9 +121,13 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         # word_id and site_id the idea being to minimize the directions
         # needed to rearrange qubits.
         new_positions: dict[int, LocationAddress] = {}
+        start_word_id = self._word_balance(state, controls, targets)
         for c, t in zip(controls, targets):
-            mover, dst_addr = self._pick_mover_and_location(state, c, t)
-            new_positions[mover] = dst_addr
+            mover, dst_addr = self._pick_mover_and_location(state, start_word_id, c, t)
+            new_positions[mover] = LocationAddress(
+                word_id=dst_addr.word_id,
+                site_id=dst_addr.site_id + 1,
+            )
 
         return self._update_positions(state, new_positions)
 
@@ -181,78 +219,6 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         return list(map(tuple, bus_moves.values()))
 
-    def moves_00(
-        self, diffs: list[tuple[LocationAddress, LocationAddress]]
-    ) -> list[tuple[LaneAddress, ...]]:
-        if len(diffs) == 0:
-            return []
-        return self.site_moves(diffs, word_id=0)
-
-    def moves_11(
-        self, diffs: list[tuple[LocationAddress, LocationAddress]]
-    ) -> list[tuple[LaneAddress, ...]]:
-        if len(diffs) == 0:
-            return []
-        return self.site_moves(diffs, word_id=1)
-
-    def moves_01(
-        self, diffs: list[tuple[LocationAddress, LocationAddress]]
-    ) -> list[tuple[LaneAddress, ...]]:
-        if len(diffs) == 0:
-            return []
-
-        first_moves = self.site_moves(diffs, word_id=0)
-        second_moves = tuple(
-            self.assert_valid_word_bus_move(
-                Direction.FORWARD,
-                0,
-                end.site_id,
-                0,
-            )
-            for _, end in diffs
-        )
-
-        return first_moves + [second_moves]
-
-    def moves_10(
-        self, diffs: list[tuple[LocationAddress, LocationAddress]]
-    ) -> list[tuple[LaneAddress, ...]]:
-        if len(diffs) == 0:
-            return []
-        last_moves = self.site_moves(diffs, word_id=0)
-
-        first_moves = [
-            tuple(
-                self.assert_valid_site_bus_move(
-                    Direction.FORWARD,
-                    1,
-                    before.site_id,
-                    0,
-                )
-                for before, _ in diffs
-            ),
-            tuple(
-                self.assert_valid_word_bus_move(
-                    Direction.BACKWARD,
-                    0,
-                    after.site_id,
-                    0,
-                )
-                for _, after in diffs
-            ),
-            tuple(
-                self.assert_valid_site_bus_move(
-                    Direction.BACKWARD,
-                    0,
-                    before.site_id,
-                    0,
-                )
-                for before, _ in diffs
-            ),
-        ]
-
-        return first_moves + last_moves
-
     def compute_moves(
         self, state_before: AtomState, state_after: AtomState
     ) -> list[tuple[LaneAddress, ...]]:
@@ -274,6 +240,71 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
     arch_spec: ArchSpec = field(default=generate_arch(1))
+
+    def layout_from_weights(
+        self,
+        edges: dict[tuple[int, int], int],
+        weighted_degrees: dict[int, int],
+    ) -> tuple[LocationAddress, ...]:
+        left_atoms = []
+        right_atoms = []
+
+        unassigned = sorted(
+            weighted_degrees.keys(),
+            key=lambda x: (weighted_degrees[x], x),
+        )
+
+        def get_weight(addr: int, curr_atoms: list[int], other_atoms: list[int]):
+
+            weight = 0
+            for same in curr_atoms:
+                edge = (min(addr, same), max(addr, same))
+                weight += 2 * edges.get(edge, 0)
+
+            for other in other_atoms:
+                edge = (min(addr, other), max(addr, other))
+                weight += edges.get(edge, 0)
+
+            return weight
+
+        while unassigned:
+            addr = unassigned.pop()
+
+            left_weight = get_weight(addr, left_atoms, right_atoms)
+            right_weight = get_weight(addr, right_atoms, left_atoms)
+
+            if right_weight < left_weight:
+                best_list, not_best_list = left_atoms, right_atoms
+            else:
+                best_list, not_best_list = right_atoms, left_atoms
+
+            if len(best_list) < 5:
+                best_list.append(addr)
+            else:
+                not_best_list.append(addr)
+
+        layout_map = {}
+        for i, addr in enumerate(left_atoms):
+            layout_map[
+                LocationAddress(
+                    word_id=0,
+                    site_id=i * 2,
+                )
+            ] = addr
+
+        for i, addr in enumerate(right_atoms):
+            layout_map[
+                LocationAddress(
+                    word_id=1,
+                    site_id=i * 2,
+                )
+            ] = addr
+
+        # invert layout
+        final_layout = list(layout_map.keys())
+        final_layout.sort(key=lambda x: layout_map[x])
+
+        return tuple(final_layout)
 
     def compute_layout(
         self,
@@ -299,17 +330,4 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             weighted_degrees[n] += weight
             weighted_degrees[m] += weight
 
-        # sort locations from hightest site id and word id to lowest
-        sites = range(0, 10, 2)[::-1]
-        words = [1, 0]
-        all_locations = [
-            LocationAddress(word_id=w, site_id=s) for w in words for s in sites
-        ]
-
-        # sorted qubits from highest weighted degree to lowest
-        sorted_qubits = sorted(
-            all_qubits, key=lambda q: weighted_degrees[q], reverse=True
-        )
-        # assign highest weighted degree qubit to highest location
-        location_map = {q: loc for q, loc in zip(sorted_qubits, all_locations)}
-        return tuple(location_map[q] for q in all_qubits)
+        return self.layout_from_weights(edges, weighted_degrees)
