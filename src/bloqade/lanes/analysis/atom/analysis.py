@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field, replace
 
+from bloqade.lanes.layout.path import PathFinder
 from kirin import ir
 from kirin.analysis import ForwardExtra, ForwardFrame
 from kirin.interp.value import Successor
@@ -41,7 +42,18 @@ class AtomFrame(ForwardFrame[EmptyLattice]):
     atom_visited: dict[ir.Block, set[tuple[AtomStateType, Successor[EmptyLattice]]]] = (
         field(default_factory=dict)
     )
-    current_state: AtomStateType = field(default_factory=UnknownAtomState)
+    prev_states: list[AtomStateType] = field(default_factory=list)
+
+    @property
+    def current_state(self) -> AtomStateType:
+        if len(self.prev_states) > 0:
+            return self.prev_states[-1]
+        return UnknownAtomState()
+
+    @current_state.setter
+    def current_state(self, value: AtomStateType) -> None:
+        if self.current_state != value:
+            self.prev_states.append(value)
 
 
 @dataclass
@@ -49,7 +61,12 @@ class AtomInterpreter(ForwardExtra[AtomFrame, EmptyLattice]):
     lattice = EmptyLattice
 
     arch_spec: ArchSpec = field(kw_only=True)
+    path_finder: PathFinder = field(init=False)
     keys = ("atom",)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.path_finder = PathFinder(self.arch_spec)
 
     def method_self(self, method) -> EmptyLattice:
         return EmptyLattice.bottom()

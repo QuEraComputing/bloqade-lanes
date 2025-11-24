@@ -72,6 +72,8 @@ class SsaCfg(interp.MethodTable):
         for stmt in succ.block.stmts:
             frame.current_stmt = stmt
             stmt_results = interp_.frame_eval(frame, stmt)
+            if frame.prev_states[-1] != frame.current_state:
+                frame.prev_states.append(frame.current_state)
             if isinstance(stmt_results, tuple):
                 frame.set_values(stmt._results, stmt_results)
             elif stmt_results is None:
@@ -134,17 +136,16 @@ class Move(interp.MethodTable):
 
         qubits_to_move = {}
         for move_lane in stmt.lanes:
-            src, dst = interp_.arch_spec.get_endpoints(move_lane)
-            if src is None or dst is None:
+            endpoints = interp_.path_finder.get_endpoints(move_lane)
+            if endpoints is None:
                 frame.current_state = UnknownAtomState()
                 return
 
-            qubit = current_state.get_qubit(src)
+            qubit = current_state.get_qubit(endpoints[0])
             if qubit is None:
                 continue
 
-            qubits_to_move[qubit] = dst
-
+            qubits_to_move[qubit] = endpoints[1]
         frame.current_state = current_state.update(qubits_to_move)
 
     @interp.impl(move.Initialize)
