@@ -144,3 +144,25 @@ def test_fixed_invalid_initial_layout_2():
     )
     with pytest.raises(ValueError):
         placement_strategy.validate_initial_layout(layout)
+
+
+def test_fixed_initial_layout():
+    layout_strategy = fixed.LogicalLayoutHeuristic()
+
+    edges = {
+        (1, 2): 3,
+        (2, 3): 4,
+        (0, 1): 5,
+        (0, 3): 5,
+        (0, 2): 1,
+    }
+
+    stages = [(key,) * weight for key, weight in edges.items()]
+    layout = layout_strategy.compute_layout(tuple(range(4)), stages)
+
+    assert layout == (
+        LocationAddress(word_id=1, site_id=8),
+        LocationAddress(word_id=1, site_id=4),
+        LocationAddress(word_id=1, site_id=2),
+        LocationAddress(word_id=1, site_id=6),
+    )
