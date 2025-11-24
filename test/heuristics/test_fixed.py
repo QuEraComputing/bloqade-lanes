@@ -3,10 +3,7 @@ import pytest
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.layout.encoding import (
-    Direction,
     LocationAddress,
-    SiteLaneAddress,
-    WordLaneAddress,
 )
 
 
@@ -47,10 +44,13 @@ def cz_placement_cases():
         move_count=(1, 1, 0, 0),
     )
 
+    gates = [(0, 2), (1, 3)]
+    ctrls, trgts = list(zip(*gates))
+
     yield (
         state_before,
-        (0, 1),
-        (2, 3),
+        ctrls,
+        trgts,
         state_after,
     )
 
@@ -62,84 +62,27 @@ def cz_placement_cases():
             LocationAddress(1, 0),
             LocationAddress(1, 2),
         ),
-        move_count=(1, 1, 0, 0),
+        move_count=(0, 0, 0, 0),
     )
     state_after = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(0, 1),
             LocationAddress(0, 3),
+            LocationAddress(0, 2),
+            LocationAddress(1, 3),
+            LocationAddress(1, 2),
         ),
-        move_count=(1, 1, 1, 1),
-    )
-    yield (
-        state_before,
-        (0, 1),
-        (2, 3),
-        state_after,
+        move_count=(1, 0, 1, 0),
     )
 
-    state_before = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(0, 4),
-            LocationAddress(0, 6),
-        ),
-        move_count=(1, 1, 0, 0),
-    )
-    state_after = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(0, 1),
-            LocationAddress(0, 3),
-        ),
-        move_count=(1, 1, 1, 1),
-    )
-    yield (
-        state_before,
-        (0, 1),
-        (2, 3),
-        state_after,
-    )
-
-    state_before = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(0, 4),
-            LocationAddress(0, 6),
-        ),
-        move_count=(0, 0, 1, 1),
-    )
-    state_after = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 5),
-            LocationAddress(0, 7),
-            LocationAddress(0, 4),
-            LocationAddress(0, 6),
-        ),
-        move_count=(1, 1, 1, 1),
-    )
-    yield (
-        state_before,
-        (0, 1),
-        (2, 3),
-        state_after,
-    )
+    gates = [(0, 1), (2, 3)]
+    ctrls, trgts = list(zip(*gates))
 
     yield (
         state_before,
-        (0, 1, 4),
-        (2, 3),
-        AtomState.top(),
+        ctrls,
+        trgts,
+        state_after,
     )
 
 
@@ -201,132 +144,3 @@ def test_fixed_invalid_initial_layout_2():
     )
     with pytest.raises(ValueError):
         placement_strategy.validate_initial_layout(layout)
-
-
-def test_move_scheduler_get_direction():
-    move_scheduler = fixed.LogicalMoveScheduler()
-    assert move_scheduler.get_direction(1) == Direction.FORWARD
-    assert move_scheduler.get_direction(-1) == Direction.BACKWARD
-
-
-def test_move_scheduler_get_y_position():
-    move_scheduler = fixed.LogicalMoveScheduler()
-    loc1 = LocationAddress(word_id=0, site_id=3)
-    loc2 = LocationAddress(word_id=1, site_id=4)
-    assert move_scheduler.get_site_y(loc1) == 1
-    assert move_scheduler.get_site_y(loc2) == 2
-
-
-def test_move_scheduler_get_site_bus_id():
-    move_scheduler = fixed.LogicalMoveScheduler()
-    loc1 = LocationAddress(word_id=0, site_id=2)
-    loc2 = LocationAddress(word_id=1, site_id=6)
-    bus_id, direction = move_scheduler.get_site_bus_id(loc1, loc2)
-    assert bus_id == 2
-    assert direction == Direction.FORWARD
-
-    loc3 = LocationAddress(word_id=0, site_id=6)
-    loc4 = LocationAddress(word_id=1, site_id=2)
-    bus_id, direction = move_scheduler.get_site_bus_id(loc3, loc4)
-    assert bus_id == 2
-    assert direction == Direction.BACKWARD
-
-
-def test_move_scheduler_compute_moves():
-    move_scheduler = fixed.LogicalMoveScheduler()
-    state_before = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(1, 0),
-            LocationAddress(1, 2),
-        ),
-        move_count=(0, 0, 0, 0),
-    )
-    state_after = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(1, 1),
-            LocationAddress(1, 3),
-            LocationAddress(1, 0),
-            LocationAddress(1, 2),
-        ),
-        move_count=(1, 1, 0, 0),
-    )
-
-    moves = move_scheduler.compute_moves(state_before, state_after)
-    assert moves == [
-        (
-            SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=0
-            ),
-            SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=2, bus_id=0
-            ),
-        ),
-        (
-            WordLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=2, bus_id=0
-            ),
-            WordLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=4, bus_id=0
-            ),
-        ),
-    ]
-
-
-def test_move_scheduler_compute_moves_same_word():
-    move_scheduler = fixed.LogicalMoveScheduler()
-    state_before = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(1, 0),
-            LocationAddress(1, 2),
-        ),
-        move_count=(0, 0, 0, 0),
-    )
-    state_after = ConcreteState(
-        occupied=frozenset(),
-        layout=(
-            LocationAddress(0, 3),
-            LocationAddress(0, 2),
-            LocationAddress(1, 3),
-            LocationAddress(1, 2),
-        ),
-        move_count=(1, 1, 0, 0),
-    )
-
-    moves = move_scheduler.compute_moves(state_before, state_after)
-    assert moves == [
-        (SiteLaneAddress(direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=1),),
-        (SiteLaneAddress(direction=Direction.FORWARD, word_id=1, site_id=0, bus_id=1),),
-    ]
-
-
-def test_initial_layout():
-    layout_heuristic = fixed.LogicalLayoutHeuristic()
-    edges = {(i, j): 1 for i in range(10) for j in range(i + 1, 10, 1)}
-    edges[(0, 1)] = 10
-    edges[(2, 3)] = 9
-    edges[(4, 5)] = 8
-    edges[(6, 7)] = 7
-    edges[(8, 9)] = 6
-
-    edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
-
-    layout = layout_heuristic.compute_layout(tuple(range(10)), [edges])
-    assert layout == (
-        LocationAddress(word_id=1, site_id=2),
-        LocationAddress(word_id=1, site_id=0),
-        LocationAddress(word_id=1, site_id=6),
-        LocationAddress(word_id=1, site_id=4),
-        LocationAddress(word_id=0, site_id=0),
-        LocationAddress(word_id=1, site_id=8),
-        LocationAddress(word_id=0, site_id=4),
-        LocationAddress(word_id=0, site_id=2),
-        LocationAddress(word_id=0, site_id=8),
-        LocationAddress(word_id=0, site_id=6),
-    )

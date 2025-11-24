@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Any, Generator
 
 from kirin import interp
 
@@ -16,6 +15,7 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
+from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
 
 
@@ -72,23 +72,21 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
     def _pick_mover_and_location(
         self,
         state: ConcreteState,
-        start_word_id: int,
         control: int,
         target: int,
     ):
         c_addr = state.layout[control]
         t_addr = state.layout[target]
-        if c_addr.word_id == t_addr.word_id:
-            if (
-                state.move_count[control] <= state.move_count[target]
-            ):  # move control to target
-                return control, t_addr
-            else:  # move target to control
-                return target, c_addr
-        elif t_addr.word_id == start_word_id:
-            return target, c_addr
+        if c_addr.site_id < t_addr.site_id:
+            return control, LocationAddress(
+                word_id=t_addr.word_id,
+                site_id=t_addr.site_id + 1,
+            )
         else:
-            return control, t_addr
+            return target, LocationAddress(
+                word_id=c_addr.word_id,
+                site_id=c_addr.site_id + 1,
+            )
 
     def _update_positions(
         self,
@@ -121,14 +119,9 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         # word_id and site_id the idea being to minimize the directions
         # needed to rearrange qubits.
         new_positions: dict[int, LocationAddress] = {}
-        start_word_id = self._word_balance(state, controls, targets)
         for c, t in zip(controls, targets):
-            mover, dst_addr = self._pick_mover_and_location(state, start_word_id, c, t)
-
-            new_positions[mover] = LocationAddress(
-                word_id=dst_addr.word_id,
-                site_id=dst_addr.site_id + 1,
-            )
+            mover, dst_addr = self._pick_mover_and_location(state, c, t)
+            new_positions[mover] = dst_addr
 
         return self._update_positions(state, new_positions)
 
@@ -142,42 +135,59 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
 
 @dataclass(init=False)
 class LogicalMoveScheduler(MoveSchedulerABC):
+    path_finder: PathFinder
 
     def __init__(self):
         super().__init__(generate_arch(1))
+        self.path_finder = PathFinder(self.arch_spec)
 
-    def get_direction(self, diff: int) -> Direction:
-        if diff > 0:
-            return Direction.FORWARD
-        else:
-            return Direction.BACKWARD
-
-    def get_site_y(self, location: LocationAddress) -> int:
-        return location.site_id // 2
-
-    def get_site_bus_id(self, src: LocationAddress, dst: LocationAddress):
-        diff_y = self.get_site_y(dst) - self.get_site_y(src)
-        if diff_y >= 0:
-            return diff_y, Direction.FORWARD
-        else:
-            return -diff_y, Direction.BACKWARD
-
-    def _yield_site_moves(
+    def assert_valid_word_bus_move(
         self,
-        site_dict: dict[
-            tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]
-        ],
-    ) -> Generator[tuple[LaneAddress, ...], Any, None]:
-        for (site_bus_id, site_bus_direction), sites in site_dict.items():
-            yield tuple(
-                SiteLaneAddress(
-                    site_bus_direction,
-                    src.word_id,
-                    src.site_id,
-                    site_bus_id,
-                )
-                for src, _ in sites
-            )
+        direction: Direction,
+        src_word: int,
+        src_site: int,
+        bus_id: int,
+    ) -> WordLaneAddress:
+        assert bus_id < len(
+            self.arch_spec.word_buses
+        ), f"Invalid bus id {bus_id} for word bus move"
+        assert (
+            src_word in self.arch_spec.word_buses[bus_id].src
+        ), f"Invalid source word {src_word} for word bus move"
+        assert (
+            src_site in self.arch_spec.has_word_buses
+        ), f"Invalid source site {src_site} for word bus move"
+
+        return WordLaneAddress(
+            direction,
+            src_word,
+            src_site,
+            bus_id,
+        )
+
+    def assert_valid_site_bus_move(
+        self,
+        direction: Direction,
+        src_word: int,
+        src_site: int,
+        bus_id: int,
+    ) -> SiteLaneAddress:
+        assert bus_id < len(
+            self.arch_spec.site_buses
+        ), f"Invalid bus id {bus_id} for site bus move"
+        assert (
+            src_site in self.arch_spec.site_buses[bus_id].src
+        ), f"Invalid source site {src_site} for site bus move {bus_id}"
+        assert (
+            src_word in self.arch_spec.has_site_buses
+        ), f"Invalid source word {src_word} for site bus move {bus_id}"
+
+        return SiteLaneAddress(
+            direction,
+            src_word,
+            src_site,
+            bus_id,
+        )
 
     def compute_moves(self, state_before: AtomState, state_after: AtomState):
         if not (
@@ -186,51 +196,32 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         ):
             return []
 
-        diffs = (
+        diffs = [
             ele
             for ele in zip(state_before.layout, state_after.layout)
             if ele[0] != ele[1]
-        )
+        ]
 
-        diff_moves_dict: dict[
-            tuple[int, int],
-            dict[tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]],
-        ] = {}
-
-        same_moves_dict = dict(diff_moves_dict)
-        for src, dst in diffs:
-            site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
-            if src.word_id != dst.word_id:
-                diff_moves_dict.setdefault((src.word_id, dst.word_id), {}).setdefault(
-                    (site_bus_id, site_bus_direction), []
-                ).append((src, dst))
-            else:
-                same_moves_dict.setdefault((src.word_id, src.word_id), {}).setdefault(
-                    (site_bus_id, site_bus_direction), []
-                ).append((src, dst))
-
-        assert (
-            len(diff_moves_dict) <= 1
-        ), "Multiple word bus moves detected, which should not happen in logical architecture"
-
-        moves: list[tuple[LaneAddress, ...]] = []
-        if len(diff_moves_dict) > 0:
-            ((src_word_id, dst_word_id),) = diff_moves_dict.keys()
-            diff_sites_dict = diff_moves_dict[(src_word_id, dst_word_id)]
-
-            moves.extend(self._yield_site_moves(diff_sites_dict))
-            direction = self.get_direction(dst_word_id - src_word_id)
-            moves.append(
-                tuple(
-                    WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
-                    for sites in diff_sites_dict.values()
-                    for _, dst in sites
-                )
+        curr_state = state_before
+        paths: list[tuple[LaneAddress, ...]] = []
+        for start, end in diffs:
+            path, _ = self.path_finder.find_path(
+                start,
+                end,
+                frozenset(curr_state.layout),
             )
+            assert (
+                path is not None
+            ), f"No path found from {start} to {end} with occupied {curr_state.layout}"
+            curr_state = replace(
+                curr_state,
+                layout=tuple(
+                    end if addr == start else addr for addr in curr_state.layout
+                ),
+            )
+            paths.append(path)
 
-        for sites_dict in same_moves_dict.values():
-            moves.extend(self._yield_site_moves(sites_dict))
-            # no word bus move needed here
+        moves = [(lane,) for lane in chain.from_iterable(paths)]
 
         return moves
 
@@ -285,16 +276,16 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         for i, addr in enumerate(left_atoms):
             layout_map[
                 LocationAddress(
-                    word_id=0,
-                    site_id=i * 2,
+                    0,
+                    i * 2,
                 )
             ] = addr
 
         for i, addr in enumerate(right_atoms):
             layout_map[
                 LocationAddress(
-                    word_id=1,
-                    site_id=i * 2,
+                    1,
+                    i * 2,
                 )
             ] = addr
 
