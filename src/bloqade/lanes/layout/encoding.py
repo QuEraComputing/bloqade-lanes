@@ -179,6 +179,9 @@ class LaneAddress(Encoder):
         )
         return replace(self, direction=new_direction)
 
+    def __str__(self) -> str:
+        return "0x{:08x}".format(self.get_address(EncodingType.BIT32))
+
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
             mask = 0xFF

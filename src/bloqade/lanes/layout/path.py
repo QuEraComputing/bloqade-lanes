@@ -84,15 +84,18 @@ class PathFinder:
         """Given a path as a list of node indices, extract the lane addresses."""
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
-        lanes: list[LaneAddress] = []
-        for src, dst in zip(path[:-1], path[1:]):
-            if not self.site_graph.has_edge(src, dst):
-                return None
+        return tuple(self.physical_addresses[ele] for ele in path)
 
-            lane: LaneAddress = self.site_graph.get_edge_data(src, dst)
-            lanes.append(lane)
-
-        return tuple(lanes)
+    def get_lane(
+        self, start: LocationAddress, end: LocationAddress
+    ) -> LaneAddress | None:
+        """Get the LaneAddress connecting two LocationAddress sites."""
+        start_node = self.physical_address_map[start]
+        end_node = self.physical_address_map[end]
+        edge_data = self.site_graph.get_edge_data(start_node, end_node)
+        if edge_data is None:
+            return None
+        return edge_data
 
     def get_endpoints(self, lane: LaneAddress):
         """Get the start and end LocationAddress for a given LaneAddress."""
@@ -105,8 +108,8 @@ class PathFinder:
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[tuple[LaneAddress, ...]], float] = lambda _: 0.0,
-    ) -> tuple[tuple[LaneAddress, ...] | None, frozenset[LocationAddress]]:
+        path_heuristic: Callable[[tuple[LocationAddress, ...]], float] = lambda _: 0.0,
+    ) -> tuple[LocationAddress, ...] | None:
         """Find a path from start to end avoiding occupied sites.
 
         Args:
@@ -131,24 +134,14 @@ class PathFinder:
         def filter_occupied(path: list[int] | None):
             if path is None:
                 return False
-            return all(
-                self.physical_addresses[node] not in occupied for node in path[1:]
-            )
+            return all(self.physical_addresses[node] not in occupied for node in path)
 
         valid_paths = list(filter(filter_occupied, path_nodes))
         paths = list(filter(None, map(self.extract_lanes_from_path, valid_paths)))
 
         if len(paths) == 0:
-            return None, occupied
+            return None
 
         lanes = min(paths, key=lambda p: len(p) + path_heuristic(p))
-        new_occupied = set(occupied)
-        for lane in lanes:
-            src, dst = self.get_endpoints(lane)
-            if src is None or dst is None:
-                raise RuntimeError(f"Endpoints not found for lane {lane}")
 
-            new_occupied.add(src)
-            new_occupied.add(dst)
-
-        return lanes, frozenset(new_occupied)
+        return lanes

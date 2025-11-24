@@ -21,22 +21,7 @@ from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
 
 @dataclass
 class LogicalPlacementStrategy(PlacementStrategyABC):
-    """A placement strategy that assumes a logical architecture.
-
-    The logical architecture assumes 2 word buses (word_id 0 and 1) and a single word bus.
-    This is equivalent to the generic architecture but with a hypercube dimension of 1,
-
-    The idea is to keep the initial locations of the qubits are all on even site ids. Then when
-    two qubits need to be entangled via a cz gate, one qubit (the control or target) is moved to the
-    odd site id next to the other qubit. This ensures that no two qubits ever occupy the same
-    location address and that there is always a clear path for qubits to traverse the architecture.
-
-    The placement heuristic prioritizes balancing the number of moves each qubit has made, instead
-    of prioritizing parallelism of moves.
-
-
-    The hope is that this should balance out the number of moves across all qubits in the circuit.
-    """
+    """A placement strategy that assumes a logical architecture."""
 
     def validate_initial_layout(
         self,
@@ -60,7 +45,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
     ):
         c_addr = state.layout[control]
         t_addr = state.layout[target]
-        if c_addr.site_id < t_addr.site_id:
+        if c_addr.site_id <= t_addr.site_id:
             return control, LocationAddress(
                 word_id=t_addr.word_id,
                 site_id=t_addr.site_id + 1,
@@ -175,6 +160,11 @@ class LogicalMoveScheduler(MoveSchedulerABC):
     def site_moves(
         self, diffs: list[tuple[LocationAddress, LocationAddress]], word_id: int
     ) -> list[tuple[LaneAddress, ...]]:
+        start_site_ids = [before.site_id for before, _ in diffs]
+        assert len(set(start_site_ids)) == len(
+            start_site_ids
+        ), "Start site ids must be unique"
+
         bus_moves = {}
         for before, end in diffs:
             bus_id = end.site_id // 2 - before.site_id // 2
@@ -231,29 +221,41 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             return []
         last_moves = self.site_moves(diffs, word_id=0)
 
-        first_moves = tuple(
-            self.assert_valid_site_bus_move(
-                Direction.FORWARD,
-                1,
-                before.site_id,
-                0,
-            )
-            for before, _ in diffs
-        )
+        first_moves = [
+            tuple(
+                self.assert_valid_site_bus_move(
+                    Direction.FORWARD,
+                    1,
+                    before.site_id,
+                    0,
+                )
+                for before, _ in diffs
+            ),
+            tuple(
+                self.assert_valid_word_bus_move(
+                    Direction.BACKWARD,
+                    0,
+                    after.site_id,
+                    0,
+                )
+                for _, after in diffs
+            ),
+            tuple(
+                self.assert_valid_site_bus_move(
+                    Direction.BACKWARD,
+                    0,
+                    before.site_id,
+                    0,
+                )
+                for before, _ in diffs
+            ),
+        ]
 
-        middle_moves = tuple(
-            self.assert_valid_word_bus_move(
-                Direction.BACKWARD,
-                0,
-                before.site_id,
-                0,
-            )
-            for before, _ in diffs
-        )
+        return first_moves + last_moves
 
-        return [first_moves, middle_moves] + last_moves
-
-    def compute_moves(self, state_before: AtomState, state_after: AtomState):
+    def compute_moves(
+        self, state_before: AtomState, state_after: AtomState
+    ) -> list[tuple[LaneAddress, ...]]:
         if not (
             isinstance(state_before, ConcreteState)
             and isinstance(state_after, ConcreteState)
@@ -266,27 +268,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             if ele[0] != ele[1]
         ]
 
-        groups = {}
-
-        for before, after in diffs:
-            assert before.site_id % 2 == 0, "Before site id should be even"
-            assert after.site_id % 2 == 1, "After site id should be odd"
-            assert (
-                before.site_id < after.site_id
-            ), "After site id should be greater than before site id"
-
-            groups.setdefault((before.word_id, after.word_id), []).append(
-                (before, after)
-            )
-
-        return list(
-            chain(
-                self.moves_00(groups.get((0, 0), [])),
-                self.moves_11(groups.get((1, 1), [])),
-                self.moves_01(groups.get((0, 1), [])),
-                self.moves_10(groups.get((1, 0), [])),
-            )
-        )
+        raise NotImplementedError
 
 
 @dataclass

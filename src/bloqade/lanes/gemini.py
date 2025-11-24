@@ -18,6 +18,15 @@ def site_buses(word_size_y: int):
             )
         )
 
+    for diff in range(1, word_size_y):
+        shift = word_size_y - diff
+        site_buses.append(
+            Bus(
+                dst=as_flat_tuple_int(site_addresses[: word_size_y - shift, 1]),
+                src=as_flat_tuple_int(site_addresses[shift:, 0]),
+            )
+        )
+
     return tuple(site_buses)
 
 
