@@ -213,7 +213,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         first_moves = self.site_moves(diffs, word_id=0)
         second_moves = tuple(
-            WordLaneAddress(
+            self.assert_valid_word_bus_move(
                 Direction.FORWARD,
                 0,
                 end.site_id,
@@ -232,7 +232,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         last_moves = self.site_moves(diffs, word_id=0)
 
         first_moves = tuple(
-            SiteLaneAddress(
+            self.assert_valid_site_bus_move(
                 Direction.FORWARD,
                 1,
                 before.site_id,
@@ -242,7 +242,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         )
 
         middle_moves = tuple(
-            WordLaneAddress(
+            self.assert_valid_word_bus_move(
                 Direction.BACKWARD,
                 0,
                 before.site_id,
@@ -293,71 +293,6 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
     arch_spec: ArchSpec = field(default=generate_arch(1))
 
-    def layout_from_weights(
-        self,
-        edges: dict[tuple[int, int], int],
-        weighted_degrees: dict[int, int],
-    ) -> tuple[LocationAddress, ...]:
-        left_atoms = []
-        right_atoms = []
-
-        unassigned = sorted(
-            weighted_degrees.keys(),
-            key=lambda x: (weighted_degrees[x], x),
-        )
-
-        def get_weight(addr: int, curr_atoms: list[int], other_atoms: list[int]):
-
-            weight = 0
-            for same in curr_atoms:
-                edge = (min(addr, same), max(addr, same))
-                weight += 2 * edges.get(edge, 0)
-
-            for other in other_atoms:
-                edge = (min(addr, other), max(addr, other))
-                weight += edges.get(edge, 0)
-
-            return weight
-
-        while unassigned:
-            addr = unassigned.pop()
-
-            left_weight = get_weight(addr, left_atoms, right_atoms)
-            right_weight = get_weight(addr, right_atoms, left_atoms)
-
-            if right_weight < left_weight:
-                best_list, not_best_list = left_atoms, right_atoms
-            else:
-                best_list, not_best_list = right_atoms, left_atoms
-
-            if len(best_list) < 5:
-                best_list.append(addr)
-            else:
-                not_best_list.append(addr)
-
-        layout_map = {}
-        for i, addr in enumerate(left_atoms):
-            layout_map[
-                LocationAddress(
-                    0,
-                    i * 2,
-                )
-            ] = addr
-
-        for i, addr in enumerate(right_atoms):
-            layout_map[
-                LocationAddress(
-                    1,
-                    i * 2,
-                )
-            ] = addr
-
-        # invert layout
-        final_layout = list(layout_map.keys())
-        final_layout.sort(key=lambda x: layout_map[x])
-
-        return tuple(final_layout)
-
     def compute_layout(
         self,
         all_qubits: tuple[int, ...],
@@ -382,4 +317,17 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             weighted_degrees[n] += weight
             weighted_degrees[m] += weight
 
-        return self.layout_from_weights(edges, weighted_degrees)
+        # sort locations from hightest site id and word id to lowest
+        sites = range(0, 10, 2)[::-1]
+        words = [1, 0]
+        all_locations = [
+            LocationAddress(word_id=w, site_id=s) for w in words for s in sites
+        ]
+
+        # sorted qubits from highest weighted degree to lowest
+        sorted_qubits = sorted(
+            all_qubits, key=lambda q: weighted_degrees[q], reverse=True
+        )
+        # assign highest weighted degree qubit to highest location
+        location_map = {q: loc for q, loc in zip(sorted_qubits, all_locations)}
+        return tuple(location_map[q] for q in all_qubits)
