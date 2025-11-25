@@ -47,6 +47,9 @@ class EncodingType(enum.IntEnum):
         else:
             raise ValueError("Architecture too large to encode with 64-bit addresses")
 
+    def __repr__(self):
+        return f"EncodingType.{self.name}"
+
 
 @dataclass
 class Encoder(ir.Data):
