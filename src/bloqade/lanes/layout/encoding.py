@@ -104,9 +104,6 @@ class ZoneAddress(Encoder):
 
         return zone_id_enc
 
-    def __repr__(self) -> str:
-        return super().__repr__()
-
 
 @dataclass
 class WordAddress(Encoder):
@@ -133,9 +130,6 @@ class WordAddress(Encoder):
 
         return word_id_enc
 
-    def __repr__(self) -> str:
-        return super().__repr__()
-
 
 @dataclass
 class SiteAddress(Encoder):
@@ -161,9 +155,6 @@ class SiteAddress(Encoder):
             raise ValueError("Site ID too large to encode")
 
         return site_id_enc
-
-    def __repr__(self) -> str:
-        return super().__repr__()
 
 
 @dataclass
@@ -204,9 +195,6 @@ class LocationAddress(Encoder):
             32 if encoding == EncodingType.BIT32 else 64
         ), "Bug in encoding"
         return address
-
-    def __repr__(self) -> str:
-        return super().__repr__()
 
 
 @dataclass
