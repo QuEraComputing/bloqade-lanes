@@ -15,7 +15,6 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
-from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
 
 
@@ -141,11 +140,9 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
 
 @dataclass(init=False)
 class LogicalMoveScheduler(MoveSchedulerABC):
-    path_finder: PathFinder
 
     def __init__(self):
         super().__init__(generate_arch(1))
-        self.path_finder = PathFinder(self.arch_spec)
 
     def assert_valid_word_bus_move(
         self,
