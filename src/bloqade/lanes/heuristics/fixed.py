@@ -206,7 +206,8 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         bus_moves = {}
         for before, end in diffs:
             bus_id = end.site_id // 2 - before.site_id // 2
-            assert bus_id >= 0, "Bus id should be non-negative"
+            if bus_id < 0:
+                bus_id += len(self.arch_spec.site_buses)
 
             bus_moves.setdefault(bus_id, []).append(
                 self.assert_valid_site_bus_move(
@@ -234,7 +235,41 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             if ele[0] != ele[1]
         ]
 
-        raise NotImplementedError
+        groups: dict[tuple[int, int], list[tuple[LocationAddress, LocationAddress]]] = (
+            {}
+        )
+        for src, dst in diffs:
+            groups.setdefault((src.word_id, dst.word_id), []).append((src, dst))
+
+        match (groups.get((1, 0), []), groups.get((0, 1), [])):
+            case (word_moves, []) if len(word_moves) >= 0:
+                word_start = 1
+            case ([], word_moves) if len(word_moves) > 0:
+                word_start = 0
+            case _:
+                raise AssertionError(
+                    "Cannot have both (0,1) and (1,0) moves in logical arch"
+                )
+
+        moves: list[tuple[LaneAddress, ...]] = self.site_moves(word_moves, word_start)
+        if len(moves) > 0:
+            direction = Direction.FORWARD if word_start == 0 else Direction.BACKWARD
+            moves.append(
+                tuple(
+                    self.assert_valid_word_bus_move(
+                        direction,
+                        0,
+                        end.site_id,
+                        0,
+                    )
+                    for _, end in diffs
+                )
+            )
+
+        moves.extend(self.site_moves(groups.get((0, 0), []), 0))
+        moves.extend(self.site_moves(groups.get((1, 1), []), 1))
+
+        return moves
 
 
 @dataclass

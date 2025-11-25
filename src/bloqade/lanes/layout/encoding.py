@@ -58,6 +58,9 @@ class Encoder(abc.ABC):
         """
         pass
 
+    def __repr__(self) -> str:
+        return f"0x{self.get_address(EncodingType.BIT64):016x}"
+
 
 @dataclass(frozen=True)
 class ZoneAddress(Encoder):
@@ -78,6 +81,9 @@ class ZoneAddress(Encoder):
             raise ValueError("Zone ID too large to encode")
 
         return zone_id_enc
+
+    def __repr__(self) -> str:
+        return super().__str__()
 
 
 @dataclass(frozen=True)
@@ -102,6 +108,9 @@ class WordAddress(Encoder):
 
         return word_id_enc
 
+    def __repr__(self) -> str:
+        return super().__str__()
+
 
 @dataclass(frozen=True)
 class SiteAddress(Encoder):
@@ -124,6 +133,9 @@ class SiteAddress(Encoder):
             raise ValueError("Site ID too large to encode")
 
         return site_id_enc
+
+    def __repr__(self) -> str:
+        return super().__str__()
 
 
 @dataclass(frozen=True)
@@ -161,6 +173,9 @@ class LocationAddress(Encoder):
             32 if encoding == EncodingType.BIT32 else 64
         ), "Bug in encoding"
         return address
+
+    def __repr__(self) -> str:
+        return super().__str__()
 
 
 @dataclass(frozen=True, order=True)
@@ -221,12 +236,21 @@ class LaneAddress(Encoder):
         """Get the source site as a PhysicalAddress."""
         return LocationAddress(self.word_id, self.site_id)
 
+    def __repr__(self) -> str:
+        return super().__str__()
+
 
 @dataclass(frozen=True)
 class SiteLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.SITE, init=False)
 
+    def __repr__(self) -> str:
+        return super().__str__()
+
 
 @dataclass(frozen=True)
 class WordLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.WORD, init=False)
+
+    def __repr__(self) -> str:
+        return super().__str__()
