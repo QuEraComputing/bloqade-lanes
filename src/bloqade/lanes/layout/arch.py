@@ -172,8 +172,12 @@ class ArchSpec(Generic[SiteType]):
                 lane1.direction == lane2.direction
                 and (lane2.word_id in self.site_bus_compatibility[lane1.word_id])
                 and lane1.bus_id == lane2.bus_id
+                and (lane1.word_id != lane2.word_id or lane1.site_id != lane2.site_id)
             )
         elif isinstance(lane1, WordLaneAddress) and isinstance(lane2, WordLaneAddress):
-            return lane1.direction == lane2.direction and lane1.bus_id == lane2.bus_id
-
+            return (
+                lane1.direction == lane2.direction
+                and lane1.bus_id == lane2.bus_id
+                and (lane1.word_id != lane2.word_id or lane1.site_id != lane2.site_id)
+            )
         return False
