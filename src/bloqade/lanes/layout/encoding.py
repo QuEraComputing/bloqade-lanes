@@ -83,7 +83,7 @@ class ZoneAddress(Encoder):
         return zone_id_enc
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
 
 
 @dataclass(frozen=True)
@@ -109,7 +109,7 @@ class WordAddress(Encoder):
         return word_id_enc
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
 
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ class SiteAddress(Encoder):
         return site_id_enc
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,7 @@ class LocationAddress(Encoder):
         return address
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
 
 
 @dataclass(frozen=True, order=True)
@@ -193,9 +193,6 @@ class LaneAddress(Encoder):
             else Direction.FORWARD
         )
         return replace(self, direction=new_direction)
-
-    def __str__(self) -> str:
-        return "0x{:08x}".format(self.get_address(EncodingType.BIT32))
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -237,7 +234,7 @@ class LaneAddress(Encoder):
         return LocationAddress(self.word_id, self.site_id)
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
 
 
 @dataclass(frozen=True)
@@ -245,7 +242,7 @@ class SiteLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.SITE, init=False)
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
 
 
 @dataclass(frozen=True)
@@ -253,4 +250,4 @@ class WordLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.WORD, init=False)
 
     def __repr__(self) -> str:
-        return super().__str__()
+        return super().__repr__()
