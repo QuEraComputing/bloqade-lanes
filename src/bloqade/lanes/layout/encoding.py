@@ -2,18 +2,27 @@ import abc
 import enum
 from dataclasses import dataclass, field, replace
 
+from kirin import ir, types
+from kirin.print import Printer
 
-class Direction(enum.Enum):
+
+class Direction(enum.IntEnum):
     FORWARD = 0
     BACKWARD = 1
 
+    def __repr__(self):
+        return f"Direction.{self.name}"
 
-class MoveType(enum.Enum):
+
+class MoveType(enum.IntEnum):
     SITE = 0
     WORD = 1
 
+    def __repr__(self):
+        return f"MoveType.{self.name}"
 
-class EncodingType(enum.Enum):
+
+class EncodingType(enum.IntEnum):
     BIT32 = 32
     BIT64 = 64
 
@@ -39,8 +48,12 @@ class EncodingType(enum.Enum):
             raise ValueError("Architecture too large to encode with 64-bit addresses")
 
 
-class Encoder(abc.ABC):
+@dataclass
+class Encoder(ir.Data):
     """Base class of all encodable entities."""
+
+    def __post_init__(self):
+        self.type = types.PyClass(type(self))
 
     @abc.abstractmethod
     def get_address(self, encoding: EncodingType) -> int:
@@ -58,14 +71,20 @@ class Encoder(abc.ABC):
         """
         pass
 
-    def __repr__(self) -> str:
-        return f"0x{self.get_address(EncodingType.BIT64):016x}"
+    def unwrap(self):
+        return self
+
+    def print_impl(self, printer: Printer):
+        printer.plain_print(f"0x{self.get_address(EncodingType.BIT64):016x}")
 
 
-@dataclass(frozen=True)
+@dataclass
 class ZoneAddress(Encoder):
     zone_id: int
     """The ID of the zone."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -82,16 +101,16 @@ class ZoneAddress(Encoder):
 
         return zone_id_enc
 
-    def __repr__(self) -> str:
-        return super().__repr__()
 
-
-@dataclass(frozen=True)
+@dataclass
 class WordAddress(Encoder):
     """Data class representing a word address in the architecture."""
 
     word_id: int
     """The ID of the word."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -108,16 +127,16 @@ class WordAddress(Encoder):
 
         return word_id_enc
 
-    def __repr__(self) -> str:
-        return super().__repr__()
 
-
-@dataclass(frozen=True)
+@dataclass
 class SiteAddress(Encoder):
     """Data class representing a site address in the architecture."""
 
     site_id: int
     """The ID of the site."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -134,11 +153,8 @@ class SiteAddress(Encoder):
 
         return site_id_enc
 
-    def __repr__(self) -> str:
-        return super().__repr__()
 
-
-@dataclass(frozen=True)
+@dataclass
 class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 
@@ -146,6 +162,9 @@ class LocationAddress(Encoder):
     """The ID of the word."""
     site_id: int
     """The ID of the site within the word."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType):
 
@@ -174,11 +193,8 @@ class LocationAddress(Encoder):
         ), "Bug in encoding"
         return address
 
-    def __repr__(self) -> str:
-        return super().__repr__()
 
-
-@dataclass(frozen=True, order=True)
+@dataclass
 class LaneAddress(Encoder):
     direction: Direction
     move_type: MoveType
@@ -233,21 +249,21 @@ class LaneAddress(Encoder):
         """Get the source site as a PhysicalAddress."""
         return LocationAddress(self.word_id, self.site_id)
 
-    def __repr__(self) -> str:
-        return super().__repr__()
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
 
-@dataclass(frozen=True)
+@dataclass
 class SiteLaneAddress(LaneAddress):
-    move_type: MoveType = field(default=MoveType.SITE, init=False)
+    move_type: MoveType = field(default=MoveType.SITE, init=False, repr=False)
 
-    def __repr__(self) -> str:
-        return super().__repr__()
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
 
-@dataclass(frozen=True)
+@dataclass
 class WordLaneAddress(LaneAddress):
-    move_type: MoveType = field(default=MoveType.WORD, init=False)
+    move_type: MoveType = field(default=MoveType.WORD, init=False, repr=False)
 
-    def __repr__(self) -> str:
-        return super().__repr__()
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)

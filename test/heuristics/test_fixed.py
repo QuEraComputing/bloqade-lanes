@@ -227,3 +227,51 @@ def test_initial_layout():
         LocationAddress(word_id=0, site_id=8),
         LocationAddress(word_id=0, site_id=6),
     )
+
+
+def test_move_scheduler_cz():
+
+    initial_state = ConcreteState(
+        frozenset(),
+        tuple(
+            LocationAddress(word_id, site_id)
+            for word_id in range(2)
+            for site_id in range(0, 10, 2)
+        ),
+        tuple(0 for _ in range(10)),
+    )
+
+    placement = fixed.LogicalPlacementStrategy()
+    controls = (0, 1, 4)
+    targets = (5, 6, 7)
+
+    final_state = placement.cz_placements(
+        initial_state,
+        controls,
+        targets,
+    )
+
+    moves = fixed.LogicalMoveScheduler().compute_moves(initial_state, final_state)
+
+    assert moves == [
+        (
+            SiteLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=0
+            ),
+            SiteLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=2, bus_id=0
+            ),
+        ),
+        (SiteLaneAddress(direction=Direction.FORWARD, word_id=0, site_id=8, bus_id=7),),
+        (
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=1, bus_id=0
+            ),
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=3, bus_id=0
+            ),
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=5, bus_id=0
+            ),
+        ),
+    ]
