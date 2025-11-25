@@ -13,7 +13,7 @@ from bloqade.lanes.types import StateType
 dialect = ir.Dialect(name="lanes.circuit")
 
 
-@statement
+@statement(init=False)
 class QuantumStmt(ir.Statement):
     """This is a base class for all low level statements."""
 

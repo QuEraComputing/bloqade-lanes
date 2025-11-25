@@ -1,19 +1,28 @@
 import abc
 import enum
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+
+from kirin import ir, types
+from kirin.print import Printer
 
 
-class Direction(enum.Enum):
+class Direction(enum.IntEnum):
     FORWARD = 0
     BACKWARD = 1
 
-
-class MoveTypeEnum(enum.Enum):
-    INTRA = 0
-    INTER = 1
+    def __repr__(self):
+        return f"Direction.{self.name}"
 
 
-class EncodingType(enum.Enum):
+class MoveType(enum.IntEnum):
+    SITE = 0
+    WORD = 1
+
+    def __repr__(self):
+        return f"MoveType.{self.name}"
+
+
+class EncodingType(enum.IntEnum):
     BIT32 = 32
     BIT64 = 64
 
@@ -38,9 +47,16 @@ class EncodingType(enum.Enum):
         else:
             raise ValueError("Architecture too large to encode with 64-bit addresses")
 
+    def __repr__(self):
+        return f"EncodingType.{self.name}"
 
-class Encoder(abc.ABC):
+
+@dataclass
+class Encoder(ir.Data):
     """Base class of all encodable entities."""
+
+    def __post_init__(self):
+        self.type = types.PyClass(type(self))
 
     @abc.abstractmethod
     def get_address(self, encoding: EncodingType) -> int:
@@ -58,11 +74,20 @@ class Encoder(abc.ABC):
         """
         pass
 
+    def unwrap(self):
+        return self
 
-@dataclass(frozen=True)
+    def print_impl(self, printer: Printer):
+        printer.plain_print(f"0x{self.get_address(EncodingType.BIT64):016x}")
+
+
+@dataclass
 class ZoneAddress(Encoder):
     zone_id: int
     """The ID of the zone."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -80,12 +105,15 @@ class ZoneAddress(Encoder):
         return zone_id_enc
 
 
-@dataclass(frozen=True)
+@dataclass
 class WordAddress(Encoder):
     """Data class representing a word address in the architecture."""
 
     word_id: int
     """The ID of the word."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -103,12 +131,15 @@ class WordAddress(Encoder):
         return word_id_enc
 
 
-@dataclass(frozen=True)
+@dataclass
 class SiteAddress(Encoder):
     """Data class representing a site address in the architecture."""
 
     site_id: int
     """The ID of the site."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -126,7 +157,7 @@ class SiteAddress(Encoder):
         return site_id_enc
 
 
-@dataclass(frozen=True)
+@dataclass
 class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 
@@ -134,6 +165,9 @@ class LocationAddress(Encoder):
     """The ID of the word."""
     site_id: int
     """The ID of the site within the word."""
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
 
     def get_address(self, encoding: EncodingType):
 
@@ -163,9 +197,13 @@ class LocationAddress(Encoder):
         return address
 
 
-@dataclass(frozen=True)
+@dataclass
 class LaneAddress(Encoder):
     direction: Direction
+    move_type: MoveType
+    word_id: int
+    site_id: int
+    bus_id: int
 
     def reverse(self):
         new_direction = (
@@ -174,21 +212,6 @@ class LaneAddress(Encoder):
             else Direction.FORWARD
         )
         return replace(self, direction=new_direction)
-
-    @abc.abstractmethod
-    def src_site(self) -> LocationAddress:
-        """Get the source site as a PhysicalAddress."""
-        pass
-
-
-@dataclass(frozen=True)
-class SiteLaneAddress(LaneAddress):
-    word_id: int
-    site_id: int
-    bus_id: int
-
-    def src_site(self):
-        return LocationAddress(self.word_id, self.site_id)
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -218,54 +241,32 @@ class SiteLaneAddress(LaneAddress):
         address = lane_id_enc
         address |= site_id_enc << shift
         address |= word_id_enc << (2 * shift)
-        address |= MoveTypeEnum.INTRA.value << (3 * shift + padding)
+        address |= self.move_type.value << (3 * shift + padding)
         address |= self.direction.value << (3 * shift + padding + 1)
         assert address.bit_length() <= (
             32 if encoding == EncodingType.BIT32 else 64
         ), "Bug in encoding"
         return address
 
+    def src_site(self) -> LocationAddress:
+        """Get the source site as a PhysicalAddress."""
+        return LocationAddress(self.word_id, self.site_id)
 
-@dataclass(frozen=True)
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
+
+
+@dataclass
+class SiteLaneAddress(LaneAddress):
+    move_type: MoveType = field(default=MoveType.SITE, init=False, repr=False)
+
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)
+
+
+@dataclass
 class WordLaneAddress(LaneAddress):
-    word_id: int
-    site_id: int
-    bus_id: int
+    move_type: MoveType = field(default=MoveType.WORD, init=False, repr=False)
 
-    def src_site(self):
-        return LocationAddress(self.word_id, self.bus_id)
-
-    def get_address(self, encoding: EncodingType) -> int:
-        if encoding == EncodingType.BIT32:
-            mask = 0xFF
-            shift = 8
-            padding = 6
-        elif encoding == EncodingType.BIT64:
-            mask = 0xFFFF
-            shift = 16
-            padding = 14
-        else:
-            raise ValueError("Unsupported encoding type")
-
-        bus_id_enc = mask & self.bus_id
-        word_id_enc = mask & self.word_id
-        site_id_enc = mask & self.site_id
-
-        if bus_id_enc != self.bus_id:
-            raise ValueError("Lane ID too large to encode")
-
-        if word_id_enc != self.word_id:
-            raise ValueError("Word ID too large to encode")
-
-        if site_id_enc != self.site_id:
-            raise ValueError("Site ID too large to encode")
-
-        address = bus_id_enc
-        address |= word_id_enc << shift
-        address |= site_id_enc << (2 * shift)
-        address |= MoveTypeEnum.INTER.value << (3 * shift + padding)
-        address |= self.direction.value << (3 * shift + padding + 1)
-        assert address.bit_length() <= (
-            32 if encoding == EncodingType.BIT32 else 64
-        ), "Bug in encoding"
-        return address
+    def __hash__(self) -> int:
+        return self.get_address(EncodingType.BIT64)

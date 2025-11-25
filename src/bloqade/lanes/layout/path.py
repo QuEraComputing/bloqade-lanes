@@ -17,7 +17,7 @@ from .encoding import (
 @dataclass(frozen=True)
 class PathFinder:
     spec: ArchSpec
-    site_graph: nx.PyGraph = field(init=False, default_factory=nx.PyGraph)
+    site_graph: nx.PyDiGraph = field(init=False, default_factory=nx.PyDiGraph)
     """Graph representing all sites and edges as lanes."""
     physical_addresses: list[LocationAddress] = field(init=False, default_factory=list)
     """Map from graph node index to (word_id, site_id) tuple."""
@@ -25,6 +25,9 @@ class PathFinder:
         init=False, default_factory=dict
     )
     """Map from (word_id, site_id) tuple to graph node index."""
+    end_points_cache: dict[LaneAddress, tuple[LocationAddress, LocationAddress]] = (
+        field(init=False, default_factory=dict)
+    )
 
     def __post_init__(self):
         word_ids = range(len(self.spec.words))
@@ -48,6 +51,13 @@ class PathFinder:
                         self.physical_address_map[dst_site],
                         lane_addr,
                     )
+                    self.site_graph.add_edge(
+                        self.physical_address_map[dst_site],
+                        self.physical_address_map[src_site],
+                        rev_lane_addr := lane_addr.reverse(),
+                    )
+                    self.end_points_cache[lane_addr] = (src_site, dst_site)
+                    self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
         for bus_id, bus in enumerate(self.spec.word_buses):
             for src_word, dst_word in zip(bus.src, bus.dst):
@@ -55,35 +65,51 @@ class PathFinder:
                     src_site = LocationAddress(src_word, site)
                     dst_site = LocationAddress(dst_word, site)
                     lane_addr = WordLaneAddress(
-                        Direction.FORWARD, src_word, dst_word, bus_id
+                        Direction.FORWARD, src_word, site, bus_id
                     )
                     self.site_graph.add_edge(
                         self.physical_address_map[src_site],
                         self.physical_address_map[dst_site],
                         lane_addr,
                     )
+                    self.site_graph.add_edge(
+                        self.physical_address_map[dst_site],
+                        self.physical_address_map[src_site],
+                        rev_lane_addr := lane_addr.reverse(),
+                    )
+                    self.end_points_cache[lane_addr] = (src_site, dst_site)
+                    self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
     def extract_lanes_from_path(self, path: list[int]):
         """Given a path as a list of node indices, extract the lane addresses."""
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
-        lanes: list[LaneAddress] = []
-        for src, dst in zip(path[:-1], path[1:]):
-            if not self.site_graph.has_edge(src, dst):
-                raise ValueError(f"No lane between nodes {src} and {dst}")
+        return tuple(self.physical_addresses[ele] for ele in path)
 
-            lane: LaneAddress = self.site_graph.get_edge_data(src, dst)
+    def get_lane(
+        self, start: LocationAddress, end: LocationAddress
+    ) -> LaneAddress | None:
+        """Get the LaneAddress connecting two LocationAddress sites."""
+        start_node = self.physical_address_map[start]
+        end_node = self.physical_address_map[end]
+        edge_data = self.site_graph.get_edge_data(start_node, end_node)
+        if edge_data is None:
+            return None
+        return edge_data
 
-            lanes.append(lane)
-        return lanes
+    def get_endpoints(self, lane: LaneAddress):
+        """Get the start and end LocationAddress for a given LaneAddress."""
+        if lane in self.end_points_cache:
+            return self.end_points_cache[lane]
+        return None, None
 
     def find_path(
         self,
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[list[LaneAddress]], float] = lambda _: 0.0,
-    ) -> tuple[list[LaneAddress] | None, frozenset[LocationAddress]]:
+        path_heuristic: Callable[[tuple[LocationAddress, ...]], float] = lambda _: 0.0,
+    ) -> tuple[LocationAddress, ...] | None:
         """Find a path from start to end avoiding occupied sites.
 
         Args:
@@ -103,23 +129,19 @@ class PathFinder:
         start_node = self.physical_address_map[start]
         end_node = self.physical_address_map[end]
 
-        if start_node in occupied or end_node in occupied:
-            raise ValueError("Start or end site is already occupied.")
+        path_nodes = nx.all_simple_paths(self.site_graph, start_node, end_node)
 
-        subgraph = self.site_graph.subgraph(
-            [n for n, ele in enumerate(self.physical_addresses) if ele not in occupied]
-        )
+        def filter_occupied(path: list[int] | None):
+            if path is None:
+                return False
+            return all(self.physical_addresses[node] not in occupied for node in path)
 
-        path_nodes = nx.all_shortest_paths(subgraph, start_node, end_node)
-        if len(path_nodes) == 0:
-            # no path found
-            return None, occupied
+        valid_paths = list(filter(filter_occupied, path_nodes))
+        paths = list(filter(None, map(self.extract_lanes_from_path, valid_paths)))
 
-        path = min(
-            path_nodes,
-            key=lambda p: path_heuristic(self.extract_lanes_from_path(p)),
-        )
-        lanes = self.extract_lanes_from_path(path)
-        return lanes, occupied.union(
-            frozenset(self.physical_addresses[n] for n in path)
-        )
+        if len(paths) == 0:
+            return None
+
+        lanes = min(paths, key=lambda p: len(p) + path_heuristic(p))
+
+        return lanes
