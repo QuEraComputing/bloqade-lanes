@@ -253,11 +253,10 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         moves: list[tuple[LaneAddress, ...]] = self.site_moves(word_moves, word_start)
         if len(moves) > 0:
-            direction = Direction.FORWARD if word_start == 0 else Direction.BACKWARD
             moves.append(
                 tuple(
                     self.assert_valid_word_bus_move(
-                        direction,
+                        Direction.FORWARD if word_start == 0 else Direction.BACKWARD,
                         0,
                         end.site_id,
                         0,
