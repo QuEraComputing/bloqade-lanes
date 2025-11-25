@@ -8,7 +8,7 @@ def test_architecture_generation():
     arch_physical = generate_arch()
 
     assert len(arch_physical.words) == 16
-    assert len(arch_physical.site_buses) == 5
+    assert len(arch_physical.site_buses) == 9
     assert len(arch_physical.word_buses) == 4
     assert arch_physical.encoding is EncodingType.BIT32
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable
 
+from bloqade.gemini.dialects.logical import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir
 from kirin.dialects import ilist
@@ -44,6 +45,30 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         )
 
         return circuit.StaticCircuit(qubits=qubits, body=body)
+
+    def rewrite_TerminalLogicalMeasurement(
+        self, node: gemini_stmts.TerminalLogicalMeasurement
+    ) -> abc.RewriteResult:
+        if not isinstance(args_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        inputs = args_list.values
+        body, block, entry_state = self.prep_region()
+        gate_stmt = circuit.EndMeasure(
+            entry_state,
+            qubits=tuple(range(len(inputs))),
+        )
+        new_node = self.construct_execute(
+            gate_stmt, qubits=inputs, body=body, block=block
+        )
+        new_node.insert_before(node)
+        node.replace_by(
+            circuit.ConvertToPhysicalMeasurements(
+                tuple(new_node.results),
+            )
+        )
+
+        return abc.RewriteResult(has_done_something=True)
 
     def rewrite_CZ(self, node: gate.CZ) -> abc.RewriteResult:
         if not isinstance(

@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Any, Generator
 
 from kirin import interp
 
@@ -124,7 +123,6 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         start_word_id = self._word_balance(state, controls, targets)
         for c, t in zip(controls, targets):
             mover, dst_addr = self._pick_mover_and_location(state, start_word_id, c, t)
-
             new_positions[mover] = LocationAddress(
                 word_id=dst_addr.word_id,
                 site_id=dst_addr.site_id + 1,
@@ -146,91 +144,128 @@ class LogicalMoveScheduler(MoveSchedulerABC):
     def __init__(self):
         super().__init__(generate_arch(1))
 
-    def get_direction(self, diff: int) -> Direction:
-        if diff > 0:
-            return Direction.FORWARD
-        else:
-            return Direction.BACKWARD
-
-    def get_site_y(self, location: LocationAddress) -> int:
-        return location.site_id // 2
-
-    def get_site_bus_id(self, src: LocationAddress, dst: LocationAddress):
-        diff_y = self.get_site_y(dst) - self.get_site_y(src)
-        if diff_y >= 0:
-            return diff_y, Direction.FORWARD
-        else:
-            return -diff_y, Direction.BACKWARD
-
-    def _yield_site_moves(
+    def assert_valid_word_bus_move(
         self,
-        site_dict: dict[
-            tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]
-        ],
-    ) -> Generator[tuple[LaneAddress, ...], Any, None]:
-        for (site_bus_id, site_bus_direction), sites in site_dict.items():
-            yield tuple(
-                SiteLaneAddress(
-                    site_bus_direction,
-                    src.word_id,
-                    src.site_id,
-                    site_bus_id,
+        direction: Direction,
+        src_word: int,
+        src_site: int,
+        bus_id: int,
+    ) -> WordLaneAddress:
+        assert bus_id < len(
+            self.arch_spec.word_buses
+        ), f"Invalid bus id {bus_id} for word bus move"
+        assert (
+            src_word in self.arch_spec.word_buses[bus_id].src
+        ), f"Invalid source word {src_word} for word bus move"
+        assert (
+            src_site in self.arch_spec.has_word_buses
+        ), f"Invalid source site {src_site} for word bus move"
+
+        return WordLaneAddress(
+            direction,
+            src_word,
+            src_site,
+            bus_id,
+        )
+
+    def assert_valid_site_bus_move(
+        self,
+        direction: Direction,
+        src_word: int,
+        src_site: int,
+        bus_id: int,
+    ) -> SiteLaneAddress:
+        assert bus_id < len(
+            self.arch_spec.site_buses
+        ), f"Invalid bus id {bus_id} for site bus move"
+        assert (
+            src_site in self.arch_spec.site_buses[bus_id].src
+        ), f"Invalid source site {src_site} for site bus move {bus_id}"
+        assert (
+            src_word in self.arch_spec.has_site_buses
+        ), f"Invalid source word {src_word} for site bus move {bus_id}"
+
+        return SiteLaneAddress(
+            direction,
+            src_word,
+            src_site,
+            bus_id,
+        )
+
+    def site_moves(
+        self, diffs: list[tuple[LocationAddress, LocationAddress]], word_id: int
+    ) -> list[tuple[LaneAddress, ...]]:
+        start_site_ids = [before.site_id for before, _ in diffs]
+        assert len(set(start_site_ids)) == len(
+            start_site_ids
+        ), "Start site ids must be unique"
+
+        bus_moves = {}
+        for before, end in diffs:
+            bus_id = end.site_id // 2 - before.site_id // 2
+            if bus_id < 0:
+                bus_id += len(self.arch_spec.site_buses)
+
+            bus_moves.setdefault(bus_id, []).append(
+                self.assert_valid_site_bus_move(
+                    Direction.FORWARD,
+                    word_id,
+                    before.site_id,
+                    bus_id,
                 )
-                for src, _ in sites
             )
 
-    def compute_moves(self, state_before: AtomState, state_after: AtomState):
+        return list(map(tuple, bus_moves.values()))
+
+    def compute_moves(
+        self, state_before: AtomState, state_after: AtomState
+    ) -> list[tuple[LaneAddress, ...]]:
         if not (
             isinstance(state_before, ConcreteState)
             and isinstance(state_after, ConcreteState)
         ):
             return []
 
-        diffs = (
+        diffs = [
             ele
             for ele in zip(state_before.layout, state_after.layout)
             if ele[0] != ele[1]
+        ]
+
+        groups: dict[tuple[int, int], list[tuple[LocationAddress, LocationAddress]]] = (
+            {}
         )
-
-        diff_moves_dict: dict[
-            tuple[int, int],
-            dict[tuple[int, Direction], list[tuple[LocationAddress, LocationAddress]]],
-        ] = {}
-
-        same_moves_dict = dict(diff_moves_dict)
         for src, dst in diffs:
-            site_bus_id, site_bus_direction = self.get_site_bus_id(src, dst)
-            if src.word_id != dst.word_id:
-                diff_moves_dict.setdefault((src.word_id, dst.word_id), {}).setdefault(
-                    (site_bus_id, site_bus_direction), []
-                ).append((src, dst))
-            else:
-                same_moves_dict.setdefault((src.word_id, src.word_id), {}).setdefault(
-                    (site_bus_id, site_bus_direction), []
-                ).append((src, dst))
+            groups.setdefault((src.word_id, dst.word_id), []).append((src, dst))
 
-        assert (
-            len(diff_moves_dict) <= 1
-        ), "Multiple word bus moves detected, which should not happen in logical architecture"
+        match (groups.get((1, 0), []), groups.get((0, 1), [])):
+            case ([] as word_moves, []):
+                word_start = 0
+            case (list() as word_moves, []):
+                word_start = 1
+            case ([], list() as word_moves):
+                word_start = 0
+            case _:
+                raise AssertionError(
+                    "Cannot have both (0,1) and (1,0) moves in logical arch"
+                )
 
-        moves: list[tuple[LaneAddress, ...]] = []
-        if len(diff_moves_dict) > 0:
-            ((src_word_id, dst_word_id),) = diff_moves_dict.keys()
-            diff_sites_dict = diff_moves_dict[(src_word_id, dst_word_id)]
-
-            moves.extend(self._yield_site_moves(diff_sites_dict))
-            direction = self.get_direction(dst_word_id - src_word_id)
+        moves: list[tuple[LaneAddress, ...]] = self.site_moves(word_moves, word_start)
+        if len(moves) > 0:
             moves.append(
                 tuple(
-                    WordLaneAddress(direction, src_word_id, dst.site_id + 1, 0)
-                    for sites in diff_sites_dict.values()
-                    for _, dst in sites
+                    self.assert_valid_word_bus_move(
+                        Direction.FORWARD if word_start == 0 else Direction.BACKWARD,
+                        0,
+                        end.site_id,
+                        0,
+                    )
+                    for _, end in word_moves
                 )
             )
 
-        for sites_dict in same_moves_dict.values():
-            moves.extend(self._yield_site_moves(sites_dict))
-            # no word bus move needed here
+        moves.extend(self.site_moves(groups.get((0, 0), []), 0))
+        moves.extend(self.site_moves(groups.get((1, 1), []), 1))
 
         return moves
 

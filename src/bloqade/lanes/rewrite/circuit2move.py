@@ -25,7 +25,7 @@ class MoveSchedulerABC(abc.ABC):
             for word_id in zone:
                 word = self.arch_spec.words[word_id]
                 for site_id, _ in enumerate(word.sites):
-                    loc_addr = LocationAddress(word_id=word_id, site_id=site_id)
+                    loc_addr = LocationAddress(word_id, site_id)
                     zone_address = ZoneAddress(zone_id)
                     self.zone_address_map[loc_addr] = (zone_address, index)
                     index += 1
@@ -248,7 +248,7 @@ class InsertMeasure(RewriteRule):
             zone_address, index = self.move_heuristic.zone_address_map[loc_addr]
             get_result_stmt = move.GetMeasurementResult(
                 measurement_future=futures[zone_address],
-                index=index,
+                location_address=loc_addr,
             )
             get_result_stmt.insert_before(node)
             result.replace_by(get_result_stmt.result)

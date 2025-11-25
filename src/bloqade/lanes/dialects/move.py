@@ -76,7 +76,7 @@ class GetMeasurementResult(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
 
     measurement_future: ir.SSAValue = info.argument(MeasurementFutureType)
-    index: int = info.attribute()
+    location_address: LocationAddress = info.attribute()
 
     result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)
 

@@ -136,16 +136,16 @@ class Move(interp.MethodTable):
 
         qubits_to_move = {}
         for move_lane in stmt.lanes:
-            endpoints = interp_.path_finder.get_endpoints(move_lane)
-            if endpoints is None:
+            src, dst = interp_.path_finder.get_endpoints(move_lane)
+            if src is None or dst is None:
                 frame.current_state = UnknownAtomState()
                 return
 
-            qubit = current_state.get_qubit(endpoints[0])
+            qubit = current_state.get_qubit(src)
             if qubit is None:
                 continue
 
-            qubits_to_move[qubit] = endpoints[1]
+            qubits_to_move[qubit] = dst
         frame.current_state = current_state.update(qubits_to_move)
 
     @interp.impl(move.Initialize)

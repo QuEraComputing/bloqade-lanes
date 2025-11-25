@@ -1,3 +1,4 @@
+from bloqade.gemini.dialects.logical import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gates
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
@@ -108,6 +109,41 @@ def test_rz():
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle
         )
     )
+    block.stmts.append(circuit.Yield(gate_stmt.state_after))
+
+    rule = rewrite.Walk(RewriteLowLevelCircuit())
+
+    rule.rewrite(test_block)
+
+    assert_nodes(test_block, expected_block)
+
+
+def test_measurement():
+    test_block = ir.Block(
+        [
+            qubits := ilist.New(
+                values=(
+                    q0 := ir.TestValue(),
+                    q1 := ir.TestValue(),
+                    q2 := ir.TestValue(),
+                )
+            ),
+            gemini_stmts.TerminalLogicalMeasurement(qubits=qubits.result),
+        ],
+    )
+
+    expected_block = ir.Block(
+        [
+            qubits := ilist.New(values=(q0, q1, q2)),
+            st_circ := circuit.StaticCircuit(
+                qubits=(q0, q1, q2), body=ir.Region(block := ir.Block())
+            ),
+            circuit.ConvertToPhysicalMeasurements(tuple(st_circ.results)),
+        ]
+    )
+
+    entry_state = block.args.append_from(types.StateType, name="entry_state")
+    block.stmts.append(gate_stmt := circuit.EndMeasure(entry_state, qubits=(0, 1, 2)))
     block.stmts.append(circuit.Yield(gate_stmt.state_after))
 
     rule = rewrite.Walk(RewriteLowLevelCircuit())

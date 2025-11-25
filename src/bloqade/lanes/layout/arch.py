@@ -8,7 +8,7 @@ from bloqade.lanes.layout.encoding import (
     EncodingType,
     LaneAddress,
     LocationAddress,
-    MoveTypeEnum,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -45,8 +45,6 @@ class ArchSpec(Generic[SiteType]):
     """List of all word buses in the architecture by word address."""
     site_bus_compatibility: tuple[frozenset[int], ...]
     """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
-    word_bus_compatibility: tuple[frozenset[int], ...]
-    """Mapping from site id indicating which other site ids can execute word-buses in parallel."""
     encoding: EncodingType = field(init=False)
 
     def __post_init__(self):
@@ -172,26 +170,28 @@ class ArchSpec(Generic[SiteType]):
 
     def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
         """Check if two lanes are compatible (can be executed in parallel)."""
-        if isinstance(lane1, (WordLaneAddress, SiteLaneAddress)) and isinstance(
-            lane2, (WordLaneAddress, SiteLaneAddress)
-        ):
+        if isinstance(lane1, SiteLaneAddress) and isinstance(lane2, SiteLaneAddress):
             return (
-                type(lane1) is type(lane2)
-                and lane1.direction == lane2.direction
+                lane1.direction == lane2.direction
                 and (lane2.word_id in self.site_bus_compatibility[lane1.word_id])
-                and lane1.site_id != lane2.site_id
                 and lane1.bus_id == lane2.bus_id
+                and (lane1.word_id != lane2.word_id or lane1.site_id != lane2.site_id)
             )
-
+        elif isinstance(lane1, WordLaneAddress) and isinstance(lane2, WordLaneAddress):
+            return (
+                lane1.direction == lane2.direction
+                and lane1.bus_id == lane2.bus_id
+                and (lane1.word_id != lane2.word_id or lane1.site_id != lane2.site_id)
+            )
         return False
 
     def get_endpoints(self, lane_address: LaneAddress):
         src = lane_address.src_site()
-        if lane_address.type_ is MoveTypeEnum.WORD:
+        if lane_address.move_type is MoveType.WORD:
             bus = self.word_buses[lane_address.bus_id]
             dst_word = bus.dst[bus.src.index(src.word_id)]
             dst = LocationAddress(dst_word, src.site_id)
-        elif lane_address.type_ is MoveTypeEnum.SITE:
+        elif lane_address.move_type is MoveType.SITE:
             bus = self.site_buses[lane_address.bus_id]
             dst_site = bus.dst[bus.src.index(src.site_id)]
             dst = LocationAddress(src.word_id, dst_site)
