@@ -239,9 +239,11 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             groups.setdefault((src.word_id, dst.word_id), []).append((src, dst))
 
         match (groups.get((1, 0), []), groups.get((0, 1), [])):
-            case (word_moves, []) if len(word_moves) >= 0:
+            case ([] as word_moves, []):
+                word_start = 0
+            case (list() as word_moves, []):
                 word_start = 1
-            case ([], word_moves) if len(word_moves) > 0:
+            case ([], list() as word_moves):
                 word_start = 0
             case _:
                 raise AssertionError(
@@ -258,7 +260,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
                         end.site_id,
                         0,
                     )
-                    for _, end in diffs
+                    for _, end in word_moves
                 )
             )
 
