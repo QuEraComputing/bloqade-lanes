@@ -8,6 +8,7 @@ from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import circuit, move
+from bloqade.lanes.passes.canonicalize import CanonicalizeNative
 from bloqade.lanes.rewrite import circuit2move, native2circuit
 
 
@@ -22,6 +23,7 @@ class NativeToCircuit:
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(circuit))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
+        CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(
             native2circuit.RewriteLowLevelCircuit(),
         ).rewrite(out.code)
