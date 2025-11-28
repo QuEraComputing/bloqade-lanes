@@ -135,21 +135,23 @@ def test_measurement():
     expected_block = ir.Block(
         [
             qubits := ilist.New(values=(q0, q1, q2)),
-            st_circ := circuit.StaticCircuit(
-                qubits=(q0, q1, q2), body=ir.Region(block := ir.Block())
-            ),
-            circuit.ConvertToPhysicalMeasurements(tuple(st_circ.results)),
         ]
     )
 
+    block = ir.Block()
+
     entry_state = block.args.append_from(types.StateType, name="entry_state")
     block.stmts.append(gate_stmt := circuit.EndMeasure(entry_state, qubits=(0, 1, 2)))
-    block.stmts.append(circuit.Yield(gate_stmt.state_after))
-
+    block.stmts.append(circuit.Yield(*gate_stmt.results))
+    expected_block.stmts.append(
+        circ := circuit.StaticCircuit(qubits=(q0, q1, q2), body=ir.Region(block))
+    )
+    expected_block.stmts.append(
+        circuit.ConvertToPhysicalMeasurements(tuple(circ.results))
+    )
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
     rule.rewrite(test_block)
-
     assert_nodes(test_block, expected_block)
 
 
@@ -239,7 +241,3 @@ def test_merge_regions():
     test_block.print()
     expected_block.print()
     assert_nodes(test_block, expected_block)
-
-
-if __name__ == "__main__":
-    test_merge_regions()

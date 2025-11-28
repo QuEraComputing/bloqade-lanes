@@ -5,6 +5,8 @@ from kirin import ir, passes, rewrite
 from kirin.passes.hint_const import HintConst
 from kirin.rewrite import abc
 
+from bloqade import qubit
+
 
 class HoistClassicalStatements(abc.RewriteRule):
     """This rewrite rule shift any classical statements that are pure
@@ -18,6 +20,15 @@ class HoistClassicalStatements(abc.RewriteRule):
 
     """
 
+    TYPES = (
+        gates.CZ,
+        gates.R,
+        gates.Rz,
+        qubit.stmts.Measure,
+        qubit.stmts.Reset,
+        qubit.stmts.New,
+    )
+
     def is_pure(self, node: ir.Statement) -> bool:
         return (
             node.has_trait(ir.Pure)
@@ -27,9 +38,10 @@ class HoistClassicalStatements(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, (gates.CZ, gates.R, gates.Rz))
+            isinstance(node, self.TYPES)
             and (next_node := node.next_stmt) is not None
             and not next_node.has_trait(ir.IsTerminator)
+            and set(node.results).isdisjoint(next_node.args)
             and self.is_pure(next_node)
         ):
             return abc.RewriteResult()
@@ -44,10 +56,6 @@ class CanonicalizeNative(passes.Pass):
 
     def unsafe_run(self, mt: ir.Method) -> abc.RewriteResult:
         result = HintConst(mt.dialects)(mt)
-        result = (
-            rewrite.Fixpoint(rewrite.Walk(HoistClassicalStatements()))
-            .rewrite(mt.code)
-            .join(result)
-        )
+        result = rewrite.Walk(HoistClassicalStatements()).rewrite(mt.code).join(result)
 
         return result
