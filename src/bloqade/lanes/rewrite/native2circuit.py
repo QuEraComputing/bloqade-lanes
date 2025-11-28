@@ -170,7 +170,7 @@ class MergePlacementRegions(abc.RewriteRule):
         else:
             return node.from_stmt(
                 node,
-                args=(curr_state,),
+                args=(curr_state, *node.args[1:]),
                 attributes={
                     "qubits": ir.PyAttr(tuple(input_map[i] for i in node.qubits))
                 },
@@ -212,10 +212,10 @@ class MergePlacementRegions(abc.RewriteRule):
                 remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)
-                new_block.stmts.append(remapped_stmt)
                 for old_result, new_result in zip(
                     stmt.results[1:], remapped_stmt.results[1:]
                 ):
+                    old_result.replace_by(new_result)
                     current_yields.append(new_result)
 
         new_yield = circuit.Yield(
@@ -233,7 +233,9 @@ class MergePlacementRegions(abc.RewriteRule):
 
         # replace old results with new results from new static circuit
         old_results = list(node.results) + list(next_node.results)
-        for old_result, new_result in zip(old_results, new_static_circuit.results):
+        for old_result, new_result in zip(
+            old_results, new_static_circuit.results, strict=True
+        ):
             old_result.replace_by(new_result)
 
         # delete the old nodes
