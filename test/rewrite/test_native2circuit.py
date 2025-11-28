@@ -241,11 +241,3 @@ def test_merge_regions():
     test_block.print()
     expected_block.print()
     assert_nodes(test_block, expected_block)
-
-
-if __name__ == "__main__":
-    test_cz()
-    test_r()
-    test_rz()
-    test_measurement()
-    test_merge_regions()
