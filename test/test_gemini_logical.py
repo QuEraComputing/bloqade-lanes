@@ -1,6 +1,6 @@
 from matplotlib import pyplot as plt
 
-from bloqade.lanes.gemini import generate_arch
+from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.layout.encoding import EncodingType
 
 

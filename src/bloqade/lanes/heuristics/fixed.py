@@ -6,7 +6,7 @@ from kirin import interp
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
-from bloqade.lanes.gemini import generate_arch
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
@@ -138,11 +138,9 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         return state  # No movement for single-qubit gates
 
 
-@dataclass(init=False)
+@dataclass()
 class LogicalMoveScheduler(MoveSchedulerABC):
-
-    def __init__(self):
-        super().__init__(generate_arch(1))
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
 
     def assert_valid_word_bus_move(
         self,
@@ -272,7 +270,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
-    arch_spec: ArchSpec = field(default=generate_arch(1))
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
 
     def layout_from_weights(
         self,
