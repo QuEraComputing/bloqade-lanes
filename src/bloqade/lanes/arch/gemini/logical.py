@@ -40,12 +40,24 @@ class RewriteMoves(rewrite_abc.RewriteRule):
     def get_y_positions(self, lane: LaneAddress):
         return lane.site_id // 2
 
-    def get_address_info(self, node: ir.Statement, lanes: tuple[LaneAddress, ...]):
-        direction = lanes[0].direction
-        y_positions_list = ilist.IList([self.get_y_positions(lane) for lane in lanes])
-        word = lanes[0].word_id
-        bus_id = lanes[0].bus_id
+    def get_address_info(self, node: move.Move):
 
+        if len(node.lanes) == 0:
+            return None, None, None, None
+        direction = node.lanes[0].direction
+        word = node.lanes[0].word_id
+        bus_id = node.lanes[0].bus_id
+
+        if not all(lane.word_id == word for lane in node.lanes):
+            word = None
+        if not all(lane.bus_id == bus_id for lane in node.lanes):
+            bus_id = None
+        if not all(lane.direction == direction for lane in node.lanes):
+            direction = None
+
+        y_positions_list = ilist.IList(
+            [self.get_y_positions(lane) for lane in node.lanes]
+        )
         (y_positions_stmt := py.Constant(y_positions_list)).insert_before(node)
 
         return y_positions_stmt.result, word, bus_id, direction
@@ -54,11 +66,12 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         if not isinstance(node, move.Move):
             return rewrite_abc.RewriteResult()
 
-        y_positions, word, bus_id, direction = self.get_address_info(
-            node, lanes := node.lanes
-        )
+        y_positions, word, bus_id, direction = self.get_address_info(node)
 
-        if types.is_tuple_of(lanes, SiteLaneAddress):
+        if y_positions is None or word is None or bus_id is None or direction is None:
+            return rewrite_abc.RewriteResult()
+
+        if types.is_tuple_of(node.lanes, SiteLaneAddress):
             node.replace_by(
                 SiteBusMove(
                     y_positions,
@@ -68,7 +81,10 @@ class RewriteMoves(rewrite_abc.RewriteRule):
                 )
             )
             return rewrite_abc.RewriteResult(has_done_something=True)
-        elif types.is_tuple_of(lanes, WordLaneAddress):
+        elif types.is_tuple_of(node.lanes, WordLaneAddress):
+            if word != 0 or bus_id != 0:
+                return rewrite_abc.RewriteResult()
+
             node.replace_by(
                 WordBusMove(
                     y_positions,
