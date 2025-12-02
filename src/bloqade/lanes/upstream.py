@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
@@ -13,7 +14,10 @@ from bloqade.lanes.rewrite import circuit2move, native2circuit
 
 
 def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
-    return False
+    return all(
+        isinstance(stmt, (circuit.R, circuit.Rz, circuit.Yield))
+        for stmt in chain(region_a.walk(), region_b.walk())
+    )
 
 
 @dataclass
@@ -24,6 +28,7 @@ class NativeToCircuit:
         out = mt.similar(mt.dialects.add(circuit))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
+        out.print()
         rewrite.Walk(
             native2circuit.RewriteLowLevelCircuit(),
         ).rewrite(out.code)

@@ -1,12 +1,11 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from kirin import decl, ir, types
+from kirin import decl, ir, rewrite, types
 from kirin.decl import info
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
     MoveType,
@@ -38,9 +37,6 @@ class WordBusMove(ir.Statement):
 
 @dataclass
 class RewriteMoves(rewrite_abc.RewriteRule):
-    """Re"""
-
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
 
     def get_address_info(self, node: move.Move):
 
@@ -81,3 +77,16 @@ class RewriteMoves(rewrite_abc.RewriteRule):
             raise AssertionError("Unsupported move type for rewrite")
 
         return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+class SpecializeGemini:
+
+    def emit(self, mt: ir.Method, no_raise=True) -> ir.Method:
+        out = mt.similar(dialects=mt.dialects.add(dialect))
+
+        rewrite.Walk(RewriteMoves()).rewrite(out.code)
+
+        if not no_raise:
+            out.verify()
+
+        return out
