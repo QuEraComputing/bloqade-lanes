@@ -27,10 +27,14 @@ def log_depth_ghz():
             reg = reg + new_qubits
 
 
+log_depth_ghz.print()
+
 log_depth_ghz = SquinToNative().emit(log_depth_ghz)
 log_depth_ghz.print()
+
 log_depth_ghz = NativeToCircuit().emit(log_depth_ghz)
 log_depth_ghz.print()
+
 log_depth_ghz = CircuitToMove(
     fixed.LogicalLayoutHeuristic(),
     fixed.LogicalPlacementStrategy(),
