@@ -270,7 +270,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def layout_from_weights(
         self,
