@@ -28,7 +28,6 @@ class NativeToCircuit:
         out = mt.similar(mt.dialects.add(circuit))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
-        out.print()
         rewrite.Walk(
             native2circuit.RewriteLowLevelCircuit(),
         ).rewrite(out.code)
