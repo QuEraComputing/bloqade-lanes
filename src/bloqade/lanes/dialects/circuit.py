@@ -90,7 +90,7 @@ class Yield(ir.Statement):
 
     def __init__(self, final_state: ir.SSAValue, *classical_results: ir.SSAValue):
         super().__init__(
-            args=(final_state,),
+            args=(final_state, *classical_results),
             args_slice={"final_state": 0, "classical_results": slice(1, None)},
         )
 

@@ -58,8 +58,8 @@ class InsertMoves(RewriteRule):
             return RewriteResult()
 
         moves = self.move_heuristic.compute_moves(
-            self.placement_analysis[node.state_before],
-            self.placement_analysis[node.state_after],
+            self.placement_analysis.get(node.state_before, placement.AtomState.top()),
+            self.placement_analysis.get(node.state_after, placement.AtomState.top()),
         )
 
         if len(moves) == 0:

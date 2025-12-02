@@ -135,21 +135,23 @@ def test_measurement():
     expected_block = ir.Block(
         [
             qubits := ilist.New(values=(q0, q1, q2)),
-            st_circ := circuit.StaticCircuit(
-                qubits=(q0, q1, q2), body=ir.Region(block := ir.Block())
-            ),
-            circuit.ConvertToPhysicalMeasurements(tuple(st_circ.results)),
         ]
     )
 
+    block = ir.Block()
+
     entry_state = block.args.append_from(types.StateType, name="entry_state")
     block.stmts.append(gate_stmt := circuit.EndMeasure(entry_state, qubits=(0, 1, 2)))
-    block.stmts.append(circuit.Yield(gate_stmt.state_after))
-
+    block.stmts.append(circuit.Yield(*gate_stmt.results))
+    expected_block.stmts.append(
+        circ := circuit.StaticCircuit(qubits=(q0, q1, q2), body=ir.Region(block))
+    )
+    expected_block.stmts.append(
+        circuit.ConvertToPhysicalMeasurements(tuple(circ.results))
+    )
     rule = rewrite.Walk(RewriteLowLevelCircuit())
 
     rule.rewrite(test_block)
-
     assert_nodes(test_block, expected_block)
 
 
@@ -157,46 +159,47 @@ def test_merge_regions():
 
     qubits = tuple(ir.TestValue() for _ in range(10))
 
-    test_block = ir.Block(
-        [
-            rotation_angle := py.Constant(0.5),
-            circuit.StaticCircuit(
-                qubits=(qubits[0], qubits[1]),
-                body=ir.Region(body_block := ir.Block()),
-            ),
-            circuit.StaticCircuit(
-                qubits=(qubits[2], qubits[3]),
-                body=ir.Region(second_block := ir.Block()),
-            ),
-        ]
-    )
-
+    test_block = ir.Block([rotation_angle := py.Constant(0.5)])
+    body_block = ir.Block()
     entry_state = body_block.args.append_from(types.StateType, name="entry_state")
     body_block.stmts.append(
         gate_stmt := circuit.Rz(
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
-    body_block.stmts.append(circuit.Yield(gate_stmt.state_after))
+    body_block.stmts.append(
+        measure0_stmt := circuit.EndMeasure(gate_stmt.state_after, qubits=(0, 1))
+    )
+    body_block.stmts.append(circuit.Yield(*measure0_stmt.results))
+    test_block.stmts.append(
+        circuit1 := circuit.StaticCircuit(
+            qubits=(qubits[0], qubits[1]), body=ir.Region(body_block)
+        )
+    )
 
-    entry_state = second_block.args.append_from(types.StateType, name="entry_state")
-    second_block.stmts.append(
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, name="entry_state")
+    body_block.stmts.append(
         gate_stmt := circuit.Rz(
             entry_state, qubits=(0, 1), rotation_angle=rotation_angle.result
         )
     )
-    second_block.stmts.append(circuit.Yield(gate_stmt.state_after))
-
-    expected_block = ir.Block(
-        [
-            rotation_angle := py.Constant(0.5),
-            circuit.StaticCircuit(
-                qubits=(qubits[0], qubits[1], qubits[2], qubits[3]),
-                body=ir.Region(body_block := ir.Block()),
-            ),
-        ]
+    body_block.stmts.append(
+        measure1_stmt := circuit.EndMeasure(gate_stmt.state_after, qubits=(0, 1))
+    )
+    body_block.stmts.append(circuit.Yield(*measure1_stmt.results))
+    test_block.stmts.append(
+        circuit2 := circuit.StaticCircuit(
+            qubits=(qubits[2], qubits[3]), body=ir.Region(body_block)
+        )
     )
 
+    test_block.stmts.append(
+        ilist.New(tuple(circuit1.results) + tuple(circuit2.results))
+    )
+
+    expected_block = ir.Block([rotation_angle := py.Constant(0.5)])
+    body_block = ir.Block()
     entry_state = body_block.args.append_from(types.StateType, name="entry_state")
     body_block.stmts.append(
         (
@@ -206,12 +209,35 @@ def test_merge_regions():
         )
     )
     body_block.stmts.append(
+        measure01_stmt := circuit.EndMeasure(gate_stmt.state_after, qubits=(0, 1))
+    )
+    body_block.stmts.append(
         gate_stmt := circuit.Rz(
             gate_stmt.state_after, qubits=(2, 3), rotation_angle=rotation_angle.result
         )
     )
-    body_block.stmts.append(circuit.Yield(gate_stmt.state_after))
+    body_block.stmts.append(
+        measure23_stmt := circuit.EndMeasure(gate_stmt.state_after, qubits=(2, 3))
+    )
+    measure_result = tuple(measure01_stmt.results[1:]) + tuple(
+        measure23_stmt.results[1:]
+    )
+    body_block.stmts.append(
+        circuit.Yield(
+            gate_stmt.state_after,
+            *measure_result,
+        )
+    )
+    expected_block.stmts.append(
+        merged_circuit := circuit.StaticCircuit(
+            qubits=(qubits[0], qubits[1], qubits[2], qubits[3]),
+            body=ir.Region(body_block),
+        )
+    )
+    expected_block.stmts.append(ilist.New(tuple(merged_circuit.results)))
 
-    rewrite.Walk(MergePlacementRegions()).rewrite(test_block)
+    rewrite.Fixpoint(rewrite.Walk(MergePlacementRegions())).rewrite(test_block)
 
+    test_block.print()
+    expected_block.print()
     assert_nodes(test_block, expected_block)
