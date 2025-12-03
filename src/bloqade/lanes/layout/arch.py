@@ -60,8 +60,8 @@ class ArchSpec(Generic[SiteType]):
         self,
         ax=None,
         show_words: Sequence[int] = (),
-        show_intra: Sequence[int] = (),
-        show_inter: Sequence[int] = (),
+        show_site_bus: Sequence[int] = (),
+        show_word_bus: Sequence[int] = (),
         **scatter_kwargs,
     ):
         import matplotlib.pyplot as plt  # type: ignore
@@ -83,7 +83,7 @@ class ArchSpec(Generic[SiteType]):
         colors = {}
         for word_id in show_words:
             word = self.words[word_id]
-            for lane_id in show_intra:
+            for lane_id in show_site_bus:
                 lane = self.site_buses[lane_id]
 
                 for start, end in zip(lane.src, lane.dst):
@@ -114,7 +114,7 @@ class ArchSpec(Generic[SiteType]):
                         if lane not in colors:
                             colors[lane] = ln.get_color()
 
-        for lane in show_inter:
+        for lane in show_word_bus:
             lane = self.word_buses[lane]
             for start_word_id, end_word_id in zip(lane.src, lane.dst):
                 start_word = self.words[start_word_id]
@@ -162,8 +162,8 @@ class ArchSpec(Generic[SiteType]):
         self.plot(
             ax,
             show_words=show_words,
-            show_intra=show_intra,
-            show_inter=show_inter,
+            show_site_bus=show_intra,
+            show_word_bus=show_inter,
             **scatter_kwargs,
         )
         plt.show()
