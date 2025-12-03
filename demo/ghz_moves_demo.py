@@ -12,7 +12,7 @@ from bloqade.lanes.upstream import CircuitToMove, NativeToCircuit
 def log_depth_ghz():
     size = 10
     q0 = qubit.new()
-    # squin.h(q0)
+    squin.h(q0)
     reg = ilist.IList([q0])
     for i in range(size):
         current = len(reg)
@@ -24,7 +24,7 @@ def log_depth_ghz():
 
         if num_alloc > 0:
             new_qubits = qubit.qalloc(num_alloc)
-            squin.broadcast.cz(reg[-num_alloc:], new_qubits)
+            squin.broadcast.cx(reg[-num_alloc:], new_qubits)
             reg = reg + new_qubits
 
 
@@ -39,4 +39,4 @@ log_depth_ghz = CircuitToMove(
 
 arch_spec = logical.get_arch_spec()
 
-visualize.animate(log_depth_ghz, arch_spec)
+visualize.animate(log_depth_ghz, arch_spec, pause_time=2.0)

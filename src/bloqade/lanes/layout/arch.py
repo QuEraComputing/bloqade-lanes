@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Generic, Sequence
 
 import numpy as np
@@ -55,6 +56,42 @@ class ArchSpec(Generic[SiteType]):
         """Get the maximum number of qubits supported by this architecture."""
         num_sites_per_word = len(self.words[0].sites)
         return len(self.words) * num_sites_per_word // 2
+
+    @cached_property
+    def x_bounds(self) -> tuple[float, float]:
+        x_min = float("inf")
+        x_max = float("-inf")
+        for word in self.words:
+            for site_id in range(len(word.sites)):
+                for x_pos, _ in word.site_positions(site_id):
+                    x_min = min(x_min, x_pos)
+                    x_max = max(x_max, x_pos)
+
+        if x_min == float("inf"):
+            x_min = -1.0
+
+        if x_max == float("-inf"):
+            x_max = 1.0
+
+        return x_min, x_max
+
+    @cached_property
+    def y_bounds(self) -> tuple[float, float]:
+        y_min = float("inf")
+        y_max = float("-inf")
+        for word in self.words:
+            for site_id in range(len(word.sites)):
+                for _, y_pos in word.site_positions(site_id):
+                    y_min = min(y_min, y_pos)
+                    y_max = max(y_max, y_pos)
+
+        if y_min == float("inf"):
+            y_min = -1.0
+
+        if y_max == float("-inf"):
+            y_max = 1.0
+
+        return y_min, y_max
 
     def plot(
         self,

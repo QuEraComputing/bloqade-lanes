@@ -29,7 +29,7 @@ class AtomState(AtomStateType):
         if location in self.locations:
             return self.locations.index(location)
 
-    def plot(self, arch_spec: ArchSpec, atom_color: str = "red", ax=None):
+    def plot(self, arch_spec: ArchSpec, ax=None, **kwargs):
         import matplotlib.pyplot as plt
 
         if ax is None:
@@ -39,7 +39,7 @@ class AtomState(AtomStateType):
             x_pos, y_pos = zip(
                 *arch_spec.words[location.word_id].site_positions(location.site_id)
             )
-            ax.scatter(x_pos, y_pos, color=atom_color, marker="o", s=200)
+            ax.scatter(x_pos, y_pos, **kwargs)
 
 
 @dataclass(frozen=True)
