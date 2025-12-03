@@ -26,7 +26,6 @@ class HoistClassicalStatements(abc.RewriteRule):
         gates.Rz,
         qubit.stmts.Measure,
         qubit.stmts.Reset,
-        qubit.stmts.New,
     )
 
     def is_pure(self, node: ir.Statement) -> bool:
@@ -51,11 +50,32 @@ class HoistClassicalStatements(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+class HoistQubitAllocations(abc.RewriteRule):
+    """This rewrite rule shifts all qubit allocations to the start of the method."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not (
+            not isinstance(node, qubit.stmts.New)
+            and isinstance(next_stmt := node.next_stmt, qubit.stmts.New)
+        ):
+            return abc.RewriteResult()
+
+        next_stmt.detach()
+        next_stmt.insert_before(node)
+        return abc.RewriteResult(has_done_something=True)
+
+
 @dataclass
 class CanonicalizeNative(passes.Pass):
 
     def unsafe_run(self, mt: ir.Method) -> abc.RewriteResult:
         result = HintConst(mt.dialects)(mt)
-        result = rewrite.Walk(HoistClassicalStatements()).rewrite(mt.code).join(result)
+        result = (
+            rewrite.Walk(
+                rewrite.Chain(HoistClassicalStatements(), HoistQubitAllocations())
+            )
+            .rewrite(mt.code)
+            .join(result)
+        )
 
         return result
