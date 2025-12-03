@@ -72,8 +72,6 @@ class SsaCfg(interp.MethodTable):
         for stmt in succ.block.stmts:
             frame.current_stmt = stmt
             stmt_results = interp_.frame_eval(frame, stmt)
-            if frame.prev_states[-1] != frame.current_state:
-                frame.prev_states.append(frame.current_state)
             if isinstance(stmt_results, tuple):
                 frame.set_values(stmt._results, stmt_results)
             elif stmt_results is None:
@@ -147,9 +145,25 @@ class Move(interp.MethodTable):
 
             qubits_to_move[qubit] = dst
         frame.current_state = current_state.update(qubits_to_move)
+        frame.set_state_for_stmt(stmt)
+
+    @interp.impl(move.LocalR)
+    @interp.impl(move.LocalRz)
+    @interp.impl(move.GlobalR)
+    @interp.impl(move.GlobalRz)
+    @interp.impl(move.EndMeasure)
+    @interp.impl(move.CZ)
+    def noop_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: AtomFrame,
+        stmt: ir.Statement,
+    ):
+        frame.set_state_for_stmt(stmt)
 
     @interp.impl(move.Initialize)
     def initialize_impl(
         self, interp_: AtomInterpreter, frame: AtomFrame, stmt: move.Initialize
     ):
         frame.current_state = AtomState(stmt.location_addresses)
+        frame.set_state_for_stmt(stmt)
