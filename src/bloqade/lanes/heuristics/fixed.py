@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, replace
-from itertools import chain
+from itertools import chain, combinations
 
 from kirin import interp
 
@@ -272,70 +272,34 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
     arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
 
-    def layout_from_weights(
-        self,
-        edges: dict[tuple[int, int], int],
-        weighted_degrees: dict[int, int],
-    ) -> tuple[LocationAddress, ...]:
-        left_atoms = []
-        right_atoms = []
+    def score_parallelism(
+        self, edges: dict[tuple[int, int], int], qubit_map: dict[int, LocationAddress]
+    ) -> int:
+        move_weights = {}
+        for n, m in combinations(qubit_map.keys(), 2):
+            n, m = (min(n, m), max(n, m))
+            edge_weight = edges.get((n, m))
+            if edge_weight is None:
+                continue
 
-        unassigned = sorted(
-            weighted_degrees.keys(),
-            key=lambda x: (weighted_degrees[x], x),
-        )
+            addr_n = qubit_map[n]
+            addr_m = qubit_map[m]
+            site_diff = (addr_n.site_id - addr_m.site_id) // 2
+            word_diff = addr_n.word_id - addr_m.word_id
+            if word_diff != 0:
+                edge_weight *= 2
 
-        def get_weight(addr: int, curr_atoms: list[int], other_atoms: list[int]):
+            move_weights[(word_diff, site_diff)] = (
+                move_weights.get((word_diff, site_diff), 0) + edge_weight
+            )
 
-            weight = 0
-            for same in curr_atoms:
-                edge = (min(addr, same), max(addr, same))
-                weight += 2 * edges.get(edge, 0)
+        all_moves = list(move_weights.keys())
+        score = 0
+        for i, move_i in enumerate(all_moves):
+            for move_j in all_moves[i + 1 :]:
+                score += move_weights[move_i] + move_weights[move_j]
 
-            for other in other_atoms:
-                edge = (min(addr, other), max(addr, other))
-                weight += edges.get(edge, 0)
-
-            return weight
-
-        while unassigned:
-            addr = unassigned.pop()
-
-            left_weight = get_weight(addr, left_atoms, right_atoms)
-            right_weight = get_weight(addr, right_atoms, left_atoms)
-
-            if right_weight < left_weight:
-                best_list, not_best_list = left_atoms, right_atoms
-            else:
-                best_list, not_best_list = right_atoms, left_atoms
-
-            if len(best_list) < 5:
-                best_list.append(addr)
-            else:
-                not_best_list.append(addr)
-
-        layout_map = {}
-        for i, addr in enumerate(left_atoms):
-            layout_map[
-                LocationAddress(
-                    word_id=0,
-                    site_id=i * 2,
-                )
-            ] = addr
-
-        for i, addr in enumerate(right_atoms):
-            layout_map[
-                LocationAddress(
-                    word_id=1,
-                    site_id=i * 2,
-                )
-            ] = addr
-
-        # invert layout
-        final_layout = list(layout_map.keys())
-        final_layout.sort(key=lambda x: layout_map[x])
-
-        return tuple(final_layout)
+        return score
 
     def compute_layout(
         self,
@@ -355,10 +319,33 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             edge_weight = edges.get((n, m), 0)
             edges[(n, m)] = edge_weight + 1
 
-        weighted_degrees = {i: 0 for i in all_qubits}
+        available_addresses = set(
+            [
+                LocationAddress(word_id, site_id)
+                for word_id, word in enumerate(self.arch_spec.words)
+                for site_id in range(len(word.sites))
+                if site_id % 2 == 0
+            ]
+        )
 
-        for (n, m), weight in edges.items():
-            weighted_degrees[n] += weight
-            weighted_degrees[m] += weight
+        qubit_map: dict[int, LocationAddress] = {}
+        layout_map: dict[LocationAddress, int] = {}
+        for qubit in sorted(all_qubits):
 
-        return self.layout_from_weights(edges, weighted_degrees)
+            scores: dict[LocationAddress, int] = {}
+            for addr in available_addresses:
+                qubit_map = qubit_map.copy()
+                qubit_map[qubit] = addr
+                scores[addr] = self.score_parallelism(edges, qubit_map)
+
+            best_addr = min(
+                scores.keys(), key=lambda x: (scores[x], x.word_id, x.site_id)
+            )
+            available_addresses.remove(best_addr)
+            qubit_map[qubit] = best_addr
+            layout_map[best_addr] = qubit
+
+        # invert layout
+        final_layout = list(layout_map.keys())
+        final_layout.sort(key=lambda x: layout_map[x])
+        return tuple(final_layout)
