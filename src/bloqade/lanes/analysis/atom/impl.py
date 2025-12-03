@@ -37,13 +37,20 @@ class SsaCfg(interp.MethodTable):
             if atom_state is None:
                 raise interp.InterpreterError("Missing atom state for successor")
 
-            visited = frame.atom_visited.setdefault(succ.block, set())
-            if (atom_state, succ) in visited:
+            # cache initial state for block,
+            # If the initial state is different than a previous one, mark as unknown
+            existing_state = frame.initial_states.get(succ.block)
+            if existing_state is not None and existing_state != atom_state:
+                atom_state = UnknownAtomState()
+
+            frame.initial_states[succ.block] = atom_state
+            visited = frame.visited.setdefault(succ.block, set())
+            if succ in visited:
                 continue
 
             block_result = self.run_succ(interp_, atom_state, frame, succ)
             if len(visited) < 128:
-                visited.add((atom_state, succ))
+                visited.add(succ)
             else:
                 continue
 

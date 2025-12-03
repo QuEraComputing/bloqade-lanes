@@ -2,7 +2,6 @@ from dataclasses import dataclass, field, replace
 
 from kirin import ir
 from kirin.analysis import ForwardExtra, ForwardFrame
-from kirin.interp.value import Successor
 from kirin.lattice.empty import EmptyLattice
 from kirin.worklist import WorkList
 
@@ -51,22 +50,13 @@ class UnknownAtomState(AtomStateType):
 @dataclass
 class AtomFrame(ForwardFrame[EmptyLattice]):
     atom_states: WorkList[AtomStateType] = field(default_factory=WorkList)
-    atom_visited: dict[ir.Block, set[tuple[AtomStateType, Successor[EmptyLattice]]]] = (
-        field(default_factory=dict)
-    )
     atom_state_map: dict[ir.Statement, AtomStateType] = field(
         default_factory=dict, init=False
     )
-
-    _current_state: AtomStateType = field(default_factory=UnknownAtomState, init=False)
-
-    @property
-    def current_state(self) -> AtomStateType:
-        return self._current_state
-
-    @current_state.setter
-    def current_state(self, value: AtomStateType) -> None:
-        self._current_state = value
+    initial_states: dict[ir.Block, AtomStateType] = field(
+        default_factory=dict, init=False
+    )
+    current_state: AtomStateType = field(default_factory=UnknownAtomState, init=False)
 
     def set_state_for_stmt(self, stmt: ir.Statement):
         if stmt in self.atom_state_map:
