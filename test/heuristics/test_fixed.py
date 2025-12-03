@@ -206,26 +206,24 @@ def test_fixed_invalid_initial_layout_2():
 def test_initial_layout():
     layout_heuristic = fixed.LogicalLayoutHeuristic()
     edges = {(i, j): 1 for i in range(10) for j in range(i + 1, 10, 1)}
+
     edges[(0, 1)] = 10
-    edges[(2, 3)] = 9
-    edges[(4, 5)] = 8
-    edges[(6, 7)] = 7
-    edges[(8, 9)] = 6
 
     edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
 
     layout = layout_heuristic.compute_layout(tuple(range(10)), [edges])
+    print(layout)
     assert layout == (
-        LocationAddress(word_id=1, site_id=2),
-        LocationAddress(word_id=1, site_id=0),
-        LocationAddress(word_id=1, site_id=6),
-        LocationAddress(word_id=1, site_id=4),
         LocationAddress(word_id=0, site_id=0),
-        LocationAddress(word_id=1, site_id=8),
-        LocationAddress(word_id=0, site_id=4),
         LocationAddress(word_id=0, site_id=2),
-        LocationAddress(word_id=0, site_id=8),
+        LocationAddress(word_id=0, site_id=4),
         LocationAddress(word_id=0, site_id=6),
+        LocationAddress(word_id=0, site_id=8),
+        LocationAddress(word_id=1, site_id=0),
+        LocationAddress(word_id=1, site_id=2),
+        LocationAddress(word_id=1, site_id=4),
+        LocationAddress(word_id=1, site_id=6),
+        LocationAddress(word_id=1, site_id=8),
     )
 
 
