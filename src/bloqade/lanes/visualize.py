@@ -98,8 +98,8 @@ def default(ax, stmt: ir.Statement, arch_spec: ArchSpec):
     arch_spec.plot(ax, show_words=range(len(arch_spec.words)))
 
 
-def animate(mt: ir.Method, arch_spec: ArchSpec):
-
+def debugger(mt: ir.Method, arch_spec: ArchSpec):
+    # set up matplotlib figure with buttons
     fig, ax = plt.subplots()
     fig.subplots_adjust(bottom=0.2)
     prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
@@ -109,7 +109,39 @@ def animate(mt: ir.Method, arch_spec: ArchSpec):
     prev_button = Button(prev_ax, "Previous")
     next_button = Button(next_ax, "Next")
     exit_button = Button(exit_ax, "Exit")
-    exit_button.on_clicked(lambda event: exit())
+
+    step_index = 0
+    running = True
+    waiting = True
+    updated = False
+
+    def on_exit(event):
+        nonlocal running, waiting, updated
+        running = False
+        waiting = False
+        if not updated:
+            updated = True
+
+    def on_next(event):
+        nonlocal waiting, step_index, updated
+        waiting = False
+        if not updated:
+            step_index = min(step_index + 1, len(steps) - 1)
+            ax.cla()
+            updated = True
+
+    def on_prev(event):
+        nonlocal waiting, step_index, updated
+        waiting = False
+        if not updated:
+            step_index = max(step_index - 1, 0)
+            ax.cla()
+            updated = True
+
+    # connect buttons to callbacks
+    next_button.on_clicked(on_next)
+    prev_button.on_clicked(on_prev)
+    exit_button.on_clicked(on_exit)
 
     methods: dict = {
         move.LocalR: show_local_r,
@@ -139,9 +171,7 @@ def animate(mt: ir.Method, arch_spec: ArchSpec):
         if isinstance(curr_state, AtomState):
             steps.append((stmt, curr_state))
 
-    step_index = 0
-
-    while True:
+    while running:
         stmt, curr_state = steps[step_index]
 
         visualize_fn = methods.get(type(stmt), default)
@@ -155,28 +185,10 @@ def animate(mt: ir.Method, arch_spec: ArchSpec):
 
         plt.draw()
 
-        # Wait for button press
+        while waiting:
+            plt.pause(0.01)
+
         waiting = True
         updated = False
 
-        def on_next(event):
-            nonlocal waiting, step_index, updated
-            waiting = False
-            if not updated:
-                step_index = min(step_index + 1, len(steps) - 1)
-                ax.cla()
-                updated = True
-
-        def on_prev(event):
-            nonlocal waiting, step_index, updated
-            waiting = False
-            if not updated:
-                step_index = max(step_index - 1, 0)
-                ax.cla()
-                updated = True
-
-        next_button.on_clicked(on_next)
-        prev_button.on_clicked(on_prev)
-
-        while waiting:
-            plt.pause(0.01)
+    plt.close(fig)
