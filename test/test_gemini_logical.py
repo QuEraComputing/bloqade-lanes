@@ -46,10 +46,12 @@ def test_logical_architecture_rewrite_site():
     rewrite_rule.rewrite(test_block)
 
     expected_block = ir.Block()
-    expected_block.stmts.append(const_list := py.Constant(ilist.IList([0, 1, 2, 3])))
+    expected_block.stmts.append(
+        const_list := py.Constant(ilist.IList([True, True, True, True, False]))
+    )
     expected_block.stmts.append(
         logical.SiteBusMove(
-            y_positions=const_list.result,
+            y_mask=const_list.result,
             word=0,
             bus_id=0,
             direction=Direction.FORWARD,
