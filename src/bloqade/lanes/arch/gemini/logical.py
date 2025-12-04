@@ -23,7 +23,7 @@ dialect = ir.Dialect("gemini.logical")
 
 @decl.statement(dialect=dialect)
 class SiteBusMove(ir.Statement):
-    y_positions: ir.SSAValue = info.argument(ilist.IListType[types.Int])
+    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Int])
     word: int = info.attribute()
     bus_id: int = info.attribute()
     direction: Direction = info.attribute()
@@ -31,7 +31,7 @@ class SiteBusMove(ir.Statement):
 
 @decl.statement(dialect=dialect)
 class WordBusMove(ir.Statement):
-    y_positions: ir.SSAValue = info.argument(ilist.IListType[types.Int])
+    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Int])
     direction: Direction = info.attribute()
 
 
@@ -45,22 +45,25 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         word = node.lanes[0].word_id
         bus_id = node.lanes[0].bus_id
 
-        y_positions_list = ilist.IList([lane.site_id // 2 for lane in node.lanes])
-        (y_positions_stmt := py.Constant(y_positions_list)).insert_before(node)
+        y_positions = [lane.site_id // 2 for lane in node.lanes]
 
-        return move_type, y_positions_stmt.result, word, bus_id, direction
+        y_mask = ilist.IList([i in y_positions for i in range(5)])
+
+        (y_mask_stmt := py.Constant(y_mask)).insert_before(node)
+
+        return move_type, y_mask_stmt.result, word, bus_id, direction
 
     def rewrite_Statement(self, node: ir.Statement):
         if not (isinstance(node, move.Move) and len(node.lanes) > 0):
             return rewrite_abc.RewriteResult()
 
         # This assumes validation has already occurred so only valid moves are present
-        move_type, y_positions, word, bus_id, direction = self.get_address_info(node)
+        move_type, y_mask_ref, word, bus_id, direction = self.get_address_info(node)
 
         if move_type is MoveType.SITE:
             node.replace_by(
                 SiteBusMove(
-                    y_positions,
+                    y_mask_ref,
                     word=word,
                     bus_id=bus_id,
                     direction=direction,
@@ -69,7 +72,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         elif move_type is MoveType.WORD:
             node.replace_by(
                 WordBusMove(
-                    y_positions,
+                    y_mask_ref,
                     direction=direction,
                 )
             )
