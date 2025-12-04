@@ -21,7 +21,6 @@ def show_local(
     ax.plot(
         x_pos, y_pos, color=color, marker="o", linestyle="", alpha=0.3, markersize=15
     )
-    default(ax, stmt, arch_spec)
 
 
 def show_local_r(ax: Axes, stmt: move.LocalR, arch_spec: ArchSpec):
@@ -52,7 +51,6 @@ def show_global(
         color=color,
         alpha=0.3,
     )
-    default(ax, stmt, arch_spec)
 
 
 def show_global_r(ax: Axes, stmt: move.GlobalR, arch_spec: ArchSpec):
@@ -91,10 +89,8 @@ def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
         alpha=0.3,
     )
 
-    default(ax, stmt, arch_spec)
 
-
-def default(ax, stmt: ir.Statement, arch_spec: ArchSpec):
+def show_slm(ax, stmt: ir.Statement, arch_spec: ArchSpec):
     slm_plt_arg: dict = {
         "facecolors": "none",
         "edgecolors": "k",
@@ -139,7 +135,9 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes):
 
     def draw(step_index: int):
         stmt, curr_state = steps[step_index]
-        visualize_fn = methods.get(type(stmt), default)
+        show_slm(ax, stmt, arch_spec)
+
+        visualize_fn = methods.get(type(stmt), lambda a, b, c: None)
         visualize_fn(ax, stmt, arch_spec)
         curr_state.draw_atoms(arch_spec, ax=ax, color="#6437FF", s=80)
         curr_state.draw_moves(arch_spec, ax=ax, color="orange")
