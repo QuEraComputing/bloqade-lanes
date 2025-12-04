@@ -87,7 +87,7 @@ def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
         [x_min - 10, x_max + 10],
         [y_min, y_min],
         [y_max, y_max],
-        color="purple",
+        color="red",
         alpha=0.3,
     )
 
@@ -108,50 +108,57 @@ def default(ax, stmt: ir.Statement, arch_spec: ArchSpec):
     )
 
 
-def debugger(mt: ir.Method, arch_spec: ArchSpec):
+def debugger(
+    mt: ir.Method,
+    arch_spec: ArchSpec,
+    interactive: bool = True,
+    pause_time: float = 1.0,
+):
     # set up matplotlib figure with buttons
     fig, ax = plt.subplots()
     fig.subplots_adjust(bottom=0.2)
-    prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
-    exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
-    next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
-
-    prev_button = Button(prev_ax, "Previous")
-    next_button = Button(next_ax, "Next")
-    exit_button = Button(exit_ax, "Exit")
 
     step_index = 0
     running = True
     waiting = True
     updated = False
 
-    def on_exit(event):
-        nonlocal running, waiting, updated
-        running = False
-        waiting = False
-        if not updated:
-            updated = True
+    if interactive:
+        prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
+        exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
+        next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
 
-    def on_next(event):
-        nonlocal waiting, step_index, updated
-        waiting = False
-        if not updated:
-            step_index = min(step_index + 1, len(steps) - 1)
-            ax.cla()
-            updated = True
+        prev_button = Button(prev_ax, "Previous")
+        next_button = Button(next_ax, "Next")
+        exit_button = Button(exit_ax, "Exit")
 
-    def on_prev(event):
-        nonlocal waiting, step_index, updated
-        waiting = False
-        if not updated:
-            step_index = max(step_index - 1, 0)
-            ax.cla()
-            updated = True
+        def on_exit(event):
+            nonlocal running, waiting, updated
+            running = False
+            waiting = False
+            if not updated:
+                updated = True
 
-    # connect buttons to callbacks
-    next_button.on_clicked(on_next)
-    prev_button.on_clicked(on_prev)
-    exit_button.on_clicked(on_exit)
+        def on_next(event):
+            nonlocal waiting, step_index, updated
+            waiting = False
+            if not updated:
+                step_index = min(step_index + 1, len(steps) - 1)
+                ax.cla()
+                updated = True
+
+        def on_prev(event):
+            nonlocal waiting, step_index, updated
+            waiting = False
+            if not updated:
+                step_index = max(step_index - 1, 0)
+                ax.cla()
+                updated = True
+
+        # connect buttons to callbacks
+        next_button.on_clicked(on_next)
+        prev_button.on_clicked(on_prev)
+        exit_button.on_clicked(on_exit)
 
     methods: dict = {
         move.LocalR: show_local_r,
@@ -196,10 +203,18 @@ def debugger(mt: ir.Method, arch_spec: ArchSpec):
 
         plt.draw()
 
-        while waiting:
-            plt.pause(0.01)
+        if interactive:
+            while waiting:
+                plt.pause(0.01)
 
-        waiting = True
-        updated = False
+            waiting = True
+            updated = False
+        else:
+            step_index += 1
+            if step_index >= len(steps):
+                running = False
+            plt.pause(pause_time)
+            plt.cla()
 
-    plt.close(fig)
+    if interactive:
+        plt.close(fig)
