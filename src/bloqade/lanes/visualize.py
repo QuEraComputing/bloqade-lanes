@@ -1,7 +1,7 @@
 from itertools import chain
 
 from kirin import ir
-from matplotlib import pyplot as plt
+from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.widgets import Button
 
@@ -108,58 +108,7 @@ def default(ax, stmt: ir.Statement, arch_spec: ArchSpec):
     )
 
 
-def debugger(
-    mt: ir.Method,
-    arch_spec: ArchSpec,
-    interactive: bool = True,
-    pause_time: float = 1.0,
-):
-    # set up matplotlib figure with buttons
-    fig, ax = plt.subplots()
-    fig.subplots_adjust(bottom=0.2)
-
-    step_index = 0
-    running = True
-    waiting = True
-    updated = False
-
-    if interactive:
-        prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
-        exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
-        next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
-
-        prev_button = Button(prev_ax, "Previous")
-        next_button = Button(next_ax, "Next")
-        exit_button = Button(exit_ax, "Exit")
-
-        def on_exit(event):
-            nonlocal running, waiting, updated
-            running = False
-            waiting = False
-            if not updated:
-                updated = True
-
-        def on_next(event):
-            nonlocal waiting, step_index, updated
-            waiting = False
-            if not updated:
-                step_index = min(step_index + 1, len(steps) - 1)
-                ax.cla()
-                updated = True
-
-        def on_prev(event):
-            nonlocal waiting, step_index, updated
-            waiting = False
-            if not updated:
-                step_index = max(step_index - 1, 0)
-                ax.cla()
-                updated = True
-
-        # connect buttons to callbacks
-        next_button.on_clicked(on_next)
-        prev_button.on_clicked(on_prev)
-        exit_button.on_clicked(on_exit)
-
+def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes):
     methods: dict = {
         move.LocalR: show_local_r,
         move.LocalRz: show_local_rz,
@@ -188,7 +137,8 @@ def debugger(
         if isinstance(curr_state, AtomState):
             steps.append((stmt, curr_state))
 
-    def draw(stmt, curr_state):
+    def draw(step_index: int):
+        stmt, curr_state = steps[step_index]
         visualize_fn = methods.get(type(stmt), default)
         visualize_fn(ax, stmt, arch_spec)
         curr_state.draw_atoms(arch_spec, ax=ax, color="#6437FF", s=80)
@@ -201,19 +151,85 @@ def debugger(
 
         plt.draw()
 
+    return draw, len(steps)
+
+
+def interactive_debugger(
+    draw,
+    num_steps: int,
+    fig: figure.Figure,
+):
+
+    ax = plt.gca()
+    step_index = 0
+    running = True
+    waiting = True
+    updated = False
+
+    prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
+    exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
+    next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
+
+    prev_button = Button(prev_ax, "Previous")
+    next_button = Button(next_ax, "Next")
+    exit_button = Button(exit_ax, "Exit")
+
+    def on_exit(event):
+        nonlocal running, waiting, updated
+        running = False
+        waiting = False
+        if not updated:
+            updated = True
+
+    def on_next(event):
+        nonlocal waiting, step_index, updated
+        waiting = False
+        if not updated:
+            step_index = min(step_index + 1, num_steps - 1)
+            ax.cla()
+            updated = True
+
+    def on_prev(event):
+        nonlocal waiting, step_index, updated
+        waiting = False
+        if not updated:
+            step_index = max(step_index - 1, 0)
+            ax.cla()
+            updated = True
+
+    # connect buttons to callbacks
+    next_button.on_clicked(on_next)
+    prev_button.on_clicked(on_prev)
+    exit_button.on_clicked(on_exit)
+
+    while running:
+        draw(step_index)
+
+        while waiting:
+            plt.pause(0.01)
+
+        waiting = True
+        updated = False
+
+    plt.close(fig)
+
+
+def debugger(
+    mt: ir.Method,
+    arch_spec: ArchSpec,
+    interactive: bool = True,
+    pause_time: float = 1.0,
+):
+    # set up matplotlib figure with buttons
+    fig, ax = plt.subplots()
+    fig.subplots_adjust(bottom=0.2)
+
+    draw, num_steps = get_drawer(mt, arch_spec, ax)
+
     if interactive:
-        while running:
-            draw(*steps[step_index])
-
-            while waiting:
-                plt.pause(0.01)
-
-            waiting = True
-            updated = False
-
-        plt.close(fig)
+        interactive_debugger(draw, num_steps, fig)
     else:
-        for stmt, curr_state in steps:
-            draw(stmt, curr_state)
+        for step_index in range(num_steps):
+            draw(step_index)
             plt.pause(pause_time)
             ax.cla()
