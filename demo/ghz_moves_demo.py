@@ -1,4 +1,5 @@
 from bloqade.native.upstream import SquinToNative
+from kirin import ir
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
@@ -28,15 +29,32 @@ def log_depth_ghz():
             reg = reg + new_qubits
 
 
-log_depth_ghz = SquinToNative().emit(log_depth_ghz)
-log_depth_ghz = NativeToCircuit().emit(log_depth_ghz)
-log_depth_ghz = CircuitToMove(
-    fixed.LogicalLayoutHeuristic(),
-    fixed.LogicalPlacementStrategy(),
-    fixed.LogicalMoveScheduler(),
-).emit(log_depth_ghz)
+@squin.kernel(typeinfer=True, fold=True)
+def ghz_optimal():
+    size = 10
+    qs = qubit.qalloc(size)
+    squin.h(qs[0])
+    squin.cx(qs[0], qs[1])
+    squin.broadcast.cx(qs[:2], qs[2:4])
+    squin.cx(qs[3], qs[4])
+    squin.broadcast.cx(qs[:5], qs[5:])
 
 
-arch_spec = logical.get_arch_spec()
+def compile_and_visualize(log_depth_ghz: ir.Method):
+    # Compile to move dialect
 
-visualize.animate(log_depth_ghz, arch_spec, pause_time=2.0)
+    log_depth_ghz = SquinToNative().emit(log_depth_ghz)
+    log_depth_ghz = NativeToCircuit().emit(log_depth_ghz)
+    log_depth_ghz = CircuitToMove(
+        fixed.LogicalLayoutHeuristic(),
+        fixed.LogicalPlacementStrategy(),
+        fixed.LogicalMoveScheduler(),
+    ).emit(log_depth_ghz)
+
+    arch_spec = logical.get_arch_spec()
+
+    visualize.animate(log_depth_ghz, arch_spec)
+
+
+# compile_and_visualize(log_depth_ghz)
+compile_and_visualize(ghz_optimal)

@@ -6,7 +6,7 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.worklist import WorkList
 
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.layout.path import PathFinder
 
 
@@ -17,19 +17,27 @@ class AtomStateType:
 @dataclass(frozen=True)
 class AtomState(AtomStateType):
     locations: tuple[LocationAddress, ...]
+    prev_lanes: dict[int, LaneAddress] = field(default_factory=dict)
 
-    def update(self, qubits: dict[int, LocationAddress]):
+    def update(
+        self,
+        qubits: dict[int, LocationAddress],
+        prev_lanes: dict[int, LaneAddress] | None = None,
+    ):
+        if prev_lanes is None:
+            prev_lanes = {}
+
         new_locations = tuple(
             qubits.get(i, original_location)
             for i, original_location in enumerate(self.locations)
         )
-        return replace(self, locations=new_locations)
+        return replace(self, locations=new_locations, prev_lanes=prev_lanes)
 
     def get_qubit(self, location: LocationAddress):
         if location in self.locations:
             return self.locations.index(location)
 
-    def plot(self, arch_spec: ArchSpec, ax=None, **kwargs):
+    def plot(self, arch_spec: ArchSpec, ax=None, show_moves: bool = False, **kwargs):
         import matplotlib.pyplot as plt
 
         if ax is None:
@@ -40,6 +48,25 @@ class AtomState(AtomStateType):
                 *arch_spec.words[location.word_id].site_positions(location.site_id)
             )
             ax.scatter(x_pos, y_pos, **kwargs)
+
+        if not show_moves:
+            return
+
+        for lane in self.prev_lanes.values():
+            start, end = arch_spec.get_endpoints(lane)
+            start_pos = arch_spec.words[start.word_id].site_positions(start.site_id)
+            end_pos = arch_spec.words[end.word_id].site_positions(end.site_id)
+            for (x_start, y_start), (x_end, y_end) in zip(start_pos, end_pos):
+                ax.quiver(
+                    [x_start],
+                    [y_start],
+                    [x_end - x_start],
+                    [y_end - y_start],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=1,
+                    color="blue",
+                )
 
 
 @dataclass(frozen=True)

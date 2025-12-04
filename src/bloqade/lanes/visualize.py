@@ -3,29 +3,11 @@ from itertools import chain
 from kirin import ir
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.widgets import Button
 
 from bloqade.lanes.analysis.atom.analysis import AtomInterpreter, AtomState
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import MoveType
-
-
-def show_move(ax: Axes, stmt: move.Move, arch_spec: ArchSpec):
-    word_bus = []
-    site_bus = []
-
-    for lane in stmt.lanes:
-        if lane.move_type == MoveType.WORD:
-            word_bus.append(lane.bus_id)
-        else:
-            site_bus.append(lane.bus_id)
-
-    arch_spec.plot(
-        ax,
-        show_words=range(len(arch_spec.words)),
-        show_word_bus=word_bus,
-        show_site_bus=site_bus,
-    )
 
 
 def show_local(
@@ -116,10 +98,20 @@ def default(ax, stmt: ir.Statement, arch_spec: ArchSpec):
     arch_spec.plot(ax, show_words=range(len(arch_spec.words)))
 
 
-def animate(mt: ir.Method, arch_spec: ArchSpec, pause_time: float = 1.0):
+def animate(mt: ir.Method, arch_spec: ArchSpec):
+
+    fig, ax = plt.subplots()
+    fig.subplots_adjust(bottom=0.2)
+    prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
+    exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
+    next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
+
+    prev_button = Button(prev_ax, "Previous")
+    next_button = Button(next_ax, "Next")
+    exit_button = Button(exit_ax, "Exit")
+    exit_button.on_clicked(lambda event: exit())
 
     methods: dict = {
-        move.Move: show_move,
         move.LocalR: show_local_r,
         move.LocalRz: show_local_rz,
         move.GlobalR: show_global_r,
@@ -128,7 +120,6 @@ def animate(mt: ir.Method, arch_spec: ArchSpec, pause_time: float = 1.0):
     }
 
     frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
-    prev_state = None
 
     x_min, x_max = arch_spec.x_bounds
     y_min, y_max = arch_spec.y_bounds
@@ -141,29 +132,51 @@ def animate(mt: ir.Method, arch_spec: ArchSpec, pause_time: float = 1.0):
     y_min -= 0.1 * y_width
     y_max += 0.1 * y_width
 
+    steps: list[tuple[ir.Statement, AtomState]] = []
+
     for stmt in mt.callable_region.walk():
         curr_state = frame.atom_state_map.get(stmt)
+        if isinstance(curr_state, AtomState):
+            steps.append((stmt, curr_state))
 
-        if not isinstance(curr_state, AtomState):
-            continue
+    step_index = 0
 
-        ax = plt.gca()
-
-        if prev_state is None:
-            prev_state = curr_state
-            continue
+    while True:
+        stmt, curr_state = steps[step_index]
 
         visualize_fn = methods.get(type(stmt), default)
         visualize_fn(ax, stmt, arch_spec)
+        curr_state.plot(arch_spec, ax=ax, show_moves=True, color="grey", s=150)
 
-        if isinstance(curr_state, AtomState):
-            curr_state.plot(arch_spec, color="grey", ax=ax, s=150)
-            prev_state.plot(arch_spec, color="grey", ax=ax, alpha=0.25, s=150)
+        ax.set_title(f"Step {step_index+1} / {len(steps)}: {type(stmt).__name__}")
 
-            prev_state = curr_state
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
 
-        ax.set_xlim((x_min, x_max))
-        ax.set_ylim((y_min, y_max))
+        plt.draw()
 
-        plt.pause(pause_time)
-        plt.cla()
+        # Wait for button press
+        waiting = True
+        updated = False
+
+        def on_next(event):
+            nonlocal waiting, step_index, updated
+            waiting = False
+            if not updated:
+                step_index = min(step_index + 1, len(steps) - 1)
+                ax.cla()
+                updated = True
+
+        def on_prev(event):
+            nonlocal waiting, step_index, updated
+            waiting = False
+            if not updated:
+                step_index = max(step_index - 1, 0)
+                ax.cla()
+                updated = True
+
+        next_button.on_clicked(on_next)
+        prev_button.on_clicked(on_prev)
+
+        while waiting:
+            plt.pause(0.01)

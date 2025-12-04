@@ -140,6 +140,7 @@ class Move(interp.MethodTable):
             return
 
         qubits_to_move = {}
+        prev_lanes = {}
         for move_lane in stmt.lanes:
             src, dst = interp_.path_finder.get_endpoints(move_lane)
             if src is None or dst is None:
@@ -150,8 +151,9 @@ class Move(interp.MethodTable):
             if qubit is None:
                 continue
 
+            prev_lanes[qubit] = move_lane
             qubits_to_move[qubit] = dst
-        frame.current_state = current_state.update(qubits_to_move)
+        frame.current_state = current_state.update(qubits_to_move, prev_lanes)
         frame.set_state_for_stmt(stmt)
 
     @interp.impl(move.LocalR)
