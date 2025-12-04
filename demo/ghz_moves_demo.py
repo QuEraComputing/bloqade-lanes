@@ -40,20 +40,20 @@ def ghz_optimal():
     squin.broadcast.cx(qs[:5], qs[5:])
 
 
-def compile_and_visualize(log_depth_ghz: ir.Method, interactive=True):
+def compile_and_visualize(mt: ir.Method, interactive=True):
     # Compile to move dialect
 
-    log_depth_ghz = SquinToNative().emit(log_depth_ghz)
-    log_depth_ghz = NativeToCircuit().emit(log_depth_ghz)
-    log_depth_ghz = CircuitToMove(
+    mt = SquinToNative().emit(mt)
+    mt = NativeToCircuit().emit(mt)
+    mt = CircuitToMove(
         fixed.LogicalLayoutHeuristic(),
         fixed.LogicalPlacementStrategy(),
         fixed.LogicalMoveScheduler(),
-    ).emit(log_depth_ghz)
+    ).emit(mt)
 
     arch_spec = logical.get_arch_spec()
 
-    visualize.debugger(log_depth_ghz, arch_spec, interactive=interactive)
+    visualize.debugger(mt, arch_spec, interactive=interactive)
 
 
 # compile_and_visualize(log_depth_ghz)
