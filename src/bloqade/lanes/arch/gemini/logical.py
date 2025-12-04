@@ -23,7 +23,7 @@ dialect = ir.Dialect("gemini.logical")
 
 @decl.statement(dialect=dialect)
 class SiteBusMove(ir.Statement):
-    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Int])
+    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
     word: int = info.attribute()
     bus_id: int = info.attribute()
     direction: Direction = info.attribute()
@@ -31,7 +31,7 @@ class SiteBusMove(ir.Statement):
 
 @decl.statement(dialect=dialect)
 class WordBusMove(ir.Statement):
-    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Int])
+    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
     direction: Direction = info.attribute()
 
 
