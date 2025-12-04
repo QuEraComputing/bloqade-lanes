@@ -74,7 +74,7 @@ def plot():
     f, axs = plt.subplots(1, 1)
 
     ax = arch_physical.plot(
-        show_words=(0, 1), show_intra=tuple(range(4)), show_inter=(0,), ax=axs
+        show_words=(0, 1), show_site_bus=tuple(range(4)), show_word_bus=(0,), ax=axs
     )
 
     ax.set_aspect(0.25)
@@ -85,9 +85,9 @@ def plot():
 
     f, axs = plt.subplots(2, 2, figsize=(10, 8))
 
-    arch_physical.plot(show_words=tuple(range(16)), show_inter=(0,), ax=axs[0, 0])
-    arch_physical.plot(show_words=tuple(range(16)), show_inter=(1,), ax=axs[0, 1])
-    arch_physical.plot(show_words=tuple(range(16)), show_inter=(2,), ax=axs[1, 0])
-    arch_physical.plot(show_words=tuple(range(16)), show_inter=(3,), ax=axs[1, 1])
+    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(0,), ax=axs[0, 0])
+    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(1,), ax=axs[0, 1])
+    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(2,), ax=axs[1, 0])
+    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(3,), ax=axs[1, 1])
 
     plt.show()

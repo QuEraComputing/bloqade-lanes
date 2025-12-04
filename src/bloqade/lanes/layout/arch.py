@@ -1,11 +1,15 @@
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Generic, Sequence
 
 import numpy as np
 
 from bloqade.lanes.layout.encoding import (
+    Direction,
     EncodingType,
     LaneAddress,
+    LocationAddress,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -53,12 +57,48 @@ class ArchSpec(Generic[SiteType]):
         num_sites_per_word = len(self.words[0].sites)
         return len(self.words) * num_sites_per_word // 2
 
+    @cached_property
+    def x_bounds(self) -> tuple[float, float]:
+        x_min = float("inf")
+        x_max = float("-inf")
+        for word in self.words:
+            for site_id in range(len(word.sites)):
+                for x_pos, _ in word.site_positions(site_id):
+                    x_min = min(x_min, x_pos)
+                    x_max = max(x_max, x_pos)
+
+        if x_min == float("inf"):
+            x_min = -1.0
+
+        if x_max == float("-inf"):
+            x_max = 1.0
+
+        return x_min, x_max
+
+    @cached_property
+    def y_bounds(self) -> tuple[float, float]:
+        y_min = float("inf")
+        y_max = float("-inf")
+        for word in self.words:
+            for site_id in range(len(word.sites)):
+                for _, y_pos in word.site_positions(site_id):
+                    y_min = min(y_min, y_pos)
+                    y_max = max(y_max, y_pos)
+
+        if y_min == float("inf"):
+            y_min = -1.0
+
+        if y_max == float("-inf"):
+            y_max = 1.0
+
+        return y_min, y_max
+
     def plot(
         self,
         ax=None,
         show_words: Sequence[int] = (),
-        show_intra: Sequence[int] = (),
-        show_inter: Sequence[int] = (),
+        show_site_bus: Sequence[int] = (),
+        show_word_bus: Sequence[int] = (),
         **scatter_kwargs,
     ):
         import matplotlib.pyplot as plt  # type: ignore
@@ -69,7 +109,7 @@ class ArchSpec(Generic[SiteType]):
 
         for word_id in show_words:
             word = self.words[word_id]
-            word.plot(ax)
+            word.plot(ax, **scatter_kwargs)
 
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
@@ -80,7 +120,7 @@ class ArchSpec(Generic[SiteType]):
         colors = {}
         for word_id in show_words:
             word = self.words[word_id]
-            for lane_id in show_intra:
+            for lane_id in show_site_bus:
                 lane = self.site_buses[lane_id]
 
                 for start, end in zip(lane.src, lane.dst):
@@ -105,13 +145,14 @@ class ArchSpec(Generic[SiteType]):
                         )
                         x_vals = np.linspace(x_start, x_end, num=10)
                         y_vals = f(x_vals)
+
                         (ln,) = ax.plot(
                             x_vals, y_vals, color=colors.get(lane), linestyle="--"
                         )
                         if lane not in colors:
                             colors[lane] = ln.get_color()
 
-        for lane in show_inter:
+        for lane in show_word_bus:
             lane = self.word_buses[lane]
             for start_word_id, end_word_id in zip(lane.src, lane.dst):
                 start_word = self.words[start_word_id]
@@ -159,8 +200,8 @@ class ArchSpec(Generic[SiteType]):
         self.plot(
             ax,
             show_words=show_words,
-            show_intra=show_intra,
-            show_inter=show_inter,
+            show_site_bus=show_intra,
+            show_word_bus=show_inter,
             **scatter_kwargs,
         )
         plt.show()
@@ -181,3 +222,21 @@ class ArchSpec(Generic[SiteType]):
                 and (lane1.word_id != lane2.word_id or lane1.site_id != lane2.site_id)
             )
         return False
+
+    def get_endpoints(self, lane_address: LaneAddress):
+        src = lane_address.src_site()
+        if lane_address.move_type is MoveType.WORD:
+            bus = self.word_buses[lane_address.bus_id]
+            dst_word = bus.dst[bus.src.index(src.word_id)]
+            dst = LocationAddress(dst_word, src.site_id)
+        elif lane_address.move_type is MoveType.SITE:
+            bus = self.site_buses[lane_address.bus_id]
+            dst_site = bus.dst[bus.src.index(src.site_id)]
+            dst = LocationAddress(src.word_id, dst_site)
+        else:
+            raise ValueError("Unsupported lane address type")
+
+        if lane_address.direction is Direction.FORWARD:
+            return src, dst
+        else:
+            return dst, src
