@@ -57,4 +57,4 @@ def compile_and_visualize(log_depth_ghz: ir.Method, interactive=True):
 
 
 # compile_and_visualize(log_depth_ghz)
-compile_and_visualize(ghz_optimal, interactive=False)
+compile_and_visualize(ghz_optimal, interactive=True)

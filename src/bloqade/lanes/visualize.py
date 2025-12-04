@@ -188,9 +188,7 @@ def debugger(
         if isinstance(curr_state, AtomState):
             steps.append((stmt, curr_state))
 
-    while running:
-        stmt, curr_state = steps[step_index]
-
+    def draw(stmt, curr_state):
         visualize_fn = methods.get(type(stmt), default)
         visualize_fn(ax, stmt, arch_spec)
         curr_state.draw_atoms(arch_spec, ax=ax, color="#6437FF", s=80)
@@ -203,18 +201,19 @@ def debugger(
 
         plt.draw()
 
-        if interactive:
+    if interactive:
+        while running:
+            draw(*steps[step_index])
+
             while waiting:
                 plt.pause(0.01)
 
             waiting = True
             updated = False
-        else:
-            step_index += 1
-            if step_index >= len(steps):
-                running = False
-            plt.pause(pause_time)
-            plt.cla()
 
-    if interactive:
         plt.close(fig)
+    else:
+        for stmt, curr_state in steps:
+            draw(stmt, curr_state)
+            plt.pause(pause_time)
+            ax.cla()
