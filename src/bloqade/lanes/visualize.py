@@ -95,7 +95,17 @@ def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
 
 
 def default(ax, stmt: ir.Statement, arch_spec: ArchSpec):
-    arch_spec.plot(ax, show_words=range(len(arch_spec.words)))
+    slm_plt_arg: dict = {
+        "facecolors": "none",
+        "edgecolors": "k",
+        "linestyle": "-",
+        "s": 80,
+        "alpha": 0.3,
+        "linewidth": 0.5,
+    }
+    arch_spec.plot(
+        ax, show_words=range(len(arch_spec.words)), color="blue", **slm_plt_arg
+    )
 
 
 def debugger(mt: ir.Method, arch_spec: ArchSpec):
@@ -176,7 +186,8 @@ def debugger(mt: ir.Method, arch_spec: ArchSpec):
 
         visualize_fn = methods.get(type(stmt), default)
         visualize_fn(ax, stmt, arch_spec)
-        curr_state.plot(arch_spec, ax=ax, show_moves=True, color="grey", s=150)
+        curr_state.draw_atoms(arch_spec, ax=ax, color="#6437FF", s=80)
+        curr_state.draw_moves(arch_spec, ax=ax, color="orange")
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {type(stmt).__name__}")
 

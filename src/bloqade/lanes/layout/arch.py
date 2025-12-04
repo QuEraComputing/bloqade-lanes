@@ -109,7 +109,7 @@ class ArchSpec(Generic[SiteType]):
 
         for word_id in show_words:
             word = self.words[word_id]
-            word.plot(ax)
+            word.plot(ax, **scatter_kwargs)
 
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
@@ -145,6 +145,7 @@ class ArchSpec(Generic[SiteType]):
                         )
                         x_vals = np.linspace(x_start, x_end, num=10)
                         y_vals = f(x_vals)
+
                         (ln,) = ax.plot(
                             x_vals, y_vals, color=colors.get(lane), linestyle="--"
                         )

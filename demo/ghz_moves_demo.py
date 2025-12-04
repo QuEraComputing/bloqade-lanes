@@ -56,5 +56,5 @@ def compile_and_visualize(log_depth_ghz: ir.Method):
     visualize.debugger(log_depth_ghz, arch_spec)
 
 
-compile_and_visualize(log_depth_ghz)
+# compile_and_visualize(log_depth_ghz)
 compile_and_visualize(ghz_optimal)

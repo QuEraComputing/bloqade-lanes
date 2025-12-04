@@ -4,6 +4,7 @@ from kirin import ir
 from kirin.analysis import ForwardExtra, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.worklist import WorkList
+from matplotlib.axes import Axes
 
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
@@ -37,7 +38,7 @@ class AtomState(AtomStateType):
         if location in self.locations:
             return self.locations.index(location)
 
-    def plot(self, arch_spec: ArchSpec, ax=None, show_moves: bool = False, **kwargs):
+    def draw_atoms(self, arch_spec: ArchSpec, ax: Axes | None = None, **kwargs):
         import matplotlib.pyplot as plt
 
         if ax is None:
@@ -49,8 +50,11 @@ class AtomState(AtomStateType):
             )
             ax.scatter(x_pos, y_pos, **kwargs)
 
-        if not show_moves:
-            return
+    def draw_moves(self, arch_spec: ArchSpec, ax: Axes | None = None, **kwargs):
+        import matplotlib.pyplot as plt
+
+        if ax is None:
+            ax = plt.gca()
 
         for lane in self.prev_lanes.values():
             start, end = arch_spec.get_endpoints(lane)
@@ -64,8 +68,8 @@ class AtomState(AtomStateType):
                     [y_end - y_start],
                     angles="xy",
                     scale_units="xy",
-                    scale=1,
-                    color="blue",
+                    scale=1.0,
+                    **kwargs,
                 )
 
 
