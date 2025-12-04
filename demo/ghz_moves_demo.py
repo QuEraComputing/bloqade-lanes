@@ -53,7 +53,7 @@ def compile_and_visualize(mt: ir.Method, interactive=True):
 
     arch_spec = logical.get_arch_spec()
 
-    visualize.debugger(mt, arch_spec, interactive=interactive)
+    visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker="s")
 
 
 # compile_and_visualize(log_depth_ghz)

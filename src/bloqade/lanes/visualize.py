@@ -90,7 +90,7 @@ def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
     )
 
 
-def show_slm(ax, stmt: ir.Statement, arch_spec: ArchSpec):
+def show_slm(ax, stmt: ir.Statement, arch_spec: ArchSpec, atom_marker: str):
     slm_plt_arg: dict = {
         "facecolors": "none",
         "edgecolors": "k",
@@ -98,13 +98,12 @@ def show_slm(ax, stmt: ir.Statement, arch_spec: ArchSpec):
         "s": 80,
         "alpha": 0.3,
         "linewidth": 0.5,
+        "marker": atom_marker,
     }
-    arch_spec.plot(
-        ax, show_words=range(len(arch_spec.words)), color="blue", **slm_plt_arg
-    )
+    arch_spec.plot(ax, show_words=range(len(arch_spec.words)), **slm_plt_arg)
 
 
-def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes):
+def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
     methods: dict = {
         move.LocalR: show_local_r,
         move.LocalRz: show_local_rz,
@@ -135,11 +134,13 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes):
 
     def draw(step_index: int):
         stmt, curr_state = steps[step_index]
-        show_slm(ax, stmt, arch_spec)
+        show_slm(ax, stmt, arch_spec, atom_marker)
 
         visualize_fn = methods.get(type(stmt), lambda a, b, c: None)
         visualize_fn(ax, stmt, arch_spec)
-        curr_state.draw_atoms(arch_spec, ax=ax, color="#6437FF", s=80)
+        curr_state.draw_atoms(
+            arch_spec, ax=ax, color="#6437FF", s=80, marker=atom_marker
+        )
         curr_state.draw_moves(arch_spec, ax=ax, color="orange")
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {type(stmt).__name__}")
@@ -217,12 +218,13 @@ def debugger(
     arch_spec: ArchSpec,
     interactive: bool = True,
     pause_time: float = 1.0,
+    atom_marker: str = "o",
 ):
     # set up matplotlib figure with buttons
     fig, ax = plt.subplots()
     fig.subplots_adjust(bottom=0.2)
 
-    draw, num_steps = get_drawer(mt, arch_spec, ax)
+    draw, num_steps = get_drawer(mt, arch_spec, ax, atom_marker)
 
     if interactive:
         interactive_debugger(draw, num_steps, fig)
