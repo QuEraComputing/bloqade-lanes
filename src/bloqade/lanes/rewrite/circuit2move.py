@@ -80,7 +80,7 @@ class InsertPalindromeMoves(RewriteRule):
     """
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, place.StaticCircuit):
+        if not isinstance(node, place.StaticPlacement):
             return RewriteResult()
 
         yield_stmt = node.body.blocks[0].last_stmt
@@ -262,7 +262,7 @@ class LiftMoveStatements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
             type(node) in move.dialect.stmts
-            and isinstance((parent_stmt := node.parent_stmt), place.StaticCircuit)
+            and isinstance((parent_stmt := node.parent_stmt), place.StaticPlacement)
         ):
             return RewriteResult()
 
@@ -275,7 +275,7 @@ class LiftMoveStatements(RewriteRule):
 class RemoveNoOpCircuits(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
-            isinstance(node, place.StaticCircuit)
+            isinstance(node, place.StaticPlacement)
             and isinstance(yield_stmt := node.body.blocks[0].first_stmt, place.Yield)
         ):
             return RewriteResult()

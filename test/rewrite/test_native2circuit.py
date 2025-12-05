@@ -26,7 +26,7 @@ def test_cz():
         [
             targets := ilist.New(values=(q0, q1)),
             controls := ilist.New(values=(c0, c1)),
-            place.StaticCircuit(
+            place.StaticPlacement(
                 qubits=(c0, c1, q0, q1), body=ir.Region(block := ir.Block())
             ),
         ]
@@ -65,7 +65,7 @@ def test_r():
     expected_block = ir.Block(
         [
             inputs := ilist.New(values=(q0, q1)),
-            place.StaticCircuit(qubits=(q0, q1), body=ir.Region(block := ir.Block())),
+            place.StaticPlacement(qubits=(q0, q1), body=ir.Region(block := ir.Block())),
         ]
     )
 
@@ -99,7 +99,7 @@ def test_rz():
     expected_block = ir.Block(
         [
             qubits := ilist.New(values=(q0, q1)),
-            place.StaticCircuit(qubits=(q0, q1), body=ir.Region(block := ir.Block())),
+            place.StaticPlacement(qubits=(q0, q1), body=ir.Region(block := ir.Block())),
         ]
     )
 
@@ -142,7 +142,7 @@ def test_measurement():
     block.stmts.append(gate_stmt := place.EndMeasure(entry_state, qubits=(0, 1, 2)))
     block.stmts.append(place.Yield(*gate_stmt.results))
     expected_block.stmts.append(
-        circ := place.StaticCircuit(qubits=(q0, q1, q2), body=ir.Region(block))
+        circ := place.StaticPlacement(qubits=(q0, q1, q2), body=ir.Region(block))
     )
     expected_block.stmts.append(
         place.ConvertToPhysicalMeasurements(tuple(circ.results))
@@ -170,7 +170,7 @@ def test_merge_regions():
     )
     body_block.stmts.append(place.Yield(*measure0_stmt.results))
     test_block.stmts.append(
-        circuit1 := place.StaticCircuit(
+        circuit1 := place.StaticPlacement(
             qubits=(qubits[0], qubits[1]), body=ir.Region(body_block)
         )
     )
@@ -187,7 +187,7 @@ def test_merge_regions():
     )
     body_block.stmts.append(place.Yield(*measure1_stmt.results))
     test_block.stmts.append(
-        circuit2 := place.StaticCircuit(
+        circuit2 := place.StaticPlacement(
             qubits=(qubits[2], qubits[3]), body=ir.Region(body_block)
         )
     )
@@ -227,7 +227,7 @@ def test_merge_regions():
         )
     )
     expected_block.stmts.append(
-        merged_circuit := place.StaticCircuit(
+        merged_circuit := place.StaticPlacement(
             qubits=(qubits[0], qubits[1], qubits[2], qubits[3]),
             body=ir.Region(body_block),
         )

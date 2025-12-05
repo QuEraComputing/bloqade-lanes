@@ -38,13 +38,13 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         qubits: tuple[ir.SSAValue, ...],
         body: ir.Region,
         block: ir.Block,
-    ) -> place.StaticCircuit:
+    ) -> place.StaticPlacement:
         block.stmts.append(quantum_stmt)
         block.stmts.append(
             place.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:])
         )
 
-        return place.StaticCircuit(qubits=qubits, body=body)
+        return place.StaticPlacement(qubits=qubits, body=body)
 
     def rewrite_TerminalLogicalMeasurement(
         self, node: gemini_stmts.TerminalLogicalMeasurement
@@ -178,8 +178,8 @@ class MergePlacementRegions(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, place.StaticCircuit)
-            and isinstance(next_node := node.next_stmt, place.StaticCircuit)
+            isinstance(node, place.StaticPlacement)
+            and isinstance(next_node := node.next_stmt, place.StaticPlacement)
         ):
             return abc.RewriteResult()
 
@@ -223,7 +223,7 @@ class MergePlacementRegions(abc.RewriteRule):
         new_block.stmts.append(new_yield)
 
         # create the new static circuit
-        new_static_circuit = place.StaticCircuit(
+        new_static_circuit = place.StaticPlacement(
             new_qubits,
             new_body,
         )
