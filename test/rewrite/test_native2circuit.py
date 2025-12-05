@@ -8,7 +8,7 @@ from bloqade.lanes import types
 from bloqade.lanes.dialects import place
 from bloqade.lanes.rewrite.native2circuit import (
     MergePlacementRegions,
-    RewriteLowLevelCircuit,
+    RewritePlaceOperations,
 )
 
 
@@ -38,7 +38,7 @@ def test_cz():
     )
     block.stmts.append(place.Yield(gate_stmt.state_after))
 
-    rule = rewrite.Walk(RewriteLowLevelCircuit())
+    rule = rewrite.Walk(RewritePlaceOperations())
 
     rule.rewrite(test_block)
 
@@ -80,7 +80,7 @@ def test_r():
     )
     block.stmts.append(place.Yield(gate_stmt.state_after))
 
-    rule = rewrite.Walk(RewriteLowLevelCircuit())
+    rule = rewrite.Walk(RewritePlaceOperations())
 
     rule.rewrite(test_block)
 
@@ -109,7 +109,7 @@ def test_rz():
     )
     block.stmts.append(place.Yield(gate_stmt.state_after))
 
-    rule = rewrite.Walk(RewriteLowLevelCircuit())
+    rule = rewrite.Walk(RewritePlaceOperations())
 
     rule.rewrite(test_block)
 
@@ -147,7 +147,7 @@ def test_measurement():
     expected_block.stmts.append(
         place.ConvertToPhysicalMeasurements(tuple(circ.results))
     )
-    rule = rewrite.Walk(RewriteLowLevelCircuit())
+    rule = rewrite.Walk(RewritePlaceOperations())
 
     rule.rewrite(test_block)
     assert_nodes(test_block, expected_block)

@@ -29,7 +29,7 @@ class NativeToCircuit:
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(
-            native2circuit.RewriteLowLevelCircuit(),
+            native2circuit.RewritePlaceOperations(),
         ).rewrite(out.code)
 
         rewrite.Fixpoint(

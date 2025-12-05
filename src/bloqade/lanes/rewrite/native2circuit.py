@@ -12,9 +12,9 @@ from bloqade.lanes.types import StateType
 
 
 @dataclass
-class RewriteLowLevelCircuit(abc.RewriteRule):
+class RewritePlaceOperations(abc.RewriteRule):
     """
-    Rewrite rule to convert native operations to placement operations.
+    Rewrite rule to convert native operations to place operations.
     This is a placeholder for the actual implementation.
     """
 
