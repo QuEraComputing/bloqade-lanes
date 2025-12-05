@@ -8,14 +8,14 @@ from kirin import ir, passes, rewrite
 from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
-from bloqade.lanes.dialects import circuit, move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.passes.canonicalize import CanonicalizeNative
 from bloqade.lanes.rewrite import circuit2move, native2circuit
 
 
 def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
     return all(
-        isinstance(stmt, (circuit.R, circuit.Rz, circuit.Yield))
+        isinstance(stmt, (place.R, place.Rz, place.Yield))
         for stmt in chain(region_a.walk(), region_b.walk())
     )
 
@@ -25,7 +25,7 @@ class NativeToCircuit:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
 
     def emit(self, mt: Method, no_raise: bool = True):
-        out = mt.similar(mt.dialects.add(circuit))
+        out = mt.similar(mt.dialects.add(place))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(

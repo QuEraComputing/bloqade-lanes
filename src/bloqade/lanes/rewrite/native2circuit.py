@@ -7,7 +7,7 @@ from kirin import ir
 from kirin.dialects import ilist
 from kirin.rewrite import abc
 
-from bloqade.lanes.dialects import circuit
+from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
 
 
@@ -33,18 +33,18 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
 
     def construct_execute(
         self,
-        quantum_stmt: circuit.QuantumStmt,
+        quantum_stmt: place.QuantumStmt,
         *,
         qubits: tuple[ir.SSAValue, ...],
         body: ir.Region,
         block: ir.Block,
-    ) -> circuit.StaticCircuit:
+    ) -> place.StaticCircuit:
         block.stmts.append(quantum_stmt)
         block.stmts.append(
-            circuit.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:])
+            place.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:])
         )
 
-        return circuit.StaticCircuit(qubits=qubits, body=body)
+        return place.StaticCircuit(qubits=qubits, body=body)
 
     def rewrite_TerminalLogicalMeasurement(
         self, node: gemini_stmts.TerminalLogicalMeasurement
@@ -54,7 +54,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
 
         inputs = args_list.values
         body, block, entry_state = self.prep_region()
-        gate_stmt = circuit.EndMeasure(
+        gate_stmt = place.EndMeasure(
             entry_state,
             qubits=tuple(range(len(inputs))),
         )
@@ -63,7 +63,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         )
         new_node.insert_before(node)
         node.replace_by(
-            circuit.ConvertToPhysicalMeasurements(
+            place.ConvertToPhysicalMeasurements(
                 tuple(new_node.results),
             )
         )
@@ -85,7 +85,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         n_controls = len(controls)
 
         body, block, entry_state = self.prep_region()
-        stmt = circuit.CZ(
+        stmt = place.CZ(
             entry_state,
             controls=all_qubits[:n_controls],
             targets=all_qubits[n_controls:],
@@ -106,7 +106,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         inputs = args_list.values
 
         body, block, entry_state = self.prep_region()
-        gate_stmt = circuit.R(
+        gate_stmt = place.R(
             entry_state,
             qubits=tuple(range(len(inputs))),
             axis_angle=node.axis_angle,
@@ -127,7 +127,7 @@ class RewriteLowLevelCircuit(abc.RewriteRule):
         body = ir.Region(block := ir.Block())
         entry_state = block.args.append_from(StateType, name="entry_state")
 
-        gate_stmt = circuit.Rz(
+        gate_stmt = place.Rz(
             entry_state,
             qubits=tuple(range(len(inputs))),
             rotation_angle=node.rotation_angle,
@@ -158,11 +158,11 @@ class MergePlacementRegions(abc.RewriteRule):
     def remap_qubits(
         self,
         curr_state: ir.SSAValue,
-        node: circuit.R | circuit.Rz | circuit.CZ | circuit.EndMeasure,
+        node: place.R | place.Rz | place.CZ | place.EndMeasure,
         input_map: dict[int, int],
     ):
-        if isinstance(node, circuit.CZ):
-            return circuit.CZ(
+        if isinstance(node, place.CZ):
+            return place.CZ(
                 curr_state,
                 targets=tuple(input_map[i] for i in node.targets),
                 controls=tuple(input_map[i] for i in node.controls),
@@ -178,8 +178,8 @@ class MergePlacementRegions(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, circuit.StaticCircuit)
-            and isinstance(next_node := node.next_stmt, circuit.StaticCircuit)
+            isinstance(node, place.StaticCircuit)
+            and isinstance(next_node := node.next_stmt, place.StaticCircuit)
         ):
             return abc.RewriteResult()
 
@@ -199,16 +199,14 @@ class MergePlacementRegions(abc.RewriteRule):
         new_block = new_body.blocks[0]
 
         curr_yield = new_block.last_stmt
-        assert isinstance(curr_yield, circuit.Yield)
+        assert isinstance(curr_yield, place.Yield)
 
         curr_state = curr_yield.final_state
         current_yields = list(curr_yield.classical_results)
         curr_yield.delete()
 
         for stmt in next_node.body.blocks[0].stmts:
-            if isinstance(
-                stmt, (circuit.R, circuit.Rz, circuit.CZ, circuit.EndMeasure)
-            ):
+            if isinstance(stmt, (place.R, place.Rz, place.CZ, place.EndMeasure)):
                 remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)
@@ -218,14 +216,14 @@ class MergePlacementRegions(abc.RewriteRule):
                     old_result.replace_by(new_result)
                     current_yields.append(new_result)
 
-        new_yield = circuit.Yield(
+        new_yield = place.Yield(
             curr_state,
             *current_yields,
         )
         new_block.stmts.append(new_yield)
 
         # create the new static circuit
-        new_static_circuit = circuit.StaticCircuit(
+        new_static_circuit = place.StaticCircuit(
             new_qubits,
             new_body,
         )
