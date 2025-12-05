@@ -6,7 +6,7 @@ from kirin.dialects import ilist, py
 
 from bloqade.lanes import types
 from bloqade.lanes.dialects import place
-from bloqade.lanes.rewrite.native2circuit import (
+from bloqade.lanes.rewrite.native2place import (
     MergePlacementRegions,
     RewritePlaceOperations,
 )

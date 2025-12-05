@@ -15,7 +15,7 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
-from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
+from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 
 @dataclass
