@@ -21,7 +21,7 @@ def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
 
 
 @dataclass
-class NativeToCircuit:
+class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
 
     def emit(self, mt: Method, no_raise: bool = True):
@@ -41,7 +41,7 @@ class NativeToCircuit:
 
 
 @dataclass
-class CircuitToMove:
+class PlaceToMove:
     layout_heristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
     move_scheduler: place2move.MoveSchedulerABC
@@ -81,6 +81,7 @@ class CircuitToMove:
             place2move.RewriteCZ(*args),
             place2move.RewriteR(*args),
             place2move.RewriteRz(*args),
+            place2move.InsertMeasure(*args),
         )
         rewrite.Walk(rule).rewrite(out.code)
 

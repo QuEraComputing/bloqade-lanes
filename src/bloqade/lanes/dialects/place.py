@@ -202,6 +202,18 @@ class PlacementMethods(interp.MethodTable):
                     "StaticPlacement body did not return a ConcreteState"
                 )
 
+    @interp.impl(EndMeasure)
+    def end_measure(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: EndMeasure,
+    ):
+        new_state = _interp.placement_strategy.measure_placements(
+            frame.get(stmt.state_before), stmt.qubits
+        )
+        return (new_state,) + (EmptyLattice.bottom(),) * len(stmt.qubits)
+
 
 @dialect.register(key="circuit.layout")
 class InitialLayoutMethods(interp.MethodTable):
