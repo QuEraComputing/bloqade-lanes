@@ -89,7 +89,7 @@ class CircuitToMove:
 
         rewrite.Walk(
             rewrite.Chain(
-                place2move.LiftMoveStatements(), place2move.RemoveNoOpCircuits()
+                place2move.LiftMoveStatements(), place2move.RemoveNoOpStaticPlacements()
             )
         ).rewrite(out.code)
 

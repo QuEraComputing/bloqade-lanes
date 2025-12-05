@@ -272,7 +272,7 @@ class LiftMoveStatements(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-class RemoveNoOpCircuits(RewriteRule):
+class RemoveNoOpStaticPlacements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
             isinstance(node, place.StaticPlacement)
