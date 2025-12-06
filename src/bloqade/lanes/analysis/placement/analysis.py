@@ -40,6 +40,13 @@ class PlacementStrategyABC(abc.ABC):
     ) -> AtomState:
         pass
 
+    def measure_placements(
+        self,
+        state: AtomState,
+        qubits: tuple[int, ...],
+    ) -> AtomState:
+        return state
+
 
 @dataclass
 class PlacementAnalysis(Forward[AtomState]):

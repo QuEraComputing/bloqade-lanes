@@ -7,7 +7,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade import qubit
 from bloqade.lanes.analysis import placement
-from bloqade.lanes.dialects import circuit, move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
@@ -54,7 +54,7 @@ class InsertMoves(RewriteRule):
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, circuit.QuantumStmt):
+        if not isinstance(node, place.QuantumStmt):
             return RewriteResult()
 
         moves = self.move_heuristic.compute_moves(
@@ -80,11 +80,11 @@ class InsertPalindromeMoves(RewriteRule):
     """
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, circuit.StaticCircuit):
+        if not isinstance(node, place.StaticPlacement):
             return RewriteResult()
 
         yield_stmt = node.body.blocks[0].last_stmt
-        assert isinstance(yield_stmt, circuit.Yield)
+        assert isinstance(yield_stmt, place.Yield)
 
         for stmt in node.body.walk(reverse=True):
             if not isinstance(stmt, move.Move):
@@ -109,7 +109,7 @@ class RewriteCZ(RewriteRule):
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, circuit.CZ):
+        if not isinstance(node, place.CZ):
             return RewriteResult()
 
         state_after = self.placement_analysis.get(node.state_after)
@@ -138,7 +138,7 @@ class RewriteR(RewriteRule):
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, circuit.R):
+        if not isinstance(node, place.R):
             return RewriteResult()
 
         state_after = self.placement_analysis.get(node.state_after)
@@ -185,7 +185,7 @@ class RewriteRz(RewriteRule):
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, circuit.Rz):
+        if not isinstance(node, place.Rz):
             return RewriteResult()
 
         state_after = self.placement_analysis.get(node.state_after)
@@ -226,7 +226,7 @@ class InsertMeasure(RewriteRule):
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, circuit.EndMeasure):
+        if not isinstance(node, place.EndMeasure):
             return RewriteResult()
 
         if not isinstance(
@@ -262,7 +262,7 @@ class LiftMoveStatements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
             type(node) in move.dialect.stmts
-            and isinstance((parent_stmt := node.parent_stmt), circuit.StaticCircuit)
+            and isinstance((parent_stmt := node.parent_stmt), place.StaticPlacement)
         ):
             return RewriteResult()
 
@@ -272,11 +272,11 @@ class LiftMoveStatements(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-class RemoveNoOpCircuits(RewriteRule):
+class RemoveNoOpStaticPlacements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
-            isinstance(node, circuit.StaticCircuit)
-            and isinstance(yield_stmt := node.body.blocks[0].first_stmt, circuit.Yield)
+            isinstance(node, place.StaticPlacement)
+            and isinstance(yield_stmt := node.body.blocks[0].first_stmt, place.Yield)
         ):
             return RewriteResult()
 

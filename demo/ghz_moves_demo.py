@@ -6,7 +6,7 @@ from bloqade import qubit, squin
 from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.heuristics import fixed
-from bloqade.lanes.upstream import CircuitToMove, NativeToCircuit
+from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
 
 
 @squin.kernel(typeinfer=True, fold=True)
@@ -44,8 +44,8 @@ def compile_and_visualize(mt: ir.Method, interactive=True):
     # Compile to move dialect
 
     mt = SquinToNative().emit(mt)
-    mt = NativeToCircuit().emit(mt)
-    mt = CircuitToMove(
+    mt = NativeToPlace().emit(mt)
+    mt = PlaceToMove(
         fixed.LogicalLayoutHeuristic(),
         fixed.LogicalPlacementStrategy(),
         fixed.LogicalMoveScheduler(),
