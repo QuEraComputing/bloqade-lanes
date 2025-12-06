@@ -10,7 +10,7 @@ from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
-dialect = ir.Dialect(name="lanes.circuit")
+dialect = ir.Dialect(name="lanes.place")
 
 
 @statement(init=False)
