@@ -10,7 +10,7 @@ from kirin.ir.method import Method
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.passes.canonicalize import CanonicalizeNative
-from bloqade.lanes.rewrite import native2place, place2move
+from bloqade.lanes.rewrite import circuit2place, place2move
 
 
 def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
@@ -29,11 +29,11 @@ class NativeToPlace:
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(
-            native2place.RewritePlaceOperations(),
+            circuit2place.RewritePlaceOperations(),
         ).rewrite(out.code)
 
         rewrite.Fixpoint(
-            rewrite.Walk(native2place.MergePlacementRegions(self.merge_heuristic))
+            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
         ).rewrite(out.code)
         passes.TypeInfer(out.dialects)(out)
 

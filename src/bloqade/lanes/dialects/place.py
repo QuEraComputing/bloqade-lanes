@@ -1,3 +1,5 @@
+from functools import cached_property
+
 from bloqade.analysis import address
 from kirin import exception, interp, ir, types
 from kirin.analysis.forward import ForwardFrame
@@ -41,8 +43,15 @@ class Initialize(QuantumStmt):
 
 @statement(dialect=dialect)
 class CZ(QuantumStmt):
-    targets: tuple[int, ...] = info.attribute()
-    controls: tuple[int, ...] = info.attribute()
+    qubits: tuple[int, ...] = info.attribute()
+
+    @cached_property
+    def controls(self) -> tuple[int, ...]:
+        return self.qubits[: len(self.qubits) // 2]
+
+    @cached_property
+    def targets(self) -> tuple[int, ...]:
+        return self.qubits[len(self.qubits) // 2 :]
 
 
 @statement(dialect=dialect)

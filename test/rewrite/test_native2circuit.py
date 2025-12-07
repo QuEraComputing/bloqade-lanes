@@ -6,7 +6,7 @@ from kirin.dialects import ilist, py
 
 from bloqade.lanes import types
 from bloqade.lanes.dialects import place
-from bloqade.lanes.rewrite.native2place import (
+from bloqade.lanes.rewrite.circuit2place import (
     MergePlacementRegions,
     RewritePlaceOperations,
 )
@@ -33,9 +33,7 @@ def test_cz():
     )
 
     entry_state = block.args.append_from(types.StateType, name="entry_state")
-    block.stmts.append(
-        gate_stmt := place.CZ(entry_state, controls=(0, 1), targets=(2, 3))
-    )
+    block.stmts.append(gate_stmt := place.CZ(entry_state, qubits=(0, 1, 2, 3)))
     block.stmts.append(place.Yield(gate_stmt.state_after))
 
     rule = rewrite.Walk(RewritePlaceOperations())
