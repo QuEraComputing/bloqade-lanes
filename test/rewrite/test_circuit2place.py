@@ -151,6 +151,53 @@ def test_measurement():
     assert_nodes(test_block, expected_block)
 
 
+def test_initialize():
+    test_block = ir.Block(
+        [
+            qubits := ilist.New(
+                values=(
+                    q0 := ir.TestValue(),
+                    q1 := ir.TestValue(),
+                    q2 := ir.TestValue(),
+                )
+            ),
+            gemini_stmts.Initialize(
+                theta := ir.TestValue(),
+                phi := ir.TestValue(),
+                lam := ir.TestValue(),
+                qubits=qubits.result,
+            ),
+        ],
+    )
+
+    expected_block = ir.Block(
+        [
+            qubits := ilist.New(values=(q0, q1, q2)),
+        ]
+    )
+
+    block = ir.Block()
+
+    entry_state = block.args.append_from(types.StateType, name="entry_state")
+    block.stmts.append(
+        gate_stmt := place.Initialize(
+            entry_state,
+            theta=theta,
+            phi=phi,
+            lam=lam,
+            qubits=(0, 1, 2),
+        )
+    )
+    block.stmts.append(place.Yield(gate_stmt.state_after))
+    expected_block.stmts.append(
+        place.StaticPlacement(qubits=(q0, q1, q2), body=ir.Region(block))
+    )
+    rule = rewrite.Walk(RewritePlaceOperations())
+
+    rule.rewrite(test_block)
+    assert_nodes(test_block, expected_block)
+
+
 def test_merge_regions():
 
     qubits = tuple(ir.TestValue() for _ in range(10))
