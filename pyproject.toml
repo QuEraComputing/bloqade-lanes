@@ -8,7 +8,7 @@ authors = [
 ]
 dependencies = [
     "bloqade-circuit~=0.10.0",
-    "bloqade-geometry",
+    "bloqade-geometry~=0.5.0",
     "kirin-toolchain~=0.21.0",
     "numpy>=2.2.6",
     "rustworkx>=0.17.1",
