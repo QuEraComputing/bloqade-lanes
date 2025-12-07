@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Any, Generic, TypeVar
 
-from .grid import Grid
+from bloqade.geometry.dialects.grid import Grid
 
 SiteType = TypeVar("SiteType", bound=Grid | tuple[float, float] | tuple[int, int])
 

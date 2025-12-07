@@ -1,7 +1,7 @@
 import numpy as np
+from bloqade.geometry.dialects.grid import Grid
 
 from bloqade.lanes.layout.arch import ArchSpec, Bus
-from bloqade.lanes.layout.grid import Grid
 from bloqade.lanes.layout.numpy_compat import as_flat_tuple_int
 from bloqade.lanes.layout.word import Word
 
@@ -56,10 +56,10 @@ def generate_arch(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
     x_positions = (0.0, 2.0)
     y_positions = tuple(10.0 * i for i in range(word_size_y))
 
-    grid = Grid(x_positions, y_positions)
+    grid = Grid.from_positions(x_positions, y_positions)
 
     words = tuple(
-        Word(grid.shift(10.0 * ix, 0.0).positions) for ix in range(num_word_x)
+        Word(tuple(grid.shift(10.0 * ix, 0.0).positions)) for ix in range(num_word_x)
     )
 
     word_ids = np.arange(word_size_x * word_size_y).reshape(word_size_y, word_size_x)
