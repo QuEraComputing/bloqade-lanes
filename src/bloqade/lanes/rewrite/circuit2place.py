@@ -180,18 +180,6 @@ class MergePlacementRegions(abc.RewriteRule):
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = _default_merge_heuristic
     """Heuristic function to decide whether to merge two circuit regions."""
 
-    def remap_qubits(
-        self,
-        curr_state: ir.SSAValue,
-        node: place.R | place.Rz | place.CZ | place.EndMeasure,
-        input_map: dict[int, int],
-    ):
-        return node.from_stmt(
-            node,
-            args=(curr_state, *node.args[1:]),
-            attributes={"qubits": ir.PyAttr(tuple(input_map[i] for i in node.qubits))},
-        )
-
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
             isinstance(node, place.StaticPlacement)
@@ -223,7 +211,15 @@ class MergePlacementRegions(abc.RewriteRule):
 
         for stmt in next_node.body.blocks[0].stmts:
             if isinstance(stmt, (place.R, place.Rz, place.CZ, place.EndMeasure)):
-                remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
+                remapped_stmt = stmt.from_stmt(
+                    stmt,
+                    args=(curr_state, *stmt.args[1:]),
+                    attributes={
+                        "qubits": ir.PyAttr(
+                            tuple(new_input_map[i] for i in stmt.qubits)
+                        )
+                    },
+                )
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)
                 for old_result, new_result in zip(
