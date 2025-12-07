@@ -210,7 +210,9 @@ class MergePlacementRegions(abc.RewriteRule):
         curr_yield.delete()
 
         for stmt in next_node.body.blocks[0].stmts:
-            if isinstance(stmt, (place.R, place.Rz, place.CZ, place.EndMeasure)):
+            if isinstance(
+                stmt, (place.R, place.Rz, place.CZ, place.EndMeasure, place.Initialize)
+            ):
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
