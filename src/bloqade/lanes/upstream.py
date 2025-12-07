@@ -52,9 +52,10 @@ class PlaceToMove:
 
         if no_raise:
             address_frame, _ = address.AddressAnalysis(out.dialects).run_no_raise(out)
-            initial_layout = layout.LayoutAnalysis(
+            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
                 out.dialects, self.layout_heristic, address_frame.entries
             ).get_layout_no_raise(out)
+
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
                 initial_layout,
@@ -63,7 +64,7 @@ class PlaceToMove:
             ).run_no_raise(out)
         else:
             address_frame, _ = address.AddressAnalysis(out.dialects).run(out)
-            initial_layout = layout.LayoutAnalysis(
+            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
                 out.dialects, self.layout_heristic, address_frame.entries
             ).get_layout(out)
             placement_frame, _ = placement.PlacementAnalysis(
@@ -73,10 +74,16 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run(out)
 
+        if len(initial_layout) != len(thetas):
+            raise RuntimeError(
+                "Number of initial angles does not match number of qubits in initial layout"
+            )
+
         placement_analysis = placement_frame.entries
         args = (self.move_scheduler, placement_analysis)
         rule = rewrite.Chain(
-            place2move.InsertInitialize(initial_layout),
+            place2move.InsertFill(initial_layout),
+            place2move.InsertInitialize(init_locations, thetas, phis, lams),
             place2move.InsertMoves(*args),
             place2move.RewriteCZ(*args),
             place2move.RewriteR(*args),

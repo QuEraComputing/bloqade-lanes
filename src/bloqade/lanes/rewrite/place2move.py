@@ -292,6 +292,30 @@ class RemoveNoOpStaticPlacements(RewriteRule):
 
 @dataclass
 class InsertInitialize(RewriteRule):
+    init_locations: tuple[LocationAddress, ...]
+    thetas: tuple[ir.SSAValue, ...]
+    phis: tuple[ir.SSAValue, ...]
+    lams: tuple[ir.SSAValue, ...]
+
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not (len(self.init_locations) > 0 and isinstance(node, func.Function)):
+            return RewriteResult()
+
+        first_stmt = node.body.blocks[0].first_stmt
+
+        if first_stmt is None or isinstance(first_stmt, move.Initialize):
+            return RewriteResult()
+        move.Initialize(
+            location_addresses=self.init_locations,
+            thetas=self.thetas,
+            phis=self.phis,
+            lams=self.lams,
+        ).insert_before(first_stmt)
+        return RewriteResult(has_done_something=True)
+
+
+@dataclass
+class InsertFill(RewriteRule):
     initial_layout: tuple[LocationAddress, ...]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
@@ -300,11 +324,11 @@ class InsertInitialize(RewriteRule):
 
         first_stmt = node.body.blocks[0].first_stmt
 
-        if first_stmt is None or isinstance(first_stmt, move.Initialize):
+        if first_stmt is None or isinstance(first_stmt, move.Fill):
             return RewriteResult()
-        move.Initialize(location_addresses=self.initial_layout).insert_before(
-            first_stmt
-        )
+
+        move.Fill(location_addresses=self.initial_layout).insert_before(first_stmt)
+
         return RewriteResult(has_done_something=True)
 
 

@@ -31,6 +31,15 @@ class QuantumStmt(ir.Statement):
 
 
 @statement(dialect=dialect)
+class Initialize(QuantumStmt):
+    qubits: tuple[int, ...] = info.attribute()
+
+    theta: ir.SSAValue = info.argument(type=types.Float)
+    phi: ir.SSAValue = info.argument(type=types.Float)
+    lam: ir.SSAValue = info.argument(type=types.Float)
+
+
+@statement(dialect=dialect)
 class CZ(QuantumStmt):
     targets: tuple[int, ...] = info.attribute()
     controls: tuple[int, ...] = info.attribute()
@@ -215,7 +224,7 @@ class PlacementMethods(interp.MethodTable):
         return (new_state,) + (EmptyLattice.bottom(),) * len(stmt.qubits)
 
 
-@dialect.register(key="circuit.layout")
+@dialect.register(key="place.layout")
 class InitialLayoutMethods(interp.MethodTable):
 
     @interp.impl(CZ)
@@ -226,6 +235,21 @@ class InitialLayoutMethods(interp.MethodTable):
         stmt: CZ,
     ):
         _interp.add_stage(stmt.controls, stmt.targets)
+
+        return ()
+
+    @interp.impl(Initialize)
+    def initialize(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: Initialize,
+    ):
+        for qubit_id in stmt.qubits:
+            global_qubit_id = _interp.global_address_stack[qubit_id]
+            _interp.thetas[global_qubit_id] = stmt.theta
+            _interp.phis[global_qubit_id] = stmt.phi
+            _interp.lams[global_qubit_id] = stmt.lam
 
         return ()
 
