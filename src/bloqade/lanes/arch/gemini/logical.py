@@ -22,6 +22,28 @@ dialect = ir.Dialect("gemini.logical")
 
 
 @decl.statement(dialect=dialect)
+class Fill(ir.Statement):
+
+    filled: ir.SSAValue = info.argument(
+        ilist.IListType[types.Tuple[types.Float, types.Float], types.Any]
+    )
+    vacant: ir.ResultValue = info.result(
+        ilist.IListType[types.Tuple[types.Float, types.Float], types.Any]
+    )
+
+
+NumRows = types.TypeVar("NumRows")
+
+
+@decl.statement(dialect=dialect)
+class LogicalInitialize(ir.Statement):
+    y_locs: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumRows])
+    x_locs: ir.SSAValue = info.argument(
+        ilist.IListType[ilist.IListType[types.Float, types.Any], NumRows]
+    )
+
+
+@decl.statement(dialect=dialect)
 class SiteBusMove(ir.Statement):
     y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
     word: int = info.attribute()
