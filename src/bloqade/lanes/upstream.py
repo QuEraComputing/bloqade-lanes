@@ -74,11 +74,6 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run(out)
 
-        if len(initial_layout) != len(thetas):
-            raise RuntimeError(
-                "Number of initial angles does not match number of qubits in initial layout"
-            )
-
         placement_analysis = placement_frame.entries
         args = (self.move_scheduler, placement_analysis)
         rule = rewrite.Chain(
