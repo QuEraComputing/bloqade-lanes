@@ -74,16 +74,14 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run(out)
 
-        placement_analysis = placement_frame.entries
-        args = (self.move_scheduler, placement_analysis)
         rule = rewrite.Chain(
             place2move.InsertFill(initial_layout),
             place2move.InsertInitialize(init_locations, thetas, phis, lams),
-            place2move.InsertMoves(*args),
-            place2move.RewriteCZ(*args),
-            place2move.RewriteR(*args),
-            place2move.RewriteRz(*args),
-            place2move.InsertMeasure(*args),
+            place2move.InsertMoves(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteCZ(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteR(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteRz(self.move_scheduler, placement_frame.entries),
+            place2move.InsertMeasure(self.move_scheduler, placement_frame.entries),
         )
         rewrite.Walk(rule).rewrite(out.code)
 
