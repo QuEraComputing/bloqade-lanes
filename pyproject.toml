@@ -40,9 +40,6 @@ dev-dependencies = [
     "rust-just>=1.36.0",
 ]
 
-[tool.uv.sources]
-bloqade-geometry = { workspace = true }
-
 [dependency-groups]
 doc = [
     "griffe-kirin>=0.1.0",
