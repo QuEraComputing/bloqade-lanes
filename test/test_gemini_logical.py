@@ -5,6 +5,8 @@ from matplotlib import pyplot as plt
 
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch
+from bloqade.lanes.arch.gemini.logical.rewrite import RewriteMoves
+from bloqade.lanes.arch.gemini.logical.stmts import SiteBusMove
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import (
     Direction,
@@ -41,7 +43,7 @@ def test_logical_architecture_rewrite_site():
         )
     )
 
-    rewrite_rule = rewrite.Walk(logical.RewriteMoves())
+    rewrite_rule = rewrite.Walk(RewriteMoves())
 
     rewrite_rule.rewrite(test_block)
 
@@ -50,7 +52,7 @@ def test_logical_architecture_rewrite_site():
         const_list := py.Constant(ilist.IList([True, True, True, True, False]))
     )
     expected_block.stmts.append(
-        logical.SiteBusMove(
+        SiteBusMove(
             y_mask=const_list.result,
             word=0,
             bus_id=0,
@@ -66,7 +68,7 @@ def test_logical_architecture_rewrite_site_no_lanes():
 
     test_block.stmts.append(move.Move(lanes=()))
 
-    rewrite_rule = rewrite.Walk(logical.RewriteMoves())
+    rewrite_rule = rewrite.Walk(RewriteMoves())
     result = rewrite_rule.rewrite(test_block)
     assert not result.has_done_something
 

@@ -1,60 +1,15 @@
 from dataclasses import dataclass
 
-from kirin import decl, ir, rewrite, types
-from kirin.decl import info
+from kirin import ir
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import (
-    Direction,
     MoveType,
 )
 
-from .impls import generate_arch
-
-
-def get_arch_spec():
-    return generate_arch(hypercube_dims=1, word_size_y=5)
-
-
-dialect = ir.Dialect("gemini.logical")
-
-
-@decl.statement(dialect=dialect)
-class Fill(ir.Statement):
-
-    filled: ir.SSAValue = info.argument(
-        ilist.IListType[types.Tuple[types.Float, types.Float], types.Any]
-    )
-    vacant: ir.ResultValue = info.result(
-        ilist.IListType[types.Tuple[types.Float, types.Float], types.Any]
-    )
-
-
-NumRows = types.TypeVar("NumRows")
-
-
-@decl.statement(dialect=dialect)
-class LogicalInitialize(ir.Statement):
-    y_locs: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumRows])
-    x_locs: ir.SSAValue = info.argument(
-        ilist.IListType[ilist.IListType[types.Float, types.Any], NumRows]
-    )
-
-
-@decl.statement(dialect=dialect)
-class SiteBusMove(ir.Statement):
-    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
-    word: int = info.attribute()
-    bus_id: int = info.attribute()
-    direction: Direction = info.attribute()
-
-
-@decl.statement(dialect=dialect)
-class WordBusMove(ir.Statement):
-    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
-    direction: Direction = info.attribute()
+from . import stmts
 
 
 @dataclass
@@ -84,7 +39,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
         if move_type is MoveType.SITE:
             node.replace_by(
-                SiteBusMove(
+                stmts.SiteBusMove(
                     y_mask_ref,
                     word=word,
                     bus_id=bus_id,
@@ -93,7 +48,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
             )
         elif move_type is MoveType.WORD:
             node.replace_by(
-                WordBusMove(
+                stmts.WordBusMove(
                     y_mask_ref,
                     direction=direction,
                 )
@@ -102,16 +57,3 @@ class RewriteMoves(rewrite_abc.RewriteRule):
             raise AssertionError("Unsupported move type for rewrite")
 
         return rewrite_abc.RewriteResult(has_done_something=True)
-
-
-class SpecializeGemini:
-
-    def emit(self, mt: ir.Method, no_raise=True) -> ir.Method:
-        out = mt.similar(dialects=mt.dialects.add(dialect))
-
-        rewrite.Walk(RewriteMoves()).rewrite(out.code)
-
-        if not no_raise:
-            out.verify()
-
-        return out
