@@ -13,12 +13,19 @@ class Fill(ir.Statement):
     locations: ir.SSAValue = info.argument(filled.FilledGridType[types.Any, types.Any])
 
 
+NumGates = types.TypeVar("NumGates")
 NumRows = types.TypeVar("NumRows")
+NumCols = types.TypeVar("NumCols")
 
 
 @decl.statement(dialect=dialect)
 class LogicalInitialize(ir.Statement):
-    locations: ir.SSAValue = info.argument(filled.FilledGridType[types.Any, types.Any])
+    location_groups: ir.SSAValue = info.argument(
+        ilist.IListType[filled.FilledGridType[NumRows, NumCols], NumGates]
+    )
+    thetas: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumGates])
+    phis: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumGates])
+    lams: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumGates])
 
 
 @decl.statement(dialect=dialect)
