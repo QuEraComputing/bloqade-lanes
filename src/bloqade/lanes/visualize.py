@@ -133,6 +133,8 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
             steps.append((stmt, curr_state))
 
     def draw(step_index: int):
+        if len(steps) == 0:
+            return
         stmt, curr_state = steps[step_index]
         show_slm(ax, stmt, arch_spec, atom_marker)
 
