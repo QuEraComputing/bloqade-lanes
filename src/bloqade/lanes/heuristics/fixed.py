@@ -272,9 +272,6 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         moves.extend(self.site_moves(groups.get((0, 0), []), 0))
         moves.extend(self.site_moves(groups.get((1, 1), []), 1))
 
-        for move_group in moves:
-            print(move_group)
-
         return moves
 
 
