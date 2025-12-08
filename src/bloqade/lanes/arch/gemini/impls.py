@@ -32,7 +32,7 @@ def site_buses(site_addresses: np.ndarray):
 def hypercube_busses(hypercube_dims: int):
     word_buses: list[Bus] = []
     for shift in range(hypercube_dims):
-        m = 1 << shift
+        m = 1 << (hypercube_dims - shift - 1)
 
         srcs = []
         dsts = []
@@ -45,6 +45,7 @@ def hypercube_busses(hypercube_dims: int):
             dsts.append(dst)
 
         word_buses.append(Bus(tuple(srcs), tuple(dsts)))
+
     return tuple(word_buses)
 
 

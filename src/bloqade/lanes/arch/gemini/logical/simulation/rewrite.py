@@ -16,7 +16,7 @@ def physical_word_id(address: AddressType) -> Iterator[AddressType]:
     if address.word_id == 0:
         yield from (replace(address, word_id=word_id) for word_id in range(7))
     elif address.word_id == 1:
-        yield from (replace(address, word_id=word_id) for word_id in range(9, 16, 1))
+        yield from (replace(address, word_id=word_id) for word_id in range(8, 15, 1))
     else:
         yield address
 

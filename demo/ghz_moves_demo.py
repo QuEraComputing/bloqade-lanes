@@ -1,10 +1,12 @@
 from bloqade.native.upstream import SquinToNative
-from kirin import ir
+from kirin import ir, rewrite
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.arch.gemini.impls import generate_arch
+from bloqade.lanes.arch.gemini.logical.simulation import rewrite as sim_rewrite
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
 
@@ -40,7 +42,7 @@ def ghz_optimal():
     squin.broadcast.cx(qs[:5], qs[5:])
 
 
-def compile_and_visualize(mt: ir.Method, interactive=True):
+def compile(mt: ir.Method, transversal: bool = False):
     # Compile to move dialect
 
     mt = SquinToNative().emit(mt)
@@ -51,10 +53,26 @@ def compile_and_visualize(mt: ir.Method, interactive=True):
         fixed.LogicalMoveScheduler(),
     ).emit(mt)
 
-    arch_spec = logical.get_arch_spec()
+    if transversal:
+        rewrite.Walk(
+            rewrite.Chain(sim_rewrite.RewriteLocations(), sim_rewrite.RewriteMoves())
+        ).rewrite(mt.code)
+    return mt
 
-    visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker="s")
+
+def compile_and_visualize(mt: ir.Method, interactive=True, transversal: bool = False):
+    # Compile to move dialect
+    mt = compile(mt, transversal=transversal)
+    if transversal:
+        arch_spec = generate_arch(4)
+        marker = "o"
+    else:
+        arch_spec = logical.get_arch_spec()
+        marker = "s"
+
+    visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker=marker)
 
 
-compile_and_visualize(log_depth_ghz)
-# compile_and_visualize(ghz_optimal)
+compile_and_visualize(log_depth_ghz, transversal=False)
+compile_and_visualize(ghz_optimal, transversal=False)
+compile_and_visualize(ghz_optimal, transversal=True)
