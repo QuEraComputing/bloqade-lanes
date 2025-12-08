@@ -3,9 +3,10 @@ from itertools import chain
 from typing import Callable, Iterator, TypeVar
 
 from kirin import ir
+from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
 
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
 AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
@@ -59,4 +60,38 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
         node.replace_by(move.Move(lanes=physical_lanes))
 
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+@dataclass
+class RewriteGetMeasurementResult(rewrite_abc.RewriteRule):
+    transform_lanes: Callable[[LocationAddress], Iterator[LocationAddress]] = (
+        physical_word_id
+    )
+
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, move.GetMeasurementResult):
+            return rewrite_abc.RewriteResult()
+
+        new_results = []
+        for address in self.transform_lanes(node.location_address):
+            new_stmt = move.GetMeasurementResult(
+                node.measurement_future, location_address=address
+            )
+            new_results.append(new_stmt.result)
+            node.insert_before(new_stmt)
+
+        node.replace_by(ilist.New(tuple(new_results)))
+
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+class RewriteLogicalToPhysicalConversion(rewrite_abc.RewriteRule):
+    """Note that this rewrite is to be combined with RewriteGetMeasurementResult."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
+        if not isinstance(node, place.ConvertToPhysicalMeasurements):
+            return rewrite_abc.RewriteResult()
+
+        node.replace_by(ilist.New(tuple(node.args)))
         return rewrite_abc.RewriteResult(has_done_something=True)
