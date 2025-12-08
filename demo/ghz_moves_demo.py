@@ -56,5 +56,5 @@ def compile_and_visualize(mt: ir.Method, interactive=True):
     visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker="s")
 
 
-# compile_and_visualize(log_depth_ghz)
-compile_and_visualize(ghz_optimal, interactive=True)
+compile_and_visualize(log_depth_ghz)
+# compile_and_visualize(ghz_optimal)
