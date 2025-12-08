@@ -170,9 +170,7 @@ class Move(interp.MethodTable):
     ):
         frame.set_state_for_stmt(stmt)
 
-    @interp.impl(move.Initialize)
-    def initialize_impl(
-        self, interp_: AtomInterpreter, frame: AtomFrame, stmt: move.Initialize
-    ):
+    @interp.impl(move.Fill)
+    def fill_impl(self, interp_: AtomInterpreter, frame: AtomFrame, stmt: move.Fill):
         frame.current_state = AtomState(stmt.location_addresses)
         frame.set_state_for_stmt(stmt)
