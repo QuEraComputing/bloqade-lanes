@@ -10,7 +10,12 @@ dialect = ir.Dialect("gemini.logical")
 
 @decl.statement(dialect=dialect)
 class Fill(ir.Statement):
-    locations: ir.SSAValue = info.argument(filled.FilledGridType[types.Any, types.Any])
+    filled: ir.SSAValue = info.argument(
+        ilist.IListType[types.Tuple[types.Int, types.Int], types.Any]
+    )
+    vacant: ir.SSAValue = info.argument(
+        ilist.IListType[types.Tuple[types.Int, types.Int], types.Any]
+    )
 
 
 NumGates = types.TypeVar("NumGates")
