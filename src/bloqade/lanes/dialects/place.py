@@ -41,8 +41,15 @@ class Initialize(QuantumStmt):
 
 @statement(dialect=dialect)
 class CZ(QuantumStmt):
-    targets: tuple[int, ...] = info.attribute()
-    controls: tuple[int, ...] = info.attribute()
+    qubits: tuple[int, ...] = info.attribute()
+
+    @property
+    def controls(self) -> tuple[int, ...]:
+        return self.qubits[: len(self.qubits) // 2]
+
+    @property
+    def targets(self) -> tuple[int, ...]:
+        return self.qubits[len(self.qubits) // 2 :]
 
 
 @statement(dialect=dialect)

@@ -18,12 +18,20 @@ class RewritePlaceOperations(abc.RewriteRule):
     This is a placeholder for the actual implementation.
     """
 
-    def default_(self, node: ir.Statement) -> abc.RewriteResult:
-        return abc.RewriteResult()
-
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(
+            node,
+            (
+                gemini_stmts.TerminalLogicalMeasurement,
+                gemini_stmts.Initialize,
+                gate.CZ,
+                gate.R,
+                gate.Rz,
+            ),
+        ):
+            return abc.RewriteResult()
         rewrite_method_name = f"rewrite_{type(node).__name__}"
-        rewrite_method = getattr(self, rewrite_method_name, self.default_)
+        rewrite_method = getattr(self, rewrite_method_name)
         return rewrite_method(node)
 
     def prep_region(self) -> tuple[ir.Region, ir.Block, ir.SSAValue]:
@@ -45,6 +53,25 @@ class RewritePlaceOperations(abc.RewriteRule):
         )
 
         return place.StaticPlacement(qubits=qubits, body=body)
+
+    def rewrite_Initialize(self, node: gemini_stmts.Initialize) -> abc.RewriteResult:
+        if not isinstance(args_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        inputs = args_list.values
+        body, block, entry_state = self.prep_region()
+        gate_stmt = place.Initialize(
+            entry_state,
+            phi=node.phi,
+            theta=node.theta,
+            lam=node.lam,
+            qubits=tuple(range(len(inputs))),
+        )
+        node.replace_by(
+            self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
+        )
+
+        return abc.RewriteResult(has_done_something=True)
 
     def rewrite_TerminalLogicalMeasurement(
         self, node: gemini_stmts.TerminalLogicalMeasurement
@@ -82,13 +109,11 @@ class RewritePlaceOperations(abc.RewriteRule):
             return abc.RewriteResult()
 
         all_qubits = tuple(range(len(targets) + len(controls)))
-        n_controls = len(controls)
 
         body, block, entry_state = self.prep_region()
         stmt = place.CZ(
             entry_state,
-            controls=all_qubits[:n_controls],
-            targets=all_qubits[n_controls:],
+            qubits=all_qubits,
         )
 
         node.replace_by(
@@ -155,27 +180,6 @@ class MergePlacementRegions(abc.RewriteRule):
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = _default_merge_heuristic
     """Heuristic function to decide whether to merge two circuit regions."""
 
-    def remap_qubits(
-        self,
-        curr_state: ir.SSAValue,
-        node: place.R | place.Rz | place.CZ | place.EndMeasure,
-        input_map: dict[int, int],
-    ):
-        if isinstance(node, place.CZ):
-            return place.CZ(
-                curr_state,
-                targets=tuple(input_map[i] for i in node.targets),
-                controls=tuple(input_map[i] for i in node.controls),
-            )
-        else:
-            return node.from_stmt(
-                node,
-                args=(curr_state, *node.args[1:]),
-                attributes={
-                    "qubits": ir.PyAttr(tuple(input_map[i] for i in node.qubits))
-                },
-            )
-
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
             isinstance(node, place.StaticPlacement)
@@ -206,8 +210,18 @@ class MergePlacementRegions(abc.RewriteRule):
         curr_yield.delete()
 
         for stmt in next_node.body.blocks[0].stmts:
-            if isinstance(stmt, (place.R, place.Rz, place.CZ, place.EndMeasure)):
-                remapped_stmt = self.remap_qubits(curr_state, stmt, new_input_map)
+            if isinstance(
+                stmt, (place.R, place.Rz, place.CZ, place.EndMeasure, place.Initialize)
+            ):
+                remapped_stmt = stmt.from_stmt(
+                    stmt,
+                    args=(curr_state, *stmt.args[1:]),
+                    attributes={
+                        "qubits": ir.PyAttr(
+                            tuple(new_input_map[i] for i in stmt.qubits)
+                        )
+                    },
+                )
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)
                 for old_result, new_result in zip(
