@@ -1,4 +1,3 @@
-from bloqade.geometry.dialects import filled
 from kirin import decl, ir, types
 from kirin.decl import info
 from kirin.dialects import ilist
@@ -18,19 +17,18 @@ class Fill(ir.Statement):
     )
 
 
-NumGates = types.TypeVar("NumGates")
-NumRows = types.TypeVar("NumRows")
-NumCols = types.TypeVar("NumCols")
+NumLayers = types.TypeVar("NumLayers")
 
 
 @decl.statement(dialect=dialect)
 class LogicalInitialize(ir.Statement):
-    location_groups: ir.SSAValue = info.argument(
-        ilist.IListType[filled.FilledGridType[NumRows, NumCols], NumGates]
+    thetas: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
+    phis: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
+    lams: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
+    rows: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
+    x_locs_list: ir.SSAValue = info.argument(
+        ilist.IListType[ilist.IListType[types.Float, types.Any], NumLayers]
     )
-    thetas: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumGates])
-    phis: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumGates])
-    lams: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumGates])
 
 
 @decl.statement(dialect=dialect)
