@@ -1,13 +1,13 @@
 import numpy as np
+from bloqade.geometry.dialects.grid import Grid
 
 from bloqade.lanes.layout.arch import ArchSpec, Bus
-from bloqade.lanes.layout.grid import Grid
 from bloqade.lanes.layout.numpy_compat import as_flat_tuple_int
 from bloqade.lanes.layout.word import Word
 
 
-def site_buses(word_size_y: int):
-    site_addresses = np.arange(word_size_y * 2).reshape((word_size_y, 2))
+def site_buses(site_addresses: np.ndarray):
+    word_size_y = site_addresses.shape[0]
 
     site_buses: list[Bus] = []
     for shift in range(word_size_y):
@@ -26,14 +26,13 @@ def site_buses(word_size_y: int):
                 src=as_flat_tuple_int(site_addresses[shift:, 0]),
             )
         )
-
     return tuple(site_buses)
 
 
 def hypercube_busses(hypercube_dims: int):
     word_buses: list[Bus] = []
     for shift in range(hypercube_dims):
-        m = 1 << shift
+        m = 1 << (hypercube_dims - shift - 1)
 
         srcs = []
         dsts = []
@@ -46,6 +45,7 @@ def hypercube_busses(hypercube_dims: int):
             dsts.append(dst)
 
         word_buses.append(Bus(tuple(srcs), tuple(dsts)))
+
     return tuple(word_buses)
 
 
@@ -56,24 +56,30 @@ def generate_arch(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
     x_positions = (0.0, 2.0)
     y_positions = tuple(10.0 * i for i in range(word_size_y))
 
-    grid = Grid(x_positions, y_positions)
+    grid = Grid.from_positions(x_positions, y_positions)
 
     words = tuple(
-        Word(grid.shift(10.0 * ix, 0.0).positions) for ix in range(num_word_x)
+        Word(tuple(grid.shift(10.0 * ix, 0.0).positions)) for ix in range(num_word_x)
     )
 
-    word_ids = np.arange(word_size_x * word_size_y).reshape(word_size_y, word_size_x)
+    site_ids = (
+        np.arange(word_size_x * word_size_y)
+        .reshape(word_size_x, word_size_y)
+        .transpose()
+    )
     word_buses = hypercube_busses(hypercube_dims)
     site_bus_compatibility = tuple(
         frozenset(range(num_word_x)) for _ in range(num_word_x)
     )
+
     gate_zone = tuple(range(len(words)))
+
     return ArchSpec(
         words,
         (gate_zone,),
         frozenset(range(num_word_x)),
-        frozenset(as_flat_tuple_int(word_ids[:, 1])),
-        site_buses(word_size_y),
+        frozenset(as_flat_tuple_int(site_ids[:, 1])),
+        site_buses(site_ids),
         word_buses,
         site_bus_compatibility,
     )

@@ -1,6 +1,7 @@
 from itertools import chain
 
 from kirin import ir
+from kirin.dialects import py
 from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.widgets import Button
@@ -126,13 +127,26 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     y_max += 0.1 * y_width
 
     steps: list[tuple[ir.Statement, AtomState]] = []
-
+    constants = {}
     for stmt in mt.callable_region.walk():
         curr_state = frame.atom_state_map.get(stmt)
         if isinstance(curr_state, AtomState):
             steps.append((stmt, curr_state))
+        elif isinstance(stmt, py.Constant):
+            constants[stmt.result] = stmt.value.unwrap()
+
+    def stmt_text(stmt: ir.Statement) -> str:
+        if len(stmt.args) == 0:
+            return f"{type(stmt).__name__}"
+        return (
+            f"{type(stmt).__name__}("
+            + ", ".join(f"{constants.get(arg,'missing')}" for arg in stmt.args)
+            + ")"
+        )
 
     def draw(step_index: int):
+        if len(steps) == 0:
+            return
         stmt, curr_state = steps[step_index]
         show_slm(ax, stmt, arch_spec, atom_marker)
 
@@ -143,7 +157,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         )
         curr_state.draw_moves(arch_spec, ax=ax, color="orange")
 
-        ax.set_title(f"Step {step_index+1} / {len(steps)}: {type(stmt).__name__}")
+        ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
 
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_min, y_max)

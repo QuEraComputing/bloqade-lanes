@@ -8,32 +8,32 @@ from kirin import ir, passes, rewrite
 from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
-from bloqade.lanes.dialects import circuit, move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.passes.canonicalize import CanonicalizeNative
-from bloqade.lanes.rewrite import circuit2move, native2circuit
+from bloqade.lanes.rewrite import circuit2place, place2move
 
 
 def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
     return all(
-        isinstance(stmt, (circuit.R, circuit.Rz, circuit.Yield))
+        isinstance(stmt, (place.R, place.Rz, place.Yield))
         for stmt in chain(region_a.walk(), region_b.walk())
     )
 
 
 @dataclass
-class NativeToCircuit:
+class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
 
     def emit(self, mt: Method, no_raise: bool = True):
-        out = mt.similar(mt.dialects.add(circuit))
+        out = mt.similar(mt.dialects.add(place))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(
-            native2circuit.RewriteLowLevelCircuit(),
+            circuit2place.RewritePlaceOperations(),
         ).rewrite(out.code)
 
         rewrite.Fixpoint(
-            rewrite.Walk(native2circuit.MergePlacementRegions(self.merge_heuristic))
+            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
         ).rewrite(out.code)
         passes.TypeInfer(out.dialects)(out)
 
@@ -41,10 +41,10 @@ class NativeToCircuit:
 
 
 @dataclass
-class CircuitToMove:
+class PlaceToMove:
     layout_heristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
-    move_scheduler: circuit2move.MoveSchedulerABC
+    move_scheduler: place2move.MoveSchedulerABC
     insert_palindrome_moves: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True):
@@ -52,9 +52,10 @@ class CircuitToMove:
 
         if no_raise:
             address_frame, _ = address.AddressAnalysis(out.dialects).run_no_raise(out)
-            initial_layout = layout.LayoutAnalysis(
+            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
                 out.dialects, self.layout_heristic, address_frame.entries
             ).get_layout_no_raise(out)
+
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
                 initial_layout,
@@ -63,7 +64,7 @@ class CircuitToMove:
             ).run_no_raise(out)
         else:
             address_frame, _ = address.AddressAnalysis(out.dialects).run(out)
-            initial_layout = layout.LayoutAnalysis(
+            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
                 out.dialects, self.layout_heristic, address_frame.entries
             ).get_layout(out)
             placement_frame, _ = placement.PlacementAnalysis(
@@ -73,30 +74,30 @@ class CircuitToMove:
                 self.placement_strategy,
             ).run(out)
 
-        placement_analysis = placement_frame.entries
-        args = (self.move_scheduler, placement_analysis)
         rule = rewrite.Chain(
-            circuit2move.InsertInitialize(initial_layout),
-            circuit2move.InsertMoves(*args),
-            circuit2move.RewriteCZ(*args),
-            circuit2move.RewriteR(*args),
-            circuit2move.RewriteRz(*args),
+            place2move.InsertFill(initial_layout),
+            place2move.InsertInitialize(init_locations, thetas, phis, lams),
+            place2move.InsertMoves(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteCZ(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteR(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteRz(self.move_scheduler, placement_frame.entries),
+            place2move.InsertMeasure(self.move_scheduler, placement_frame.entries),
         )
         rewrite.Walk(rule).rewrite(out.code)
 
         if self.insert_palindrome_moves:
-            rewrite.Walk(circuit2move.InsertPalindromeMoves()).rewrite(out.code)
+            rewrite.Walk(place2move.InsertPalindromeMoves()).rewrite(out.code)
 
         rewrite.Walk(
             rewrite.Chain(
-                circuit2move.LiftMoveStatements(), circuit2move.RemoveNoOpCircuits()
+                place2move.LiftMoveStatements(), place2move.RemoveNoOpStaticPlacements()
             )
         ).rewrite(out.code)
 
         rewrite.Fixpoint(
             rewrite.Walk(
                 rewrite.Chain(
-                    circuit2move.DeleteQubitNew(), rewrite.DeadCodeElimination()
+                    place2move.DeleteQubitNew(), rewrite.DeadCodeElimination()
                 )
             )
         ).rewrite(out.code)

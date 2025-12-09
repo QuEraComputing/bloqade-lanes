@@ -11,9 +11,20 @@ dialect = ir.Dialect(name="lanes.move")
 
 
 @statement(dialect=dialect)
+class Fill(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
+
+
+@statement(dialect=dialect)
 class Initialize(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
+
     location_addresses: tuple[LocationAddress, ...] = info.attribute()
+    thetas: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
+    phis: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
+    lams: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)

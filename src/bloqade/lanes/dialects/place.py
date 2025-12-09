@@ -10,7 +10,7 @@ from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
 from bloqade.lanes.types import StateType
 
-dialect = ir.Dialect(name="lanes.circuit")
+dialect = ir.Dialect(name="lanes.place")
 
 
 @statement(init=False)
@@ -31,9 +31,25 @@ class QuantumStmt(ir.Statement):
 
 
 @statement(dialect=dialect)
+class Initialize(QuantumStmt):
+    qubits: tuple[int, ...] = info.attribute()
+
+    theta: ir.SSAValue = info.argument(type=types.Float)
+    phi: ir.SSAValue = info.argument(type=types.Float)
+    lam: ir.SSAValue = info.argument(type=types.Float)
+
+
+@statement(dialect=dialect)
 class CZ(QuantumStmt):
-    targets: tuple[int, ...] = info.attribute()
-    controls: tuple[int, ...] = info.attribute()
+    qubits: tuple[int, ...] = info.attribute()
+
+    @property
+    def controls(self) -> tuple[int, ...]:
+        return self.qubits[: len(self.qubits) // 2]
+
+    @property
+    def targets(self) -> tuple[int, ...]:
+        return self.qubits[len(self.qubits) // 2 :]
 
 
 @statement(dialect=dialect)
@@ -96,13 +112,13 @@ class Yield(ir.Statement):
 
 
 @statement(dialect=dialect)
-class StaticCircuit(ir.Statement):
+class StaticPlacement(ir.Statement):
     """This statement represents A static circuit to be executed on the hardware.
 
     The body region contains the low-level instructions to be executed.
     The inputs are the squin qubits to be used in the execution.
 
-    The region always terminates with an ExitRegion statement, which provides the
+    The region always terminates with an Yield statement, which provides the
     the measurement results for the qubits depending on which low-level code was executed.
     """
 
@@ -176,29 +192,46 @@ class PlacementMethods(interp.MethodTable):
     def impl_yield(
         self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: Yield
     ):
-        return interp.YieldValue((frame.get(stmt.final_state),))
+        return interp.YieldValue(frame.get_values(stmt.args))
 
-    @interp.impl(StaticCircuit)
+    @interp.impl(StaticPlacement)
     def impl_static_circuit(
         self,
         _interp: PlacementAnalysis,
         frame: ForwardFrame[AtomState],
-        stmt: StaticCircuit,
+        stmt: StaticPlacement,
     ):
         initial_state = _interp.get_inintial_state(stmt.qubits)
 
-        final_state = _interp.frame_call_region(frame, stmt, stmt.body, initial_state)
+        frame_call_result = _interp.frame_call_region(
+            frame, stmt, stmt.body, initial_state
+        )
 
-        ret = (AtomState.bottom(),) * len(stmt.results)
+        match frame_call_result:
+            case (ConcreteState() as final_state, *ret):
+                for qid, qubit in enumerate(stmt.qubits):
+                    _interp.move_count[qubit] += final_state.move_count[qid]
 
-        if isinstance(final_state, ConcreteState):
-            for qid, qubit in enumerate(stmt.qubits):
-                _interp.move_count[qubit] += final_state.move_count[qid]
+                return tuple(ret)
+            case _:
+                raise interp.InterpreterError(
+                    "StaticPlacement body did not return a ConcreteState"
+                )
 
-        return ret
+    @interp.impl(EndMeasure)
+    def end_measure(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: EndMeasure,
+    ):
+        new_state = _interp.placement_strategy.measure_placements(
+            frame.get(stmt.state_before), stmt.qubits
+        )
+        return (new_state,) + (EmptyLattice.bottom(),) * len(stmt.qubits)
 
 
-@dialect.register(key="circuit.layout")
+@dialect.register(key="place.layout")
 class InitialLayoutMethods(interp.MethodTable):
 
     @interp.impl(CZ)
@@ -212,12 +245,27 @@ class InitialLayoutMethods(interp.MethodTable):
 
         return ()
 
-    @interp.impl(StaticCircuit)
+    @interp.impl(Initialize)
+    def initialize(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: Initialize,
+    ):
+        for qubit_id in stmt.qubits:
+            global_qubit_id = _interp.global_address_stack[qubit_id]
+            _interp.thetas[global_qubit_id] = stmt.theta
+            _interp.phis[global_qubit_id] = stmt.phi
+            _interp.lams[global_qubit_id] = stmt.lam
+
+        return ()
+
+    @interp.impl(StaticPlacement)
     def static_circuit(
         self,
         _interp: LayoutAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        stmt: StaticCircuit,
+        stmt: StaticPlacement,
     ):
         initial_addresses = tuple(
             _interp.address_entries[qubit] for qubit in stmt.qubits

@@ -30,19 +30,19 @@ def cz_placement_cases():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
-            LocationAddress(0, 2),
+            LocationAddress(0, 1),
             LocationAddress(1, 0),
-            LocationAddress(1, 2),
+            LocationAddress(1, 1),
         ),
         move_count=(0, 0, 0, 0),
     )
     state_after = ConcreteState(
         occupied=frozenset(),
         layout=(
+            LocationAddress(1, 5),
+            LocationAddress(1, 6),
+            LocationAddress(1, 0),
             LocationAddress(1, 1),
-            LocationAddress(1, 3),
-            LocationAddress(1, 0),
-            LocationAddress(1, 2),
         ),
         move_count=(1, 1, 0, 0),
     )
@@ -58,9 +58,9 @@ def cz_placement_cases():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
-            LocationAddress(0, 2),
+            LocationAddress(0, 1),
             LocationAddress(1, 0),
-            LocationAddress(1, 2),
+            LocationAddress(1, 1),
         ),
         move_count=(1, 1, 0, 0),
     )
@@ -68,9 +68,9 @@ def cz_placement_cases():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
-            LocationAddress(0, 2),
             LocationAddress(0, 1),
-            LocationAddress(0, 3),
+            LocationAddress(0, 5),
+            LocationAddress(0, 6),
         ),
         move_count=(1, 1, 1, 1),
     )
@@ -85,9 +85,9 @@ def cz_placement_cases():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
+            LocationAddress(0, 1),
             LocationAddress(0, 2),
-            LocationAddress(0, 4),
-            LocationAddress(0, 6),
+            LocationAddress(0, 3),
         ),
         move_count=(1, 1, 0, 0),
     )
@@ -95,9 +95,9 @@ def cz_placement_cases():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
-            LocationAddress(0, 2),
             LocationAddress(0, 1),
-            LocationAddress(0, 3),
+            LocationAddress(0, 5),
+            LocationAddress(0, 6),
         ),
         move_count=(1, 1, 1, 1),
     )
@@ -112,19 +112,19 @@ def cz_placement_cases():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
+            LocationAddress(0, 1),
             LocationAddress(0, 2),
-            LocationAddress(0, 4),
-            LocationAddress(0, 6),
+            LocationAddress(0, 3),
         ),
         move_count=(0, 0, 1, 1),
     )
     state_after = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(0, 5),
             LocationAddress(0, 7),
-            LocationAddress(0, 4),
-            LocationAddress(0, 6),
+            LocationAddress(0, 8),
+            LocationAddress(0, 2),
+            LocationAddress(0, 3),
         ),
         move_count=(1, 1, 1, 1),
     )
@@ -185,7 +185,7 @@ def test_fixed_invalid_initial_layout_1():
         LocationAddress(0, 0),
         LocationAddress(0, 1),
         LocationAddress(0, 2),
-        LocationAddress(0, 3),
+        LocationAddress(0, 5),
     )
     with pytest.raises(ValueError):
         placement_strategy.validate_initial_layout(layout)
@@ -215,15 +215,15 @@ def test_initial_layout():
     print(layout)
     assert layout == (
         LocationAddress(word_id=0, site_id=0),
+        LocationAddress(word_id=0, site_id=1),
         LocationAddress(word_id=0, site_id=2),
+        LocationAddress(word_id=0, site_id=3),
         LocationAddress(word_id=0, site_id=4),
-        LocationAddress(word_id=0, site_id=6),
-        LocationAddress(word_id=0, site_id=8),
         LocationAddress(word_id=1, site_id=0),
+        LocationAddress(word_id=1, site_id=1),
         LocationAddress(word_id=1, site_id=2),
+        LocationAddress(word_id=1, site_id=3),
         LocationAddress(word_id=1, site_id=4),
-        LocationAddress(word_id=1, site_id=6),
-        LocationAddress(word_id=1, site_id=8),
     )
 
 
@@ -234,7 +234,7 @@ def test_move_scheduler_cz():
         tuple(
             LocationAddress(word_id, site_id)
             for word_id in range(2)
-            for site_id in range(0, 10, 2)
+            for site_id in range(5)
         ),
         tuple(0 for _ in range(10)),
     )
@@ -257,19 +257,19 @@ def test_move_scheduler_cz():
                 direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=0
             ),
             SiteLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=2, bus_id=0
-            ),
-        ),
-        (SiteLaneAddress(direction=Direction.FORWARD, word_id=0, site_id=8, bus_id=7),),
-        (
-            WordLaneAddress(
                 direction=Direction.FORWARD, word_id=0, site_id=1, bus_id=0
             ),
-            WordLaneAddress(
-                direction=Direction.FORWARD, word_id=0, site_id=3, bus_id=0
-            ),
+        ),
+        (SiteLaneAddress(direction=Direction.FORWARD, word_id=0, site_id=4, bus_id=7),),
+        (
             WordLaneAddress(
                 direction=Direction.FORWARD, word_id=0, site_id=5, bus_id=0
+            ),
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=6, bus_id=0
+            ),
+            WordLaneAddress(
+                direction=Direction.FORWARD, word_id=0, site_id=7, bus_id=0
             ),
         ),
     ]

@@ -15,7 +15,7 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
-from bloqade.lanes.rewrite.circuit2move import MoveSchedulerABC
+from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 
 @dataclass
@@ -46,9 +46,9 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
                 raise ValueError(
                     "Initial layout contains invalid word id for logical arch"
                 )
-            if addr.site_id % 2 != 0:
+            if addr.site_id >= 5:
                 raise ValueError(
-                    "Initial layout should only contain even site ids for fixed home location strategy"
+                    "Initial layout should only site ids < 5 for logical arch"
                 )
 
     def _word_balance(
@@ -125,7 +125,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
             mover, dst_addr = self._pick_mover_and_location(state, start_word_id, c, t)
             new_positions[mover] = LocationAddress(
                 word_id=dst_addr.word_id,
-                site_id=dst_addr.site_id + 1,
+                site_id=dst_addr.site_id + 5,
             )
 
         return self._update_positions(state, new_positions)
@@ -158,6 +158,9 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         assert (
             src_site in self.arch_spec.has_word_buses
         ), f"Invalid source site {src_site} for word bus move"
+        assert src_word < len(
+            self.arch_spec.words
+        ), f"Invalid source word {src_word} for site bus move {bus_id}"
 
         return WordLaneAddress(
             direction,
@@ -182,6 +185,9 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         assert (
             src_word in self.arch_spec.has_site_buses
         ), f"Invalid source word {src_word} for site bus move {bus_id}"
+        assert src_word < len(
+            self.arch_spec.words
+        ), f"Invalid source word {src_word} for site bus move {bus_id}"
 
         return SiteLaneAddress(
             direction,
@@ -200,7 +206,8 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         bus_moves = {}
         for before, end in diffs:
-            bus_id = end.site_id // 2 - before.site_id // 2
+            bus_id = (end.site_id % 5) - (before.site_id % 5)
+
             if bus_id < 0:
                 bus_id += len(self.arch_spec.site_buses)
 
@@ -322,9 +329,8 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         available_addresses = set(
             [
                 LocationAddress(word_id, site_id)
-                for word_id, word in enumerate(self.arch_spec.words)
-                for site_id in range(len(word.sites))
-                if site_id % 2 == 0
+                for word_id in range(len(self.arch_spec.words))
+                for site_id in range(5)
             ]
         )
 
