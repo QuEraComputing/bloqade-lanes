@@ -1,6 +1,7 @@
 from bloqade.gemini.dialects import logical as gemini_logical
 from bloqade.native.upstream import SquinToNative
 from kirin import rewrite
+from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.lanes.arch.gemini.logical.simulation import rewrite as sim_rewrite
@@ -11,31 +12,51 @@ kernel = squin.kernel.add(gemini_logical.dialect)
 kernel.run_pass = squin.kernel.run_pass
 
 
-@kernel(typeinfer=True, fold=True)
-def ghz_optimal():
+# @kernel(typeinfer=True, fold=True)
+# def main():
+#     size = 10
+#     qs = qubit.qalloc(size)
+#     squin.h(qs[0])
+#     squin.cx(qs[0], qs[1])
+#     squin.broadcast.cx(qs[:2], qs[2:4])
+#     squin.cx(qs[3], qs[4])
+#     squin.broadcast.cx(qs[:5], qs[5:])
+
+#     return gemini_logical.terminal_measure(qs)
+
+
+@squin.kernel(typeinfer=True, fold=True)
+def main():
     size = 10
-    qs = qubit.qalloc(size)
-    squin.h(qs[0])
-    squin.cx(qs[0], qs[1])
-    squin.broadcast.cx(qs[:2], qs[2:4])
-    squin.cx(qs[3], qs[4])
-    squin.broadcast.cx(qs[:5], qs[5:])
+    q0 = qubit.new()
+    squin.h(q0)
+    reg = ilist.IList([q0])
+    for i in range(size):
+        current = len(reg)
+        missing = size - current
+        if missing > current:
+            num_alloc = current
+        else:
+            num_alloc = missing
 
-    return gemini_logical.terminal_measure(qs)
+        if num_alloc > 0:
+            new_qubits = qubit.qalloc(num_alloc)
+            squin.broadcast.cx(reg[-num_alloc:], new_qubits)
+            reg = reg + new_qubits
 
 
-ghz_optimal.print()
+main.print()
 
-ghz_optimal = SquinToNative().emit(ghz_optimal)
+main = SquinToNative().emit(main)
+main = NativeToPlace().emit(main)
+main.print()
 
-ghz_optimal = NativeToPlace().emit(ghz_optimal)
-
-ghz_optimal = PlaceToMove(
+main = PlaceToMove(
     fixed.LogicalLayoutHeuristic(),
     fixed.LogicalPlacementStrategy(),
     fixed.LogicalMoveScheduler(),
-).emit(ghz_optimal)
-
+).emit(main)
+# transversal rewrite to convert logical to physical addresses
 rewrite.Walk(
     rewrite.Chain(
         sim_rewrite.RewriteLocations(),
@@ -43,7 +64,7 @@ rewrite.Walk(
         sim_rewrite.RewriteGetMeasurementResult(),
         sim_rewrite.RewriteLogicalToPhysicalConversion(),
     )
-).rewrite(ghz_optimal.code)
+).rewrite(main.code)
 
 
-ghz_optimal.print()
+main.print()

@@ -78,7 +78,16 @@ class Encoder(ir.Data):
         return self
 
     def print_impl(self, printer: Printer):
-        printer.plain_print(f"0x{self.get_address(EncodingType.BIT64):016x}")
+        try:
+            printer.plain_print(f"0x{self.get_address(EncodingType.BIT32):08x}")
+        except ValueError:
+            printer.plain_print(f"0x{self.get_address(EncodingType.BIT64):016x}")
+
+    def __repr__(self) -> str:
+        try:
+            return f"0x{self.get_address(EncodingType.BIT32):08x}"
+        except ValueError:
+            return f"0x{self.get_address(EncodingType.BIT64):016x}"
 
 
 @dataclass
@@ -88,6 +97,9 @@ class ZoneAddress(Encoder):
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
+
+    def __repr__(self) -> str:
+        return super().__repr__()
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -115,6 +127,9 @@ class WordAddress(Encoder):
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
 
+    def __repr__(self) -> str:
+        return super().__repr__()
+
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
             mask = 0xFF
@@ -140,6 +155,9 @@ class SiteAddress(Encoder):
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
+
+    def __repr__(self) -> str:
+        return super().__repr__()
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -168,6 +186,9 @@ class LocationAddress(Encoder):
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
+
+    def __repr__(self) -> str:
+        return super().__repr__()
 
     def get_address(self, encoding: EncodingType):
 
@@ -255,6 +276,9 @@ class LaneAddress(Encoder):
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
 
+    def __repr__(self) -> str:
+        return super().__repr__()
+
 
 @dataclass
 class SiteLaneAddress(LaneAddress):
@@ -263,6 +287,9 @@ class SiteLaneAddress(LaneAddress):
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
 
+    def __repr__(self) -> str:
+        return super().__repr__()
+
 
 @dataclass
 class WordLaneAddress(LaneAddress):
@@ -270,3 +297,6 @@ class WordLaneAddress(LaneAddress):
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
+
+    def __repr__(self) -> str:
+        return super().__repr__()
