@@ -9,25 +9,24 @@ dialect = ir.Dialect("gemini.logical")
 
 @decl.statement(dialect=dialect)
 class Fill(ir.Statement):
-    filled: ir.SSAValue = info.argument(
+    filled_logical_addresses: ir.SSAValue = info.argument(
         ilist.IListType[types.Tuple[types.Int, types.Int], types.Any]
     )
-    vacant: ir.SSAValue = info.argument(
+    vacant_logical_addresses: ir.SSAValue = info.argument(
         ilist.IListType[types.Tuple[types.Int, types.Int], types.Any]
     )
 
 
-NumLayers = types.TypeVar("NumLayers")
+NumLocations = types.TypeVar("NumLocations")
 
 
 @decl.statement(dialect=dialect)
 class LogicalInitialize(ir.Statement):
-    thetas: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
-    phis: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
-    lams: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
-    rows: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLayers])
-    x_locs_list: ir.SSAValue = info.argument(
-        ilist.IListType[ilist.IListType[types.Float, types.Any], NumLayers]
+    thetas: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLocations])
+    phis: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLocations])
+    lams: ir.SSAValue = info.argument(ilist.IListType[types.Float, NumLocations])
+    logical_addresses: ir.SSAValue = info.argument(
+        ilist.IListType[types.Tuple[types.Int, types.Int], NumLocations]
     )
 
 
