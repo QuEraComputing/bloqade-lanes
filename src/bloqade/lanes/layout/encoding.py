@@ -78,10 +78,19 @@ class Encoder(ir.Data):
         return self
 
     def print_impl(self, printer: Printer):
-        printer.plain_print(f"0x{self.get_address(EncodingType.BIT64):016x}")
+        try:
+            printer.plain_print(f"0x{self.get_address(EncodingType.BIT32):08x}")
+        except ValueError:
+            printer.plain_print(f"0x{self.get_address(EncodingType.BIT64):016x}")
+
+    def __repr__(self) -> str:
+        try:
+            return f"0x{self.get_address(EncodingType.BIT32):08x}"
+        except ValueError:
+            return f"0x{self.get_address(EncodingType.BIT64):016x}"
 
 
-@dataclass
+@dataclass(repr=False)
 class ZoneAddress(Encoder):
     zone_id: int
     """The ID of the zone."""
@@ -105,7 +114,7 @@ class ZoneAddress(Encoder):
         return zone_id_enc
 
 
-@dataclass
+@dataclass(repr=False)
 class WordAddress(Encoder):
     """Data class representing a word address in the architecture."""
 
@@ -131,7 +140,7 @@ class WordAddress(Encoder):
         return word_id_enc
 
 
-@dataclass
+@dataclass(repr=False)
 class SiteAddress(Encoder):
     """Data class representing a site address in the architecture."""
 
@@ -157,7 +166,7 @@ class SiteAddress(Encoder):
         return site_id_enc
 
 
-@dataclass
+@dataclass(repr=False)
 class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 
@@ -197,7 +206,7 @@ class LocationAddress(Encoder):
         return address
 
 
-@dataclass
+@dataclass(repr=False)
 class LaneAddress(Encoder):
     direction: Direction
     move_type: MoveType
@@ -256,7 +265,7 @@ class LaneAddress(Encoder):
         return self.get_address(EncodingType.BIT64)
 
 
-@dataclass
+@dataclass(repr=False)
 class SiteLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.SITE, init=False, repr=False)
 
@@ -264,7 +273,7 @@ class SiteLaneAddress(LaneAddress):
         return self.get_address(EncodingType.BIT64)
 
 
-@dataclass
+@dataclass(repr=False)
 class WordLaneAddress(LaneAddress):
     move_type: MoveType = field(default=MoveType.WORD, init=False, repr=False)
 
