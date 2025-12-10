@@ -79,7 +79,7 @@ class RewriteGetMeasurementResult(rewrite_abc.RewriteRule):
                 node.measurement_future, location_address=address
             )
             new_results.append(new_stmt.result)
-            node.insert_before(new_stmt)
+            new_stmt.insert_before(node)
 
         node.replace_by(ilist.New(tuple(new_results)))
 
