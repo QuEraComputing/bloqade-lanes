@@ -12,7 +12,7 @@ kernel = squin.kernel.add(gemini_logical.dialect)
 kernel.run_pass = squin.kernel.run_pass
 
 
-@kernel(typeinfer=True, fold=True)
+@kernel(typeinfer=False, fold=True)
 def main():
     size = 10
     q0 = qubit.new()
