@@ -9,7 +9,7 @@ from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
 
 
-def compile(mt: ir.Method, transversal: bool = False):
+def compile_squin(mt: ir.Method, transversal: bool = False):
     # Compile to move dialect
 
     mt = SquinToNative().emit(mt)
@@ -32,9 +32,11 @@ def compile(mt: ir.Method, transversal: bool = False):
     return mt
 
 
-def compile_and_visualize(mt: ir.Method, interactive=True, transversal: bool = False):
+def compile_and_visualize(
+    mt: ir.Method, interactive: bool = True, transversal: bool = False
+):
     # Compile to move dialect
-    mt = compile(mt, transversal=transversal)
+    mt = compile_squin(mt, transversal=transversal)
     if transversal:
         arch_spec = generate_arch(4)
         marker = "o"

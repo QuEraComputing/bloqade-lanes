@@ -2,8 +2,7 @@ from bloqade.gemini.dialects import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-
-from .utils import compile
+from bloqade.lanes.logical_mvp import compile_squin
 
 kernel = squin.kernel.add(gemini_logical.dialect)
 kernel.run_pass = squin.kernel.run_pass
@@ -31,6 +30,4 @@ def main():
     return gemini_logical.terminal_measure(reg)
 
 
-main = compile(main)
-
-main.print()
+main = compile_squin(main)

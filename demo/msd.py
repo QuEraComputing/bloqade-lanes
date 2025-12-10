@@ -1,8 +1,7 @@
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-
-from .utils import compile_and_visualize
+from bloqade.lanes.logical_mvp import compile_squin
 
 
 @squin.kernel
@@ -19,4 +18,5 @@ def main():
     squin.broadcast.sqrt_y_adj(reg)
 
 
-compile_and_visualize(main)
+main = compile_squin(main)
+# compile_and_visualize(main)

@@ -3,6 +3,7 @@ from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
+from bloqade.native.dialects import gate as native_gate
 from bloqade.rewrite.passes import AggressiveUnroll
 from kirin import ir, passes, rewrite
 from kirin.ir.method import Method
@@ -25,7 +26,7 @@ class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
 
     def emit(self, mt: Method, no_raise: bool = True):
-        out = mt.similar(mt.dialects.add(place))
+        out = mt.similar(mt.dialects.add(place).discard(native_gate))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(
@@ -36,6 +37,9 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
         ).rewrite(out.code)
         passes.TypeInfer(out.dialects)(out)
+
+        out.verify()
+        out.verify_type()
 
         return out
 
@@ -102,5 +106,8 @@ class PlaceToMove:
             )
         ).rewrite(out.code)
         passes.TypeInfer(out.dialects)(out)
+
+        out.verify()
+        out.verify_type()
 
         return out
