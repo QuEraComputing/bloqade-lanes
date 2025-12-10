@@ -12,20 +12,7 @@ kernel = squin.kernel.add(gemini_logical.dialect)
 kernel.run_pass = squin.kernel.run_pass
 
 
-# @kernel(typeinfer=True, fold=True)
-# def main():
-#     size = 10
-#     qs = qubit.qalloc(size)
-#     squin.h(qs[0])
-#     squin.cx(qs[0], qs[1])
-#     squin.broadcast.cx(qs[:2], qs[2:4])
-#     squin.cx(qs[3], qs[4])
-#     squin.broadcast.cx(qs[:5], qs[5:])
-
-#     return gemini_logical.terminal_measure(qs)
-
-
-@squin.kernel(typeinfer=True, fold=True)
+@kernel(typeinfer=True, fold=True)
 def main():
     size = 10
     q0 = qubit.new()
@@ -43,6 +30,8 @@ def main():
             new_qubits = qubit.qalloc(num_alloc)
             squin.broadcast.cx(reg[-num_alloc:], new_qubits)
             reg = reg + new_qubits
+
+    return gemini_logical.terminal_measure(reg)
 
 
 main.print()
