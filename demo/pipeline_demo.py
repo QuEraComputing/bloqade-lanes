@@ -1,12 +1,9 @@
 from bloqade.gemini.dialects import logical as gemini_logical
-from bloqade.native.upstream import SquinToNative
-from kirin import rewrite
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.arch.gemini.logical.simulation import rewrite as sim_rewrite
-from bloqade.lanes.heuristics import fixed
-from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
+
+from .utils import compile
 
 kernel = squin.kernel.add(gemini_logical.dialect)
 kernel.run_pass = squin.kernel.run_pass
@@ -34,26 +31,6 @@ def main():
     return gemini_logical.terminal_measure(reg)
 
 
-main.print()
-
-main = SquinToNative().emit(main)
-main = NativeToPlace().emit(main)
-main.print()
-
-main = PlaceToMove(
-    fixed.LogicalLayoutHeuristic(),
-    fixed.LogicalPlacementStrategy(),
-    fixed.LogicalMoveScheduler(),
-).emit(main)
-# transversal rewrite to convert logical to physical addresses
-rewrite.Walk(
-    rewrite.Chain(
-        sim_rewrite.RewriteLocations(),
-        sim_rewrite.RewriteMoves(),
-        sim_rewrite.RewriteGetMeasurementResult(),
-        sim_rewrite.RewriteLogicalToPhysicalConversion(),
-    )
-).rewrite(main.code)
-
+main = compile(main)
 
 main.print()
