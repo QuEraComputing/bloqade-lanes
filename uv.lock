@@ -185,7 +185,7 @@ doc = [
 requires-dist = [
     { name = "bloqade-circuit", specifier = "~=0.10.3" },
     { name = "bloqade-geometry", specifier = "~=0.5.0" },
-    { name = "kirin-toolchain", specifier = "~=0.22.0" },
+    { name = "kirin-toolchain", specifier = "~=0.22.6" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "rustworkx", specifier = ">=0.17.1" },
@@ -931,16 +931,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/5e/73/e01e4c5e11ad0494f
 
 [[package]]
 name = "kirin-toolchain"
-version = "0.22.5"
+version = "0.22.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beartype" },
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/2a/88055a06d156c3e802ba09926c815b03a0e9cfc7ecc8361a43b0086bd1e7/kirin_toolchain-0.22.5.tar.gz", hash = "sha256:1d54b6c1856ec79e7fee685a793cfb9013be41ec02ac111310884a0e286802b2", size = 1205080, upload-time = "2025-12-10T15:22:39.11Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/43/fe332bac4bda62135bc06d9ea3cb378346274c3a90d39cacc142ad398642/kirin_toolchain-0.22.6.tar.gz", hash = "sha256:5879b6301430c0d574705db92485c36574aa2a7425d5dcf45fe88c66a1e64620", size = 1205122, upload-time = "2025-12-11T20:17:23.802Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/80/353d98316fcc9473a6abcd2fe46be9b0420c870d48a21babf0b580ab83e6/kirin_toolchain-0.22.5-py3-none-any.whl", hash = "sha256:4e18713eb20566ed602c7558cecf1a741d339cbc5987e986596deb3a668cfbc7", size = 254095, upload-time = "2025-12-10T15:22:37.09Z" },
+    { url = "https://files.pythonhosted.org/packages/76/35/81df2d9c0790a2ec10d9465983c59cc0df0b6f1adce89cd0d5aa7968f0db/kirin_toolchain-0.22.6-py3-none-any.whl", hash = "sha256:10ae9161291d03cb66a2a337e263b686aa17a40282c045244a5fa2fe5474cbad", size = 254131, upload-time = "2025-12-11T20:17:22.199Z" },
 ]
 
 [[package]]
