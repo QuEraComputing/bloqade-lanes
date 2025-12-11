@@ -1,23 +1,27 @@
 coverage-run:
     coverage run -m pytest test
 
-coverage-xml:
+coverage-xml: coverage-run
     coverage xml
 
-coverage-html:
+coverage-html:  coverage-run
     coverage html
 
-coverage-report:
+coverage-report: coverage-run
     coverage report
 
-coverage-open:
+coverage-open: coverage-html
     open htmlcov/index.html
 
-coverage-unit:
-    coverage run -m pytest test/unit
-    coverage report --include="**/types.py","**/taskgen.py","**/concrete.py"
-
 coverage: coverage-run coverage-xml coverage-report
+
+demo-msd:
+    python demo/msd.py
+
+demo-pipeline:
+    python demo/pipeline_demo.py
+
+demo: demo-msd demo-pipeline
 
 doc:
     mkdocs serve
