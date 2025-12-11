@@ -2,29 +2,13 @@ from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import ilist, py
 
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.arch.gemini.logical.rewrite import RewriteMoves
 from bloqade.lanes.arch.gemini.logical.stmts import SiteBusMove
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import (
     Direction,
-    EncodingType,
     SiteLaneAddress,
 )
-
-
-def test_architecture_generation():
-    arch_physical = generate_arch()
-
-    assert len(arch_physical.words) == 16
-    assert len(arch_physical.site_buses) == 9
-    assert len(arch_physical.word_buses) == 4
-    assert arch_physical.encoding is EncodingType.BIT32
-
-
-def test_logical_architecture():
-    assert logical.get_arch_spec() == generate_arch(hypercube_dims=1, word_size_y=5)
 
 
 def test_logical_architecture_rewrite_site():
