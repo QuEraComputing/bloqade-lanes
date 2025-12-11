@@ -1,6 +1,6 @@
 from kirin import ir, rewrite
 
-from .rewrite import RewriteFill, RewriteLogicalInitialize, RewriteMoves
+from .rewrite import RewriteFill, RewriteInitialize, RewriteMoves
 from .stmts import dialect
 
 
@@ -10,7 +10,7 @@ class SpecializeGemini:
         out = mt.similar(dialects=mt.dialects.add(dialect))
 
         rewrite.Walk(
-            rewrite.Chain(RewriteMoves(), RewriteFill(), RewriteLogicalInitialize())
+            rewrite.Chain(RewriteMoves(), RewriteFill(), RewriteInitialize())
         ).rewrite(out.code)
 
         if not no_raise:

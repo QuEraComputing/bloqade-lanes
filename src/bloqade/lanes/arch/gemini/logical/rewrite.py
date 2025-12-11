@@ -83,7 +83,7 @@ class RewriteFill(rewrite_abc.RewriteRule):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 
-class RewriteLogicalInitialize(rewrite_abc.RewriteRule):
+class RewriteInitialize(rewrite_abc.RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.Initialize):
             return rewrite_abc.RewriteResult()
