@@ -5,7 +5,7 @@ from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.heuristics import fixed
-from bloqade.lanes.rewrite import transversal as transversal
+from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
 
 
