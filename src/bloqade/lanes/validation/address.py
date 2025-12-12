@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, TypeGuard, TypeVar
+from typing import Any, Callable, Iterable, TypeGuard, TypeVar
 
 from kirin import interp, ir
 from kirin.analysis.forward import Forward, ForwardFrame
@@ -8,7 +8,7 @@ from kirin.validation import ValidationPass
 
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import Encoder
+from bloqade.lanes.layout.encoding import Encoder, LaneAddress
 
 
 @dataclass
@@ -28,7 +28,7 @@ class _ValidationAnalysis(Forward[EmptyLattice]):
 
     def filter_by_error(
         self,
-        addresses: tuple[AddressType, ...],
+        addresses: Iterable[AddressType],
         checker: Callable[[AddressType], str | None],
     ):
         """Apply a checker function to a sequence of addresses, yielding those with errors
@@ -76,16 +76,19 @@ class _MoveMethods(interp.MethodTable):
         valid_lanes = set(node.lanes) - set(invalid_lanes)
         first_lane = valid_lanes.pop()
         incompatible_lanes = []
-        for other_lane in valid_lanes:
-            if not _interp.arch_spec.compatible_lanes(first_lane, other_lane):
-                incompatible_lanes.append(other_lane)
 
-        if incompatible_lanes:
+        def validate_compatible_lane(lane: LaneAddress):
+            return _interp.arch_spec.compatible_lane_error(first_lane, lane)
+
+        for lane, error_msg in _interp.filter_by_error(
+            valid_lanes, validate_compatible_lane
+        ):
+            incompatible_lanes.append(lane)
             _interp.add_validation_error(
                 node,
                 ir.ValidationError(
                     node,
-                    f"Move has incompatible lanes: {first_lane!r} and {invalid_lanes!r}",
+                    f"Incompatible lane address {first_lane!r} with lane {lane!r}: {error_msg}",
                 ),
             )
 
