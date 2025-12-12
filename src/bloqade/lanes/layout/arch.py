@@ -10,8 +10,6 @@ from bloqade.lanes.layout.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    SiteLaneAddress,
-    WordLaneAddress,
 )
 
 from .word import SiteType, Word
@@ -208,14 +206,14 @@ class ArchSpec(Generic[SiteType]):
 
     def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
         """Check if two lanes are compatible (can be executed in parallel)."""
-        if isinstance(lane1, SiteLaneAddress) and isinstance(lane2, SiteLaneAddress):
+        if lane1.move_type == MoveType.SITE and lane2.move_type == MoveType.SITE:
             return (
                 lane1.direction == lane2.direction
                 and (lane2.word_id in self.site_bus_compatibility[lane1.word_id])
                 and lane1.bus_id == lane2.bus_id
                 and (lane1.word_id != lane2.word_id or lane1.site_id != lane2.site_id)
             )
-        elif isinstance(lane1, WordLaneAddress) and isinstance(lane2, WordLaneAddress):
+        elif lane1.move_type == MoveType.WORD and lane2.move_type == MoveType.WORD:
             return (
                 lane1.direction == lane2.direction
                 and lane1.bus_id == lane2.bus_id
