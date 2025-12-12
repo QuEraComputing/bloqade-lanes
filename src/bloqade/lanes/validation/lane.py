@@ -1,0 +1,1 @@
+from kirin.validation import ValidationPass
