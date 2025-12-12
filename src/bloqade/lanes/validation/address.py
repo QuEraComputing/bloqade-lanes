@@ -119,6 +119,23 @@ class _MoveMethods(interp.MethodTable):
                 ),
             )
 
+    @interp.impl(move.GetMeasurementResult)
+    def measurement_checker(
+        self,
+        _interp: _ValidationAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        node: move.GetMeasurementResult,
+    ):
+        error_msg = _interp.arch_spec.valid_location(node.location_address)
+        if error_msg is not None:
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"Invalid measurement location address {node.location_address!r}: {error_msg}",
+                ),
+            )
+
 
 @dataclass
 class Validation(ValidationPass):
