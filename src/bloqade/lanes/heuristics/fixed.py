@@ -149,25 +149,18 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         src_site: int,
         bus_id: int,
     ) -> WordLaneAddress:
-        assert bus_id < len(
-            self.arch_spec.word_buses
-        ), f"Invalid bus id {bus_id} for word bus move"
-        assert (
-            src_word in self.arch_spec.word_buses[bus_id].src
-        ), f"Invalid source word {src_word} for word bus move"
-        assert (
-            src_site in self.arch_spec.has_word_buses
-        ), f"Invalid source site {src_site} for word bus move"
-        assert src_word < len(
-            self.arch_spec.words
-        ), f"Invalid source word {src_word} for site bus move {bus_id}"
-
-        return WordLaneAddress(
+        lane = WordLaneAddress(
             direction,
             src_word,
             src_site,
             bus_id,
         )
+
+        assert (
+            err := self.arch_spec.valid_lane(lane)
+        ) is None, f"Invalid word bus move: {err}"
+
+        return lane
 
     def assert_valid_site_bus_move(
         self,
@@ -176,25 +169,18 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         src_site: int,
         bus_id: int,
     ) -> SiteLaneAddress:
-        assert bus_id < len(
-            self.arch_spec.site_buses
-        ), f"Invalid bus id {bus_id} for site bus move"
-        assert (
-            src_site in self.arch_spec.site_buses[bus_id].src
-        ), f"Invalid source site {src_site} for site bus move {bus_id}"
-        assert (
-            src_word in self.arch_spec.has_site_buses
-        ), f"Invalid source word {src_word} for site bus move {bus_id}"
-        assert src_word < len(
-            self.arch_spec.words
-        ), f"Invalid source word {src_word} for site bus move {bus_id}"
-
-        return SiteLaneAddress(
+        lane = SiteLaneAddress(
             direction,
             src_word,
             src_site,
             bus_id,
         )
+
+        assert (
+            err := self.arch_spec.valid_lane(lane)
+        ) is None, f"Invalid site bus move: {err}"
+
+        return lane
 
     def site_moves(
         self, diffs: list[tuple[LocationAddress, LocationAddress]], word_id: int
