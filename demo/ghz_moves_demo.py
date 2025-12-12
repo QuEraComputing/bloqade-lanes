@@ -35,6 +35,6 @@ def ghz_optimal():
     squin.broadcast.cx(qs[:5], qs[5:])
 
 
-compile_and_visualize(log_depth_ghz, transversal=False)
-compile_and_visualize(ghz_optimal, transversal=False)
-compile_and_visualize(ghz_optimal, transversal=True)
+compile_and_visualize(log_depth_ghz)
+compile_and_visualize(ghz_optimal)
+compile_and_visualize(ghz_optimal, transversal_rewrite=True)

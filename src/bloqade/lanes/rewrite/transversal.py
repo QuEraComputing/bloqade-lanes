@@ -1,32 +1,33 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import chain
-from typing import Callable, Iterator, TypeVar
 
-from kirin import ir
+from kirin import ir, types
 from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
+from typing_extensions import Callable, Iterable, Sequence, TypeGuard, TypeVar
 
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
-AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
+T = TypeVar("T")
 
 
-def physical_word_id(address: AddressType) -> Iterator[AddressType]:
-    if address.word_id == 0:
-        yield from (replace(address, word_id=word_id) for word_id in range(7))
-    elif address.word_id == 1:
-        yield from (replace(address, word_id=word_id) for word_id in range(8, 15, 1))
-    else:
-        yield address
+def no_none_elements(xs: Sequence[T | None]) -> TypeGuard[Sequence[T]]:
+    """Check that there are no None elements in the sequence.
+
+    Args:
+        xs: A sequence that may contain None elements.
+
+    Returns:
+        A TypeGuard indicating that all elements are not None.
+
+    """
+    return all(x is not None for x in xs)
 
 
 @dataclass
 class RewriteLocations(rewrite_abc.RewriteRule):
-
-    transform_location: Callable[[LocationAddress], Iterator[LocationAddress]] = (
-        physical_word_id
-    )
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(
@@ -34,12 +35,18 @@ class RewriteLocations(rewrite_abc.RewriteRule):
         ):
             return rewrite_abc.RewriteResult()
 
-        physical_addresses = tuple(
-            chain.from_iterable(map(self.transform_location, node.location_addresses))
-        )
+        iterators = list(map(self.transform_location, node.location_addresses))
+
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
+        physical_addresses = tuple(chain.from_iterable(iterators))
 
         attributes: dict[str, ir.Attribute] = {
-            "location_addresses": ir.PyAttr(physical_addresses)
+            "location_addresses": ir.PyAttr(
+                physical_addresses,
+                pytype=types.Tuple[types.Vararg(types.PyClass(LocationAddress))],
+            )
         }
 
         node.replace_by(node.from_stmt(node, attributes=attributes))
@@ -48,15 +55,18 @@ class RewriteLocations(rewrite_abc.RewriteRule):
 
 @dataclass
 class RewriteMoves(rewrite_abc.RewriteRule):
-    transform_lanes: Callable[[LaneAddress], Iterator[LaneAddress]] = physical_word_id
+    transform_lane: Callable[[LaneAddress], Iterable[LaneAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.Move):
             return rewrite_abc.RewriteResult()
 
-        physical_lanes = tuple(
-            chain.from_iterable(map(self.transform_lanes, node.lanes))
-        )
+        iterators = list(map(self.transform_lane, node.lanes))
+
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
+        physical_lanes = tuple(chain.from_iterable(iterators))
 
         node.replace_by(move.Move(lanes=physical_lanes))
 
@@ -65,16 +75,19 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
 @dataclass
 class RewriteGetMeasurementResult(rewrite_abc.RewriteRule):
-    transform_lanes: Callable[[LocationAddress], Iterator[LocationAddress]] = (
-        physical_word_id
-    )
+    transform_lane: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.GetMeasurementResult):
             return rewrite_abc.RewriteResult()
 
         new_results = []
-        for address in self.transform_lanes(node.location_address):
+        iterator = self.transform_lane(node.location_address)
+
+        if iterator is None:
+            return rewrite_abc.RewriteResult()
+
+        for address in iterator:
             new_stmt = move.GetMeasurementResult(
                 node.measurement_future, location_address=address
             )
