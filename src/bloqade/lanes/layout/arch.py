@@ -240,7 +240,7 @@ class ArchSpec(Generic[SiteType]):
         """Check if two lanes are compatible (can be executed in parallel)."""
         return self.compatible_lane_error(lane1, lane2) is None
 
-    def valid_location(self, location_address: LocationAddress) -> str | None:
+    def validate_location(self, location_address: LocationAddress) -> str | None:
         """Check if a location address is valid in this architecture."""
         num_words = len(self.words)
         if location_address.word_id < 0 or location_address.word_id >= num_words:
@@ -252,10 +252,12 @@ class ArchSpec(Generic[SiteType]):
         if location_address.site_id < 0 or location_address.site_id >= num_sites:
             return f"Site id {location_address.site_id} out of range of {num_sites}"
 
-    def valid_lane(self, lane_address: LaneAddress) -> str | None:
+    def validate_lane(self, lane_address: LaneAddress) -> str | None:
         """Check if a lane address is valid in this architecture."""
 
-        if (source_error := self.valid_location(lane_address.src_site())) is not None:
+        if (
+            source_error := self.validate_location(lane_address.src_site())
+        ) is not None:
             return source_error
 
         if lane_address.move_type is MoveType.WORD:

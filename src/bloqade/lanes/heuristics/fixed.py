@@ -157,7 +157,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         )
 
         assert (
-            err := self.arch_spec.valid_lane(lane)
+            err := self.arch_spec.validate_lane(lane)
         ) is None, f"Invalid word bus move: {err}"
 
         return lane
@@ -177,7 +177,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         )
 
         assert (
-            err := self.arch_spec.valid_lane(lane)
+            err := self.arch_spec.validate_lane(lane)
         ) is None, f"Invalid site bus move: {err}"
 
         return lane

@@ -63,7 +63,7 @@ class _MoveMethods(interp.MethodTable):
 
         invalid_lanes = []
         for lane, error_msg in _interp.filter_by_error(
-            node.lanes, _interp.arch_spec.valid_lane
+            node.lanes, _interp.arch_spec.validate_lane
         ):
             _interp.add_validation_error(
                 node,
@@ -106,7 +106,7 @@ class _MoveMethods(interp.MethodTable):
         invalid_locations = list(
             _interp.filter_by_error(
                 node.location_addresses,
-                _interp.arch_spec.valid_location,
+                _interp.arch_spec.validate_location,
             )
         )
 
@@ -126,7 +126,7 @@ class _MoveMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: move.GetMeasurementResult,
     ):
-        error_msg = _interp.arch_spec.valid_location(node.location_address)
+        error_msg = _interp.arch_spec.validate_location(node.location_address)
         if error_msg is not None:
             _interp.add_validation_error(
                 node,
