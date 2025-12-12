@@ -1,11 +1,10 @@
 from dataclasses import dataclass
 from itertools import chain
-from typing import Sequence
 
-from kirin import ir
+from kirin import ir, types
 from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
-from typing_extensions import Callable, Iterator, TypeGuard, TypeVar
+from typing_extensions import Callable, Iterable, Sequence, TypeGuard, TypeVar
 
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
@@ -28,7 +27,7 @@ def no_none_elements(xs: Sequence[T | None]) -> TypeGuard[Sequence[T]]:
 
 @dataclass
 class RewriteLocations(rewrite_abc.RewriteRule):
-    transform_location: Callable[[LocationAddress], Iterator[LocationAddress] | None]
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(
@@ -44,7 +43,10 @@ class RewriteLocations(rewrite_abc.RewriteRule):
         physical_addresses = tuple(chain.from_iterable(iterators))
 
         attributes: dict[str, ir.Attribute] = {
-            "location_addresses": ir.PyAttr(physical_addresses)
+            "location_addresses": ir.PyAttr(
+                physical_addresses,
+                pytype=types.Tuple[types.Vararg(types.PyClass(LocationAddress))],
+            )
         }
 
         node.replace_by(node.from_stmt(node, attributes=attributes))
@@ -53,7 +55,7 @@ class RewriteLocations(rewrite_abc.RewriteRule):
 
 @dataclass
 class RewriteMoves(rewrite_abc.RewriteRule):
-    transform_lane: Callable[[LaneAddress], Iterator[LaneAddress] | None]
+    transform_lane: Callable[[LaneAddress], Iterable[LaneAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.Move):
@@ -73,7 +75,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
 @dataclass
 class RewriteGetMeasurementResult(rewrite_abc.RewriteRule):
-    transform_lane: Callable[[LocationAddress], Iterator[LocationAddress] | None]
+    transform_lane: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.GetMeasurementResult):
