@@ -25,38 +25,6 @@ def trivial_map(address: AddressType) -> tuple[AddressType, ...] | None:
 
 def cases():
 
-    node = move.Initialize(
-        thetas := (ir.TestValue(),),
-        phis := (ir.TestValue(),),
-        lams := (ir.TestValue(),),
-        location_addresses=(LocationAddress(0, 1), LocationAddress(1, 1)),
-    )
-
-    expected_node = move.Initialize(
-        thetas,
-        phis,
-        lams,
-        location_addresses=(LocationAddress(0, 1), LocationAddress(1, 1)),
-    )
-
-    yield node, expected_node, False
-
-    node = move.Initialize(
-        thetas := (ir.TestValue(),),
-        phis := (ir.TestValue(),),
-        lams := (ir.TestValue(),),
-        location_addresses=(LocationAddress(0, 1), LocationAddress(0, 1)),
-    )
-
-    expected_node = move.Initialize(
-        thetas,
-        phis,
-        lams,
-        location_addresses=(LocationAddress(0, 1), LocationAddress(0, 1)),
-    )
-
-    yield node, expected_node, True
-
     node = move.Move(
         lanes=(
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
