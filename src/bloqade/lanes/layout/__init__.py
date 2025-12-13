@@ -1,8 +1,8 @@
-from .arch import Bus as Bus, ArchSpec as ArchSpec
+from .arch import ArchSpec as ArchSpec, Bus as Bus
 from .encoding import (
-    LocationAddress as LocationAddress,
     LaneAddress as LaneAddress,
-    WordLaneAddress as WordLaneAddress,
+    LocationAddress as LocationAddress,
     SiteLaneAddress as SiteLaneAddress,
+    WordLaneAddress as WordLaneAddress,
     ZoneAddress as ZoneAddress,
 )

@@ -5,6 +5,7 @@ from kirin import ir, types
 from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
 from typing_extensions import Callable, Iterable
+
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 

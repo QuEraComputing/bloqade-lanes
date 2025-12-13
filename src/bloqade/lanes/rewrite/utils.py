@@ -1,5 +1,4 @@
-from typing import Sequence, TypeVar, TypeGuard
-
+from typing import Sequence, TypeGuard, TypeVar
 
 T = TypeVar("T")
 
