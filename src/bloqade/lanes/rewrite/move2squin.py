@@ -32,6 +32,10 @@ class InsertQubits(rewrite_abc.RewriteRule):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 
+class RewriteInitialize(rewrite_abc.RewriteRule):
+    pass
+
+
 @dataclass
 class RewriteMoveDialect(rewrite_abc.RewriteRule):
     physical_ssa_values: tuple[ir.SSAValue, ...]

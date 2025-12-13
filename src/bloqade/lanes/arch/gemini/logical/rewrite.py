@@ -83,7 +83,7 @@ class RewriteFill(rewrite_abc.RewriteRule):
 
 class RewriteInitialize(rewrite_abc.RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, move.Initialize):
+        if not isinstance(node, move.LogicalInitialize):
             return rewrite_abc.RewriteResult()
 
         groups: dict[

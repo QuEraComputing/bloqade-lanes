@@ -18,7 +18,7 @@ class RewriteLocations(rewrite_abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(
-            node, (move.Fill, move.LocalR, move.LocalRz, move.Initialize)
+            node, (move.Fill, move.LocalR, move.LocalRz, move.LogicalInitialize)
         ):
             return rewrite_abc.RewriteResult()
 

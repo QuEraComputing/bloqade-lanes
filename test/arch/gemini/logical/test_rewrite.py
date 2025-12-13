@@ -107,7 +107,7 @@ def test_logical_architecture_rewrite_logical_initialize():
 
     test_block = ir.Block()
     test_block.stmts.append(
-        move.Initialize(
+        move.LogicalInitialize(
             thetas=thetas,
             phis=phis,
             lams=lams,

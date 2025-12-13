@@ -18,10 +18,22 @@ class Fill(ir.Statement):
 
 
 @statement(dialect=dialect)
-class Initialize(ir.Statement):
+class LogicalInitialize(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
 
     location_addresses: tuple[LocationAddress, ...] = info.attribute()
+    thetas: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
+    phis: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
+    lams: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
+
+
+@statement(dialect=dialect)
+class InitializePhysical(ir.Statement):
+    """Placeholder for when rewriting to simulation"""
+
+    traits = frozenset({lowering.FromPythonCall()})
+
+    location_addresses: tuple[tuple[LocationAddress, ...], ...] = info.attribute()
     thetas: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
     phis: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
     lams: tuple[ir.SSAValue, ...] = info.argument(type=types.Float)
@@ -92,7 +104,7 @@ class GetMeasurementResult(ir.Statement):
     result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)
 
 
-@wraps(Initialize)
+@wraps(LogicalInitialize)
 def initialize(*, location_addresses: tuple[LocationAddress, ...]) -> None: ...
 
 
