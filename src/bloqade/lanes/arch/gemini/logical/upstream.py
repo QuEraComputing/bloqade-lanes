@@ -34,7 +34,6 @@ def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | Non
     else:
         return None
 
-
 class SpecializeGemini:
 
     def emit(self, mt: ir.Method, no_raise=True) -> ir.Method:

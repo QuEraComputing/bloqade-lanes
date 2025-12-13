@@ -8,8 +8,9 @@ from kirin.rewrite import abc as rewrite_abc
 from bloqade import qubit
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
+from bloqade.lanes.layout.encoding import LocationAddress
 
-from .utils import no_none_elements
+from . import utils
 
 
 @dataclass
@@ -47,18 +48,29 @@ class RewriteSingleQubitGates(rewrite_abc.RewriteRule):
             return self.physical_ssa_values[qubit_index]
         return None
 
+    def get_qubit_ssa_from_locations(
+        self,
+        atom_state: atom.AtomState,
+        location_addresses: tuple[LocationAddress, ...],
+    ) -> tuple[ir.SSAValue | None, ...]:
+        qubit_ssa = tuple(
+            map(
+                self.get_qubit_ssa,
+                filter(None, map(atom_state.get_qubit, location_addresses)),
+            )
+        )
+
+        return qubit_ssa
+
     def rewrite_LocalRz(
         self, atom_state: atom.AtomState, node: move.LocalRz
     ) -> rewrite_abc.RewriteResult:
 
-        qubit_ssa = tuple(
-            map(
-                self.get_qubit_ssa,
-                filter(None, map(atom_state.get_qubit, node.location_addresses)),
-            )
+        qubit_ssa = self.get_qubit_ssa_from_locations(
+            atom_state, node.location_addresses
         )
 
-        if not no_none_elements(qubit_ssa):
+        if not utils.no_none_elements_tuple(qubit_ssa):
             return rewrite_abc.RewriteResult()
 
         (zero := py.Constant(0.0)).insert_before(node)
@@ -87,14 +99,11 @@ class RewriteSingleQubitGates(rewrite_abc.RewriteRule):
         (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
         (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
 
-        qubit_ssa = tuple(
-            map(
-                self.get_qubit_ssa,
-                filter(None, map(atom_state.get_qubit, node.location_addresses)),
-            )
+        qubit_ssa = self.get_qubit_ssa_from_locations(
+            atom_state, node.location_addresses
         )
 
-        if not no_none_elements(qubit_ssa):
+        if not utils.no_none_elements_tuple(qubit_ssa):
             return rewrite_abc.RewriteResult()
 
         (reg := ilist.New(qubit_ssa)).insert_before(node)
