@@ -13,6 +13,30 @@ from .utils import no_none_elements
 
 
 @dataclass
+class RewriteLogicalInitialize(rewrite_abc.RewriteRule):
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
+
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, (move.LogicalInitialize)):
+            return rewrite_abc.RewriteResult()
+
+        iterators = list(map(self.transform_location, node.location_addresses))
+
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
+        node.replace_by(
+            move.PhysicalInitialize(
+                thetas=node.thetas,
+                phis=node.phis,
+                lams=node.lams,
+                location_addresses=tuple(map(tuple, iterators)),
+            )
+        )
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+@dataclass
 class RewriteLocations(rewrite_abc.RewriteRule):
     transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
