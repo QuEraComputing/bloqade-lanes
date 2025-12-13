@@ -5,9 +5,7 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import (
-    MoveType,
-)
+from bloqade.lanes.layout.encoding import MoveType
 
 from . import stmts
 
@@ -88,18 +86,26 @@ class RewriteInitialize(rewrite_abc.RewriteRule):
         if not isinstance(node, move.Initialize):
             return rewrite_abc.RewriteResult()
 
-        (thetas_stmt := ilist.New(node.thetas)).insert_before(node)
-        (phis_stmt := ilist.New(node.phis)).insert_before(node)
-        (lams_stmt := ilist.New(node.lams)).insert_before(node)
+        groups: dict[
+            tuple[ir.SSAValue, ir.SSAValue, ir.SSAValue], list[tuple[int, int]]
+        ] = {}
+        for location_addr, theta, phi, lam in zip(
+            node.location_addresses, node.thetas, node.phis, node.lams
+        ):
+            groups.setdefault((theta, phi, lam), []).append(
+                (location_addr.word_id, location_addr.site_id)
+            )
 
-        logical_addresses_ilist = ilist.IList(
-            [(addr.word_id, addr.site_id) for addr in node.location_addresses],
-            elem=types.Tuple[types.Int, types.Int],
-        )
-        (logical_addresses_stmt := py.Constant(logical_addresses_ilist)).insert_before(
-            node
-        )
+        def make_ilist(list_of_tuples: list[tuple[int, int]]) -> ilist.IList:
+            return ilist.IList(list_of_tuples, elem=types.Tuple[types.Int, types.Int])
 
+        thetas, phis, lams = ([key[i] for key in groups.keys()] for i in range(3))
+        logical_addresses = ilist.IList(list(map(make_ilist, groups.values())))
+
+        (thetas_stmt := ilist.New(thetas)).insert_before(node)
+        (phis_stmt := ilist.New(phis)).insert_before(node)
+        (lams_stmt := ilist.New(lams)).insert_before(node)
+        (logical_addresses_stmt := py.Constant(logical_addresses)).insert_before(node)
         node.replace_by(
             stmts.LogicalInitialize(
                 thetas=thetas_stmt.result,

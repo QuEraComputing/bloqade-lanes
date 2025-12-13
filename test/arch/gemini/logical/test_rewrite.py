@@ -122,7 +122,7 @@ def test_logical_architecture_rewrite_logical_initialize():
     expected_block.stmts.append(
         const_list := py.Constant(
             ilist.IList(
-                [(0, 0), (1, 2), (2, 4)], elem=types.Tuple[types.Int, types.Int]
+                [ilist.IList([(0, 0)]), ilist.IList([(1, 2)]), ilist.IList([(2, 4)])]
             )
         )
     )
