@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin import ir
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade import qubit
@@ -16,26 +16,39 @@ from . import utils
 @dataclass
 class InsertQubits(rewrite_abc.RewriteRule):
     physical_ssa_values: list[ir.SSAValue] = field(default_factory=list, init=False)
+    initial_location_map: dict[LocationAddress, ir.SSAValue] = field(
+        default_factory=dict, init=False
+    )
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not isinstance(node, move.Fill):
             return rewrite_abc.RewriteResult()
 
-        for physical_id in range(len(node.location_addresses)):
+        for location_addr in self.initial_location_map:
             (new_qubit := qubit.stmts.New()).insert_before(node)
-            self.physical_ssa_values[physical_id] = new_qubit.result
+            self.physical_ssa_values.append(new_qubit.result)
+            self.initial_location_map[location_addr] = new_qubit.result
 
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 
 @dataclass
-class RewriteSingleQubitGates(rewrite_abc.RewriteRule):
+class RewriteMoveDialect(rewrite_abc.RewriteRule):
     physical_ssa_values: tuple[ir.SSAValue, ...]
     atom_state_map: dict[ir.Statement, atom.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
-            isinstance(node, (move.LocalRz, move.GlobalRz, move.LocalR, move.GlobalR))
+            isinstance(
+                node,
+                (
+                    move.LocalRz,
+                    move.GlobalRz,
+                    move.LocalR,
+                    move.GlobalR,
+                    move.GetMeasurementResult,
+                ),
+            )
             and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
         ):
             return rewrite_abc.RewriteResult()
@@ -122,4 +135,17 @@ class RewriteSingleQubitGates(rewrite_abc.RewriteRule):
         node.replace_by(
             gate_stmts.U3(phi.result, node.rotation_angle, lam.result, reg.result)
         )
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+    def rewrite_GetMeasurementResult(
+        self, atom_state: atom.AtomState, node: move.GetMeasurementResult
+    ) -> rewrite_abc.RewriteResult:
+        (qubit_ssa,) = self.get_qubit_ssa_from_locations(
+            atom_state, (node.location_address,)
+        )
+        if qubit_ssa is None:
+            return rewrite_abc.RewriteResult()
+
+        node.replace_by(func.Invoke((qubit_ssa,), callee=qubit.measure))
+
         return rewrite_abc.RewriteResult(has_done_something=True)
