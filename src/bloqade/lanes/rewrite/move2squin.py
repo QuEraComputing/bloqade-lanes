@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin import ir
@@ -33,13 +34,17 @@ class InsertQubits(rewrite_abc.RewriteRule):
 
 
 class RewriteInitialize(rewrite_abc.RewriteRule):
-    pass
+    physical_ssa_values: tuple[ir.SSAValue, ...]
+    atom_state_map: dict[ir.Statement, atom.AtomState]
 
 
 @dataclass
 class RewriteMoveDialect(rewrite_abc.RewriteRule):
     physical_ssa_values: tuple[ir.SSAValue, ...]
     atom_state_map: dict[ir.Statement, atom.AtomState]
+    initialize_kernel: ir.Method[
+        [float, float, float, ilist.IList[qubit.Qubit, Any]], None
+    ]
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
@@ -51,6 +56,7 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
                     move.LocalR,
                     move.GlobalR,
                     move.GetMeasurementResult,
+                    move.PhysicalInitialize,
                 ),
             )
             and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
@@ -115,7 +121,6 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
         (quarter_turn := py.Constant(0.25)).insert_before(node)
         (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
         (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
-
         qubit_ssa = self.get_qubit_ssa_from_locations(
             atom_state, node.location_addresses
         )
@@ -151,5 +156,27 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
             return rewrite_abc.RewriteResult()
 
         node.replace_by(func.Invoke((qubit_ssa,), callee=qubit.measure))
+
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+    def rewrite_PhysicalInitialize(
+        self, atom_state: atom.AtomState, node: move.PhysicalInitialize
+    ) -> rewrite_abc.RewriteResult:
+        nodes_to_insert = []
+        for theta, phi, lam, locations in zip(
+            node.thetas, node.phis, node.lams, node.location_addresses
+        ):
+            qubit_ssa = self.get_qubit_ssa_from_locations(atom_state, locations)
+            if not utils.no_none_elements_tuple(qubit_ssa):
+                return rewrite_abc.RewriteResult()
+
+            nodes_to_insert.append(reg_stmt := ilist.New(qubit_ssa))
+            inputs = (theta, phi, lam, reg_stmt.result)
+            nodes_to_insert.append(func.Invoke(inputs, callee=self.initialize_kernel))
+
+        for n in nodes_to_insert:
+            n.insert_before(node)
+
+        node.delete()
 
         return rewrite_abc.RewriteResult(has_done_something=True)

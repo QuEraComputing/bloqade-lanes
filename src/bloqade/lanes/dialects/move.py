@@ -28,7 +28,7 @@ class LogicalInitialize(ir.Statement):
 
 
 @statement(dialect=dialect)
-class InitializePhysical(ir.Statement):
+class PhysicalInitialize(ir.Statement):
     """Placeholder for when rewriting to simulation"""
 
     traits = frozenset({lowering.FromPythonCall()})
