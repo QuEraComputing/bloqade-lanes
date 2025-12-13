@@ -58,8 +58,10 @@ def generate_arch(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
 
     grid = Grid.from_positions(x_positions, y_positions)
 
+    has_cz = tuple((i + word_size_y) % word_size_y for i in range(word_size_y))
     words = tuple(
-        Word(tuple(grid.shift(10.0 * ix, 0.0).positions)) for ix in range(num_word_x)
+        Word(tuple(grid.shift(10.0 * ix, 0.0).positions), has_cz)
+        for ix in range(num_word_x)
     )
 
     site_ids = (

@@ -4,25 +4,11 @@ from itertools import chain
 from kirin import ir, types
 from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
-from typing_extensions import Callable, Iterable, Sequence, TypeGuard, TypeVar
-
+from typing_extensions import Callable, Iterable
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
-T = TypeVar("T")
-
-
-def no_none_elements(xs: Sequence[T | None]) -> TypeGuard[Sequence[T]]:
-    """Check that there are no None elements in the sequence.
-
-    Args:
-        xs: A sequence that may contain None elements.
-
-    Returns:
-        A TypeGuard indicating that all elements are not None.
-
-    """
-    return all(x is not None for x in xs)
+from .utils import no_none_elements
 
 
 @dataclass
