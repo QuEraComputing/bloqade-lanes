@@ -14,24 +14,20 @@ from .utils import no_none_elements
 
 @dataclass
 class RewriteLocations(rewrite_abc.RewriteRule):
-    transform_location: dict[LocationAddress, tuple[LocationAddress, ...]]
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, (move.Fill, move.LocalR, move.LocalRz)):
-            return rewrite_abc.RewriteResult()
-
-        if any(
-            loc_addr not in self.transform_location
-            for loc_addr in node.location_addresses
+        if not isinstance(
+            node, (move.Fill, move.LocalR, move.LocalRz, move.Initialize)
         ):
             return rewrite_abc.RewriteResult()
 
-        physical_addresses = tuple(
-            chain.from_iterable(
-                self.transform_location[loc_addr]
-                for loc_addr in node.location_addresses
-            )
-        )
+        iterators = list(map(self.transform_location, node.location_addresses))
+
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
+        physical_addresses = tuple(chain.from_iterable(iterators))
 
         attributes: dict[str, ir.Attribute] = {
             "location_addresses": ir.PyAttr(
