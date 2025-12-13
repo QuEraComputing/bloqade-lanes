@@ -16,6 +16,9 @@ class Word(Generic[SiteType]):
     has_cz: tuple[int, ...] | None = None
     """defines which sites in the word have a controlled-Z (CZ) interaction, e.g. has_cz[i] = j means site i has a CZ with site j"""
 
+    def __post_init__(self):
+        assert len(self.sites) == len(self.has_cz) if self.has_cz is not None else True
+
     def __getitem__(self, index: int):
         return WordSite(
             word=self,
