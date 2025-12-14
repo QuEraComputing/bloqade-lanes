@@ -6,10 +6,10 @@ from kirin import ir
 from kirin.dialects import func, ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
-from bloqade import qubit, squin
+from bloqade import qubit
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import LaneAddress, LocationAddress
+from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
 
 from . import utils
@@ -33,16 +33,13 @@ class InsertQubits(rewrite_abc.RewriteRule):
 
 
 @dataclass
-class RewriteMoveDialect(rewrite_abc.RewriteRule):
+class InsertGates(rewrite_abc.RewriteRule):
     arch_spec: ArchSpec
     physical_ssa_values: tuple[ir.SSAValue, ...]
     atom_state_map: dict[ir.Statement, atom.AtomStateType]
     initialize_kernel: ir.Method[
         [float, float, float, ilist.IList[qubit.Qubit, Any]], None
     ]
-    move_noise: dict[LaneAddress, tuple[float, float, float]] | None = field(
-        default=None
-    )
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
@@ -55,7 +52,6 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
                     move.GlobalR,
                     move.GetMeasurementResult,
                     move.PhysicalInitialize,
-                    move.Move,
                     move.CZ,
                 ),
             )
@@ -100,9 +96,9 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
 
         (zero := py.Constant(0.0)).insert_before(node)
         (reg := ilist.New(qubit_ssa)).insert_before(node)
-        node.replace_by(
+        (
             gate_stmts.U3(zero.result, node.rotation_angle, zero.result, reg.result)
-        )
+        ).insert_before(node)
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_GlobalRz(
@@ -110,9 +106,9 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
     ) -> rewrite_abc.RewriteResult:
         (zero := py.Constant(0.0)).insert_before(node)
         (reg := ilist.New(self.physical_ssa_values)).insert_before(node)
-        node.replace_by(
+        (
             gate_stmts.U3(zero.result, node.rotation_angle, zero.result, reg.result)
-        )
+        ).insert_before(node)
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_LocalR(
@@ -131,9 +127,9 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
             return rewrite_abc.RewriteResult()
 
         (reg := ilist.New(qubit_ssa)).insert_before(node)
-        node.replace_by(
-            gate_stmts.U3(phi.result, node.rotation_angle, lam.result, reg.result)
-        )
+        (
+            gate_stmts.U3(node.rotation_angle, phi.result, lam.result, reg.result)
+        ).insert_before(node)
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_GlobalR(
@@ -143,9 +139,9 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
         (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
         (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
         (reg := ilist.New(self.physical_ssa_values)).insert_before(node)
-        node.replace_by(
-            gate_stmts.U3(phi.result, node.rotation_angle, lam.result, reg.result)
-        )
+        (
+            gate_stmts.U3(node.rotation_angle, phi.result, lam.result, reg.result)
+        ).insert_before(node)
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_GetMeasurementResult(
@@ -164,7 +160,7 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
     def rewrite_PhysicalInitialize(
         self, atom_state: atom.AtomState, node: move.PhysicalInitialize
     ) -> rewrite_abc.RewriteResult:
-        nodes_to_insert = []
+        nodes_to_insert: list[ir.Statement] = []
         for theta, phi, lam, locations in zip(
             node.thetas, node.phis, node.lams, node.location_addresses
         ):
@@ -179,8 +175,6 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
         for n in nodes_to_insert:
             n.insert_before(node)
 
-        node.delete()
-
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_CZ(
@@ -190,8 +184,8 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
         zone_word_ids = self.arch_spec.zones[node.zone_address.zone_id]
 
         visited = set()
-        controls = []
-        targets = []
+        controls: list[ir.SSAValue] = []
+        targets: list[ir.SSAValue] = []
         for control, address in zip(self.physical_ssa_values, atom_state.locations):
             if control in visited:
                 continue
@@ -220,37 +214,38 @@ class RewriteMoveDialect(rewrite_abc.RewriteRule):
 
         (control_reg := ilist.New(controls)).insert_before(node)
         (target_reg := ilist.New(targets)).insert_before(node)
-        node.replace_by(gate_stmts.CZ(control_reg.result, target_reg.result))
+        gate_stmts.CZ(control_reg.result, target_reg.result).insert_before(node)
 
         return rewrite_abc.RewriteResult(has_done_something=True)
 
-    def rewrite_Move(
-        self, atom_state: atom.AtomState, node: move.Move
-    ) -> rewrite_abc.RewriteResult:
-        if self.move_noise is None:
-            node.delete()
-            return rewrite_abc.RewriteResult(has_done_something=True)
 
-        noise_params = tuple(map(self.move_noise.get, node.lanes))
+@dataclass
+class CleanUpMoveDialect(rewrite_abc.RewriteRule):
+    atom_state_map: dict[ir.Statement, atom.AtomStateType]
 
-        if not utils.no_none_elements(noise_params):
+    def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
+        if not (
+            isinstance(
+                node,
+                (
+                    move.LocalRz,
+                    move.GlobalRz,
+                    move.LocalR,
+                    move.GlobalR,
+                    move.GetMeasurementResult,
+                    move.PhysicalInitialize,
+                    move.Move,
+                    move.EndMeasure,
+                    move.CZ,
+                ),
+            )
+            and isinstance(self.atom_state_map.get(node), atom.AtomState)
+        ):
             return rewrite_abc.RewriteResult()
 
-        srcs, _ = zip(*map(self.arch_spec.get_endpoints, node.lanes))
+        if any(len(result.uses) > 0 for result in node.results):
+            return rewrite_abc.RewriteResult()
 
-        has_done_something = False
-        for noise, qubit_ssa in zip(
-            noise_params, self.get_qubit_ssa_from_locations(atom_state, srcs)
-        ):
-            if qubit_ssa is None:
-                continue
+        node.delete()
 
-            has_done_something = True
-            inputs = []
-            for param in noise:
-                (param_stmt := py.Constant(param)).insert_before(node)
-                inputs.append(param_stmt.result)
-            inputs.append(qubit_ssa)
-            (func.Invoke(tuple(inputs), callee=squin.single_qubit_pauli_channel))
-
-        return rewrite_abc.RewriteResult(has_done_something=has_done_something)
+        return rewrite_abc.RewriteResult(has_done_something=True)

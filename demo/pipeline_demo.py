@@ -1,6 +1,8 @@
 from typing import Literal
 
 from bloqade.gemini.dialects import logical as gemini_logical
+from bloqade.rewrite.passes import AggressiveUnroll
+from bloqade.squin.rewrite import SquinU3ToClifford
 from kirin import rewrite
 from kirin.dialects import ilist
 
@@ -56,14 +58,26 @@ def initialize(
 main = compile_squin(main, transversal_rewrite=True)
 
 arch_spec = generate_arch(4, 5)
+
+
+main = main.similar(main.dialects.union(squin.kernel))
 interp = atom.AtomInterpreter(main.dialects, arch_spec=arch_spec)
 frame, _ = interp.run(main)
 
 rule = move2squin.InsertQubits()
 rewrite.Walk(rule).rewrite(main.code)
 rewrite.Walk(
-    move2squin.RewriteMoveDialect(
+    move2squin.InsertGates(
         arch_spec, tuple(rule.physical_ssa_values), frame.atom_state_map, initialize
+    )
+).rewrite(main.code)
+
+AggressiveUnroll(main.dialects).fixpoint(main)
+
+rewrite.Walk(
+    rewrite.Chain(
+        SquinU3ToClifford(),
+        move2squin.CleanUpMoveDialect(frame.atom_state_map),
     )
 ).rewrite(main.code)
 main.print()
