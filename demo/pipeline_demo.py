@@ -1,16 +1,13 @@
-from typing import Literal
+from typing import Any
 
 from bloqade.gemini.dialects import logical as gemini_logical
-from bloqade.rewrite.passes import AggressiveUnroll
-from bloqade.squin.rewrite import SquinU3ToClifford
-from kirin import rewrite
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch
+from bloqade.lanes.arch.gemini.logical.upstream import steane7_initialize
 from bloqade.lanes.logical_mvp import compile_squin
-from bloqade.lanes.rewrite import move2squin
+from bloqade.lanes.transform import MoveToSquinTransformer, SimpleNoiseModel
 
 kernel = squin.kernel.add(gemini_logical.dialect)
 kernel.run_pass = squin.kernel.run_pass
@@ -39,45 +36,36 @@ def main():
 
 
 @squin.kernel
-def initialize(
-    theta: float, phi: float, lam: float, qubits: ilist.IList[qubit.Qubit, Literal[7]]
-):
-    squin.u3(theta, phi, lam, qubits[6])
-    squin.broadcast.sqrt_y_adj(qubits[:6])
-    evens = qubits[::2]
-    odds = qubits[1::2]
+def cz_unpaired_error(qubits: ilist.IList[qubit.Qubit, Any]):
+    squin.broadcast.depolarize(0.001, qubits)
+    squin.broadcast.qubit_loss(0.0001, qubits)
 
-    squin.broadcast.cz(odds, evens[:-1])
-    squin.sqrt_y(qubits[6])
-    squin.broadcast.cz(evens[:-1], ilist.IList([qubits[3], qubits[5], qubits[6]]))
-    squin.broadcast.sqrt_y(qubits[2:])
-    squin.broadcast.cz(evens[:-1], odds)
-    squin.broadcast.sqrt_y(ilist.IList([qubits[1], qubits[2], qubits[4]]))
 
+@squin.kernel
+def move_error(qubit: qubit.Qubit):
+    squin.depolarize(0.002, qubit)
+    squin.qubit_loss(0.0002, qubit)
+
+
+@squin.kernel
+def idle_error(qubits: ilist.IList[qubit.Qubit, Any]):
+    squin.broadcast.depolarize(0.0005, qubits)
+    squin.broadcast.qubit_loss(0.00005, qubits)
+
+
+arch_spec = generate_arch()
 
 main = compile_squin(main, transversal_rewrite=True)
 
-arch_spec = generate_arch(4, 5)
 
+transformer = MoveToSquinTransformer(
+    arch_spec=arch_spec,
+    logical_initialization=steane7_initialize,
+    noise_model=SimpleNoiseModel(
+        lane_noise=move_error,
+        idle_noise=idle_error,
+        cz_unpaired_noise=cz_unpaired_error,
+    ),
+)
 
-main = main.similar(main.dialects.union(squin.kernel))
-interp = atom.AtomInterpreter(main.dialects, arch_spec=arch_spec)
-frame, _ = interp.run(main)
-
-rule = move2squin.InsertQubits()
-rewrite.Walk(rule).rewrite(main.code)
-rewrite.Walk(
-    move2squin.InsertGates(
-        arch_spec, tuple(rule.physical_ssa_values), frame.atom_state_map, initialize
-    )
-).rewrite(main.code)
-
-AggressiveUnroll(main.dialects).fixpoint(main)
-
-rewrite.Walk(
-    rewrite.Chain(
-        SquinU3ToClifford(),
-        move2squin.CleanUpMoveDialect(frame.atom_state_map),
-    )
-).rewrite(main.code)
-main.print()
+transformer.transform(main)
