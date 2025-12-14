@@ -11,6 +11,7 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.layout.encoding import LaneAddress, MoveType
 
 from . import utils
 
@@ -32,10 +33,33 @@ class InsertQubits(rewrite_abc.RewriteRule):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 
-@dataclass
-class InsertGates(rewrite_abc.RewriteRule):
+class AtomStateRewriter(rewrite_abc.RewriteRule):
     arch_spec: ArchSpec
     physical_ssa_values: tuple[ir.SSAValue, ...]
+
+    def get_qubit_ssa(
+        self, atom_state: atom.AtomState, location: LocationAddress
+    ) -> ir.SSAValue | None:
+        qubit_index = atom_state.get_qubit(location)
+
+        if qubit_index is None:
+            return None
+
+        return self.physical_ssa_values[qubit_index]
+
+    def get_qubit_ssa_from_locations(
+        self,
+        atom_state: atom.AtomState,
+        location_addresses: tuple[LocationAddress, ...],
+    ) -> tuple[ir.SSAValue | None, ...]:
+        def get_qubit_ssa(location: LocationAddress) -> ir.SSAValue | None:
+            return self.get_qubit_ssa(atom_state, location)
+
+        return tuple(map(get_qubit_ssa, location_addresses))
+
+
+@dataclass
+class InsertGates(AtomStateRewriter):
     atom_state_map: dict[ir.Statement, atom.AtomStateType]
     initialize_kernel: ir.Method[
         [float, float, float, ilist.IList[qubit.Qubit, Any]], None
@@ -61,27 +85,6 @@ class InsertGates(rewrite_abc.RewriteRule):
 
         rewriter = getattr(self, f"rewrite_{type(node).__name__}")
         return rewriter(atom_state, node)
-
-    def get_qubit_ssa(self, qubit_index: int | None) -> ir.SSAValue | None:
-        if qubit_index is None:
-            return None
-
-        if 0 <= qubit_index < len(self.physical_ssa_values):
-            return self.physical_ssa_values[qubit_index]
-        return None
-
-    def get_qubit_ssa_from_locations(
-        self,
-        atom_state: atom.AtomState,
-        location_addresses: tuple[LocationAddress, ...],
-    ) -> tuple[ir.SSAValue | None, ...]:
-        qubit_ssa = tuple(
-            map(
-                self.get_qubit_ssa,
-                map(atom_state.get_qubit, location_addresses),
-            )
-        )
-        return qubit_ssa
 
     def rewrite_LocalRz(
         self, atom_state: atom.AtomState, node: move.LocalRz
@@ -147,9 +150,7 @@ class InsertGates(rewrite_abc.RewriteRule):
     def rewrite_GetMeasurementResult(
         self, atom_state: atom.AtomState, node: move.GetMeasurementResult
     ) -> rewrite_abc.RewriteResult:
-        (qubit_ssa,) = self.get_qubit_ssa_from_locations(
-            atom_state, (node.location_address,)
-        )
+        qubit_ssa = self.get_qubit_ssa(atom_state, node.location_address)
         if qubit_ssa is None:
             return rewrite_abc.RewriteResult()
 
@@ -180,41 +181,114 @@ class InsertGates(rewrite_abc.RewriteRule):
     def rewrite_CZ(
         self, atom_state: atom.AtomState, node: move.CZ
     ) -> rewrite_abc.RewriteResult:
+        controls, targets, _ = atom_state.get_qubit_pairing(
+            node.zone_address, self.arch_spec
+        )
+        assert len(atom_state.locations) == len(
+            self.physical_ssa_values
+        ), "Mismatch between atom state and physical SSA values"
+        controls_ssa: tuple[ir.SSAValue, ...] = tuple(
+            self.physical_ssa_values[i] for i in controls
+        )
+        targets_ssa: tuple[ir.SSAValue, ...] = tuple(
+            self.physical_ssa_values[i] for i in targets
+        )
 
-        zone_word_ids = self.arch_spec.zones[node.zone_address.zone_id]
+        (control_reg := ilist.New(controls_ssa)).insert_before(node)
+        (target_reg := ilist.New(targets_ssa)).insert_before(node)
+        gate_stmts.CZ(control_reg.result, target_reg.result).insert_before(node)
 
-        visited = set()
-        controls: list[ir.SSAValue] = []
-        targets: list[ir.SSAValue] = []
-        for control, address in zip(self.physical_ssa_values, atom_state.locations):
-            if control in visited:
-                continue
+        return rewrite_abc.RewriteResult(has_done_something=True)
 
-            visited.add(control)
-            if (word_id := address.word_id) not in zone_word_ids:
-                continue
 
-            site = self.arch_spec.words[word_id][address.site_id]
-            if (target_site := site.cz_pair) is None:
-                continue
+@dataclass
+class InsertNoise(AtomStateRewriter):
+    atom_state_map: dict[ir.Statement, atom.AtomStateType]
+    lane_noise: dict[LaneAddress, ir.Method[[qubit.Qubit], None]] = field(
+        default_factory=dict
+    )
+    bus_idle_noise: dict[
+        tuple[MoveType, int], ir.Method[[ilist.IList[qubit.Qubit, Any]], None]
+    ] = field(default_factory=dict)
+    cz_unpaired_noise: ir.Method[[ilist.IList[qubit.Qubit, Any]], None] | None = field(
+        default=None
+    )
 
-            target_location_address = LocationAddress(word_id, target_site)
-            (target,) = self.get_qubit_ssa_from_locations(
-                atom_state, (target_location_address,)
+    def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
+        if not (
+            isinstance(
+                node,
+                (
+                    move.Move,
+                    move.CZ,
+                ),
             )
-            if target is None:
-                continue
-
-            controls.append(control)
-            targets.append(target)
-            visited.add(target)
-
-        if len(controls) == 0:
+            and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
+        ):
             return rewrite_abc.RewriteResult()
 
-        (control_reg := ilist.New(controls)).insert_before(node)
-        (target_reg := ilist.New(targets)).insert_before(node)
-        gate_stmts.CZ(control_reg.result, target_reg.result).insert_before(node)
+        rewriter = getattr(self, f"rewrite_{type(node).__name__}")
+        return rewriter(atom_state, node)
+
+    def rewrite_Move(
+        self, atom_state: atom.AtomState, node: move.Move
+    ) -> rewrite_abc.RewriteResult:
+        if len(node.lanes) == 0:
+            return rewrite_abc.RewriteResult()
+
+        first_lane = node.lanes[0]
+
+        stmts_to_insert: list[ir.Statement] = []
+        stationary_qubits: set[ir.SSAValue] = set(self.physical_ssa_values)
+        for lane in node.lanes:
+            src, _ = self.arch_spec.get_endpoints(lane)
+
+            qubit_ssa = self.get_qubit_ssa(atom_state, src)
+            if qubit_ssa is None:
+                return rewrite_abc.RewriteResult()
+
+            stationary_qubits.discard(qubit_ssa)
+            noise_method = self.lane_noise.get(lane)
+            if noise_method is None:
+                return rewrite_abc.RewriteResult()
+
+            stmts_to_insert.append(func.Invoke((qubit_ssa,), callee=noise_method))
+
+        bus_idle_method = self.bus_idle_noise.get(
+            (first_lane.move_type, first_lane.bus_id)
+        )
+        if bus_idle_method is None:
+            return rewrite_abc.RewriteResult()
+
+        idle_qubits = tuple(stationary_qubits)
+        stmts_to_insert.append(idle_reg := ilist.New(idle_qubits))
+        stmts_to_insert.append(func.Invoke((idle_reg.result,), callee=bus_idle_method))
+
+        for stmt in stmts_to_insert:
+            stmt.insert_before(node)
+
+        return rewrite_abc.RewriteResult(has_done_something=len(stmts_to_insert) > 0)
+
+    def rewrite_CZ(
+        self, atom_state: atom.AtomState, node: move.CZ
+    ) -> rewrite_abc.RewriteResult:
+        if self.cz_unpaired_noise is None:
+            return rewrite_abc.RewriteResult()
+
+        assert len(atom_state.locations) == len(
+            self.physical_ssa_values
+        ), "Mismatch between atom state and physical SSA values"
+
+        _, _, unpaired = atom_state.get_qubit_pairing(node.zone_address, self.arch_spec)
+
+        unpaired_qubits: tuple[ir.SSAValue, ...] = tuple(
+            self.physical_ssa_values[i] for i in unpaired
+        )
+
+        (unpaired_reg := ilist.New(unpaired_qubits)).insert_before(node)
+        func.Invoke(
+            (unpaired_reg.result,), callee=self.cz_unpaired_noise
+        ).insert_before(node)
 
         return rewrite_abc.RewriteResult(has_done_something=True)
 
