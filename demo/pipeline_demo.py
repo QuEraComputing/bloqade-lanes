@@ -15,7 +15,7 @@ kernel.run_pass = squin.kernel.run_pass
 
 @kernel(typeinfer=False, fold=True)
 def main():
-    size = 10
+    size = 8
     q0 = qubit.new()
     squin.h(q0)
     reg = ilist.IList([q0])
@@ -36,36 +36,34 @@ def main():
 
 
 @squin.kernel
-def cz_unpaired_error(qubits: ilist.IList[qubit.Qubit, Any]):
+def cz_unpaired_noise(qubits: ilist.IList[qubit.Qubit, Any]):
     squin.broadcast.depolarize(0.001, qubits)
     squin.broadcast.qubit_loss(0.0001, qubits)
 
 
 @squin.kernel
-def move_error(qubit: qubit.Qubit):
+def lane_noise(qubit: qubit.Qubit):
     squin.depolarize(0.002, qubit)
     squin.qubit_loss(0.0002, qubit)
 
 
 @squin.kernel
-def idle_error(qubits: ilist.IList[qubit.Qubit, Any]):
+def idle_noise(qubits: ilist.IList[qubit.Qubit, Any]):
     squin.broadcast.depolarize(0.0005, qubits)
     squin.broadcast.qubit_loss(0.00005, qubits)
 
 
 arch_spec = generate_arch()
 
-main = compile_squin(main, transversal_rewrite=True)
-
+main = compile_squin(main, transversal_rewrite=False)
+main.print()
 
 transformer = MoveToSquinTransformer(
     arch_spec=arch_spec,
     logical_initialization=steane7_initialize,
-    noise_model=SimpleNoiseModel(
-        lane_noise=move_error,
-        idle_noise=idle_error,
-        cz_unpaired_noise=cz_unpaired_error,
-    ),
+    noise_model=SimpleNoiseModel(lane_noise, idle_noise, cz_unpaired_noise),
+    aggressive_unroll=False,
 )
 
-transformer.transform(main)
+main = transformer.transform(main)
+main.print()

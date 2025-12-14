@@ -24,6 +24,7 @@ class MoveToSquinTransformer:
         [float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None
     ]
     noise_model: NoiseModelABC | None = None
+    aggressive_unroll: bool = False
 
     def transform(self, main: ir.Method) -> ir.Method:
         main = main.similar(main.dialects.union(squin.kernel))
@@ -58,7 +59,10 @@ class MoveToSquinTransformer:
             )
 
         rewrite.Walk(rule).rewrite(main.code)
-        agg.AggressiveUnroll(main.dialects).fixpoint(main)
+        if self.aggressive_unroll:
+            agg.AggressiveUnroll(main.dialects).fixpoint(main)
+        else:
+            agg.Fold(main.dialects)(main)
 
         rewrite.Walk(
             rewrite.Chain(

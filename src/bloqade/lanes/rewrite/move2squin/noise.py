@@ -54,13 +54,7 @@ class InsertNoise(AtomStateRewriter):
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
-            isinstance(
-                node,
-                (
-                    move.Move,
-                    move.CZ,
-                ),
-            )
+            isinstance(node, (move.Move, move.CZ))
             and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
         ):
             return rewrite_abc.RewriteResult()
@@ -124,8 +118,13 @@ class InsertNoise(AtomStateRewriter):
             self.physical_ssa_values[i] for i in unpaired
         )
 
-        unpaired_reg = ilist.New(unpaired_qubits)
-        func.Invoke((unpaired_reg.result,), callee=cz_unpaired_noise).insert_after(node)
-        unpaired_reg.insert_after(node)
+        if len(unpaired_qubits) > 0:
+            unpaired_reg = ilist.New(unpaired_qubits)
+            func.Invoke((unpaired_reg.result,), callee=cz_unpaired_noise).insert_after(
+                node
+            )
+            unpaired_reg.insert_after(node)
 
-        return rewrite_abc.RewriteResult(has_done_something=True)
+            return rewrite_abc.RewriteResult(has_done_something=True)
+
+        return rewrite_abc.RewriteResult()
