@@ -10,7 +10,7 @@ from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.passes.canonicalize import CanonicalizeNative
+from bloqade.lanes.passes.canonicalize import HoistConstants
 from bloqade.lanes.rewrite import circuit2place, place2move
 
 
@@ -28,18 +28,41 @@ class NativeToPlace:
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place).discard(native_gate))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
-        CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
+
+        rewrite.Walk(HoistConstants()).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
+            out.code
+        )
+
+        rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
+            out.code
+        )
+
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
         ).rewrite(out.code)
 
+        rewrite.Walk(rewrite.DeadCodeElimination()).rewrite(out.code)
+
         rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
+            rewrite.Chain(
+                rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
+                rewrite.Walk(circuit2place.HoistNewQubitsUp()),
+            )
         ).rewrite(out.code)
+        out.print()
+
         passes.TypeInfer(out.dialects)(out)
 
         out.verify()
         out.verify_type()
+
+        exit()
 
         return out
 
@@ -77,7 +100,6 @@ class PlaceToMove:
                 address_frame.entries,
                 self.placement_strategy,
             ).run(out)
-
         rule = rewrite.Chain(
             place2move.InsertFill(initial_layout),
             place2move.InsertInitialize(init_locations, thetas, phis, lams),
@@ -94,9 +116,10 @@ class PlaceToMove:
 
         rewrite.Walk(
             rewrite.Chain(
-                place2move.LiftMoveStatements(), place2move.RemoveNoOpStaticPlacements()
+                place2move.LiftMoveStatements(), place2move.DeleteInitialize()
             )
         ).rewrite(out.code)
+        rewrite.Walk(place2move.RemoveNoOpStaticPlacements()).rewrite(out.code)
 
         rewrite.Fixpoint(
             rewrite.Walk(

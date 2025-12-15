@@ -3,12 +3,85 @@ from typing import Callable
 
 from bloqade.gemini.dialects.logical import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gate
-from kirin import ir
-from kirin.dialects import ilist
+from kirin import ir, types
+from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
+from bloqade import qubit
 from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
+
+
+class RewriteInitializeToLogicalInitialize(abc.RewriteRule):
+    """Rewrite Initialize statements to NewLogical qubit allocations."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not (
+            isinstance(node, gemini_stmts.Initialize)
+            and isinstance(qubit_list := node.qubits.owner, ilist.New)
+        ):
+            return abc.RewriteResult()
+
+        node.replace_by(
+            place.LogicalInitialize(
+                phi=node.phi,
+                theta=node.theta,
+                lam=node.lam,
+                qubits=qubit_list.values,
+            )
+        )
+        return abc.RewriteResult(has_done_something=True)
+
+
+class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
+    """Rewrite LogicalInitialize statements to NewLogical qubit allocations."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, place.LogicalInitialize):
+            return abc.RewriteResult()
+
+        qubit_stmts = tuple(qubit.owner for qubit in node.qubits)
+
+        if not types.is_tuple_of(qubit_stmts, qubit.stmts.New):
+            return abc.RewriteResult()
+
+        for qubit_stmt in qubit_stmts:
+            qubit_stmt.replace_by(place.NewLogicalQubit(node.theta, node.phi, node.lam))
+
+        return abc.RewriteResult(has_done_something=True)
+
+
+class CleanUpLogicalInitialize(abc.RewriteRule):
+    """Clean up any remaining LogicalInitialize statements."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, place.LogicalInitialize):
+            return abc.RewriteResult()
+
+        qubit_stmts = tuple(qubit.owner for qubit in node.qubits)
+        if not types.is_tuple_of(qubit_stmts, place.NewLogicalQubit):
+            return abc.RewriteResult()
+
+        node.delete()
+        return abc.RewriteResult(has_done_something=True)
+
+
+class InitializeNewQubits(abc.RewriteRule):
+    """Rewrite NewLogical qubit allocations to Initialize statements."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, qubit.stmts.New):
+            return abc.RewriteResult()
+
+        (zero := py.Constant(0.0)).insert_before(node)
+        node.replace_by(
+            place.NewLogicalQubit(
+                theta=zero.result,
+                phi=zero.result,
+                lam=zero.result,
+            )
+        )
+        return abc.RewriteResult(has_done_something=True)
 
 
 @dataclass
@@ -162,6 +235,24 @@ class RewritePlaceOperations(abc.RewriteRule):
             self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
         )
 
+        return abc.RewriteResult(has_done_something=True)
+
+
+class HoistNewQubitsUp(abc.RewriteRule):
+    """This rewrite rule shifts all qubit allocations and lists of qubits
+    before any gate operations.
+    """
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not (
+            isinstance(node, qubit.stmts.New)
+            and (next_node := node.next_stmt) is not None
+            and node.result not in set(next_node.args)
+        ):
+            return abc.RewriteResult()
+
+        next_node.detach()
+        next_node.insert_before(node)
         return abc.RewriteResult(has_done_something=True)
 
 

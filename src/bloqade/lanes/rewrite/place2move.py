@@ -1,6 +1,7 @@
 import abc
 from dataclasses import dataclass, field
 
+from bloqade.gemini.dialects.logical import stmts as gemini_logical_stmts
 from kirin import ir
 from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
@@ -301,16 +302,20 @@ class InsertInitialize(RewriteRule):
         if not (len(self.init_locations) > 0 and isinstance(node, func.Function)):
             return RewriteResult()
 
-        first_stmt = node.body.blocks[0].first_stmt
-
-        if first_stmt is None or isinstance(first_stmt, move.LogicalInitialize):
+        if (stmt := node.body.blocks[0].first_stmt) is None:
             return RewriteResult()
+
+        while not isinstance(stmt, gemini_logical_stmts.Initialize):
+            stmt = stmt.next_stmt
+            if stmt is None:
+                return RewriteResult()
+
         move.LogicalInitialize(
             location_addresses=self.init_locations,
             thetas=self.thetas,
             phis=self.phis,
             lams=self.lams,
-        ).insert_before(first_stmt)
+        ).insert_before(stmt)
         return RewriteResult(has_done_something=True)
 
 
@@ -337,6 +342,17 @@ class DeleteQubitNew(RewriteRule):
         if not (isinstance(node, qubit.stmts.New) and len(node.result.uses) == 0):
             return RewriteResult()
 
+        node.delete()
+
+        return RewriteResult(has_done_something=True)
+
+
+class DeleteInitialize(RewriteRule):
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not isinstance(node, place.Initialize):
+            return RewriteResult()
+
+        node.state_after.replace_by(node.state_before)
         node.delete()
 
         return RewriteResult(has_done_something=True)

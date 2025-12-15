@@ -1,4 +1,7 @@
+from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.upstream import SquinToNative
+from bloqade.rewrite.passes import AggressiveUnroll, CallGraphPass
+from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, rewrite
 
 from bloqade.lanes import visualize
@@ -11,15 +14,24 @@ from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
 
 def compile_squin(mt: ir.Method, transversal_rewrite: bool = False):
     # Compile to move dialect
+    rule = rewrite.Chain(
+        rewrite.Walk(
+            RewriteNonCliffordToU3(),
+        ),
+        rewrite.Walk(
+            __RewriteU3ToInitialize(),
+        ),
+    )
 
+    CallGraphPass(mt.dialects, rule)(mt)
     mt = SquinToNative().emit(mt)
     mt = NativeToPlace().emit(mt)
+
     mt = PlaceToMove(
         fixed.LogicalLayoutHeuristic(),
         fixed.LogicalPlacementStrategy(),
         fixed.LogicalMoveScheduler(),
     ).emit(mt)
-
     if transversal_rewrite:
         rewrite.Walk(
             rewrite.Chain(
