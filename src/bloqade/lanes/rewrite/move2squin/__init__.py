@@ -1,5 +1,4 @@
 from .base import (
-    AtomStateRewriter as AtomStateRewriter,
     CleanUpMoveDialect as CleanUpMoveDialect,
     InsertQubits as InsertQubits,
 )

@@ -22,8 +22,6 @@ class InsertQubits(rewrite_abc.RewriteRule):
             (new_qubit := qubit.stmts.New()).insert_before(node)
             self.physical_ssa_values.append(new_qubit.result)
 
-        node.delete()
-
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 
