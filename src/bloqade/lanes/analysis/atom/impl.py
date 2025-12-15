@@ -161,6 +161,7 @@ class Move(interp.MethodTable):
     @interp.impl(move.GlobalR)
     @interp.impl(move.GlobalRz)
     @interp.impl(move.EndMeasure)
+    @interp.impl(move.GetMeasurementResult)
     @interp.impl(move.CZ)
     def noop_impl(
         self,

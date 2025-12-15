@@ -303,9 +303,9 @@ class InsertInitialize(RewriteRule):
 
         first_stmt = node.body.blocks[0].first_stmt
 
-        if first_stmt is None or isinstance(first_stmt, move.Initialize):
+        if first_stmt is None or isinstance(first_stmt, move.LogicalInitialize):
             return RewriteResult()
-        move.Initialize(
+        move.LogicalInitialize(
             location_addresses=self.init_locations,
             thetas=self.thetas,
             phis=self.phis,

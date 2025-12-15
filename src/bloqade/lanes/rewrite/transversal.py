@@ -4,25 +4,36 @@ from itertools import chain
 from kirin import ir, types
 from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
-from typing_extensions import Callable, Iterable, Sequence, TypeGuard, TypeVar
+from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
-T = TypeVar("T")
+from .utils import no_none_elements
 
 
-def no_none_elements(xs: Sequence[T | None]) -> TypeGuard[Sequence[T]]:
-    """Check that there are no None elements in the sequence.
+@dataclass
+class RewriteLogicalInitialize(rewrite_abc.RewriteRule):
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
-    Args:
-        xs: A sequence that may contain None elements.
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, (move.LogicalInitialize)):
+            return rewrite_abc.RewriteResult()
 
-    Returns:
-        A TypeGuard indicating that all elements are not None.
+        iterators = list(map(self.transform_location, node.location_addresses))
 
-    """
-    return all(x is not None for x in xs)
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
+        node.replace_by(
+            move.PhysicalInitialize(
+                thetas=node.thetas,
+                phis=node.phis,
+                lams=node.lams,
+                location_addresses=tuple(map(tuple, iterators)),
+            )
+        )
+        return rewrite_abc.RewriteResult(has_done_something=True)
 
 
 @dataclass
@@ -31,7 +42,7 @@ class RewriteLocations(rewrite_abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(
-            node, (move.Fill, move.LocalR, move.LocalRz, move.Initialize)
+            node, (move.Fill, move.LocalR, move.LocalRz, move.LogicalInitialize)
         ):
             return rewrite_abc.RewriteResult()
 

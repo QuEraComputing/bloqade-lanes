@@ -6,8 +6,8 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.worklist import WorkList
 from matplotlib.axes import Axes
 
+from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.layout.path import PathFinder
 
 
@@ -37,6 +37,40 @@ class AtomState(AtomStateType):
     def get_qubit(self, location: LocationAddress):
         if location in self.locations:
             return self.locations.index(location)
+
+    def get_qubit_pairing(self, zone_address: ZoneAddress, arch_spec: ArchSpec):
+
+        controls: list[int] = []
+        targets: list[int] = []
+        unpaired: list[int] = []
+        visited: set[int] = set()
+        word_ids = arch_spec.zones[zone_address.zone_id]
+
+        for qubit_index, address in enumerate(self.locations):
+            if qubit_index in visited:
+                continue
+
+            visited.add(qubit_index)
+            if (word_id := address.word_id) not in word_ids:
+                continue
+
+            site = arch_spec.words[word_id][address.site_id]
+
+            if site.cz_pair is None:
+                unpaired.append(qubit_index)
+                continue
+
+            target_site = site.cz_pair
+            target_id = self.get_qubit(LocationAddress(word_id, target_site))
+            if target_id is None:
+                unpaired.append(qubit_index)
+                continue
+
+            controls.append(qubit_index)
+            targets.append(target_id)
+            visited.add(target_id)
+
+        return controls, targets, unpaired
 
     def draw_atoms(self, arch_spec: ArchSpec, ax: Axes | None = None, **kwargs):
         import matplotlib.pyplot as plt

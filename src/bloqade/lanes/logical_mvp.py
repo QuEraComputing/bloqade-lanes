@@ -24,6 +24,7 @@ def compile_squin(mt: ir.Method, transversal_rewrite: bool = False):
         rewrite.Walk(
             rewrite.Chain(
                 transversal.RewriteLocations(logical.steane7_transversal_map),
+                transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
                 transversal.RewriteMoves(logical.steane7_transversal_map),
                 transversal.RewriteGetMeasurementResult(
                     logical.steane7_transversal_map
