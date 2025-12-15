@@ -3,4 +3,5 @@ from .analysis import (
     AtomFrame as AtomFrame,
     AtomInterpreter as AtomInterpreter,
     AtomState as AtomState,
+    AtomStateType as AtomStateType,
 )
