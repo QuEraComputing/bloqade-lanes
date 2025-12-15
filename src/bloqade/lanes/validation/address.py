@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, TypeGuard, TypeVar
 
 from kirin import interp, ir
@@ -13,8 +13,8 @@ from bloqade.lanes.layout.encoding import Encoder, LaneAddress
 
 @dataclass
 class _ValidationAnalysis(Forward[EmptyLattice]):
-
-    keys = "move.address.validation"
+    lattice = EmptyLattice
+    keys = ("move.address.validation",)
 
     arch_spec: ArchSpec
 
@@ -49,7 +49,7 @@ class _ValidationAnalysis(Forward[EmptyLattice]):
         yield from filter(has_error, error_checks)
 
 
-@move.dialect.register(key="move.lane.validation")
+@move.dialect.register(key="move.address.validation")
 class _MoveMethods(interp.MethodTable):
     @interp.impl(move.Move)
     def lane_checker(
@@ -102,7 +102,6 @@ class _MoveMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: move.Initialize | move.LocalR | move.LocalRz | move.Fill,
     ):
-
         invalid_locations = list(
             _interp.filter_by_error(
                 node.location_addresses,
@@ -141,10 +140,7 @@ class _MoveMethods(interp.MethodTable):
 class Validation(ValidationPass):
     """Validates a move program against an architecture specification."""
 
-    arch_spec: ArchSpec
-
-    def name(self) -> str:
-        return "Lane Architecture Validation"
+    arch_spec: ArchSpec = field(kw_only=True)
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
 
