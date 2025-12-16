@@ -42,7 +42,7 @@ def steane7_initialize(
     theta: float, phi: float, lam: float, qubits: ilist.IList[qubit.Qubit, Literal[7]]
 ):
     debug.info("Begin Steane7 Initialize")
-    # squin.u3(theta, phi, lam, qubits[6])
+    # squin.u3(theta, phi, lam, qubits[6]) # TODO: uncomment when u3 is supported
     squin.broadcast.sqrt_y_adj(qubits[:6])
     evens = qubits[::2]
     odds = qubits[1::2]
