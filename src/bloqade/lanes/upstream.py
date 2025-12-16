@@ -10,7 +10,6 @@ from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.passes.canonicalize import CanonicalizeNative
 from bloqade.lanes.rewrite import circuit2place, place2move
 
 
@@ -28,14 +27,42 @@ class NativeToPlace:
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place).discard(native_gate))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
-        CanonicalizeNative(out.dialects, no_raise=no_raise).fixpoint(out)
+
+        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
+            out.code
+        )
+
+        rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
+            out.code
+        )
+
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
+        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
         ).rewrite(out.code)
 
-        rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
+        rewrite.Walk(
+            rewrite.Chain(
+                rewrite.DeadCodeElimination(), rewrite.CommonSubexpressionElimination()
+            )
         ).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
+
+        rewrite.Fixpoint(
+            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
+        ).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
+
+        rewrite.Fixpoint(
+            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
+        ).rewrite(out.code)
+
         passes.TypeInfer(out.dialects)(out)
 
         out.verify()
@@ -53,11 +80,12 @@ class PlaceToMove:
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(move))
-
+        address_analysis = address.AddressAnalysis(out.dialects)
         if no_raise:
-            address_frame, _ = address.AddressAnalysis(out.dialects).run_no_raise(out)
-            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
-                out.dialects, self.layout_heristic, address_frame.entries
+            address_frame, _ = address_analysis.run_no_raise(out)
+            all_qubits = tuple(range(address_analysis.next_address))
+            initial_layout = layout.LayoutAnalysis(
+                out.dialects, self.layout_heristic, address_frame.entries, all_qubits
             ).get_layout_no_raise(out)
 
             placement_frame, _ = placement.PlacementAnalysis(
@@ -67,9 +95,10 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run_no_raise(out)
         else:
-            address_frame, _ = address.AddressAnalysis(out.dialects).run(out)
-            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
-                out.dialects, self.layout_heristic, address_frame.entries
+            address_frame, _ = address_analysis.run(out)
+            all_qubits = tuple(range(address_analysis.next_address))
+            initial_layout = layout.LayoutAnalysis(
+                out.dialects, self.layout_heristic, address_frame.entries, all_qubits
             ).get_layout(out)
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
@@ -77,10 +106,9 @@ class PlaceToMove:
                 address_frame.entries,
                 self.placement_strategy,
             ).run(out)
-
         rule = rewrite.Chain(
             place2move.InsertFill(initial_layout),
-            place2move.InsertInitialize(init_locations, thetas, phis, lams),
+            place2move.InsertInitialize(address_frame.entries, initial_layout),
             place2move.InsertMoves(self.move_scheduler, placement_frame.entries),
             place2move.RewriteCZ(self.move_scheduler, placement_frame.entries),
             place2move.RewriteR(self.move_scheduler, placement_frame.entries),
@@ -94,9 +122,10 @@ class PlaceToMove:
 
         rewrite.Walk(
             rewrite.Chain(
-                place2move.LiftMoveStatements(), place2move.RemoveNoOpStaticPlacements()
+                place2move.LiftMoveStatements(), place2move.DeleteInitialize()
             )
         ).rewrite(out.code)
+        rewrite.Walk(place2move.RemoveNoOpStaticPlacements()).rewrite(out.code)
 
         rewrite.Fixpoint(
             rewrite.Walk(

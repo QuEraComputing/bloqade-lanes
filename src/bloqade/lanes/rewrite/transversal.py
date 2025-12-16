@@ -41,9 +41,7 @@ class RewriteLocations(rewrite_abc.RewriteRule):
     transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(
-            node, (move.Fill, move.LocalR, move.LocalRz, move.LogicalInitialize)
-        ):
+        if not isinstance(node, (move.Fill, move.LocalR, move.LocalRz)):
             return rewrite_abc.RewriteResult()
 
         iterators = list(map(self.transform_location, node.location_addresses))

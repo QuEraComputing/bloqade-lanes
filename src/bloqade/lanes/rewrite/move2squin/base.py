@@ -60,12 +60,14 @@ class CleanUpMoveDialect(rewrite_abc.RewriteRule):
             isinstance(
                 node,
                 (
+                    move.Fill,
                     move.LocalRz,
                     move.GlobalRz,
                     move.LocalR,
                     move.GlobalR,
                     move.GetMeasurementResult,
                     move.PhysicalInitialize,
+                    move.LogicalInitialize,
                     move.Move,
                     move.EndMeasure,
                     move.CZ,

@@ -13,6 +13,39 @@ from bloqade.lanes.types import StateType
 dialect = ir.Dialect(name="lanes.place")
 
 
+@statement(dialect=dialect)
+class LogicalInitialize(ir.Statement):
+    """Initialize logical qubits in the |0> state.
+
+    Args:
+        qubits (tuple[int, ...]): The logical qubit IDs to initialize.
+
+    """
+
+    theta: ir.SSAValue = info.argument(type=types.Float)
+    phi: ir.SSAValue = info.argument(type=types.Float)
+    lam: ir.SSAValue = info.argument(type=types.Float)
+    qubits: tuple[ir.SSAValue, ...] = info.argument(bloqade_types.QubitType)
+
+
+@statement(dialect=dialect)
+class NewLogicalQubit(ir.Statement):
+    """Allocate new logical qubits with initial state u3(theta, phi, lam)|0>.
+
+    Args:
+        theta (float): Angle for rotation around the Y axis
+        phi (float): angle for rotation around the Z axis
+        lam (float): angle for rotation around the Z axis
+
+    """
+
+    traits = frozenset()
+    theta: ir.SSAValue = info.argument(types.Float)
+    phi: ir.SSAValue = info.argument(types.Float)
+    lam: ir.SSAValue = info.argument(types.Float)
+    result: ir.ResultValue = info.result(bloqade_types.QubitType)
+
+
 @statement(init=False)
 class QuantumStmt(ir.Statement):
     """This is a base class for all low level statements."""
@@ -245,21 +278,6 @@ class InitialLayoutMethods(interp.MethodTable):
 
         return ()
 
-    @interp.impl(Initialize)
-    def initialize(
-        self,
-        _interp: LayoutAnalysis,
-        frame: ForwardFrame[EmptyLattice],
-        stmt: Initialize,
-    ):
-        for qubit_id in stmt.qubits:
-            global_qubit_id = _interp.global_address_stack[qubit_id]
-            _interp.thetas[global_qubit_id] = stmt.theta
-            _interp.phis[global_qubit_id] = stmt.phi
-            _interp.lams[global_qubit_id] = stmt.lam
-
-        return ()
-
     @interp.impl(StaticPlacement)
     def static_circuit(
         self,
@@ -282,3 +300,18 @@ class InitialLayoutMethods(interp.MethodTable):
         _interp.global_address_stack.clear()
 
         return tuple(EmptyLattice.bottom() for _ in stmt.results)
+
+
+@dialect.register(key="qubit.address")
+class QubitAddressAnalysis(interp.MethodTable):
+
+    @interp.impl(NewLogicalQubit)
+    def new_logical_qubit(
+        self,
+        _interp: address.AddressAnalysis,
+        frame: ForwardFrame[address.Address],
+        stmt: NewLogicalQubit,
+    ):
+        addr = address.AddressQubit(_interp.next_address)
+        _interp.next_address += 1
+        return (addr,)
