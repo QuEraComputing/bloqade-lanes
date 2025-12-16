@@ -278,24 +278,6 @@ class InitialLayoutMethods(interp.MethodTable):
 
         return ()
 
-    @interp.impl(NewLogicalQubit)
-    def initialize(
-        self,
-        _interp: LayoutAnalysis,
-        frame: ForwardFrame[EmptyLattice],
-        stmt: NewLogicalQubit,
-    ):
-
-        address = _interp.address_entries.get(stmt.result)
-        if isinstance(address, address.AddressQubit):
-            _interp.thetas[address.data] = stmt.theta
-            _interp.phis[address.data] = stmt.phi
-            _interp.lams[address.data] = stmt.lam
-            _interp.all_qubits.add(address.data)
-            _interp.latest_alloc =
-
-        return (EmptyLattice.bottom(),)
-
     @interp.impl(StaticPlacement)
     def static_circuit(
         self,
