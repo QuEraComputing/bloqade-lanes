@@ -61,8 +61,7 @@ class NativeToPlace:
         ).rewrite(out.code)
 
         passes.TypeInfer(out.dialects)(out)
-        out.print()
-        exit()
+
         out.verify()
         out.verify_type()
 
