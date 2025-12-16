@@ -1,6 +1,6 @@
 from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.upstream import SquinToNative
-from bloqade.rewrite.passes import AggressiveUnroll, CallGraphPass
+from bloqade.rewrite.passes import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, rewrite
 
@@ -9,10 +9,21 @@ from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.rewrite import transversal
+from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
+from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
 
 
-def compile_squin(mt: ir.Method, transversal_rewrite: bool = False):
+def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
+    """Compile a squin kernel to move dialect.
+
+    Args:
+        mt (ir.Method): The Squin kernel to compile.
+        transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False
+    Returns:
+        ir.Method: The compiled move dialect method.
+    """
+
     # Compile to move dialect
     rule = rewrite.Chain(
         rewrite.Walk(
@@ -47,11 +58,18 @@ def compile_squin(mt: ir.Method, transversal_rewrite: bool = False):
     return mt
 
 
-def compile_and_visualize(
+def compile_squin_to_move_and_visualize(
     mt: ir.Method, interactive: bool = True, transversal_rewrite: bool = False
 ):
+    """Compile a squin kernel to moves and visualize the program.
+
+    Args:
+        mt (ir.Method): The Squin kernel to compile.
+        interactive (bool, optional): Whether to display the visualization interactively. Defaults to True.
+        transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
+    """
     # Compile to move dialect
-    mt = compile_squin(mt, transversal_rewrite)
+    mt = compile_squin_to_move(mt, transversal_rewrite)
     if transversal_rewrite:
         arch_spec = generate_arch(4)
         marker = "o"
@@ -60,3 +78,25 @@ def compile_and_visualize(
         marker = "s"
 
     visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker=marker)
+
+
+def compile_to_physical_squin_noise_model(mt: ir.Method, noise_model: NoiseModelABC):
+    """Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
+
+    Args:
+        mt: The logical squin method to compile.
+        noise_model: The noise model to insert during compilation.
+    Returns:
+        The compiled physical squin method.
+
+    """
+    move_mt = compile_squin_to_move(mt, transversal_rewrite=True)
+
+    transformer = MoveToSquin(
+        arch_spec=generate_arch(4),
+        logical_initialization=logical.steane7_initialize,
+        noise_model=noise_model,
+        aggressive_unroll=False,
+    )
+
+    return transformer.emit(move_mt)

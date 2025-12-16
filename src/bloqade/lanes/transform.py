@@ -5,6 +5,7 @@ from bloqade.rewrite.passes import aggressive_unroll as agg
 from bloqade.squin.rewrite import SquinU3ToClifford
 from kirin import ir, rewrite
 from kirin.dialects import ilist
+from kirin.passes import TypeInfer
 
 from bloqade import qubit, squin
 from bloqade.lanes import layout
@@ -18,7 +19,7 @@ from bloqade.lanes.rewrite.move2squin import (
 
 
 @dataclass
-class MoveToSquinTransformer:
+class MoveToSquin:
     arch_spec: layout.ArchSpec
     logical_initialization: ir.Method[
         [float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None
@@ -26,39 +27,38 @@ class MoveToSquinTransformer:
     noise_model: NoiseModelABC | None = None
     aggressive_unroll: bool = False
 
-    def transform(self, main: ir.Method) -> ir.Method:
+    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
         main = main.similar(main.dialects.union(squin.kernel))
 
-        interp = atom.AtomInterpreter(main.dialects, arch_spec=self.arch_spec)
-        frame, _ = interp.run(main)
+        vqpu = atom.AtomInterpreter(main.dialects, arch_spec=self.arch_spec)
+        run_method = vqpu.run_no_raise if no_raise else vqpu.run
 
-        rule = move2squin.InsertQubits()
-        rewrite.Walk(rule).rewrite(main.code)
+        frame, _ = run_method(main)
+        qubit_rule = move2squin.InsertQubits()
+        rewrite.Walk(qubit_rule).rewrite(main.code)
 
-        if self.noise_model is None:
-            rule = move2squin.InsertGates(
+        rules = []
+
+        rules.append(
+            move2squin.InsertGates(
                 self.arch_spec,
-                tuple(rule.physical_ssa_values),
+                tuple(qubit_rule.physical_ssa_values),
                 frame.atom_state_map,
                 self.logical_initialization,
             )
-        else:
-            rule = rewrite.Chain(
-                move2squin.InsertGates(
-                    self.arch_spec,
-                    tuple(rule.physical_ssa_values),
-                    frame.atom_state_map,
-                    self.logical_initialization,
-                ),
+        )
+        if self.noise_model is not None:
+            rules.append(
                 move2squin.InsertNoise(
                     self.arch_spec,
-                    tuple(rule.physical_ssa_values),
+                    tuple(qubit_rule.physical_ssa_values),
                     frame.atom_state_map,
                     self.noise_model,
                 ),
             )
 
-        rewrite.Walk(rule).rewrite(main.code)
+        rewrite.Walk(rewrite.Chain(*rules)).rewrite(main.code)
+        # we need to fold before writing U3 to Clifford
         if self.aggressive_unroll:
             agg.AggressiveUnroll(main.dialects).fixpoint(main)
         else:
@@ -72,6 +72,9 @@ class MoveToSquinTransformer:
         ).rewrite(main.code)
 
         out = main.similar(main.dialects.discard(move.dialect))
+
+        TypeInfer(out.dialects)(out)
         out.verify()
+        out.verify_type()
 
         return out
