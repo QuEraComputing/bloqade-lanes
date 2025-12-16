@@ -47,10 +47,10 @@ def invalid_methods():
 
 
 @pytest.mark.parametrize("mt", invalid_methods())
-def test_invalid_location(mt: ir.Method):
+def test_address_invalid_location(mt: ir.Method):
 
-    valdiator = ValidationSuite([validation.AddressValidation])
-    result = valdiator.validate(mt)
+    validator = ValidationSuite([validation.AddressValidation])
+    result = validator.validate(mt)
 
     with pytest.raises(ValidationErrorGroup):
         result.raise_if_invalid()

@@ -211,7 +211,7 @@ class ArchSpec(Generic[SiteType]):
             lane1: The first lane address.
             lane2: The second lane address.
         Returns:
-            The error message if the lanes are not compatible, or None if they are.
+            set[str]: A set of error messages indicating why the lanes are not compatible.
 
         NOTE: this function assumes that both lanes are valid.
 
@@ -266,11 +266,7 @@ class ArchSpec(Generic[SiteType]):
 
     def validate_lane(self, lane_address: LaneAddress) -> set[str]:
         """Check if a lane address is valid in this architecture."""
-        errors = set()
-        if (
-            source_error := self.validate_location(lane_address.src_site())
-        ) is not None:
-            errors.update(source_error)
+        errors = self.validate_location(lane_address.src_site())
 
         if lane_address.move_type is MoveType.WORD:
             if lane_address.site_id not in self.has_word_buses:

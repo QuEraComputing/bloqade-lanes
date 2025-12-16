@@ -37,8 +37,8 @@ class _ValidationAnalysis(Forward[EmptyLattice]):
 
         Args:
             addresses: A tuple of address objects to be checked.
-            checker: A function that takes an address and returns an error message
-                if the address is invalid, or None if it is valid.
+            checker: A function that takes an address and returns a set of error messages.
+                if the set is empty, the address is considered valid.
         Yields:
             Tuples of (address, error message) for each address that has an error.
         """
@@ -77,6 +77,9 @@ class _MoveMethods(interp.MethodTable):
                 )
 
         valid_lanes = set(node.lanes) - set(invalid_lanes)
+        if len(valid_lanes) == 0:
+            return
+
         first_lane = valid_lanes.pop()
         incompatible_lanes = []
 
