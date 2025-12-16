@@ -55,14 +55,11 @@ class NativeToPlace:
                 rewrite.Walk(circuit2place.HoistNewQubitsUp()),
             )
         ).rewrite(out.code)
-        out.print()
 
         passes.TypeInfer(out.dialects)(out)
 
         out.verify()
         out.verify_type()
-
-        exit()
 
         return out
 
@@ -76,11 +73,12 @@ class PlaceToMove:
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(move))
-
+        address_analysis = address.AddressAnalysis(out.dialects)
         if no_raise:
-            address_frame, _ = address.AddressAnalysis(out.dialects).run_no_raise(out)
-            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
-                out.dialects, self.layout_heristic, address_frame.entries
+            address_frame, _ = address_analysis.run_no_raise(out)
+            all_qubits = tuple(range(address_analysis.next_address))
+            initial_layout = layout.LayoutAnalysis(
+                out.dialects, self.layout_heristic, address_frame.entries, all_qubits
             ).get_layout_no_raise(out)
 
             placement_frame, _ = placement.PlacementAnalysis(
@@ -90,9 +88,10 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run_no_raise(out)
         else:
-            address_frame, _ = address.AddressAnalysis(out.dialects).run(out)
-            initial_layout, init_locations, thetas, phis, lams = layout.LayoutAnalysis(
-                out.dialects, self.layout_heristic, address_frame.entries
+            address_frame, _ = address_analysis.run(out)
+            all_qubits = tuple(range(address_analysis.next_address))
+            initial_layout = layout.LayoutAnalysis(
+                out.dialects, self.layout_heristic, address_frame.entries, all_qubits
             ).get_layout(out)
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
@@ -102,7 +101,7 @@ class PlaceToMove:
             ).run(out)
         rule = rewrite.Chain(
             place2move.InsertFill(initial_layout),
-            place2move.InsertInitialize(init_locations, thetas, phis, lams),
+            place2move.InsertInitialize(address_frame.entries, initial_layout),
             place2move.InsertMoves(self.move_scheduler, placement_frame.entries),
             place2move.RewriteCZ(self.move_scheduler, placement_frame.entries),
             place2move.RewriteR(self.move_scheduler, placement_frame.entries),

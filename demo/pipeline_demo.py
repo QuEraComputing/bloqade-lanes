@@ -78,7 +78,7 @@ def main():
     squin.cx(q[7], q[1])
     squin.cx(q[8], q[0])
 
-    return gemini_logical.terminal_measure(q)
+    gemini_logical.terminal_measure(q)
 
 
 @squin.kernel
@@ -106,19 +106,17 @@ def idle_noise(qubits: ilist.IList[qubit.Qubit, Any]):
 arch_spec = generate_arch()
 
 main = compile_squin(main, transversal_rewrite=True)
-main.print()
 
-exit()
 transformer = MoveToSquinTransformer(
     arch_spec=arch_spec,
     logical_initialization=steane7_initialize,
     noise_model=SimpleNoiseModel(lane_noise, idle_noise, cz_unpaired_noise),
-    aggressive_unroll=False,
+    aggressive_unroll=True,
 )
 
 main = transformer.transform(main)
+
 main = squin_to_stim(main)
-main.print()
 
 buf = io.StringIO()
 emit = EmitStimMain(dialects=stim.main, io=buf)

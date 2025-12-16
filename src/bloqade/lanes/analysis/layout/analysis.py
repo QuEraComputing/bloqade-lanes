@@ -43,31 +43,13 @@ class LayoutAnalysis(Forward):
 
     heuristic: LayoutHeuristicABC
     address_entries: dict[ir.SSAValue, address.Address]
-    all_qubits: tuple[int, ...] = field(init=False)
-    thetas: dict[int, ir.SSAValue] = field(default_factory=dict, init=False)
-    phis: dict[int, ir.SSAValue] = field(default_factory=dict, init=False)
-    lams: dict[int, ir.SSAValue] = field(default_factory=dict, init=False)
+    all_qubits: tuple[int, ...]
     stages: list[tuple[tuple[int, int], ...]] = field(default_factory=list, init=False)
     global_address_stack: list[int] = field(default_factory=list, init=False)
-
-    def __post_init__(self) -> None:
-        self.all_qubits = tuple(
-            sorted(
-                set(
-                    ele.data
-                    for ele in self.address_entries.values()
-                    if isinstance(ele, address.AddressQubit)
-                )
-            )
-        )
-        super().__post_init__()
 
     def initialize(self):
         self.stages.clear()
         self.global_address_stack.clear()
-        self.thetas.clear()
-        self.phis.clear()
-        self.lams.clear()
         return super().initialize()
 
     def eval_stmt_fallback(self, frame, stmt):
@@ -83,24 +65,7 @@ class LayoutAnalysis(Forward):
 
     def process_results(self):
         layout = self.heuristic.compute_layout(self.all_qubits, self.stages)
-        init_locations = tuple(
-            loc
-            for qubit_id, loc in zip(self.all_qubits, layout)
-            if qubit_id in self.thetas
-        )
-        thetas = tuple(
-            self.thetas[qubit_id]
-            for qubit_id in self.all_qubits
-            if qubit_id in self.thetas
-        )
-        phis = tuple(
-            self.phis[qubit_id] for qubit_id in self.all_qubits if qubit_id in self.phis
-        )
-        lams = tuple(
-            self.lams[qubit_id] for qubit_id in self.all_qubits if qubit_id in self.lams
-        )
-
-        return layout, init_locations, thetas, phis, lams
+        return layout
 
     def get_layout_no_raise(self, method: ir.Method):
         """Get the layout for a given method."""

@@ -1,12 +1,11 @@
 import abc
 from dataclasses import dataclass, field
 
-from bloqade.gemini.dialects.logical import stmts as gemini_logical_stmts
+from bloqade.analysis import address
 from kirin import ir
 from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
-from bloqade import qubit
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.arch import ArchSpec
@@ -293,29 +292,48 @@ class RemoveNoOpStaticPlacements(RewriteRule):
 
 @dataclass
 class InsertInitialize(RewriteRule):
-    init_locations: tuple[LocationAddress, ...]
-    thetas: tuple[ir.SSAValue, ...]
-    phis: tuple[ir.SSAValue, ...]
-    lams: tuple[ir.SSAValue, ...]
+    address_entries: dict[ir.SSAValue, address.Address]
+    initial_layout: tuple[LocationAddress, ...]
 
-    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not (len(self.init_locations) > 0 and isinstance(node, func.Function)):
-            return RewriteResult()
+    def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        stmt = node.first_stmt
+        thetas: list[ir.SSAValue] = []
+        phis: list[ir.SSAValue] = []
+        lams: list[ir.SSAValue] = []
+        location_addresses: list[LocationAddress] = []
 
-        if (stmt := node.body.blocks[0].first_stmt) is None:
-            return RewriteResult()
+        while stmt is not None:
+            if not isinstance(stmt, place.NewLogicalQubit):
+                stmt = stmt.next_stmt
+                continue
 
-        while not isinstance(stmt, gemini_logical_stmts.Initialize):
-            stmt = stmt.next_stmt
-            if stmt is None:
+            if not isinstance(
+                qubit_addr := self.address_entries.get(stmt.result),
+                address.AddressQubit,
+            ):
                 return RewriteResult()
 
+            if qubit_addr.data >= len(self.initial_layout):
+                return RewriteResult()
+
+            location_addresses.append(self.initial_layout[qubit_addr.data])
+            thetas.append(stmt.theta)
+            phis.append(stmt.phi)
+            lams.append(stmt.lam)
+            stmt = stmt.next_stmt
+            if len(location_addresses) == len(self.initial_layout):
+                break
+
+        if stmt is None:
+            return RewriteResult()
+
         move.LogicalInitialize(
-            location_addresses=self.init_locations,
-            thetas=self.thetas,
-            phis=self.phis,
-            lams=self.lams,
+            tuple(thetas),
+            tuple(phis),
+            tuple(lams),
+            location_addresses=tuple(location_addresses),
         ).insert_before(stmt)
+
         return RewriteResult(has_done_something=True)
 
 
@@ -339,7 +357,7 @@ class InsertFill(RewriteRule):
 
 class DeleteQubitNew(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not (isinstance(node, qubit.stmts.New) and len(node.result.uses) == 0):
+        if not (isinstance(node, place.NewLogicalQubit) and len(node.result.uses) == 0):
             return RewriteResult()
 
         node.delete()
