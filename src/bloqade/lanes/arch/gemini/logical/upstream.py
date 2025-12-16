@@ -1,8 +1,10 @@
 from dataclasses import replace
-from typing import Iterator, TypeVar
+from typing import Iterator, Literal, TypeVar
 
 from kirin import ir, rewrite
+from kirin.dialects import debug, ilist
 
+from bloqade import qubit, squin
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.rewrite.transversal import (
     RewriteGetMeasurementResult,
@@ -33,6 +35,25 @@ def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | Non
         return (replace(address, word_id=word_id) for word_id in range(8, 15, 1))
     else:
         return None
+
+
+@squin.kernel
+def steane7_initialize(
+    theta: float, phi: float, lam: float, qubits: ilist.IList[qubit.Qubit, Literal[7]]
+):
+    debug.info("Begin Steane7 Initialize")
+    # squin.u3(theta, phi, lam, qubits[6]) # TODO: uncomment when u3 is supported
+    squin.broadcast.sqrt_y_adj(qubits[:6])
+    evens = qubits[::2]
+    odds = qubits[1::2]
+
+    squin.broadcast.cz(odds, evens[:-1])
+    squin.sqrt_y(qubits[6])
+    squin.broadcast.cz(evens[:-1], ilist.IList([qubits[3], qubits[5], qubits[6]]))
+    squin.broadcast.sqrt_y(qubits[2:])
+    squin.broadcast.cz(evens[:-1], odds)
+    squin.broadcast.sqrt_y(ilist.IList([qubits[1], qubits[2], qubits[4]]))
+    debug.info("End Steane7 Initialize")
 
 
 class SpecializeGemini:

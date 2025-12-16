@@ -156,12 +156,15 @@ class Move(interp.MethodTable):
         frame.current_state = current_state.update(qubits_to_move, prev_lanes)
         frame.set_state_for_stmt(stmt)
 
+    @interp.impl(move.CZ)
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
     @interp.impl(move.GlobalR)
     @interp.impl(move.GlobalRz)
     @interp.impl(move.EndMeasure)
-    @interp.impl(move.CZ)
+    @interp.impl(move.LogicalInitialize)
+    @interp.impl(move.PhysicalInitialize)
+    @interp.impl(move.GetMeasurementResult)
     def noop_impl(
         self,
         interp_: AtomInterpreter,

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from itertools import chain
 from typing import Any, Callable, Iterable, TypeVar
 
 from kirin import interp, ir
@@ -95,7 +96,7 @@ class _MoveMethods(interp.MethodTable):
                     ),
                 )
 
-    @interp.impl(move.Initialize)
+    @interp.impl(move.LogicalInitialize)
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
     @interp.impl(move.Fill)
@@ -103,11 +104,35 @@ class _MoveMethods(interp.MethodTable):
         self,
         _interp: _ValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        node: move.Initialize | move.LocalR | move.LocalRz | move.Fill,
+        node: move.LogicalInitialize | move.LocalR | move.LocalRz | move.Fill,
     ):
         invalid_locations = list(
             _interp.filter_by_error(
                 node.location_addresses,
+                _interp.arch_spec.validate_location,
+            )
+        )
+
+        for lane_address, error_msgs in invalid_locations:
+            for error_msg in error_msgs:
+                _interp.add_validation_error(
+                    node,
+                    ir.ValidationError(
+                        node,
+                        f"Invalid location address {lane_address!r}: {error_msg}",
+                    ),
+                )
+
+    @interp.impl(move.PhysicalInitialize)
+    def location_checker_physical(
+        self,
+        _interp: _ValidationAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        node: move.PhysicalInitialize,
+    ):
+        invalid_locations = list(
+            _interp.filter_by_error(
+                chain.from_iterable(node.location_addresses),
                 _interp.arch_spec.validate_location,
             )
         )
