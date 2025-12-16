@@ -10,7 +10,6 @@ from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.passes.canonicalize import HoistConstants
 from bloqade.lanes.rewrite import circuit2place, place2move
 
 
@@ -29,7 +28,7 @@ class NativeToPlace:
         out = mt.similar(mt.dialects.add(place).discard(native_gate))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
 
-        rewrite.Walk(HoistConstants()).rewrite(out.code)
+        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
             out.code
@@ -40,24 +39,30 @@ class NativeToPlace:
         )
 
         rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
-
         rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
 
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
         ).rewrite(out.code)
 
-        rewrite.Walk(rewrite.DeadCodeElimination()).rewrite(out.code)
+        rewrite.Walk(
+            rewrite.Chain(
+                rewrite.DeadCodeElimination(), rewrite.CommonSubexpressionElimination()
+            )
+        ).rewrite(out.code)
 
+        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
+        out.print()
         rewrite.Fixpoint(
             rewrite.Chain(
-                rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
                 rewrite.Walk(circuit2place.HoistNewQubitsUp()),
+                rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
             )
         ).rewrite(out.code)
 
         passes.TypeInfer(out.dialects)(out)
-
+        out.print()
+        exit()
         out.verify()
         out.verify_type()
 

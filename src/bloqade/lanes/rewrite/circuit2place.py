@@ -238,6 +238,31 @@ class RewritePlaceOperations(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+class HoistConstants(abc.RewriteRule):
+    """This rewrite rule hoists all constant values to the top of the kernel."""
+
+    def is_pure(self, node: ir.Statement) -> bool:
+        return (
+            node.has_trait(ir.Pure)
+            or (maybe_pure := node.get_trait(ir.MaybePure)) is not None
+            and maybe_pure.is_pure(node)
+        )
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not (
+            isinstance(node, py.Constant)
+            and (parent_block := node.parent_block) is not None
+            and (first_stmt := parent_block.first_stmt) is not None
+            and node is not first_stmt
+        ):
+            return abc.RewriteResult()
+
+        node.detach()
+        node.insert_before(first_stmt)
+
+        return abc.RewriteResult(has_done_something=True)
+
+
 class HoistNewQubitsUp(abc.RewriteRule):
     """This rewrite rule shifts all qubit allocations and lists of qubits
     before any gate operations.
@@ -245,9 +270,9 @@ class HoistNewQubitsUp(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, qubit.stmts.New)
-            and (next_node := node.next_stmt) is not None
-            and node.result not in set(next_node.args)
+            not isinstance(node, place.NewLogicalQubit)
+            and isinstance(next_node := node.next_stmt, place.NewLogicalQubit)
+            and set(node.results).isdisjoint(next_node.args)
         ):
             return abc.RewriteResult()
 
