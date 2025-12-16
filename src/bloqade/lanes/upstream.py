@@ -52,11 +52,15 @@ class NativeToPlace:
         ).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
+
         rewrite.Fixpoint(
-            rewrite.Chain(
-                rewrite.Walk(circuit2place.HoistNewQubitsUp()),
-                rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
-            )
+            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
+        ).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
+
+        rewrite.Fixpoint(
+            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
         ).rewrite(out.code)
 
         passes.TypeInfer(out.dialects)(out)

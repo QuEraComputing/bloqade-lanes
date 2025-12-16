@@ -115,7 +115,7 @@ transformer = MoveToSquinTransformer(
 )
 
 main = transformer.transform(main)
-main.print()
+# main.print()
 main = squin_to_stim(main)
 
 buf = io.StringIO()

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, TypeGuard
 
 from bloqade.gemini.dialects.logical import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gate
@@ -264,20 +264,35 @@ class HoistConstants(abc.RewriteRule):
 
 
 class HoistNewQubitsUp(abc.RewriteRule):
-    """This rewrite rule shifts all qubit allocations and lists of qubits
-    before any gate operations.
-    """
+    """This rewrite rule shifts all qubit allocations before all gate operations."""
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            not isinstance(node, place.NewLogicalQubit)
-            and isinstance(next_node := node.next_stmt, place.NewLogicalQubit)
-            and set(node.results).isdisjoint(next_node.args)
+            isinstance(node, place.NewLogicalQubit)
+            and (parent_block := node.parent_block) is not None
+            and (first_stmt := parent_block.first_stmt) is not None
+            and node is not first_stmt
         ):
             return abc.RewriteResult()
 
-        next_node.detach()
-        next_node.insert_before(node)
+        stmt = node.prev_stmt
+        node.detach()
+
+        def loop_cond(stmt: ir.Statement | None) -> TypeGuard[ir.Statement]:
+            return (
+                stmt is not None
+                and not isinstance(stmt, place.NewLogicalQubit)
+                and set(stmt.results).isdisjoint(node.args)
+            )
+
+        while loop_cond(stmt):
+            stmt = stmt.prev_stmt
+
+        if stmt is None:
+            node.insert_before(first_stmt)
+        else:
+            node.insert_after(stmt)
+
         return abc.RewriteResult(has_done_something=True)
 
 
