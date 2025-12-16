@@ -13,7 +13,7 @@ from bloqade.lanes.types import StateType
 
 
 class RewriteInitializeToLogicalInitialize(abc.RewriteRule):
-    """Rewrite Initialize statements to NewLogical qubit allocations."""
+    """Rewrite gemini.logical.Initialize statements to place.LogicalInitialize statement."""
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
@@ -34,21 +34,23 @@ class RewriteInitializeToLogicalInitialize(abc.RewriteRule):
 
 
 class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
-    """Rewrite LogicalInitialize statements to NewLogical qubit allocations."""
+    """Rewrite qubit references in place.LogicalInitialize statements to place.NewLogicalQubit allocations."""
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not isinstance(node, place.LogicalInitialize):
             return abc.RewriteResult()
 
-        qubit_stmts = tuple(qubit.owner for qubit in node.qubits)
+        def is_qubit_new(owner: ir.Statement | ir.Block) -> TypeGuard[qubit.stmts.New]:
+            return isinstance(owner, qubit.stmts.New)
 
-        if not types.is_tuple_of(qubit_stmts, qubit.stmts.New):
-            return abc.RewriteResult()
+        qubit_stmts = tuple(
+            filter(is_qubit_new, (qubit.owner for qubit in node.qubits))
+        )
 
         for qubit_stmt in qubit_stmts:
             qubit_stmt.replace_by(place.NewLogicalQubit(node.theta, node.phi, node.lam))
 
-        return abc.RewriteResult(has_done_something=True)
+        return abc.RewriteResult(has_done_something=len(qubit_stmts) > 0)
 
 
 class CleanUpLogicalInitialize(abc.RewriteRule):
