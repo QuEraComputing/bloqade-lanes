@@ -65,17 +65,16 @@ def idle_noise(qubits: ilist.IList[qubit.Qubit, Any]):
     squin.broadcast.qubit_loss(0.00005, qubits)
 
 
-# main.print()
 noise_kernel = compile_to_physical_squin_noise_model(
     main,
-    noise_model=SimpleNoiseModel(lane_noise, idle_noise, cz_unpaired_noise),
+    SimpleNoiseModel(lane_noise, idle_noise, cz_unpaired_noise),
 )
 
-main = squin_to_stim(main)
+noise_kernel = squin_to_stim(noise_kernel)
 
 buf = io.StringIO()
 emit = EmitStimMain(dialects=stim.main, io=buf)
 emit.initialize()
-emit.run(node=main)
+emit.run(node=noise_kernel)
 result = buf.getvalue().strip()
 print(result)

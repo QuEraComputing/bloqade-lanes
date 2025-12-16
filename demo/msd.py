@@ -8,6 +8,7 @@ from bloqade.lanes.logical_mvp import compile_squin_to_move
 def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
+    squin.broadcast.t(reg)
 
     squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
     squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
@@ -19,4 +20,5 @@ def main():
 
 
 main = compile_squin_to_move(main)
+main.print()
 # compile_and_visualize(main)
