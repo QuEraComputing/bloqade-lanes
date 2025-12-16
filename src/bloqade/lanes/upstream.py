@@ -52,7 +52,6 @@ class NativeToPlace:
         ).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
-        out.print()
         rewrite.Fixpoint(
             rewrite.Chain(
                 rewrite.Walk(circuit2place.HoistNewQubitsUp()),
