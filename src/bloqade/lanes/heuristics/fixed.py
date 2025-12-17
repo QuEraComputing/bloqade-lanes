@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, replace
 from functools import cached_property
-from itertools import chain, combinations
+from itertools import chain, combinations, starmap
 
 from kirin import interp
 
@@ -31,14 +31,14 @@ class MoveOp:
     """Destination location address of the move."""
 
     @cached_property
-    def src_positions(self) -> list[tuple[float, float]]:
+    def src_positions(self) -> tuple[tuple[float, float], ...]:
         word = self.arch_spec.words[self.src.word_id]
-        return list(word.site_positions(self.src.site_id))
+        return tuple(word.site_positions(self.src.site_id))
 
     @cached_property
-    def dst_positions(self) -> list[tuple[float, float]]:
+    def dst_positions(self) -> tuple[tuple[float, float], ...]:
         word = self.arch_spec.words[self.dst.word_id]
-        return list(word.site_positions(self.dst.site_id))
+        return tuple(word.site_positions(self.dst.site_id))
 
 
 def check_conflict(m0: MoveOp, m1: MoveOp):
@@ -52,22 +52,22 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
         bool: True if there is a conflict, False otherwise.
 
     """
+
     flattened_coords = chain.from_iterable(
-        zip(*coords)
-        for coords in zip(
-            m0.src_positions,
-            m1.src_positions,
-            m0.dst_positions,
-            m1.dst_positions,
+        starmap(
+            zip,
+            zip(m0.src_positions, m1.src_positions, m0.dst_positions, m1.dst_positions),
         )
-    )
-    for src1, src0, dst1, dst0 in flattened_coords:
+    )  # flatten all the coordinates into tuples of (src0, src1, dst0, dst1) per dimension per position
+
+    def check_coord_conflict(
+        src0: float, dst0: float, src1: float, dst1: float
+    ) -> bool:
         dir_src = (src1 - src0) // abs(src1 - src0) if src1 != src0 else 0
         dir_dst = (dst1 - dst0) // abs(dst1 - dst0) if dst1 != dst0 else 0
-        if dir_src != dir_dst:
-            return True
+        return dir_src != dir_dst
 
-    return False
+    return any(starmap(check_coord_conflict, flattened_coords))
 
 
 @dataclass
