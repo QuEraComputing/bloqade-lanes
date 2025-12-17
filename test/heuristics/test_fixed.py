@@ -162,6 +162,33 @@ def cz_placement_cases():
         state_after,
     )
 
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 0),
+            LocationAddress(0, 1),
+            LocationAddress(0, 2),
+            LocationAddress(0, 3),
+        ),
+        move_count=(0, 0, 0, 1),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 7),
+            LocationAddress(0, 8),
+            LocationAddress(0, 2),
+            LocationAddress(0, 3),
+        ),
+        move_count=(1, 1, 0, 1),
+    )
+    yield (
+        state_before,
+        (1, 0),
+        (3, 2),
+        state_after,
+    )
+
     yield (
         state_before,
         (0, 1, 4),
