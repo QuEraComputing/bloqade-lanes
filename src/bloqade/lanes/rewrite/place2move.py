@@ -1,8 +1,8 @@
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from kirin import ir
-from kirin.dialects import func
+from kirin.dialects import debug, func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade import qubit
@@ -15,29 +15,17 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 @dataclass
 class MoveSchedulerABC(abc.ABC):
     arch_spec: ArchSpec
-    zone_address_map: dict[LocationAddress, tuple[ZoneAddress, int]] = field(
-        init=False, default_factory=dict
-    )
-
-    def __post_init__(self):
-        for zone_id, zone in enumerate(self.arch_spec.zones):
-            index = 0
-            for word_id in zone:
-                word = self.arch_spec.words[word_id]
-                for site_id, _ in enumerate(word.sites):
-                    loc_addr = LocationAddress(word_id, site_id)
-                    zone_address = ZoneAddress(zone_id)
-                    self.zone_address_map[loc_addr] = (zone_address, index)
-                    index += 1
 
     def compute_zone_addresses(
         self,
         locations: tuple[LocationAddress, ...],
     ) -> list[ZoneAddress]:
-        return sorted(
-            set(self.zone_address_map[loc][0] for loc in locations),
-            key=lambda za: za.zone_id,
-        )
+        out: set[ZoneAddress] = set()
+        for loc in locations:
+            if loc not in self.arch_spec.zone_address_map:
+                continue
+            out |= self.arch_spec.zone_address_map[loc].keys()
+        return sorted(out, key=lambda za: za.zone_id)
 
     @abc.abstractmethod
     def compute_moves(
@@ -245,7 +233,13 @@ class InsertMeasure(RewriteRule):
 
         for qubit_index, result in zip(node.qubits, node.results[1:]):
             loc_addr = atom_state.layout[qubit_index]
-            zone_address, index = self.move_heuristic.zone_address_map[loc_addr]
+            zone_addresses = self.move_heuristic.arch_spec.zone_address_map[loc_addr]
+            if len(zone_addresses) > 1:
+                debug.info(
+                    "Multiple zone addresses found for location address:", loc_addr
+                )
+                assert False
+            zone_address = next(iter(zone_addresses))
             get_result_stmt = move.GetMeasurementResult(
                 measurement_future=futures[zone_address],
                 location_address=loc_addr,
