@@ -221,7 +221,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         moves: list[MoveOp] = []
 
         # sort cz pairs by total move count descending order to prioritize
-        # balancing moves across qubits and leeting pairs with no moves go last
+        # balancing moves across qubits and letting pairs with no moves go last
         # to pick the moves that cause least conflicts
         for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
             moves.append(self._pick_move(state, moves, start_word_id, c, t))
