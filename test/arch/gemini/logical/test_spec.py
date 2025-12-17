@@ -1,5 +1,8 @@
+import pytest
+
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     EncodingType,
     LocationAddress,
@@ -63,3 +66,18 @@ def plot():
     arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(3,), ax=axs[1, 1])
 
     plt.show()
+
+
+def invalid_locations():
+    arch_spec = logical.get_arch_spec()
+    yield arch_spec, LocationAddress(16, 0), set(["Word id 16 out of range of 2"])
+    yield arch_spec, LocationAddress(0, 32), set(["Site id 32 out of range of 10"])
+    yield arch_spec, LocationAddress(-1, 0), set(["Word id -1 out of range of 2"])
+    yield arch_spec, LocationAddress(0, -1), set(["Site id -1 out of range of 10"])
+
+
+@pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())
+def test_location_validation(
+    arch_spec: ArchSpec, location_address: LocationAddress, message: set[str]
+):
+    assert message == arch_spec.validate_location(location_address)

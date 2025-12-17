@@ -104,8 +104,28 @@ class GetMeasurementResult(ir.Statement):
     result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)
 
 
+@wraps(Fill)
+def fill(*, location_addresses: tuple[LocationAddress, ...]) -> None: ...
+
+
 @wraps(LogicalInitialize)
-def initialize(*, location_addresses: tuple[LocationAddress, ...]) -> None: ...
+def logical_initialize(
+    thetas: tuple[float, ...],
+    phis: tuple[float, ...],
+    lams: tuple[float, ...],
+    *,
+    location_addresses: tuple[LocationAddress, ...],
+) -> None: ...
+
+
+@wraps(PhysicalInitialize)
+def physical_initialize(
+    thetas: tuple[float, ...],
+    phis: tuple[float, ...],
+    lams: tuple[float, ...],
+    *,
+    location_addresses: tuple[tuple[LocationAddress, ...], ...],
+) -> None: ...
 
 
 @wraps(CZ)
@@ -141,3 +161,9 @@ def move(*, lanes: tuple[LaneAddress, ...]) -> None: ...
 
 @wraps(EndMeasure)
 def end_measure(*, zone_address: ZoneAddress) -> MeasurementFuture: ...
+
+
+@wraps(GetMeasurementResult)
+def get_measurement_result(
+    measurement_future: MeasurementFuture, *, location_address: LocationAddress
+) -> int: ...
