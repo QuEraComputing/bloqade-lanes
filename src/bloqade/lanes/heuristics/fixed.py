@@ -108,9 +108,13 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         else:
             return 1
 
-    def _get_counter(self, moves: list[MoveOp]):
+    def _pick_move_by_conflict(
+        self,
+        moves: list[MoveOp],
+        move1: MoveOp,
+        move2: MoveOp,
+    ) -> MoveOp:
         def count_conflicts(proposed_move: MoveOp) -> int:
-
             return sum(
                 check_conflict(
                     proposed_move,
@@ -119,18 +123,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
                 for existing_move in moves
             )
 
-        return count_conflicts
-
-    def _pick_move_by_conflict(
-        self,
-        moves: list[MoveOp],
-        move1: MoveOp,
-        move2: MoveOp,
-    ) -> MoveOp:
-        count_conflicts = self._get_counter(moves)
-        move1_conflicts = count_conflicts(move1)
-        move2_conflicts = count_conflicts(move2)
-        if move1_conflicts <= move2_conflicts:
+        if count_conflicts(move1) <= count_conflicts(move2):
             return move1
         else:
             return move2
