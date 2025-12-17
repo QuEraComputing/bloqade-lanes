@@ -21,9 +21,14 @@ from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 @dataclass(frozen=True)
 class MoveOp:
+    """Data class to store a move operation along with its source and destination addresses."""
+
     arch_spec: ArchSpec
+    """Architecture specification for move position lookups."""
     src: LocationAddress
+    """Source location address of the move."""
     dst: LocationAddress
+    """Destination location address of the move."""
 
     @cached_property
     def src_positions(self) -> list[tuple[float, float]]:
@@ -37,22 +42,31 @@ class MoveOp:
 
 
 def check_conflict(m0: MoveOp, m1: MoveOp):
-    for src0, dst0, src1, dst1 in zip(
-        m0.src_positions, m0.dst_positions, m1.src_positions, m1.dst_positions
-    ):
-        for dim in [0, 1]:
-            dir_src = (
-                (src1[dim] - src0[dim]) // abs(src1[dim] - src0[dim])
-                if src1[dim] != src0[dim]
-                else 0
-            )
-            dir_dst = (
-                (dst1[dim] - dst0[dim]) // abs(dst1[dim] - dst0[dim])
-                if dst1[dim] != dst0[dim]
-                else 0
-            )
-            if dir_src != dir_dst:
-                return True
+    """Check if two move operations conflict based on their source and destination positions.
+
+    A conflict occurs if the direction of movement for any dimension differs between the two moves.
+    Args:
+        m0 (MoveOp): The first move operation.
+        m1 (MoveOp): The second move operation.
+    Returns:
+        bool: True if there is a conflict, False otherwise.
+
+    """
+    flattened_coords = chain.from_iterable(
+        zip(*coords)
+        for coords in zip(
+            m0.src_positions,
+            m1.src_positions,
+            m0.dst_positions,
+            m1.dst_positions,
+        )
+    )
+    for src1, src0, dst1, dst0 in flattened_coords:
+        dir_src = (src1 - src0) // abs(src1 - src0) if src1 != src0 else 0
+        dir_dst = (dst1 - dst0) // abs(dst1 - dst0) if dst1 != dst0 else 0
+        if dir_src != dir_dst:
+            return True
+
     return False
 
 
