@@ -13,10 +13,3 @@ class MeasurementFuture:
 
 
 MeasurementFutureType = types.PyClass(MeasurementFuture)
-
-
-class MeasurementFutureResult:
-    pass
-
-
-MeasurementFutureResultType = types.PyClass(MeasurementFutureResult)
