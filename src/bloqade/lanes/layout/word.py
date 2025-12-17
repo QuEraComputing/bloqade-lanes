@@ -29,8 +29,10 @@ class Word(Generic[SiteType]):
     def site_positions(self, site_index: int):
         site = self.sites[site_index]
         match site:
-            case Grid(x_positions, y_positions):
-                yield from ((x, y) for y, x in product(y_positions, x_positions))
+            case Grid() as grid:
+                yield from (
+                    (x, y) for y, x in product(grid.y_positions, grid.x_positions)
+                )
             case (float(), float()):
                 yield site
             case (int() as x, int() as y):

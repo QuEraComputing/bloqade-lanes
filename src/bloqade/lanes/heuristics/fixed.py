@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field, replace
-from itertools import chain, combinations
+from functools import cached_property
+from itertools import chain, combinations, starmap
 
 from kirin import interp
 
@@ -16,6 +17,55 @@ from bloqade.lanes.layout.encoding import (
     WordLaneAddress,
 )
 from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
+
+
+@dataclass(frozen=True)
+class MoveOp:
+    """Data class to store a move operation along with its source and destination addresses."""
+
+    arch_spec: ArchSpec
+    """Architecture specification for move position lookups."""
+    src: LocationAddress
+    """Source location address of the move."""
+    dst: LocationAddress
+    """Destination location address of the move."""
+
+    @cached_property
+    def src_positions(self) -> tuple[tuple[float, float], ...]:
+        return tuple(self.arch_spec.get_positions(self.src))
+
+    @cached_property
+    def dst_positions(self) -> tuple[tuple[float, float], ...]:
+        return tuple(self.arch_spec.get_positions(self.dst))
+
+
+def check_conflict(m0: MoveOp, m1: MoveOp):
+    """Check if two move operations conflict based on their source and destination positions.
+
+    A conflict occurs if the direction of movement for any dimension differs between the two moves.
+    Args:
+        m0 (MoveOp): The first move operation.
+        m1 (MoveOp): The second move operation.
+    Returns:
+        bool: True if there is a conflict, False otherwise.
+
+    """
+
+    flattened_coords = chain.from_iterable(
+        starmap(
+            zip,
+            zip(m0.src_positions, m1.src_positions, m0.dst_positions, m1.dst_positions),
+        )
+    )  # flatten all the coordinates into tuples of (src0, src1, dst0, dst1) per dimension per position
+
+    def check_coord_conflict(
+        src0: float, dst0: float, src1: float, dst1: float
+    ) -> bool:
+        dir_src = (src1 - src0) // abs(src1 - src0) if src1 != src0 else 0
+        dir_dst = (dst1 - dst0) // abs(dst1 - dst0) if dst1 != dst0 else 0
+        return dir_src != dir_dst
+
+    return any(starmap(check_coord_conflict, flattened_coords))
 
 
 @dataclass
@@ -36,6 +86,8 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
 
     The hope is that this should balance out the number of moves across all qubits in the circuit.
     """
+
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def validate_initial_layout(
         self,
@@ -68,32 +120,69 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         else:
             return 1
 
-    def _pick_mover_and_location(
+    def _pick_move_by_conflict(
+        self,
+        moves: list[MoveOp],
+        move1: MoveOp,
+        move2: MoveOp,
+    ) -> MoveOp:
+        def count_conflicts(proposed_move: MoveOp) -> int:
+            return sum(
+                check_conflict(
+                    proposed_move,
+                    existing_move,
+                )
+                for existing_move in moves
+            )
+
+        if count_conflicts(move1) <= count_conflicts(move2):
+            return move1
+        else:
+            return move2
+
+    def _pick_move(
         self,
         state: ConcreteState,
+        moves: list[MoveOp],
         start_word_id: int,
         control: int,
         target: int,
-    ):
+    ) -> MoveOp:
         c_addr = state.layout[control]
         t_addr = state.layout[target]
+
+        c_addr_dst = LocationAddress(t_addr.word_id, t_addr.site_id + 5)
+        t_addr_dst = LocationAddress(c_addr.word_id, c_addr.site_id + 5)
+        c_move_count = state.move_count[control]
+        t_move_count = state.move_count[target]
+
+        move_t_to_c = MoveOp(self.arch_spec, t_addr, t_addr_dst)
+        move_c_to_t = MoveOp(self.arch_spec, c_addr, c_addr_dst)
+
         if c_addr.word_id == t_addr.word_id:
-            if (
-                state.move_count[control] <= state.move_count[target]
-            ):  # move control to target
-                return control, t_addr
-            else:  # move target to control
-                return target, c_addr
+            if c_move_count < t_move_count:  # move control to target
+                return move_c_to_t
+            elif c_move_count > t_move_count:  # move target to control
+                return move_t_to_c
+            else:
+                return self._pick_move_by_conflict(moves, move_c_to_t, move_t_to_c)
         elif t_addr.word_id == start_word_id:
-            return target, c_addr
+            return move_t_to_c
         else:
-            return control, t_addr
+            return move_c_to_t
 
     def _update_positions(
         self,
         state: ConcreteState,
-        new_positions: dict[int, LocationAddress],
+        moves: list[MoveOp],
     ) -> ConcreteState:
+
+        new_positions: dict[int, LocationAddress] = {}
+        for move in moves:
+            src_qubit = state.get_qubit_id(move.src)
+            assert src_qubit is not None, "Source qubit must exist in state"
+            new_positions[src_qubit] = move.dst
+
         new_layout = tuple(
             new_positions.get(i, loc) for i, loc in enumerate(state.layout)
         )
@@ -102,6 +191,15 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
             new_move_count[qid] += 1
 
         return replace(state, layout=new_layout, move_count=tuple(new_move_count))
+
+    def _sorted_cz_pairs_by_move_count(
+        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
+    ) -> list[tuple[int, int]]:
+        return sorted(
+            zip(controls, targets),
+            key=lambda x: state.move_count[x[0]] + state.move_count[x[1]],
+            reverse=True,
+        )
 
     def cz_placements(
         self,
@@ -119,16 +217,16 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         # since cz gates are symmetric swap controls and targets based on
         # word_id and site_id the idea being to minimize the directions
         # needed to rearrange qubits.
-        new_positions: dict[int, LocationAddress] = {}
         start_word_id = self._word_balance(state, controls, targets)
-        for c, t in zip(controls, targets):
-            mover, dst_addr = self._pick_mover_and_location(state, start_word_id, c, t)
-            new_positions[mover] = LocationAddress(
-                word_id=dst_addr.word_id,
-                site_id=dst_addr.site_id + 5,
-            )
+        moves: list[MoveOp] = []
 
-        return self._update_positions(state, new_positions)
+        # sort cz pairs by total move count descending order to prioritize
+        # balancing moves across qubits and letting pairs with no moves go last
+        # to pick the moves that cause least conflicts
+        for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
+            moves.append(self._pick_move(state, moves, start_word_id, c, t))
+
+        return self._update_positions(state, moves)
 
     def sq_placements(
         self,
