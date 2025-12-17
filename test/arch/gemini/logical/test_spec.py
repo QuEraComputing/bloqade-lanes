@@ -3,6 +3,7 @@ from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.layout.encoding import (
     EncodingType,
     LocationAddress,
+    ZoneAddress,
 )
 
 
