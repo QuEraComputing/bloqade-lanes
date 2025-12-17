@@ -2,7 +2,7 @@ from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.upstream import SquinToNative
 from bloqade.rewrite.passes import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
-from kirin import ir, rewrite
+from kirin import ir, passes, rewrite
 
 from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
@@ -49,12 +49,16 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
                 transversal.RewriteLocations(logical.steane7_transversal_map),
                 transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
                 transversal.RewriteMoves(logical.steane7_transversal_map),
-                transversal.RewriteGetMeasurementResult(
-                    logical.steane7_transversal_map
-                ),
+                transversal.RewriteGetItem(logical.steane7_transversal_map),
                 transversal.RewriteLogicalToPhysicalConversion(),
             )
         ).rewrite(mt.code)
+
+    passes.TypeInfer(mt.dialects)(mt)
+
+    mt.verify()
+    mt.verify_type()
+
     return mt
 
 

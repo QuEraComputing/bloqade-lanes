@@ -36,6 +36,10 @@ class ArchSpec(Generic[SiteType]):
     """tuple of all words in the architecture. words[i] gives the word at word address i."""
     zones: tuple[tuple[int, ...], ...]
     """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
+    measurement_zones: frozenset[int]
+    """Set of zone ids that support measurements."""
+    cz_gate_zones: frozenset[int]
+    """Set of zone ids that support CZ gates."""
     has_site_buses: frozenset[int]
     """Set of words that have site-bus moves."""
     has_word_buses: frozenset[int]
@@ -76,9 +80,9 @@ class ArchSpec(Generic[SiteType]):
         self,
         loc_addr: LocationAddress,
         zone_id: ZoneAddress,
-    ) -> int:
+    ) -> int | None:
         """Get the index of a location address within a zone address."""
-        return self.zone_address_map[loc_addr][zone_id]
+        return self.zone_address_map[loc_addr].get(zone_id)
 
     @cached_property
     def x_bounds(self) -> tuple[float, float]:

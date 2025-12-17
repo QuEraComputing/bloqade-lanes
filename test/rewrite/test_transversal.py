@@ -83,59 +83,6 @@ def test_simple_rewrite(
     assert result.has_done_something is has_done_something
 
 
-def test_get_measurement_result():
-
-    measurement_future = ir.TestValue()
-    test_block = ir.Block()
-    test_block.stmts.append(
-        move.GetMeasurementResult(
-            measurement_future, location_address=LocationAddress(0, 1)
-        )
-    )
-
-    expected_block = ir.Block()
-    expected_block.stmts.append(
-        measure := move.GetMeasurementResult(
-            measurement_future, location_address=LocationAddress(0, 1)
-        )
-    )
-    expected_block.stmts.append(ilist.New((measure.result,)))
-
-    rule = rewrite.Walk(transversal.RewriteGetMeasurementResult(trivial_map))
-
-    result = rule.rewrite(test_block)
-
-    assert result.has_done_something
-    assert_nodes(test_block, expected_block)
-
-
-def test_get_measurement_result_no_op():
-
-    measurement_future = ir.TestValue()
-    test_block = ir.Block()
-    test_block.stmts.append(py.Constant(10))
-    test_block.stmts.append(
-        move.GetMeasurementResult(
-            measurement_future, location_address=LocationAddress(1, 1)
-        )
-    )
-
-    expected_block = ir.Block()
-    expected_block.stmts.append(py.Constant(10))
-    expected_block.stmts.append(
-        move.GetMeasurementResult(
-            measurement_future, location_address=LocationAddress(1, 1)
-        )
-    )
-
-    rule = rewrite.Walk(transversal.RewriteGetMeasurementResult(trivial_map))
-
-    result = rule.rewrite(test_block)
-
-    assert not result.has_done_something
-    assert_nodes(test_block, expected_block)
-
-
 def test_rewrite_conversion():
     measure_1 = ir.TestValue()
     measure_2 = ir.TestValue()

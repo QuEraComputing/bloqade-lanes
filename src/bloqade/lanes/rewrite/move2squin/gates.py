@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from bloqade.squin.gate import stmts as gate_stmts
@@ -9,6 +9,7 @@ from kirin.rewrite import abc as rewrite_abc
 from bloqade import qubit
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
+from bloqade.lanes.layout import LocationAddress, ZoneAddress
 
 from .. import utils
 from .base import AtomStateRewriter
@@ -20,6 +21,9 @@ class InsertGates(AtomStateRewriter):
     initialize_kernel: ir.Method[
         [float, float, float, ilist.IList[qubit.Qubit, Any]], None
     ]
+    measurement_position_map: dict[tuple[ZoneAddress, LocationAddress], int] = field(
+        init=False, default_factory=dict
+    )
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
@@ -30,7 +34,8 @@ class InsertGates(AtomStateRewriter):
                     move.GlobalRz,
                     move.LocalR,
                     move.GlobalR,
-                    move.GetMeasurementResult,
+                    move.EndMeasure,
+                    move.GetFutureResult,
                     move.PhysicalInitialize,
                     move.LogicalInitialize,
                     move.CZ,
@@ -104,16 +109,15 @@ class InsertGates(AtomStateRewriter):
         ).insert_before(node)
         return rewrite_abc.RewriteResult(has_done_something=True)
 
-    def rewrite_GetMeasurementResult(
-        self, atom_state: atom.AtomState, node: move.GetMeasurementResult
+    def rewrite_GetFutureResult(
+        self, atom_state: atom.AtomState, node: move.GetFutureResult
     ) -> rewrite_abc.RewriteResult:
-        qubit_ssa = self.get_qubit_ssa(atom_state, node.location_address)
-        if qubit_ssa is None:
-            return rewrite_abc.RewriteResult()
+        raise NotImplementedError("GetFutureResult not implemented yet.")
 
-        node.replace_by(func.Invoke((qubit_ssa,), callee=qubit.measure))
-
-        return rewrite_abc.RewriteResult(has_done_something=True)
+    def rewrite_EndMeasure(
+        self, atom_state: atom.AtomState, node: move.EndMeasure
+    ) -> rewrite_abc.RewriteResult:
+        raise NotImplementedError("EndMeasure not implemented yet.")
 
     def rewrite_LogicalInitialize(
         self, atom_state: atom.AtomState, node: move.LogicalInitialize

@@ -150,12 +150,12 @@ class _MoveMethods(interp.MethodTable):
                     ),
                 )
 
-    @interp.impl(move.GetMeasurementResult)
+    @interp.impl(move.GetZoneIndex)
     def measurement_checker(
         self,
         _interp: _ValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        node: move.GetMeasurementResult,
+        node: move.GetZoneIndex,
     ):
         error_msgs = _interp.arch_spec.validate_location(node.location_address)
         for error_msg in error_msgs:
