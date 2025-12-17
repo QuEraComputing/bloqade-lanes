@@ -77,10 +77,10 @@ class ArchSpec(Generic[SiteType]):
     def get_zone_index(
         self,
         loc_addr: LocationAddress,
-        zone_id: int,
+        zone_id: ZoneAddress,
     ) -> int:
         """Get the index of a location address within a zone address."""
-        return self.zone_address_map[loc_addr][ZoneAddress(zone_id)]
+        return self.zone_address_map[loc_addr][zone_id]
 
     @cached_property
     def x_bounds(self) -> tuple[float, float]:
