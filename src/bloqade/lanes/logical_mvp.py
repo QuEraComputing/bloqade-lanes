@@ -84,7 +84,9 @@ def compile_squin_to_move_and_visualize(
     visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker=marker)
 
 
-def compile_to_physical_squin_noise_model(mt: ir.Method, noise_model: NoiseModelABC):
+def compile_to_physical_squin_noise_model(
+    mt: ir.Method, noise_model: NoiseModelABC | None = None
+) -> ir.Method:
     """Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
 
     Args:
@@ -95,7 +97,6 @@ def compile_to_physical_squin_noise_model(mt: ir.Method, noise_model: NoiseModel
 
     """
     move_mt = compile_squin_to_move(mt, transversal_rewrite=True)
-
     transformer = MoveToSquin(
         arch_spec=generate_arch(4),
         logical_initialization=logical.steane7_initialize,

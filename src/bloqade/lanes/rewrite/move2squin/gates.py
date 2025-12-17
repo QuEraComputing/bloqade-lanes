@@ -21,7 +21,7 @@ class InsertGates(AtomStateRewriter):
     initialize_kernel: ir.Method[
         [float, float, float, ilist.IList[qubit.Qubit, Any]], None
     ]
-    measurement_position_map: dict[tuple[ZoneAddress, LocationAddress], int] = field(
+    measurement_index_map: dict[ZoneAddress, dict[LocationAddress, int]] = field(
         init=False, default_factory=dict
     )
 
@@ -30,21 +30,19 @@ class InsertGates(AtomStateRewriter):
             isinstance(
                 node,
                 (
-                    move.LocalRz,
-                    move.GlobalRz,
+                    move.CZ,
                     move.LocalR,
                     move.GlobalR,
-                    move.EndMeasure,
+                    move.LocalRz,
+                    move.GlobalRz,
                     move.GetFutureResult,
-                    move.PhysicalInitialize,
                     move.LogicalInitialize,
-                    move.CZ,
+                    move.PhysicalInitialize,
                 ),
             )
             and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
         ):
             return rewrite_abc.RewriteResult()
-
         rewriter = getattr(self, f"rewrite_{type(node).__name__}")
         return rewriter(atom_state, node)
 
@@ -112,12 +110,28 @@ class InsertGates(AtomStateRewriter):
     def rewrite_GetFutureResult(
         self, atom_state: atom.AtomState, node: move.GetFutureResult
     ) -> rewrite_abc.RewriteResult:
-        raise NotImplementedError("GetFutureResult not implemented yet.")
+        zone_address = node.zone_address
+        qubit_ssas: list[ir.SSAValue] = []
 
-    def rewrite_EndMeasure(
-        self, atom_state: atom.AtomState, node: move.EndMeasure
-    ) -> rewrite_abc.RewriteResult:
-        raise NotImplementedError("EndMeasure not implemented yet.")
+        for word_id in self.arch_spec.zones[zone_address.zone_id]:
+            for site_id, _ in enumerate(self.arch_spec.words[word_id].sites):
+                location_address = LocationAddress(word_id, site_id)
+                qubit_ssa = self.get_qubit_ssa(atom_state, location_address)
+                if qubit_ssa is None:
+                    continue
+                location_mapping = self.measurement_index_map.setdefault(
+                    zone_address, {}
+                )
+                location_mapping[location_address] = len(qubit_ssas)
+                qubit_ssas.append(qubit_ssa)
+
+        if len(qubit_ssas) == 0:
+            return rewrite_abc.RewriteResult()
+
+        (reg := ilist.New(tuple(qubit_ssas))).insert_before(node)
+        node.replace_by(func.Invoke((reg.result,), callee=qubit.broadcast.measure))
+
+        return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_LogicalInitialize(
         self, atom_state: atom.AtomState, node: move.LogicalInitialize
@@ -179,4 +193,25 @@ class InsertGates(AtomStateRewriter):
         (target_reg := ilist.New(targets_ssa)).insert_before(node)
         gate_stmts.CZ(control_reg.result, target_reg.result).insert_before(node)
 
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+@dataclass
+class InsertMeasurementIndices(rewrite_abc.RewriteRule):
+    measurement_index_map: dict[ZoneAddress, dict[LocationAddress, int]]
+
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, move.GetZoneIndex):
+            return rewrite_abc.RewriteResult()
+
+        zone_address = node.zone_address
+        location_address = node.location_address
+
+        if (location_indices := self.measurement_index_map.get(zone_address)) is None:
+            return rewrite_abc.RewriteResult()
+
+        if (location_index := location_indices.get(location_address)) is None:
+            return rewrite_abc.RewriteResult()
+
+        node.replace_by(py.Constant(location_index))
         return rewrite_abc.RewriteResult(has_done_something=True)

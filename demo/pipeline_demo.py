@@ -69,7 +69,7 @@ noise_kernel = compile_to_physical_squin_noise_model(
     main,
     SimpleNoiseModel(lane_noise, idle_noise, cz_unpaired_noise),
 )
-
+noise_kernel.print()
 noise_kernel = squin_to_stim(noise_kernel)
 
 buf = io.StringIO()

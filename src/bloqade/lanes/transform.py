@@ -40,7 +40,7 @@ class MoveToSquin:
         rules = []
 
         rules.append(
-            move2squin.InsertGates(
+            gate_rule := move2squin.InsertGates(
                 self.arch_spec,
                 tuple(qubit_rule.physical_ssa_values),
                 frame.atom_state_map,
@@ -58,6 +58,10 @@ class MoveToSquin:
             )
 
         rewrite.Walk(rewrite.Chain(*rules)).rewrite(main.code)
+
+        rewrite.Walk(
+            move2squin.InsertMeasurementIndices(gate_rule.measurement_index_map)
+        ).rewrite(main.code)
         # we need to fold before writing U3 to Clifford
         if self.aggressive_unroll:
             agg.AggressiveUnroll(main.dialects).fixpoint(main)
