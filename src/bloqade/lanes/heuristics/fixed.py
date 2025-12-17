@@ -32,13 +32,11 @@ class MoveOp:
 
     @cached_property
     def src_positions(self) -> tuple[tuple[float, float], ...]:
-        word = self.arch_spec.words[self.src.word_id]
-        return tuple(word.site_positions(self.src.site_id))
+        return tuple(self.arch_spec.get_positions(self.src))
 
     @cached_property
     def dst_positions(self) -> tuple[tuple[float, float], ...]:
-        word = self.arch_spec.words[self.dst.word_id]
-        return tuple(word.site_positions(self.dst.site_id))
+        return tuple(self.arch_spec.get_positions(self.dst))
 
 
 def check_conflict(m0: MoveOp, m1: MoveOp):
