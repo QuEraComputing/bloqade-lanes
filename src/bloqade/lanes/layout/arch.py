@@ -93,6 +93,10 @@ class ArchSpec(Generic[SiteType]):
 
         return y_min, y_max
 
+    def get_positions(self, location: LocationAddress) -> list[tuple[float, float]]:
+        word = self.words[location.word_id]
+        return list(word.site_positions(location.site_id))
+
     def plot(
         self,
         ax=None,
