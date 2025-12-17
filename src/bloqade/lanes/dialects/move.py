@@ -90,6 +90,8 @@ class Move(ir.Statement):
 
 @statement(dialect=dialect)
 class EndMeasure(ir.Statement):
+    """Start a measurement over the specified zones. Returns a MeasurementFuture."""
+
     traits = frozenset({lowering.FromPythonCall()})
 
     zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
@@ -98,6 +100,8 @@ class EndMeasure(ir.Statement):
 
 @statement(dialect=dialect)
 class GetFutureResult(ir.Statement):
+    """Get the measurement results from a measurement future"""
+
     traits = frozenset({lowering.FromPythonCall()})
 
     measurement_future: ir.SSAValue = info.argument(MeasurementFutureType)
