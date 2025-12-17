@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, Sequence
@@ -10,6 +11,7 @@ from bloqade.lanes.layout.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
+    ZoneAddress,
 )
 
 from .word import SiteType, Word
@@ -45,8 +47,23 @@ class ArchSpec(Generic[SiteType]):
     site_bus_compatibility: tuple[frozenset[int], ...]
     """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
     encoding: EncodingType = field(init=False)
+    """Mapping from location addresses to zone addresses and indices within the zone."""
+    zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
+        init=False, default_factory=dict
+    )
 
     def __post_init__(self):
+        zone_address_map = defaultdict(dict)
+        for zone_id, zone in enumerate(self.zones):
+            index = 0
+            for word_id in zone:
+                word = self.words[word_id]
+                for site_id, _ in enumerate(word.sites):
+                    loc_addr = LocationAddress(word_id, site_id)
+                    zone_address = ZoneAddress(zone_id)
+                    zone_address_map[loc_addr][zone_address] = index
+                    index += 1
+        object.__setattr__(self, "zone_address_map", dict(zone_address_map))
         object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
 
     @property
@@ -54,6 +71,14 @@ class ArchSpec(Generic[SiteType]):
         """Get the maximum number of qubits supported by this architecture."""
         num_sites_per_word = len(self.words[0].sites)
         return len(self.words) * num_sites_per_word // 2
+
+    def get_zone_index(
+        self,
+        loc_addr: LocationAddress,
+        zone_id: ZoneAddress,
+    ) -> int:
+        """Get the index of a location address within a zone address."""
+        return self.zone_address_map[loc_addr][zone_id]
 
     @cached_property
     def x_bounds(self) -> tuple[float, float]:

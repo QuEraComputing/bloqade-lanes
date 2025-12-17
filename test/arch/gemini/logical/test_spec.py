@@ -6,6 +6,7 @@ from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     EncodingType,
     LocationAddress,
+    ZoneAddress,
 )
 
 
@@ -16,6 +17,25 @@ def test_architecture_generation():
     assert len(arch_physical.site_buses) == 9
     assert len(arch_physical.word_buses) == 4
     assert arch_physical.encoding is EncodingType.BIT32
+
+
+def test_get_zone_index():
+    arch_physical = generate_arch()
+
+    loc_addr = LocationAddress(word_id=0, site_id=0)
+    zone_id = ZoneAddress(0)
+    index = arch_physical.get_zone_index(loc_addr, zone_id)
+    assert index == 0
+
+    loc_addr = LocationAddress(word_id=0, site_id=1)
+    zone_id = ZoneAddress(0)
+    index = arch_physical.get_zone_index(loc_addr, zone_id)
+    assert index == 1
+
+    loc_addr = LocationAddress(word_id=1, site_id=0)
+    zone_id = ZoneAddress(0)
+    index = arch_physical.get_zone_index(loc_addr, zone_id)
+    assert index == 10
 
 
 def test_logical_architecture():
