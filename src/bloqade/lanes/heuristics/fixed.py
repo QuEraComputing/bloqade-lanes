@@ -187,6 +187,15 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
 
         return replace(state, layout=new_layout, move_count=tuple(new_move_count))
 
+    def _sorted_cz_pairs_by_move_count(
+        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
+    ) -> list[tuple[int, int]]:
+        return sorted(
+            zip(controls, targets),
+            key=lambda x: state.move_count[x[0]] + state.move_count[x[1]],
+            reverse=True,
+        )
+
     def cz_placements(
         self,
         state: AtomState,
@@ -205,7 +214,11 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         # needed to rearrange qubits.
         start_word_id = self._word_balance(state, controls, targets)
         moves: list[MoveOp] = []
-        for c, t in zip(controls, targets):
+
+        # sort cz pairs by total move count descending order to prioritize
+        # balancing moves across qubits and leeting pairs with no moves go last
+        # to pick the moves that cause least conflicts
+        for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
             moves.append(self._pick_move(state, moves, start_word_id, c, t))
 
         return self._update_positions(state, moves)
