@@ -69,8 +69,11 @@ class MoveToSquin:
             agg.Fold(main.dialects)(main)
 
         rewrite.Walk(
-            rewrite.Chain(
-                SquinU3ToClifford(),
+            SquinU3ToClifford(),
+        ).rewrite(main.code)
+
+        rewrite.Fixpoint(
+            rewrite.Walk(
                 move2squin.CleanUpMoveDialect(frame.atom_state_map),
             )
         ).rewrite(main.code)

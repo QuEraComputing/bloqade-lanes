@@ -155,6 +155,7 @@ class Move(interp.MethodTable):
             qubits_to_move[qubit] = dst
         frame.current_state = current_state.update(qubits_to_move, prev_lanes)
         frame.set_state_for_stmt(stmt)
+        return (EmptyLattice.top(),)
 
     @interp.impl(move.CZ)
     @interp.impl(move.LocalR)
@@ -165,6 +166,7 @@ class Move(interp.MethodTable):
     @interp.impl(move.LogicalInitialize)
     @interp.impl(move.PhysicalInitialize)
     @interp.impl(move.GetFutureResult)
+    @interp.impl(move.GetCurrentState)
     def noop_impl(
         self,
         interp_: AtomInterpreter,
@@ -172,8 +174,10 @@ class Move(interp.MethodTable):
         stmt: ir.Statement,
     ):
         frame.set_state_for_stmt(stmt)
+        return (EmptyLattice.top(),)
 
     @interp.impl(move.Fill)
     def fill_impl(self, interp_: AtomInterpreter, frame: AtomFrame, stmt: move.Fill):
         frame.current_state = AtomState(stmt.location_addresses)
         frame.set_state_for_stmt(stmt)
+        return (EmptyLattice.top(),)
