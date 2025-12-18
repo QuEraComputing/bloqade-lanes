@@ -38,7 +38,7 @@ class ArchSpec(Generic[SiteType]):
     """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
     measurement_zones: frozenset[int]
     """Set of zone ids that support measurements."""
-    cz_gate_zones: frozenset[int]
+    entangling_zones: frozenset[int]
     """Set of zone ids that support CZ gates."""
     has_site_buses: frozenset[int]
     """Set of words that have site-bus moves."""
