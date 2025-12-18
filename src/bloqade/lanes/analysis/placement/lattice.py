@@ -77,7 +77,17 @@ class ConcreteState(AtomState):
 @final
 @dataclass
 class ExecuteCZ(ConcreteState):
+    """Defines the state representing the placement of
+    atoms before/after executing CZ gate pulse.
+
+    NOTE: you can specify multiple entnangling zones to be active
+    in a single ExecuteCZ state in cases where there are multiple entangling
+    zones that can be used in parallel.
+
+    """
+
     active_cz_zones: frozenset[ZoneAddress]
+    """The set of CZ zones that need to execute for this round of CZ gates."""
 
     @classmethod
     def from_concrete_state(
@@ -101,7 +111,13 @@ class ExecuteCZ(ConcreteState):
 @final
 @dataclass
 class ExecuteMeasure(ConcreteState):
-    """A state representing measurement placements."""
+    """A state representing measurement placements.
+
+    NOTE: Depending on the placement of the atoms you may need to specify
+    which atoms are measured by which zone. This is done via the zone_maps field, such that
+    `zone_maps[i]` gives the zone that measures the ith qubit.
+
+    """
 
     zone_maps: tuple[ZoneAddress, ...]
 
