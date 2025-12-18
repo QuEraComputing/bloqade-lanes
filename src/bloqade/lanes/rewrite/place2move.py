@@ -42,8 +42,11 @@ class InsertMoves(RewriteRule):
         if len(moves) == 0:
             return RewriteResult()
 
+        (current_state := move.GetCurrentState()).insert_before(node)
         for move_lanes in moves:
-            move.Move(lanes=move_lanes).insert_before(node)
+            (
+                current_state := move.Move(current_state.result, lanes=move_lanes)
+            ).insert_before(node)
 
         return RewriteResult(has_done_something=True)
 
@@ -63,12 +66,15 @@ class InsertPalindromeMoves(RewriteRule):
         yield_stmt = node.body.blocks[0].last_stmt
         assert isinstance(yield_stmt, place.Yield)
 
+        (current_state := move.GetCurrentState()).insert_before(yield_stmt)
         for stmt in node.body.walk(reverse=True):
             if not isinstance(stmt, move.Move):
                 continue
 
             reverse_moves = tuple(lane.reverse() for lane in stmt.lanes[::-1])
-            move.Move(lanes=reverse_moves).insert_before(yield_stmt)
+            (
+                current_state := move.Move(current_state.result, lanes=reverse_moves)
+            ).insert_before(yield_stmt)
 
         return RewriteResult(has_done_something=True)
 
@@ -94,10 +100,17 @@ class RewriteCZ(RewriteRule):
         if not isinstance(state_after, placement.ExecuteCZ):
             return RewriteResult()
 
+        stmts_to_insert: list[move.CZ | move.GetCurrentState] = [move.GetCurrentState()]
         for cz_zone_address in state_after.active_cz_zones:
-            move.CZ(
-                zone_address=cz_zone_address,
-            ).insert_after(node)
+            stmts_to_insert.append(
+                move.CZ(
+                    stmts_to_insert[-1].result,
+                    zone_address=cz_zone_address,
+                )
+            )
+
+        for stmt in reversed(stmts_to_insert):
+            stmt.insert_after(node)
 
         node.state_after.replace_by(node.state_before)
         node.delete()
@@ -129,18 +142,23 @@ class RewriteR(RewriteRule):
             node.qubits
         )  # gate statement includes all atoms
 
+        current_state = move.GetCurrentState()
         if is_global:
             move.GlobalR(
+                current_state.result,
                 axis_angle=node.axis_angle,
                 rotation_angle=node.rotation_angle,
             ).insert_after(node)
         else:
             location_addresses = tuple(state_after.layout[i] for i in node.qubits)
             move.LocalR(
+                current_state.result,
                 location_addresses=location_addresses,
                 axis_angle=node.axis_angle,
                 rotation_angle=node.rotation_angle,
             ).insert_after(node)
+
+        current_state.insert_before(node)
 
         node.state_after.replace_by(node.state_before)
         node.delete()
@@ -177,16 +195,20 @@ class RewriteRz(RewriteRule):
             node.qubits
         )  # gate statement includes all atoms
 
+        current_state = move.GetCurrentState()
         if is_global:
             move.GlobalRz(
+                current_state.result,
                 rotation_angle=node.rotation_angle,
             ).insert_after(node)
         else:
             location_addresses = tuple(state_after.layout[i] for i in node.qubits)
             move.LocalRz(
+                current_state.result,
                 location_addresses=location_addresses,
                 rotation_angle=node.rotation_angle,
             ).insert_after(node)
+        current_state.insert_before(node)
 
         node.state_after.replace_by(node.state_before)
         node.delete()
@@ -210,10 +232,13 @@ class InsertMeasure(RewriteRule):
         ):
             return RewriteResult()
 
+        (current_state := move.GetCurrentState()).insert_before(node)
         zone_addresses = tuple(set(atom_state.zone_maps))
-        (future_stmt := move.EndMeasure(zone_addresses=zone_addresses)).insert_before(
-            node
-        )
+        (
+            future_stmt := move.EndMeasure(
+                current_state.result, zone_addresses=zone_addresses
+            )
+        ).insert_before(node)
 
         future_results: dict[ZoneAddress, ir.SSAValue] = {}
         for zone_address in zone_addresses:
@@ -314,7 +339,9 @@ class InsertInitialize(RewriteRule):
         if stmt is None:
             return RewriteResult()
 
+        (current_state := move.GetCurrentState()).insert_before(stmt)
         move.LogicalInitialize(
+            current_state.result,
             tuple(thetas),
             tuple(phis),
             tuple(lams),
@@ -337,7 +364,10 @@ class InsertFill(RewriteRule):
         if first_stmt is None or isinstance(first_stmt, move.Fill):
             return RewriteResult()
 
-        move.Fill(location_addresses=self.initial_layout).insert_before(first_stmt)
+        (current_state := move.GetCurrentState()).insert_before(first_stmt)
+        move.Fill(
+            current_state.result, location_addresses=self.initial_layout
+        ).insert_before(first_stmt)
 
         return RewriteResult(has_done_something=True)
 
