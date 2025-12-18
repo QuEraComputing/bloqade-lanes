@@ -1,6 +1,8 @@
 import pytest
 
+from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
+from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.layout.encoding import (
     Direction,
@@ -11,6 +13,8 @@ from bloqade.lanes.layout.encoding import (
 
 
 def cz_placement_cases():
+
+    all_zones = frozenset([layout.ZoneAddress(0)])
 
     yield (
         AtomState.top(),
@@ -36,7 +40,7 @@ def cz_placement_cases():
         ),
         move_count=(0, 0, 0, 0),
     )
-    state_after = ConcreteState(
+    state_after = ExecuteCZ(
         occupied=frozenset(),
         layout=(
             LocationAddress(1, 5),
@@ -45,6 +49,7 @@ def cz_placement_cases():
             LocationAddress(1, 1),
         ),
         move_count=(1, 1, 0, 0),
+        active_cz_zones=all_zones,
     )
 
     yield (
@@ -64,7 +69,7 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 0, 0),
     )
-    state_after = ConcreteState(
+    state_after = ExecuteCZ(
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
@@ -73,6 +78,7 @@ def cz_placement_cases():
             LocationAddress(0, 6),
         ),
         move_count=(1, 1, 1, 1),
+        active_cz_zones=all_zones,
     )
     yield (
         state_before,
@@ -91,7 +97,7 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 0, 0),
     )
-    state_after = ConcreteState(
+    state_after = ExecuteCZ(
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
@@ -100,6 +106,7 @@ def cz_placement_cases():
             LocationAddress(0, 6),
         ),
         move_count=(1, 1, 1, 1),
+        active_cz_zones=all_zones,
     )
     yield (
         state_before,
@@ -118,7 +125,7 @@ def cz_placement_cases():
         ),
         move_count=(0, 0, 1, 1),
     )
-    state_after = ConcreteState(
+    state_after = ExecuteCZ(
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 7),
@@ -127,6 +134,7 @@ def cz_placement_cases():
             LocationAddress(0, 3),
         ),
         move_count=(1, 1, 1, 1),
+        active_cz_zones=all_zones,
     )
     yield (
         state_before,
@@ -145,7 +153,7 @@ def cz_placement_cases():
         ),
         move_count=(1, 0, 0, 0),
     )
-    state_after = ConcreteState(
+    state_after = ExecuteCZ(
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
@@ -154,6 +162,7 @@ def cz_placement_cases():
             LocationAddress(0, 6),
         ),
         move_count=(1, 0, 1, 1),
+        active_cz_zones=all_zones,
     )
     yield (
         state_before,
@@ -172,7 +181,7 @@ def cz_placement_cases():
         ),
         move_count=(0, 0, 0, 1),
     )
-    state_after = ConcreteState(
+    state_after = ExecuteCZ(
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 7),
@@ -181,6 +190,7 @@ def cz_placement_cases():
             LocationAddress(0, 3),
         ),
         move_count=(1, 1, 0, 1),
+        active_cz_zones=all_zones,
     )
     yield (
         state_before,
@@ -193,7 +203,7 @@ def cz_placement_cases():
         state_before,
         (0, 1, 4),
         (2, 3),
-        AtomState.top(),
+        AtomState.bottom(),
     )
 
 

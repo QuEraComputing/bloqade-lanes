@@ -79,6 +79,17 @@ class ConcreteState(AtomState):
 class ExecuteCZ(ConcreteState):
     active_cz_zones: frozenset[ZoneAddress]
 
+    @classmethod
+    def from_concrete_state(
+        cls, state: ConcreteState, active_cz_zones: frozenset[ZoneAddress]
+    ) -> "ExecuteCZ":
+        return cls(
+            occupied=state.occupied,
+            layout=state.layout,
+            move_count=state.move_count,
+            active_cz_zones=active_cz_zones,
+        )
+
     def is_subseteq(self, other: AtomState) -> bool:
         return (
             super().is_subseteq(other)
@@ -93,6 +104,17 @@ class ExecuteMeasure(ConcreteState):
     """A state representing measurement placements."""
 
     zone_maps: tuple[ZoneAddress, ...]
+
+    @classmethod
+    def from_concrete_state(
+        cls, state: ConcreteState, zone_maps: tuple[ZoneAddress, ...]
+    ) -> "ExecuteMeasure":
+        return cls(
+            occupied=state.occupied,
+            layout=state.layout,
+            move_count=state.move_count,
+            zone_maps=zone_maps,
+        )
 
     def is_subseteq(self, other: AtomState) -> bool:
         return (
