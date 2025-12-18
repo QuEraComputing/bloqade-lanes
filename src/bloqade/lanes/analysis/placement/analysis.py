@@ -9,9 +9,9 @@ from kirin.analysis.forward import ForwardFrame
 from kirin.interp.exceptions import InterpreterError
 from typing_extensions import Self
 
-from bloqade.lanes.layout import LocationAddress, ZoneAddress
+from bloqade.lanes.layout import LocationAddress
 
-from .lattice import AtomState, ConcreteState, ExecuteMeasure
+from .lattice import AtomState, ConcreteState
 
 
 class PlacementStrategyABC(abc.ABC):
