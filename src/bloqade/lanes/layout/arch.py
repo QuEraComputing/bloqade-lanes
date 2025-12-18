@@ -36,6 +36,10 @@ class ArchSpec(Generic[SiteType]):
     """tuple of all words in the architecture. words[i] gives the word at word address i."""
     zones: tuple[tuple[int, ...], ...]
     """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
+    measurement_mode_zones: tuple[int, ...]
+    """Map from from contiguous mode value to zone id for measurement mode operations."""
+    entangling_zones: frozenset[int]
+    """Set of zone ids that support CZ gates."""
     has_site_buses: frozenset[int]
     """Set of words that have site-bus moves."""
     has_word_buses: frozenset[int]
@@ -53,6 +57,27 @@ class ArchSpec(Generic[SiteType]):
     )
 
     def __post_init__(self):
+        if self.zones[0] != tuple(range(len(self.words))):
+            raise ValueError("Zone 0 must include all words in the architecture")
+
+        if len(self.measurement_mode_zones) == 0:
+            raise ValueError("There must be at least one measurement mode zone")
+
+        if self.measurement_mode_zones[0] != 0:
+            raise ValueError("Measurement mode zone 0 must be zone 0")
+
+        if any(
+            zone_id < 0 or zone_id >= len(self.zones)
+            for zone_id in self.entangling_zones
+        ):
+            raise ValueError("Entangling zone ids must be valid zone ids")
+
+        if any(
+            zone_id < 0 or zone_id >= len(self.zones)
+            for zone_id in self.measurement_mode_zones
+        ):
+            raise ValueError("Measurement mode zone ids must be valid zone ids")
+
         zone_address_map = defaultdict(dict)
         for zone_id, zone in enumerate(self.zones):
             index = 0
@@ -76,9 +101,9 @@ class ArchSpec(Generic[SiteType]):
         self,
         loc_addr: LocationAddress,
         zone_id: ZoneAddress,
-    ) -> int:
+    ) -> int | None:
         """Get the index of a location address within a zone address."""
-        return self.zone_address_map[loc_addr][zone_id]
+        return self.zone_address_map[loc_addr].get(zone_id)
 
     @cached_property
     def x_bounds(self) -> tuple[float, float]:

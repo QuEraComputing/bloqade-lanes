@@ -1,5 +1,8 @@
+from typing import Any
+
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
+from kirin.dialects import ilist
 from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
@@ -87,21 +90,38 @@ class Move(ir.Statement):
 
 @statement(dialect=dialect)
 class EndMeasure(ir.Statement):
+    """Start a measurement over the specified zones. Returns a MeasurementFuture."""
+
     traits = frozenset({lowering.FromPythonCall()})
 
-    zone_address: ZoneAddress = info.attribute()
-
+    zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
     result: ir.ResultValue = info.result(MeasurementFutureType)
 
 
 @statement(dialect=dialect)
-class GetMeasurementResult(ir.Statement):
+class GetFutureResult(ir.Statement):
+    """Get the measurement results from a measurement future"""
+
     traits = frozenset({lowering.FromPythonCall()})
 
     measurement_future: ir.SSAValue = info.argument(MeasurementFutureType)
+    zone_address: ZoneAddress = info.attribute()
+
+    result: ir.ResultValue = info.result(
+        type=ilist.IListType[bloqade_types.MeasurementResultType, types.Any]
+    )
+
+
+@statement(dialect=dialect)
+class GetZoneIndex(ir.Statement):
+    """Get the index of a location within a zone"""
+
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+
+    zone_address: ZoneAddress = info.attribute()
     location_address: LocationAddress = info.attribute()
 
-    result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)
+    result: ir.ResultValue = info.result(type=types.Int)
 
 
 @wraps(Fill)
@@ -160,10 +180,16 @@ def move(*, lanes: tuple[LaneAddress, ...]) -> None: ...
 
 
 @wraps(EndMeasure)
-def end_measure(*, zone_address: ZoneAddress) -> MeasurementFuture: ...
+def end_measure(*, zone_addresses: tuple[ZoneAddress, ...]) -> MeasurementFuture: ...
 
 
-@wraps(GetMeasurementResult)
-def get_measurement_result(
-    measurement_future: MeasurementFuture, *, location_address: LocationAddress
+@wraps(GetFutureResult)
+def get_future_result(
+    measurement_future: MeasurementFuture, *, zone_address: ZoneAddress
+) -> ilist.IList[bloqade_types.MeasurementResult, Any]: ...
+
+
+@wraps(GetZoneIndex)
+def get_zone_index(
+    *, zone_address: ZoneAddress, location_address: LocationAddress
 ) -> int: ...

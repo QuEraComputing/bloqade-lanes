@@ -65,7 +65,7 @@ class CleanUpMoveDialect(rewrite_abc.RewriteRule):
                     move.GlobalRz,
                     move.LocalR,
                     move.GlobalR,
-                    move.GetMeasurementResult,
+                    move.GetFutureResult,
                     move.PhysicalInitialize,
                     move.LogicalInitialize,
                     move.Move,

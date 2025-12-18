@@ -4,18 +4,16 @@ from itertools import chain, combinations, starmap
 
 from kirin import interp
 
+from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.analysis.placement import PlacementStrategyABC
-from bloqade.lanes.analysis.placement.lattice import AtomState, ConcreteState
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import (
-    Direction,
-    LaneAddress,
-    LocationAddress,
-    SiteLaneAddress,
-    WordLaneAddress,
+from bloqade.lanes.analysis.placement import (
+    AtomState,
+    ConcreteState,
+    ExecuteCZ,
+    ExecuteMeasure,
+    PlacementStrategyABC,
 )
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 
@@ -23,11 +21,11 @@ from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 class MoveOp:
     """Data class to store a move operation along with its source and destination addresses."""
 
-    arch_spec: ArchSpec
+    arch_spec: layout.ArchSpec
     """Architecture specification for move position lookups."""
-    src: LocationAddress
+    src: layout.LocationAddress
     """Source location address of the move."""
-    dst: LocationAddress
+    dst: layout.LocationAddress
     """Destination location address of the move."""
 
     @cached_property
@@ -42,7 +40,7 @@ class MoveOp:
 def check_conflict(m0: MoveOp, m1: MoveOp):
     """Check if two move operations conflict based on their source and destination positions.
 
-    A conflict occurs if the direction of movement for any dimension differs between the two moves.
+    A conflict occurs if the layout.direction of movement for any dimension differs between the two moves.
     Args:
         m0 (MoveOp): The first move operation.
         m1 (MoveOp): The second move operation.
@@ -87,11 +85,11 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
     The hope is that this should balance out the number of moves across all qubits in the circuit.
     """
 
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def validate_initial_layout(
         self,
-        initial_layout: tuple[LocationAddress, ...],
+        initial_layout: tuple[layout.LocationAddress, ...],
     ) -> None:
         for addr in initial_layout:
             if addr.word_id >= 2:
@@ -151,8 +149,8 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         c_addr = state.layout[control]
         t_addr = state.layout[target]
 
-        c_addr_dst = LocationAddress(t_addr.word_id, t_addr.site_id + 5)
-        t_addr_dst = LocationAddress(c_addr.word_id, c_addr.site_id + 5)
+        c_addr_dst = layout.LocationAddress(t_addr.word_id, t_addr.site_id + 5)
+        t_addr_dst = layout.LocationAddress(c_addr.word_id, c_addr.site_id + 5)
         c_move_count = state.move_count[control]
         t_move_count = state.move_count[target]
 
@@ -177,7 +175,7 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         moves: list[MoveOp],
     ) -> ConcreteState:
 
-        new_positions: dict[int, LocationAddress] = {}
+        new_positions: dict[int, layout.LocationAddress] = {}
         for move in moves:
             src_qubit = state.get_qubit_id(move.src)
             assert src_qubit is not None, "Source qubit must exist in state"
@@ -212,10 +210,10 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
 
         # invalid cz statement
         if len(controls) != len(targets):
-            return AtomState.top()
+            return AtomState.bottom()
 
         # since cz gates are symmetric swap controls and targets based on
-        # word_id and site_id the idea being to minimize the directions
+        # word_id and site_id the idea being to minimize the layout.directions
         # needed to rearrange qubits.
         start_word_id = self._word_balance(state, controls, targets)
         moves: list[MoveOp] = []
@@ -226,7 +224,11 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
             moves.append(self._pick_move(state, moves, start_word_id, c, t))
 
-        return self._update_positions(state, moves)
+        new_state = self._update_positions(state, moves)
+
+        return ExecuteCZ.from_concrete_state(
+            new_state, frozenset([layout.ZoneAddress(0)])
+        )
 
     def sq_placements(
         self,
@@ -235,19 +237,28 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
     ) -> AtomState:
         return state  # No movement for single-qubit gates
 
+    def measure_placements(
+        self, state: AtomState, qubits: tuple[int, ...]
+    ) -> AtomState:
+        if not isinstance(state, ConcreteState):
+            return state
+
+        zone_map = tuple(layout.ZoneAddress(0) for _ in state.layout)
+        return ExecuteMeasure.from_concrete_state(state, zone_map)
+
 
 @dataclass()
 class LogicalMoveScheduler(MoveSchedulerABC):
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def assert_valid_word_bus_move(
         self,
-        direction: Direction,
+        direction: layout.Direction,
         src_word: int,
         src_site: int,
         bus_id: int,
-    ) -> WordLaneAddress:
-        lane = WordLaneAddress(
+    ) -> layout.WordLaneAddress:
+        lane = layout.WordLaneAddress(
             direction,
             src_word,
             src_site,
@@ -262,12 +273,12 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
     def assert_valid_site_bus_move(
         self,
-        direction: Direction,
+        direction: layout.Direction,
         src_word: int,
         src_site: int,
         bus_id: int,
-    ) -> SiteLaneAddress:
-        lane = SiteLaneAddress(
+    ) -> layout.SiteLaneAddress:
+        lane = layout.SiteLaneAddress(
             direction,
             src_word,
             src_site,
@@ -281,8 +292,10 @@ class LogicalMoveScheduler(MoveSchedulerABC):
         return lane
 
     def site_moves(
-        self, diffs: list[tuple[LocationAddress, LocationAddress]], word_id: int
-    ) -> list[tuple[LaneAddress, ...]]:
+        self,
+        diffs: list[tuple[layout.LocationAddress, layout.LocationAddress]],
+        word_id: int,
+    ) -> list[tuple[layout.LaneAddress, ...]]:
         start_site_ids = [before.site_id for before, _ in diffs]
         assert len(set(start_site_ids)) == len(
             start_site_ids
@@ -297,7 +310,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
             bus_moves.setdefault(bus_id, []).append(
                 self.assert_valid_site_bus_move(
-                    Direction.FORWARD,
+                    layout.Direction.FORWARD,
                     word_id,
                     before.site_id,
                     bus_id,
@@ -308,7 +321,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
     def compute_moves(
         self, state_before: AtomState, state_after: AtomState
-    ) -> list[tuple[LaneAddress, ...]]:
+    ) -> list[tuple[layout.LaneAddress, ...]]:
         if not (
             isinstance(state_before, ConcreteState)
             and isinstance(state_after, ConcreteState)
@@ -321,9 +334,9 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             if ele[0] != ele[1]
         ]
 
-        groups: dict[tuple[int, int], list[tuple[LocationAddress, LocationAddress]]] = (
-            {}
-        )
+        groups: dict[
+            tuple[int, int], list[tuple[layout.LocationAddress, layout.LocationAddress]]
+        ] = {}
         for src, dst in diffs:
             groups.setdefault((src.word_id, dst.word_id), []).append((src, dst))
 
@@ -339,12 +352,18 @@ class LogicalMoveScheduler(MoveSchedulerABC):
                     "Cannot have both (0,1) and (1,0) moves in logical arch"
                 )
 
-        moves: list[tuple[LaneAddress, ...]] = self.site_moves(word_moves, word_start)
+        moves: list[tuple[layout.LaneAddress, ...]] = self.site_moves(
+            word_moves, word_start
+        )
         if len(moves) > 0:
             moves.append(
                 tuple(
                     self.assert_valid_word_bus_move(
-                        Direction.FORWARD if word_start == 0 else Direction.BACKWARD,
+                        (
+                            layout.Direction.FORWARD
+                            if word_start == 0
+                            else layout.Direction.BACKWARD
+                        ),
                         0,
                         end.site_id,
                         0,
@@ -361,10 +380,12 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def score_parallelism(
-        self, edges: dict[tuple[int, int], int], qubit_map: dict[int, LocationAddress]
+        self,
+        edges: dict[tuple[int, int], int],
+        qubit_map: dict[int, layout.LocationAddress],
     ) -> int:
         move_weights = {}
         for n, m in combinations(qubit_map.keys(), 2):
@@ -396,7 +417,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
-    ) -> tuple[LocationAddress, ...]:
+    ) -> tuple[layout.LocationAddress, ...]:
 
         if len(all_qubits) > self.arch_spec.max_qubits:
             raise interp.InterpreterError(
@@ -412,17 +433,17 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
 
         available_addresses = set(
             [
-                LocationAddress(word_id, site_id)
+                layout.LocationAddress(word_id, site_id)
                 for word_id in range(len(self.arch_spec.words))
                 for site_id in range(5)
             ]
         )
 
-        qubit_map: dict[int, LocationAddress] = {}
-        layout_map: dict[LocationAddress, int] = {}
+        qubit_map: dict[int, layout.LocationAddress] = {}
+        layout_map: dict[layout.LocationAddress, int] = {}
         for qubit in sorted(all_qubits):
 
-            scores: dict[LocationAddress, int] = {}
+            scores: dict[layout.LocationAddress, int] = {}
             for addr in available_addresses:
                 qubit_map = qubit_map.copy()
                 qubit_map[qubit] = addr

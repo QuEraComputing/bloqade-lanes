@@ -164,7 +164,7 @@ class Move(interp.MethodTable):
     @interp.impl(move.EndMeasure)
     @interp.impl(move.LogicalInitialize)
     @interp.impl(move.PhysicalInitialize)
-    @interp.impl(move.GetMeasurementResult)
+    @interp.impl(move.GetFutureResult)
     def noop_impl(
         self,
         interp_: AtomInterpreter,

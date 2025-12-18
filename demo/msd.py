@@ -1,10 +1,14 @@
+from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.lanes.logical_mvp import compile_squin_to_move
 
+kernel = squin.kernel.add(gemini_logical.dialect)
+kernel.run_pass = squin.kernel.run_pass
 
-@squin.kernel
+
+@kernel
 def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
@@ -18,7 +22,9 @@ def main():
     squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
     squin.broadcast.sqrt_y_adj(reg)
 
+    return gemini_logical.terminal_measure(reg)
 
-main = compile_squin_to_move(main)
+
+main = compile_squin_to_move(main, transversal_rewrite=True)
 main.print()
 # compile_and_visualize(main)

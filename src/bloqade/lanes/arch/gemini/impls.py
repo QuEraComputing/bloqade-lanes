@@ -77,10 +77,14 @@ def generate_arch(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
     )
 
     gate_zone = tuple(range(len(words)))
+    cz_gate_zones = frozenset([0])
+    measurement_zones = (0,)
 
     return ArchSpec(
         words,
         (gate_zone,),
+        measurement_zones,
+        cz_gate_zones,
         frozenset(range(num_word_x)),
         frozenset(as_flat_tuple_int(site_ids[:, 1])),
         site_buses(site_ids),

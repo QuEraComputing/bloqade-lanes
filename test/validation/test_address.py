@@ -39,11 +39,12 @@ def invalid_methods():
     yield incompatible_move_lane
 
     @lanes.kernel
-    def invalid_measurement():
-        future = move.end_measure(zone_address=ZoneAddress(0))
-        move.get_measurement_result(future, location_address=LocationAddress(5, 5))
+    def invalid_index():
+        return move.get_zone_index(
+            zone_address=ZoneAddress(0), location_address=LocationAddress(5, 5)
+        )
 
-    yield invalid_measurement
+    yield invalid_index
 
 
 @pytest.mark.parametrize("mt", invalid_methods())

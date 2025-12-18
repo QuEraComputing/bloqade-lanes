@@ -7,7 +7,7 @@ from kirin.dialects import debug, ilist
 from bloqade import qubit, squin
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.rewrite.transversal import (
-    RewriteGetMeasurementResult,
+    RewriteGetItem,
     RewriteLogicalToPhysicalConversion,
 )
 
@@ -66,7 +66,7 @@ class SpecializeGemini:
                 RewriteMoves(),
                 RewriteFill(),
                 RewriteInitialize(),
-                RewriteGetMeasurementResult(steane7_transversal_map),
+                RewriteGetItem(steane7_transversal_map),
                 RewriteLogicalToPhysicalConversion(),
             )
         ).rewrite(out.code)

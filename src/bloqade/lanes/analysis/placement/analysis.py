@@ -9,7 +9,7 @@ from kirin.analysis.forward import ForwardFrame
 from kirin.interp.exceptions import InterpreterError
 from typing_extensions import Self
 
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.layout import LocationAddress
 
 from .lattice import AtomState, ConcreteState
 
@@ -40,12 +40,13 @@ class PlacementStrategyABC(abc.ABC):
     ) -> AtomState:
         pass
 
+    @abc.abstractmethod
     def measure_placements(
         self,
         state: AtomState,
         qubits: tuple[int, ...],
     ) -> AtomState:
-        return state
+        pass
 
 
 @dataclass

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from bloqade.analysis import address
 from kirin import ir
-from kirin.dialects import debug, func
+from kirin.dialects import func, py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
@@ -15,17 +15,6 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 @dataclass
 class MoveSchedulerABC(abc.ABC):
     arch_spec: ArchSpec
-
-    def compute_zone_addresses(
-        self,
-        locations: tuple[LocationAddress, ...],
-    ) -> list[ZoneAddress]:
-        out: set[ZoneAddress] = set()
-        for loc in locations:
-            if loc not in self.arch_spec.zone_address_map:
-                continue
-            out |= self.arch_spec.zone_address_map[loc].keys()
-        return sorted(out, key=lambda za: za.zone_id)
 
     @abc.abstractmethod
     def compute_moves(
@@ -102,15 +91,13 @@ class RewriteCZ(RewriteRule):
 
         state_after = self.placement_analysis.get(node.state_after)
 
-        if not isinstance(state_after, placement.ConcreteState):
+        if not isinstance(state_after, placement.ExecuteCZ):
             return RewriteResult()
 
-        zone_addresses = self.move_heuristic.compute_zone_addresses(
-            tuple(state_after.layout[i] for i in node.controls + node.targets)
-        )
-
-        for zone_address in zone_addresses:
-            move.CZ(zone_address=zone_address).insert_after(node)
+        for cz_zone_address in state_after.active_cz_zones:
+            move.CZ(
+                zone_address=cz_zone_address,
+            ).insert_after(node)
 
         node.state_after.replace_by(node.state_before)
         node.delete()
@@ -219,33 +206,39 @@ class InsertMeasure(RewriteRule):
 
         if not isinstance(
             atom_state := self.placement_analysis.get(state_after := node.results[0]),
-            placement.ConcreteState,
+            placement.ExecuteMeasure,
         ):
             return RewriteResult()
 
-        zone_addresses = self.move_heuristic.compute_zone_addresses(atom_state.layout)
+        zone_addresses = tuple(set(atom_state.zone_maps))
+        (future_stmt := move.EndMeasure(zone_addresses=zone_addresses)).insert_before(
+            node
+        )
 
-        futures = {}
+        future_results: dict[ZoneAddress, ir.SSAValue] = {}
         for zone_address in zone_addresses:
-            measure_stmt = move.EndMeasure(zone_address=zone_address)
-            measure_stmt.insert_before(node)
-            futures[zone_address] = measure_stmt.result
-
-        for qubit_index, result in zip(node.qubits, node.results[1:]):
-            loc_addr = atom_state.layout[qubit_index]
-            zone_addresses = self.move_heuristic.arch_spec.zone_address_map[loc_addr]
-            if len(zone_addresses) > 1:
-                debug.info(
-                    "Multiple zone addresses found for location address:", loc_addr
+            (
+                future_result := move.GetFutureResult(
+                    future_stmt.result, zone_address=zone_address
                 )
-                assert False
-            zone_address = next(iter(zone_addresses))
-            get_result_stmt = move.GetMeasurementResult(
-                measurement_future=futures[zone_address],
-                location_address=loc_addr,
-            )
-            get_result_stmt.insert_before(node)
-            result.replace_by(get_result_stmt.result)
+            ).insert_before(node)
+            future_results[zone_address] = future_result.result
+
+        for result, zone_address, loc_addr in zip(
+            node.results[1:], atom_state.zone_maps, atom_state.layout
+        ):
+            future_result = future_results[zone_address]
+            (
+                index_stmt := move.GetZoneIndex(
+                    zone_address=zone_address, location_address=loc_addr
+                )
+            ).insert_before(node)
+
+            (
+                get_item_stmt := py.GetItem(future_result, index_stmt.result)
+            ).insert_before(node)
+
+            result.replace_by(get_item_stmt.result)
 
         state_after.replace_by(node.state_before)
         node.delete()
@@ -255,7 +248,7 @@ class InsertMeasure(RewriteRule):
 class LiftMoveStatements(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement):
         if not (
-            type(node) in move.dialect.stmts
+            type(node) not in place.dialect.stmts
             and isinstance((parent_stmt := node.parent_stmt), place.StaticPlacement)
         ):
             return RewriteResult()

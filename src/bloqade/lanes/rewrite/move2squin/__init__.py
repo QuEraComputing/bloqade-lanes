@@ -2,7 +2,10 @@ from .base import (
     CleanUpMoveDialect as CleanUpMoveDialect,
     InsertQubits as InsertQubits,
 )
-from .gates import InsertGates as InsertGates
+from .gates import (
+    InsertGates as InsertGates,
+    InsertMeasurementIndices as InsertMeasurementIndices,
+)
 from .noise import (
     InsertNoise as InsertNoise,
     NoiseModelABC as NoiseModelABC,
