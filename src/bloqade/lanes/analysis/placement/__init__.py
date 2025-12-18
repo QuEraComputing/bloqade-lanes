@@ -5,4 +5,6 @@ from .analysis import (
 from .lattice import (
     AtomState as AtomState,
     ConcreteState as ConcreteState,
+    ExecuteCZ as ExecuteCZ,
+    ExecuteMeasure as ExecuteMeasure,
 )

@@ -1,6 +1,5 @@
 import abc
-from dataclasses import dataclass, field
-from typing import Iterable
+from dataclasses import dataclass
 
 from bloqade.analysis import address
 from kirin import ir
@@ -16,22 +15,6 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 @dataclass
 class MoveSchedulerABC(abc.ABC):
     arch_spec: ArchSpec
-    measurement_zone_address: ZoneAddress = field(init=False, default=ZoneAddress(0))
-    cz_gate_zone_address: ZoneAddress = field(init=False, default=ZoneAddress(0))
-
-    def all_in_measurement_zone(self, loc_addresses: Iterable[LocationAddress]) -> bool:
-        return all(
-            self.arch_spec.get_zone_index(loc_addr, self.measurement_zone_address)
-            is not None
-            for loc_addr in loc_addresses
-        )
-
-    def all_in_cz_gate_zone(self, loc_addresses: Iterable[LocationAddress]) -> bool:
-        return all(
-            self.arch_spec.get_zone_index(loc_addr, self.cz_gate_zone_address)
-            is not None
-            for loc_addr in loc_addresses
-        )
 
     @abc.abstractmethod
     def compute_moves(
@@ -108,16 +91,13 @@ class RewriteCZ(RewriteRule):
 
         state_after = self.placement_analysis.get(node.state_after)
 
-        if not isinstance(state_after, placement.ConcreteState):
+        if not isinstance(state_after, placement.ExecuteCZ):
             return RewriteResult()
 
-        location_addresses = tuple(state_after.layout[i] for i in node.qubits)
-        if not self.move_heuristic.all_in_cz_gate_zone(location_addresses):
-            return RewriteResult()
-
-        move.CZ(
-            zone_address=self.move_heuristic.cz_gate_zone_address,
-        ).insert_after(node)
+        for cz_zone_address in state_after.active_cz_zones:
+            move.CZ(
+                zone_address=cz_zone_address,
+            ).insert_after(node)
 
         node.state_after.replace_by(node.state_before)
         node.delete()
@@ -226,37 +206,38 @@ class InsertMeasure(RewriteRule):
 
         if not isinstance(
             atom_state := self.placement_analysis.get(state_after := node.results[0]),
-            placement.ConcreteState,
+            placement.ExecuteMeasure,
         ):
             return RewriteResult()
 
-        location_addresses = tuple(
-            atom_state.layout[qubit_index] for qubit_index in node.qubits
-        )
-
-        if not self.move_heuristic.all_in_measurement_zone(location_addresses):
-            return RewriteResult()
-
-        zone_address = self.move_heuristic.measurement_zone_address
-        (future_stmt := move.EndMeasure(zone_addresses=(zone_address,))).insert_before(
+        zone_addresses = tuple(set(atom_state.zone_maps))
+        (future_stmt := move.EndMeasure(zone_addresses=zone_addresses)).insert_before(
             node
         )
-        (
-            future_result := move.GetFutureResult(
-                future_stmt.result, zone_address=zone_address
-            )
-        ).insert_before(node)
 
-        for qubit_index, result in zip(node.qubits, node.results[1:]):
-            loc_addr = atom_state.layout[qubit_index]
+        future_results: dict[ZoneAddress, ir.SSAValue] = {}
+        for zone_address in zone_addresses:
+            (
+                future_result := move.GetFutureResult(
+                    future_stmt.result, zone_address=zone_address
+                )
+            ).insert_before(node)
+            future_results[zone_address] = future_result.result
+
+        for result, zone_address, loc_addr in zip(
+            node.results[1:], atom_state.zone_maps, atom_state.layout
+        ):
+            future_result = future_results[zone_address]
             (
                 index_stmt := move.GetZoneIndex(
                     zone_address=zone_address, location_address=loc_addr
                 )
             ).insert_before(node)
+
             (
-                get_item_stmt := py.GetItem(future_result.result, index_stmt.result)
+                get_item_stmt := py.GetItem(future_result, index_stmt.result)
             ).insert_before(node)
+
             result.replace_by(get_item_stmt.result)
 
         state_after.replace_by(node.state_before)

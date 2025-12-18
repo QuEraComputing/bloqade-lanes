@@ -8,7 +8,7 @@ from kirin.lattice import (
     SingletonMeta,
 )
 
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.layout import LocationAddress, ZoneAddress
 
 
 @dataclass
@@ -43,7 +43,6 @@ class AnyState(AtomState, metaclass=SingletonMeta):
         return isinstance(other, AnyState)
 
 
-@final
 @dataclass
 class ConcreteState(AtomState):
     occupied: frozenset[LocationAddress]
@@ -73,3 +72,31 @@ class ConcreteState(AtomState):
             return self.layout.index(location)
         except ValueError:
             return None
+
+
+@final
+@dataclass
+class ExecuteCZ(ConcreteState):
+    active_cz_zones: frozenset[ZoneAddress]
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return (
+            super().is_subseteq(other)
+            and isinstance(other, ExecuteCZ)
+            and self.active_cz_zones == other.active_cz_zones
+        )
+
+
+@final
+@dataclass
+class ExecuteMeasure(ConcreteState):
+    """A state representing measurement placements."""
+
+    zone_maps: tuple[ZoneAddress, ...]
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return (
+            super().is_subseteq(other)
+            and isinstance(other, ExecuteMeasure)
+            and self.zone_maps == other.zone_maps
+        )
