@@ -6,9 +6,64 @@ from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.widgets import Button
 
-from bloqade.lanes.analysis.atom.analysis import AtomInterpreter, AtomState
+from bloqade.lanes.analysis.atom import AtomInterpreter, AtomStateLattice, ConcreteState
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.arch import ArchSpec
+
+
+class StateArtist:
+
+    def draw_atoms(
+        self,
+        state: AtomStateLattice,
+        arch_spec: ArchSpec,
+        ax: Axes | None = None,
+        **kwargs,
+    ):
+        import matplotlib.pyplot as plt
+
+        if not isinstance(state, ConcreteState):
+            return
+
+        if ax is None:
+            ax = plt.gca()
+
+        for location in state.locations:
+            x_pos, y_pos = zip(
+                *arch_spec.words[location.word_id].site_positions(location.site_id)
+            )
+            ax.scatter(x_pos, y_pos, **kwargs)
+
+    def draw_moves(
+        self,
+        state: AtomStateLattice,
+        arch_spec: ArchSpec,
+        ax: Axes | None = None,
+        **kwargs,
+    ):
+        import matplotlib.pyplot as plt
+
+        if not isinstance(state, ConcreteState):
+            return
+
+        if ax is None:
+            ax = plt.gca()
+
+        for lane in state.prev_lanes.values():
+            start, end = arch_spec.get_endpoints(lane)
+            start_pos = arch_spec.words[start.word_id].site_positions(start.site_id)
+            end_pos = arch_spec.words[end.word_id].site_positions(end.site_id)
+            for (x_start, y_start), (x_end, y_end) in zip(start_pos, end_pos):
+                ax.quiver(
+                    [x_start],
+                    [y_start],
+                    [x_end - x_start],
+                    [y_end - y_start],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=1.0,
+                    **kwargs,
+                )
 
 
 def show_local(
@@ -126,11 +181,11 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     y_min -= 0.1 * y_width
     y_max += 0.1 * y_width
 
-    steps: list[tuple[ir.Statement, AtomState]] = []
+    steps: list[tuple[ir.Statement, ConcreteState]] = []
     constants = {}
     for stmt in mt.callable_region.walk():
         curr_state = frame.atom_state_map.get(stmt)
-        if isinstance(curr_state, AtomState):
+        if isinstance(curr_state, ConcreteState):
             steps.append((stmt, curr_state))
         elif isinstance(stmt, py.Constant):
             constants[stmt.result] = stmt.value.unwrap()
@@ -144,6 +199,8 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
             + ")"
         )
 
+    artist = StateArtist()
+
     def draw(step_index: int):
         if len(steps) == 0:
             return
@@ -152,10 +209,10 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
 
         visualize_fn = methods.get(type(stmt), lambda a, b, c: None)
         visualize_fn(ax, stmt, arch_spec)
-        curr_state.draw_atoms(
-            arch_spec, ax=ax, color="#6437FF", s=80, marker=atom_marker
+        artist.draw_atoms(
+            curr_state, arch_spec, ax=ax, color="#6437FF", s=80, marker=atom_marker
         )
-        curr_state.draw_moves(arch_spec, ax=ax, color="orange")
+        artist.draw_moves(curr_state, arch_spec, ax=ax, color="orange")
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
 

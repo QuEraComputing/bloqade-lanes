@@ -8,8 +8,10 @@ from ...dialects import move
 from .analysis import (
     AtomFrame,
     AtomInterpreter,
-    AtomState,
-    AtomStateType,
+)
+from .lattice import (
+    AtomStateLattice,
+    ConcreteState,
     UnknownAtomState,
 )
 
@@ -68,7 +70,7 @@ class SsaCfg(interp.MethodTable):
     def run_succ(
         self,
         interp_: AtomInterpreter,
-        atom_state: AtomStateType,
+        atom_state: AtomStateLattice,
         frame: AtomFrame,
         succ: interp.Successor,
     ) -> interp.SpecialValue[EmptyLattice]:
@@ -136,7 +138,7 @@ class Move(interp.MethodTable):
         stmt: move.Move,
     ):
         current_state = frame.current_state
-        if not isinstance(current_state, AtomState):
+        if not isinstance(current_state, ConcreteState):
             return
 
         qubits_to_move = {}
@@ -178,6 +180,6 @@ class Move(interp.MethodTable):
 
     @interp.impl(move.Fill)
     def fill_impl(self, interp_: AtomInterpreter, frame: AtomFrame, stmt: move.Fill):
-        frame.current_state = AtomState(stmt.location_addresses)
+        frame.current_state = ConcreteState(stmt.location_addresses)
         frame.set_state_for_stmt(stmt)
         return (EmptyLattice.top(),)

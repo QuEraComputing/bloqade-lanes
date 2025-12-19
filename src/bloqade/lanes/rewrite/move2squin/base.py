@@ -31,7 +31,7 @@ class AtomStateRewriter(rewrite_abc.RewriteRule):
     physical_ssa_values: tuple[ir.SSAValue, ...]
 
     def get_qubit_ssa(
-        self, atom_state: atom.AtomState, location: LocationAddress
+        self, atom_state: atom.ConcreteState, location: LocationAddress
     ) -> ir.SSAValue | None:
         qubit_index = atom_state.get_qubit(location)
 
@@ -42,7 +42,7 @@ class AtomStateRewriter(rewrite_abc.RewriteRule):
 
     def get_qubit_ssa_from_locations(
         self,
-        atom_state: atom.AtomState,
+        atom_state: atom.ConcreteState,
         location_addresses: tuple[LocationAddress, ...],
     ) -> tuple[ir.SSAValue | None, ...]:
         def get_qubit_ssa(location: LocationAddress) -> ir.SSAValue | None:
@@ -53,7 +53,7 @@ class AtomStateRewriter(rewrite_abc.RewriteRule):
 
 @dataclass
 class CleanUpMoveDialect(rewrite_abc.RewriteRule):
-    atom_state_map: dict[ir.Statement, atom.AtomStateType]
+    atom_state_map: dict[ir.Statement, atom.AtomStateLattice]
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if type(node) not in move.dialect.stmts:

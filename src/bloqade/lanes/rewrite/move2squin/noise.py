@@ -49,13 +49,15 @@ class SimpleNoiseModel(NoiseModelABC):
 
 @dataclass
 class InsertNoise(AtomStateRewriter):
-    atom_state_map: dict[ir.Statement, atom.AtomStateType]
+    atom_state_map: dict[ir.Statement, atom.AtomStateLattice]
     noise_model: NoiseModelABC
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
             isinstance(node, (move.Move, move.CZ))
-            and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
+            and isinstance(
+                atom_state := self.atom_state_map.get(node), atom.ConcreteState
+            )
         ):
             return rewrite_abc.RewriteResult()
 
@@ -63,7 +65,7 @@ class InsertNoise(AtomStateRewriter):
         return rewriter(atom_state, node)
 
     def rewrite_Move(
-        self, atom_state: atom.AtomState, node: move.Move
+        self, atom_state: atom.ConcreteState, node: move.Move
     ) -> rewrite_abc.RewriteResult:
         if len(node.lanes) == 0:
             return rewrite_abc.RewriteResult()
@@ -99,7 +101,7 @@ class InsertNoise(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_CZ(
-        self, atom_state: atom.AtomState, node: move.CZ
+        self, atom_state: atom.ConcreteState, node: move.CZ
     ) -> rewrite_abc.RewriteResult:
         if (
             cz_unpaired_noise := self.noise_model.get_cz_unpaired_noise(
