@@ -36,20 +36,15 @@ class MoveToSquin:
         frame, _ = run_method(main)
         qubit_rule = move2squin.InsertQubits()
         rewrite.Walk(qubit_rule).rewrite(main.code)
-        main.print(analysis=frame.entries)
-        rules = []
-
-        rules.append(
+        rules = [
             move2squin.InsertGates(
                 self.arch_spec,
                 tuple(qubit_rule.physical_ssa_values),
                 frame,
                 self.logical_initialization,
-            )
-        )
-        rules.append(
-            move2squin.InsertMeasurements(tuple(qubit_rule.physical_ssa_values), frame)
-        )
+            ),
+            move2squin.InsertMeasurements(tuple(qubit_rule.physical_ssa_values), frame),
+        ]
         if self.noise_model is not None:
             rules.append(
                 move2squin.InsertNoise(
@@ -71,8 +66,6 @@ class MoveToSquin:
         rewrite.Walk(
             SquinU3ToClifford(),
         ).rewrite(main.code)
-
-        main.print()
 
         rewrite.Fixpoint(rewrite.Walk(move2squin.CleanUpMoveDialect())).rewrite(
             main.code
