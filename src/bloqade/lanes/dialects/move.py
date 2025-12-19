@@ -14,8 +14,13 @@ dialect = ir.Dialect(name="lanes.move")
 
 
 @statement(dialect=dialect)
-class GetCurrentState(ir.Statement):
+class LoadState(ir.Statement):
     result: ir.ResultValue = info.result(StateType)
+
+
+@statement(dialect=dialect)
+class StoreState(ir.Statement):
+    current_state: ir.SSAValue = info.argument(StateType)
 
 
 @statement(dialect=None)

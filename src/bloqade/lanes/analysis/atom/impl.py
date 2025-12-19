@@ -168,7 +168,7 @@ class Move(interp.MethodTable):
     @interp.impl(move.LogicalInitialize)
     @interp.impl(move.PhysicalInitialize)
     @interp.impl(move.GetFutureResult)
-    @interp.impl(move.GetCurrentState)
+    @interp.impl(move.LoadState)
     def noop_impl(
         self,
         interp_: AtomInterpreter,
