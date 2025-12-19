@@ -396,17 +396,7 @@ class DeleteInitialize(RewriteRule):
 class FixUpStateFlow(RewriteRule):
     current_states: ir.SSAValue | None = field(default=None, init=False)
 
-    TYPES = (
-        move.Load,
-        move.Store,
-        cf.Branch,
-        cf.ConditionalBranch,
-    )
-
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, self.TYPES):
-            return RewriteResult()
-
         return self.rewrite_node(node)
 
     @singledispatchmethod
