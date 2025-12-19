@@ -126,7 +126,7 @@ class PlaceToMove:
             )
         ).rewrite(out.code)
         rewrite.Walk(place2move.RemoveNoOpStaticPlacements()).rewrite(out.code)
-
+        rewrite.Walk(place2move.FixUpStateFlow()).rewrite(out.code)
         rewrite.Fixpoint(
             rewrite.Walk(
                 rewrite.Chain(

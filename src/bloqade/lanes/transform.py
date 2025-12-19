@@ -36,32 +36,32 @@ class MoveToSquin:
         frame, _ = run_method(main)
         qubit_rule = move2squin.InsertQubits()
         rewrite.Walk(qubit_rule).rewrite(main.code)
-
+        main.print(analysis=frame.entries)
         rules = []
 
         rules.append(
-            gate_rule := move2squin.InsertGates(
+            move2squin.InsertGates(
                 self.arch_spec,
                 tuple(qubit_rule.physical_ssa_values),
-                frame.atom_state_map,
+                frame,
                 self.logical_initialization,
             )
+        )
+        rules.append(
+            move2squin.InsertMeasurements(tuple(qubit_rule.physical_ssa_values), frame)
         )
         if self.noise_model is not None:
             rules.append(
                 move2squin.InsertNoise(
                     self.arch_spec,
                     tuple(qubit_rule.physical_ssa_values),
-                    frame.atom_state_map,
+                    frame,
                     self.noise_model,
                 ),
             )
 
         rewrite.Walk(rewrite.Chain(*rules)).rewrite(main.code)
 
-        rewrite.Walk(
-            move2squin.InsertMeasurementIndices(gate_rule.measurement_index_map)
-        ).rewrite(main.code)
         # we need to fold before writing U3 to Clifford
         if self.aggressive_unroll:
             agg.AggressiveUnroll(main.dialects).fixpoint(main)
@@ -72,11 +72,11 @@ class MoveToSquin:
             SquinU3ToClifford(),
         ).rewrite(main.code)
 
-        rewrite.Fixpoint(
-            rewrite.Walk(
-                move2squin.CleanUpMoveDialect(frame.atom_state_map),
-            )
-        ).rewrite(main.code)
+        main.print()
+
+        rewrite.Fixpoint(rewrite.Walk(move2squin.CleanUpMoveDialect())).rewrite(
+            main.code
+        )
 
         out = main.similar(main.dialects.discard(move.dialect))
 

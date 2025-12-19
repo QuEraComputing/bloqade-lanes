@@ -1,12 +1,11 @@
 from itertools import chain
 
 from kirin import ir
-from kirin.dialects import py
 from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.widgets import Button
 
-from bloqade.lanes.analysis.atom import AtomInterpreter, AtomStateLattice, ConcreteState
+from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.arch import ArchSpec
 
@@ -15,20 +14,20 @@ class StateArtist:
 
     def draw_atoms(
         self,
-        state: AtomStateLattice,
+        state: MoveExecution,
         arch_spec: ArchSpec,
         ax: Axes | None = None,
         **kwargs,
     ):
         import matplotlib.pyplot as plt
 
-        if not isinstance(state, ConcreteState):
+        if not isinstance(state, AtomState):
             return
 
         if ax is None:
             ax = plt.gca()
 
-        for location in state.locations:
+        for location in state.locations_to_qubit:
             x_pos, y_pos = zip(
                 *arch_spec.words[location.word_id].site_positions(location.site_id)
             )
@@ -36,14 +35,14 @@ class StateArtist:
 
     def draw_moves(
         self,
-        state: AtomStateLattice,
+        state: MoveExecution,
         arch_spec: ArchSpec,
         ax: Axes | None = None,
         **kwargs,
     ):
         import matplotlib.pyplot as plt
 
-        if not isinstance(state, ConcreteState):
+        if not isinstance(state, AtomState):
             return
 
         if ax is None:
@@ -181,14 +180,15 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     y_min -= 0.1 * y_width
     y_max += 0.1 * y_width
 
-    steps: list[tuple[ir.Statement, ConcreteState]] = []
+    steps: list[tuple[ir.Statement, AtomState]] = []
     constants = {}
     for stmt in mt.callable_region.walk():
-        curr_state = frame.atom_state_map.get(stmt)
-        if isinstance(curr_state, ConcreteState):
-            steps.append((stmt, curr_state))
-        elif isinstance(stmt, py.Constant):
-            constants[stmt.result] = stmt.value.unwrap()
+        results = frame.get_values(stmt.results)
+        match results:
+            case (AtomState() as state,):
+                steps.append((stmt, state))
+            case (Value(value),) if isinstance(value, (float, int)):
+                constants[stmt.results[0]] = value
 
     def stmt_text(stmt: ir.Statement) -> str:
         if len(stmt.args) == 0:

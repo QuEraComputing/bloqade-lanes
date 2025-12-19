@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, TypeGuard
 
 from kirin import ir
+from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func, ilist
 from kirin.rewrite import abc as rewrite_abc
 
@@ -49,14 +50,14 @@ class SimpleNoiseModel(NoiseModelABC):
 
 @dataclass
 class InsertNoise(AtomStateRewriter):
-    atom_state_map: dict[ir.Statement, atom.AtomStateLattice]
+    atom_state_map: ForwardFrame[atom.MoveExecution]
     noise_model: NoiseModelABC
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
             isinstance(node, (move.Move, move.CZ))
             and isinstance(
-                atom_state := self.atom_state_map.get(node), atom.ConcreteState
+                atom_state := self.atom_state_map.get(node.result), atom.AtomState
             )
         ):
             return rewrite_abc.RewriteResult()
@@ -65,7 +66,7 @@ class InsertNoise(AtomStateRewriter):
         return rewriter(atom_state, node)
 
     def rewrite_Move(
-        self, atom_state: atom.ConcreteState, node: move.Move
+        self, atom_state: atom.AtomState, node: move.Move
     ) -> rewrite_abc.RewriteResult:
         if len(node.lanes) == 0:
             return rewrite_abc.RewriteResult()
@@ -101,7 +102,7 @@ class InsertNoise(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_CZ(
-        self, atom_state: atom.ConcreteState, node: move.CZ
+        self, atom_state: atom.AtomState, node: move.CZ
     ) -> rewrite_abc.RewriteResult:
         if (
             cz_unpaired_noise := self.noise_model.get_cz_unpaired_noise(
@@ -109,10 +110,6 @@ class InsertNoise(AtomStateRewriter):
             )
         ) is None:
             return rewrite_abc.RewriteResult()
-
-        assert len(atom_state.locations) == len(
-            self.physical_ssa_values
-        ), "Mismatch between atom state and physical SSA values"
 
         _, _, unpaired = atom_state.get_qubit_pairing(node.zone_address, self.arch_spec)
 

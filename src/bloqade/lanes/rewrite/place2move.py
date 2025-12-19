@@ -1,15 +1,16 @@
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import singledispatchmethod
 
 from bloqade.analysis import address
 from kirin import ir
-from kirin.dialects import func, py
+from kirin.dialects import cf, func, py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.types import StateType
 
 
 @dataclass
@@ -42,11 +43,9 @@ class InsertMoves(RewriteRule):
         if len(moves) == 0:
             return RewriteResult()
 
-        (current_state := move.LoadState()).insert_before(node)
         for move_lanes in moves:
-            (
-                current_state := move.Move(current_state.result, lanes=move_lanes)
-            ).insert_before(node)
+            (current_state := move.Load()).insert_before(node)
+            (move.Move(current_state.result, lanes=move_lanes)).insert_before(node)
 
         return RewriteResult(has_done_something=True)
 
@@ -66,15 +65,14 @@ class InsertPalindromeMoves(RewriteRule):
         yield_stmt = node.body.blocks[0].last_stmt
         assert isinstance(yield_stmt, place.Yield)
 
-        (current_state := move.LoadState()).insert_before(yield_stmt)
         for stmt in node.body.walk(reverse=True):
             if not isinstance(stmt, move.Move):
                 continue
-
+            (current_state := move.Load()).insert_before(yield_stmt)
             reverse_moves = tuple(lane.reverse() for lane in stmt.lanes[::-1])
-            (
-                current_state := move.Move(current_state.result, lanes=reverse_moves)
-            ).insert_before(yield_stmt)
+            (move.Move(current_state.result, lanes=reverse_moves)).insert_before(
+                yield_stmt
+            )
 
         return RewriteResult(has_done_something=True)
 
@@ -100,11 +98,12 @@ class RewriteCZ(RewriteRule):
         if not isinstance(state_after, placement.ExecuteCZ):
             return RewriteResult()
 
-        stmts_to_insert: list[move.CZ | move.LoadState] = [move.LoadState()]
+        stmts_to_insert: list[move.CZ | move.Load] = []
         for cz_zone_address in state_after.active_cz_zones:
+            stmts_to_insert.append(current_state := move.Load())
             stmts_to_insert.append(
                 move.CZ(
-                    stmts_to_insert[-1].result,
+                    current_state.result,
                     zone_address=cz_zone_address,
                 )
             )
@@ -142,7 +141,7 @@ class RewriteR(RewriteRule):
             node.qubits
         )  # gate statement includes all atoms
 
-        current_state = move.LoadState()
+        current_state = move.Load()
         if is_global:
             move.GlobalR(
                 current_state.result,
@@ -195,7 +194,7 @@ class RewriteRz(RewriteRule):
             node.qubits
         )  # gate statement includes all atoms
 
-        current_state = move.LoadState()
+        current_state = move.Load()
         if is_global:
             move.GlobalRz(
                 current_state.result,
@@ -232,7 +231,7 @@ class InsertMeasure(RewriteRule):
         ):
             return RewriteResult()
 
-        (current_state := move.LoadState()).insert_before(node)
+        (current_state := move.Load()).insert_before(node)
         zone_addresses = tuple(set(atom_state.zone_maps))
         (
             future_stmt := move.EndMeasure(
@@ -339,7 +338,7 @@ class InsertInitialize(RewriteRule):
         if stmt is None:
             return RewriteResult()
 
-        (current_state := move.LoadState()).insert_before(stmt)
+        (current_state := move.Load()).insert_before(stmt)
         move.LogicalInitialize(
             current_state.result,
             tuple(thetas),
@@ -364,7 +363,7 @@ class InsertFill(RewriteRule):
         if first_stmt is None or isinstance(first_stmt, move.Fill):
             return RewriteResult()
 
-        (current_state := move.LoadState()).insert_before(first_stmt)
+        (current_state := move.Load()).insert_before(first_stmt)
         move.Fill(
             current_state.result, location_addresses=self.initial_layout
         ).insert_before(first_stmt)
@@ -390,4 +389,110 @@ class DeleteInitialize(RewriteRule):
         node.state_after.replace_by(node.state_before)
         node.delete()
 
+        return RewriteResult(has_done_something=True)
+
+
+@dataclass
+class FixUpStateFlow(RewriteRule):
+    current_states: ir.SSAValue | None = field(default=None, init=False)
+
+    TYPES = (
+        move.Load,
+        move.Store,
+        cf.Branch,
+        cf.ConditionalBranch,
+    )
+
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not isinstance(node, self.TYPES):
+            return RewriteResult()
+
+        return self.rewrite_node(node)
+
+    @singledispatchmethod
+    def rewrite_node(self, node: ir.Statement) -> RewriteResult:
+        return RewriteResult()
+
+    @rewrite_node.register(move.Load)
+    def rewrite_Load(self, node: move.Load):
+        if len(uses := node.result.uses) != 1:
+            # Something is wrong, we cannot fix up
+            return RewriteResult()
+
+        (use,) = uses
+
+        if not isinstance(stmt := use.stmt, move.StatefulStatement):
+            return RewriteResult()
+
+        if self.current_states is None:
+            self.current_states = stmt.result
+            return RewriteResult()
+        else:
+            stmt.current_state.replace_by(self.current_states)
+            self.current_states = stmt.result
+            return RewriteResult(has_done_something=True)
+
+    @rewrite_node.register(move.Store)
+    def rewrite_Store(self, node: move.Store):
+        if self.current_states is None:
+            # Something is wrong, we cannot fix up
+            return RewriteResult()
+
+        node.current_state.replace_by(self.current_states)
+        self.current_states = None
+        return RewriteResult(has_done_something=True)
+
+    @rewrite_node.register(cf.Branch)
+    def rewrite_Branch(self, node: cf.Branch):
+        if self.current_states is None:
+            return RewriteResult()
+
+        node.replace_by(
+            cf.Branch(
+                successor=node.successor,
+                arguments=(self.current_states,) + node.arguments,
+            )
+        )
+        self.current_states = None
+        return RewriteResult(has_done_something=True)
+
+    @rewrite_node.register(cf.ConditionalBranch)
+    def rewrite_ConditionalBranch(self, node: cf.ConditionalBranch):
+        if self.current_states is None:
+            return RewriteResult()
+
+        node.replace_by(
+            cf.ConditionalBranch(
+                cond=node.cond,
+                then_successor=node.then_successor,
+                then_arguments=(self.current_states,) + node.then_arguments,
+                else_successor=node.else_successor,
+                else_arguments=(self.current_states,) + node.else_arguments,
+            )
+        )
+
+        self.current_states = None
+        return RewriteResult(has_done_something=True)
+
+    def is_entry_block(self, node: ir.Block) -> bool:
+        if (parent_stmt := node.parent_stmt) is None:
+            return False
+
+        callable_stmt_trait = parent_stmt.get_trait(ir.CallableStmtInterface)
+
+        if callable_stmt_trait is None:
+            return False
+
+        parent_region = callable_stmt_trait.get_callable_region(parent_stmt)
+        return parent_region._block_idx[node] == 0
+
+    def rewrite_Block(self, node: ir.Block):
+        if self.is_entry_block(node):
+            return RewriteResult()
+
+        if self.current_states is not None:
+            # something has gone wrong, we cannot fix up
+            return RewriteResult()
+
+        self.current_states = node.args.insert_from(0, StateType, "current_state")
         return RewriteResult(has_done_something=True)

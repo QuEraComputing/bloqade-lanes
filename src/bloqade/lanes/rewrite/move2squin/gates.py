@@ -3,6 +3,7 @@ from typing import Any
 
 from bloqade.squin.gate import stmts as gate_stmts
 from kirin import ir
+from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func, ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
@@ -17,7 +18,7 @@ from .base import AtomStateRewriter
 
 @dataclass
 class InsertGates(AtomStateRewriter):
-    atom_state_map: dict[ir.Statement, atom.AtomStateLattice]
+    move_exec_analysis: ForwardFrame[atom.MoveExecution]
     initialize_kernel: ir.Method[
         [float, float, float, ilist.IList[qubit.Qubit, Any]], None
     ]
@@ -35,13 +36,12 @@ class InsertGates(AtomStateRewriter):
                     move.GlobalR,
                     move.LocalRz,
                     move.GlobalRz,
-                    move.GetFutureResult,
                     move.LogicalInitialize,
                     move.PhysicalInitialize,
                 ),
             )
             and isinstance(
-                atom_state := self.atom_state_map.get(node), atom.ConcreteState
+                atom_state := self.move_exec_analysis.get(node.result), atom.AtomState
             )
         ):
             return rewrite_abc.RewriteResult()
@@ -49,7 +49,7 @@ class InsertGates(AtomStateRewriter):
         return rewriter(atom_state, node)
 
     def rewrite_LocalRz(
-        self, atom_state: atom.ConcreteState, node: move.LocalRz
+        self, atom_state: atom.AtomState, node: move.LocalRz
     ) -> rewrite_abc.RewriteResult:
 
         qubit_ssa = self.get_qubit_ssa_from_locations(
@@ -67,7 +67,7 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_GlobalRz(
-        self, atom_state: atom.ConcreteState, node: move.GlobalRz
+        self, atom_state: atom.AtomState, node: move.GlobalRz
     ) -> rewrite_abc.RewriteResult:
         (zero := py.Constant(0.0)).insert_before(node)
         (reg := ilist.New(self.physical_ssa_values)).insert_before(node)
@@ -77,7 +77,7 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_LocalR(
-        self, atom_state: atom.ConcreteState, node: move.LocalR
+        self, atom_state: atom.AtomState, node: move.LocalR
     ) -> rewrite_abc.RewriteResult:
         # R -> U3: https://algassert.com/quirk#circuit={%22cols%22:[[%22QFT3%22],[%22inputA3%22,1,1,%22+=A3%22],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22-pi%20t%22}],[],[1,1,1,1,1,{%22id%22:%22Rxft%22,%22arg%22:%22-pi%20t^3%22}],[],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22pi%20t%22}],[1,1,1,%22%E2%80%A6%22,%22%E2%80%A6%22,%22%E2%80%A6%22],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22-pi%20t%20+%20pi/2%22}],[],[],[1,1,1,1,1,{%22id%22:%22Ryft%22,%22arg%22:%22pi%20t^3%22}],[],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22pi%20t%20-%20pi/2%22}]]}
 
@@ -98,7 +98,7 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_GlobalR(
-        self, atom_state: atom.ConcreteState, node: move.GlobalR
+        self, atom_state: atom.AtomState, node: move.GlobalR
     ) -> rewrite_abc.RewriteResult:
         (quarter_turn := py.Constant(0.25)).insert_before(node)
         (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
@@ -110,7 +110,7 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_GetFutureResult(
-        self, atom_state: atom.ConcreteState, node: move.GetFutureResult
+        self, atom_state: atom.AtomState, node: move.GetFutureResult
     ) -> rewrite_abc.RewriteResult:
         zone_address = node.zone_address
         qubit_ssas: list[ir.SSAValue] = []
@@ -136,7 +136,7 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_LogicalInitialize(
-        self, atom_state: atom.ConcreteState, node: move.LogicalInitialize
+        self, atom_state: atom.AtomState, node: move.LogicalInitialize
     ) -> rewrite_abc.RewriteResult:
         stmts_to_insert: list[ir.Statement] = []
         for theta, phi, lam, location in zip(
@@ -156,7 +156,7 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=len(stmts_to_insert) > 0)
 
     def rewrite_PhysicalInitialize(
-        self, atom_state: atom.ConcreteState, node: move.PhysicalInitialize
+        self, atom_state: atom.AtomState, node: move.PhysicalInitialize
     ) -> rewrite_abc.RewriteResult:
         nodes_to_insert: list[ir.Statement] = []
         for theta, phi, lam, locations in zip(
@@ -176,14 +176,11 @@ class InsertGates(AtomStateRewriter):
         return rewrite_abc.RewriteResult(has_done_something=True)
 
     def rewrite_CZ(
-        self, atom_state: atom.ConcreteState, node: move.CZ
+        self, atom_state: atom.AtomState, node: move.CZ
     ) -> rewrite_abc.RewriteResult:
         controls, targets, _ = atom_state.get_qubit_pairing(
             node.zone_address, self.arch_spec
         )
-        assert len(atom_state.locations) == len(
-            self.physical_ssa_values
-        ), "Mismatch between atom state and physical SSA values"
         controls_ssa: tuple[ir.SSAValue, ...] = tuple(
             self.physical_ssa_values[i] for i in controls
         )
@@ -199,21 +196,21 @@ class InsertGates(AtomStateRewriter):
 
 
 @dataclass
-class InsertMeasurementIndices(rewrite_abc.RewriteRule):
-    measurement_index_map: dict[ZoneAddress, dict[LocationAddress, int]]
+class InsertMeasurements(rewrite_abc.RewriteRule):
+    physical_ssa_values: tuple[ir.SSAValue, ...]
+    move_exec_analysis: ForwardFrame[atom.MoveExecution]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, move.GetZoneIndex):
+        if not isinstance(node, py.GetItem):
             return rewrite_abc.RewriteResult()
 
-        zone_address = node.zone_address
-        location_address = node.location_address
-
-        if (location_indices := self.measurement_index_map.get(zone_address)) is None:
+        result = self.move_exec_analysis.get(node.result)
+        if not isinstance(result, atom.MeasureResult):
             return rewrite_abc.RewriteResult()
 
-        if (location_index := location_indices.get(location_address)) is None:
-            return rewrite_abc.RewriteResult()
-
-        node.replace_by(py.Constant(location_index))
+        node.replace_by(
+            func.Invoke(
+                (self.physical_ssa_values[result.qubit_id],), callee=qubit.measure
+            )
+        )
         return rewrite_abc.RewriteResult(has_done_something=True)

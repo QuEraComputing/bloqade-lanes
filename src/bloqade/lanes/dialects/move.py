@@ -14,12 +14,16 @@ dialect = ir.Dialect(name="lanes.move")
 
 
 @statement(dialect=dialect)
-class LoadState(ir.Statement):
+class Load(ir.Statement):
+    """Load a previously stored atom state."""
+
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+
     result: ir.ResultValue = info.result(StateType)
 
 
 @statement(dialect=dialect)
-class StoreState(ir.Statement):
+class Store(ir.Statement):
     current_state: ir.SSAValue = info.argument(StateType)
 
 
@@ -93,12 +97,10 @@ class Move(StatefulStatement):
 
 
 @statement(dialect=dialect)
-class EndMeasure(ir.Statement):
+class EndMeasure(Store):
     """Start a measurement over the specified zones. Returns a MeasurementFuture."""
 
     traits = frozenset({lowering.FromPythonCall()})
-
-    current_state: ir.SSAValue = info.argument(StateType)
 
     zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
     result: ir.ResultValue = info.result(MeasurementFutureType)

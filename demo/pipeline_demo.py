@@ -41,7 +41,7 @@ def main():
     squin.cx(q[0], q[1])
     squin.broadcast.cx(ilist.IList([q[7], q[8]]), ilist.IList([q[1], q[0]]))
 
-    gemini_logical.terminal_measure(q)
+    return gemini_logical.terminal_measure(q)
 
 
 @squin.kernel
@@ -69,7 +69,7 @@ noise_kernel = compile_to_physical_squin_noise_model(
     main,
     SimpleNoiseModel(lane_noise, idle_noise, cz_unpaired_noise),
 )
-noise_kernel.print()
+
 noise_kernel = squin_to_stim(noise_kernel)
 
 buf = io.StringIO()
