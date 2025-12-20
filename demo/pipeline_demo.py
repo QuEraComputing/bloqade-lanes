@@ -41,7 +41,7 @@ def main():
     squin.cx(q[0], q[1])
     squin.broadcast.cx(ilist.IList([q[7], q[8]]), ilist.IList([q[1], q[0]]))
 
-    return gemini_logical.terminal_measure(q)
+    gemini_logical.terminal_measure(q)
 
 
 @squin.kernel
