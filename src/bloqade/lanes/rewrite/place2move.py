@@ -429,7 +429,7 @@ class FixUpStateFlow(RewriteRule):
             return RewriteResult()
 
         node.current_state.replace_by(self.current_states)
-        self.current_states = None
+        self.current_state = None
         return RewriteResult(has_done_something=True)
 
     @rewrite_node.register(cf.Branch)
