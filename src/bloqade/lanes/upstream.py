@@ -10,7 +10,7 @@ from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.rewrite import circuit2place, place2move
+from bloqade.lanes.rewrite import circuit2place, place2move, state
 
 
 def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
@@ -126,7 +126,7 @@ class PlaceToMove:
             )
         ).rewrite(out.code)
         rewrite.Walk(place2move.RemoveNoOpStaticPlacements()).rewrite(out.code)
-        rewrite.Walk(place2move.FixUpStateFlow()).rewrite(out.code)
+        rewrite.Walk(state.FixUpStateFlow()).rewrite(out.code)
         rewrite.Fixpoint(
             rewrite.Walk(
                 rewrite.Chain(
