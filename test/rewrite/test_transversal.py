@@ -26,6 +26,7 @@ def trivial_map(address: AddressType) -> tuple[AddressType, ...] | None:
 def cases():
 
     node = move.Move(
+        current_state := ir.TestValue(),
         lanes=(
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
             SiteLaneAddress(Direction.FORWARD, 1, 1, 0),
@@ -33,6 +34,7 @@ def cases():
     )
 
     expected_node = move.Move(
+        current_state,
         lanes=(
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
             SiteLaneAddress(Direction.FORWARD, 1, 1, 0),
@@ -42,6 +44,7 @@ def cases():
     yield node, expected_node, False
 
     node = move.Move(
+        current_state := ir.TestValue(),
         lanes=(
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
@@ -49,6 +52,7 @@ def cases():
     )
 
     expected_node = move.Move(
+        current_state,
         lanes=(
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
             SiteLaneAddress(Direction.FORWARD, 0, 1, 0),

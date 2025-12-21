@@ -38,7 +38,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
         # This assumes validation has already occurred so only valid moves are present
         move_type, y_mask_ref, word, bus_id, direction = self.get_address_info(node)
-
+        node.result.replace_by(node.current_state)
         if move_type is MoveType.SITE:
             node.replace_by(
                 stmts.SiteBusMove(
@@ -73,6 +73,7 @@ class RewriteFill(rewrite_abc.RewriteRule):
         (logical_addresses_stmt := py.Constant(logical_addresses_ilist)).insert_before(
             node
         )
+        node.result.replace_by(node.current_state)
         node.replace_by(
             stmts.Fill(
                 logical_addresses=logical_addresses_stmt.result,
@@ -106,6 +107,7 @@ class RewriteInitialize(rewrite_abc.RewriteRule):
         (phis_stmt := ilist.New(phis)).insert_before(node)
         (lams_stmt := ilist.New(lams)).insert_before(node)
         (logical_addresses_stmt := py.Constant(logical_addresses)).insert_before(node)
+        node.result.replace_by(node.current_state)
         node.replace_by(
             stmts.LogicalInitialize(
                 thetas=thetas_stmt.result,

@@ -22,12 +22,13 @@ def test_logical_architecture_rewrite_site():
 
     test_block.stmts.append(
         move.Move(
+            current_state=ir.TestValue(),
             lanes=(
                 SiteLaneAddress(Direction.FORWARD, 0, 0, 0),
                 SiteLaneAddress(Direction.FORWARD, 0, 2, 0),
                 SiteLaneAddress(Direction.FORWARD, 0, 4, 0),
                 SiteLaneAddress(Direction.FORWARD, 0, 6, 0),
-            )
+            ),
         )
     )
 
@@ -54,7 +55,7 @@ def test_logical_architecture_rewrite_site_no_lanes():
 
     test_block = ir.Block()
 
-    test_block.stmts.append(move.Move(lanes=()))
+    test_block.stmts.append(move.Move(current_state=ir.TestValue(), lanes=()))
 
     expected_block = ir.Block()
 
@@ -69,11 +70,12 @@ def test_logical_architecture_rewrite_fill():
 
     test_block.stmts.append(
         move.Fill(
+            current_state=ir.TestValue(),
             location_addresses=(
                 LocationAddress(0, 0),
                 LocationAddress(1, 2),
                 LocationAddress(2, 4),
-            )
+            ),
         )
     )
 
@@ -108,6 +110,7 @@ def test_logical_architecture_rewrite_logical_initialize():
     test_block = ir.Block()
     test_block.stmts.append(
         move.LogicalInitialize(
+            ir.TestValue(),
             thetas=thetas,
             phis=phis,
             lams=lams,

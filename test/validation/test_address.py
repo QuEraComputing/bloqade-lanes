@@ -12,28 +12,31 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     ZoneAddress,
 )
+from bloqade.lanes.types import State
 
 
 def invalid_methods():
     @lanes.kernel
-    def invalid_location():
-        move.fill(location_addresses=(LocationAddress(2, 1),))
+    def invalid_location(state: State):
+
+        return move.fill(state, location_addresses=(LocationAddress(2, 1),))
 
     yield invalid_location
 
     @lanes.kernel
-    def invalid_move_lane():
-        move.move(lanes=(SiteLaneAddress(Direction.FORWARD, 0, 0, 10),))
+    def invalid_move_lane(state: State):
+        return move.move(state, lanes=(SiteLaneAddress(Direction.FORWARD, 0, 0, 10),))
 
     yield invalid_move_lane
 
     @lanes.kernel
-    def incompatible_move_lane():
-        move.move(
+    def incompatible_move_lane(state: State):
+        return move.move(
+            state,
             lanes=(
                 SiteLaneAddress(Direction.FORWARD, 0, 0, 1),
                 SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
-            )
+            ),
         )
 
     yield incompatible_move_lane

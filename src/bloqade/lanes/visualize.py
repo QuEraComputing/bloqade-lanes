@@ -1,14 +1,68 @@
 from itertools import chain
 
 from kirin import ir
-from kirin.dialects import py
 from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.widgets import Button
 
-from bloqade.lanes.analysis.atom.analysis import AtomInterpreter, AtomState
+from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.arch import ArchSpec
+
+
+class StateArtist:
+
+    def draw_atoms(
+        self,
+        state: MoveExecution,
+        arch_spec: ArchSpec,
+        ax: Axes | None = None,
+        **kwargs,
+    ):
+        import matplotlib.pyplot as plt
+
+        if not isinstance(state, AtomState):
+            return
+
+        if ax is None:
+            ax = plt.gca()
+
+        for location in state.locations_to_qubit:
+            x_pos, y_pos = zip(
+                *arch_spec.words[location.word_id].site_positions(location.site_id)
+            )
+            ax.scatter(x_pos, y_pos, **kwargs)
+
+    def draw_moves(
+        self,
+        state: MoveExecution,
+        arch_spec: ArchSpec,
+        ax: Axes | None = None,
+        **kwargs,
+    ):
+        import matplotlib.pyplot as plt
+
+        if not isinstance(state, AtomState):
+            return
+
+        if ax is None:
+            ax = plt.gca()
+
+        for lane in state.prev_lanes.values():
+            start, end = arch_spec.get_endpoints(lane)
+            start_pos = arch_spec.words[start.word_id].site_positions(start.site_id)
+            end_pos = arch_spec.words[end.word_id].site_positions(end.site_id)
+            for (x_start, y_start), (x_end, y_end) in zip(start_pos, end_pos):
+                ax.quiver(
+                    [x_start],
+                    [y_start],
+                    [x_end - x_start],
+                    [y_end - y_start],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=1.0,
+                    **kwargs,
+                )
 
 
 def show_local(
@@ -129,11 +183,12 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     steps: list[tuple[ir.Statement, AtomState]] = []
     constants = {}
     for stmt in mt.callable_region.walk():
-        curr_state = frame.atom_state_map.get(stmt)
-        if isinstance(curr_state, AtomState):
-            steps.append((stmt, curr_state))
-        elif isinstance(stmt, py.Constant):
-            constants[stmt.result] = stmt.value.unwrap()
+        results = frame.get_values(stmt.results)
+        match results:
+            case (AtomState() as state,):
+                steps.append((stmt, state))
+            case (Value(value),) if isinstance(value, (float, int)):
+                constants[stmt.results[0]] = value
 
     def stmt_text(stmt: ir.Statement) -> str:
         if len(stmt.args) == 0:
@@ -144,6 +199,8 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
             + ")"
         )
 
+    artist = StateArtist()
+
     def draw(step_index: int):
         if len(steps) == 0:
             return
@@ -152,10 +209,10 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
 
         visualize_fn = methods.get(type(stmt), lambda a, b, c: None)
         visualize_fn(ax, stmt, arch_spec)
-        curr_state.draw_atoms(
-            arch_spec, ax=ax, color="#6437FF", s=80, marker=atom_marker
+        artist.draw_atoms(
+            curr_state, arch_spec, ax=ax, color="#6437FF", s=80, marker=atom_marker
         )
-        curr_state.draw_moves(arch_spec, ax=ax, color="orange")
+        artist.draw_moves(curr_state, arch_spec, ax=ax, color="orange")
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
 

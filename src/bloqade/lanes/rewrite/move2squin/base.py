@@ -53,33 +53,10 @@ class AtomStateRewriter(rewrite_abc.RewriteRule):
 
 @dataclass
 class CleanUpMoveDialect(rewrite_abc.RewriteRule):
-    atom_state_map: dict[ir.Statement, atom.AtomStateType]
-
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
-        if not (
-            isinstance(
-                node,
-                (
-                    move.Fill,
-                    move.LocalRz,
-                    move.GlobalRz,
-                    move.LocalR,
-                    move.GlobalR,
-                    move.GetFutureResult,
-                    move.PhysicalInitialize,
-                    move.LogicalInitialize,
-                    move.Move,
-                    move.EndMeasure,
-                    move.CZ,
-                ),
-            )
-            and isinstance(self.atom_state_map.get(node), atom.AtomState)
-        ):
+        if type(node) not in move.dialect.stmts:
             return rewrite_abc.RewriteResult()
 
-        if any(len(result.uses) > 0 for result in node.results):
-            return rewrite_abc.RewriteResult()
-
-        node.delete()
+        node.delete(safe=False)
 
         return rewrite_abc.RewriteResult(has_done_something=True)

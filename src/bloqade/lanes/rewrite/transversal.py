@@ -27,6 +27,7 @@ class RewriteLogicalInitialize(rewrite_abc.RewriteRule):
 
         node.replace_by(
             move.PhysicalInitialize(
+                node.current_state,
                 thetas=node.thetas,
                 phis=node.phis,
                 lams=node.lams,
@@ -77,7 +78,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
         physical_lanes = tuple(chain.from_iterable(iterators))
 
-        node.replace_by(move.Move(lanes=physical_lanes))
+        node.replace_by(move.Move(node.current_state, lanes=physical_lanes))
 
         return rewrite_abc.RewriteResult(has_done_something=True)
 
