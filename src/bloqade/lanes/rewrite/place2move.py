@@ -1,5 +1,6 @@
 import abc
 from dataclasses import dataclass
+from functools import singledispatchmethod
 
 from bloqade.analysis import address
 from kirin import ir
@@ -20,8 +21,7 @@ class MoveSchedulerABC(abc.ABC):
         self,
         state_before: placement.AtomState,
         state_after: placement.AtomState,
-    ) -> list[tuple[LaneAddress, ...]]:
-        pass
+    ) -> list[tuple[LaneAddress, ...]]: ...
 
 
 @dataclass
@@ -76,136 +76,121 @@ class InsertPalindromeMoves(RewriteRule):
 
 
 @dataclass
-class RewriteCZ(RewriteRule):
-    """Rewrite CZ circuit statements to move CZ statements.
+class RewriteGates(RewriteRule):
+    """Rewrite R circuit statements to move R statements."""
 
-    Requires placement analysis to know where the qubits are located and a move heuristic
-    to determine which zone addresses to use for the CZ moves.
-
-    """
-
-    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
-    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, place.CZ):
-            return RewriteResult()
+    @singledispatchmethod
+    def stmts_to_insert(
+        self, node: ir.Statement, state_after: placement.AtomState
+    ) -> list[ir.Statement] | None:
+        return None
 
-        state_after = self.placement_analysis.get(node.state_after)
-
+    @stmts_to_insert.register(place.CZ)
+    def _(self, node: place.CZ, state_after: placement.AtomState):
         if not isinstance(state_after, placement.ExecuteCZ):
-            return RewriteResult()
+            return None
 
-        stmts_to_insert: list[move.CZ | move.Load] = []
+        stmts = []
         for cz_zone_address in state_after.active_cz_zones:
-            stmts_to_insert.append(current_state := move.Load())
-            stmts_to_insert.append(
+            stmts.append(current_state := move.Load())
+            stmts.append(
                 move.CZ(
                     current_state.result,
                     zone_address=cz_zone_address,
                 )
             )
 
-        for stmt in reversed(stmts_to_insert):
+        return stmts
+
+    def is_global(
+        self, node: place.R | place.Rz, state_after: placement.ConcreteState
+    ) -> bool:
+        return len(
+            state_after.occupied
+        ) == 0 and len(  # static circuit includes all atoms
+            state_after.layout
+        ) == len(
+            node.qubits
+        )  # gate statement includes all atoms
+
+    @stmts_to_insert.register(place.R)
+    def _(self, node: place.R, state_after: placement.AtomState):
+        if not isinstance(state_after, placement.ConcreteState):
+            return None
+
+        is_global = self.is_global(node, state_after)
+
+        current_state = move.Load()
+        if is_global:
+            return [
+                current_state,
+                move.GlobalR(
+                    current_state.result,
+                    axis_angle=node.axis_angle,
+                    rotation_angle=node.rotation_angle,
+                ),
+            ]
+        else:
+            location_addresses = tuple(state_after.layout[i] for i in node.qubits)
+            return [
+                current_state,
+                move.LocalR(
+                    current_state.result,
+                    location_addresses=location_addresses,
+                    axis_angle=node.axis_angle,
+                    rotation_angle=node.rotation_angle,
+                ),
+            ]
+
+    @stmts_to_insert.register(place.Rz)
+    def _(self, node: place.Rz, state_after: placement.AtomState):
+        if not isinstance(state_after, placement.ConcreteState):
+            return None
+
+        is_global = len(
+            state_after.occupied
+        ) == 0 and len(  # static circuit includes all atoms
+            state_after.layout
+        ) == len(
+            node.qubits
+        )  # gate statement includes all atoms
+
+        current_state = move.Load()
+        if is_global:
+            return [
+                current_state,
+                move.GlobalRz(
+                    current_state.result,
+                    rotation_angle=node.rotation_angle,
+                ),
+            ]
+        else:
+            location_addresses = tuple(state_after.layout[i] for i in node.qubits)
+            return [
+                current_state,
+                move.LocalRz(
+                    current_state.result,
+                    location_addresses=location_addresses,
+                    rotation_angle=node.rotation_angle,
+                ),
+            ]
+
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not isinstance(node, place.QuantumStmt):
+            return RewriteResult()
+
+        stmts = self.stmts_to_insert(
+            node,
+            self.placement_analysis.get(node.state_after),
+        )
+
+        if stmts is None:
+            return RewriteResult()
+
+        for stmt in reversed(stmts):
             stmt.insert_after(node)
-
-        node.state_after.replace_by(node.state_before)
-        node.delete()
-
-        return RewriteResult(has_done_something=True)
-
-
-@dataclass
-class RewriteR(RewriteRule):
-    """Rewrite R circuit statements to move R statements."""
-
-    move_heuristic: MoveSchedulerABC
-    placement_analysis: dict[ir.SSAValue, placement.AtomState]
-
-    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, place.R):
-            return RewriteResult()
-
-        state_after = self.placement_analysis.get(node.state_after)
-
-        if not isinstance(state_after, placement.ConcreteState):
-            return RewriteResult()
-
-        is_global = len(
-            state_after.occupied
-        ) == 0 and len(  # static circuit includes all atoms
-            state_after.layout
-        ) == len(
-            node.qubits
-        )  # gate statement includes all atoms
-
-        current_state = move.Load()
-        if is_global:
-            move.GlobalR(
-                current_state.result,
-                axis_angle=node.axis_angle,
-                rotation_angle=node.rotation_angle,
-            ).insert_after(node)
-        else:
-            location_addresses = tuple(state_after.layout[i] for i in node.qubits)
-            move.LocalR(
-                current_state.result,
-                location_addresses=location_addresses,
-                axis_angle=node.axis_angle,
-                rotation_angle=node.rotation_angle,
-            ).insert_after(node)
-
-        current_state.insert_before(node)
-
-        node.state_after.replace_by(node.state_before)
-        node.delete()
-
-        return RewriteResult(has_done_something=True)
-
-
-@dataclass
-class RewriteRz(RewriteRule):
-    """Rewrite Rz circuit statements to move Rz statements.
-
-    requires placement analysis to know where the qubits are located to do the rewrite.
-
-    """
-
-    move_heuristic: MoveSchedulerABC
-    placement_analysis: dict[ir.SSAValue, placement.AtomState]
-
-    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not isinstance(node, place.Rz):
-            return RewriteResult()
-
-        state_after = self.placement_analysis.get(node.state_after)
-
-        if not isinstance(state_after, placement.ConcreteState):
-            # do not know the location of the qubits, cannot rewrite
-            return RewriteResult()
-
-        is_global = len(
-            state_after.occupied
-        ) == 0 and len(  # static circuit includes all atoms
-            state_after.layout
-        ) == len(
-            node.qubits
-        )  # gate statement includes all atoms
-
-        current_state = move.Load()
-        if is_global:
-            move.GlobalRz(
-                current_state.result,
-                rotation_angle=node.rotation_angle,
-            ).insert_after(node)
-        else:
-            location_addresses = tuple(state_after.layout[i] for i in node.qubits)
-            move.LocalRz(
-                current_state.result,
-                location_addresses=location_addresses,
-                rotation_angle=node.rotation_angle,
-            ).insert_after(node)
-        current_state.insert_before(node)
 
         node.state_after.replace_by(node.state_before)
         node.delete()
@@ -216,7 +201,6 @@ class RewriteRz(RewriteRule):
 @dataclass
 class InsertMeasure(RewriteRule):
 
-    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
@@ -224,13 +208,13 @@ class InsertMeasure(RewriteRule):
             return RewriteResult()
 
         if not isinstance(
-            atom_state := self.placement_analysis.get(state_after := node.results[0]),
+            atom_state := self.placement_analysis.get(node.results[0]),
             placement.ExecuteMeasure,
         ):
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(node)
-        zone_addresses = tuple(set(atom_state.zone_maps))
+        zone_addresses = tuple(sorted(set(atom_state.zone_maps)))
         (
             future_stmt := move.EndMeasure(
                 current_state.result, zone_addresses=zone_addresses
@@ -245,9 +229,8 @@ class InsertMeasure(RewriteRule):
                 )
             ).insert_before(node)
             future_results[zone_address] = future_result.result
-
         for result, zone_address, loc_addr in zip(
-            node.results[1:], atom_state.zone_maps, atom_state.layout
+            node.results[1:], atom_state.zone_maps, atom_state.layout, strict=True
         ):
             future_result = future_results[zone_address]
             (
@@ -262,7 +245,7 @@ class InsertMeasure(RewriteRule):
 
             result.replace_by(get_item_stmt.result)
 
-        state_after.replace_by(node.state_before)
+        node.state_after.replace_by(node.state_before)
         node.delete()
         return RewriteResult(has_done_something=True)
 

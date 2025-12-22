@@ -51,7 +51,7 @@ class EncodingType(enum.IntEnum):
         return f"EncodingType.{self.name}"
 
 
-@dataclass
+@dataclass()
 class Encoder(ir.Data):
     """Base class of all encodable entities."""
 
@@ -90,7 +90,7 @@ class Encoder(ir.Data):
             return f"0x{self.get_address(EncodingType.BIT64):016x}"
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, order=True)
 class ZoneAddress(Encoder):
     zone_id: int
     """The ID of the zone."""
@@ -114,7 +114,7 @@ class ZoneAddress(Encoder):
         return zone_id_enc
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, order=True)
 class WordAddress(Encoder):
     """Data class representing a word address in the architecture."""
 
@@ -140,7 +140,7 @@ class WordAddress(Encoder):
         return word_id_enc
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, order=True)
 class SiteAddress(Encoder):
     """Data class representing a site address in the architecture."""
 
@@ -166,7 +166,7 @@ class SiteAddress(Encoder):
         return site_id_enc
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, order=True)
 class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 

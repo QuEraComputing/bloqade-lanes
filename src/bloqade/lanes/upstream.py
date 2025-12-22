@@ -110,10 +110,8 @@ class PlaceToMove:
             place2move.InsertFill(initial_layout),
             place2move.InsertInitialize(address_frame.entries, initial_layout),
             place2move.InsertMoves(self.move_scheduler, placement_frame.entries),
-            place2move.RewriteCZ(self.move_scheduler, placement_frame.entries),
-            place2move.RewriteR(self.move_scheduler, placement_frame.entries),
-            place2move.RewriteRz(self.move_scheduler, placement_frame.entries),
-            place2move.InsertMeasure(self.move_scheduler, placement_frame.entries),
+            place2move.RewriteGates(placement_frame.entries),
+            place2move.InsertMeasure(placement_frame.entries),
         )
         rewrite.Walk(rule).rewrite(out.code)
 
