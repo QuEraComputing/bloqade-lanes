@@ -73,14 +73,19 @@ class InsertNoise(AtomStateRewriter):
 
         first_lane = node.lanes[0]
 
-        stationary_qubits: set[ir.SSAValue] = set(self.physical_ssa_values)
         move_noise_methods = tuple(map(self.noise_model.get_lane_noise, node.lanes))
 
         qubit_ssas = self.get_qubit_ssa_from_locations(
             atom_state,
             tuple(self.arch_spec.get_endpoints(lane)[1] for lane in node.lanes),
         )
-        stationary_qubits.difference_update(filter(None, qubit_ssas))
+
+        qubit_ssas = filter(None, qubit_ssas)
+
+        def is_stationary(qubit_ssa: ir.SSAValue) -> bool:
+            return qubit_ssa in qubit_ssas
+
+        stationary_qubits = tuple(filter(is_stationary, self.physical_ssa_values))
 
         def filter_no_qubit(
             pair: tuple[ir.Method[[qubit.Qubit], None], ir.SSAValue | None],
