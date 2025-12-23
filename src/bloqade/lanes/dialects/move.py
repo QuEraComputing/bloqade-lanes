@@ -17,7 +17,7 @@ dialect = ir.Dialect(name="lanes.move")
 class Load(ir.Statement):
     """Load a previously stored atom state."""
 
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall()})
 
     result: ir.ResultValue = info.result(StateType)
 
