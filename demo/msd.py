@@ -11,14 +11,13 @@ kernel.run_pass = squin.kernel.run_pass
 
 
 @kernel
-def main(cond: bool):
+def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
     squin.broadcast.t(reg)
 
     squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
-    if cond:
-        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+    squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
     squin.broadcast.sqrt_y(ilist.IList([reg[0], reg[3]]))
     squin.broadcast.cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[2], reg[4]]))
     squin.sqrt_x_adj(reg[0])
