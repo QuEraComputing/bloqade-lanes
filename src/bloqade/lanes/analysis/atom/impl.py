@@ -37,6 +37,7 @@ class Move(interp.MethodTable):
         prev_lanes = {}
         for move_lane in stmt.lanes:
             src, dst = interp_.path_finder.get_endpoints(move_lane)
+
             if src is None or dst is None:
                 return (Bottom(),)
 
@@ -46,9 +47,8 @@ class Move(interp.MethodTable):
 
             prev_lanes[qubit] = move_lane
             qubits_to_move[qubit] = dst
-        next_state = current_state.update(qubits_to_move, prev_lanes)
-        interp_.current_state = next_state
-        return (next_state,)
+
+        return (current_state.update(qubits_to_move, prev_lanes),)
 
     @interp.impl(move.CZ)
     @interp.impl(move.LocalR)
@@ -63,7 +63,7 @@ class Move(interp.MethodTable):
         frame: ForwardFrame[MoveExecution],
         stmt: move.StatefulStatement,
     ):
-        return (frame.get(stmt.current_state),)
+        return (frame.get(stmt.current_state).copy(),)
 
     @interp.impl(move.Load)
     def load_impl(
@@ -82,13 +82,11 @@ class Move(interp.MethodTable):
         stmt: move.Fill,
     ):
         current_state = frame.get(stmt.current_state)
-
         if not isinstance(current_state, AtomState):
-            next_state = MoveExecution.bottom()
-        else:
-            next_state = current_state.add_atoms(*stmt.location_addresses)
-        interp_.current_state = next_state
-        return (next_state,)
+            return (current_state.bottom(),)
+
+        new_locations = {i: addr for i, addr in enumerate(stmt.location_addresses)}
+        return (current_state.add_atoms(new_locations),)
 
     @interp.impl(move.EndMeasure)
     def end_measure_impl(
@@ -104,6 +102,17 @@ class Move(interp.MethodTable):
             return (MoveExecution.bottom(),)
 
         return (MeasureFuture(current_state),)
+
+    @interp.impl(move.Store)
+    def store_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.Store,
+    ):
+        current_state = frame.get(stmt.current_state)
+        interp_.current_state = current_state
+        return ()
 
     @interp.impl(move.GetFutureResult)
     def get_future_result_impl(

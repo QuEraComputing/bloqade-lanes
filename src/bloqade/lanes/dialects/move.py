@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any
 
 from kirin import ir, lowering, types
@@ -13,17 +14,37 @@ from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
 dialect = ir.Dialect(name="lanes.move")
 
 
+@dataclass(frozen=True)
+class ConsumesState(ir.Trait):
+    terminates: bool
+    argument_index: int = 0
+
+    def get_state_argument(self, stmt: ir.Statement) -> ir.SSAValue:
+        return stmt.args[self.argument_index]
+
+
+@dataclass(frozen=True)
+class EmitsState(ir.Trait):
+    originates: bool
+    result_index: int = 0
+
+    def get_state_result(self, stmt: ir.Statement) -> ir.ResultValue:
+        return stmt.results[0]
+
+
 @statement(dialect=dialect)
 class Load(ir.Statement):
     """Load a previously stored atom state."""
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), EmitsState(True, 0)})
 
     result: ir.ResultValue = info.result(StateType)
 
 
 @statement(dialect=dialect)
 class Store(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ConsumesState(False)})
+
     current_state: ir.SSAValue = info.argument(StateType)
 
 
@@ -31,7 +52,9 @@ class Store(ir.Statement):
 class StatefulStatement(ir.Statement):
     """Base class for statements that modify the atom state."""
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset(
+        {lowering.FromPythonCall(), ConsumesState(False), EmitsState(False)}
+    )
 
     current_state: ir.SSAValue = info.argument(StateType)
     result: ir.ResultValue = info.result(StateType)
@@ -39,7 +62,6 @@ class StatefulStatement(ir.Statement):
 
 @statement(dialect=dialect)
 class Fill(StatefulStatement):
-    traits = frozenset({lowering.FromPythonCall()})
 
     location_addresses: tuple[LocationAddress, ...] = info.attribute()
 
@@ -97,11 +119,11 @@ class Move(StatefulStatement):
 
 
 @statement(dialect=dialect)
-class EndMeasure(Store):
+class EndMeasure(ir.Statement):
     """Start a measurement over the specified zones. Returns a MeasurementFuture."""
 
-    traits = frozenset({lowering.FromPythonCall()})
-
+    traits = frozenset({lowering.FromPythonCall(), ConsumesState(True)})
+    current_state: ir.SSAValue = info.argument(StateType)
     zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
     result: ir.ResultValue = info.result(MeasurementFutureType)
 

@@ -79,7 +79,8 @@ def test_insert_move():
         [
             py.Constant(10),
             (current_state := move.Load()),
-            move.Move(current_state.result, lanes=lane_group),
+            (current_state := move.Move(current_state.result, lanes=lane_group)),
+            move.Store(current_state.result),
             place.CZ(state_before, qubits=(0, 1, 2, 3)),
         ]
     )
@@ -106,7 +107,8 @@ def test_insert_palindrom_moves():
         ir.Block(
             [
                 (current_state := move.Load()),
-                move.Move(current_state.result, lanes=lane_group),
+                (current_state := move.Move(current_state.result, lanes=lane_group)),
+                move.Store(current_state.result),
                 stmt := place.CZ(state_before, qubits=(0, 1, 2, 3)),
                 place.Yield(stmt.results[0]),
             ]
@@ -126,10 +128,12 @@ def test_insert_palindrom_moves():
         ir.Block(
             [
                 (current_state := move.Load()),
-                move.Move(current_state.result, lanes=lane_group),
+                (current_state := move.Move(current_state.result, lanes=lane_group)),
+                move.Store(current_state.result),
                 stmt := place.CZ(state_before, qubits=(0, 1, 2, 3)),
                 (current_state := move.Load()),
-                move.Move(current_state.result, lanes=reverse_moves),
+                (current_state := move.Move(current_state.result, lanes=reverse_moves)),
+                move.Store(current_state.result),
                 place.Yield(stmt.results[0]),
             ]
         )
@@ -185,7 +189,12 @@ def test_insert_cz():
         [
             py.Constant(10),
             current_state := move.Load(),
-            move.CZ(current_state.result, zone_address=layout.ZoneAddress(0)),
+            (
+                current_state := move.CZ(
+                    current_state.result, zone_address=layout.ZoneAddress(0)
+                )
+            ),
+            move.Store(current_state.result),
         ],
     )
 
@@ -212,7 +221,12 @@ def test_global_rz():
         [
             rotation_angle := py.Constant(0.5),
             current_state := move.Load(),
-            move.GlobalRz(current_state.result, rotation_angle.result),
+            (
+                current_state := move.GlobalRz(
+                    current_state.result, rotation_angle.result
+                )
+            ),
+            move.Store(current_state.result),
         ],
     )
 
@@ -241,9 +255,12 @@ def test_global_r():
         [
             rotation_angle := py.Constant(0.5),
             current_state := move.Load(),
-            move.GlobalR(
-                current_state.result, rotation_angle.result, rotation_angle.result
+            (
+                current_state := move.GlobalR(
+                    current_state.result, rotation_angle.result, rotation_angle.result
+                )
             ),
+            move.Store(current_state.result),
         ],
     )
 
@@ -272,9 +289,12 @@ def test_local_rz():
         [
             rotation_angle := py.Constant(0.5),
             current_state := move.Load(),
-            move.LocalRz(
-                current_state.result, rotation_angle.result, location_addresses=()
+            (
+                current_state := move.LocalRz(
+                    current_state.result, rotation_angle.result, location_addresses=()
+                )
             ),
+            move.Store(current_state.result),
         ],
     )
 
@@ -305,12 +325,15 @@ def test_local_r():
         [
             rotation_angle := py.Constant(0.5),
             current_state := move.Load(),
-            move.LocalR(
-                current_state.result,
-                rotation_angle.result,
-                rotation_angle.result,
-                location_addresses=(),
+            (
+                current_state := move.LocalR(
+                    current_state.result,
+                    rotation_angle.result,
+                    rotation_angle.result,
+                    location_addresses=(),
+                )
             ),
+            move.Store(current_state.result),
         ],
     )
 

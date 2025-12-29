@@ -41,9 +41,12 @@ class InsertMoves(RewriteRule):
         if len(moves) == 0:
             return RewriteResult()
 
+        (current_state := move.Load()).insert_before(node)
         for move_lanes in moves:
-            (current_state := move.Load()).insert_before(node)
-            (move.Move(current_state.result, lanes=move_lanes)).insert_before(node)
+            (
+                current_state := move.Move(current_state.result, lanes=move_lanes)
+            ).insert_before(node)
+        (move.Store(current_state.result)).insert_before(node)
 
         return RewriteResult(has_done_something=True)
 
@@ -63,14 +66,16 @@ class InsertPalindromeMoves(RewriteRule):
         yield_stmt = node.body.blocks[0].last_stmt
         assert isinstance(yield_stmt, place.Yield)
 
+        (current_state := move.Load()).insert_before(yield_stmt)
         for stmt in node.body.walk(reverse=True):
             if not isinstance(stmt, move.Move):
                 continue
-            (current_state := move.Load()).insert_before(yield_stmt)
             reverse_moves = tuple(lane.reverse() for lane in stmt.lanes[::-1])
-            (move.Move(current_state.result, lanes=reverse_moves)).insert_before(
-                yield_stmt
-            )
+            (
+                current_state := move.Move(current_state.result, lanes=reverse_moves)
+            ).insert_before(yield_stmt)
+
+        (move.Store(current_state.result)).insert_before(yield_stmt)
 
         return RewriteResult(has_done_something=True)
 
@@ -93,14 +98,17 @@ class RewriteGates(RewriteRule):
             return None
 
         stmts = []
+        stmts.append(current_state := move.Load())
+
         for cz_zone_address in state_after.active_cz_zones:
-            stmts.append(current_state := move.Load())
             stmts.append(
-                move.CZ(
+                current_state := move.CZ(
                     current_state.result,
                     zone_address=cz_zone_address,
                 )
             )
+
+        stmts.append(move.Store(current_state.result))
 
         return stmts
 
@@ -126,22 +134,28 @@ class RewriteGates(RewriteRule):
         if is_global:
             return [
                 current_state,
-                move.GlobalR(
-                    current_state.result,
-                    axis_angle=node.axis_angle,
-                    rotation_angle=node.rotation_angle,
+                (
+                    mid_state := move.GlobalR(
+                        current_state.result,
+                        axis_angle=node.axis_angle,
+                        rotation_angle=node.rotation_angle,
+                    )
                 ),
+                move.Store(mid_state.result),
             ]
         else:
             location_addresses = tuple(state_after.layout[i] for i in node.qubits)
             return [
                 current_state,
-                move.LocalR(
-                    current_state.result,
-                    location_addresses=location_addresses,
-                    axis_angle=node.axis_angle,
-                    rotation_angle=node.rotation_angle,
+                (
+                    mid_state := move.LocalR(
+                        current_state.result,
+                        location_addresses=location_addresses,
+                        axis_angle=node.axis_angle,
+                        rotation_angle=node.rotation_angle,
+                    )
                 ),
+                move.Store(mid_state.result),
             ]
 
     @stmts_to_insert.register(place.Rz)
@@ -161,20 +175,22 @@ class RewriteGates(RewriteRule):
         if is_global:
             return [
                 current_state,
-                move.GlobalRz(
+                mid_state := move.GlobalRz(
                     current_state.result,
                     rotation_angle=node.rotation_angle,
                 ),
+                move.Store(mid_state.result),
             ]
         else:
             location_addresses = tuple(state_after.layout[i] for i in node.qubits)
             return [
                 current_state,
-                move.LocalRz(
+                mid_state := move.LocalRz(
                     current_state.result,
                     location_addresses=location_addresses,
                     rotation_angle=node.rotation_angle,
                 ),
+                move.Store(mid_state.result),
             ]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
@@ -320,13 +336,16 @@ class InsertInitialize(RewriteRule):
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(stmt)
-        move.LogicalInitialize(
-            current_state.result,
-            tuple(thetas),
-            tuple(phis),
-            tuple(lams),
-            location_addresses=tuple(location_addresses),
+        (
+            current_state := move.LogicalInitialize(
+                current_state.result,
+                tuple(thetas),
+                tuple(phis),
+                tuple(lams),
+                location_addresses=tuple(location_addresses),
+            )
         ).insert_before(stmt)
+        (move.Store(current_state.result)).insert_before(stmt)
 
         return RewriteResult(has_done_something=True)
 
@@ -345,10 +364,12 @@ class InsertFill(RewriteRule):
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(first_stmt)
-        move.Fill(
-            current_state.result, location_addresses=self.initial_layout
+        (
+            current_state := move.Fill(
+                current_state.result, location_addresses=self.initial_layout
+            )
         ).insert_before(first_stmt)
-
+        move.Store(current_state.result).insert_before(first_stmt)
         return RewriteResult(has_done_something=True)
 
 

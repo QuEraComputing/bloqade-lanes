@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from functools import singledispatchmethod
-from typing import TypeGuard
 
 from kirin import ir
 from kirin.dialects import cf
@@ -13,33 +12,37 @@ from bloqade.lanes.types import StateType
 @dataclass
 class RewriteLoad(RewriteRule):
 
-    @staticmethod
-    def is_load(stmt: ir.Statement) -> TypeGuard[move.Load]:
-        return isinstance(stmt, move.Load)
-
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         if not (current_use := node.args[0]).type.is_structurally_equal(StateType):
             current_use = None
 
-        to_delete = []
-        for load_stmt in filter(self.is_load, node.stmts):
-            result = load_stmt.result
-            if current_use is not None:
-                result.replace_by(current_use)
-                to_delete.append(load_stmt)
+        to_delete: list[ir.Statement] = []
+        state_stored = False
 
-            unique_stmts = set(use.stmt for use in result.uses)
-            if len(unique_stmts) == 0:
-                continue
+        for stmt in node.stmts:
 
-            stmt = unique_stmts.pop()
-            if isinstance(stmt, move.StatefulStatement):
-                current_use = stmt.result
-            else:
+            consume_trait = stmt.get_trait(move.ConsumesState)
+            if consume_trait is not None and consume_trait.terminates:
                 current_use = None
 
-        for load_stmt in to_delete:
-            load_stmt.delete()
+            emit_trait = stmt.get_trait(move.EmitsState)
+            if emit_trait is not None:
+                next_use = emit_trait.get_state_result(stmt)
+                if emit_trait.originates and current_use is not None:
+                    next_use.replace_by(current_use)
+                    to_delete.append(stmt)
+                else:
+                    state_stored = False
+                    current_use = next_use
+
+            if isinstance(stmt, move.Store):
+                if state_stored:
+                    to_delete.append(stmt)
+                else:
+                    state_stored = True
+
+        for stmt in to_delete:
+            stmt.delete()
 
         return RewriteResult(has_done_something=True)
 

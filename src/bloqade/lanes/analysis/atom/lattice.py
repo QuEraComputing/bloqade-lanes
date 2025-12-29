@@ -1,3 +1,4 @@
+import abc
 from dataclasses import dataclass, field
 from typing import Any, final
 
@@ -8,6 +9,7 @@ from kirin.lattice import (
     SimpleMeetMixin,
     SingletonMeta,
 )
+from typing_extensions import Self
 
 from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.layout.arch import ArchSpec
@@ -27,6 +29,9 @@ class MoveExecution(
     def bottom(cls) -> "MoveExecution":
         return Bottom()
 
+    @abc.abstractmethod
+    def copy(self: Self) -> "Self": ...
+
 
 @final
 @dataclass
@@ -35,12 +40,18 @@ class Unknown(MoveExecution, metaclass=SingletonMeta):
     def is_subseteq(self, other: MoveExecution) -> bool:
         return True
 
+    def copy(self):
+        return self
+
 
 @final
 @dataclass
 class Bottom(MoveExecution, metaclass=SingletonMeta):
     def is_subseteq(self, other: MoveExecution) -> bool:
         return isinstance(other, Bottom)
+
+    def copy(self):
+        return self
 
 
 @final
@@ -50,6 +61,9 @@ class Value(MoveExecution):
 
     def is_subseteq(self, other: MoveExecution) -> bool:
         return isinstance(other, Value) and self.value == other.value
+
+    def copy(self):
+        return Value(self.value)
 
 
 @final
@@ -65,19 +79,26 @@ class AtomState(MoveExecution):
         return (
             isinstance(other, AtomState)
             and self.locations_to_qubit == other.locations_to_qubit
-            and self.prev_lanes == other.prev_lanes
         )
 
-    def add_atoms(self, *locations: LocationAddress):
-        if not self.locations_to_qubit.keys().isdisjoint(locations):
+    def copy(self):
+        return AtomState(
+            locations_to_qubit=self.locations_to_qubit.copy(),
+            qubit_to_locations=self.qubit_to_locations.copy(),
+            prev_lanes=self.prev_lanes.copy(),
+        )
+
+    def add_atoms(self, locations: dict[int, LocationAddress]):
+        if not self.qubit_to_locations.keys().isdisjoint(locations.keys()):
+            raise InterpreterError("Attempted to add atom that already exists")
+
+        if not self.locations_to_qubit.keys().isdisjoint(locations.values()):
             raise InterpreterError("Attempted to add atom to occupied location")
 
         qubit_to_locations = self.qubit_to_locations.copy()
         locations_to_qubit = self.locations_to_qubit.copy()
 
-        for current_qubit, location in enumerate(
-            locations, len(self.locations_to_qubit)
-        ):
+        for current_qubit, location in locations.items():
             qubit_to_locations[current_qubit] = location
             locations_to_qubit[location] = current_qubit
 
@@ -94,17 +115,28 @@ class AtomState(MoveExecution):
         if prev_lanes is None:
             prev_lanes = {}
 
+        qubit_to_locations = self.qubit_to_locations.copy()
         locations_to_qubit = self.locations_to_qubit.copy()
-        qubit_to_location = self.qubit_to_locations.copy()
-        for qubit, new_location in updates.items():
-            old_location = self.qubit_to_locations.pop(qubit)
-            locations_to_qubit.pop(old_location)
-            qubit_to_location[qubit] = new_location
+
+        while len(updates) > 0:
+            qubit, new_location = updates.popitem()
+            old_location = qubit_to_locations.pop(qubit, None)
+
+            if old_location is None:
+                raise InterpreterError("Attempted to move non-existent atom")
+
+            if locations_to_qubit.pop(old_location, None) != qubit:
+                raise InterpreterError("Inconsistent atom location state")
+
+            if new_location in locations_to_qubit:
+                raise InterpreterError("Attempted to move atom to occupied location")
+
+            qubit_to_locations[qubit] = new_location
             locations_to_qubit[new_location] = qubit
 
         return AtomState(
             locations_to_qubit=locations_to_qubit,
-            qubit_to_locations=qubit_to_location,
+            qubit_to_locations=qubit_to_locations,
             prev_lanes=prev_lanes,
         )
 
@@ -151,6 +183,9 @@ class AtomState(MoveExecution):
 class MeasureFuture(MoveExecution):
     current_state: AtomState
 
+    def copy(self):
+        return MeasureFuture(self.current_state.copy())
+
     def is_subseteq(self, other: MoveExecution) -> bool:
         return isinstance(other, MeasureFuture) and self.current_state.is_subseteq(
             other.current_state
@@ -162,6 +197,9 @@ class MeasureFuture(MoveExecution):
 class MeasureResult(MoveExecution):
     qubit_id: int
 
+    def copy(self):
+        return MeasureResult(self.qubit_id)
+
     def is_subseteq(self, other: "MoveExecution") -> bool:
         return isinstance(other, MeasureResult) and self.qubit_id == other.qubit_id
 
@@ -170,6 +208,9 @@ class MeasureResult(MoveExecution):
 @dataclass
 class IListResult(MoveExecution):
     data: tuple[MoveExecution, ...]
+
+    def copy(self):
+        return IListResult(tuple(item.copy() for item in self.data))
 
     def is_subseteq(self, other: MoveExecution) -> bool:
         return (
