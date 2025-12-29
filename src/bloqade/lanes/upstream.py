@@ -134,7 +134,7 @@ class PlaceToMove:
         state.InsertBlockArgs().rewrite(out.code)
         rewrite.Walk(state.RewriteBranches()).rewrite(out.code)
 
-        rewrite.Walk(state.RewriteLoad()).rewrite(out.code)
+        rewrite.Walk(state.RewriteLoadStore()).rewrite(out.code)
 
         rewrite.Fixpoint(
             rewrite.Walk(

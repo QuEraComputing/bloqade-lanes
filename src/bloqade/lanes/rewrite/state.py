@@ -10,10 +10,12 @@ from bloqade.lanes.types import StateType
 
 
 @dataclass
-class RewriteLoad(RewriteRule):
+class RewriteLoadStore(RewriteRule):
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
-        if not (current_use := node.args[0]).type.is_structurally_equal(StateType):
+        if len(node.args) == 0 or not (
+            current_use := node.args[0]
+        ).type.is_structurally_equal(StateType):
             current_use = None
 
         to_delete: list[ir.Statement] = []
@@ -56,10 +58,15 @@ class InsertBlockArgs(RewriteRule):
 
         region = callable_stmt_trait.get_callable_region(node)
 
+        has_done_something = False
         for block in region.blocks[1:]:
-            block.args.insert_from(0, StateType, "current_state")
+            if len(args := block.args) == 0 or not args[0].type.is_structurally_equal(
+                StateType
+            ):
+                block.args.insert_from(0, StateType, "current_state")
+                has_done_something = True
 
-        return RewriteResult(has_done_something=True)
+        return RewriteResult(has_done_something=has_done_something)
 
 
 @dataclass
