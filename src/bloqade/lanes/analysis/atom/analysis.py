@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
+from typing import Callable
 
+import numpy as np
 from kirin import ir
 from kirin.analysis import Forward
 from kirin.analysis.forward import ForwardFrame
@@ -11,6 +13,23 @@ from bloqade.lanes.layout.path import PathFinder
 from .lattice import AtomState, MoveExecution
 
 
+def _default_best_state_cost(state: AtomState) -> float:
+    """average of move counts plus standard deviation more weight is added to the standard
+    deviation to prefer balanced number of moves across atoms.
+
+    """
+    if len(state.data.collision) > 0:
+        return float("inf")
+
+    move_counts = np.array(
+        list(
+            state.data.move_count.get(qubit, 0)
+            for qubit in state.data.qubit_to_locations.keys()
+        )
+    )
+    return 0.1 * np.mean(move_counts).astype(float) + np.std(move_counts).astype(float)
+
+
 @dataclass
 class AtomInterpreter(Forward[MoveExecution]):
     lattice = MoveExecution
@@ -18,6 +37,9 @@ class AtomInterpreter(Forward[MoveExecution]):
     arch_spec: ArchSpec = field(kw_only=True)
     path_finder: PathFinder = field(init=False)
     current_state: MoveExecution = field(init=False)
+    best_state_cost: Callable[[AtomState], float] = field(
+        kw_only=True, default=_default_best_state_cost
+    )
     keys = ("atom",)
 
     def __post_init__(self):

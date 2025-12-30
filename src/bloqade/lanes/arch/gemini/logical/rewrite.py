@@ -5,6 +5,7 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import move
+from bloqade.lanes.heuristics.fixed import get_coordinate
 from bloqade.lanes.layout.encoding import MoveType
 
 from . import stmts
@@ -20,7 +21,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         word = node.lanes[0].word_id
         bus_id = node.lanes[0].bus_id
 
-        y_positions = [lane.site_id // 2 for lane in node.lanes]
+        y_positions = [get_coordinate(lane.site_id)[1] for lane in node.lanes]
 
         y_mask = ilist.IList([i in y_positions for i in range(5)])
 

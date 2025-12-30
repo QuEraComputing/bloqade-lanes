@@ -58,8 +58,8 @@ def test_insert_move_no_op():
 def test_insert_move():
 
     lane_group = (
-        layout.SiteLaneAddress(layout.Direction.FORWARD, 0, 0, 0),
-        layout.SiteLaneAddress(layout.Direction.FORWARD, 0, 1, 0),
+        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
     )
 
     state_before = ir.TestValue()
@@ -91,12 +91,12 @@ def test_insert_move():
 
 def test_insert_palindrom_moves():
     lane_group = (
-        layout.SiteLaneAddress(layout.Direction.FORWARD, 0, 0, 0),
-        layout.SiteLaneAddress(layout.Direction.FORWARD, 0, 1, 0),
+        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
     )
     reverse_moves = (
-        layout.SiteLaneAddress(layout.Direction.BACKWARD, 0, 0, 0),
-        layout.SiteLaneAddress(layout.Direction.BACKWARD, 0, 1, 0),
+        layout.SiteLaneAddress(0, 0, 0, layout.Direction.BACKWARD),
+        layout.SiteLaneAddress(0, 1, 0, layout.Direction.BACKWARD),
     )
 
     state_before = ir.TestValue()

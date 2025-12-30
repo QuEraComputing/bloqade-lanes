@@ -178,7 +178,7 @@ class InsertGates(AtomStateRewriter):
     def rewrite_CZ(
         self, atom_state: atom.AtomState, node: move.CZ
     ) -> rewrite_abc.RewriteResult:
-        controls, targets, _ = atom_state.get_qubit_pairing(
+        controls, targets, _ = atom_state.data.get_qubit_pairing(
             node.zone_address, self.arch_spec
         )
         controls_ssa: tuple[ir.SSAValue, ...] = tuple(

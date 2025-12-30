@@ -25,7 +25,7 @@ def invalid_methods():
 
     @lanes.kernel
     def invalid_move_lane(state: State):
-        return move.move(state, lanes=(SiteLaneAddress(Direction.FORWARD, 0, 0, 10),))
+        return move.move(state, lanes=(SiteLaneAddress(0, 0, 10, Direction.FORWARD),))
 
     yield invalid_move_lane
 
@@ -34,8 +34,8 @@ def invalid_methods():
         return move.move(
             state,
             lanes=(
-                SiteLaneAddress(Direction.FORWARD, 0, 0, 1),
-                SiteLaneAddress(Direction.FORWARD, 0, 1, 0),
+                SiteLaneAddress(0, 0, 1, Direction.FORWARD),
+                SiteLaneAddress(0, 1, 0, Direction.FORWARD),
             ),
         )
 

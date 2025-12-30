@@ -33,7 +33,7 @@ class AtomStateRewriter(rewrite_abc.RewriteRule):
     def get_qubit_ssa(
         self, atom_state: atom.AtomState, location: LocationAddress
     ) -> ir.SSAValue | None:
-        qubit_index = atom_state.get_qubit(location)
+        qubit_index = atom_state.data.get_qubit(location)
 
         if qubit_index is None:
             return None

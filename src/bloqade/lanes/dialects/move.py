@@ -154,6 +154,14 @@ class GetZoneIndex(ir.Statement):
     result: ir.ResultValue = info.result(type=types.Int)
 
 
+@wraps(Load)
+def load() -> State: ...
+
+
+@wraps(Store)
+def store(current_state: State) -> None: ...
+
+
 @wraps(Fill)
 def fill(
     current_state: State, *, location_addresses: tuple[LocationAddress, ...]
@@ -183,7 +191,7 @@ def physical_initialize(
 
 
 @wraps(CZ)
-def cz(*, zone_address: ZoneAddress) -> None: ...
+def cz(current_state: State, *, zone_address: ZoneAddress) -> State: ...
 
 
 @wraps(LocalR)

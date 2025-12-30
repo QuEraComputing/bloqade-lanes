@@ -116,7 +116,9 @@ class InsertNoise(AtomStateRewriter):
         ) is None:
             return rewrite_abc.RewriteResult()
 
-        _, _, unpaired = atom_state.get_qubit_pairing(node.zone_address, self.arch_spec)
+        _, _, unpaired = atom_state.data.get_qubit_pairing(
+            node.zone_address, self.arch_spec
+        )
 
         unpaired_qubits: tuple[ir.SSAValue, ...] = tuple(
             self.physical_ssa_values[i] for i in unpaired

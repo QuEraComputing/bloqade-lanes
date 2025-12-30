@@ -27,7 +27,7 @@ class StateArtist:
         if ax is None:
             ax = plt.gca()
 
-        for location in state.locations_to_qubit:
+        for location in state.data.locations_to_qubit:
             x_pos, y_pos = zip(
                 *arch_spec.words[location.word_id].site_positions(location.site_id)
             )
@@ -48,7 +48,7 @@ class StateArtist:
         if ax is None:
             ax = plt.gca()
 
-        for lane in state.prev_lanes.values():
+        for lane in state.data.prev_lanes.values():
             start, end = arch_spec.get_endpoints(lane)
             start_pos = arch_spec.words[start.word_id].site_positions(start.site_id)
             end_pos = arch_spec.words[end.word_id].site_positions(end.site_id)

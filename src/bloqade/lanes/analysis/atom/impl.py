@@ -1,6 +1,6 @@
 from kirin import interp
 from kirin.analysis.forward import ForwardFrame
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 
 from bloqade.lanes import layout
 
@@ -30,25 +30,15 @@ class Move(interp.MethodTable):
     ):
         current_state = frame.get(stmt.current_state)
 
-        if not isinstance(current_state, AtomState):
-            return (current_state,)
+        if isinstance(current_state, AtomState):
+            new_data = current_state.data.apply_moves(stmt.lanes, interp_.path_finder)
+        else:
+            new_data = None
 
-        qubits_to_move = {}
-        prev_lanes = {}
-        for move_lane in stmt.lanes:
-            src, dst = interp_.path_finder.get_endpoints(move_lane)
-
-            if src is None or dst is None:
-                return (Bottom(),)
-
-            qubit = current_state.get_qubit(src)
-            if qubit is None:
-                continue
-
-            prev_lanes[qubit] = move_lane
-            qubits_to_move[qubit] = dst
-
-        return (current_state.update(qubits_to_move, prev_lanes),)
+        if new_data is None:
+            return (MoveExecution.bottom(),)
+        else:
+            return (AtomState(new_data),)
 
     @interp.impl(move.CZ)
     @interp.impl(move.LocalR)
@@ -86,7 +76,8 @@ class Move(interp.MethodTable):
             return (MoveExecution.bottom(),)
 
         new_locations = {i: addr for i, addr in enumerate(stmt.location_addresses)}
-        return (current_state.add_atoms(new_locations),)
+        new_data = current_state.data.add_atoms(new_locations)
+        return (AtomState(new_data),)
 
     @interp.impl(move.EndMeasure)
     def end_measure_impl(
@@ -130,7 +121,7 @@ class Move(interp.MethodTable):
         zone_locations = interp_.arch_spec.yield_zone_locations(stmt.zone_address)
 
         def convert(address: layout.LocationAddress):
-            qid_or_none = current_state.get_qubit(address)
+            qid_or_none = current_state.data.get_qubit(address)
             if isinstance(qid_or_none, int):
                 return MeasureResult(qid_or_none)
             else:
@@ -199,3 +190,16 @@ class IListMethods(interp.MethodTable):
         stmt: ilist.New,
     ):
         return (IListResult(frame.get_values(stmt.values)),)
+
+
+@func.dialect.register(key="atom")
+class FuncMethods(interp.MethodTable):
+
+    @interp.impl(func.Return)
+    def func_return(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: func.Return,
+    ):
+        return interp.ReturnValue(frame.get(stmt.value))
