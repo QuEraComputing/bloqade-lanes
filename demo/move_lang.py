@@ -4,35 +4,33 @@ from bloqade.lanes.analysis.atom.atom_state_data import AtomStateData
 from bloqade.lanes.analysis.atom.lattice import AtomState, IListResult, Unknown
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import (
-    Direction as Dir,
-    LocationAddress as loc,
-    SiteLaneAddress as SL,
-    WordLaneAddress as WL,
-    ZoneAddress as ZA,
-)
 from bloqade.lanes.layout.encoding import (
     Direction,
     LocationAddress,
     SiteLaneAddress,
     WordLaneAddress,
+    ZoneAddress,
 )
 
 
 @kernel
 def main(cond: bool):
     state0 = move.load()
-    state1 = move.fill(state0, location_addresses=(loc(0, 0), loc(1, 0)))
-    state2 = move.move(state1, lanes=(SL(0, 0, 0),))
-    state3 = move.move(state2, lanes=(WL(0, 5, 0),))
+    state1 = move.fill(
+        state0, location_addresses=(LocationAddress(0, 0), LocationAddress(1, 0))
+    )
+    state2 = move.move(state1, lanes=(SiteLaneAddress(0, 0, 0),))
+    state3 = move.move(state2, lanes=(WordLaneAddress(0, 5, 0),))
 
     if cond:
-        state4 = move.move(state3, lanes=(SL(1, 0, 0, Dir.BACKWARD),))
+        state4 = move.move(
+            state3, lanes=(SiteLaneAddress(1, 0, 0, Direction.BACKWARD),)
+        )
     else:
-        state4 = move.cz(state3, zone_address=ZA(0))
+        state4 = move.cz(state3, zone_address=ZoneAddress(0))
 
-    state5 = move.move(state4, lanes=(WL(0, 5, 0, Dir.BACKWARD),))
-    state6 = move.move(state5, lanes=(SL(0, 0, 0, Dir.BACKWARD),))
+    state5 = move.move(state4, lanes=(WordLaneAddress(0, 5, 0, Direction.BACKWARD),))
+    state6 = move.move(state5, lanes=(SiteLaneAddress(0, 0, 0, Direction.BACKWARD),))
     move.store(state6)
 
     return [state0, state1, state2, state3, state4, state5, state6]

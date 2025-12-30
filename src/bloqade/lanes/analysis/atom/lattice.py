@@ -52,9 +52,6 @@ class MoveExecution(
 @final
 @dataclass
 class Unknown(MoveExecution, metaclass=SingletonMeta):
-    def __hash__(self):
-        return id(self)
-
     def is_structurally_equal(
         self, other: MoveExecution, context: dict | None = None
     ) -> bool:
@@ -67,9 +64,6 @@ class Unknown(MoveExecution, metaclass=SingletonMeta):
 @final
 @dataclass
 class Bottom(MoveExecution, metaclass=SingletonMeta):
-    def __hash__(self):
-        return id(self)
-
     def is_structurally_equal(
         self, other: MoveExecution, context: dict | None = None
     ) -> bool:
@@ -100,9 +94,6 @@ class Value(MoveExecution):
 @dataclass
 class AtomState(MoveExecution):
     data: AtomStateData = field(default_factory=AtomStateData)
-
-    def __hash__(self):
-        return hash((AtomState, self.data))
 
     def is_structurally_equal(
         self, other: MoveExecution, context: dict | None = None
