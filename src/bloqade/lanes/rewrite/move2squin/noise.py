@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, TypeGuard
 
 from kirin import ir
+from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func, ilist
 from kirin.rewrite import abc as rewrite_abc
 
@@ -49,13 +50,15 @@ class SimpleNoiseModel(NoiseModelABC):
 
 @dataclass
 class InsertNoise(AtomStateRewriter):
-    atom_state_map: dict[ir.Statement, atom.AtomStateType]
+    atom_state_map: ForwardFrame[atom.MoveExecution]
     noise_model: NoiseModelABC
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
             isinstance(node, (move.Move, move.CZ))
-            and isinstance(atom_state := self.atom_state_map.get(node), atom.AtomState)
+            and isinstance(
+                atom_state := self.atom_state_map.get(node.result), atom.AtomState
+            )
         ):
             return rewrite_abc.RewriteResult()
 
@@ -70,14 +73,19 @@ class InsertNoise(AtomStateRewriter):
 
         first_lane = node.lanes[0]
 
-        stationary_qubits: set[ir.SSAValue] = set(self.physical_ssa_values)
         move_noise_methods = tuple(map(self.noise_model.get_lane_noise, node.lanes))
 
         qubit_ssas = self.get_qubit_ssa_from_locations(
             atom_state,
             tuple(self.arch_spec.get_endpoints(lane)[1] for lane in node.lanes),
         )
-        stationary_qubits.difference_update(filter(None, qubit_ssas))
+
+        qubit_ssas = set(filter(None, qubit_ssas))
+
+        def is_stationary(qubit_ssa: ir.SSAValue) -> bool:
+            return qubit_ssa not in qubit_ssas
+
+        stationary_qubits = tuple(filter(is_stationary, self.physical_ssa_values))
 
         def filter_no_qubit(
             pair: tuple[ir.Method[[qubit.Qubit], None], ir.SSAValue | None],
@@ -107,10 +115,6 @@ class InsertNoise(AtomStateRewriter):
             )
         ) is None:
             return rewrite_abc.RewriteResult()
-
-        assert len(atom_state.locations) == len(
-            self.physical_ssa_values
-        ), "Mismatch between atom state and physical SSA values"
 
         _, _, unpaired = atom_state.get_qubit_pairing(node.zone_address, self.arch_spec)
 

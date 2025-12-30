@@ -1,129 +1,22 @@
-from typing import TypeVar
+from kirin import interp
+from kirin.analysis.forward import ForwardFrame
+from kirin.dialects import ilist, py
 
-from kirin import interp, ir
-from kirin.dialects import cf, ssacfg
-from kirin.lattice.empty import EmptyLattice
+from bloqade.lanes import layout
 
 from ...dialects import move
 from .analysis import (
-    AtomFrame,
     AtomInterpreter,
-    AtomState,
-    AtomStateType,
-    UnknownAtomState,
 )
-
-
-@ssacfg.dialect.register(key="atom")
-class SsaCfg(interp.MethodTable):
-
-    FrameType = TypeVar("FrameType", bound=interp.AbstractFrame)
-
-    @interp.impl(ir.SSACFG())
-    def ssacfg(
-        self,
-        interp_: AtomInterpreter,
-        frame: AtomFrame,
-        node: ir.Region,
-    ):
-        result = None
-        frame.worklist.append(
-            interp.Successor(node.blocks[0], *frame.get_values(node.blocks[0].args))
-        )
-        frame.atom_states.append(UnknownAtomState())
-
-        while (succ := frame.worklist.pop()) is not None:
-            atom_state = frame.atom_states.pop()
-            if atom_state is None:
-                raise interp.InterpreterError("Missing atom state for successor")
-
-            # cache initial state for block,
-            # If the initial state is different than a previous one, mark as unknown
-            existing_state = frame.initial_states.get(succ.block)
-            if existing_state is not None and existing_state != atom_state:
-                atom_state = UnknownAtomState()
-
-            frame.initial_states[succ.block] = atom_state
-            visited = frame.visited.setdefault(succ.block, set())
-            if succ in visited:
-                continue
-
-            block_result = self.run_succ(interp_, atom_state, frame, succ)
-            if len(visited) < 128:
-                visited.add(succ)
-            else:
-                continue
-
-            if isinstance(block_result, interp.Successor):
-                raise interp.InterpreterError(
-                    "unexpected successor, successors should be in worklist"
-                )
-
-            result = interp_.join_results(result, block_result)
-
-        if isinstance(result, interp.YieldValue):
-            return result.values
-        return result
-
-    def run_succ(
-        self,
-        interp_: AtomInterpreter,
-        atom_state: AtomStateType,
-        frame: AtomFrame,
-        succ: interp.Successor,
-    ) -> interp.SpecialValue[EmptyLattice]:
-        frame.current_block = succ.block
-        frame.set_values(succ.block.args, succ.block_args)
-        frame.current_state = atom_state
-
-        for stmt in succ.block.stmts:
-            frame.current_stmt = stmt
-            stmt_results = interp_.frame_eval(frame, stmt)
-            if isinstance(stmt_results, tuple):
-                frame.set_values(stmt._results, stmt_results)
-            elif stmt_results is None:
-                continue  # empty result
-            else:  # terminate
-                return stmt_results
-        return None
-
-
-@cf.dialect.register(key="atom")
-class Cf(interp.MethodTable):
-    @interp.impl(cf.Branch)
-    def branch(
-        self,
-        interp_: AtomInterpreter,
-        frame: AtomFrame,
-        stmt: cf.Branch,
-    ):
-        frame.worklist.append(
-            interp.Successor(stmt.successor, *frame.get_values(stmt.arguments))
-        )
-        frame.atom_states.append(frame.current_state)
-        return ()
-
-    @interp.impl(cf.ConditionalBranch)
-    def conditional_branch(
-        self,
-        interp_: AtomInterpreter,
-        frame: AtomFrame,
-        stmt: cf.ConditionalBranch,
-    ):
-
-        frame.worklist.append(
-            interp.Successor(
-                stmt.then_successor, *frame.get_values(stmt.then_arguments)
-            )
-        )
-        frame.atom_states.append(frame.current_state)
-
-        frame.worklist.append(
-            interp.Successor(
-                stmt.else_successor, *frame.get_values(stmt.else_arguments)
-            )
-        )
-        frame.atom_states.append(frame.current_state)
+from .lattice import (
+    AtomState,
+    Bottom,
+    IListResult,
+    MeasureFuture,
+    MeasureResult,
+    MoveExecution,
+    Value,
+)
 
 
 @move.dialect.register(key="atom")
@@ -132,20 +25,21 @@ class Move(interp.MethodTable):
     def move_impl(
         self,
         interp_: AtomInterpreter,
-        frame: AtomFrame,
+        frame: ForwardFrame[MoveExecution],
         stmt: move.Move,
     ):
-        current_state = frame.current_state
+        current_state = frame.get(stmt.current_state)
+
         if not isinstance(current_state, AtomState):
-            return
+            return (current_state,)
 
         qubits_to_move = {}
         prev_lanes = {}
         for move_lane in stmt.lanes:
             src, dst = interp_.path_finder.get_endpoints(move_lane)
+
             if src is None or dst is None:
-                frame.current_state = UnknownAtomState()
-                return
+                return (Bottom(),)
 
             qubit = current_state.get_qubit(src)
             if qubit is None:
@@ -153,27 +47,155 @@ class Move(interp.MethodTable):
 
             prev_lanes[qubit] = move_lane
             qubits_to_move[qubit] = dst
-        frame.current_state = current_state.update(qubits_to_move, prev_lanes)
-        frame.set_state_for_stmt(stmt)
+
+        return (current_state.update(qubits_to_move, prev_lanes),)
 
     @interp.impl(move.CZ)
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
     @interp.impl(move.GlobalR)
     @interp.impl(move.GlobalRz)
-    @interp.impl(move.EndMeasure)
     @interp.impl(move.LogicalInitialize)
     @interp.impl(move.PhysicalInitialize)
-    @interp.impl(move.GetFutureResult)
     def noop_impl(
         self,
         interp_: AtomInterpreter,
-        frame: AtomFrame,
-        stmt: ir.Statement,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.StatefulStatement,
     ):
-        frame.set_state_for_stmt(stmt)
+        return (frame.get(stmt.current_state).copy(),)
+
+    @interp.impl(move.Load)
+    def load_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.Load,
+    ):
+        return (interp_.current_state,)
 
     @interp.impl(move.Fill)
-    def fill_impl(self, interp_: AtomInterpreter, frame: AtomFrame, stmt: move.Fill):
-        frame.current_state = AtomState(stmt.location_addresses)
-        frame.set_state_for_stmt(stmt)
+    def fill_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.Fill,
+    ):
+        current_state = frame.get(stmt.current_state)
+        if not isinstance(current_state, AtomState):
+            return (MoveExecution.bottom(),)
+
+        new_locations = {i: addr for i, addr in enumerate(stmt.location_addresses)}
+        return (current_state.add_atoms(new_locations),)
+
+    @interp.impl(move.EndMeasure)
+    def end_measure_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.EndMeasure,
+    ):
+        current_state = frame.get(stmt.current_state)
+        interp_.current_state = current_state
+
+        if not isinstance(current_state, AtomState):
+            return (MoveExecution.bottom(),)
+
+        return (MeasureFuture(current_state),)
+
+    @interp.impl(move.Store)
+    def store_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.Store,
+    ):
+        current_state = frame.get(stmt.current_state)
+        interp_.current_state = current_state
+        return ()
+
+    @interp.impl(move.GetFutureResult)
+    def get_future_result_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.GetFutureResult,
+    ):
+
+        future = frame.get(stmt.measurement_future)
+        if not isinstance(future, MeasureFuture):
+            return (Bottom(),)
+
+        current_state = future.current_state
+        zone_locations = interp_.arch_spec.yield_zone_locations(stmt.zone_address)
+
+        def convert(address: layout.LocationAddress):
+            qid_or_none = current_state.get_qubit(address)
+            if isinstance(qid_or_none, int):
+                return MeasureResult(qid_or_none)
+            else:
+                return Bottom()
+
+        return (IListResult(tuple(map(convert, zone_locations))),)
+
+    @interp.impl(move.GetZoneIndex)
+    def get_zone_index_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.GetZoneIndex,
+    ):
+        value = interp_.arch_spec.get_zone_index(
+            stmt.location_address,
+            stmt.zone_address,
+        )
+
+        return (Value(value),)
+
+
+@py.constant.dialect.register(key="atom")
+class PyConstantMethods(interp.MethodTable):
+
+    @interp.impl(py.Constant)
+    def constant(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: py.Constant,
+    ):
+        return (Value(stmt.value.unwrap()),)
+
+
+@py.indexing.dialect.register(key="atom")
+class PyIndexingMethods(interp.MethodTable):
+
+    @interp.impl(py.GetItem)
+    def index(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: py.GetItem,
+    ):
+        obj = frame.get(stmt.obj)
+        index = frame.get(stmt.index)
+        match (obj, index):
+            case (IListResult(values), Value(i)) if isinstance(i, int):
+                try:
+                    return (values[i],)
+                except IndexError:
+                    return (Bottom(),)
+            case _:
+                return (Bottom(),)
+
+
+@ilist.dialect.register(key="atom")
+class IListMethods(interp.MethodTable):
+
+    @interp.impl(ilist.New)
+    def ilist_new(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: ilist.New,
+    ):
+        return (IListResult(frame.get_values(stmt.values)),)

@@ -97,6 +97,15 @@ class ArchSpec(Generic[SiteType]):
         num_sites_per_word = len(self.words[0].sites)
         return len(self.words) * num_sites_per_word // 2
 
+    def yield_zone_locations(self, zone_address: ZoneAddress):
+        """Yield all location addresses in a given zone address."""
+        zone_id = zone_address.zone_id
+        zone = self.zones[zone_id]
+        for word_id in zone:
+            word = self.words[word_id]
+            for site_id, _ in enumerate(word.sites):
+                yield LocationAddress(word_id, site_id)
+
     def get_zone_index(
         self,
         loc_addr: LocationAddress,

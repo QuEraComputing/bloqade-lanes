@@ -2,6 +2,8 @@ from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.logical_mvp import compile_squin_to_move
 
 kernel = squin.kernel.add(gemini_logical.dialect)
@@ -26,5 +28,9 @@ def main():
 
 
 main = compile_squin_to_move(main, transversal_rewrite=True)
-main.print()
+
+atom_interp = atom.AtomInterpreter(main.dialects, arch_spec=generate_arch())
+frame, _ = atom_interp.run(main)
+main.print(analysis=frame.entries)
+
 # compile_and_visualize(main)

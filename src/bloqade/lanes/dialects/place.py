@@ -234,11 +234,17 @@ class PlacementMethods(interp.MethodTable):
         frame: ForwardFrame[AtomState],
         stmt: StaticPlacement,
     ):
-        initial_state = _interp.get_inintial_state(stmt.qubits)
 
-        frame_call_result = _interp.frame_call_region(
-            frame, stmt, stmt.body, initial_state
-        )
+        initial_state = _interp.get_inintial_state(stmt.qubits)
+        with _interp.new_frame(stmt, has_parent_access=True) as circuit_frame:
+
+            frame_call_result = _interp.frame_call_region(
+                circuit_frame, stmt, stmt.body, initial_state
+            )
+
+            frame.set_values(
+                circuit_frame.entries.keys(), circuit_frame.entries.values()
+            )
 
         match frame_call_result:
             case (ConcreteState() as final_state, *ret):
@@ -261,7 +267,7 @@ class PlacementMethods(interp.MethodTable):
         new_state = _interp.placement_strategy.measure_placements(
             frame.get(stmt.state_before), stmt.qubits
         )
-        return (new_state,) + (EmptyLattice.bottom(),) * len(stmt.qubits)
+        return (new_state,) + (AtomState.bottom(),) * len(stmt.qubits)
 
 
 @dialect.register(key="place.layout")

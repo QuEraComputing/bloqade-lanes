@@ -4,7 +4,7 @@ from .base import (
 )
 from .gates import (
     InsertGates as InsertGates,
-    InsertMeasurementIndices as InsertMeasurementIndices,
+    InsertMeasurements as InsertMeasurements,
 )
 from .noise import (
     InsertNoise as InsertNoise,
