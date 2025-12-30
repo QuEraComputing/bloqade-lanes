@@ -24,10 +24,10 @@ def test_logical_architecture_rewrite_site():
         move.Move(
             current_state=ir.TestValue(),
             lanes=(
-                SiteLaneAddress(Direction.FORWARD, 0, 0, 0),
-                SiteLaneAddress(Direction.FORWARD, 0, 2, 0),
-                SiteLaneAddress(Direction.FORWARD, 0, 4, 0),
-                SiteLaneAddress(Direction.FORWARD, 0, 6, 0),
+                SiteLaneAddress(0, 0, 0, Direction.FORWARD),
+                SiteLaneAddress(0, 1, 0, Direction.FORWARD),
+                SiteLaneAddress(0, 2, 0, Direction.FORWARD),
+                SiteLaneAddress(0, 3, 0, Direction.FORWARD),
             ),
         )
     )

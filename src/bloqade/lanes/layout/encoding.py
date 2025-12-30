@@ -5,6 +5,8 @@ from dataclasses import dataclass, field, replace
 from kirin import ir, types
 from kirin.print import Printer
 
+USE_HEX_REPR = True
+
 
 class Direction(enum.IntEnum):
     FORWARD = 0
@@ -90,7 +92,7 @@ class Encoder(ir.Data):
             return f"0x{self.get_address(EncodingType.BIT64):016x}"
 
 
-@dataclass(repr=False, order=True)
+@dataclass(repr=not USE_HEX_REPR, order=True)
 class ZoneAddress(Encoder):
     zone_id: int
     """The ID of the zone."""
@@ -114,7 +116,7 @@ class ZoneAddress(Encoder):
         return zone_id_enc
 
 
-@dataclass(repr=False, order=True)
+@dataclass(repr=not USE_HEX_REPR, order=True)
 class WordAddress(Encoder):
     """Data class representing a word address in the architecture."""
 
@@ -140,7 +142,7 @@ class WordAddress(Encoder):
         return word_id_enc
 
 
-@dataclass(repr=False, order=True)
+@dataclass(repr=not USE_HEX_REPR, order=True)
 class SiteAddress(Encoder):
     """Data class representing a site address in the architecture."""
 
@@ -166,7 +168,7 @@ class SiteAddress(Encoder):
         return site_id_enc
 
 
-@dataclass(repr=False, order=True)
+@dataclass(repr=not USE_HEX_REPR, order=True)
 class LocationAddress(Encoder):
     """Data class representing a physical address in the architecture."""
 
@@ -206,13 +208,13 @@ class LocationAddress(Encoder):
         return address
 
 
-@dataclass(repr=False)
+@dataclass(repr=not USE_HEX_REPR)
 class LaneAddress(Encoder):
-    direction: Direction
     move_type: MoveType
     word_id: int
     site_id: int
     bus_id: int
+    direction: Direction = field(default=Direction.FORWARD)
 
     def reverse(self):
         new_direction = (
@@ -265,17 +267,21 @@ class LaneAddress(Encoder):
         return self.get_address(EncodingType.BIT64)
 
 
-@dataclass(repr=False)
+@dataclass(repr=not USE_HEX_REPR)
 class SiteLaneAddress(LaneAddress):
-    move_type: MoveType = field(default=MoveType.SITE, init=False, repr=False)
+    move_type: MoveType = field(
+        default=MoveType.SITE, init=False, repr=not USE_HEX_REPR
+    )
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
 
 
-@dataclass(repr=False)
+@dataclass(repr=not USE_HEX_REPR)
 class WordLaneAddress(LaneAddress):
-    move_type: MoveType = field(default=MoveType.WORD, init=False, repr=False)
+    move_type: MoveType = field(
+        default=MoveType.WORD, init=False, repr=not USE_HEX_REPR
+    )
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
