@@ -80,10 +80,10 @@ class InsertNoise(AtomStateRewriter):
             tuple(self.arch_spec.get_endpoints(lane)[1] for lane in node.lanes),
         )
 
-        qubit_ssas = filter(None, qubit_ssas)
+        qubit_ssas = set(filter(None, qubit_ssas))
 
         def is_stationary(qubit_ssa: ir.SSAValue) -> bool:
-            return qubit_ssa in qubit_ssas
+            return qubit_ssa not in qubit_ssas
 
         stationary_qubits = tuple(filter(is_stationary, self.physical_ssa_values))
 
