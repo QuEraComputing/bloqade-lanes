@@ -208,7 +208,7 @@ def local_rz(
     rotation_angle: float,
     *,
     location_addresses: tuple[LocationAddress, ...],
-) -> None: ...
+) -> State: ...
 
 
 @wraps(GlobalRz)

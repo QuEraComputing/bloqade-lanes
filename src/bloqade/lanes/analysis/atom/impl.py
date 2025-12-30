@@ -83,7 +83,7 @@ class Move(interp.MethodTable):
     ):
         current_state = frame.get(stmt.current_state)
         if not isinstance(current_state, AtomState):
-            return (current_state.bottom(),)
+            return (MoveExecution.bottom(),)
 
         new_locations = {i: addr for i, addr in enumerate(stmt.location_addresses)}
         return (current_state.add_atoms(new_locations),)
