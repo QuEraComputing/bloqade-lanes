@@ -95,13 +95,13 @@ def test_rewrite_load():
         [
             first_load := move.Load(),
             move.Load(),
-            thrid_state := move.CZ(
+            third_state := move.CZ(
                 first_load.result, zone_address=layout.ZoneAddress(0)
             ),
-            move.Store(thrid_state.result),
-            move.Store(thrid_state.result),
+            move.Store(third_state.result),
+            move.Store(third_state.result),
             move.EndMeasure(
-                thrid_state.result, zone_addresses=(layout.ZoneAddress(0),)
+                third_state.result, zone_addresses=(layout.ZoneAddress(0),)
             ),
             move.Load(),
         ]
@@ -112,12 +112,12 @@ def test_rewrite_load():
     expected_block = ir.Block(
         [
             first_load := move.Load(),
-            thrid_state := move.CZ(
+            third_state := move.CZ(
                 first_load.result, zone_address=layout.ZoneAddress(0)
             ),
-            move.Store(thrid_state.result),
+            move.Store(third_state.result),
             move.EndMeasure(
-                thrid_state.result, zone_addresses=(layout.ZoneAddress(0),)
+                third_state.result, zone_addresses=(layout.ZoneAddress(0),)
             ),
             move.Load(),
         ]
