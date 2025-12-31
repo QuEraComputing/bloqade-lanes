@@ -25,6 +25,7 @@ class AtomStateData:
     def _hash(self):
         return hash(
             (
+                AtomStateData,
                 frozenset(self.locations_to_qubit.items()),
                 frozenset(self.qubit_to_locations.items()),
                 frozenset(self.collision.items()),
