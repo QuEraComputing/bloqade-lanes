@@ -11,7 +11,7 @@ from kirin.lattice import (
 )
 from typing_extensions import Self
 
-from ._visiter import _ElemVisitor
+from ._visitor import _ElemVisitor
 from .atom_state_data import AtomStateData
 
 
@@ -78,8 +78,8 @@ class Bottom(MoveExecution, metaclass=SingletonMeta):
 class Value(MoveExecution):
     value: Any
 
-    def is_subseteq_Value(self, other: "Value") -> bool:
-        return self.value == other.value
+    def is_subseteq_Value(self, elem: "Value") -> bool:
+        return self.value == elem.value
 
     def is_structurally_equal(
         self, other: MoveExecution, context: dict | None = None
@@ -100,8 +100,8 @@ class AtomState(MoveExecution):
     ) -> bool:
         return self == other
 
-    def is_subseteq_AtomState(self, other: "AtomState") -> bool:
-        return self.data == other.data
+    def is_subseteq_AtomState(self, elem: "AtomState") -> bool:
+        return self.data == elem.data
 
     def copy(self):
         return AtomState(self.data.copy())
@@ -115,8 +115,8 @@ class MeasureFuture(MoveExecution):
     def copy(self):
         return MeasureFuture(self.current_state.copy())
 
-    def is_subseteq_MeasureFuture(self, other: "MeasureFuture") -> bool:
-        return self.current_state == other.current_state
+    def is_subseteq_MeasureFuture(self, elem: "MeasureFuture") -> bool:
+        return self.current_state == elem.current_state
 
 
 @final
@@ -127,8 +127,8 @@ class MeasureResult(MoveExecution):
     def copy(self):
         return MeasureResult(self.qubit_id)
 
-    def is_subseteq_MeasureResult(self, other: "MeasureResult") -> bool:
-        return self.qubit_id == other.qubit_id
+    def is_subseteq_MeasureResult(self, elem: "MeasureResult") -> bool:
+        return self.qubit_id == elem.qubit_id
 
 
 @final
@@ -139,8 +139,8 @@ class IListResult(MoveExecution):
     def copy(self):
         return IListResult(tuple(item.copy() for item in self.data))
 
-    def is_subseteq_IListResult(self, other: "IListResult") -> bool:
-        return self.data == other.data
+    def is_subseteq_IListResult(self, elem: "IListResult") -> bool:
+        return self.data == elem.data
 
     def join_IListResult(self, other: "IListResult") -> "MoveExecution":
         if len(self.data) != len(other.data):
