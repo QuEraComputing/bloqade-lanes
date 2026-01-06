@@ -17,6 +17,10 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 
+def get_coordinate(site_id: int) -> tuple[int, int]:
+    return (site_id // 5, site_id % 5)
+
+
 @dataclass(frozen=True)
 class MoveOp:
     """Data class to store a move operation along with its source and destination addresses."""
@@ -253,16 +257,16 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
     def assert_valid_word_bus_move(
         self,
-        direction: layout.Direction,
         src_word: int,
         src_site: int,
         bus_id: int,
+        direction: layout.Direction,
     ) -> layout.WordLaneAddress:
         lane = layout.WordLaneAddress(
-            direction,
             src_word,
             src_site,
             bus_id,
+            direction,
         )
 
         assert (
@@ -273,16 +277,16 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
     def assert_valid_site_bus_move(
         self,
-        direction: layout.Direction,
         src_word: int,
         src_site: int,
         bus_id: int,
+        direction: layout.Direction,
     ) -> layout.SiteLaneAddress:
         lane = layout.SiteLaneAddress(
-            direction,
             src_word,
             src_site,
             bus_id,
+            direction,
         )
 
         assert (
@@ -310,10 +314,10 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
             bus_moves.setdefault(bus_id, []).append(
                 self.assert_valid_site_bus_move(
-                    layout.Direction.FORWARD,
                     word_id,
                     before.site_id,
                     bus_id,
+                    layout.Direction.FORWARD,
                 )
             )
 
@@ -359,14 +363,14 @@ class LogicalMoveScheduler(MoveSchedulerABC):
             moves.append(
                 tuple(
                     self.assert_valid_word_bus_move(
+                        0,
+                        end.site_id,
+                        0,
                         (
                             layout.Direction.FORWARD
                             if word_start == 0
                             else layout.Direction.BACKWARD
                         ),
-                        0,
-                        end.site_id,
-                        0,
                     )
                     for _, end in word_moves
                 )
