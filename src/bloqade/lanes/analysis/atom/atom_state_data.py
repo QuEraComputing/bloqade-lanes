@@ -21,6 +21,23 @@ class AtomStateData:
     move_count: dict[int, int] = field(default_factory=dict)
     """Mapping from qubit id to number of moves it has had."""
 
+    @classmethod
+    def new(cls, locations: dict[int, LocationAddress] | list[LocationAddress]):
+        if isinstance(locations, list):
+            locations = {i: loc for i, loc in enumerate(locations)}
+
+        qubit_to_locations = {}
+        locations_to_qubit = {}
+
+        for qubit, location in locations.items():
+            qubit_to_locations[qubit] = location
+            locations_to_qubit[location] = qubit
+
+        return cls(
+            locations_to_qubit=locations_to_qubit,
+            qubit_to_locations=qubit_to_locations,
+        )
+
     @cached_property
     def _hash(self):
         return hash(
