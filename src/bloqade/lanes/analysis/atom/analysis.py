@@ -14,9 +14,10 @@ from .lattice import AtomState, MoveExecution
 
 
 def _default_best_state_cost(state: AtomState) -> float:
-    """average of move counts plus standard deviation more weight is added to the standard
-    deviation to prefer balanced number of moves across atoms.
+    """Average of move counts plus standard deviation.
 
+    More weight is added to the standard deviation to prefer a balanced number
+    of moves across atoms.
     """
     if len(state.data.collision) > 0:
         return float("inf")
