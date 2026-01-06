@@ -25,6 +25,10 @@ class InsertGates(AtomStateRewriter):
     measurement_index_map: dict[ZoneAddress, dict[LocationAddress, int]] = field(
         init=False, default_factory=dict
     )
+    qubit_ids: tuple[int, ...] = field(init=False)
+
+    def __post_init__(self):
+        self.qubit_ids = tuple(sorted(self.physical_ssa_values.keys()))
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not (
@@ -69,8 +73,9 @@ class InsertGates(AtomStateRewriter):
     def rewrite_GlobalRz(
         self, atom_state: atom.AtomState, node: move.GlobalRz
     ) -> rewrite_abc.RewriteResult:
+        qubit_ssas = [self.physical_ssa_values[qubit_id] for qubit_id in self.qubit_ids]
         (zero := py.Constant(0.0)).insert_before(node)
-        (reg := ilist.New(self.physical_ssa_values)).insert_before(node)
+        (reg := ilist.New(qubit_ssas)).insert_before(node)
         (
             gate_stmts.U3(zero.result, node.rotation_angle, zero.result, reg.result)
         ).insert_before(node)
@@ -100,10 +105,12 @@ class InsertGates(AtomStateRewriter):
     def rewrite_GlobalR(
         self, atom_state: atom.AtomState, node: move.GlobalR
     ) -> rewrite_abc.RewriteResult:
+        qubit_ssas = [self.physical_ssa_values[qubit_id] for qubit_id in self.qubit_ids]
+
         (quarter_turn := py.Constant(0.25)).insert_before(node)
         (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
         (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
-        (reg := ilist.New(self.physical_ssa_values)).insert_before(node)
+        (reg := ilist.New(qubit_ssas)).insert_before(node)
         (
             gate_stmts.U3(node.rotation_angle, phi.result, lam.result, reg.result)
         ).insert_before(node)
@@ -197,7 +204,7 @@ class InsertGates(AtomStateRewriter):
 
 @dataclass
 class InsertMeasurements(rewrite_abc.RewriteRule):
-    physical_ssa_values: tuple[ir.SSAValue, ...]
+    physical_ssa_values: dict[int, ir.SSAValue]
     move_exec_analysis: ForwardFrame[atom.MoveExecution]
 
     def rewrite_Statement(self, node: ir.Statement):
