@@ -116,7 +116,7 @@ class MeasureFuture(MoveExecution):
         return MeasureFuture(self.current_state.copy())
 
     def is_subseteq_MeasureFuture(self, elem: "MeasureFuture") -> bool:
-        return self.current_state == elem.current_state
+        return self.current_state.is_subseteq(elem.current_state)
 
 
 @final
@@ -140,7 +140,9 @@ class IListResult(MoveExecution):
         return IListResult(tuple(item.copy() for item in self.data))
 
     def is_subseteq_IListResult(self, elem: "IListResult") -> bool:
-        return self.data == elem.data
+        if len(self.data) != len(elem.data):
+            return False
+        return all(a.is_subseteq(b) for a, b in zip(self.data, elem.data))
 
     def join_IListResult(self, other: "IListResult") -> "MoveExecution":
         if len(self.data) != len(other.data):
