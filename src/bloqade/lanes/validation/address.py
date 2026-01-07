@@ -99,6 +99,8 @@ class _MoveMethods(interp.MethodTable):
                     ),
                 )
 
+        return (EmptyLattice.bottom(),)
+
     @interp.impl(move.LogicalInitialize)
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
@@ -126,6 +128,27 @@ class _MoveMethods(interp.MethodTable):
                     ),
                 )
 
+        return (EmptyLattice.bottom(),)
+
+    @interp.impl(move.GetFutureResult)
+    def location_checker_get_future(
+        self,
+        _interp: _ValidationAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        node: move.GetFutureResult,
+    ):
+        location_address = node.location_address
+        error_msgs = _interp.arch_spec.validate_location(location_address)
+
+        for error_msg in error_msgs:
+            _interp.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"Invalid location address {location_address!r}: {error_msg}",
+                ),
+            )
+
     @interp.impl(move.PhysicalInitialize)
     def location_checker_physical(
         self,
@@ -149,23 +172,6 @@ class _MoveMethods(interp.MethodTable):
                         f"Invalid location address {lane_address!r}: {error_msg}",
                     ),
                 )
-
-    @interp.impl(move.GetZoneIndex)
-    def measurement_checker(
-        self,
-        _interp: _ValidationAnalysis,
-        frame: ForwardFrame[EmptyLattice],
-        node: move.GetZoneIndex,
-    ):
-        error_msgs = _interp.arch_spec.validate_location(node.location_address)
-        for error_msg in error_msgs:
-            _interp.add_validation_error(
-                node,
-                ir.ValidationError(
-                    node,
-                    f"Invalid measurement location address {node.location_address!r}: {error_msg}",
-                ),
-            )
 
 
 @dataclass

@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 
-import pytest
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import py
@@ -361,7 +360,6 @@ def test_insert_measure_no_op():
     assert not result.has_done_something
 
 
-@pytest.mark.xfail
 def test_insert_measure():
     state_before = ir.TestValue()
 
@@ -385,29 +383,23 @@ def test_insert_measure():
 
     expected_block = ir.Block(
         [
-            # py.Constant(10),
-            # current_state := move.Load(),
-            # future := move.EndMeasure(
-            #     current_state.result,
-            #     zone_addresses=(layout.ZoneAddress(0), layout.ZoneAddress(1)),
-            # ),
-            # zone_result_0 := move.GetFutureResult(
-            #     future.result, zone_address=layout.ZoneAddress(0)
-            # ),
-            # zone_result_1 := move.GetFutureResult(
-            #     future.result, zone_address=layout.ZoneAddress(1)
-            # ),
-            # index_0 := move.GetZoneIndex(
-            #     zone_address=layout.ZoneAddress(0),
-            #     location_address=layout.LocationAddress(0, 1),
-            # ),
-            # result_0 := py.GetItem(zone_result_0.result, index_0.result),
-            # index_1 := move.GetZoneIndex(
-            #     zone_address=layout.ZoneAddress(1),
-            #     location_address=layout.LocationAddress(0, 0),
-            # ),
-            # result_1 := py.GetItem(zone_result_1.result, index_1.result),
-            # place.Yield(state_before, result_0.result, result_1.result),
+            py.Constant(10),
+            current_state := move.Load(),
+            future := move.EndMeasure(
+                current_state.result,
+                zone_addresses=(layout.ZoneAddress(0), layout.ZoneAddress(1)),
+            ),
+            zone_result_0 := move.GetFutureResult(
+                future.result,
+                zone_address=layout.ZoneAddress(0),
+                location_address=layout.LocationAddress(0, 1),
+            ),
+            zone_result_1 := move.GetFutureResult(
+                future.result,
+                zone_address=layout.ZoneAddress(1),
+                location_address=layout.LocationAddress(0, 0),
+            ),
+            place.Yield(state_before, zone_result_0.result, zone_result_1.result),
         ],
     )
 

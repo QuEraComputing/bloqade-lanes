@@ -141,18 +141,6 @@ class GetFutureResult(ir.Statement):
     result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)
 
 
-@statement(dialect=dialect)
-class GetZoneIndex(ir.Statement):
-    """Get the index of a location within a zone"""
-
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
-
-    zone_address: ZoneAddress = info.attribute()
-    location_address: LocationAddress = info.attribute()
-
-    result: ir.ResultValue = info.result(type=types.Int)
-
-
 @wraps(Load)
 def load() -> State: ...
 
@@ -234,11 +222,8 @@ def end_measure(
 
 @wraps(GetFutureResult)
 def get_future_result(
-    measurement_future: MeasurementFuture, *, zone_address: ZoneAddress
+    measurement_future: MeasurementFuture,
+    *,
+    zone_address: ZoneAddress,
+    location_address: LocationAddress,
 ) -> ilist.IList[bloqade_types.MeasurementResult, Any]: ...
-
-
-@wraps(GetZoneIndex)
-def get_zone_index(
-    *, zone_address: ZoneAddress, location_address: LocationAddress
-) -> int: ...
