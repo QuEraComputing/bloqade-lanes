@@ -15,10 +15,10 @@ from bloqade.lanes.layout import LaneAddress, LocationAddress, MoveType, ZoneAdd
 
 from .base import AtomStateRewriter
 
+Len = TypeVar("Len")
+
 
 class NoiseModelABC(abc.ABC):
-    Len = TypeVar("Len")
-
     def get_cz_paired_noise(
         self, zone_address: ZoneAddress
     ) -> (
@@ -63,7 +63,6 @@ class NoiseModelABC(abc.ABC):
 
 @dataclass
 class SimpleNoiseModel(NoiseModelABC):
-    Len = TypeVar("Len")
     lane_noise: ir.Method[[qubit.Qubit], None]
     idle_noise: ir.Method[[ilist.IList[qubit.Qubit, Any]], None]
     cz_unpaired_noise: ir.Method[[ilist.IList[qubit.Qubit, Any]], None]
