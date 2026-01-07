@@ -136,10 +136,9 @@ class GetFutureResult(ir.Statement):
 
     measurement_future: ir.SSAValue = info.argument(MeasurementFutureType)
     zone_address: ZoneAddress = info.attribute()
+    location_address: LocationAddress = info.attribute()
 
-    result: ir.ResultValue = info.result(
-        type=ilist.IListType[bloqade_types.MeasurementResultType, types.Any]
-    )
+    result: ir.ResultValue = info.result(type=bloqade_types.MeasurementResultType)
 
 
 @statement(dialect=dialect)
