@@ -14,9 +14,9 @@ kernel.run_pass = squin.kernel.run_pass
 
 @kernel
 def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
-    annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0,0])
-    annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0,1])
-    annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0,2])
+    annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
+    annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
+    annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
 
 
 @kernel
