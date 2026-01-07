@@ -34,22 +34,22 @@ class MoveToSquin:
         run_method = vqpu.run_no_raise if no_raise else vqpu.run
 
         frame, _ = run_method(main)
-        qubit_rule = move2squin.InsertQubits()
+        qubit_rule = move2squin.InsertQubits(frame)
         rewrite.Walk(qubit_rule).rewrite(main.code)
         rules = [
             move2squin.InsertGates(
                 self.arch_spec,
-                tuple(qubit_rule.physical_ssa_values),
+                qubit_rule.physical_ssa_values,
                 frame,
                 self.logical_initialization,
             ),
-            move2squin.InsertMeasurements(tuple(qubit_rule.physical_ssa_values), frame),
+            move2squin.InsertMeasurements(qubit_rule.physical_ssa_values, frame),
         ]
         if self.noise_model is not None:
             rules.append(
                 move2squin.InsertNoise(
                     self.arch_spec,
-                    tuple(qubit_rule.physical_ssa_values),
+                    qubit_rule.physical_ssa_values,
                     frame,
                     self.noise_model,
                 ),

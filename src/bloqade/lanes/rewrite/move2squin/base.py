@@ -1,6 +1,8 @@
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from kirin import ir
+from kirin import ir, types
+from kirin.analysis.forward import ForwardFrame
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade import qubit
@@ -12,15 +14,32 @@ from bloqade.lanes.layout.arch import ArchSpec
 
 @dataclass
 class InsertQubits(rewrite_abc.RewriteRule):
-    physical_ssa_values: list[ir.SSAValue] = field(default_factory=list, init=False)
+    atom_state_map: ForwardFrame[atom.MoveExecution]
+    physical_ssa_values: dict[int, ir.SSAValue] = field(
+        default_factory=OrderedDict, init=False
+    )
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if not isinstance(node, move.Fill):
             return rewrite_abc.RewriteResult()
 
-        for location_addr in node.location_addresses:
+        atom_state = self.atom_state_map.get(node.result)
+        if not isinstance(atom_state, atom.AtomState):
+            return rewrite_abc.RewriteResult()
+
+        qubit_ids = tuple(
+            atom_state.data.get_qubit(location_addr)
+            for location_addr in node.location_addresses
+        )
+
+        if not types.is_tuple_of(qubit_ids, int):
+            return rewrite_abc.RewriteResult()
+
+        qubit_ids = sorted(qubit_ids)
+
+        for qubit_id in qubit_ids:
             (new_qubit := qubit.stmts.New()).insert_before(node)
-            self.physical_ssa_values.append(new_qubit.result)
+            self.physical_ssa_values[qubit_id] = new_qubit.result
 
         return rewrite_abc.RewriteResult(has_done_something=True)
 
@@ -28,17 +47,16 @@ class InsertQubits(rewrite_abc.RewriteRule):
 @dataclass
 class AtomStateRewriter(rewrite_abc.RewriteRule):
     arch_spec: ArchSpec
-    physical_ssa_values: tuple[ir.SSAValue, ...]
+    physical_ssa_values: dict[int, ir.SSAValue]
 
     def get_qubit_ssa(
         self, atom_state: atom.AtomState, location: LocationAddress
     ) -> ir.SSAValue | None:
         qubit_index = atom_state.data.get_qubit(location)
-
         if qubit_index is None:
             return None
 
-        return self.physical_ssa_values[qubit_index]
+        return self.physical_ssa_values.get(qubit_index)
 
     def get_qubit_ssa_from_locations(
         self,
