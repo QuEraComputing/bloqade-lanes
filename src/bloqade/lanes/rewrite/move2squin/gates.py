@@ -208,7 +208,7 @@ class InsertMeasurements(rewrite_abc.RewriteRule):
     move_exec_analysis: ForwardFrame[atom.MoveExecution]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, py.GetItem):
+        if not isinstance(node, move.GetFutureResult):
             return rewrite_abc.RewriteResult()
 
         result = self.move_exec_analysis.get(node.result)

@@ -11,6 +11,8 @@ from kirin.lattice import (
 )
 from typing_extensions import Self
 
+from bloqade.lanes import layout
+
 from ._visitor import _ElemVisitor
 from .atom_state_data import AtomStateData
 
@@ -110,13 +112,13 @@ class AtomState(MoveExecution):
 @final
 @dataclass
 class MeasureFuture(MoveExecution):
-    current_state: AtomState
+    results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]]
 
     def copy(self):
-        return MeasureFuture(self.current_state.copy())
+        return MeasureFuture(self.results.copy())
 
     def is_subseteq_MeasureFuture(self, elem: "MeasureFuture") -> bool:
-        return self.current_state.is_subseteq(elem.current_state)
+        return self.results == elem.results
 
 
 @final
