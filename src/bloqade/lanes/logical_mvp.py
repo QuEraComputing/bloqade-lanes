@@ -8,6 +8,7 @@ from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.transform import MoveToSquin
@@ -96,6 +97,9 @@ def compile_to_physical_squin_noise_model(
         The compiled physical squin method.
 
     """
+    if noise_model is None:
+        noise_model = generate_simple_noise_model()
+
     move_mt = compile_squin_to_move(mt, transversal_rewrite=True)
     transformer = MoveToSquin(
         arch_spec=generate_arch(4),
