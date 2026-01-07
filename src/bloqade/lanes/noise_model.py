@@ -1,6 +1,7 @@
 from typing import Any
 
 from bloqade.cirq_utils.noise.model import (
+    GeminiNoiseModelABC,
     GeminiOneZoneNoiseModel,
 )
 from kirin.dialects import debug, ilist
@@ -27,9 +28,12 @@ PAIRED_KEYS = [
 ]
 
 
-def generate_simple_noise_model():
+def generate_simple_noise_model(
+    noise_model: GeminiNoiseModelABC | None = None,
+) -> SimpleNoiseModel:
 
-    noise_model = GeminiOneZoneNoiseModel()
+    if noise_model is None:
+        noise_model = GeminiOneZoneNoiseModel()
 
     @squin.kernel
     def cz_unpaired_noise(qubits: ilist.IList[qubit.Qubit, Any]):
@@ -61,7 +65,10 @@ def generate_simple_noise_model():
         squin.broadcast.qubit_loss(sit_loss_prob, qubits)
 
     cz_paired_error_dict = noise_model.cz_paired_error_probabilities
-    assert cz_paired_error_dict is not None, "CZ paired error rates must be defined"
+    if cz_paired_error_dict is None:
+        raise ValueError("CZ paired error probabilities must be provided.")
+
+    cz_paired_error_dict = {key: 0.0 for key in PAIRED_KEYS}
     cz_paired_error_probabilities = ilist.IList(
         [cz_paired_error_dict[k] for k in PAIRED_KEYS]
     )
