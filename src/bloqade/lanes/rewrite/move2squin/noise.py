@@ -211,7 +211,7 @@ class InsertNoise(AtomStateRewriter):
         method: ir.Method,
         qubit_ssas: tuple[ir.SSAValue | None, ...],
     ):
-        reg = ilist.New(tuple(tuple(filter(None, qubit_ssas))))
+        reg = ilist.New(tuple(filter(None, qubit_ssas)))
         inputs = (reg.result, *node.args[1:])
         func.Invoke(inputs, callee=method).insert_after(node)
         reg.insert_after(node)
