@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from itertools import chain
 
 from kirin import ir, types
-from kirin.dialects import ilist, py
+from kirin.dialects import ilist
 from kirin.rewrite import abc as rewrite_abc
 from typing_extensions import Callable, Iterable
 
@@ -88,28 +88,23 @@ class RewriteGetItem(rewrite_abc.RewriteRule):
     transform_lane: Callable[[LocationAddress], Iterable[LocationAddress] | None]
 
     def rewrite_Statement(self, node: ir.Statement):
-        if not (
-            isinstance(node, py.GetItem)
-            and isinstance(index_stmt := node.index.owner, move.GetZoneIndex)
-        ):
+        if not (isinstance(node, move.GetFutureResult)):
             return rewrite_abc.RewriteResult()
 
-        iterator = self.transform_lane(index_stmt.location_address)
+        iterator = self.transform_lane(node.location_address)
 
         if iterator is None:
             return rewrite_abc.RewriteResult()
 
         new_results: list[ir.ResultValue] = []
         for address in iterator:
-            (
-                inew_index_stmt := move.GetZoneIndex(
-                    zone_address=index_stmt.zone_address, location_address=address
-                )
-            ).insert_before(index_stmt)
-            (new_stmt := py.GetItem(node.obj, inew_index_stmt.result)).insert_before(
-                node
+            new_node = move.GetFutureResult(
+                node.measurement_future,
+                zone_address=node.zone_address,
+                location_address=address,
             )
-            new_results.append(new_stmt.result)
+            new_results.append(new_node.result)
+            new_node.insert_before(node)
 
         node.replace_by(ilist.New(tuple(new_results)))
 
