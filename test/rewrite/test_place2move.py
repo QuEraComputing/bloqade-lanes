@@ -390,22 +390,16 @@ def test_insert_measure():
                 zone_addresses=(layout.ZoneAddress(0), layout.ZoneAddress(1)),
             ),
             zone_result_0 := move.GetFutureResult(
-                future.result, zone_address=layout.ZoneAddress(0)
-            ),
-            zone_result_1 := move.GetFutureResult(
-                future.result, zone_address=layout.ZoneAddress(1)
-            ),
-            index_0 := move.GetZoneIndex(
+                future.result,
                 zone_address=layout.ZoneAddress(0),
                 location_address=layout.LocationAddress(0, 1),
             ),
-            result_0 := py.GetItem(zone_result_0.result, index_0.result),
-            index_1 := move.GetZoneIndex(
+            zone_result_1 := move.GetFutureResult(
+                future.result,
                 zone_address=layout.ZoneAddress(1),
                 location_address=layout.LocationAddress(0, 0),
             ),
-            result_1 := py.GetItem(zone_result_1.result, index_1.result),
-            place.Yield(state_before, result_0.result, result_1.result),
+            place.Yield(state_before, zone_result_0.result, zone_result_1.result),
         ],
     )
 

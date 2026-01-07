@@ -1,12 +1,15 @@
+import io
 from typing import Any
 
 from bloqade.gemini import logical as gemini_logical
+from bloqade.stim.emit.stim_str import EmitStimMain
+from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin.dialects import ilist
 
 from bloqade import annotate, qubit, squin, types
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.arch.gemini.impls import generate_arch
-from bloqade.lanes.logical_mvp import compile_squin_to_move
+from bloqade.lanes.logical_mvp import (
+    compile_to_physical_squin_noise_model,
+)
 
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
@@ -45,10 +48,13 @@ def main():
         set_observable(measurements[i])
 
 
-main = compile_squin_to_move(main, transversal_rewrite=True)
+noise_kernel = compile_to_physical_squin_noise_model(main)
+noise_kernel = squin_to_stim(noise_kernel)
 
-atom_interp = atom.AtomInterpreter(main.dialects, arch_spec=generate_arch())
-frame, _ = atom_interp.run(main)
-main.print(analysis=frame.entries)
+buf = io.StringIO()
+emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
+emit.initialize()
+emit.run(node=noise_kernel)
+result = buf.getvalue().strip()
 
-# compile_and_visualize(main)
+print(result)

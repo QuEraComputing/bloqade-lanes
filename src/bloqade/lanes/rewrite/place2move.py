@@ -4,12 +4,12 @@ from functools import singledispatchmethod
 
 from bloqade.analysis import address
 from kirin import ir
-from kirin.dialects import func, py
+from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress
 
 
 @dataclass
@@ -237,26 +237,15 @@ class InsertMeasure(RewriteRule):
             )
         ).insert_before(node)
 
-        future_results: dict[ZoneAddress, ir.SSAValue] = {}
-        for zone_address in zone_addresses:
-            (
-                future_result := move.GetFutureResult(
-                    future_stmt.result, zone_address=zone_address
-                )
-            ).insert_before(node)
-            future_results[zone_address] = future_result.result
         for result, zone_address, loc_addr in zip(
             node.results[1:], atom_state.zone_maps, atom_state.layout, strict=True
         ):
-            future_result = future_results[zone_address]
             (
-                index_stmt := move.GetZoneIndex(
-                    zone_address=zone_address, location_address=loc_addr
+                get_item_stmt := move.GetFutureResult(
+                    future_stmt.result,
+                    zone_address=zone_address,
+                    location_address=loc_addr,
                 )
-            ).insert_before(node)
-
-            (
-                get_item_stmt := py.GetItem(future_result, index_stmt.result)
             ).insert_before(node)
 
             result.replace_by(get_item_stmt.result)

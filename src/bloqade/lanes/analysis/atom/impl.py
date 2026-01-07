@@ -92,7 +92,14 @@ class Move(interp.MethodTable):
         if not isinstance(current_state, AtomState):
             return (MoveExecution.bottom(),)
 
-        return (MeasureFuture(current_state),)
+        results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]] = {}
+        for zone_address in stmt.zone_addresses:
+            result = results.setdefault(zone_address, {})
+            for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):
+                if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
+                    result[loc_addr] = qubit_id
+
+        return (MeasureFuture(results),)
 
     @interp.impl(move.Store)
     def store_impl(
@@ -114,34 +121,26 @@ class Move(interp.MethodTable):
     ):
 
         future = frame.get(stmt.measurement_future)
+
         if not isinstance(future, MeasureFuture):
+            print("GetFutureResult: future is not MeasureFuture")
             return (Bottom(),)
 
-        current_state = future.current_state
-        zone_locations = interp_.arch_spec.yield_zone_locations(stmt.zone_address)
+        result = future.results.get(stmt.zone_address)
 
-        def convert(address: layout.LocationAddress):
-            qid_or_none = current_state.data.get_qubit(address)
-            if isinstance(qid_or_none, int):
-                return MeasureResult(qid_or_none)
-            else:
-                return Bottom()
+        if result is None:
+            print(f"GetFutureResult: no result for zone address {stmt.zone_address}")
+            return (Bottom(),)
 
-        return (IListResult(tuple(map(convert, zone_locations))),)
+        qubit_id = result.get(stmt.location_address)
 
-    @interp.impl(move.GetZoneIndex)
-    def get_zone_index_impl(
-        self,
-        interp_: AtomInterpreter,
-        frame: ForwardFrame[MoveExecution],
-        stmt: move.GetZoneIndex,
-    ):
-        value = interp_.arch_spec.get_zone_index(
-            stmt.location_address,
-            stmt.zone_address,
-        )
+        if qubit_id is None:
+            print(
+                f"GetFutureResult: no qubit id for location address {stmt.zone_address} {stmt.location_address}"
+            )
+            return (Bottom(),)
 
-        return (Value(value),)
+        return (MeasureResult(qubit_id),)
 
 
 @py.constant.dialect.register(key="atom")

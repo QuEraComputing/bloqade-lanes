@@ -42,9 +42,9 @@ def invalid_methods():
     yield incompatible_move_lane
 
     @lanes.kernel
-    def invalid_index():
-        return move.get_zone_index(
-            zone_address=ZoneAddress(0), location_address=LocationAddress(5, 5)
+    def invalid_index(future: move.MeasurementFuture):
+        return move.get_future_result(
+            future, zone_address=ZoneAddress(0), location_address=LocationAddress(5, 5)
         )
 
     yield invalid_index
