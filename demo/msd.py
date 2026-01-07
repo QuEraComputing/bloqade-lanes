@@ -1,13 +1,27 @@
+from typing import Any
+
 from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
-from bloqade import qubit, squin
+from bloqade import annotate, qubit, squin, types
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch
 from bloqade.lanes.logical_mvp import compile_squin_to_move
 
-kernel = squin.kernel.add(gemini_logical.dialect)
+kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
+
+
+@kernel
+def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
+    annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
+    annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
+    annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
+
+
+@kernel
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
+    annotate.set_observable([meas[0], meas[1], meas[5]])
 
 
 @kernel
@@ -24,7 +38,11 @@ def main():
     squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
     squin.broadcast.sqrt_y_adj(reg)
 
-    return gemini_logical.terminal_measure(reg)
+    measurements = gemini_logical.terminal_measure(reg)
+
+    for i in range(len(reg)):
+        set_detector(measurements[i])
+        set_observable(measurements[i])
 
 
 main = compile_squin_to_move(main, transversal_rewrite=True)
