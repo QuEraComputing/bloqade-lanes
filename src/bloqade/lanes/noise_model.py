@@ -68,7 +68,6 @@ def generate_simple_noise_model(
     if cz_paired_error_dict is None:
         raise ValueError("CZ paired error probabilities must be provided.")
 
-
     cz_paired_error_probabilities = ilist.IList(
         [cz_paired_error_dict[k] for k in PAIRED_KEYS]
     )
