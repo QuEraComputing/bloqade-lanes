@@ -1,7 +1,11 @@
+import io
+
 from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.upstream import SquinToNative
 from bloqade.rewrite.passes import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
+from bloqade.stim.emit.stim_str import EmitStimMain
+from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, passes, rewrite
 
 from bloqade.lanes import visualize
@@ -109,3 +113,26 @@ def compile_to_physical_squin_noise_model(
     )
 
     return transformer.emit(move_mt)
+
+
+def compile_to_physical_stim_program(
+    mt: ir.Method, noise_model: NoiseModelABC | None = None
+) -> str:
+    """Compiles a logical squin kernel to a physical stim kernel with noise channels inserted.
+
+    Args:
+        mt: The logical squin method to compile.
+        noise_model: The noise model to insert during compilation.
+    Returns:
+        The compiled physical stim program as a string.
+
+    """
+    noise_kernel = compile_to_physical_squin_noise_model(mt, noise_model)
+    noise_kernel = squin_to_stim(noise_kernel)
+
+    buf = io.StringIO()
+    emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
+    emit.initialize()
+    emit.run(node=noise_kernel)
+
+    return buf.getvalue().strip()

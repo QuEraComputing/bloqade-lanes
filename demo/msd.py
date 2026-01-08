@@ -1,14 +1,11 @@
-import io
 from typing import Any
 
 from bloqade.gemini import logical as gemini_logical
-from bloqade.stim.emit.stim_str import EmitStimMain
-from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin.dialects import ilist
 
 from bloqade import annotate, qubit, squin, types
 from bloqade.lanes.logical_mvp import (
-    compile_to_physical_squin_noise_model,
+    compile_to_physical_stim_program,
 )
 
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
@@ -48,13 +45,5 @@ def main():
         set_observable(measurements[i])
 
 
-noise_kernel = compile_to_physical_squin_noise_model(main)
-noise_kernel = squin_to_stim(noise_kernel)
-
-buf = io.StringIO()
-emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
-emit.initialize()
-emit.run(node=noise_kernel)
-result = buf.getvalue().strip()
-
+result = compile_to_physical_stim_program(main)
 print(result)

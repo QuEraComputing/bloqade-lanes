@@ -35,10 +35,18 @@ def generate_simple_noise_model(
     if noise_model is None:
         noise_model = GeminiOneZoneNoiseModel()
 
+    cz_unpaired_loss_prob = noise_model.cz_unpaired_loss_prob
+    cz_unpaired_gate_px = noise_model.cz_unpaired_gate_px
+    cz_unpaired_gate_py = noise_model.cz_unpaired_gate_py
+    cz_unpaired_gate_pz = noise_model.cz_unpaired_gate_pz
+
     @squin.kernel
     def cz_unpaired_noise(qubits: ilist.IList[qubit.Qubit, Any]):
         debug.info("CZ Unpaired Noise")
-        squin.broadcast.qubit_loss(0.0001, qubits)
+        squin.broadcast.single_qubit_pauli_channel(
+            cz_unpaired_gate_px, cz_unpaired_gate_py, cz_unpaired_gate_pz, qubits
+        )
+        squin.broadcast.qubit_loss(cz_unpaired_loss_prob, qubits)
 
     mover_px = noise_model.mover_px
     mover_py = noise_model.mover_py
@@ -72,6 +80,8 @@ def generate_simple_noise_model(
         [cz_paired_error_dict[k] for k in PAIRED_KEYS]
     )
 
+    cz_unpaired_loss_prob = noise_model.cz_gate_loss_prob
+
     @squin.kernel
     def cz_paired_noise(
         controls: ilist.IList[qubit.Qubit, Any], targets: ilist.IList[qubit.Qubit, Any]
@@ -85,7 +95,7 @@ def generate_simple_noise_model(
             return ilist.IList([controls[i], targets[i]])
 
         groups = ilist.map(pair_qubit, ilist.range(len(controls)))
-        squin.broadcast.correlated_qubit_loss(0.001, groups)
+        squin.broadcast.correlated_qubit_loss(cz_unpaired_loss_prob, groups)
 
     local_px = noise_model.local_px
     local_py = noise_model.local_py
