@@ -43,7 +43,8 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         if move_type is MoveType.SITE:
             node.replace_by(
                 stmts.SiteBusMove(
-                    y_mask_ref,
+                    current_state=node.current_state,
+                    y_mask=y_mask_ref,
                     word=word,
                     bus_id=bus_id,
                     direction=direction,
@@ -52,7 +53,8 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         elif move_type is MoveType.WORD:
             node.replace_by(
                 stmts.WordBusMove(
-                    y_mask_ref,
+                    current_state=node.current_state,
+                    y_mask=y_mask_ref,
                     direction=direction,
                 )
             )
@@ -77,6 +79,7 @@ class RewriteFill(rewrite_abc.RewriteRule):
         node.result.replace_by(node.current_state)
         node.replace_by(
             stmts.Fill(
+                current_state=node.current_state,
                 logical_addresses=logical_addresses_stmt.result,
             )
         )
@@ -111,6 +114,7 @@ class RewriteInitialize(rewrite_abc.RewriteRule):
         node.result.replace_by(node.current_state)
         node.replace_by(
             stmts.LogicalInitialize(
+                current_state=node.current_state,
                 thetas=thetas_stmt.result,
                 phis=phis_stmt.result,
                 lams=lams_stmt.result,
