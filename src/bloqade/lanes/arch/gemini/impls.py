@@ -49,7 +49,9 @@ def hypercube_busses(hypercube_dims: int):
     return tuple(word_buses)
 
 
-def generate_arch(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
+def generate_arch(
+    hypercube_dims: int = 4, word_size_y: int = 5
+) -> ArchSpec[tuple[float, float]]:
     word_size_x = 2
     num_word_x = 2**hypercube_dims
 
