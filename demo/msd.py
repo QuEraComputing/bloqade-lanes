@@ -21,7 +21,7 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 @kernel
 def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
-    annotate.set_observable([meas[0], meas[1], meas[5]], index)
+    annotate.set_observable([meas[0], meas[1], meas[5]])
 
 
 @kernel
