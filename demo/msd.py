@@ -20,7 +20,7 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @kernel
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
     annotate.set_observable([meas[0], meas[1], meas[5]])
 
 
@@ -42,7 +42,7 @@ def main():
 
     for i in range(len(reg)):
         set_detector(measurements[i])
-        set_observable(measurements[i])
+        set_observable(measurements[i], i)
 
 
 result = compile_to_physical_stim_program(main)

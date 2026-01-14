@@ -1,13 +1,13 @@
 from kirin import ir
 from kirin.ir import Method
 from kirin.passes import Default
-from kirin.prelude import basic
+from kirin.prelude import structural
 from typing_extensions import Annotated, Doc
 
 from bloqade.lanes.dialects import move
 
 
-@ir.dialect_group(basic.add(move))
+@ir.dialect_group(structural.add(move))
 def kernel(self):
     def run_pass(
         mt: Annotated[Method, Doc("The method to run pass on.")],

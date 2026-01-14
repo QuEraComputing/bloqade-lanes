@@ -130,7 +130,7 @@ class InsertNoise(AtomStateRewriter):
         move_noise_methods = tuple(map(self.noise_model.get_lane_noise, node.lanes))
         qubit_ssas = self.get_qubit_ssa_from_locations(
             atom_state,
-            tuple(self.arch_spec.get_endpoints(lane)[1] for lane in node.lanes),
+            tuple(self.arch_spec.get_endpoints(lane)[0] for lane in node.lanes),
         )
         qubit_ssas = list(filter(None, qubit_ssas))
 
