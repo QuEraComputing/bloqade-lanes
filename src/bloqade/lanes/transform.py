@@ -21,9 +21,10 @@ from bloqade.lanes.rewrite.move2squin import (
 @dataclass
 class MoveToSquin:
     arch_spec: layout.ArchSpec
-    logical_initialization: ir.Method[
-        [float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None
-    ]
+    logical_initialization: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None]
+        | None
+    ) = None
     noise_model: NoiseModelABC | None = None
     aggressive_unroll: bool = False
 

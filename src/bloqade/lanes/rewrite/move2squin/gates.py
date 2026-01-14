@@ -19,9 +19,9 @@ from .base import AtomStateRewriter
 @dataclass
 class InsertGates(AtomStateRewriter):
     move_exec_analysis: ForwardFrame[atom.MoveExecution]
-    initialize_kernel: ir.Method[
-        [float, float, float, ilist.IList[qubit.Qubit, Any]], None
-    ]
+    initialize_kernel: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+    ) = None
     measurement_index_map: dict[ZoneAddress, dict[LocationAddress, int]] = field(
         init=False, default_factory=dict
     )
@@ -165,6 +165,9 @@ class InsertGates(AtomStateRewriter):
     def rewrite_PhysicalInitialize(
         self, atom_state: atom.AtomState, node: move.PhysicalInitialize
     ) -> rewrite_abc.RewriteResult:
+        if self.initialize_kernel is None:
+            return rewrite_abc.RewriteResult()
+
         nodes_to_insert: list[ir.Statement] = []
         for theta, phi, lam, locations in zip(
             node.thetas, node.phis, node.lams, node.location_addresses
