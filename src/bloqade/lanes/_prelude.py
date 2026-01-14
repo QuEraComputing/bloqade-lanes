@@ -1,5 +1,4 @@
-from kirin import ir, rewrite
-from kirin.dialects.scf import scf2cf
+from kirin import ir
 from kirin.ir import Method
 from kirin.passes import Default
 from kirin.prelude import structural
@@ -37,7 +36,5 @@ def kernel(self):
             no_raise=no_raise,
         )
         default_pass.fixpoint(mt)
-
-        rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(mt.code)
 
     return run_pass

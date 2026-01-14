@@ -9,7 +9,6 @@ from bloqade.lanes.layout.encoding import (
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.visualize import debugger
 
 lane1 = SiteLaneAddress(0, 0, 0)
 lane2 = WordLaneAddress(0, 5, 0)
@@ -30,7 +29,6 @@ def main(cond: bool):
 
 
 arch_spec = get_arch_spec()
-debugger(main, arch_spec, interactive=True)
 
 squin_kernel = MoveToSquin(
     arch_spec=get_arch_spec(),

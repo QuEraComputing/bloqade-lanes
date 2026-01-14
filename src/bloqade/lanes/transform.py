@@ -4,7 +4,7 @@ from typing import Literal
 from bloqade.rewrite.passes import aggressive_unroll as agg
 from bloqade.squin.rewrite import SquinU3ToClifford
 from kirin import ir, rewrite
-from kirin.dialects import ilist
+from kirin.dialects import ilist, scf
 from kirin.passes import TypeInfer
 
 from bloqade import qubit, squin
@@ -29,7 +29,7 @@ class MoveToSquin:
     aggressive_unroll: bool = False
 
     def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
-        main = main.similar(main.dialects.union(squin.kernel))
+        main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
 
         vqpu = atom.AtomInterpreter(main.dialects, arch_spec=self.arch_spec)
         run_method = vqpu.run_no_raise if no_raise else vqpu.run
