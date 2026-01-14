@@ -44,10 +44,11 @@ def steane7_initialize(
     debug.info("Begin Steane7 Initialize")
     squin.u3(theta, phi, lam, qubits[6])
     squin.broadcast.sqrt_y_adj(qubits[:6])
-    evens = qubits[::2]
-    odds = qubits[1::2]
+    evens = qubits[::2]  # [0, 2, 4, 6]
+    odds = qubits[1::2]  # [1, 3, 5]
 
-    squin.broadcast.cz(odds, evens[:-1])
+    # Fixed: CZ pairs should be (1,2), (3,4), (5,6) not (1,0), (3,2), (5,4)
+    squin.broadcast.cz(odds, evens[1:])
     squin.sqrt_y(qubits[6])
     squin.broadcast.cz(evens[:-1], ilist.IList([qubits[3], qubits[5], qubits[6]]))
     squin.broadcast.sqrt_y(qubits[2:])
