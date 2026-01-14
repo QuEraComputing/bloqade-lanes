@@ -11,8 +11,8 @@ from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.visualize import debugger
 
-lane1 = SiteLaneAddress(word_id=0, site_id=0, bus_id=0)
-lane2 = WordLaneAddress(word_id=0, site_id=5, bus_id=0)
+lane1 = SiteLaneAddress(0, 0, 0)
+lane2 = WordLaneAddress(0, 5, 0)
 
 
 @kernel
