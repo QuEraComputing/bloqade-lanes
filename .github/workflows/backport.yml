@@ -15,7 +15,6 @@ jobs:
           fetch-depth: 0
           ref: main
 
-
       - name: Find PR number for commit
         id: prnum
         uses: actions/github-script@v8
