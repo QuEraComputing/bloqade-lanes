@@ -143,6 +143,30 @@ def set_observable(meas: ilist.IList[types.MeasurementResult, Any], idx: int):
     annotate.set_observable([meas[0], meas[1], meas[5]], idx)
 
 
+def transversal_rewrites(mt: ir.Method):
+    """Apply transversal rewrite rules to a squin method.
+
+    Args:
+        mt (ir.Method): rewrite the method in place.
+
+    Returns:
+        ir.Method: The rewritten method.
+
+    """
+
+    rewrite.Walk(
+        rewrite.Chain(
+            transversal.RewriteLocations(logical.steane7_transversal_map),
+            transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
+            transversal.RewriteMoves(logical.steane7_transversal_map),
+            transversal.RewriteGetItem(logical.steane7_transversal_map),
+            transversal.RewriteLogicalToPhysicalConversion(),
+        )
+    ).rewrite(mt.code)
+
+    return mt
+
+
 def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
     """Compile a squin kernel to move dialect.
 
@@ -173,15 +197,7 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
         fixed.LogicalMoveScheduler(),
     ).emit(mt)
     if transversal_rewrite:
-        rewrite.Walk(
-            rewrite.Chain(
-                transversal.RewriteLocations(logical.steane7_transversal_map),
-                transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
-                transversal.RewriteMoves(logical.steane7_transversal_map),
-                transversal.RewriteGetItem(logical.steane7_transversal_map),
-                transversal.RewriteLogicalToPhysicalConversion(),
-            )
-        ).rewrite(mt.code)
+        mt = transversal_rewrites(mt)
 
     passes.TypeInfer(mt.dialects)(mt)
 

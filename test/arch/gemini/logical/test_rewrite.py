@@ -19,10 +19,11 @@ from bloqade.lanes.layout.encoding import (
 def test_logical_architecture_rewrite_site():
 
     test_block = ir.Block()
+    current_state = ir.TestValue()
 
     test_block.stmts.append(
         move.Move(
-            current_state=ir.TestValue(),
+            current_state=current_state,
             lanes=(
                 SiteLaneAddress(0, 0, 0, Direction.FORWARD),
                 SiteLaneAddress(0, 1, 0, Direction.FORWARD),
@@ -42,6 +43,7 @@ def test_logical_architecture_rewrite_site():
     )
     expected_block.stmts.append(
         SiteBusMove(
+            current_state=current_state,
             y_mask=const_list.result,
             word=0,
             bus_id=0,
@@ -67,10 +69,11 @@ def test_logical_architecture_rewrite_site_no_lanes():
 def test_logical_architecture_rewrite_fill():
 
     test_block = ir.Block()
+    current_state = ir.TestValue()
 
     test_block.stmts.append(
         move.Fill(
-            current_state=ir.TestValue(),
+            current_state=current_state,
             location_addresses=(
                 LocationAddress(0, 0),
                 LocationAddress(1, 2),
@@ -89,6 +92,7 @@ def test_logical_architecture_rewrite_fill():
     )
     expected_block.stmts.append(
         Fill(
+            current_state=current_state,
             logical_addresses=const_list.result,
         )
     )
@@ -108,9 +112,11 @@ def test_logical_architecture_rewrite_logical_initialize():
     )
 
     test_block = ir.Block()
+    current_state = ir.TestValue()
+
     test_block.stmts.append(
         move.LogicalInitialize(
-            ir.TestValue(),
+            current_state=current_state,
             thetas=thetas,
             phis=phis,
             lams=lams,
@@ -131,6 +137,7 @@ def test_logical_architecture_rewrite_logical_initialize():
     )
     expected_block.stmts.append(
         LogicalInitialize(
+            current_state=current_state,
             thetas=thetas_stmt.result,
             phis=phis_stmt.result,
             lams=lams_stmt.result,
