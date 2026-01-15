@@ -86,9 +86,6 @@ class InsertGates(AtomStateRewriter):
     ) -> rewrite_abc.RewriteResult:
         # R -> U3: https://algassert.com/quirk#circuit={%22cols%22:[[%22QFT3%22],[%22inputA3%22,1,1,%22+=A3%22],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22-pi%20t%22}],[],[1,1,1,1,1,{%22id%22:%22Rxft%22,%22arg%22:%22-pi%20t^3%22}],[],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22pi%20t%22}],[1,1,1,%22%E2%80%A6%22,%22%E2%80%A6%22,%22%E2%80%A6%22],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22-pi%20t%20+%20pi/2%22}],[],[],[1,1,1,1,1,{%22id%22:%22Ryft%22,%22arg%22:%22pi%20t^3%22}],[],[1,1,1,1,1,{%22id%22:%22Rzft%22,%22arg%22:%22pi%20t%20-%20pi/2%22}]]}
 
-        (quarter_turn := py.Constant(0.25)).insert_before(node)
-        (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
-        (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
         qubit_ssa = self.get_qubit_ssa_from_locations(
             atom_state, node.location_addresses
         )
@@ -96,6 +93,9 @@ class InsertGates(AtomStateRewriter):
         if not utils.no_none_elements_tuple(qubit_ssa):
             return rewrite_abc.RewriteResult()
 
+        (quarter_turn := py.Constant(0.25)).insert_before(node)
+        (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
+        (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
         (reg := ilist.New(qubit_ssa)).insert_before(node)
         (
             gate_stmts.U3(node.rotation_angle, phi.result, lam.result, reg.result)
