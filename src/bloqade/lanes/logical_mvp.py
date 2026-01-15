@@ -43,6 +43,7 @@ class JobResult:
     detector_bits: np.ndarray
     logical_bits: np.ndarray
     detector_error_model: stim.DetectorErrorModel
+    phyiscal_program: Circuit
 
 
 class Job:
@@ -64,6 +65,7 @@ class Job:
             detector_error_model=dem,
             detector_bits=dets,
             logical_bits=obs,
+            phyiscal_program=program,
         )
 
     def get_results(self) -> JobResult:
@@ -71,8 +73,29 @@ class Job:
 
 
 class GeminiLogical:
-    def submit(self, method, shots: int) -> Job:
+    def submit(
+        self,
+        method,
+        shots: int = 100,
+        m2obs: np.ndarray | None = None,
+        m2dets: np.ndarray | None = None,
+    ) -> Job:
         stim_program_str = str(compile_to_physical_stim_program(method))
+
+        if m2obs is not None:
+            num_meas = m2obs.shape[0]
+            targets = " ".join(str(i) for i in range(num_meas))
+            stim_program_str += f"\nM {targets}\n"
+
+            for i in range(m2obs.shape[1]):
+                recs = np.flatnonzero(m2obs[:, 0]) - num_meas
+                rec_str = " ".join(f"rec[{rec}]" for rec in recs)
+                stim_program_str += f"OBSERVABLE_INCLUDE({i}) {rec_str}\n"
+        if m2dets is not None:
+            for i in range(m2dets.shape[1]):
+                recs = np.flatnonzero(m2dets[:, 0]) - m2dets.shape[0]
+                rec_str = " ".join(f"rec[{rec}]" for rec in recs)
+                stim_program_str += f"DETECTOR {rec_str}\n"
         return Job(stim_program_str, shots)
 
 
@@ -114,28 +137,28 @@ class TesseractDecoder(BaseDecoder):
         return self._decoder.decode(detector_bits)
 
 
-@kernel
-def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
-    annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
-    annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
-    annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
-
-
 # @kernel
-# def set_detector(meas: ilist.IList[ilist.IList[types.MeasurementResult, Any], Any]):
-#     h = [[0, 1, 2, 3], [1, 2, 4, 5], [2, 3, 4, 6]]
+# def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
+#     annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
+#     annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
+#     annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
 
-#     num_meas = len(meas)
 
-#     for i in range(len(h)):
-#         stab = h[i]
-#         res= []
-#         for j in range(4):
-#             for k in range(num_meas):
-#                 m = meas[k]
-#                 res = res + [m[stab[j]]]
+@kernel
+def set_detector(meas: ilist.IList[ilist.IList[types.MeasurementResult, Any], Any]):
+    h = [[0, 1, 2, 3], [1, 2, 4, 5], [2, 3, 4, 6]]
 
-#         annotate.set_detector(res, coordinates=[0, i])
+    num_meas = len(meas)
+
+    for i in range(len(h)):
+        stab = h[i]
+        res = []
+        for j in range(4):
+            for k in range(num_meas):
+                m = meas[k]
+                res = res + [m[stab[j]]]
+
+        annotate.set_detector(res, coordinates=[0, i])
 
 
 @kernel
