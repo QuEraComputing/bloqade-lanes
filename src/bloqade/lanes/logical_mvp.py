@@ -1,6 +1,9 @@
 import io
+from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+import stim
 from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.upstream import SquinToNative
@@ -10,7 +13,8 @@ from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, passes, rewrite
 from kirin.dialects import ilist
-import numpy as np
+from tesseract_decoder import tesseract
+from tsim import Circuit
 
 from bloqade import annotate, squin, types
 from bloqade.lanes import visualize
@@ -22,30 +26,92 @@ from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
-import stim
-from tsim import Circuit
-from tesseract_decoder import tesseract
 
 # Kernel definition with gemini logical dialect and annotate
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
 
 
-class Decoder:
+def simulate_program(program: Circuit, shots: int):
+    sampler = program.compile_detector_sampler()
+    return sampler.sample(shots, separate_observables=True)
+
+
+@dataclass
+class JobResult:
+    measurement_bits: np.ndarray
+    detector_bits: np.ndarray
+    logical_bits: np.ndarray
+    detector_error_model: stim.DetectorErrorModel
+
+
+class Job:
+    def __init__(self, stim_program_str: str, shots: int):
+        program = Circuit(stim_program_str)
+        dem = program.detector_error_model(approximate_disjoint_errors=True)
+        sampler = program.compile_sampler()
+        samples = sampler.sample(shots)
+
+        m2dconverter = program._stim_circ.compile_m2d_converter(
+            skip_reference_sample=True
+        )
+        dets, obs = m2dconverter.convert(
+            measurements=samples, separate_observables=True
+        )
+
+        self._result = JobResult(
+            measurement_bits=samples,
+            detector_error_model=dem,
+            detector_bits=dets,
+            logical_bits=obs,
+        )
+
+    def get_results(self) -> JobResult:
+        return self._result
+
+
+class GeminiLogical:
+    def submit(self, method, shots: int) -> Job:
+        stim_program_str = str(compile_to_physical_stim_program(method))
+        return Job(stim_program_str, shots)
+
+
+class BaseDecoder:
+    def __init__(
+        self,
+        dem: stim.DetectorErrorModel,
+    ):
+        pass
+
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        """Decode a single shot of detector bits."""
+        pass
+
+    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        """Decode a batch or single shot of detector bits."""
+        if detector_bits.ndim == 1:
+            return self._decode(detector_bits)
+        else:
+            res = []
+            for i in range(detector_bits.shape[0]):
+                res.append(self._decode(detector_bits[i]))
+            return np.array(res)
+
+    def decode_and_return_soft_information(
+        self, detector_bits: np.ndarray
+    ) -> np.ndarray:
+        """Decode a batch or single shot of detector bits and return soft information."""
+        pass
+
+
+class TesseractDecoder(BaseDecoder):
     def __init__(self, dem: stim.DetectorErrorModel):
         config = tesseract.TesseractConfig(dem=dem)
         self.num_observables = dem.num_observables
         self._decoder = config.compile_decoder()
 
-    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
-
-        logical_bits_flips = np.zeros(
-            (detector_bits.shape[0], self.num_observables), dtype=bool
-        )
-        for i, detector_shot in enumerate(detector_bits):
-            flip_logical_bit = self._decoder.decode(detector_shot)
-            logical_bits_flips[i] = flip_logical_bit
-        return logical_bits_flips
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        return self._decoder.decode(detector_bits)
 
 
 @kernel
@@ -53,6 +119,23 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
     annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
     annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
     annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
+
+
+# @kernel
+# def set_detector(meas: ilist.IList[ilist.IList[types.MeasurementResult, Any], Any]):
+#     h = [[0, 1, 2, 3], [1, 2, 4, 5], [2, 3, 4, 6]]
+
+#     num_meas = len(meas)
+
+#     for i in range(len(h)):
+#         stab = h[i]
+#         res= []
+#         for j in range(4):
+#             for k in range(num_meas):
+#                 m = meas[k]
+#                 res = res + [m[stab[j]]]
+
+#         annotate.set_detector(res, coordinates=[0, i])
 
 
 @kernel
