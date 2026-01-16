@@ -240,9 +240,9 @@ def interactive_debugger(
     exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
     next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
 
-    prev_button = Button(prev_ax, "Previous")
-    next_button = Button(next_ax, "Next")
-    exit_button = Button(exit_ax, "Exit")
+    prev_button = Button(prev_ax, "Previousv (<)")
+    next_button = Button(next_ax, "Next (>)")
+    exit_button = Button(exit_ax, "Exit (v)")
 
     def on_exit(event):
         nonlocal running, waiting, updated
@@ -271,6 +271,18 @@ def interactive_debugger(
     next_button.on_clicked(on_next)
     prev_button.on_clicked(on_prev)
     exit_button.on_clicked(on_exit)
+
+    # connect keyboard shortcuts to callbacks
+    def on_key(event):
+        match event.key:
+            case "left":
+                on_prev(event)
+            case "right":
+                on_next(event)
+            case "down":
+                on_exit(event)
+
+    fig.canvas.mpl_connect("key_press_event", on_key)
 
     while running:
         draw(step_index)
