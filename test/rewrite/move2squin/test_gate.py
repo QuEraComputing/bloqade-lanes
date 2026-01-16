@@ -5,7 +5,7 @@ from kirin import ir, rewrite
 from kirin.analysis import forward
 from kirin.dialects import func, ilist, py
 
-from bloqade import squin, types as bloqade_types
+from bloqade import qubit, squin, types as bloqade_types
 from bloqade.lanes import kernel, layout
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -415,5 +415,37 @@ def test_gate_rewrite_physical_initialize():
     assert_nodes(test_block, expected_block)
 
 
-if __name__ == "__main__":
-    test_gate_rewrite_physical_initialize()
+def test_insert_measurements():
+
+    future = ir.TestValue()
+    test_block = ir.Block(
+        [
+            gate_node := move.GetFutureResult(
+                future,
+                zone_address=layout.ZoneAddress(0),
+                location_address=layout.LocationAddress(0, 0),
+            )
+        ]
+    )
+
+    physical_ssa_values = {
+        0: (zero := ir.TestValue()),
+    }
+
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        gate_node, entries={gate_node.result: atom.MeasureResult(0)}
+    )
+
+    rule = gates.InsertMeasurements(
+        physical_ssa_values=physical_ssa_values,  # type: ignore
+        move_exec_analysis=frame,
+    )
+    rewrite.Walk(rule).rewrite(test_block)
+
+    expected_block = ir.Block(
+        [
+            func.Invoke((zero,), callee=qubit.measure),
+        ]
+    )
+
+    assert_nodes(test_block, expected_block)
