@@ -279,7 +279,7 @@ def interactive_debugger(
                 on_prev(event)
             case "right":
                 on_next(event)
-            case "down":
+            case "escape":
                 on_exit(event)
 
     fig.canvas.mpl_connect("key_press_event", on_key)
