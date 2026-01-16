@@ -240,7 +240,7 @@ def interactive_debugger(
     exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
     next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
 
-    prev_button = Button(prev_ax, "Previousv (<)")
+    prev_button = Button(prev_ax, "Previous (<)")
     next_button = Button(next_ax, "Next (>)")
     exit_button = Button(exit_ax, "Exit (Esc)")
 
