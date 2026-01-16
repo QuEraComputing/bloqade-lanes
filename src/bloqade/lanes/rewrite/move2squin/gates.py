@@ -117,33 +117,6 @@ class InsertGates(AtomStateRewriter):
         ).insert_before(node)
         return rewrite_abc.RewriteResult(has_done_something=True)
 
-    @rewriter.register(move.GetFutureResult)
-    def _(
-        self, node: move.GetFutureResult, atom_state: atom.AtomState
-    ) -> rewrite_abc.RewriteResult:
-        zone_address = node.zone_address
-        qubit_ssas: list[ir.SSAValue] = []
-
-        for word_id in self.arch_spec.zones[zone_address.zone_id]:
-            for site_id, _ in enumerate(self.arch_spec.words[word_id].sites):
-                location_address = LocationAddress(word_id, site_id)
-                qubit_ssa = self.get_qubit_ssa(atom_state, location_address)
-                if qubit_ssa is None:
-                    continue
-                location_mapping = self.measurement_index_map.setdefault(
-                    zone_address, {}
-                )
-                location_mapping[location_address] = len(qubit_ssas)
-                qubit_ssas.append(qubit_ssa)
-
-        if len(qubit_ssas) == 0:
-            return rewrite_abc.RewriteResult()
-
-        (reg := ilist.New(tuple(qubit_ssas))).insert_before(node)
-        node.replace_by(func.Invoke((reg.result,), callee=qubit.broadcast.measure))
-
-        return rewrite_abc.RewriteResult(has_done_something=True)
-
     @rewriter.register(move.LogicalInitialize)
     def _(
         self, node: move.LogicalInitialize, atom_state: atom.AtomState

@@ -1,14 +1,23 @@
+from typing import Any
+
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.analysis import forward
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 
-from bloqade import squin
+from bloqade import squin, types as bloqade_types
 from bloqade.lanes import kernel, layout
 from bloqade.lanes.analysis import atom
-from bloqade.lanes.arch.gemini.logical import get_arch_spec, steane7_initialize
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite.move2squin import base, gates
+
+
+@squin.kernel
+def initialize(
+    theta: float, phi: float, lam: float, qubits: ilist.IList[bloqade_types.Qubit, Any]
+):
+    return
 
 
 def run_insert_qubits(test_kernel: ir.Method):
@@ -25,7 +34,7 @@ def run_insert_qubits(test_kernel: ir.Method):
             arch_spec=arch_spec,
             physical_ssa_values=rule.physical_ssa_values,
             move_exec_analysis=frame,
-            initialize_kernel=steane7_initialize,
+            initialize_kernel=initialize,
         )
     ).rewrite(test_kernel.code)
 
@@ -58,7 +67,7 @@ def test_gate_rewrite_cz():
         arch_spec=arch_spec,
         physical_ssa_values=physical_ssa_values,  # type: ignore
         move_exec_analysis=frame,
-        initialize_kernel=steane7_initialize,
+        initialize_kernel=initialize,
     )
     rewrite.Walk(rule).rewrite(test_block)
 
@@ -102,7 +111,7 @@ def test_gate_rewrite_global_rz():
         arch_spec=arch_spec,
         physical_ssa_values=physical_ssa_values,  # type: ignore
         move_exec_analysis=frame,
-        initialize_kernel=steane7_initialize,
+        initialize_kernel=initialize,
     )
     rewrite.Walk(rule).rewrite(test_block)
 
@@ -155,7 +164,7 @@ def test_gate_rewrite_global_r():
         arch_spec=arch_spec,
         physical_ssa_values=physical_ssa_values,  # type: ignore
         move_exec_analysis=frame,
-        initialize_kernel=steane7_initialize,
+        initialize_kernel=initialize,
     )
     rewrite.Walk(rule).rewrite(test_block)
 
@@ -215,7 +224,7 @@ def test_gate_rewrite_local_r():
         arch_spec=arch_spec,
         physical_ssa_values=physical_ssa_values,  # type: ignore
         move_exec_analysis=frame,
-        initialize_kernel=steane7_initialize,
+        initialize_kernel=initialize,
     )
     rewrite.Walk(rule).rewrite(test_block)
 
@@ -269,7 +278,7 @@ def test_gate_rewrite_local_rz():
         arch_spec=arch_spec,
         physical_ssa_values=physical_ssa_values,  # type: ignore
         move_exec_analysis=frame,
-        initialize_kernel=steane7_initialize,
+        initialize_kernel=initialize,
     )
     rewrite.Walk(rule).rewrite(test_block)
 
@@ -286,9 +295,125 @@ def test_gate_rewrite_local_rz():
     assert_nodes(test_block, expected_block)
 
 
+def test_gate_rewrite_logical_initialize():
+    state = ir.TestValue()
+    theta = ir.TestValue()
+    phi = ir.TestValue()
+    lam = ir.TestValue()
+    test_block = ir.Block(
+        [
+            gate_node := move.LogicalInitialize(
+                current_state=state,
+                thetas=(theta, theta),
+                phis=(phi, phi),
+                lams=(lam, lam),
+                location_addresses=(
+                    layout.LocationAddress(0, 0),
+                    layout.LocationAddress(0, 5),
+                ),
+            )
+        ]
+    )
+
+    physical_ssa_values = {
+        0: (zero := ir.TestValue()),
+        1: (one := ir.TestValue()),
+    }
+    arch_spec = get_arch_spec()
+    atom_state = atom.AtomState(
+        atom.AtomStateData.new(
+            {
+                0: layout.LocationAddress(0, 0),
+                1: layout.LocationAddress(0, 5),
+            }
+        )
+    )
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        gate_node, entries={gate_node.result: atom_state}
+    )
+
+    rule = gates.InsertGates(
+        arch_spec=arch_spec,
+        physical_ssa_values=physical_ssa_values,  # type: ignore
+        move_exec_analysis=frame,
+        initialize_kernel=initialize,
+    )
+    rewrite.Walk(rule).rewrite(test_block)
+
+    expected_block = ir.Block(
+        [
+            zero_reg := ilist.New((zero,)),
+            squin.gate.stmts.U3(theta, phi, lam, zero_reg.result),
+            one_reg := ilist.New((one,)),
+            squin.gate.stmts.U3(theta, phi, lam, one_reg.result),
+            gate_node,
+        ]
+    )
+    assert_nodes(test_block, expected_block)
+
+
+def test_gate_rewrite_physical_initialize():
+    state = ir.TestValue()
+    theta = ir.TestValue()
+    phi = ir.TestValue()
+    lam = ir.TestValue()
+    test_block = ir.Block(
+        [
+            gate_node := move.PhysicalInitialize(
+                current_state=state,
+                thetas=(theta, theta),
+                phis=(phi, phi),
+                lams=(lam, lam),
+                location_addresses=(
+                    (layout.LocationAddress(0, 0),),
+                    (layout.LocationAddress(0, 5),),
+                ),
+            )
+        ]
+    )
+
+    physical_ssa_values = {
+        0: (zero := ir.TestValue()),
+        1: (one := ir.TestValue()),
+    }
+    arch_spec = get_arch_spec()
+    atom_state = atom.AtomState(
+        atom.AtomStateData.new(
+            {
+                0: layout.LocationAddress(0, 0),
+                1: layout.LocationAddress(0, 5),
+            }
+        )
+    )
+    frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
+        gate_node, entries={gate_node.result: atom_state}
+    )
+
+    rule = gates.InsertGates(
+        arch_spec=arch_spec,
+        physical_ssa_values=physical_ssa_values,  # type: ignore
+        move_exec_analysis=frame,
+        initialize_kernel=initialize,
+    )
+    rewrite.Walk(rule).rewrite(test_block)
+
+    expected_block = ir.Block(
+        [
+            zero_reg := ilist.New((zero,)),
+            func.Invoke(
+                (theta, phi, lam, zero_reg.result),
+                callee=initialize,
+            ),
+            one_reg := ilist.New((one,)),
+            func.Invoke(
+                (theta, phi, lam, one_reg.result),
+                callee=initialize,
+            ),
+            gate_node,
+        ]
+    )
+    assert_nodes(test_block, expected_block)
+
+
 if __name__ == "__main__":
-    test_gate_rewrite_cz()
-    test_gate_rewrite_global_rz()
-    test_gate_rewrite_global_r()
-    test_gate_rewrite_local_r()
-    test_gate_rewrite_local_rz()
+    test_gate_rewrite_physical_initialize()
