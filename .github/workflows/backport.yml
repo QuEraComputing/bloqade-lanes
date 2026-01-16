@@ -107,7 +107,7 @@ jobs:
               for (const err of errors) {
                 core.warning(err);
               }
-              throw new Error(`Backport failed for the following branches:\n${errors.join('\n')}`);
+              throw new Error(`Backport failed some branches. See warnings for details.`);
             }
         env:
           VERSIONS: ${{ steps.versions.outputs.versions }}
