@@ -1,7 +1,5 @@
 name: Backport on Squash Merge
 
-
-
 on:
   push:
     branches:
@@ -10,13 +8,15 @@ on:
 jobs:
   backport:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
-
 
       - name: Find PR number for commit
         id: prnum
@@ -80,6 +80,7 @@ jobs:
             // Set git user config for the runner
             execSync('git config user.name "github-actions[bot]"');
             execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+            let errors = [];
             for (const version of versions) {
               const branch = `release-${version.replace('.', '-')}`;
               const backportBranch = `${branch}-backport-pr${prNum}`;
@@ -98,9 +99,15 @@ jobs:
                   body: `Automated backport of PR #${prNum} (${commit}) to ${branch}`
                 });
               } catch (e) {
-                core.warning(`Skipping ${branch}: failed to backport due to cherry-pick error: ${e.message}`);
+                errors.push(`release branch ${branch}: ${e.message}`);
                 continue;
               }
+            }
+            if (errors.length) {
+              for (const err of errors) {
+                core.warning(err);
+              }
+              throw new Error(`Backport failed for the following branches:\n${errors.join('\n')}`);
             }
         env:
           VERSIONS: ${{ steps.versions.outputs.versions }}
