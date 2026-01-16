@@ -242,7 +242,7 @@ def interactive_debugger(
 
     prev_button = Button(prev_ax, "Previousv (<)")
     next_button = Button(next_ax, "Next (>)")
-    exit_button = Button(exit_ax, "Exit (v)")
+    exit_button = Button(exit_ax, "Exit (Esc)")
 
     def on_exit(event):
         nonlocal running, waiting, updated
