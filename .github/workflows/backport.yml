@@ -1,0 +1,115 @@
+name: Backport on Squash Merge
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  backport:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Find PR number for commit
+        id: prnum
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const commitSha = process.env.GITHUB_SHA;
+            const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: commitSha
+            });
+            if (!prs.data.length) {
+              core.info(`No PR found for commit ${commitSha}. Ending workflow with success.`);
+              // Set a special output to indicate early exit
+              core.setOutput('pr_num', '');
+              return;
+            }
+            const prNum = prs.data[0].number;
+            core.setOutput('pr_num', prNum);
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Get backport versions from PR labels
+        if: steps.prnum.outputs.pr_num != ''
+        id: versions
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNum = process.env.PR_NUM;
+            if (!prNum) {
+              core.info('No PR number found, skipping backport.');
+              core.setOutput('versions', '');
+              return;
+            }
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNum
+            });
+            const labels = pr.data.labels.map(l => l.name);
+            const versionPattern = /^backport v(\d+\.\d+)$/;
+            const versions = labels
+              .map(l => {
+                const m = l.match(versionPattern);
+                return m ? m[1] : null;
+              })
+              .filter(Boolean);
+            core.setOutput('versions', versions.join('\n'));
+        env:
+          PR_NUM: ${{ steps.prnum.outputs.pr_num }}
+      - name: Cherry-pick and create PRs
+        if: steps.versions.outputs.versions != ''
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const execSync = require('child_process').execSync;
+            const versions = process.env.VERSIONS.split('\n').filter(Boolean);
+            const commit = process.env.GITHUB_SHA;
+            const prNum = process.env.PR_NUM;
+            // Set git user config for the runner
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+            let errors = [];
+            for (const version of versions) {
+              const branch = `release-${version.replace('.', '-')}`;
+              const backportBranch = `${branch}-backport-pr${prNum}`;
+              try {
+                // Checkout the release branch and create a new branch from it
+                execSync(`git fetch origin ${branch}:${branch}`);
+                execSync(`git checkout -B ${backportBranch} origin/${branch}`);
+                execSync(`git cherry-pick ${commit}`);
+                execSync(`git push origin ${backportBranch}`);
+                github.rest.pulls.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `Backport PR #${prNum} (${commit}) to ${branch}`,
+                  head: backportBranch,
+                  base: branch,
+                  body: `Automated backport of PR #${prNum} (${commit}) to ${branch}`
+                });
+              } catch (e) {
+                errors.push(`release branch ${branch}: ${e.message}`);
+                continue;
+              }
+            }
+            if (errors.length) {
+              for (const err of errors) {
+                core.warning(err);
+              }
+              throw new Error(`Backport failed some branches. See warnings for details.`);
+            }
+        env:
+          VERSIONS: ${{ steps.versions.outputs.versions }}
+          GITHUB_SHA: ${{ github.sha }}
+          PR_NUM: ${{ steps.prnum.outputs.pr_num }}
