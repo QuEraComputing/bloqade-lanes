@@ -17,10 +17,6 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 
-def get_coordinate(site_id: int) -> tuple[int, int]:
-    return (site_id // 5, site_id % 5)
-
-
 @dataclass(frozen=True)
 class MoveOp:
     """Data class to store a move operation along with its source and destination addresses."""
