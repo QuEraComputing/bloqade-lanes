@@ -94,6 +94,25 @@ class RewriteInitialize(rewrite_abc.RewriteRule):
         if not isinstance(node, move.LogicalInitialize):
             return rewrite_abc.RewriteResult()
 
+        (quarter_turn := py.Constant(0.25)).insert_before(node)
+
+        ssa_map = {}
+        for theta in list(node.thetas):
+            ssa_result = ssa_map.get(theta)
+            if ssa_result is not None:
+                continue
+
+            (add_node := py.Add(theta, quarter_turn.result)).insert_before(node)
+            ssa_map[theta] = add_node.result
+
+        for phi in list(node.phis):
+            ssa_result = ssa_map.get(phi)
+            if ssa_result is not None:
+                continue
+
+            (neg_node := py.USub(phi)).insert_before(node)
+            ssa_map[phi] = neg_node.result
+
         groups: dict[
             tuple[ir.SSAValue, ir.SSAValue, ir.SSAValue], list[tuple[int, int]]
         ] = {}
@@ -107,7 +126,9 @@ class RewriteInitialize(rewrite_abc.RewriteRule):
         def make_ilist(list_of_tuples: list[tuple[int, int]]) -> ilist.IList:
             return ilist.IList(list_of_tuples, elem=types.Tuple[types.Int, types.Int])
 
-        thetas, phis, lams = ([key[i] for key in groups.keys()] for i in range(3))
+        thetas, phis, lams = (
+            [ssa_map.get(key[i], key[i]) for key in groups.keys()] for i in range(3)
+        )
         logical_addresses = ilist.IList(list(map(make_ilist, groups.values())))
 
         (thetas_stmt := ilist.New(thetas)).insert_before(node)
