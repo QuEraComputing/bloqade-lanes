@@ -28,3 +28,6 @@ doc:
 
 doc-build:
     mkdocs build
+
+sync:
+    uv sync --all-extras --index-strategy=unsafe-best-match
