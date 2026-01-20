@@ -1,6 +1,6 @@
 [project]
 name = "bloqade-lanes"
-version = "0.1.0-dev"
+version = "0.3.0-dev"
 description = "Components for defining and manipulating lane-based structures in Bloqade for neutral atom quantum computing."
 readme = "README.md"
 authors = [
