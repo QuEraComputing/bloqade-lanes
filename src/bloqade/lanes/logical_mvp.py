@@ -10,7 +10,7 @@ from kirin import ir, passes, rewrite
 
 from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch
+from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
@@ -96,7 +96,7 @@ def compile_squin_to_move_and_visualize(
     # Compile to move dialect
     mt = compile_squin_to_move(mt, transversal_rewrite)
     if transversal_rewrite:
-        arch_spec = generate_arch(4)
+        arch_spec = generate_arch_hypercube(4)
         marker = "o"
     else:
         arch_spec = logical.get_arch_spec()
@@ -122,7 +122,7 @@ def compile_to_physical_squin_noise_model(
 
     move_mt = compile_squin_to_move(mt, transversal_rewrite=True)
     transformer = MoveToSquin(
-        arch_spec=generate_arch(4),
+        arch_spec=generate_arch_hypercube(4),
         logical_initialization=logical.steane7_initialize,
         noise_model=noise_model,
         aggressive_unroll=False,
