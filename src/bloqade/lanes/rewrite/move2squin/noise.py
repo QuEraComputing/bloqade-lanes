@@ -249,6 +249,7 @@ class InsertNoise(AtomStateRewriter):
         qubit_ssas = self.get_qubit_ssa_from_locations(
             atom_state, node.location_addresses
         )
+        print(qubit_ssas)
 
         self.insert_gate_noise(node, noise_method, qubit_ssas)
 
