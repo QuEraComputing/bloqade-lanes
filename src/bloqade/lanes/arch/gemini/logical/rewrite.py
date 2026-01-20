@@ -5,10 +5,13 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics.fixed import get_coordinate
 from bloqade.lanes.layout.encoding import MoveType
 
 from . import stmts
+
+
+def get_coordinate(site_id: int) -> tuple[int, int]:
+    return (site_id // 5, site_id % 5)
 
 
 @dataclass
