@@ -156,12 +156,5 @@ def test_logical_architecture_rewrite_logical_initialize():
         )
     )
 
-    # theta_0.result.type = thetas[0].type.join(types.Float)
-    # theta_1.result.type = thetas[1].type.join(types.Float)
-    # theta_2.result.type = thetas[2].type.join(types.Float)
-    # neg_phi_0.result.type = phis[0].type.join(types.Float)
-    # neg_phi_1.result.type = phis[1].type.join(types.Float)
-    # neg_phi_2.result.type = phis[2].type.join(types.Float)
-
     rewrite.Walk(RewriteInitialize()).rewrite(test_block)
     assert_nodes(test_block, expected_block)
