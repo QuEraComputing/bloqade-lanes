@@ -125,8 +125,19 @@ def test_logical_architecture_rewrite_logical_initialize():
     )
 
     expected_block = ir.Block()
-    expected_block.stmts.append(thetas_stmt := ilist.New(thetas))
-    expected_block.stmts.append(phis_stmt := ilist.New(phis))
+    expected_block.stmts.append(quarter_turn := py.Constant(0.25))
+    expected_block.stmts.append(theta_0 := py.Add(thetas[0], quarter_turn.result))
+    expected_block.stmts.append(theta_1 := py.Add(thetas[1], quarter_turn.result))
+    expected_block.stmts.append(theta_2 := py.Add(thetas[2], quarter_turn.result))
+    expected_block.stmts.append(neg_phi_0 := py.USub(phis[0]))
+    expected_block.stmts.append(neg_phi_1 := py.USub(phis[1]))
+    expected_block.stmts.append(neg_phi_2 := py.USub(phis[2]))
+    expected_block.stmts.append(
+        thetas_stmt := ilist.New((theta_0.result, theta_1.result, theta_2.result))
+    )
+    expected_block.stmts.append(
+        phis_stmt := ilist.New((neg_phi_0.result, neg_phi_1.result, neg_phi_2.result))
+    )
     expected_block.stmts.append(lams_stmt := ilist.New(lams))
     expected_block.stmts.append(
         const_list := py.Constant(
@@ -144,6 +155,13 @@ def test_logical_architecture_rewrite_logical_initialize():
             logical_addresses=const_list.result,
         )
     )
+
+    # theta_0.result.type = thetas[0].type.join(types.Float)
+    # theta_1.result.type = thetas[1].type.join(types.Float)
+    # theta_2.result.type = thetas[2].type.join(types.Float)
+    # neg_phi_0.result.type = phis[0].type.join(types.Float)
+    # neg_phi_1.result.type = phis[1].type.join(types.Float)
+    # neg_phi_2.result.type = phis[2].type.join(types.Float)
 
     rewrite.Walk(RewriteInitialize()).rewrite(test_block)
     assert_nodes(test_block, expected_block)
