@@ -180,6 +180,9 @@ class Validation(ValidationPass):
 
     arch_spec: ArchSpec = field(kw_only=True)
 
+    def name(self) -> str:
+        return "lanes.address.validation"
+
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
 
         analysis = _ValidationAnalysis(
