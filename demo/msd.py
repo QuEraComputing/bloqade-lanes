@@ -45,5 +45,8 @@ def main():
         set_observable(measurements[i], i)
 
 
+### Visualize ###
+# from from bloqade.lanes.logical_mvp import compile_squin_to_move_and_visualize
+# compile_squin_to_move_and_visualize(main, transversal_rewrite=True)
 result = compile_to_physical_stim_program(main)
 print(result)
