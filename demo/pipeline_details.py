@@ -139,7 +139,6 @@ from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
 example_kernel = PlaceToMove(
     layout_heristic=fixed.LogicalLayoutHeuristic(),
     placement_strategy=fixed.LogicalPlacementStrategy(),
-    move_scheduler=fixed.LogicalMoveScheduler(),
     insert_palindrome_moves=True,
 ).emit(example_kernel)
 

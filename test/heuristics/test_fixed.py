@@ -50,6 +50,24 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 0, 0),
         active_cz_zones=all_zones,
+        move_layers=(
+            (
+                SiteLaneAddress(
+                    word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
+                ),
+                SiteLaneAddress(
+                    word_id=0, site_id=1, bus_id=0, direction=Direction.FORWARD
+                ),
+            ),
+            (
+                WordLaneAddress(
+                    word_id=0, site_id=5, bus_id=0, direction=Direction.FORWARD
+                ),
+                WordLaneAddress(
+                    word_id=0, site_id=6, bus_id=0, direction=Direction.FORWARD
+                ),
+            ),
+        ),
     )
 
     yield (
@@ -79,6 +97,24 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 1, 1),
         active_cz_zones=all_zones,
+        move_layers=(
+            (
+                SiteLaneAddress(
+                    word_id=1, site_id=0, bus_id=0, direction=Direction.FORWARD
+                ),
+                SiteLaneAddress(
+                    word_id=1, site_id=1, bus_id=0, direction=Direction.FORWARD
+                ),
+            ),
+            (
+                WordLaneAddress(
+                    word_id=0, site_id=5, bus_id=0, direction=Direction.BACKWARD
+                ),
+                WordLaneAddress(
+                    word_id=0, site_id=6, bus_id=0, direction=Direction.BACKWARD
+                ),
+            ),
+        ),
     )
     yield (
         state_before,
@@ -107,6 +143,16 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 1, 1),
         active_cz_zones=all_zones,
+        move_layers=(
+            (
+                SiteLaneAddress(
+                    word_id=0, site_id=2, bus_id=7, direction=Direction.FORWARD
+                ),
+                SiteLaneAddress(
+                    word_id=0, site_id=3, bus_id=7, direction=Direction.FORWARD
+                ),
+            ),
+        ),
     )
     yield (
         state_before,
@@ -135,6 +181,16 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 1, 1),
         active_cz_zones=all_zones,
+        move_layers=(
+            (
+                SiteLaneAddress(
+                    word_id=0, site_id=0, bus_id=2, direction=Direction.FORWARD
+                ),
+                SiteLaneAddress(
+                    word_id=0, site_id=1, bus_id=2, direction=Direction.FORWARD
+                ),
+            ),
+        ),
     )
     yield (
         state_before,
@@ -163,6 +219,16 @@ def cz_placement_cases():
         ),
         move_count=(1, 0, 1, 1),
         active_cz_zones=all_zones,
+        move_layers=(
+            (
+                SiteLaneAddress(
+                    word_id=0, site_id=2, bus_id=7, direction=Direction.FORWARD
+                ),
+                SiteLaneAddress(
+                    word_id=0, site_id=3, bus_id=7, direction=Direction.FORWARD
+                ),
+            ),
+        ),
     )
     yield (
         state_before,
@@ -191,6 +257,16 @@ def cz_placement_cases():
         ),
         move_count=(1, 1, 0, 1),
         active_cz_zones=all_zones,
+        move_layers=(
+            (
+                SiteLaneAddress(
+                    word_id=0, site_id=0, bus_id=2, direction=Direction.FORWARD
+                ),
+                SiteLaneAddress(
+                    word_id=0, site_id=1, bus_id=2, direction=Direction.FORWARD
+                ),
+            ),
+        ),
     )
     yield (
         state_before,
@@ -218,7 +294,6 @@ def test_fixed_cz_placement(
 ):
     placement_strategy = fixed.LogicalPlacementStrategy()
     state_result = placement_strategy.cz_placements(state_before, controls, targets)
-
     assert state_result == state_after
 
 
@@ -276,7 +351,7 @@ def test_initial_layout():
     edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
 
     layout = layout_heuristic.compute_layout(tuple(range(10)), [edges])
-    print(layout)
+
     assert layout == (
         LocationAddress(word_id=0, site_id=0),
         LocationAddress(word_id=0, site_id=1),
@@ -313,9 +388,7 @@ def test_move_scheduler_cz():
         targets,
     )
 
-    moves = fixed.LogicalMoveScheduler().compute_moves(initial_state, final_state)
-
-    assert moves == [
+    assert final_state.get_move_layers() == (
         (
             SiteLaneAddress(
                 direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=0
@@ -336,4 +409,4 @@ def test_move_scheduler_cz():
                 direction=Direction.FORWARD, word_id=0, site_id=7, bus_id=0
             ),
         ),
-    ]
+    )

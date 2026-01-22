@@ -1,4 +1,3 @@
-import abc
 from dataclasses import dataclass
 from functools import singledispatchmethod
 
@@ -9,34 +8,22 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress
-
-
-@dataclass
-class MoveSchedulerABC(abc.ABC):
-    arch_spec: ArchSpec
-
-    @abc.abstractmethod
-    def compute_moves(
-        self,
-        state_before: placement.AtomState,
-        state_after: placement.AtomState,
-    ) -> list[tuple[LaneAddress, ...]]: ...
+from bloqade.lanes.layout import LocationAddress
 
 
 @dataclass
 class InsertMoves(RewriteRule):
-    move_heuristic: MoveSchedulerABC
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, place.QuantumStmt):
             return RewriteResult()
 
-        moves = self.move_heuristic.compute_moves(
-            self.placement_analysis.get(node.state_before, placement.AtomState.top()),
-            self.placement_analysis.get(node.state_after, placement.AtomState.top()),
-        )
+        state_after = self.placement_analysis.get(node.state_after)
+        if state_after is None:
+            return RewriteResult()
+
+        moves = state_after.get_move_layers()
 
         if len(moves) == 0:
             return RewriteResult()
