@@ -98,6 +98,10 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return state
 
+        # all qubits must be measured
+        if len(qubits) != len(state.layout):
+            return AtomState.bottom()
+
         return ExecuteMeasure(
             occupied=state.occupied,
             layout=state.layout,
