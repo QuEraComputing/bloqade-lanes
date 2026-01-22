@@ -294,7 +294,6 @@ def test_fixed_cz_placement(
 ):
     placement_strategy = fixed.LogicalPlacementStrategy()
     state_result = placement_strategy.cz_placements(state_before, controls, targets)
-    print(state_result.get_move_layers())
     assert state_result == state_after
 
 
