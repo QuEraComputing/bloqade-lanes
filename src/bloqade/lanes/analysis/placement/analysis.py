@@ -11,7 +11,7 @@ from typing_extensions import Self
 
 from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 
-from .lattice import AtomState, ConcreteState, ExecuteCZ, ExecuteMeasure, NotState
+from .lattice import AtomState, ConcreteState, ExecuteCZ, ExecuteMeasure
 
 
 class PlacementStrategyABC(abc.ABC):
@@ -65,8 +65,9 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
     def cz_placements(
         self, state: AtomState, controls: tuple[int, ...], targets: tuple[int, ...]
     ) -> AtomState:
-        if isinstance(state, NotState):
-            return state
+        if len(controls) != len(targets) or state == AtomState.bottom():
+            return AtomState.bottom()
+
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
