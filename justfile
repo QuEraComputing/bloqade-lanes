@@ -21,6 +21,9 @@ demo-msd:
 demo-pipeline:
     python demo/pipeline_demo.py
 
+pipeline-details:
+    python demo/pipeline_details.py
+
 demo: demo-msd demo-pipeline
 
 doc:
@@ -28,3 +31,6 @@ doc:
 
 doc-build:
     mkdocs build
+
+sync:
+    uv sync --all-extras --index-strategy=unsafe-best-match

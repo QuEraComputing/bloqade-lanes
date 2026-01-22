@@ -1,6 +1,6 @@
 [project]
 name = "bloqade-lanes"
-version = "0.1.0-dev"
+version = "0.3.0-dev"
 description = "Components for defining and manipulating lane-based structures in Bloqade for neutral atom quantum computing."
 readme = "README.md"
 authors = [
@@ -9,6 +9,7 @@ authors = [
 dependencies = [
     "bloqade-circuit[cirq, qasm2]~=0.10.6",
     "bloqade-geometry~=0.5.0",
+    "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",
     "numpy>=2.2.6",
     "rustworkx>=0.17.1",
