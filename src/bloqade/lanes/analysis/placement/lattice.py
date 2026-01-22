@@ -8,7 +8,7 @@ from kirin.lattice import (
     SingletonMeta,
 )
 
-from bloqade.lanes.layout import LocationAddress, ZoneAddress
+from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 
 
 @dataclass
@@ -25,6 +25,9 @@ class AtomState(
     @classmethod
     def top(cls) -> "AtomState":
         return AnyState()
+
+    def get_move_layers(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return ()
 
 
 @final
@@ -88,6 +91,11 @@ class ExecuteCZ(ConcreteState):
 
     active_cz_zones: frozenset[ZoneAddress]
     """The set of CZ zones that need to execute for this round of CZ gates."""
+    move_layers: tuple[tuple[LaneAddress, ...], ...] = ()
+    """The layers of moves that need to be executed to reach this state."""
+
+    def get_move_layers(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return self.move_layers
 
     @classmethod
     def from_concrete_state(
@@ -120,6 +128,12 @@ class ExecuteMeasure(ConcreteState):
     """
 
     zone_maps: tuple[ZoneAddress, ...]
+    """The mapping from qubit index to the zone that measures it."""
+    move_layers: tuple[tuple[LaneAddress, ...], ...] = ()
+    """The layers of moves that need to be executed to reach this state."""
+
+    def get_move_layers(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return self.move_layers
 
     @classmethod
     def from_concrete_state(

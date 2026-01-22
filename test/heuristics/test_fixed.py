@@ -276,7 +276,7 @@ def test_initial_layout():
     edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
 
     layout = layout_heuristic.compute_layout(tuple(range(10)), [edges])
-    print(layout)
+
     assert layout == (
         LocationAddress(word_id=0, site_id=0),
         LocationAddress(word_id=0, site_id=1),
@@ -313,9 +313,7 @@ def test_move_scheduler_cz():
         targets,
     )
 
-    moves = fixed.LogicalMoveScheduler().compute_moves(initial_state, final_state)
-
-    assert moves == [
+    assert final_state.get_move_layers() == (
         (
             SiteLaneAddress(
                 direction=Direction.FORWARD, word_id=0, site_id=0, bus_id=0
@@ -336,4 +334,4 @@ def test_move_scheduler_cz():
                 direction=Direction.FORWARD, word_id=0, site_id=7, bus_id=0
             ),
         ),
-    ]
+    )

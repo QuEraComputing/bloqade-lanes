@@ -77,7 +77,6 @@ class NativeToPlace:
 class PlaceToMove:
     layout_heristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
-    move_scheduler: place2move.MoveSchedulerABC
     insert_palindrome_moves: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True):
@@ -113,7 +112,7 @@ class PlaceToMove:
         rule = rewrite.Chain(
             place2move.InsertFill(initial_layout),
             place2move.InsertInitialize(address_frame.entries, initial_layout),
-            place2move.InsertMoves(self.move_scheduler, placement_frame.entries),
+            place2move.InsertMoves(placement_frame.entries),
             place2move.RewriteGates(placement_frame.entries),
             place2move.InsertMeasure(placement_frame.entries),
         )

@@ -1,5 +1,3 @@
-from dataclasses import dataclass, field
-
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import py
@@ -28,22 +26,11 @@ ARCH_SPEC = layout.ArchSpec(
 )
 
 
-@dataclass
-class MoveSchedulerTester(place2move.MoveSchedulerABC):
-    arch_spec: layout.ArchSpec = field(init=False, default=ARCH_SPEC)
-    lanes: list[tuple[layout.LaneAddress, ...]]
-
-    def compute_moves(self, state_before: AtomState, state_after: AtomState):
-        return self.lanes
-
-
 def test_insert_move_no_op():
-
-    move_scheduler = MoveSchedulerTester([])
 
     placement_analysis: dict[ir.SSAValue, AtomState] = {}
 
-    rule = rewrite.Walk(place2move.InsertMoves(move_scheduler, placement_analysis))
+    rule = rewrite.Walk(place2move.InsertMoves(placement_analysis))
 
     test_block = ir.Block(
         [
@@ -57,24 +44,32 @@ def test_insert_move_no_op():
 
 def test_insert_move():
 
+    state_before = ir.TestValue()
+
+    test_block = ir.Block(
+        [
+            py.Constant(10),
+            cz_stmt := place.CZ(state_before, qubits=(0, 1, 2, 3)),
+        ]
+    )
+
     lane_group = (
         layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
         layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
     )
 
-    state_before = ir.TestValue()
-    move_scheduler = MoveSchedulerTester([lane_group])
+    placement_analysis: dict[ir.SSAValue, AtomState] = {
+        cz_stmt.state_after: ExecuteCZ(
+            frozenset(),
+            (),
+            (),
+            frozenset([layout.ZoneAddress(0)]),
+            move_layers=(lane_group,),
+        )
+    }
 
-    placement_analysis: dict[ir.SSAValue, AtomState] = {}
+    rule = rewrite.Walk(place2move.InsertMoves(placement_analysis))
 
-    rule = rewrite.Walk(place2move.InsertMoves(move_scheduler, placement_analysis))
-
-    test_block = ir.Block(
-        [
-            py.Constant(10),
-            place.CZ(state_before, qubits=(0, 1, 2, 3)),
-        ]
-    )
     expected_block = ir.Block(
         [
             py.Constant(10),

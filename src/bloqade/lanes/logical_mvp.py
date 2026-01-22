@@ -70,7 +70,6 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
     mt = PlaceToMove(
         fixed.LogicalLayoutHeuristic(),
         fixed.LogicalPlacementStrategy(),
-        fixed.LogicalMoveScheduler(),
     ).emit(mt)
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
