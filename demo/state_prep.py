@@ -46,6 +46,17 @@ class Move:
 Moves = list[Move]
 Layer = list[Moves]
 Circuit = list[Layer]
+
+one_anc_postseect = [
+    [[Move(0, 2), Move(6, 7)], [Move(1, 5)]],
+    [[Move(2, 0), Move(5, 1), Move(7, 3)], [Move(0, 1), Move(5, 7)]],
+    [[Move(1, 0), Move(3, 2), Move(7, 6)], [Move(4, 6), Move(0, 4), Move(1, 3)]],
+    [[Move(2, 0), Move(3, 1), Move(6, 3)]],
+    [[Move(1, 5), Move(0, 1), Move(2, 3)]],
+    [[Move(1, 0), Move(3, 1)]],
+]
+
+
 @kernel
 def sp_one_anc_postselect():
     state = move.load()
