@@ -37,6 +37,15 @@ word_two_step = hypercube_dim - 2
 word_four_step = hypercube_dim - 3
 
 
+@dataclass
+class Move:
+    origin: int
+    dest: int
+
+
+Moves = list[Move]
+Layer = list[Moves]
+Circuit = list[Layer]
 @kernel
 def sp_one_anc_postselect():
     state = move.load()
