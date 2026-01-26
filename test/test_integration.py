@@ -45,10 +45,6 @@ def main():
         set_observable(measurements[i], i)
 
 
-### Visualize ###
-# from from bloqade.lanes.logical_mvp import compile_squin_to_move_and_visualize
-# compile_squin_to_move_and_visualize(main, transversal_rewrite=True)
-result = compile_to_physical_stim_program(main)
 expected_result = """# Begin Steane7 Initialize
 I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.03978874*pi)] 6
 SQRT_Y_DAG 0 1 2 3 4 5
@@ -511,18 +507,20 @@ OBSERVABLE_INCLUDE(0) rec[-14] rec[-13] rec[-9]
 DETECTOR(0, 0) rec[-7] rec[-6] rec[-5] rec[-4]
 DETECTOR(0, 1) rec[-6] rec[-5] rec[-3] rec[-2]
 DETECTOR(0, 2) rec[-5] rec[-4] rec[-3] rec[-1]
-OBSERVABLE_INCLUDE(0) rec[-7] rec[-6] rec[-2]]"""
-
-result_lines = result.split("\n")
-expected_result_lines = expected_result.split("\n")
-
-has_diff = False
-
-for result_line, expected_result_line in zip(result_lines, expected_result_lines):
-    print(result_line, expected_result_line)
-    if result_lines == expected_result_line:
-        print(result_lines, expected_result_line)
-        has_diff = True
+OBSERVABLE_INCLUDE(0) rec[-7] rec[-6] rec[-2]"""
 
 
-assert not has_diff
+def test_stim_output():
+    result = compile_to_physical_stim_program(main)
+
+    result_lines = result.split("\n")
+    expected_result_lines = expected_result.split("\n")
+
+    has_diff = False
+
+    for result_line, expected_result_line in zip(result_lines, expected_result_lines):
+        if result_line != expected_result_line:
+            print(result_line, expected_result_line)
+            has_diff = True
+
+    assert not has_diff
