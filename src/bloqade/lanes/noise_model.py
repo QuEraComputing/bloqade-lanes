@@ -31,6 +31,18 @@ PAIRED_KEYS = [
 def generate_simple_noise_model(
     noise_model: GeminiNoiseModelABC | None = None,
 ) -> SimpleNoiseModel:
+    """Generate a simple noise model from a bloqade-circuit noise model.
+
+    Args:
+        noise_model (GeminiNoiseModelABC | None, optional): The bloqade-circuit noise model to use.
+            Defaults to None.
+
+    Returns:
+        SimpleNoiseModel: A simple noise model compatible with bloqade-lanes. You can
+            use this to add noise when rewriting from the move dialect kernel to a squin
+            kernel.
+
+    """
 
     if noise_model is None:
         noise_model = GeminiOneZoneNoiseModel()
