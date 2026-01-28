@@ -20,6 +20,8 @@ requires-python = ">= 3.10"
 visualization = [
     "matplotlib>=3.9.4",
     "scipy>=1.15.3",
+    "pyqt5>=5.15.11;  sys_platform == 'darwin'",
+    "pyqt5>=5.15.11;  sys_platform == 'linux'",
 ]
 
 [build-system]
@@ -32,6 +34,7 @@ dev-dependencies = [
     "coverage>=7.6.4",
     "ipython>=8.29.0",
     "isort>=5.13.2",
+    "jupytext>=1.18.1",
     "mypy>=1.13.0",
     "numpy>=1.26.4",
     "pre-commit>=4.0.1",
