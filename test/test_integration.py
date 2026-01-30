@@ -47,7 +47,7 @@ def main():
 
 
 expected_result = """# Begin Steane7 Initialize
-I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.03978874*pi)] 6
+I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.25*pi)] 6
 SQRT_Y_DAG 0 1 2 3 4 5
 CZ 1 2 3 4 5 6
 SQRT_Y 6
@@ -57,7 +57,7 @@ CZ 0 1 2 3 4 5
 SQRT_Y 1 2 4
 # End Steane7 Initialize
 # Begin Steane7 Initialize
-I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.03978874*pi)] 13
+I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.25*pi)] 13
 SQRT_Y_DAG 7 8 9 10 11 12
 CZ 8 9 10 11 12 13
 SQRT_Y 13
@@ -67,7 +67,7 @@ CZ 7 8 9 10 11 12
 SQRT_Y 8 9 11
 # End Steane7 Initialize
 # Begin Steane7 Initialize
-I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.03978874*pi)] 20
+I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.25*pi)] 20
 SQRT_Y_DAG 14 15 16 17 18 19
 CZ 15 16 17 18 19 20
 SQRT_Y 20
@@ -77,7 +77,7 @@ CZ 14 15 16 17 18 19
 SQRT_Y 15 16 18
 # End Steane7 Initialize
 # Begin Steane7 Initialize
-I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.03978874*pi)] 27
+I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.25*pi)] 27
 SQRT_Y_DAG 21 22 23 24 25 26
 CZ 22 23 24 25 26 27
 SQRT_Y 27
@@ -87,7 +87,7 @@ CZ 21 22 23 24 25 26
 SQRT_Y 22 23 25
 # End Steane7 Initialize
 # Begin Steane7 Initialize
-I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.03978874*pi)] 34
+I[U3(theta=0.0*pi, phi=0.0*pi, lambda=0.25*pi)] 34
 SQRT_Y_DAG 28 29 30 31 32 33
 CZ 29 30 31 32 33 34
 SQRT_Y 34
