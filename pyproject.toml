@@ -7,7 +7,7 @@ authors = [
     { name = "Phillip Weinberg", email = "pweinberg@quera.com" }
 ]
 dependencies = [
-    "bloqade-circuit[cirq, qasm2]~=0.10.6",
+    "bloqade-circuit[cirq, qasm2]~=0.11.0",
     "bloqade-geometry~=0.5.0",
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",

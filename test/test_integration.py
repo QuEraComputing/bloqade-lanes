@@ -1,9 +1,10 @@
 from typing import Any
 
+from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
-from bloqade import annotate, qubit, squin, types
+from bloqade import qubit, squin, types
 from bloqade.lanes.logical_mvp import (
     compile_to_physical_stim_program,
 )
@@ -21,7 +22,7 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 @kernel
 def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
-    annotate.set_observable([meas[0], meas[1], meas[5]])
+    annotate.set_observable([meas[0], meas[1], meas[5]], index)
 
 
 @kernel
@@ -495,19 +496,19 @@ OBSERVABLE_INCLUDE(0) rec[-35] rec[-34] rec[-30]
 DETECTOR(0, 0) rec[-28] rec[-27] rec[-26] rec[-25]
 DETECTOR(0, 1) rec[-27] rec[-26] rec[-24] rec[-23]
 DETECTOR(0, 2) rec[-26] rec[-25] rec[-24] rec[-22]
-OBSERVABLE_INCLUDE(0) rec[-28] rec[-27] rec[-23]
+OBSERVABLE_INCLUDE(1) rec[-28] rec[-27] rec[-23]
 DETECTOR(0, 0) rec[-21] rec[-20] rec[-19] rec[-18]
 DETECTOR(0, 1) rec[-20] rec[-19] rec[-17] rec[-16]
 DETECTOR(0, 2) rec[-19] rec[-18] rec[-17] rec[-15]
-OBSERVABLE_INCLUDE(0) rec[-21] rec[-20] rec[-16]
+OBSERVABLE_INCLUDE(2) rec[-21] rec[-20] rec[-16]
 DETECTOR(0, 0) rec[-14] rec[-13] rec[-12] rec[-11]
 DETECTOR(0, 1) rec[-13] rec[-12] rec[-10] rec[-9]
 DETECTOR(0, 2) rec[-12] rec[-11] rec[-10] rec[-8]
-OBSERVABLE_INCLUDE(0) rec[-14] rec[-13] rec[-9]
+OBSERVABLE_INCLUDE(3) rec[-14] rec[-13] rec[-9]
 DETECTOR(0, 0) rec[-7] rec[-6] rec[-5] rec[-4]
 DETECTOR(0, 1) rec[-6] rec[-5] rec[-3] rec[-2]
 DETECTOR(0, 2) rec[-5] rec[-4] rec[-3] rec[-1]
-OBSERVABLE_INCLUDE(0) rec[-7] rec[-6] rec[-2]"""
+OBSERVABLE_INCLUDE(4) rec[-7] rec[-6] rec[-2]"""
 
 
 def test_stim_output():
