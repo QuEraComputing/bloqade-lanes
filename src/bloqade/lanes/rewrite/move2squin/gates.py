@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from functools import singledispatchmethod
 from typing import Any
@@ -145,7 +146,7 @@ class InsertGates(AtomStateRewriter):
         if self.initialize_kernel is None:
             return rewrite_abc.RewriteResult()
 
-        nodes_to_insert: list[ir.Statement] = []
+        nodes_to_insert: list[ir.Statement] = [tau := py.Constant(math.tau)]
         for theta, phi, lam, locations in zip(
             node.thetas, node.phis, node.lams, node.location_addresses
         ):
@@ -153,8 +154,11 @@ class InsertGates(AtomStateRewriter):
             if not utils.no_none_elements_tuple(qubit_ssa):
                 return rewrite_abc.RewriteResult()
 
+            nodes_to_insert.append(theta_rad := py.Mult(tau.result, theta))
+            nodes_to_insert.append(phi_rad := py.Mult(tau.result, phi))
+            nodes_to_insert.append(lam_rad := py.Mult(tau.result, lam))
             nodes_to_insert.append(reg_stmt := ilist.New(qubit_ssa))
-            inputs = (theta, phi, lam, reg_stmt.result)
+            inputs = (theta_rad.result, phi_rad.result, lam_rad.result, reg_stmt.result)
             nodes_to_insert.append(func.Invoke(inputs, callee=self.initialize_kernel))
 
         for n in nodes_to_insert:
