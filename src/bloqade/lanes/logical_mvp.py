@@ -13,7 +13,6 @@ from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, passes, rewrite
 from kirin.dialects import ilist
-from tesseract_decoder import tesseract
 from tsim import Circuit
 
 from bloqade import annotate, squin, types
@@ -110,14 +109,19 @@ class BaseDecoder:
         """Decode a single shot of detector bits."""
         pass
 
-    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+    def decode(self, detector_bits: np.ndarray, logical_bits: np.ndarray | None = None) -> np.ndarray:
         """Decode a batch or single shot of detector bits."""
         if detector_bits.ndim == 1:
+            if logical_bits is not None:
+                return self._decode(detector_bits) ^ logical_bits
             return self._decode(detector_bits)
         else:
             res = []
             for i in range(detector_bits.shape[0]):
-                res.append(self._decode(detector_bits[i]))
+                if logical_bits is not None:
+                    res.append(self._decode(detector_bits[i]) ^ logical_bits[i])
+                else:
+                    res.append(self._decode(detector_bits[i]))
             return np.array(res)
 
     def decode_and_return_soft_information(
@@ -129,19 +133,14 @@ class BaseDecoder:
 
 class TesseractDecoder(BaseDecoder):
     def __init__(self, dem: stim.DetectorErrorModel):
+        from tesseract_decoder import tesseract
+
         config = tesseract.TesseractConfig(dem=dem)
         self.num_observables = dem.num_observables
         self._decoder = config.compile_decoder()
 
     def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
         return self._decoder.decode(detector_bits)
-
-
-# @kernel
-# def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
-#     annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
-#     annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
-#     annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
 
 
 @kernel
