@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 from bloqade.decoders.dialects import annotate
@@ -29,7 +30,7 @@ def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
 def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
-    squin.broadcast.t(reg)
+    squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
 
     squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
     squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
