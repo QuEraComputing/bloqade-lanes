@@ -203,7 +203,7 @@ wheels = [
 
 [[package]]
 name = "bloqade-lanes"
-version = "0.3.3"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "bloqade-circuit", extra = ["cirq", "qasm2"] },
