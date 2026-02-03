@@ -7,14 +7,10 @@ from kirin import interp
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import (
-    AtomState,
     ConcreteState,
-    ExecuteCZ,
-    ExecuteMeasure,
-    PlacementStrategyABC,
+    SingleZonePlacementStrategyABC,
 )
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.rewrite.place2move import MoveSchedulerABC
 
 
 @dataclass(frozen=True)
@@ -67,7 +63,7 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 
 
 @dataclass
-class LogicalPlacementStrategy(PlacementStrategyABC):
+class LogicalPlacementStrategy(SingleZonePlacementStrategyABC):
     """A placement strategy that assumes a logical architecture.
 
     The logical architecture assumes 2 word buses (word_id 0 and 1) and a single word bus.
@@ -199,19 +195,12 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
             reverse=True,
         )
 
-    def cz_placements(
+    def desired_cz_layout(
         self,
-        state: AtomState,
+        state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
-    ) -> AtomState:
-        if not isinstance(state, ConcreteState):
-            return state
-
-        # invalid cz statement
-        if len(controls) != len(targets):
-            return AtomState.bottom()
-
+    ) -> ConcreteState:
         # since cz gates are symmetric swap controls and targets based on
         # word_id and site_id the idea being to minimize the layout.directions
         # needed to rearrange qubits.
@@ -224,34 +213,9 @@ class LogicalPlacementStrategy(PlacementStrategyABC):
         for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
             moves.append(self._pick_move(state, moves, start_word_id, c, t))
 
-        new_state = self._update_positions(state, moves)
+        return self._update_positions(state, moves)
 
-        return ExecuteCZ.from_concrete_state(
-            new_state, frozenset([layout.ZoneAddress(0)])
-        )
-
-    def sq_placements(
-        self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-    ) -> AtomState:
-        return state  # No movement for single-qubit gates
-
-    def measure_placements(
-        self, state: AtomState, qubits: tuple[int, ...]
-    ) -> AtomState:
-        if not isinstance(state, ConcreteState):
-            return state
-
-        zone_map = tuple(layout.ZoneAddress(0) for _ in state.layout)
-        return ExecuteMeasure.from_concrete_state(state, zone_map)
-
-
-@dataclass()
-class LogicalMoveScheduler(MoveSchedulerABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
-
-    def assert_valid_word_bus_move(
+    def _assert_valid_word_bus_move(
         self,
         src_word: int,
         src_site: int,
@@ -271,7 +235,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         return lane
 
-    def assert_valid_site_bus_move(
+    def _assert_valid_site_bus_move(
         self,
         src_word: int,
         src_site: int,
@@ -291,7 +255,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         return lane
 
-    def site_moves(
+    def _site_moves(
         self,
         diffs: list[tuple[layout.LocationAddress, layout.LocationAddress]],
         word_id: int,
@@ -309,7 +273,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
                 bus_id += len(self.arch_spec.site_buses)
 
             bus_moves.setdefault(bus_id, []).append(
-                self.assert_valid_site_bus_move(
+                self._assert_valid_site_bus_move(
                     word_id,
                     before.site_id,
                     bus_id,
@@ -319,15 +283,7 @@ class LogicalMoveScheduler(MoveSchedulerABC):
 
         return list(map(tuple, bus_moves.values()))
 
-    def compute_moves(
-        self, state_before: AtomState, state_after: AtomState
-    ) -> list[tuple[layout.LaneAddress, ...]]:
-        if not (
-            isinstance(state_before, ConcreteState)
-            and isinstance(state_after, ConcreteState)
-        ):
-            return []
-
+    def compute_moves(self, state_before: ConcreteState, state_after: ConcreteState):
         diffs = [
             ele
             for ele in zip(state_before.layout, state_after.layout)
@@ -352,13 +308,13 @@ class LogicalMoveScheduler(MoveSchedulerABC):
                     "Cannot have both (0,1) and (1,0) moves in logical arch"
                 )
 
-        moves: list[tuple[layout.LaneAddress, ...]] = self.site_moves(
+        moves: list[tuple[layout.LaneAddress, ...]] = self._site_moves(
             word_moves, word_start
         )
         if len(moves) > 0:
             moves.append(
                 tuple(
-                    self.assert_valid_word_bus_move(
+                    self._assert_valid_word_bus_move(
                         0,
                         end.site_id,
                         0,
@@ -372,10 +328,10 @@ class LogicalMoveScheduler(MoveSchedulerABC):
                 )
             )
 
-        moves.extend(self.site_moves(groups.get((0, 0), []), 0))
-        moves.extend(self.site_moves(groups.get((1, 1), []), 1))
+        moves.extend(self._site_moves(groups.get((0, 0), []), 0))
+        moves.extend(self._site_moves(groups.get((1, 1), []), 1))
 
-        return moves
+        return tuple(moves)
 
 
 @dataclass

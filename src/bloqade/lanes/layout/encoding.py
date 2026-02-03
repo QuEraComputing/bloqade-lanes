@@ -269,9 +269,7 @@ class LaneAddress(Encoder):
 
 @dataclass(repr=not USE_HEX_REPR)
 class SiteLaneAddress(LaneAddress):
-    move_type: MoveType = field(
-        default=MoveType.SITE, init=False, repr=not USE_HEX_REPR
-    )
+    move_type: MoveType = field(default=MoveType.SITE, init=False, repr=False)
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)
@@ -279,9 +277,7 @@ class SiteLaneAddress(LaneAddress):
 
 @dataclass(repr=not USE_HEX_REPR)
 class WordLaneAddress(LaneAddress):
-    move_type: MoveType = field(
-        default=MoveType.WORD, init=False, repr=not USE_HEX_REPR
-    )
+    move_type: MoveType = field(default=MoveType.WORD, init=False, repr=False)
 
     def __hash__(self) -> int:
         return self.get_address(EncodingType.BIT64)

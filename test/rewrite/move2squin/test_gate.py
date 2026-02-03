@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 from bloqade.test_utils import assert_nodes
@@ -399,14 +400,21 @@ def test_gate_rewrite_physical_initialize():
 
     expected_block = ir.Block(
         [
+            tau := py.Constant(math.tau),
+            theta_rad := py.Mult(tau.result, theta),
+            phi_rad := py.Mult(tau.result, phi),
+            lam_rad := py.Mult(tau.result, lam),
             zero_reg := ilist.New((zero,)),
             func.Invoke(
-                (theta, phi, lam, zero_reg.result),
+                (theta_rad.result, phi_rad.result, lam_rad.result, zero_reg.result),
                 callee=initialize,
             ),
+            theta_rad := py.Mult(tau.result, theta),
+            phi_rad := py.Mult(tau.result, phi),
+            lam_rad := py.Mult(tau.result, lam),
             one_reg := ilist.New((one,)),
             func.Invoke(
-                (theta, phi, lam, one_reg.result),
+                (theta_rad.result, phi_rad.result, lam_rad.result, one_reg.result),
                 callee=initialize,
             ),
             gate_node,

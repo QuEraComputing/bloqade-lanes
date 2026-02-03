@@ -1,13 +1,13 @@
 [project]
 name = "bloqade-lanes"
-version = "0.3.0-dev"
+version = "0.4.0-dev"
 description = "Components for defining and manipulating lane-based structures in Bloqade for neutral atom quantum computing."
 readme = "README.md"
 authors = [
     { name = "Phillip Weinberg", email = "pweinberg@quera.com" }
 ]
 dependencies = [
-    "bloqade-circuit[cirq, qasm2]~=0.10.6",
+    "bloqade-circuit[cirq, qasm2]~=0.11.0",
     "bloqade-geometry~=0.5.0",
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",
@@ -20,6 +20,8 @@ requires-python = ">= 3.10"
 visualization = [
     "matplotlib>=3.9.4",
     "scipy>=1.15.3",
+    "pyqt5>=5.15.11;  sys_platform == 'darwin'",
+    "pyqt5>=5.15.11;  sys_platform == 'linux'",
 ]
 
 [build-system]
@@ -27,20 +29,6 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv]
-dev-dependencies = [
-    "black>=24.10.0",
-    "coverage>=7.6.4",
-    "ipython>=8.29.0",
-    "isort>=5.13.2",
-    "mypy>=1.13.0",
-    "numpy>=1.26.4",
-    "pre-commit>=4.0.1",
-    "pyright[nodejs]>=1.1.388",
-    "pytest>=8.3.3",
-    "ruff>=0.7.3",
-    "rust-just>=1.36.0",
-]
-
 [dependency-groups]
 doc = [
     "griffe-kirin>=0.1.0",
@@ -53,6 +41,21 @@ doc = [
     "mkdocs-minify-plugin>=0.8.0",
     "mkdocstrings[python]>=0.27.0",
 ]
+dev = [
+    "black>=24.10.0",
+    "coverage>=7.6.4",
+    "ipython>=8.29.0",
+    "isort>=5.13.2",
+    "jupytext>=1.18.1",
+    "mypy>=1.13.0",
+    "numpy>=1.26.4",
+    "pre-commit>=4.0.1",
+    "pyright[nodejs]>=1.1.388",
+    "pytest>=8.3.3",
+    "ruff>=0.7.3",
+    "rust-just>=1.36.0",
+]
+
 
 [tool.hatch.metadata]
 allow-direct-references = true

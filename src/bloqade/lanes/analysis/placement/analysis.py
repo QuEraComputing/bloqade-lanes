@@ -1,4 +1,3 @@
-import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -12,41 +11,7 @@ from typing_extensions import Self
 from bloqade.lanes.layout import LocationAddress
 
 from .lattice import AtomState, ConcreteState
-
-
-class PlacementStrategyABC(abc.ABC):
-
-    @abc.abstractmethod
-    def validate_initial_layout(
-        self,
-        initial_layout: tuple[LocationAddress, ...],
-    ) -> None:
-        pass
-
-    @abc.abstractmethod
-    def cz_placements(
-        self,
-        state: AtomState,
-        controls: tuple[int, ...],
-        targets: tuple[int, ...],
-    ) -> AtomState:
-        pass
-
-    @abc.abstractmethod
-    def sq_placements(
-        self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-    ) -> AtomState:
-        pass
-
-    @abc.abstractmethod
-    def measure_placements(
-        self,
-        state: AtomState,
-        qubits: tuple[int, ...],
-    ) -> AtomState:
-        pass
+from .strategy import PlacementStrategyABC
 
 
 @dataclass
