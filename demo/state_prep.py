@@ -12,7 +12,7 @@ from kirin.prelude import python_basic, basic_no_opt, basic
 from bloqade.rewrite.passes import aggressive_unroll
 from bloqade.types import Qubit, MeasurementResult
 from bloqade.lanes.dialects import move, place
-from bloqade import annotate
+from bloqade.decoders.dialects import annotate
 from bloqade import lanes
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.noise_model import generate_simple_noise_model
@@ -30,7 +30,7 @@ from bloqade.stim.upstream.from_squin import squin_to_stim
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade import squin
 
-kernel = lanes.kernel.add(annotate).add(place)
+kernel = lanes.kernel.add(annotate).union(squin.kernel)
 
 # %%
 
@@ -150,6 +150,7 @@ LANES, FINAL_LANES = _freeze_lanes(one_anc_postseect)
 def _make_sp_kernel_from_lanes(
     lanes_table,
     final_lanes,
+    circuit: Circuit,
     *,
     name: str = "sp_one_anc_postselect",
     cz_zone: int = 0,
@@ -204,43 +205,68 @@ def _make_sp_kernel_from_lanes(
     return kernel()(fn)
 
 
-sp_one_anc_postselect_moves = _make_sp_kernel_from_lanes(LANES, FINAL_LANES)
+sp_one_anc_postselect_moves = _make_sp_kernel_from_lanes(
+    LANES, FINAL_LANES, one_anc_postseect
+)
 
-@kernel 
+
+@kernel
 def measurements(state):
     fut = move.end_measure(state, zone_addresses=(ZoneAddress(0),))
-    res_0 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[0])
-    res_1 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[1])
-    res_2 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[2])
-    res_3 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[3])
-    res_4 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[4])
-    res_5 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[5])
-    res_6 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[6])
-    res_7 = move.get_future_result(fut, zone_address=ZoneAddress(0),location_address=reg_locations[7])
+    res_0 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[0]
+    )
+    res_1 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[1]
+    )
+    res_2 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[2]
+    )
+    res_3 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[3]
+    )
+    res_4 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[4]
+    )
+    res_5 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[5]
+    )
+    res_6 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[6]
+    )
+    res_7 = move.get_future_result(
+        fut, zone_address=ZoneAddress(0), location_address=reg_locations[7]
+    )
+
     res = IList([res_0, res_1, res_2, res_3, res_4, res_5, res_6, res_7])
     return state, res
 
-@kernel 
+
+@kernel
 def detectors(res: IList[MeasurementResult, Any]):
     # det = IList([res[a] for a in [0,1,2,3,4,5,6,7]])
     # annotate.set_detector(det, coordinates=[0, 0])
     annotate.set_detector(res, coordinates=[0, 0])
 
 
-@kernel 
+@kernel
 def sp_one_anc_postselect():
-    state =sp_one_anc_postselect_moves()
+    state = sp_one_anc_postselect_moves()
     state = move.move(state, lanes=FINAL_LANES)
     state_and_res = measurements(state)
+    move.local_r(state, 0.25, 0.25, location_addresses=(reg_locations[0],))
+    move.local_rz(state, 0.5, location_addresses=(reg_locations[0],))
     state = state_and_res[0]
     res = state_and_res[1]
     detectors(res)
 
-    
     move.store(state)
 
-#unroll
-aggressive_unroll.AggressiveUnroll(sp_one_anc_postselect.dialects)(sp_one_anc_postselect)
+
+# unroll
+aggressive_unroll.AggressiveUnroll(sp_one_anc_postselect.dialects)(
+    sp_one_anc_postselect
+)
 
 
 sp_one_anc_postselect.print()
@@ -248,7 +274,7 @@ sp_one_anc_postselect.print()
 arch_spec = generate_arch_hypercube(hypercube_dims=hypercube_dim, word_size_y=1)
 # arch_spec = get_arch_spec()
 
-# debugger(mt=sp_one_anc_postselect, arch_spec=arch_spec, atom_marker="o")
+debugger(mt=sp_one_anc_postselect, arch_spec=arch_spec, atom_marker="o")
 
 # exit()
 
