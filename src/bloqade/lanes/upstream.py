@@ -167,8 +167,6 @@ def squin_to_move(
         mt (ir.Method): The Squin kernel to compile.
         layout_heuristic (layout.LayoutHeuristicABC): The layout heuristic to use.
         placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
-        transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules.
-            Defaults to False
         merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions.
             Defaults to default_merge_heuristic.
 
