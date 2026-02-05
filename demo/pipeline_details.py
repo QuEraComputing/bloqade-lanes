@@ -96,8 +96,8 @@ logical_arch = get_arch_spec()
 
 ax = logical_arch.plot(show_words=(0, 1))
 
-(pos_0,) = logical_arch.get_positions(initial_layout[0])
-(pos_1,) = logical_arch.get_positions(initial_layout[1])
+(pos_0,) = logical_arch.get_position(initial_layout[0])
+(pos_1,) = logical_arch.get_position(initial_layout[1])
 ax.scatter(
     [pos_0[0], pos_1[0]],
     [pos_0[1], pos_1[1]],

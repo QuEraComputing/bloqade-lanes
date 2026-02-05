@@ -28,10 +28,7 @@ class StateArtist:
             ax = plt.gca()
 
         for location in state.data.locations_to_qubit:
-            x_pos, y_pos = zip(
-                *arch_spec.words[location.word_id].site_positions(location.site_id)
-            )
-            ax.scatter(x_pos, y_pos, **kwargs)
+            ax.scatter(arch_spec.get_position(location), **kwargs)
 
     def draw_moves(
         self,
@@ -50,26 +47,25 @@ class StateArtist:
 
         for lane in state.data.prev_lanes.values():
             start, end = arch_spec.get_endpoints(lane)
-            start_pos = arch_spec.words[start.word_id].site_positions(start.site_id)
-            end_pos = arch_spec.words[end.word_id].site_positions(end.site_id)
-            for (x_start, y_start), (x_end, y_end) in zip(start_pos, end_pos):
-                ax.quiver(
-                    [x_start],
-                    [y_start],
-                    [x_end - x_start],
-                    [y_end - y_start],
-                    angles="xy",
-                    scale_units="xy",
-                    scale=1.0,
-                    **kwargs,
-                )
+            x_start, x_end = arch_spec.words[start.word_id].site_position(start.site_id)
+            y_start, y_end = arch_spec.words[end.word_id].site_position(end.site_id)
+            ax.quiver(
+                [x_start],
+                [y_start],
+                [x_end - x_start],
+                [y_end - y_start],
+                angles="xy",
+                scale_units="xy",
+                scale=1.0,
+                **kwargs,
+            )
 
 
 def show_local(
     ax: Axes, stmt: move.LocalR | move.LocalRz, arch_spec: ArchSpec, color: str
 ):
     positions = chain.from_iterable(
-        arch_spec.words[location.word_id].site_positions(location.site_id)
+        arch_spec.words[location.word_id].site_position(location.site_id)
         for location in stmt.location_addresses
     )
     x_pos, y_pos = zip(*positions)
@@ -127,9 +123,9 @@ def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
 
     for word in words:
         for site_id in range(len(word.sites)):
-            _, y_pos = zip(*word.site_positions(site_id))
-            y_min = min(y_min, min(y_pos))
-            y_max = max(y_max, max(y_pos))
+            for _, y_pos in word.all_positions():
+                y_min = min(y_min, y_pos)
+                y_max = max(y_max, y_pos)
 
     x_min, x_max = arch_spec.x_bounds
     y_width = y_max - y_min

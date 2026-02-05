@@ -119,10 +119,9 @@ class ArchSpec(Generic[SiteType]):
         x_min = float("inf")
         x_max = float("-inf")
         for word in self.words:
-            for site_id in range(len(word.sites)):
-                for x_pos, _ in word.site_positions(site_id):
-                    x_min = min(x_min, x_pos)
-                    x_max = max(x_max, x_pos)
+            for x_pos, _ in word.all_positions():
+                x_min = min(x_min, x_pos)
+                x_max = max(x_max, x_pos)
 
         if x_min == float("inf"):
             x_min = -1.0
@@ -137,10 +136,9 @@ class ArchSpec(Generic[SiteType]):
         y_min = float("inf")
         y_max = float("-inf")
         for word in self.words:
-            for site_id in range(len(word.sites)):
-                for _, y_pos in word.site_positions(site_id):
-                    y_min = min(y_min, y_pos)
-                    y_max = max(y_max, y_pos)
+            for _, y_pos in word.all_positions():
+                y_min = min(y_min, y_pos)
+                y_max = max(y_max, y_pos)
 
         if y_min == float("inf"):
             y_min = -1.0
@@ -150,9 +148,8 @@ class ArchSpec(Generic[SiteType]):
 
         return y_min, y_max
 
-    def get_positions(self, location: LocationAddress) -> list[tuple[float, float]]:
-        word = self.words[location.word_id]
-        return list(word.site_positions(location.site_id))
+    def get_position(self, location: LocationAddress) -> tuple[float, float]:
+        return self.words[location.word_id].site_position(location.site_id)
 
     def plot(
         self,
