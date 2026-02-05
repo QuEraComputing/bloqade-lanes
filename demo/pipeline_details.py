@@ -138,9 +138,9 @@ example_kernel.print(analysis=placement_frame.entries)
 from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
 
 example_kernel = PlaceToMove(
-    layout_heristic=fixed.LogicalLayoutHeuristic(),
-    placement_strategy=fixed.LogicalPlacementStrategy(),
-    insert_palindrome_moves=True,
+    fixed.LogicalLayoutHeuristic(),
+    fixed.LogicalPlacementStrategy(),
+    True,
 ).emit(example_kernel)
 
 example_kernel.print()
