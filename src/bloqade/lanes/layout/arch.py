@@ -388,19 +388,21 @@ class ArchSpec(Generic[SiteType]):
         else:
             return dst, src
 
-    def get_blockaded_location(self, location: LocationAddress) -> LocationAddress | None:
+    def get_blockaded_location(
+        self, location: LocationAddress
+    ) -> LocationAddress | None:
         """Get the blockaded location (CZ pair) for a given location.
-        
+
         Args:
             location: The location address to find the blockaded location for.
-            
+
         Returns:
             The LocationAddress of the blockaded location if one exists, None otherwise.
         """
         word = self.words[location.word_id]
         site = word[location.site_id]
-        
+
         if site.cz_pair is None:
             return None
-        
+
         return LocationAddress(location.word_id, site.cz_pair)
