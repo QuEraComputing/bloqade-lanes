@@ -3,8 +3,12 @@ from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
+from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.dialects import gate as native_gate
+from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
+from bloqade.rewrite.passes.callgraph import CallGraphPass
+from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.method import Method
@@ -148,3 +152,48 @@ class PlaceToMove:
         out.verify_type()
 
         return out
+
+
+def squin_to_move(
+    mt: ir.Method,
+    layout_heristic: layout.LayoutHeuristicABC,
+    placement_strategy: placement.PlacementStrategyABC,
+    insert_palindrome_moves: bool = True,
+    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
+) -> ir.Method:
+    """Compile a squin kernel to move dialect.
+
+    Args:
+        mt (ir.Method): The Squin kernel to compile.
+        layout_heristic (layout.LayoutHeuristicABC): The layout heuristic to use.
+        placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
+        transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules.
+            Defaults to False
+        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions.
+            Defaults to default_merge_heuristic.
+
+    Returns:
+        ir.Method: The compiled move dialect method.
+    """
+    rule = rewrite.Chain(
+        rewrite.Walk(
+            RewriteNonCliffordToU3(),
+        ),
+        rewrite.Walk(
+            __RewriteU3ToInitialize(),
+        ),
+    )
+    CallGraphPass(mt.dialects, rule)(out := mt.similar())
+    out = SquinToNative().emit(out)
+    out = NativeToPlace(merge_heuristic).emit(out)
+    out = PlaceToMove(
+        layout_heristic=layout_heristic,
+        placement_strategy=placement_strategy,
+        insert_palindrome_moves=insert_palindrome_moves,
+    ).emit(out)
+
+    passes.TypeInfer(mt.dialects)(out)
+    out.verify()
+    out.verify_type()
+
+    return out
