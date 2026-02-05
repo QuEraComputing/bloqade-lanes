@@ -144,7 +144,6 @@ def compile_to_physical_stim_program(
     """
     noise_kernel = compile_to_physical_squin_noise_model(mt, noise_model)
     noise_kernel = squin_to_stim(noise_kernel)
-    noise_kernel.print()
     buf = io.StringIO()
     emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
     emit.initialize()

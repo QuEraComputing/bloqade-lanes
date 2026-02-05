@@ -1,5 +1,3 @@
-from itertools import chain
-
 from kirin import ir
 from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
@@ -27,8 +25,13 @@ class StateArtist:
         if ax is None:
             ax = plt.gca()
 
-        for location in state.data.locations_to_qubit:
-            ax.scatter(arch_spec.get_position(location), **kwargs)
+            x, y = zip(
+                *[
+                    arch_spec.get_position(location)
+                    for location in state.data.locations_to_qubit
+                ]
+            )
+            ax.scatter(x, y, **kwargs)
 
     def draw_moves(
         self,
@@ -66,7 +69,7 @@ class StateArtist:
 def show_local(
     ax: Axes, stmt: move.LocalR | move.LocalRz, arch_spec: ArchSpec, color: str
 ):
-    positions = chain.from_iterable(
+    positions = (
         arch_spec.words[location.word_id].site_position(location.site_id)
         for location in stmt.location_addresses
     )
@@ -124,10 +127,9 @@ def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
     y_max = float("-inf")
 
     for word in words:
-        for site_id in range(len(word.sites)):
-            for _, y_pos in word.all_positions():
-                y_min = min(y_min, y_pos)
-                y_max = max(y_max, y_pos)
+        for _, y_pos in word.all_positions():
+            y_min = min(y_min, y_pos)
+            y_max = max(y_max, y_pos)
 
     x_min, x_max = arch_spec.x_bounds
     y_width = y_max - y_min
