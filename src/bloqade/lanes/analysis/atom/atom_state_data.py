@@ -129,17 +129,16 @@ class AtomStateData:
                 continue
 
             visited.add(qubit_index)
-            if (word_id := address.word_id) not in word_ids:
+            if (address.word_id) not in word_ids:
                 continue
 
-            site = arch_spec.words[word_id][address.site_id]
-
-            if site.cz_pair is None:
+            blockaded_location = arch_spec.get_blockaded_location(address)
+            arch_spec.get_blockaded_location(address)
+            if blockaded_location is None:
                 unpaired.append(qubit_index)
                 continue
 
-            target_site = site.cz_pair
-            target_id = self.get_qubit(LocationAddress(word_id, target_site))
+            target_id = self.get_qubit(blockaded_location)
             if target_id is None:
                 unpaired.append(qubit_index)
                 continue
