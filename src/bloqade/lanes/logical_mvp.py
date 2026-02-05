@@ -1,12 +1,8 @@
 import io
 
-from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
-from bloqade.native.upstream import SquinToNative
-from bloqade.rewrite.passes import CallGraphPass
-from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
-from kirin import ir, passes, rewrite
+from kirin import ir, rewrite
 
 from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
@@ -16,7 +12,7 @@ from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.upstream import NativeToPlace, PlaceToMove
+from bloqade.lanes.upstream import squin_to_move
 
 
 def transversal_rewrites(mt: ir.Method):
@@ -52,32 +48,14 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
     Returns:
         ir.Method: The compiled move dialect method.
     """
-
-    # Compile to move dialect
-    rule = rewrite.Chain(
-        rewrite.Walk(
-            RewriteNonCliffordToU3(),
-        ),
-        rewrite.Walk(
-            __RewriteU3ToInitialize(),
-        ),
+    mt = squin_to_move(
+        mt,
+        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        placement_strategy=fixed.LogicalPlacementStrategy(),
+        insert_palindrome_moves=True,
     )
-
-    CallGraphPass(mt.dialects, rule)(mt)
-    mt = SquinToNative().emit(mt)
-    mt = NativeToPlace().emit(mt)
-
-    mt = PlaceToMove(
-        fixed.LogicalLayoutHeuristic(),
-        fixed.LogicalPlacementStrategy(),
-    ).emit(mt)
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
-
-    passes.TypeInfer(mt.dialects)(mt)
-
-    mt.verify()
-    mt.verify_type()
 
     return mt
 
@@ -144,7 +122,6 @@ def compile_to_physical_stim_program(
     """
     noise_kernel = compile_to_physical_squin_noise_model(mt, noise_model)
     noise_kernel = squin_to_stim(noise_kernel)
-
     buf = io.StringIO()
     emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
     emit.initialize()

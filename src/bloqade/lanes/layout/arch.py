@@ -119,10 +119,9 @@ class ArchSpec(Generic[SiteType]):
         x_min = float("inf")
         x_max = float("-inf")
         for word in self.words:
-            for site_id in range(len(word.sites)):
-                for x_pos, _ in word.site_positions(site_id):
-                    x_min = min(x_min, x_pos)
-                    x_max = max(x_max, x_pos)
+            for x_pos, _ in word.all_positions():
+                x_min = min(x_min, x_pos)
+                x_max = max(x_max, x_pos)
 
         if x_min == float("inf"):
             x_min = -1.0
@@ -137,10 +136,9 @@ class ArchSpec(Generic[SiteType]):
         y_min = float("inf")
         y_max = float("-inf")
         for word in self.words:
-            for site_id in range(len(word.sites)):
-                for _, y_pos in word.site_positions(site_id):
-                    y_min = min(y_min, y_pos)
-                    y_max = max(y_max, y_pos)
+            for _, y_pos in word.all_positions():
+                y_min = min(y_min, y_pos)
+                y_max = max(y_max, y_pos)
 
         if y_min == float("inf"):
             y_min = -1.0
@@ -150,9 +148,8 @@ class ArchSpec(Generic[SiteType]):
 
         return y_min, y_max
 
-    def get_positions(self, location: LocationAddress) -> list[tuple[float, float]]:
-        word = self.words[location.word_id]
-        return list(word.site_positions(location.site_id))
+    def get_position(self, location: LocationAddress) -> tuple[float, float]:
+        return self.words[location.word_id].site_position(location.site_id)
 
     def plot(
         self,
@@ -188,30 +185,30 @@ class ArchSpec(Generic[SiteType]):
                     start = word[start]
                     end = word[end]
 
-                    for (x_start, y_start), (x_end, y_end) in zip(
-                        start.positions(), end.positions()
-                    ):
-                        mid_x = (x_start + x_end) / 2
-                        mid_y = (y_start + y_end) / 2
+                    x_start, y_start = start.position()
+                    x_end, y_end = end.position()
 
-                        if x_start == x_end:
-                            mid_x += bow_y
-                        elif y_start == y_end:
-                            mid_y += bow_x
+                    mid_x = (x_start + x_end) / 2
+                    mid_y = (y_start + y_end) / 2
 
-                        f = interp.interp1d(
-                            [x_start, mid_x, x_end],
-                            [y_start, mid_y, y_end],
-                            kind="quadratic",
-                        )
-                        x_vals = np.linspace(x_start, x_end, num=10)
-                        y_vals = f(x_vals)
+                    if x_start == x_end:
+                        mid_x += bow_y
+                    elif y_start == y_end:
+                        mid_y += bow_x
 
-                        (ln,) = ax.plot(
-                            x_vals, y_vals, color=colors.get(lane), linestyle="--"
-                        )
-                        if lane not in colors:
-                            colors[lane] = ln.get_color()
+                    f = interp.interp1d(
+                        [x_start, mid_x, x_end],
+                        [y_start, mid_y, y_end],
+                        kind="quadratic",
+                    )
+                    x_vals = np.linspace(x_start, x_end, num=10)
+                    y_vals = f(x_vals)
+
+                    (ln,) = ax.plot(
+                        x_vals, y_vals, color=colors.get(lane), linestyle="--"
+                    )
+                    if lane not in colors:
+                        colors[lane] = ln.get_color()
 
         for lane in show_word_bus:
             lane = self.word_buses[lane]
@@ -222,29 +219,30 @@ class ArchSpec(Generic[SiteType]):
                 for site in self.has_word_buses:
                     start = start_word[site]
                     end = end_word[site]
-                    for (x_start, y_start), (x_end, y_end) in zip(
-                        start.positions(), end.positions()
-                    ):
-                        mid_x = (x_start + x_end) / 2
-                        mid_y = (y_start + y_end) / 2
+                    (x_start, y_start), (x_end, y_end) = (
+                        start.position(),
+                        end.position(),
+                    )
+                    mid_x = (x_start + x_end) / 2
+                    mid_y = (y_start + y_end) / 2
 
-                        if x_start == x_end:
-                            mid_x += bow_y
-                        elif y_start == y_end:
-                            mid_y += bow_x
+                    if x_start == x_end:
+                        mid_x += bow_y
+                    elif y_start == y_end:
+                        mid_y += bow_x
 
-                        f = interp.interp1d(
-                            [x_start, mid_x, x_end],
-                            [y_start, mid_y, y_end],
-                            kind="quadratic",
-                        )
-                        x_vals = np.linspace(x_start, x_end, num=10)
-                        y_vals = f(x_vals)
-                        (ln,) = ax.plot(
-                            x_vals, y_vals, color=colors.get(lane), linestyle="-"
-                        )
-                        if lane not in colors:
-                            colors[lane] = ln.get_color()
+                    f = interp.interp1d(
+                        [x_start, mid_x, x_end],
+                        [y_start, mid_y, y_end],
+                        kind="quadratic",
+                    )
+                    x_vals = np.linspace(x_start, x_end, num=10)
+                    y_vals = f(x_vals)
+                    (ln,) = ax.plot(
+                        x_vals, y_vals, color=colors.get(lane), linestyle="-"
+                    )
+                    if lane not in colors:
+                        colors[lane] = ln.get_color()
 
         return ax
 

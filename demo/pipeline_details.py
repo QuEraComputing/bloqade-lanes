@@ -96,8 +96,8 @@ logical_arch = get_arch_spec()
 
 ax = logical_arch.plot(show_words=(0, 1))
 
-(pos_0,) = logical_arch.get_positions(initial_layout[0])
-(pos_1,) = logical_arch.get_positions(initial_layout[1])
+pos_0 = logical_arch.get_position(initial_layout[0])
+pos_1 = logical_arch.get_position(initial_layout[1])
 ax.scatter(
     [pos_0[0], pos_1[0]],
     [pos_0[1], pos_1[1]],
@@ -138,9 +138,9 @@ example_kernel.print(analysis=placement_frame.entries)
 from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
 
 example_kernel = PlaceToMove(
-    layout_heristic=fixed.LogicalLayoutHeuristic(),
-    placement_strategy=fixed.LogicalPlacementStrategy(),
-    insert_palindrome_moves=True,
+    fixed.LogicalLayoutHeuristic(),
+    fixed.LogicalPlacementStrategy(),
+    True,
 ).emit(example_kernel)
 
 example_kernel.print()

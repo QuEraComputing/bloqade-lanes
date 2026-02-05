@@ -25,12 +25,12 @@ class MoveOp:
     """Destination location address of the move."""
 
     @cached_property
-    def src_positions(self) -> tuple[tuple[float, float], ...]:
-        return tuple(self.arch_spec.get_positions(self.src))
+    def src_position(self) -> tuple[float, float]:
+        return self.arch_spec.get_position(self.src)
 
     @cached_property
-    def dst_positions(self) -> tuple[tuple[float, float], ...]:
-        return tuple(self.arch_spec.get_positions(self.dst))
+    def dst_position(self) -> tuple[float, float]:
+        return self.arch_spec.get_position(self.dst)
 
 
 def check_conflict(m0: MoveOp, m1: MoveOp):
@@ -45,13 +45,6 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 
     """
 
-    flattened_coords = chain.from_iterable(
-        starmap(
-            zip,
-            zip(m0.src_positions, m1.src_positions, m0.dst_positions, m1.dst_positions),
-        )
-    )  # flatten all the coordinates into tuples of (src0, src1, dst0, dst1) per dimension per position
-
     def check_coord_conflict(
         src0: float, dst0: float, src1: float, dst1: float
     ) -> bool:
@@ -59,7 +52,12 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
         dir_dst = (dst1 - dst0) // abs(dst1 - dst0) if dst1 != dst0 else 0
         return dir_src != dir_dst
 
-    return any(starmap(check_coord_conflict, flattened_coords))
+    return any(
+        starmap(
+            check_coord_conflict,
+            zip(m0.src_position, m1.src_position, m0.dst_position, m1.dst_position),
+        )
+    )
 
 
 @dataclass

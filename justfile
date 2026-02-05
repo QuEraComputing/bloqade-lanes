@@ -33,4 +33,4 @@ doc-build:
     mkdocs build
 
 sync:
-    uv sync --all-extras --index-strategy=unsafe-best-match
+    uv sync --dev --all-extras --index-strategy=unsafe-best-match

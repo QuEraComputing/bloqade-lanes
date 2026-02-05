@@ -1,10 +1,7 @@
 from dataclasses import dataclass
-from itertools import product
 from typing import Any, Generic, TypeVar
 
-from bloqade.geometry.dialects.grid import Grid
-
-SiteType = TypeVar("SiteType", bound=Grid | tuple[float, float] | tuple[int, int])
+SiteType = TypeVar("SiteType", bound=tuple[float, float] | tuple[int, int])
 
 
 @dataclass(frozen=True)
@@ -26,23 +23,13 @@ class Word(Generic[SiteType]):
             cz_pair=self.has_cz[index] if self.has_cz is not None else None,
         )
 
-    def site_positions(self, site_index: int):
+    def site_position(self, site_index: int) -> tuple[float, float]:
         site = self.sites[site_index]
-        match site:
-            case Grid() as grid:
-                yield from (
-                    (x, y) for y, x in product(grid.y_positions, grid.x_positions)
-                )
-            case (float(), float()):
-                yield site
-            case (int() as x, int() as y):
-                yield (float(x), float(y))
-            case _:
-                raise TypeError(f"Unsupported site type: {type(site)}")
+        return (float(site[0]), float(site[1]))
 
     def all_positions(self):
         for site_index in range(len(self.sites)):
-            yield from self.site_positions(site_index)
+            yield self.site_position(site_index)
 
     def plot(self, ax=None, **scatter_kwargs):
         import matplotlib.pyplot as plt  # pyright: ignore[reportMissingModuleSource]
@@ -63,5 +50,5 @@ class WordSite(Generic[WordType]):
     site_index: int
     cz_pair: int | None = None
 
-    def positions(self):
-        yield from self.word.site_positions(self.site_index)
+    def position(self):
+        return self.word.site_position(self.site_index)
