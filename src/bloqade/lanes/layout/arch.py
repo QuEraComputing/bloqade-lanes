@@ -185,30 +185,30 @@ class ArchSpec(Generic[SiteType]):
                     start = word[start]
                     end = word[end]
 
-                    for (x_start, y_start), (x_end, y_end) in zip(
-                        start.positions(), end.positions()
-                    ):
-                        mid_x = (x_start + x_end) / 2
-                        mid_y = (y_start + y_end) / 2
+                    x_start, y_start = start.position()
+                    x_end, y_end = end.position()
 
-                        if x_start == x_end:
-                            mid_x += bow_y
-                        elif y_start == y_end:
-                            mid_y += bow_x
+                    mid_x = (x_start + x_end) / 2
+                    mid_y = (y_start + y_end) / 2
 
-                        f = interp.interp1d(
-                            [x_start, mid_x, x_end],
-                            [y_start, mid_y, y_end],
-                            kind="quadratic",
-                        )
-                        x_vals = np.linspace(x_start, x_end, num=10)
-                        y_vals = f(x_vals)
+                    if x_start == x_end:
+                        mid_x += bow_y
+                    elif y_start == y_end:
+                        mid_y += bow_x
 
-                        (ln,) = ax.plot(
-                            x_vals, y_vals, color=colors.get(lane), linestyle="--"
-                        )
-                        if lane not in colors:
-                            colors[lane] = ln.get_color()
+                    f = interp.interp1d(
+                        [x_start, mid_x, x_end],
+                        [y_start, mid_y, y_end],
+                        kind="quadratic",
+                    )
+                    x_vals = np.linspace(x_start, x_end, num=10)
+                    y_vals = f(x_vals)
+
+                    (ln,) = ax.plot(
+                        x_vals, y_vals, color=colors.get(lane), linestyle="--"
+                    )
+                    if lane not in colors:
+                        colors[lane] = ln.get_color()
 
         for lane in show_word_bus:
             lane = self.word_buses[lane]
@@ -219,29 +219,30 @@ class ArchSpec(Generic[SiteType]):
                 for site in self.has_word_buses:
                     start = start_word[site]
                     end = end_word[site]
-                    for (x_start, y_start), (x_end, y_end) in zip(
-                        start.positions(), end.positions()
-                    ):
-                        mid_x = (x_start + x_end) / 2
-                        mid_y = (y_start + y_end) / 2
+                    (x_start, y_start), (x_end, y_end) = (
+                        start.position(),
+                        end.position(),
+                    )
+                    mid_x = (x_start + x_end) / 2
+                    mid_y = (y_start + y_end) / 2
 
-                        if x_start == x_end:
-                            mid_x += bow_y
-                        elif y_start == y_end:
-                            mid_y += bow_x
+                    if x_start == x_end:
+                        mid_x += bow_y
+                    elif y_start == y_end:
+                        mid_y += bow_x
 
-                        f = interp.interp1d(
-                            [x_start, mid_x, x_end],
-                            [y_start, mid_y, y_end],
-                            kind="quadratic",
-                        )
-                        x_vals = np.linspace(x_start, x_end, num=10)
-                        y_vals = f(x_vals)
-                        (ln,) = ax.plot(
-                            x_vals, y_vals, color=colors.get(lane), linestyle="-"
-                        )
-                        if lane not in colors:
-                            colors[lane] = ln.get_color()
+                    f = interp.interp1d(
+                        [x_start, mid_x, x_end],
+                        [y_start, mid_y, y_end],
+                        kind="quadratic",
+                    )
+                    x_vals = np.linspace(x_start, x_end, num=10)
+                    y_vals = f(x_vals)
+                    (ln,) = ax.plot(
+                        x_vals, y_vals, color=colors.get(lane), linestyle="-"
+                    )
+                    if lane not in colors:
+                        colors[lane] = ln.get_color()
 
         return ax
 

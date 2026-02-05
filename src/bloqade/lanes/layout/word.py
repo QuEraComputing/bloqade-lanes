@@ -50,5 +50,5 @@ class WordSite(Generic[WordType]):
     site_index: int
     cz_pair: int | None = None
 
-    def positions(self):
-        yield self.word.site_position(self.site_index)
+    def position(self):
+        return self.word.site_position(self.site_index)
