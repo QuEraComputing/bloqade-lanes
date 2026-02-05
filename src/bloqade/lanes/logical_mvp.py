@@ -50,7 +50,7 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
     """
     mt = squin_to_move(
         mt,
-        layout_heristic=fixed.LogicalLayoutHeuristic(),
+        layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=fixed.LogicalPlacementStrategy(),
         insert_palindrome_moves=True,
     )

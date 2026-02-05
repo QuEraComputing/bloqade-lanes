@@ -79,7 +79,7 @@ class NativeToPlace:
 
 @dataclass
 class PlaceToMove:
-    layout_heristic: layout.LayoutHeuristicABC
+    layout_heuristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
     insert_palindrome_moves: bool = True
 
@@ -90,7 +90,7 @@ class PlaceToMove:
             address_frame, _ = address_analysis.run_no_raise(out)
             all_qubits = tuple(range(address_analysis.next_address))
             initial_layout = layout.LayoutAnalysis(
-                out.dialects, self.layout_heristic, address_frame.entries, all_qubits
+                out.dialects, self.layout_heuristic, address_frame.entries, all_qubits
             ).get_layout_no_raise(out)
 
             placement_analysis = placement.PlacementAnalysis(
@@ -104,7 +104,7 @@ class PlaceToMove:
             address_frame, _ = address_analysis.run(out)
             all_qubits = tuple(range(address_analysis.next_address))
             initial_layout = layout.LayoutAnalysis(
-                out.dialects, self.layout_heristic, address_frame.entries, all_qubits
+                out.dialects, self.layout_heuristic, address_frame.entries, all_qubits
             ).get_layout(out)
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
@@ -156,7 +156,7 @@ class PlaceToMove:
 
 def squin_to_move(
     mt: ir.Method,
-    layout_heristic: layout.LayoutHeuristicABC,
+    layout_heuristic: layout.LayoutHeuristicABC,
     placement_strategy: placement.PlacementStrategyABC,
     insert_palindrome_moves: bool = True,
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
@@ -165,7 +165,7 @@ def squin_to_move(
 
     Args:
         mt (ir.Method): The Squin kernel to compile.
-        layout_heristic (layout.LayoutHeuristicABC): The layout heuristic to use.
+        layout_heuristic (layout.LayoutHeuristicABC): The layout heuristic to use.
         placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules.
             Defaults to False
@@ -187,7 +187,7 @@ def squin_to_move(
     out = SquinToNative().emit(out)
     out = NativeToPlace(merge_heuristic).emit(out)
     out = PlaceToMove(
-        layout_heristic=layout_heristic,
+        layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
         insert_palindrome_moves=insert_palindrome_moves,
     ).emit(out)
