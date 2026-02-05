@@ -25,7 +25,7 @@ class Word(Generic[SiteType]):
 
     def site_position(self, site_index: int) -> tuple[float, float]:
         site = self.sites[site_index]
-        return site
+        return (float(site[0]), float(site[1]))
 
     def all_positions(self):
         for site_index in range(len(self.sites)):
