@@ -47,8 +47,10 @@ class StateArtist:
 
         for lane in state.data.prev_lanes.values():
             start, end = arch_spec.get_endpoints(lane)
-            x_start, x_end = arch_spec.words[start.word_id].site_position(start.site_id)
-            y_start, y_end = arch_spec.words[end.word_id].site_position(end.site_id)
+            (x_start, y_start) = arch_spec.words[start.word_id].site_position(
+                start.site_id
+            )
+            (x_end, y_end) = arch_spec.words[end.word_id].site_position(end.site_id)
             ax.quiver(
                 [x_start],
                 [y_start],
