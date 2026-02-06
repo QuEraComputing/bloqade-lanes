@@ -1,9 +1,13 @@
 import abc
 import enum
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from kirin import ir, types
 from kirin.print import Printer
+
+if TYPE_CHECKING:
+    from bloqade.lanes.layout.arch import ArchSpec
 
 USE_HEX_REPR = True
 
@@ -29,9 +33,9 @@ class EncodingType(enum.IntEnum):
     BIT64 = 64
 
     @staticmethod
-    def infer(spec) -> "EncodingType":
+    def infer(spec: "ArchSpec") -> "EncodingType":
         num_words = len(spec.words)
-        num_sites = len(spec.words[0].sites)
+        num_sites = len(spec.words[0].site_indices)
         num_site_buses = len(spec.site_buses)
         num_word_buses = len(spec.word_buses)
 

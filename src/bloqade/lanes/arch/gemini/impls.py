@@ -1,9 +1,11 @@
 from dataclasses import replace
+from itertools import product
 
 import numpy as np
 from bloqade.geometry.dialects.grid import Grid
 from deprecated import deprecated
 
+from bloqade.lanes import layout
 from bloqade.lanes.layout.arch import ArchSpec, Bus
 from bloqade.lanes.layout.numpy_compat import as_flat_tuple_int
 from bloqade.lanes.layout.word import Word
@@ -63,9 +65,7 @@ def generate_linear_busses(num_words: int):
     return tuple(buses)
 
 
-def generate_base_arch(
-    num_words_x: int, word_size_y: int
-) -> ArchSpec[tuple[float, float]]:
+def generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
     word_size_x = 2
 
     x_positions = (0.0, 2.0)
@@ -73,11 +73,16 @@ def generate_base_arch(
 
     grid = Grid.from_positions(x_positions, y_positions)
 
-    has_cz = tuple(
-        (i + word_size_y) % (2 * word_size_y) for i in range(2 * word_size_y)
-    )
+    def get_cz_pair(word_id: int):
+        return tuple(
+            layout.LocationAddress(word_id, (i + word_size_y) % (2 * word_size_y))
+            for i in range(2 * word_size_y)
+        )
+
+    site_indices = tuple(product(range(word_size_x), range(word_size_y)))
+
     words = tuple(
-        Word(tuple(grid.shift(10.0 * ix, 0.0).positions), has_cz)
+        Word(grid.shift(10.0 * ix, 0.0), site_indices, get_cz_pair(ix))
         for ix in range(num_words_x)
     )
 
@@ -107,18 +112,14 @@ def generate_base_arch(
     )
 
 
-def generate_arch_hypercube(
-    hypercube_dims: int = 4, word_size_y: int = 5
-) -> ArchSpec[tuple[float, float]]:
+def generate_arch_hypercube(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
     num_words_x = 2**hypercube_dims
     base_arch = generate_base_arch(num_words_x, word_size_y)
     word_buses = hypercube_busses(hypercube_dims)
     return replace(base_arch, word_buses=word_buses)
 
 
-def generate_arch_linear(
-    num_words: int = 16, word_size_y: int = 5
-) -> ArchSpec[tuple[float, float]]:
+def generate_arch_linear(num_words: int = 16, word_size_y: int = 5) -> ArchSpec:
     base_arch = generate_base_arch(num_words, word_size_y)
     word_buses = generate_linear_busses(num_words)
     return replace(base_arch, word_buses=word_buses)
@@ -128,7 +129,5 @@ def generate_arch_linear(
     version="0.2.1",
     reason="Multiple physical arch may be needed; use generate_arch_hypercube instead.",
 )
-def generate_arch(
-    hypercube_dims: int = 4, word_size_y: int = 5
-) -> ArchSpec[tuple[float, float]]:
+def generate_arch(hypercube_dims: int = 4, word_size_y: int = 5) -> ArchSpec:
     return generate_arch_hypercube(hypercube_dims, word_size_y)
