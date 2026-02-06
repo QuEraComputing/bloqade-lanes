@@ -1,5 +1,6 @@
 import abc
 from dataclasses import dataclass
+from functools import cached_property
 
 from kirin import ir
 from matplotlib import figure, pyplot as plt
@@ -11,14 +12,15 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import ArchSpec, LaneAddress
 
 
+@dataclass
 class PathGenABC(abc.ABC):
+    arch_spec: ArchSpec
+
     @abc.abstractmethod
     def get_path(self, lane_address: LaneAddress) -> list[tuple[float, float]]: ...
 
 
-@dataclass
 class DefaultPath(PathGenABC):
-    arch_spec: ArchSpec
 
     def get_path(self, lane_address: LaneAddress) -> list[tuple[float, float]]:
         src, dst = self.arch_spec.get_endpoints(lane_address)
@@ -31,11 +33,11 @@ class DefaultPath(PathGenABC):
 class StateArtist:
     ax: Axes
     arch_spec: ArchSpec
-    path_gen: PathGenABC | None = None
+    path_gen_type: type[PathGenABC] = DefaultPath
 
-    def __post_init__(self):
-        if self.path_gen is None:
-            self.path_gen = DefaultPath(self.arch_spec)
+    @cached_property
+    def path_gen(self) -> PathGenABC:
+        return self.path_gen_type(self.arch_spec)
 
     def draw_atoms(
         self,
@@ -57,28 +59,24 @@ class StateArtist:
     def draw_moves(
         self,
         state: MoveExecution,
-        ax: Axes | None = None,
         **kwargs,
     ):
         if not isinstance(state, AtomState):
             return
 
         for lane in state.data.prev_lanes.values():
-            start, end = self.arch_spec.get_endpoints(lane)
-            x_start, y_start = self.arch_spec.words[start.word_id].site_position(
-                start.site_id
-            )
-            x_end, y_end = self.arch_spec.words[end.word_id].site_position(end.site_id)
-            self.ax.quiver(
-                [x_start],
-                [y_start],
-                [x_end - x_start],
-                [y_end - y_start],
-                angles="xy",
-                scale_units="xy",
-                scale=1.0,
-                **kwargs,
-            )
+            path = self.path_gen.get_path(lane)
+            for (x_start, y_start), (x_end, y_end) in zip(path, path[1:]):
+                self.ax.quiver(
+                    [x_start],
+                    [y_start],
+                    [x_end - x_start],
+                    [y_end - y_start],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=1.0,
+                    **kwargs,
+                )
 
     def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
         positions = (
