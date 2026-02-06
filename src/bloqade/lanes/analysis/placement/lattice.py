@@ -8,7 +8,7 @@ from kirin.lattice import (
     SingletonMeta,
 )
 
-from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAddress
 
 
 @dataclass
@@ -114,6 +114,29 @@ class ExecuteCZ(ConcreteState):
             and isinstance(other, ExecuteCZ)
             and self.active_cz_zones == other.active_cz_zones
         )
+
+    def verify(
+        self, arch_spec: ArchSpec, controls: tuple[int, ...], targets: tuple[int, ...]
+    ):
+        """Returns True if the current atom configuration will execute the provided entangled pairs."""
+        if len(targets) != len(controls):
+            return False
+
+        for control, target in zip(controls, targets):
+            if control < 0 or control >= len(self.layout):
+                return False
+            if target < 0 or target >= len(self.layout):
+                return False
+
+            c_addr = self.layout[control]
+            t_addr = self.layout[target]
+
+            if (arch_spec.get_blockaded_location(c_addr) != t_addr) and (
+                arch_spec.get_blockaded_location(t_addr) != c_addr
+            ):
+                return False
+
+        return True
 
 
 @final
