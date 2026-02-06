@@ -1,3 +1,6 @@
+import abc
+from dataclasses import dataclass
+
 from kirin import ir
 from matplotlib import figure, pyplot as plt
 from matplotlib.axes import Axes
@@ -5,56 +8,68 @@ from matplotlib.widgets import Button
 
 from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.layout import ArchSpec, LaneAddress
 
 
+class PathGenABC(abc.ABC):
+    @abc.abstractmethod
+    def get_path(self, lane_address: LaneAddress) -> list[tuple[float, float]]: ...
+
+
+@dataclass
+class DefaultPath(PathGenABC):
+    arch_spec: ArchSpec
+
+    def get_path(self, lane_address: LaneAddress) -> list[tuple[float, float]]:
+        src, dst = self.arch_spec.get_endpoints(lane_address)
+        start_pos = self.arch_spec.get_position(src)
+        end_pos = self.arch_spec.get_position(dst)
+        return [start_pos, end_pos]
+
+
+@dataclass
 class StateArtist:
+    ax: Axes
+    arch_spec: ArchSpec
+    path_gen: PathGenABC | None = None
+
+    def __post_init__(self):
+        if self.path_gen is None:
+            self.path_gen = DefaultPath(self.arch_spec)
 
     def draw_atoms(
         self,
         state: MoveExecution,
-        arch_spec: ArchSpec,
-        ax: Axes | None = None,
         **kwargs,
     ):
-        import matplotlib.pyplot as plt
-
         if not isinstance(state, AtomState):
             return
 
-        if ax is None:
-            ax = plt.gca()
+        locations = list(state.data.locations_to_qubit)
 
-            x, y = zip(
-                *[
-                    arch_spec.get_position(location)
-                    for location in state.data.locations_to_qubit
-                ]
-            )
-            ax.scatter(x, y, **kwargs)
+        x, y = (
+            zip(*map(self.arch_spec.get_position, locations))
+            if len(locations) > 0
+            else ([], [])
+        )
+        self.ax.scatter(x, y, **kwargs)
 
     def draw_moves(
         self,
         state: MoveExecution,
-        arch_spec: ArchSpec,
         ax: Axes | None = None,
         **kwargs,
     ):
-        import matplotlib.pyplot as plt
-
         if not isinstance(state, AtomState):
             return
 
-        if ax is None:
-            ax = plt.gca()
-
         for lane in state.data.prev_lanes.values():
-            start, end = arch_spec.get_endpoints(lane)
-            x_start, y_start = arch_spec.words[start.word_id].site_position(
+            start, end = self.arch_spec.get_endpoints(lane)
+            x_start, y_start = self.arch_spec.words[start.word_id].site_position(
                 start.site_id
             )
-            x_end, y_end = arch_spec.words[end.word_id].site_position(end.site_id)
-            ax.quiver(
+            x_end, y_end = self.arch_spec.words[end.word_id].site_position(end.site_id)
+            self.ax.quiver(
                 [x_start],
                 [y_start],
                 [x_end - x_start],
@@ -65,106 +80,104 @@ class StateArtist:
                 **kwargs,
             )
 
+    def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
+        positions = (
+            self.arch_spec.words[location.word_id].site_position(location.site_id)
+            for location in stmt.location_addresses
+        )
+        x_pos, y_pos = zip(*positions)
+        self.ax.plot(
+            x_pos,
+            y_pos,
+            color=color,
+            marker="o",
+            linestyle="",
+            alpha=0.3,
+            markersize=15,
+        )
 
-def show_local(
-    ax: Axes, stmt: move.LocalR | move.LocalRz, arch_spec: ArchSpec, color: str
-):
-    positions = (
-        arch_spec.words[location.word_id].site_position(location.site_id)
-        for location in stmt.location_addresses
-    )
-    x_pos, y_pos = zip(*positions)
-    ax.plot(
-        x_pos, y_pos, color=color, marker="o", linestyle="", alpha=0.3, markersize=15
-    )
+    def show_local_r(self, stmt: move.LocalR):
+        self._show_local(stmt, color="blue")
 
+    def show_local_rz(self, stmt: move.LocalRz):
+        self._show_local(stmt, color="green")
 
-def show_local_r(ax: Axes, stmt: move.LocalR, arch_spec: ArchSpec):
-    show_local(ax, stmt, arch_spec, color="blue")
+    def _show_global(self, stmt: move.GlobalR | move.GlobalRz, color: str):
+        x_min, x_max = self.arch_spec.x_bounds
+        x_width = x_max - x_min
+        x_min -= 0.5 * x_width
+        x_max += 0.5 * x_width
 
+        y_min, y_max = self.arch_spec.y_bounds
+        y_width = y_max - y_min
+        y_min -= 0.5 * y_width
+        y_max += 0.5 * y_width
 
-def show_local_rz(ax: Axes, stmt: move.LocalRz, arch_spec: ArchSpec):
-    show_local(ax, stmt, arch_spec, color="green")
+        self.ax.fill_between(
+            [x_min, x_max],
+            [y_min, y_min],
+            [y_max, y_max],
+            color=color,
+            alpha=0.3,
+        )
 
+    def show_global_r(self, stmt: move.GlobalR):
+        self._show_global(stmt, color="blue")
 
-def show_global(
-    ax: Axes, stmt: move.GlobalR | move.GlobalRz, arch_spec: ArchSpec, color: str
-):
-    x_min, x_max = arch_spec.x_bounds
-    x_width = x_max - x_min
-    x_min -= 0.5 * x_width
-    x_max += 0.5 * x_width
+    def show_global_rz(self, stmt: move.GlobalRz):
+        self._show_global(stmt, color="green")
 
-    y_min, y_max = arch_spec.y_bounds
-    y_width = y_max - y_min
-    y_min -= 0.5 * y_width
-    y_max += 0.5 * y_width
+    def show_cz(self, stmt: move.CZ):
+        words = tuple(
+            self.arch_spec.words[word_id]
+            for word_id in self.arch_spec.zones[stmt.zone_address.zone_id]
+        )
 
-    ax.fill_between(
-        [x_min, x_max],
-        [y_min, y_min],
-        [y_max, y_max],
-        color=color,
-        alpha=0.3,
-    )
+        y_min = float("inf")
+        y_max = float("-inf")
 
+        for word in words:
+            for _, y_pos in word.all_positions():
+                y_min = min(y_min, y_pos)
+                y_max = max(y_max, y_pos)
 
-def show_global_r(ax: Axes, stmt: move.GlobalR, arch_spec: ArchSpec):
-    show_global(ax, stmt, arch_spec, color="blue")
+        x_min, x_max = self.arch_spec.x_bounds
+        y_width = y_max - y_min
+        y_min -= 0.1 * y_width
+        y_max += 0.1 * y_width
 
+        self.ax.fill_between(
+            [x_min - 10, x_max + 10],
+            [y_min, y_min],
+            [y_max, y_max],
+            color="red",
+            alpha=0.3,
+        )
 
-def show_global_rz(ax: Axes, stmt: move.GlobalRz, arch_spec: ArchSpec):
-    show_global(ax, stmt, arch_spec, color="green")
-
-
-def show_cz(ax: Axes, stmt: move.CZ, arch_spec: ArchSpec):
-    words = tuple(
-        arch_spec.words[word_id]
-        for word_id in arch_spec.zones[stmt.zone_address.zone_id]
-    )
-
-    y_min = float("inf")
-    y_max = float("-inf")
-
-    for word in words:
-        for _, y_pos in word.all_positions():
-            y_min = min(y_min, y_pos)
-            y_max = max(y_max, y_pos)
-
-    x_min, x_max = arch_spec.x_bounds
-    y_width = y_max - y_min
-    y_min -= 0.1 * y_width
-    y_max += 0.1 * y_width
-
-    ax.fill_between(
-        [x_min - 10, x_max + 10],
-        [y_min, y_min],
-        [y_max, y_max],
-        color="red",
-        alpha=0.3,
-    )
-
-
-def show_slm(ax, stmt: ir.Statement, arch_spec: ArchSpec, atom_marker: str):
-    slm_plt_arg: dict = {
-        "facecolors": "none",
-        "edgecolors": "k",
-        "linestyle": "-",
-        "s": 80,
-        "alpha": 0.3,
-        "linewidth": 0.5,
-        "marker": atom_marker,
-    }
-    arch_spec.plot(ax, show_words=range(len(arch_spec.words)), **slm_plt_arg)
+    def show_slm(self, stmt: ir.Statement, atom_marker: str):
+        slm_plt_arg: dict = {
+            "facecolors": "none",
+            "edgecolors": "k",
+            "linestyle": "-",
+            "s": 80,
+            "alpha": 0.3,
+            "linewidth": 0.5,
+            "marker": atom_marker,
+        }
+        self.arch_spec.plot(
+            self.ax, show_words=range(len(self.arch_spec.words)), **slm_plt_arg
+        )
 
 
 def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
+    artist = StateArtist(ax, arch_spec)
+
     methods: dict = {
-        move.LocalR: show_local_r,
-        move.LocalRz: show_local_rz,
-        move.GlobalR: show_global_r,
-        move.GlobalRz: show_global_rz,
-        move.CZ: show_cz,
+        move.LocalR: artist.show_local_r,
+        move.LocalRz: artist.show_local_rz,
+        move.GlobalR: artist.show_global_r,
+        move.GlobalRz: artist.show_global_rz,
+        move.CZ: artist.show_cz,
     }
 
     frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
@@ -199,20 +212,16 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
             + ")"
         )
 
-    artist = StateArtist()
-
     def draw(step_index: int):
         if len(steps) == 0:
             return
         stmt, curr_state = steps[step_index]
-        show_slm(ax, stmt, arch_spec, atom_marker)
+        artist.show_slm(stmt, atom_marker)
 
-        visualize_fn = methods.get(type(stmt), lambda a, b, c: None)
-        visualize_fn(ax, stmt, arch_spec)
-        artist.draw_atoms(
-            curr_state, arch_spec, ax=ax, color="#6437FF", s=80, marker=atom_marker
-        )
-        artist.draw_moves(curr_state, arch_spec, ax=ax, color="orange")
+        visualize_fn = methods.get(type(stmt), lambda stmt: None)
+        visualize_fn(stmt)
+        artist.draw_atoms(curr_state, color="#6437FF", s=80, marker=atom_marker)
+        artist.draw_moves(curr_state, color="orange")
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
 
