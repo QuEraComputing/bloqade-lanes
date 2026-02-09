@@ -10,6 +10,7 @@ from bloqade.lanes.analysis.placement import (
     ConcreteState,
     SingleZonePlacementStrategyABC,
 )
+from bloqade.lanes.analysis.placement.move_synthesis import compute_move_layers
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 
 
@@ -213,123 +214,10 @@ class LogicalPlacementStrategy(SingleZonePlacementStrategyABC):
 
         return self._update_positions(state, moves)
 
-    def _assert_valid_word_bus_move(
-        self,
-        src_word: int,
-        src_site: int,
-        bus_id: int,
-        direction: layout.Direction,
-    ) -> layout.WordLaneAddress:
-        lane = layout.WordLaneAddress(
-            src_word,
-            src_site,
-            bus_id,
-            direction,
-        )
-
-        assert (
-            err := self.arch_spec.validate_lane(lane)
-        ) == set(), f"Invalid word bus move: {err}"
-
-        return lane
-
-    def _assert_valid_site_bus_move(
-        self,
-        src_word: int,
-        src_site: int,
-        bus_id: int,
-        direction: layout.Direction,
-    ) -> layout.SiteLaneAddress:
-        lane = layout.SiteLaneAddress(
-            src_word,
-            src_site,
-            bus_id,
-            direction,
-        )
-
-        assert (
-            err := self.arch_spec.validate_lane(lane)
-        ) == set(), f"Invalid site bus move: {err}"
-
-        return lane
-
-    def _site_moves(
-        self,
-        diffs: list[tuple[layout.LocationAddress, layout.LocationAddress]],
-        word_id: int,
-    ) -> list[tuple[layout.LaneAddress, ...]]:
-        start_site_ids = [before.site_id for before, _ in diffs]
-        assert len(set(start_site_ids)) == len(
-            start_site_ids
-        ), "Start site ids must be unique"
-
-        bus_moves = {}
-        for before, end in diffs:
-            bus_id = (end.site_id % 5) - (before.site_id % 5)
-
-            if bus_id < 0:
-                bus_id += len(self.arch_spec.site_buses)
-
-            bus_moves.setdefault(bus_id, []).append(
-                self._assert_valid_site_bus_move(
-                    word_id,
-                    before.site_id,
-                    bus_id,
-                    layout.Direction.FORWARD,
-                )
-            )
-
-        return list(map(tuple, bus_moves.values()))
-
-    def compute_moves(self, state_before: ConcreteState, state_after: ConcreteState):
-        diffs = [
-            ele
-            for ele in zip(state_before.layout, state_after.layout)
-            if ele[0] != ele[1]
-        ]
-
-        groups: dict[
-            tuple[int, int], list[tuple[layout.LocationAddress, layout.LocationAddress]]
-        ] = {}
-        for src, dst in diffs:
-            groups.setdefault((src.word_id, dst.word_id), []).append((src, dst))
-
-        match (groups.get((1, 0), []), groups.get((0, 1), [])):
-            case ([] as word_moves, []):
-                word_start = 0
-            case (list() as word_moves, []):
-                word_start = 1
-            case ([], list() as word_moves):
-                word_start = 0
-            case _:
-                raise AssertionError(
-                    "Cannot have both (0,1) and (1,0) moves in logical arch"
-                )
-
-        moves: list[tuple[layout.LaneAddress, ...]] = self._site_moves(
-            word_moves, word_start
-        )
-        if len(moves) > 0:
-            moves.append(
-                tuple(
-                    self._assert_valid_word_bus_move(
-                        0,
-                        end.site_id,
-                        0,
-                        (
-                            layout.Direction.FORWARD
-                            if word_start == 0
-                            else layout.Direction.BACKWARD
-                        ),
-                    )
-                    for _, end in word_moves
-                )
-            )
-
-        moves.extend(self._site_moves(groups.get((0, 0), []), 0))
-        moves.extend(self._site_moves(groups.get((1, 1), []), 1))
-
-        return tuple(moves)
+    def compute_moves(
+        self, state_before: ConcreteState, state_after: ConcreteState
+    ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
+        return compute_move_layers(self.arch_spec, state_before, state_after)
 
 
 @dataclass
