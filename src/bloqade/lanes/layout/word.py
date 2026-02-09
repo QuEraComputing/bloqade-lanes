@@ -1,20 +1,24 @@
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
 
-SiteType = TypeVar("SiteType", bound=tuple[float, float] | tuple[int, int])
+from bloqade.geometry.dialects import grid
+
+from .encoding import LocationAddress
 
 
 @dataclass(frozen=True)
-class Word(Generic[SiteType]):
-    # note that the `SiteType` is really just here for visualization purposes
-    # you can simply ignore the site in general
-    sites: tuple[SiteType, ...]
+class Word:
+    positions: grid.Grid
+    """Layout grid defining the positions of the sites in the word"""
+    site_indices: tuple[tuple[int, int], ...]
     """Geometric layout of the word, consisting of one or more coordinates per site"""
-    has_cz: tuple[int, ...] | None = None
+    has_cz: tuple[LocationAddress, ...] | None = None
     """defines which sites in the word have a controlled-Z (CZ) interaction, e.g. has_cz[i] = j means site i has a CZ with site j"""
 
     def __post_init__(self):
-        assert len(self.sites) == len(self.has_cz) if self.has_cz is not None else True
+        if len(self.positions.positions) != len(self.site_indices):
+            raise ValueError("Number of positions must match number of site indices")
+        if self.has_cz is not None and len(self.has_cz) != len(self.site_indices):
+            raise ValueError("Length of has_cz must match number of site indices")
 
     def __getitem__(self, index: int):
         return WordSite(
@@ -24,12 +28,10 @@ class Word(Generic[SiteType]):
         )
 
     def site_position(self, site_index: int) -> tuple[float, float]:
-        site = self.sites[site_index]
-        return (float(site[0]), float(site[1]))
+        return self.positions.get(self.site_indices[site_index])
 
     def all_positions(self):
-        for site_index in range(len(self.sites)):
-            yield self.site_position(site_index)
+        yield from map(self.site_position, range(len(self.site_indices)))
 
     def plot(self, ax=None, **scatter_kwargs):
         import matplotlib.pyplot as plt  # pyright: ignore[reportMissingModuleSource]
@@ -41,14 +43,11 @@ class Word(Generic[SiteType]):
         return ax
 
 
-WordType = TypeVar("WordType", bound=Word[Any])
-
-
 @dataclass(frozen=True)
-class WordSite(Generic[WordType]):
-    word: WordType
+class WordSite:
+    word: Word
     site_index: int
-    cz_pair: int | None = None
+    cz_pair: LocationAddress | None = None
 
     def position(self):
         return self.word.site_position(self.site_index)
