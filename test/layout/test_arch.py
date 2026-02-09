@@ -59,9 +59,9 @@ def test_get_blockaded_location_multiple_words():
         Word(
             grid.Grid.from_positions([0.0, 2.0, 10.0, 12.0], [0.0]),
             ((0, 0), (1, 0), (2, 0), (3, 0)),
-            tuple(layout.LocationAddress(0, cz_sites[j]) for j in range(4)),
+            tuple(layout.LocationAddress(ix, cz_site) for cz_site in cz_sites),
         )
-        for _ in range(4)
+        for ix in range(4)
     )
 
     arch_spec = layout.ArchSpec(
