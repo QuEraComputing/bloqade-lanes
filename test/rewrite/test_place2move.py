@@ -28,7 +28,6 @@ ARCH_SPEC = layout.ArchSpec(
     frozenset(),
     (),
     (),
-    (),
 )
 
 

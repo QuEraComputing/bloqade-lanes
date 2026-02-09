@@ -48,8 +48,6 @@ class ArchSpec:
     """List of all site buses in the architecture by site address."""
     word_buses: tuple[Bus, ...]
     """List of all word buses in the architecture by word address."""
-    site_bus_compatibility: tuple[frozenset[int], ...]
-    """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
     encoding: EncodingType = field(init=False)
     """Mapping from location addresses to zone addresses and indices within the zone."""
     zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
@@ -282,10 +280,6 @@ class ArchSpec:
             errors.add("Lanes have different directions")
 
         if lane1.move_type == MoveType.SITE and lane2.move_type == MoveType.SITE:
-            if lane2.word_id not in self.site_bus_compatibility[lane1.word_id]:
-                errors.add(
-                    "Lanes are on incompatible words for parallel site-bus moves"
-                )
             if lane1.bus_id != lane2.bus_id:
                 errors.add("Lanes are on different site-buses")
             if lane1.word_id == lane2.word_id and lane1.site_id == lane2.site_id:

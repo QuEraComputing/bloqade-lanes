@@ -7,9 +7,8 @@ from .encoding import LocationAddress
 
 @dataclass(frozen=True)
 class Word:
-    # note that the `SiteType` is really just here for visualization purposes
-    # you can simply ignore the site in general
     positions: grid.Grid
+    """Layout grid defining the positions of the sites in the word"""
     site_indices: tuple[tuple[int, int], ...]
     """Geometric layout of the word, consisting of one or more coordinates per site"""
     has_cz: tuple[LocationAddress, ...] | None = None

@@ -91,9 +91,6 @@ def generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
         .reshape(word_size_x, word_size_y)
         .transpose()
     )
-    site_bus_compatibility = tuple(
-        frozenset(range(num_words_x)) for _ in range(num_words_x)
-    )
 
     gate_zone = tuple(range(len(words)))
     cz_gate_zones = frozenset([0])
@@ -108,7 +105,6 @@ def generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
         frozenset(as_flat_tuple_int(site_ids[:, 1])),
         site_buses(site_ids),
         (),
-        site_bus_compatibility,
     )
 
 

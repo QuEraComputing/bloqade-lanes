@@ -43,7 +43,6 @@ def test_get_blockaded_location_without_pair():
         frozenset(),
         (),
         (),
-        (),
     )
 
     assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 0)) is None
@@ -74,7 +73,6 @@ def test_get_blockaded_location_multiple_words():
         frozenset(),
         (),
         (),
-        tuple(frozenset([i]) for i in range(4)),
     )
 
     # Test word 0: site 0 should pair with site 2
