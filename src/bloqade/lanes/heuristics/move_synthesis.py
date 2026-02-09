@@ -73,7 +73,7 @@ def _site_moves(
     return list(map(tuple, bus_moves.values()))
 
 
-def compute_move_layers(
+def _compute_move_layers_two_words(
     arch_spec: layout.ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
@@ -92,8 +92,9 @@ def compute_move_layers(
     word_moves_10 = groups.get((1, 0), [])
     word_moves_01 = groups.get((0, 1), [])
 
-    if word_moves_10 and word_moves_01:
-        raise AssertionError("Cannot have both (0,1) and (1,0) moves in logical arch")
+    assert not (
+        word_moves_10 and word_moves_01
+    ), "Cannot have both (0,1) and (1,0) moves in logical arch"
     if word_moves_10:
         word_moves = word_moves_10
         word_start = 1
@@ -131,3 +132,7 @@ def compute_move_layers(
     moves.extend(_site_moves(arch_spec, groups.get((1, 1), []), 1))
 
     return tuple(moves)
+
+
+# Public API: implementation is 2-word only for the time being
+compute_move_layers = _compute_move_layers_two_words
