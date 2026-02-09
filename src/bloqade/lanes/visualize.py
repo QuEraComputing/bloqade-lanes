@@ -1,6 +1,4 @@
-import abc
 from dataclasses import dataclass
-from functools import cached_property
 
 from kirin import ir
 from matplotlib import figure, pyplot as plt
@@ -9,35 +7,13 @@ from matplotlib.widgets import Button
 
 from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import ArchSpec, LaneAddress
-
-
-@dataclass
-class PathGenABC(abc.ABC):
-    arch_spec: ArchSpec
-
-    @abc.abstractmethod
-    def get_path(self, lane_address: LaneAddress) -> list[tuple[float, float]]: ...
-
-
-class DefaultPath(PathGenABC):
-
-    def get_path(self, lane_address: LaneAddress) -> list[tuple[float, float]]:
-        src, dst = self.arch_spec.get_endpoints(lane_address)
-        start_pos = self.arch_spec.get_position(src)
-        end_pos = self.arch_spec.get_position(dst)
-        return [start_pos, end_pos]
+from bloqade.lanes.layout import ArchSpec
 
 
 @dataclass
 class StateArtist:
     ax: Axes
     arch_spec: ArchSpec
-    path_gen_type: type[PathGenABC] = DefaultPath
-
-    @cached_property
-    def path_gen(self) -> PathGenABC:
-        return self.path_gen_type(self.arch_spec)
 
     def draw_atoms(
         self,
@@ -65,7 +41,7 @@ class StateArtist:
             return
 
         for lane in state.data.prev_lanes.values():
-            path = self.path_gen.get_path(lane)
+            path = self.arch_spec.get_path(lane)
             for (x_start, y_start), (x_end, y_end) in zip(path, path[1:]):
                 self.ax.quiver(
                     [x_start],

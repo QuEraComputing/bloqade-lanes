@@ -55,6 +55,10 @@ class ArchSpec(Generic[SiteType]):
     zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
         init=False, default_factory=dict
     )
+    paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = field(
+        default_factory=dict
+    )
+    """Optional precomputed paths for lanes in the architecture."""
 
     def __post_init__(self):
         if self.zones[0] != tuple(range(len(self.words))):
@@ -105,6 +109,15 @@ class ArchSpec(Generic[SiteType]):
             word = self.words[word_id]
             for site_id, _ in enumerate(word.sites):
                 yield LocationAddress(word_id, site_id)
+
+    def get_path(
+        self,
+        lane_address: LaneAddress,
+    ) -> tuple[tuple[float, float], ...]:
+        if (path := self.paths.get(lane_address)) is None:
+            src, dst = self.get_endpoints(lane_address)
+            return (self.get_position(src), self.get_position(dst))
+        return path
 
     def get_zone_index(
         self,
