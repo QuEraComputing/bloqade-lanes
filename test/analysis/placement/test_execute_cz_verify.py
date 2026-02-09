@@ -1,8 +1,11 @@
 """Tests for ExecuteCZ.verify() — blockade-radius validation of CZ placements."""
 
+from bloqade.geometry.dialects import grid
+
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.word import Word
 
 
@@ -82,8 +85,10 @@ def test_verify_multi_word():
 
 def test_verify_no_czs():
     """Test archspec w/no cz pairs"""
+    word_grid = grid.Grid.from_positions([0.0, 1.0, 2.0], [0.0])
     word = Word(
-        sites=((0.0, 0.0), (1.0, 0.0), (2.0, 0.0)),
+        word_grid,
+        ((0, 0), (1, 0), (2, 0)),
     )
 
     arch_spec = layout.ArchSpec(
@@ -93,7 +98,6 @@ def test_verify_no_czs():
         frozenset([0]),
         frozenset(),
         frozenset(),
-        (),
         (),
         (),
     )
@@ -108,12 +112,19 @@ def test_verify_no_czs():
 
 def test_verify_custom_large_arch():
     """Verify works with multiword ArchSpec where site 0<->2 and 1<->3."""
+    word_grid = grid.Grid.from_positions([0.0, 2.0], [0.0, 10.0])
     words = tuple(
         Word(
-            sites=((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)),
-            has_cz=(2, 3, 0, 1),
+            word_grid.shift(10.0 * ix, 0.0),
+            ((0, 0), (0, 1), (1, 0), (1, 1)),
+            has_cz=(
+                LocationAddress(ix, 2),
+                LocationAddress(ix, 3),
+                LocationAddress(ix, 0),
+                LocationAddress(ix, 1),
+            ),
         )
-        for _ in range(4)
+        for ix in range(4)
     )
     arch_spec = layout.ArchSpec(
         words,
@@ -124,7 +135,6 @@ def test_verify_custom_large_arch():
         frozenset(),
         (),
         (),
-        tuple(frozenset([i]) for i in range(4)),
     )
 
     state = _make_execute_cz(
