@@ -77,20 +77,16 @@ def test_get_blockaded_location_multiple_words():
 
     # Test word 0: site 0 should pair with site 2
     blockaded = arch_spec.get_blockaded_location(layout.LocationAddress(0, 0))
-    assert blockaded is not None
     assert blockaded == layout.LocationAddress(0, 1)
 
     # Test word 0: site 2 should pair with site 0
     blockaded2 = arch_spec.get_blockaded_location(layout.LocationAddress(0, 1))
-    assert blockaded2 is not None
     assert blockaded2 == layout.LocationAddress(0, 0)
 
     # Test word 1: site 1 should pair with site 3
     blockaded3 = arch_spec.get_blockaded_location(layout.LocationAddress(0, 3))
-    assert blockaded3 is not None
     assert blockaded3 == layout.LocationAddress(0, 2)
 
     # Test word 2: site 0 should pair with site 2
     blockaded4 = arch_spec.get_blockaded_location(layout.LocationAddress(0, 2))
-    assert blockaded4 is not None
     assert blockaded4 == layout.LocationAddress(0, 3)
