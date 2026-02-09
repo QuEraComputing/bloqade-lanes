@@ -1,7 +1,7 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Generic, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -14,7 +14,7 @@ from bloqade.lanes.layout.encoding import (
     ZoneAddress,
 )
 
-from .word import SiteType, Word
+from .word import Word
 
 
 @dataclass(frozen=True)
@@ -31,8 +31,8 @@ class Bus:
 
 
 @dataclass(frozen=True)
-class ArchSpec(Generic[SiteType]):
-    words: tuple[Word[SiteType], ...]
+class ArchSpec:
+    words: tuple[Word, ...]
     """tuple of all words in the architecture. words[i] gives the word at word address i."""
     zones: tuple[tuple[int, ...], ...]
     """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
@@ -48,8 +48,6 @@ class ArchSpec(Generic[SiteType]):
     """List of all site buses in the architecture by site address."""
     word_buses: tuple[Bus, ...]
     """List of all word buses in the architecture by word address."""
-    site_bus_compatibility: tuple[frozenset[int], ...]
-    """Mapping from word id indicating which other word ids can execute site-buses in parallel."""
     encoding: EncodingType = field(init=False)
     """Mapping from location addresses to zone addresses and indices within the zone."""
     zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
@@ -83,7 +81,7 @@ class ArchSpec(Generic[SiteType]):
             index = 0
             for word_id in zone:
                 word = self.words[word_id]
-                for site_id, _ in enumerate(word.sites):
+                for site_id, _ in enumerate(word.site_indices):
                     loc_addr = LocationAddress(word_id, site_id)
                     zone_address = ZoneAddress(zone_id)
                     zone_address_map[loc_addr][zone_address] = index
@@ -94,7 +92,7 @@ class ArchSpec(Generic[SiteType]):
     @property
     def max_qubits(self) -> int:
         """Get the maximum number of qubits supported by this architecture."""
-        num_sites_per_word = len(self.words[0].sites)
+        num_sites_per_word = len(self.words[0].site_indices)
         return len(self.words) * num_sites_per_word // 2
 
     def yield_zone_locations(self, zone_address: ZoneAddress):
@@ -103,7 +101,7 @@ class ArchSpec(Generic[SiteType]):
         zone = self.zones[zone_id]
         for word_id in zone:
             word = self.words[word_id]
-            for site_id, _ in enumerate(word.sites):
+            for site_id, _ in enumerate(word.site_indices):
                 yield LocationAddress(word_id, site_id)
 
     def get_zone_index(
@@ -282,10 +280,6 @@ class ArchSpec(Generic[SiteType]):
             errors.add("Lanes have different directions")
 
         if lane1.move_type == MoveType.SITE and lane2.move_type == MoveType.SITE:
-            if lane2.word_id not in self.site_bus_compatibility[lane1.word_id]:
-                errors.add(
-                    "Lanes are on incompatible words for parallel site-bus moves"
-                )
             if lane1.bus_id != lane2.bus_id:
                 errors.add("Lanes are on different site-buses")
             if lane1.word_id == lane2.word_id and lane1.site_id == lane2.site_id:
@@ -317,7 +311,7 @@ class ArchSpec(Generic[SiteType]):
 
         word = self.words[location_address.word_id]
 
-        num_sites = len(word.sites)
+        num_sites = len(word.site_indices)
         if location_address.site_id < 0 or location_address.site_id >= num_sites:
             errors.add(
                 f"Site id {location_address.site_id} out of range of {num_sites}"
@@ -397,10 +391,4 @@ class ArchSpec(Generic[SiteType]):
         Returns:
             The LocationAddress of the blockaded location if one exists, None otherwise.
         """
-        word = self.words[location.word_id]
-        site = word[location.site_id]
-
-        if site.cz_pair is None:
-            return None
-
-        return LocationAddress(location.word_id, site.cz_pair)
+        return self.words[location.word_id][location.site_id].cz_pair

@@ -1,3 +1,4 @@
+from bloqade.geometry.dialects import grid
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import py
@@ -14,13 +15,17 @@ from bloqade.lanes.layout import word
 from bloqade.lanes.rewrite import place2move
 
 ARCH_SPEC = layout.ArchSpec(
-    (word.Word(((0, 0), (0, 1))),),
+    (
+        word.Word(
+            positions=grid.Grid.from_positions([0], [0, 1]),
+            site_indices=((0, 0), (0, 1)),
+        ),
+    ),
     ((0,),),
     (0,),
     frozenset([0]),
     frozenset(),
     frozenset(),
-    (),
     (),
     (),
 )
