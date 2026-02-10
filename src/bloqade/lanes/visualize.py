@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
+import numpy as np
 from kirin import ir
-from matplotlib import figure, pyplot as plt
+from matplotlib import colormaps, figure, pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.widgets import Button
 
@@ -40,9 +41,14 @@ class StateArtist:
         if not isinstance(state, AtomState):
             return
 
+        cmap = colormaps["plasma"]
         for lane in state.data.prev_lanes.values():
             path = self.arch_spec.get_path(lane)
-            for (x_start, y_start), (x_end, y_end) in zip(path, path[1:]):
+            steps = list(zip(path, path[1:]))
+            color_indices = np.linspace(0, 1, len(steps))
+            for cl_val, ((x_start, y_start), (x_end, y_end)) in zip(
+                color_indices, steps
+            ):
                 self.ax.quiver(
                     [x_start],
                     [y_start],
@@ -51,6 +57,7 @@ class StateArtist:
                     angles="xy",
                     scale_units="xy",
                     scale=1.0,
+                    color=cmap(cl_val),
                     **kwargs,
                 )
 
@@ -176,13 +183,28 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
                 constants[stmt.results[0]] = value
 
     def stmt_text(stmt: ir.Statement) -> str:
-        if len(stmt.args) == 0:
-            return f"{type(stmt).__name__}"
-        return (
-            f"{type(stmt).__name__}("
-            + ", ".join(f"{constants.get(arg,'missing')}" for arg in stmt.args)
-            + ")"
-        )
+        stmt_str = f"{type(stmt).__name__}("
+        if len(stmt.args) != 0:
+            stmt_str = stmt_str + (
+                ", ".join(
+                    f"{constants.get(arg, arg.name or "missing")}" for arg in stmt.args
+                )
+            )
+        stmt_str = stmt_str + "){"
+        if len(stmt.attributes) != 0:
+
+            def get_str(value: ir.Attribute):
+                if isinstance(value, ir.PyAttr):
+                    return str(value.unwrap())
+                return str(value)
+
+            stmt_str = stmt_str + (
+                ", ".join(
+                    f"{key}={get_str(value)}" for key, value in stmt.attributes.items()
+                )
+            )
+        stmt_str = stmt_str + "}"
+        return stmt_str
 
     def draw(step_index: int):
         if len(steps) == 0:
@@ -193,7 +215,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         visualize_fn = methods.get(type(stmt), lambda stmt: None)
         visualize_fn(stmt)
         artist.draw_atoms(curr_state, color="#6437FF", s=80, marker=atom_marker)
-        artist.draw_moves(curr_state, color="orange")
+        artist.draw_moves(curr_state)
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
 
@@ -221,9 +243,9 @@ def interactive_debugger(
     exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
     next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
 
-    prev_button = Button(prev_ax, "Previous (<)")
+    prev_button = Button(prev_ax, "Prev (<)")
     next_button = Button(next_ax, "Next (>)")
-    exit_button = Button(exit_ax, "Exit (Esc)")
+    exit_button = Button(exit_ax, "Exit(Esc)")
 
     def on_exit(event):
         nonlocal running, waiting, updated
