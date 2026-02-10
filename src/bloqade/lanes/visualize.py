@@ -62,11 +62,11 @@ class StateArtist:
                 )
 
     def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
-        positions = (
+        positions = list(
             self.arch_spec.words[location.word_id].site_position(location.site_id)
             for location in stmt.location_addresses
         )
-        x_pos, y_pos = zip(*positions)
+        x_pos, y_pos = zip(*positions) if len(positions) > 0 else ([], [])
         self.ax.plot(
             x_pos,
             y_pos,
