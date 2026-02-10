@@ -26,13 +26,14 @@ def log_depth_ghz():
 
 @squin.kernel(typeinfer=True, fold=True)
 def ghz_optimal():
-    size = 10
-    qs = qubit.qalloc(size)
-    squin.h(qs[0])
-    squin.cx(qs[0], qs[1])
-    squin.broadcast.cx(qs[:2], qs[2:4])
-    squin.cx(qs[3], qs[4])
-    squin.broadcast.cx(qs[:5], qs[5:])
+    qs = qubit.qalloc(10)
+    squin.broadcast.sqrt_y(qs)
+    squin.z(qs[0])
+    squin.cz(qs[0], qs[5])
+    squin.broadcast.cz(qs[:2] + qs[5:7], qs[2:4] + qs[7:9])
+    squin.broadcast.cz(ilist.IList([qs[3], qs[8]]), ilist.IList([qs[4], qs[9]]))
+    squin.broadcast.sqrt_y(qs)
+    squin.sqrt_y_adj(qs[0])
 
 
 compile_squin_to_move_and_visualize(log_depth_ghz)
