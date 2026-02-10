@@ -54,7 +54,7 @@ class ArchSpec:
         init=False, default_factory=dict
     )
     paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = field(
-        default_factory=dict
+        default_factory=dict, hash=False, compare=False
     )
     """Optional precomputed paths for lanes in the architecture."""
 
@@ -124,6 +124,30 @@ class ArchSpec:
     ) -> int | None:
         """Get the index of a location address within a zone address."""
         return self.zone_address_map[loc_addr].get(zone_id)
+
+    def path_bounds(self) -> tuple[float, float, float, float]:
+        x_min, x_max = self.x_bounds
+        y_min, y_max = self.y_bounds
+
+        x_values = set(x for path in self.paths.values() for x, _ in path)
+        y_values = set(y for path in self.paths.values() for _, y in path)
+
+        y_min = min(y_min, min(y_values, default=y_min))
+        y_max = max(y_max, max(y_values, default=y_max))
+
+        x_min = min(x_min, min(x_values, default=x_min))
+        x_max = max(x_max, max(x_values, default=x_max))
+        return (x_min, x_max, y_min, y_max)
+
+    def y_path_bounds(self) -> tuple[float, float]:
+        y_min, y_max = self.y_bounds
+
+        for path in self.paths.values():
+            for (_, y_start), (_, y_end) in zip(path, path[1:]):
+                y_min = min(y_min, y_start, y_end)
+                y_max = max(y_max, y_start, y_end)
+
+        return y_min, y_max
 
     @cached_property
     def x_bounds(self) -> tuple[float, float]:

@@ -156,9 +156,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
 
     frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
 
-    x_min, x_max = arch_spec.x_bounds
-    y_min, y_max = arch_spec.y_bounds
-
+    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
     x_width = x_max - x_min
     y_width = y_max - y_min
 
