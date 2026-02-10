@@ -139,16 +139,6 @@ class ArchSpec:
         x_max = max(x_max, max(x_values, default=x_max))
         return (x_min, x_max, y_min, y_max)
 
-    def y_path_bounds(self) -> tuple[float, float]:
-        y_min, y_max = self.y_bounds
-
-        for path in self.paths.values():
-            for (_, y_start), (_, y_end) in zip(path, path[1:]):
-                y_min = min(y_min, y_start, y_end)
-                y_max = max(y_max, y_start, y_end)
-
-        return y_min, y_max
-
     @cached_property
     def x_bounds(self) -> tuple[float, float]:
         x_min = float("inf")
