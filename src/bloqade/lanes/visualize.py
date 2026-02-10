@@ -41,7 +41,7 @@ class StateArtist:
         if not isinstance(state, AtomState):
             return
 
-        cmap = colormaps["plasma"]
+        cmap = colormaps["viridis"]
         for lane in state.data.prev_lanes.values():
             path = self.arch_spec.get_path(lane)
             steps = list(zip(path, path[1:]))
