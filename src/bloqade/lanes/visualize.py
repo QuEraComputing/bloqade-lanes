@@ -187,7 +187,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         if len(stmt.args) != 0:
             stmt_str = stmt_str + (
                 ", ".join(
-                    f"{constants.get(arg, arg.name or "missing")}" for arg in stmt.args
+                    f"{constants.get(arg, arg.name or 'missing')}" for arg in stmt.args
                 )
             )
         stmt_str = stmt_str + "){"
