@@ -230,7 +230,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
 def interactive_debugger(
     draw,
     num_steps: int,
-    fig: figure.Figure,
+    fig: figure.Figure | figure.SubFigure,
 ):
 
     ax = plt.gca()
@@ -296,7 +296,8 @@ def interactive_debugger(
         waiting = True
         updated = False
 
-    plt.close(fig)
+    if isinstance(fig, figure.Figure):
+        plt.close(fig)
 
 
 def debugger(
@@ -305,9 +306,14 @@ def debugger(
     interactive: bool = True,
     pause_time: float = 1.0,
     atom_marker: str = "o",
+    ax: Axes | None = None,
 ):
     # set up matplotlib figure with buttons
-    fig, ax = plt.subplots()
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
     fig.subplots_adjust(bottom=0.2)
 
     draw, num_steps = get_drawer(mt, arch_spec, ax, atom_marker)
