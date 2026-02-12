@@ -124,7 +124,7 @@ class ArchSpec:
                         )
                         src, dst = self.get_endpoints(lane_addr)
                         lane_map[(src, dst)] = lane_addr
-        object.__setattr__(self, "_lane_map", lane_map)
+        super().__setattr__("_lane_map", lane_map)
 
     @property
     def max_qubits(self) -> int:
@@ -382,6 +382,7 @@ class ArchSpec:
     def get_lane_address(
         self, src: LocationAddress, dst: LocationAddress
     ) -> LaneAddress | None:
+        """Given an input tuple of locations, gets the lane (w/direction)."""
         return self._lane_map.get((src, dst))
 
     def validate_lane(self, lane_address: LaneAddress) -> set[str]:
