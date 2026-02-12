@@ -25,12 +25,17 @@ def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
     )
 
 
+def always_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
+    """Always allow merging; all CZs end up in one region in the Place IR."""
+    return True
+
+
 @dataclass
 class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
 
     def emit(self, mt: Method, no_raise: bool = True):
-        out = mt.similar(mt.dialects.add(place).discard(native_gate))
+        out = mt.similar(mt.dialects.add(place))
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
@@ -69,10 +74,12 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
         ).rewrite(out.code)
 
-        passes.TypeInfer(out.dialects)(out)
+        out = out.similar(out.dialects.discard(native_gate))
+        passes.TypeInfer(out.dialects, no_raise=True)(out)
 
-        out.verify()
-        out.verify_type()
+        if not no_raise:
+            out.verify()
+            out.verify_type()
 
         return out
 

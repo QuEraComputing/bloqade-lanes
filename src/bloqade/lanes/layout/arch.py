@@ -11,6 +11,8 @@ from bloqade.lanes.layout.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
+    SiteLaneAddress,
+    WordLaneAddress,
     ZoneAddress,
 )
 
@@ -57,6 +59,10 @@ class ArchSpec:
         default_factory=dict, hash=False, compare=False
     )
     """Optional precomputed paths for lanes in the architecture."""
+    _lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = field(
+        init=False, default_factory=dict, compare=False, hash=False
+    )
+    """Map of site-site tuples to the lane that addresses the move between that pair of sites (None if no lane exists). Note that direction is factored in."""
 
     def __post_init__(self):
         if self.zones[0] != tuple(range(len(self.words))):
@@ -92,6 +98,33 @@ class ArchSpec:
                     index += 1
         object.__setattr__(self, "zone_address_map", dict(zone_address_map))
         object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
+
+        lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
+        for word_id in self.has_site_buses:
+            for bus_id, bus in enumerate(self.site_buses):
+                for i in range(len(bus.src)):
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        lane_addr = SiteLaneAddress(
+                            word_id=word_id,
+                            site_id=bus.src[i],
+                            bus_id=bus_id,
+                            direction=direction,
+                        )
+                        src, dst = self.get_endpoints(lane_addr)
+                        lane_map[(src, dst)] = lane_addr
+        for bus_id, bus in enumerate(self.word_buses):
+            for site_id in self.has_word_buses:
+                for word_id in bus.src:
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        lane_addr = WordLaneAddress(
+                            word_id=word_id,
+                            site_id=site_id,
+                            bus_id=bus_id,
+                            direction=direction,
+                        )
+                        src, dst = self.get_endpoints(lane_addr)
+                        lane_map[(src, dst)] = lane_addr
+        object.__setattr__(self, "_lane_map", lane_map)
 
     @property
     def max_qubits(self) -> int:
@@ -345,6 +378,11 @@ class ArchSpec:
             )
 
         return errors
+
+    def get_lane_address(
+        self, src: LocationAddress, dst: LocationAddress
+    ) -> LaneAddress | None:
+        return self._lane_map.get((src, dst))
 
     def validate_lane(self, lane_address: LaneAddress) -> set[str]:
         """Check if a lane address is valid in this architecture."""
