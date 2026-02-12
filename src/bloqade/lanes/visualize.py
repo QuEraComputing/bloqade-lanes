@@ -19,7 +19,7 @@ class PlotParameters:
     atom_marker: str = "o"
     aod_marker: str = "x"
 
-    atom_marker_size: int = 5
+    atom_marker_size: int = 80
     slm_marker_size: int = 80
     atom_color: str = "#6437FF"
     local_r_color: str = "blue"
@@ -36,15 +36,14 @@ class PlotParameters:
             "color": self.atom_color,
             "marker": self.atom_marker,
             "linestyle": "",
-            "markersize": self.atom_marker_size,
+            "s": self.atom_marker_size,
         }
 
     @property
     def gate_spot_args(self) -> dict:
         return {
             "marker": self.atom_marker,
-            "linestyle": "",
-            "markersize": self.atom_marker_size * 1.5,
+            "s": self.atom_marker_size * 1.5,
             "alpha": 0.3,
         }
 
@@ -72,7 +71,7 @@ class PlotParameters:
         return {
             "color": "black",
             "marker": self.aod_marker,
-            "markersize": self.atom_marker_size * 1.2,
+            "s": self.atom_marker_size * 1.2,
             "linestyle": "",
         }
 
@@ -108,15 +107,15 @@ class MoveRenderer:
         )
         aod_x_positions, aod_y_positions = np.meshgrid(aod_x, aod_y)
 
-        (self.aod_positions,) = self.ax.plot(
+        self.aod_positions = self.ax.scatter(
             aod_x_positions.ravel(),
             aod_y_positions.ravel(),
             **self.plot_params.aod_marker_args,
         )
-        (self.moving_atoms_scatter,) = self.ax.plot(
+        self.moving_atoms_scatter = self.ax.scatter(
             moving_atom_x, moving_atom_y, **self.plot_params.atom_plot_args
         )
-        self.ax.plot(
+        self.ax.scatter(
             self.stationary_atoms_x,
             self.stationary_atoms_y,
             **self.plot_params.atom_plot_args,
@@ -132,8 +131,12 @@ class MoveRenderer:
         self.aod_x_lines.set_segments([[(x, ymin), (x, ymax)] for x in aod_x])
         self.aod_y_lines.set_segments([[(xmin, y), (xmax, y)] for y in aod_y])
         aod_x_positions, aod_y_positions = np.meshgrid(aod_x, aod_y)
-        self.aod_positions.set_data(aod_x_positions.ravel(), aod_y_positions.ravel())
-        self.moving_atoms_scatter.set_data(moving_atom_x, moving_atom_y)
+        self.aod_positions.set_offsets(
+            np.column_stack([aod_x_positions.ravel(), aod_y_positions.ravel()])
+        )
+        self.moving_atoms_scatter.set_offsets(
+            np.column_stack([moving_atom_x, moving_atom_y])
+        )
 
 
 @dataclass
@@ -253,21 +256,18 @@ class StateArtist:
     def draw_atoms(
         self,
         state: MoveExecution,
-        **kwargs,
     ):
         if not isinstance(state, AtomState):
             return
 
         locations = list(state.data.locations_to_qubit)
 
-        kwargs["linestyle"] = ""
-
         x, y = (
             zip(*map(self.arch_spec.get_position, locations))
             if len(locations) > 0
             else ([], [])
         )
-        self.ax.plot(x, y, **kwargs)
+        self.ax.scatter(x, y, **self.plot_params.atom_plot_args)
 
     def draw_moves(
         self,
@@ -303,7 +303,7 @@ class StateArtist:
             for location in stmt.location_addresses
         )
         x_pos, y_pos = zip(*positions) if len(positions) > 0 else ([], [])
-        self.ax.plot(x_pos, y_pos, color=color, **self.plot_params.gate_spot_args)
+        self.ax.scatter(x_pos, y_pos, color=color, **self.plot_params.gate_spot_args)
 
     def show_local_r(self, stmt: move.LocalR):
         self._show_local(stmt, color="blue")
@@ -435,7 +435,7 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
 
         visualize_fn = methods.get(type(stmt), lambda stmt: None)
         visualize_fn(stmt)
-        artist.draw_atoms(curr_state, color="#6437FF", s=80, marker=atom_marker)
+        artist.draw_atoms(curr_state)
         artist.draw_moves(curr_state)
 
         ax.set_title(f"Step {step_index+1} / {len(steps)}")
@@ -603,9 +603,7 @@ def render_generator(
 
         visualize_fn = methods.get(type(stmt))
         if visualize_fn is not None:
-            artist.draw_atoms(
-                curr_state, color="#6437FF", markersize=5, marker=atom_marker
-            )
+            artist.draw_atoms(curr_state)
             visualize_fn(stmt)
             return 3 * fps, _no_op
 
@@ -622,7 +620,7 @@ def render_generator(
 
             return total_frames, _move_renderer
 
-        artist.draw_atoms(curr_state, color="#6437FF", markersize=4, marker=atom_marker)
+        artist.draw_atoms(curr_state)
         return 3 * fps, _no_op
 
     return get_renderer, len(steps)

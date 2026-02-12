@@ -36,6 +36,8 @@ def ghz_optimal():
     squin.sqrt_y_adj(qs[0])
 
 
-compile_squin_to_move_and_visualize(log_depth_ghz)
-compile_squin_to_move_and_visualize(ghz_optimal)
-compile_squin_to_move_and_visualize(ghz_optimal, transversal_rewrite=True)
+# compile_squin_to_move_and_visualize(log_depth_ghz, animated=)
+# compile_squin_to_move_and_visualize(ghz_optimal)
+compile_squin_to_move_and_visualize(
+    ghz_optimal, transversal_rewrite=True, animated=True
+)
