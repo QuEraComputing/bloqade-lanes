@@ -20,6 +20,7 @@ class quera_color_code(str, Enum):
     purple = "#6437FF"
     red = "#C2477F"
     yellow = "#EADD08"
+    aod_line_color = "#FFE8E9"
 
 
 @dataclass
@@ -29,18 +30,19 @@ class PlotParameters:
     atom_marker: str = "o"
     aod_marker: str = "+"
 
-    local_r_color: str = "blue"
-    local_rz_color: str = "green"
-    global_r_color: str = "blue"
-    global_rz_color: str = "green"
-    cz_color: str = "red"
-    aod_line_color: str = "gray"
+    local_r_color: str = "tab:blue"
+    local_rz_color: str = "tab:green"
+    global_r_color: str = "tab:blue"
+    global_rz_color: str = "tab:green"
+    cz_color: str = "tab:red"
+    aod_line_color: str = quera_color_code.aod_line_color
+    atom_color: str = quera_color_code.purple
     aod_line_style: str = "dashed"
 
     @property
     def atom_plot_args(self) -> dict:
         return {
-            "color": quera_color_code.purple,
+            "color": self.atom_color,
             "marker": self.atom_marker,
             "linestyle": "",
             "s": self.scale * 65,
@@ -69,8 +71,10 @@ class PlotParameters:
     @property
     def aod_line_args(self) -> dict:
         return {
+            "alpha": 1.0,
             "colors": self.aod_line_color,
             "linestyles": self.aod_line_style,
+            "zorder": -101,
         }
 
     @property
@@ -81,6 +85,7 @@ class PlotParameters:
             "s": self.scale * 260,
             "linewidth": np.sqrt(self.scale),
             "alpha": 0.7,
+            "zorder": -100,
         }
 
 
@@ -432,24 +437,9 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         stmt_str = f"{type(stmt).__name__}("
         if len(stmt.args) != 0:
             stmt_str = stmt_str + (
-                ", ".join(
-                    f"{constants.get(arg, arg.name or 'missing')}" for arg in stmt.args
-                )
+                ", ".join(f"{constants[arg]}" for arg in stmt.args if arg in constants)
             )
-        stmt_str = stmt_str + "){"
-        if len(stmt.attributes) != 0:
-
-            def get_str(value: ir.Attribute):
-                if isinstance(value, ir.PyAttr):
-                    return str(value.unwrap())
-                return str(value)
-
-            stmt_str = stmt_str + (
-                ", ".join(
-                    f"{key}={get_str(value)}" for key, value in stmt.attributes.items()
-                )
-            )
-        stmt_str = stmt_str + "}"
+        stmt_str = stmt_str + ")"
         return stmt_str
 
     def draw(step_index: int):
@@ -585,24 +575,9 @@ def render_generator(
         stmt_str = f"{type(stmt).__name__}("
         if len(stmt.args) != 0:
             stmt_str = stmt_str + (
-                ", ".join(
-                    f"{constants.get(arg, arg.name or 'missing')}" for arg in stmt.args
-                )
+                ", ".join(f"{constants[arg]}" for arg in stmt.args if arg in constants)
             )
-        stmt_str = stmt_str + "){"
-        if len(stmt.attributes) != 0:
-
-            def get_str(value: ir.Attribute):
-                if isinstance(value, ir.PyAttr):
-                    return str(value.unwrap())
-                return str(value)
-
-            stmt_str = stmt_str + (
-                ", ".join(
-                    f"{key}={get_str(value)}" for key, value in stmt.attributes.items()
-                )
-            )
-        stmt_str = stmt_str + "}"
+        stmt_str = stmt_str + ")"
         return stmt_str
 
     def _no_op(ani_step_index: int):
@@ -614,10 +589,7 @@ def render_generator(
 
         stmt, curr_state = steps[step_index]
         artist.show_slm(stmt, atom_marker)
-        ax.set_title(f"Step {step_index+1} / {len(steps)}")
-        ax.text(
-            0.5, -0.3, stmt_text(stmt), ha="center", va="bottom", transform=ax.transAxes
-        )
+        ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_min, y_max)
         ax.set_aspect("equal", adjustable="box")
@@ -773,7 +745,7 @@ def animated_debugger(
     fps: int = 30,
 ):
     if ax is None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(14, 8))
     else:
         fig = ax.figure
 
