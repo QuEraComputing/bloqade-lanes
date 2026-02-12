@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
 from functools import cached_property
 from typing import Callable
 
@@ -14,14 +15,20 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import ArchSpec
 
 
+class quera_color_code(str, Enum):
+    # TODO: for python 3.11+, replace traits with StrEnum
+    purple = "#6437FF"
+    red = "#C2477F"
+    yellow = "#EADD08"
+
+
 @dataclass
 class PlotParameters:
-    atom_marker: str = "o"
-    aod_marker: str = "x"
+    scale: float
 
-    atom_marker_size: int = 80
-    slm_marker_size: int = 80
-    atom_color: str = "#6437FF"
+    atom_marker: str = "o"
+    aod_marker: str = "+"
+
     local_r_color: str = "blue"
     local_rz_color: str = "green"
     global_r_color: str = "blue"
@@ -33,17 +40,17 @@ class PlotParameters:
     @property
     def atom_plot_args(self) -> dict:
         return {
-            "color": self.atom_color,
+            "color": quera_color_code.purple,
             "marker": self.atom_marker,
             "linestyle": "",
-            "s": self.atom_marker_size,
+            "s": self.scale * 65,
         }
 
     @property
     def gate_spot_args(self) -> dict:
         return {
             "marker": self.atom_marker,
-            "s": self.atom_marker_size * 1.5,
+            "s": self.scale * 160,
             "alpha": 0.3,
         }
 
@@ -53,9 +60,9 @@ class PlotParameters:
             "facecolors": "none",
             "edgecolors": "k",
             "linestyle": "-",
-            "s": self.slm_marker_size,
-            "alpha": 0.3,
-            "linewidth": 0.5,
+            "s": self.scale * 80,
+            "alpha": 1.0,
+            "linewidth": 0.5 * np.sqrt(self.scale),
             "marker": self.atom_marker,
         }
 
@@ -69,10 +76,11 @@ class PlotParameters:
     @property
     def aod_marker_args(self) -> dict:
         return {
-            "color": "black",
+            "color": quera_color_code.red,
             "marker": self.aod_marker,
-            "s": self.atom_marker_size * 1.2,
-            "linestyle": "",
+            "s": self.scale * 260,
+            "linewidth": np.sqrt(self.scale),
+            "alpha": 0.7,
         }
 
 
@@ -85,7 +93,7 @@ class MoveRenderer:
     moving_atoms_y_indices: list[int]
     stationary_atoms_x: list[float]
     stationary_atoms_y: list[float]
-    plot_params: PlotParameters = field(default_factory=PlotParameters)
+    plot_params: PlotParameters
 
     @cached_property
     def total_time(self) -> float:
@@ -143,7 +151,7 @@ class MoveRenderer:
 class StateArtist:
     ax: Axes
     arch_spec: ArchSpec
-    plot_params: PlotParameters = field(default_factory=PlotParameters)
+    plot_params: PlotParameters
 
     def _get_aod_paths(self, speed, move_execution: AtomState):
         waypoints: list[tuple[set[float], set[float]]] = []
@@ -371,19 +379,9 @@ class StateArtist:
         )
 
 
-def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
-    artist = StateArtist(ax, arch_spec)
-
-    methods: dict = {
-        move.LocalR: artist.show_local_r,
-        move.LocalRz: artist.show_local_rz,
-        move.GlobalR: artist.show_global_r,
-        move.GlobalRz: artist.show_global_rz,
-        move.CZ: artist.show_cz,
-    }
-
-    frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
-
+def get_state_artist(
+    arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"
+) -> StateArtist:
     x_min, x_max, y_min, y_max = arch_spec.path_bounds()
     x_width = x_max - x_min
     y_width = y_max - y_min
@@ -392,6 +390,33 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     x_max += 0.1 * x_width
     y_min -= 0.1 * y_width
     y_max += 0.1 * y_width
+
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    nsites = len(arch_spec.words) * len(arch_spec.words[0].site_indices)
+
+    scale = (
+        np.sqrt(44.0 / nsites) * 2.0 * plt.rcParams["figure.dpi"] / 100
+    )  # scale the size of the figure
+
+    plot_params = PlotParameters(scale, atom_marker=atom_marker)
+
+    return StateArtist(ax, arch_spec, plot_params=plot_params)
+
+
+def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
+    artist = get_state_artist(arch_spec, ax)
+
+    frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
+
+    methods: dict = {
+        move.LocalR: artist.show_local_r,
+        move.LocalRz: artist.show_local_rz,
+        move.GlobalR: artist.show_global_r,
+        move.GlobalRz: artist.show_global_rz,
+        move.CZ: artist.show_cz,
+    }
 
     steps: list[tuple[ir.Statement, AtomState]] = []
     constants = {}
@@ -442,9 +467,6 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         ax.text(
             0.5, 1.01, stmt_text(stmt), ha="center", va="bottom", transform=ax.transAxes
         )
-
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
 
         plt.draw()
 
@@ -527,9 +549,8 @@ def interactive_debugger(
 def render_generator(
     mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o", fps: int = 30
 ) -> tuple[Callable[[int], tuple[int, Callable[[int], None]]], int]:
-    plot_params = PlotParameters(atom_marker=atom_marker)
 
-    artist = StateArtist(ax, arch_spec, plot_params=plot_params)
+    artist = get_state_artist(arch_spec, ax, atom_marker)
 
     methods: dict = {
         move.LocalR: artist.show_local_r,
@@ -629,10 +650,13 @@ def render_generator(
 def interactive_animator(
     get_renderer: Callable[[int], tuple[int, Callable[[int], None]]],
     num_steps: int,
-    fig: figure.Figure | figure.SubFigure,
+    ax: Axes,
 ):
+    fig = ax.get_figure(True)
 
-    ax = plt.gca()
+    if fig is None:
+        raise ValueError("Could not get figure from axes for interactive animator.")
+
     step_index = 0
     animation_step = 1
     num_frames = 0
@@ -718,14 +742,13 @@ def debugger(
     mt: ir.Method,
     arch_spec: ArchSpec,
     interactive: bool = True,
-    animated: bool = False,
     pause_time: float = 1.0,
     atom_marker: str = "o",
     ax: Axes | None = None,
 ):
     # set up matplotlib figure with buttons
     if ax is None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(14, 8))
     else:
         fig = ax.figure
 
@@ -758,7 +781,7 @@ def animated_debugger(
 
     get_renderer, num_steps = render_generator(mt, arch_spec, ax, atom_marker, fps)
     if interactive:
-        interactive_animator(get_renderer, num_steps, fig)
+        interactive_animator(get_renderer, num_steps, ax)
     else:
         for step_index in range(num_steps):
             num_frames, renderer = get_renderer(step_index)
