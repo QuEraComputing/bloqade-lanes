@@ -61,7 +61,10 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
 
 
 def compile_squin_to_move_and_visualize(
-    mt: ir.Method, interactive: bool = True, transversal_rewrite: bool = False
+    mt: ir.Method,
+    interactive: bool = True,
+    transversal_rewrite: bool = False,
+    animated: bool = False,
 ):
     """Compile a squin kernel to moves and visualize the program.
 
@@ -69,6 +72,7 @@ def compile_squin_to_move_and_visualize(
         mt (ir.Method): The Squin kernel to compile.
         interactive (bool, optional): Whether to display the visualization interactively. Defaults to True.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
+        animated: (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
     """
     # Compile to move dialect
     mt = compile_squin_to_move(mt, transversal_rewrite)
@@ -79,7 +83,12 @@ def compile_squin_to_move_and_visualize(
         arch_spec = logical.get_arch_spec()
         marker = "s"
 
-    visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker=marker)
+    if animated:
+        visualize.animated_debugger(
+            mt, arch_spec, interactive=interactive, atom_marker=marker
+        )
+    else:
+        visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker=marker)
 
 
 def compile_to_physical_squin_noise_model(
