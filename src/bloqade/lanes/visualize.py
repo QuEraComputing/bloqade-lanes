@@ -15,12 +15,12 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import ArchSpec
 
 
-class quera_color_code(str, Enum):
+class QuEraColorCode(str, Enum):
     # TODO: for python 3.11+, replace traits with StrEnum
-    purple = "#6437FF"
-    red = "#C2477F"
-    yellow = "#EADD08"
-    aod_line_color = "#FFE8E9"
+    Purple = "#6437FF"
+    Red = "#C2477F"
+    Yellow = "#EADD08"
+    AodLineColor = "#FFE8E9"
 
 
 @dataclass
@@ -35,8 +35,8 @@ class PlotParameters:
     global_r_color: str = "tab:blue"
     global_rz_color: str = "tab:green"
     cz_color: str = "tab:red"
-    aod_line_color: str = quera_color_code.aod_line_color
-    atom_color: str = quera_color_code.purple
+    aod_line_color: str = QuEraColorCode.AodLineColor
+    atom_color: str = QuEraColorCode.Purple
     aod_line_style: str = "dashed"
 
     @property
@@ -80,7 +80,7 @@ class PlotParameters:
     @property
     def aod_marker_args(self) -> dict:
         return {
-            "color": quera_color_code.red,
+            "color": QuEraColorCode.Red,
             "marker": self.aod_marker,
             "s": self.scale * 260,
             "linewidth": np.sqrt(self.scale),
@@ -319,10 +319,10 @@ class StateArtist:
         self.ax.scatter(x_pos, y_pos, color=color, **self.plot_params.gate_spot_args)
 
     def show_local_r(self, stmt: move.LocalR):
-        self._show_local(stmt, color="blue")
+        self._show_local(stmt, color=self.plot_params.local_r_color)
 
     def show_local_rz(self, stmt: move.LocalRz):
-        self._show_local(stmt, color="green")
+        self._show_local(stmt, color=self.plot_params.local_rz_color)
 
     def _show_global(self, stmt: move.GlobalR | move.GlobalRz, color: str):
         x_min, x_max = self.arch_spec.x_bounds
@@ -344,10 +344,10 @@ class StateArtist:
         )
 
     def show_global_r(self, stmt: move.GlobalR):
-        self._show_global(stmt, color="blue")
+        self._show_global(stmt, color=self.plot_params.global_r_color)
 
     def show_global_rz(self, stmt: move.GlobalRz):
-        self._show_global(stmt, color="green")
+        self._show_global(stmt, color=self.plot_params.global_rz_color)
 
     def show_cz(self, stmt: move.CZ):
         words = tuple(
@@ -372,7 +372,7 @@ class StateArtist:
             [x_min - 10, x_max + 10],
             [y_min, y_min],
             [y_max, y_max],
-            color="red",
+            color=self.plot_params.cz_color,
             alpha=0.3,
         )
 
@@ -411,7 +411,7 @@ def get_state_artist(
 
 
 def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
-    artist = get_state_artist(arch_spec, ax)
+    artist = get_state_artist(arch_spec, ax, atom_marker)
 
     frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
 
@@ -442,9 +442,17 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         stmt_str = stmt_str + ")"
         return stmt_str
 
+    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
+
     def draw(step_index: int):
         if len(steps) == 0:
             return
+
+        stmt, _ = steps[step_index]
+        ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_aspect("equal", adjustable="box")
         stmt, curr_state = steps[step_index]
         artist.show_slm(stmt, atom_marker)
 
@@ -452,11 +460,6 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         visualize_fn(stmt)
         artist.draw_atoms(curr_state)
         artist.draw_moves(curr_state)
-
-        ax.set_title(f"Step {step_index+1} / {len(steps)}")
-        ax.text(
-            0.5, 1.01, stmt_text(stmt), ha="center", va="bottom", transform=ax.transAxes
-        )
 
         plt.draw()
 
@@ -602,7 +605,7 @@ def render_generator(
 
         move_renderer = artist.move_renderer(curr_state, speed=2.0)
         if move_renderer is not None:
-            operation_time = min(5.0, move_renderer.total_time)
+            operation_time = min(5.0, max(1.0, move_renderer.total_time))
             total_frames = int(operation_time * fps)
 
             def _move_renderer(ani_step_index: int):

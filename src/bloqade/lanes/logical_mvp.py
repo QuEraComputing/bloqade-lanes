@@ -72,7 +72,7 @@ def compile_squin_to_move_and_visualize(
         mt (ir.Method): The Squin kernel to compile.
         interactive (bool, optional): Whether to display the visualization interactively. Defaults to True.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
-        animated: bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
+        animated: (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
     """
     # Compile to move dialect
     mt = compile_squin_to_move(mt, transversal_rewrite)
