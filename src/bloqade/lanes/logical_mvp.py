@@ -13,7 +13,7 @@ from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.upstream import always_merge_heuristic, squin_to_move
+from bloqade.lanes.upstream import squin_to_move
 
 
 def transversal_rewrites(mt: ir.Method):
