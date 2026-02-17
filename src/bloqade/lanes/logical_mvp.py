@@ -8,11 +8,12 @@ from bloqade.lanes import visualize
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.upstream import always_merge_heuristic, squin_to_move
 
 
 def transversal_rewrites(mt: ir.Method):
@@ -51,8 +52,9 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
     mt = squin_to_move(
         mt,
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
-        placement_strategy=fixed.LogicalPlacementStrategy(),
+        placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_palindrome_moves=True,
+        merge_heuristic=always_merge_heuristic,
     )
     if transversal_rewrite:
         mt = transversal_rewrites(mt)

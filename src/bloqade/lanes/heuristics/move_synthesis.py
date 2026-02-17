@@ -136,3 +136,27 @@ def _compute_move_layers_two_words(
 
 # Public API: implementation is 2-word only for the time being
 compute_move_layers = _compute_move_layers_two_words
+
+
+def move_to_entangle(
+    arch_spec: layout.ArchSpec,
+    state_before: ConcreteState,
+    state_after: ConcreteState,
+) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
+    """Synthesize move layers from current layout to CZ entangling layout."""
+    return state_after, compute_move_layers(arch_spec, state_before, state_after)
+
+
+def move_to_left(
+    arch_spec: layout.ArchSpec,
+    state_before: ConcreteState,
+    state_after: ConcreteState,
+) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
+    """Synthesize move layers from CZ layout to post-CZ return layout."""
+    # This uses reverse lanes for a non-existent CZ to derive the return moves.
+    forward_layers = compute_move_layers(arch_spec, state_after, state_before)
+    reverse_layers = tuple(
+        tuple(lane.reverse() for lane in move_lanes[::-1])
+        for move_lanes in forward_layers[::-1]
+    )
+    return state_after, reverse_layers
