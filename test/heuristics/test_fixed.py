@@ -3,7 +3,13 @@ import pytest
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics.logical_placement import (
+    LogicalPlacementStrategy,
+    LogicalPlacementStrategyNoHome,
+)
+from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 from bloqade.lanes.layout.encoding import (
     Direction,
     LocationAddress,
@@ -292,13 +298,23 @@ def test_fixed_cz_placement(
     controls: tuple[int, ...],
     state_after: AtomState,
 ):
-    placement_strategy = fixed.LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy()
     state_result = placement_strategy.cz_placements(state_before, controls, targets)
-    assert state_result == state_after
+    if not isinstance(state_before, ConcreteState) or not isinstance(
+        state_after, ExecuteCZ
+    ):
+        assert state_result == state_after
+        return
+
+    assert isinstance(state_result, ExecuteCZ)
+    assert state_result.active_cz_zones == state_after.active_cz_zones
+    assert state_result.layout == state_after.layout
+    assert state_result.get_move_layers() == state_after.move_layers
+    assert state_result.move_count == state_after.move_count
 
 
 def test_fixed_sq_placement():
-    placement_strategy = fixed.LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy()
     assert AtomState.top() == placement_strategy.sq_placements(
         AtomState.top(), (0, 1, 2)
     )
@@ -319,7 +335,7 @@ def test_fixed_sq_placement():
 
 
 def test_fixed_invalid_initial_layout_1():
-    placement_strategy = fixed.LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy()
     layout = (
         LocationAddress(0, 0),
         LocationAddress(0, 1),
@@ -331,7 +347,7 @@ def test_fixed_invalid_initial_layout_1():
 
 
 def test_fixed_invalid_initial_layout_2():
-    placement_strategy = fixed.LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy()
     layout = (
         LocationAddress(0, 0),
         LocationAddress(1, 0),
@@ -378,7 +394,7 @@ def test_move_scheduler_cz():
         tuple(0 for _ in range(10)),
     )
 
-    placement = fixed.LogicalPlacementStrategy()
+    placement = LogicalPlacementStrategy()
     controls = (0, 1, 4)
     targets = (5, 6, 7)
 
@@ -410,3 +426,105 @@ def test_move_scheduler_cz():
             ),
         ),
     )
+
+
+def test_nohome_choose_return_layout():
+    placement = LogicalPlacementStrategyNoHome()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(1, 5),
+            LocationAddress(0, 1),
+        ),
+        move_count=(3, 4),
+    )
+    mid_state, left_move_layers = placement.choose_return_layout(
+        state_before, controls=(0,), targets=(1,)
+    )
+    assert mid_state.layout == (
+        LocationAddress(1, 0),
+        LocationAddress(0, 1),
+    )
+    assert mid_state.move_count == (4, 4)
+    _, expected_left_move_layers = move_to_left(
+        get_arch_spec(),
+        state_before,
+        mid_state,
+    )
+    assert left_move_layers == expected_left_move_layers
+
+
+def test_nohome_choose_return_layout_duplicate_collision():
+    placement = LogicalPlacementStrategyNoHome()
+    state_before = ConcreteState(
+        occupied=frozenset(
+            {
+                LocationAddress(0, 1),
+                LocationAddress(0, 2),
+                LocationAddress(0, 3),
+                LocationAddress(0, 4),
+                LocationAddress(1, 0),
+                LocationAddress(1, 1),
+                LocationAddress(1, 2),
+                LocationAddress(1, 3),
+                LocationAddress(1, 4),
+            }
+        ),
+        layout=(
+            LocationAddress(1, 5),
+            LocationAddress(0, 0),
+        ),
+        move_count=(0, 0),
+    )
+    with pytest.raises(ValueError, match="No empty left-column site"):
+        placement.choose_return_layout(state_before, controls=(0,), targets=(1,))
+
+
+def test_nohome_choose_return_layout_sequential_no_conflicts():
+    placement = LogicalPlacementStrategyNoHome()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 5),
+            LocationAddress(0, 6),
+            LocationAddress(1, 7),
+            LocationAddress(1, 8),
+        ),
+        move_count=(0, 0, 0, 0),
+    )
+    mid_state, _ = placement.choose_return_layout(
+        state_before, controls=(0, 1), targets=(2, 3)
+    )
+    assert mid_state.layout == (
+        LocationAddress(0, 0),
+        LocationAddress(0, 1),
+        LocationAddress(1, 2),
+        LocationAddress(1, 3),
+    )
+
+
+def test_nohome_cz_placements_combines_return_and_entangle_layers():
+    placement = LogicalPlacementStrategyNoHome()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(1, 5),
+            LocationAddress(0, 1),
+        ),
+        move_count=(0, 0),
+    )
+    result = placement.cz_placements(state_before, controls=(0,), targets=(1,))
+    assert isinstance(result, ExecuteCZ)
+    mid_state, left_move_layers = placement.choose_return_layout(
+        state_before, controls=(0,), targets=(1,)
+    )
+    entangle_move_layers = compute_move_layers(
+        get_arch_spec(),
+        mid_state,
+        ConcreteState(
+            occupied=mid_state.occupied,
+            layout=result.layout,
+            move_count=result.move_count,
+        ),
+    )
+    assert result.get_move_layers() == left_move_layers + entangle_move_layers

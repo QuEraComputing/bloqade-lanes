@@ -1,13 +1,28 @@
+import io
 import math
+from collections import Counter
 from typing import Any
 
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
+from bloqade.stim.emit.stim_str import EmitStimMain
+from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
+from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
-    compile_to_physical_stim_program,
+    transversal_rewrites,
+)
+from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.upstream import (
+    always_merge_heuristic,
+    default_merge_heuristic,
+    squin_to_move,
 )
 
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
@@ -47,482 +62,60 @@ def main():
         set_observable(measurements[i], i)
 
 
-expected_result = """# Begin Steane7 Initialize
-I[U3(theta=0.3041*pi, phi=0.25*pi, lambda=0.0*pi)] 6
-SQRT_Y_DAG 0 1 2 3 4 5
-CZ 1 2 3 4 5 6
-SQRT_Y 6
-CZ 0 3 2 5 4 6
-SQRT_Y 2 3 4 5 6
-CZ 0 1 2 3 4 5
-SQRT_Y 1 2 4
-# End Steane7 Initialize
-# Begin Steane7 Initialize
-I[U3(theta=0.3041*pi, phi=0.25*pi, lambda=0.0*pi)] 13
-SQRT_Y_DAG 7 8 9 10 11 12
-CZ 8 9 10 11 12 13
-SQRT_Y 13
-CZ 7 10 9 12 11 13
-SQRT_Y 9 10 11 12 13
-CZ 7 8 9 10 11 12
-SQRT_Y 8 9 11
-# End Steane7 Initialize
-# Begin Steane7 Initialize
-I[U3(theta=0.3041*pi, phi=0.25*pi, lambda=0.0*pi)] 20
-SQRT_Y_DAG 14 15 16 17 18 19
-CZ 15 16 17 18 19 20
-SQRT_Y 20
-CZ 14 17 16 19 18 20
-SQRT_Y 16 17 18 19 20
-CZ 14 15 16 17 18 19
-SQRT_Y 15 16 18
-# End Steane7 Initialize
-# Begin Steane7 Initialize
-I[U3(theta=0.3041*pi, phi=0.25*pi, lambda=0.0*pi)] 27
-SQRT_Y_DAG 21 22 23 24 25 26
-CZ 22 23 24 25 26 27
-SQRT_Y 27
-CZ 21 24 23 26 25 27
-SQRT_Y 23 24 25 26 27
-CZ 21 22 23 24 25 26
-SQRT_Y 22 23 25
-# End Steane7 Initialize
-# Begin Steane7 Initialize
-I[U3(theta=0.3041*pi, phi=0.25*pi, lambda=0.0*pi)] 34
-SQRT_Y_DAG 28 29 30 31 32 33
-CZ 29 30 31 32 33 34
-SQRT_Y 34
-CZ 28 31 30 33 32 34
-SQRT_Y 30 31 32 33 34
-CZ 28 29 30 31 32 33
-SQRT_Y 29 30 32
-# End Steane7 Initialize
-SQRT_X_DAG 0 1 2 3 4 5 6 7 8 9 10 11 12 13 28 29 30 31 32 33 34
-# Local Gate Noise
-PAULI_CHANNEL_1(0.00041020, 0.00041020, 0.00041120) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 28 29 30 31 32 33 34
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 0
-I_ERROR[loss](0.00000000) 0
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 1
-I_ERROR[loss](0.00000000) 1
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 2
-I_ERROR[loss](0.00000000) 2
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 3
-I_ERROR[loss](0.00000000) 3
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 4
-I_ERROR[loss](0.00000000) 4
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 5
-I_ERROR[loss](0.00000000) 5
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 6
-I_ERROR[loss](0.00000000) 6
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 14
-I_ERROR[loss](0.00000000) 14
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 15
-I_ERROR[loss](0.00000000) 15
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 16
-I_ERROR[loss](0.00000000) 16
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 17
-I_ERROR[loss](0.00000000) 17
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 18
-I_ERROR[loss](0.00000000) 18
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 19
-I_ERROR[loss](0.00000000) 19
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 20
-I_ERROR[loss](0.00000000) 20
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-CZ 0 7 1 8 2 9 3 10 4 11 5 12 6 13 14 21 15 22 16 23 17 24 18 25 19 26 20 27
-# CZ Paired Noise
-PAULI_CHANNEL_2(0.00022747, 0.00022747, 0.00151278, 0.00022747, 0.00014286, 0.00014286, 0.00014308, 0.00022747, 0.00014286, 0.00014286, 0.00014308, 0.00151278, 0.00014308, 0.00014308, 0.00142814) 0 7 1 8 2 9 3 10 4 11 5 12 6 13 14 21 15 22 16 23 17 24 18 25 19 26 20 27
-I_ERROR[correlated_loss:0](0.00000000) 0 7
-I_ERROR[correlated_loss:1](0.00000000) 1 8
-I_ERROR[correlated_loss:2](0.00000000) 2 9
-I_ERROR[correlated_loss:3](0.00000000) 3 10
-I_ERROR[correlated_loss:4](0.00000000) 4 11
-I_ERROR[correlated_loss:5](0.00000000) 5 12
-I_ERROR[correlated_loss:6](0.00000000) 6 13
-I_ERROR[correlated_loss:7](0.00000000) 14 21
-I_ERROR[correlated_loss:8](0.00000000) 15 22
-I_ERROR[correlated_loss:9](0.00000000) 16 23
-I_ERROR[correlated_loss:10](0.00000000) 17 24
-I_ERROR[correlated_loss:11](0.00000000) 18 25
-I_ERROR[correlated_loss:12](0.00000000) 19 26
-I_ERROR[correlated_loss:13](0.00000000) 20 27
-# CZ Unpaired Noise
-PAULI_CHANNEL_1(0.00051490, 0.00051490, 0.00218500) 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 28 29 30 31 32 33 34
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 14
-I_ERROR[loss](0.00000000) 14
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 15
-I_ERROR[loss](0.00000000) 15
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 16
-I_ERROR[loss](0.00000000) 16
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 17
-I_ERROR[loss](0.00000000) 17
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 18
-I_ERROR[loss](0.00000000) 18
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 19
-I_ERROR[loss](0.00000000) 19
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 20
-I_ERROR[loss](0.00000000) 20
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 0
-I_ERROR[loss](0.00000000) 0
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 1
-I_ERROR[loss](0.00000000) 1
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 2
-I_ERROR[loss](0.00000000) 2
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 3
-I_ERROR[loss](0.00000000) 3
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 4
-I_ERROR[loss](0.00000000) 4
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 5
-I_ERROR[loss](0.00000000) 5
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 6
-I_ERROR[loss](0.00000000) 6
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-SQRT_Y_DAG 0 1 2 3 4 5 6 21 22 23 24 25 26 27
-# Local Gate Noise
-PAULI_CHANNEL_1(0.00041020, 0.00041020, 0.00041120) 0 1 2 3 4 5 6 21 22 23 24 25 26 27
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 21 22 23 24 25 26 27
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 14
-I_ERROR[loss](0.00000000) 14
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 15
-I_ERROR[loss](0.00000000) 15
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 16
-I_ERROR[loss](0.00000000) 16
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 17
-I_ERROR[loss](0.00000000) 17
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 18
-I_ERROR[loss](0.00000000) 18
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 19
-I_ERROR[loss](0.00000000) 19
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 20
-I_ERROR[loss](0.00000000) 20
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 28
-I_ERROR[loss](0.00000000) 28
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 29
-I_ERROR[loss](0.00000000) 29
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 30
-I_ERROR[loss](0.00000000) 30
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 31
-I_ERROR[loss](0.00000000) 31
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 32
-I_ERROR[loss](0.00000000) 32
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 33
-I_ERROR[loss](0.00000000) 33
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 34
-I_ERROR[loss](0.00000000) 34
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-CZ 0 14 1 15 2 16 3 17 4 18 5 19 6 20 21 28 22 29 23 30 24 31 25 32 26 33 27 34
-# CZ Paired Noise
-PAULI_CHANNEL_2(0.00022747, 0.00022747, 0.00151278, 0.00022747, 0.00014286, 0.00014286, 0.00014308, 0.00022747, 0.00014286, 0.00014286, 0.00014308, 0.00151278, 0.00014308, 0.00014308, 0.00142814) 0 14 1 15 2 16 3 17 4 18 5 19 6 20 21 28 22 29 23 30 24 31 25 32 26 33 27 34
-I_ERROR[correlated_loss:14](0.00000000) 0 14
-I_ERROR[correlated_loss:15](0.00000000) 1 15
-I_ERROR[correlated_loss:16](0.00000000) 2 16
-I_ERROR[correlated_loss:17](0.00000000) 3 17
-I_ERROR[correlated_loss:18](0.00000000) 4 18
-I_ERROR[correlated_loss:19](0.00000000) 5 19
-I_ERROR[correlated_loss:20](0.00000000) 6 20
-I_ERROR[correlated_loss:21](0.00000000) 21 28
-I_ERROR[correlated_loss:22](0.00000000) 22 29
-I_ERROR[correlated_loss:23](0.00000000) 23 30
-I_ERROR[correlated_loss:24](0.00000000) 24 31
-I_ERROR[correlated_loss:25](0.00000000) 25 32
-I_ERROR[correlated_loss:26](0.00000000) 26 33
-I_ERROR[correlated_loss:27](0.00000000) 27 34
-# CZ Unpaired Noise
-PAULI_CHANNEL_1(0.00051490, 0.00051490, 0.00218500) 7 8 9 10 11 12 13
-I_ERROR[loss](0.00000000) 7 8 9 10 11 12 13
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 28
-I_ERROR[loss](0.00000000) 28
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 29
-I_ERROR[loss](0.00000000) 29
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 30
-I_ERROR[loss](0.00000000) 30
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 31
-I_ERROR[loss](0.00000000) 31
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 32
-I_ERROR[loss](0.00000000) 32
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 33
-I_ERROR[loss](0.00000000) 33
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 34
-I_ERROR[loss](0.00000000) 34
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 14
-I_ERROR[loss](0.00000000) 14
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 15
-I_ERROR[loss](0.00000000) 15
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 16
-I_ERROR[loss](0.00000000) 16
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 17
-I_ERROR[loss](0.00000000) 17
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 18
-I_ERROR[loss](0.00000000) 18
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 19
-I_ERROR[loss](0.00000000) 19
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 20
-I_ERROR[loss](0.00000000) 20
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-SQRT_X 0 1 2 3 4 5 6
-# Local Gate Noise
-PAULI_CHANNEL_1(0.00041020, 0.00041020, 0.00041120) 0 1 2 3 4 5 6
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 28
-I_ERROR[loss](0.00000000) 28
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 29
-I_ERROR[loss](0.00000000) 29
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 30
-I_ERROR[loss](0.00000000) 30
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 31
-I_ERROR[loss](0.00000000) 31
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 32
-I_ERROR[loss](0.00000000) 32
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 33
-I_ERROR[loss](0.00000000) 33
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 34
-I_ERROR[loss](0.00000000) 34
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 21
-I_ERROR[loss](0.00000000) 21
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 22
-I_ERROR[loss](0.00000000) 22
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 23
-I_ERROR[loss](0.00000000) 23
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 24
-I_ERROR[loss](0.00000000) 24
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 25
-I_ERROR[loss](0.00000000) 25
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 26
-I_ERROR[loss](0.00000000) 26
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 27
-I_ERROR[loss](0.00000000) 27
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 28 29 30 31 32 33 34
-CZ 0 28 1 29 2 30 3 31 4 32 5 33 6 34 7 21 8 22 9 23 10 24 11 25 12 26 13 27
-# CZ Paired Noise
-PAULI_CHANNEL_2(0.00022747, 0.00022747, 0.00151278, 0.00022747, 0.00014286, 0.00014286, 0.00014308, 0.00022747, 0.00014286, 0.00014286, 0.00014308, 0.00151278, 0.00014308, 0.00014308, 0.00142814) 0 28 1 29 2 30 3 31 4 32 5 33 6 34 7 21 8 22 9 23 10 24 11 25 12 26 13 27
-I_ERROR[correlated_loss:28](0.00000000) 0 28
-I_ERROR[correlated_loss:29](0.00000000) 1 29
-I_ERROR[correlated_loss:30](0.00000000) 2 30
-I_ERROR[correlated_loss:31](0.00000000) 3 31
-I_ERROR[correlated_loss:32](0.00000000) 4 32
-I_ERROR[correlated_loss:33](0.00000000) 5 33
-I_ERROR[correlated_loss:34](0.00000000) 6 34
-I_ERROR[correlated_loss:35](0.00000000) 7 21
-I_ERROR[correlated_loss:36](0.00000000) 8 22
-I_ERROR[correlated_loss:37](0.00000000) 9 23
-I_ERROR[correlated_loss:38](0.00000000) 10 24
-I_ERROR[correlated_loss:39](0.00000000) 11 25
-I_ERROR[correlated_loss:40](0.00000000) 12 26
-I_ERROR[correlated_loss:41](0.00000000) 13 27
-# CZ Unpaired Noise
-PAULI_CHANNEL_1(0.00051490, 0.00051490, 0.00218500) 14 15 16 17 18 19 20
-I_ERROR[loss](0.00000000) 14 15 16 17 18 19 20
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 21
-I_ERROR[loss](0.00000000) 21
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 22
-I_ERROR[loss](0.00000000) 22
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 23
-I_ERROR[loss](0.00000000) 23
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 24
-I_ERROR[loss](0.00000000) 24
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 25
-I_ERROR[loss](0.00000000) 25
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 26
-I_ERROR[loss](0.00000000) 26
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 27
-I_ERROR[loss](0.00000000) 27
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 28 29 30 31 32 33 34
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 28
-I_ERROR[loss](0.00000000) 28
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 29
-I_ERROR[loss](0.00000000) 29
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 30
-I_ERROR[loss](0.00000000) 30
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 31
-I_ERROR[loss](0.00000000) 31
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 32
-I_ERROR[loss](0.00000000) 32
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 33
-I_ERROR[loss](0.00000000) 33
-# Lane Noise
-PAULI_CHANNEL_1(0.00080600, 0.00080600, 0.00245800) 34
-I_ERROR[loss](0.00000000) 34
-# Idle Noise
-PAULI_CHANNEL_1(0.00030660, 0.00030660, 0.00046390) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
-SQRT_Y 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-# Global Gate Noise
-PAULI_CHANNEL_1(0.00006500, 0.00006500, 0.00006500) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-I_ERROR[loss](0.00000000) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34
-MZ(0.00000000) 0
-MZ(0.00000000) 1
-MZ(0.00000000) 2
-MZ(0.00000000) 3
-MZ(0.00000000) 4
-MZ(0.00000000) 5
-MZ(0.00000000) 6
-MZ(0.00000000) 7
-MZ(0.00000000) 8
-MZ(0.00000000) 9
-MZ(0.00000000) 10
-MZ(0.00000000) 11
-MZ(0.00000000) 12
-MZ(0.00000000) 13
-MZ(0.00000000) 14
-MZ(0.00000000) 15
-MZ(0.00000000) 16
-MZ(0.00000000) 17
-MZ(0.00000000) 18
-MZ(0.00000000) 19
-MZ(0.00000000) 20
-MZ(0.00000000) 21
-MZ(0.00000000) 22
-MZ(0.00000000) 23
-MZ(0.00000000) 24
-MZ(0.00000000) 25
-MZ(0.00000000) 26
-MZ(0.00000000) 27
-MZ(0.00000000) 28
-MZ(0.00000000) 29
-MZ(0.00000000) 30
-MZ(0.00000000) 31
-MZ(0.00000000) 32
-MZ(0.00000000) 33
-MZ(0.00000000) 34
-DETECTOR(0, 0) rec[-35] rec[-34] rec[-33] rec[-32]
-DETECTOR(0, 1) rec[-34] rec[-33] rec[-31] rec[-30]
-DETECTOR(0, 2) rec[-33] rec[-32] rec[-31] rec[-29]
-OBSERVABLE_INCLUDE(0) rec[-35] rec[-34] rec[-30]
-DETECTOR(0, 0) rec[-28] rec[-27] rec[-26] rec[-25]
-DETECTOR(0, 1) rec[-27] rec[-26] rec[-24] rec[-23]
-DETECTOR(0, 2) rec[-26] rec[-25] rec[-24] rec[-22]
-OBSERVABLE_INCLUDE(1) rec[-28] rec[-27] rec[-23]
-DETECTOR(0, 0) rec[-21] rec[-20] rec[-19] rec[-18]
-DETECTOR(0, 1) rec[-20] rec[-19] rec[-17] rec[-16]
-DETECTOR(0, 2) rec[-19] rec[-18] rec[-17] rec[-15]
-OBSERVABLE_INCLUDE(2) rec[-21] rec[-20] rec[-16]
-DETECTOR(0, 0) rec[-14] rec[-13] rec[-12] rec[-11]
-DETECTOR(0, 1) rec[-13] rec[-12] rec[-10] rec[-9]
-DETECTOR(0, 2) rec[-12] rec[-11] rec[-10] rec[-8]
-OBSERVABLE_INCLUDE(3) rec[-14] rec[-13] rec[-9]
-DETECTOR(0, 0) rec[-7] rec[-6] rec[-5] rec[-4]
-DETECTOR(0, 1) rec[-6] rec[-5] rec[-3] rec[-2]
-DETECTOR(0, 2) rec[-5] rec[-4] rec[-3] rec[-1]
-OBSERVABLE_INCLUDE(4) rec[-7] rec[-6] rec[-2]"""
+def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
+    noise_model = generate_simple_noise_model()
+    move_mt = squin_to_move(
+        mt,
+        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        placement_strategy=LogicalPlacementStrategyNoHome(),
+        insert_palindrome_moves=True,
+        merge_heuristic=merge_heuristic,
+    )
+    move_mt = transversal_rewrites(move_mt)
+    transformer = MoveToSquin(
+        arch_spec=generate_arch_hypercube(4),
+        logical_initialization=logical.steane7_initialize,
+        noise_model=noise_model,
+        aggressive_unroll=False,
+    )
+    physical_squin = transformer.emit(move_mt)
+    stim_kernel = squin_to_stim(physical_squin)
+    buf = io.StringIO()
+    emit = EmitStimMain(dialects=stim_kernel.dialects, io=buf)
+    emit.initialize()
+    emit.run(node=stim_kernel)
+    return buf.getvalue().strip()
 
 
-def test_stim_output():
-    result = compile_to_physical_stim_program(main)
+def _normalized_gate_ops(stim_program: str) -> Counter[str]:
+    """Remove all comments and noise operations (PAULI_CHANNEL_* and I_ERROR[...]) from the stim program."""
+    ops: list[str] = []
+    for raw_line in stim_program.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if " #" in line:
+            line = line.split(" #", 1)[0].rstrip()
+        normalized = " ".join(line.split())
+        if normalized:
+            if normalized.startswith("PAULI_CHANNEL_") or normalized.startswith(
+                "I_ERROR["
+            ):
+                continue
+            ops.append(normalized)
+    return Counter(ops)
 
-    result_lines = result.split("\n")
-    expected_result_lines = expected_result.split("\n")
 
-    has_diff = False
+def test_default_and_always_merge_have_same_operations():
+    default_program = _compile_to_stim_with_merge_heuristic(
+        main, default_merge_heuristic
+    )
+    always_program = _compile_to_stim_with_merge_heuristic(main, always_merge_heuristic)
 
-    for result_line, expected_result_line in zip(result_lines, expected_result_lines):
-        if result_line != expected_result_line:
-            print(result_line, expected_result_line)
-            has_diff = True
+    default_ops = _normalized_gate_ops(default_program)
+    always_ops = _normalized_gate_ops(always_program)
+    print(default_program)
+    print("--------------------------------")
+    print(always_program)
 
-    assert not has_diff
+    assert default_ops == always_ops
