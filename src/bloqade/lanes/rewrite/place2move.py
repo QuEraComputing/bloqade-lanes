@@ -43,7 +43,7 @@ class InsertMoves(RewriteRule):
 def palindrome_move_layers(
     placement_analysis: dict[ir.SSAValue, placement.AtomState],
     node: place.StaticPlacement,
-) -> list[tuple[LaneAddress, ...]]:
+) -> tuple[tuple[LaneAddress, ...], ...] | None:
     move_layers: list[tuple[LaneAddress, ...]] = []
     for stmt in node.body.walk():
         if not isinstance(stmt, move.Move):
@@ -51,7 +51,7 @@ def palindrome_move_layers(
         reversed_layer = tuple(lane.reverse() for lane in stmt.lanes)
         move_layers.append(reversed_layer)
 
-    return list(reversed(move_layers))
+    return tuple(reversed(move_layers))
 
 
 @dataclass
@@ -68,25 +68,28 @@ class InsertPalindromeMoves(RewriteRule):
     )
     revert_initial_position: Callable[
         [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
-        list[tuple[LaneAddress, ...]],
+        tuple[tuple[LaneAddress, ...], ...] | None,
     ] = palindrome_move_layers
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, place.StaticPlacement):
             return RewriteResult()
 
-        yield_stmt = node.body.blocks[0].last_stmt
-        assert isinstance(yield_stmt, place.Yield)
+        last_stmt = node.body.blocks[0].last_stmt
+        if last_stmt is None:
+            return RewriteResult()
 
         move_layers = self.revert_initial_position(self.placement_analysis, node)
 
-        (current_state := move.Load()).insert_before(yield_stmt)
+        if move_layers is None:
+            return RewriteResult()
+
+        (current_state := move.Load()).insert_before(last_stmt)
         for move_layer in move_layers:
             (
                 current_state := move.Move(current_state.result, lanes=move_layer)
-            ).insert_before(yield_stmt)
-
-        (move.Store(current_state.result)).insert_before(yield_stmt)
+            ).insert_before(last_stmt)
+        (move.Store(current_state.result)).insert_before(last_stmt)
 
         return RewriteResult(has_done_something=True)
 
