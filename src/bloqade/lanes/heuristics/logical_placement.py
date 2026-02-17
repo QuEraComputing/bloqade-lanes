@@ -181,18 +181,6 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
 
-    def desired_cz_layout(
-        self,
-        state: ConcreteState,
-        controls: tuple[int, ...],
-        targets: tuple[int, ...],
-    ) -> ConcreteState:
-        start_word_id = self._word_balance(state, controls, targets)
-        moves: list[MoveOp] = []
-        for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
-            moves.append(self._pick_move(state, moves, start_word_id, c, t))
-        return self._update_positions(state, moves)
-
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
     ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
