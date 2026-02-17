@@ -3,6 +3,7 @@ import math
 from collections import Counter
 from typing import Any
 
+import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from bloqade.stim.emit.stim_str import EmitStimMain
@@ -12,9 +13,11 @@ from kirin.dialects import ilist
 from bloqade import qubit, squin, types
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
+    compile_squin_to_move,
     transversal_rewrites,
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
@@ -24,6 +27,7 @@ from bloqade.lanes.upstream import (
     default_merge_heuristic,
     squin_to_move,
 )
+from bloqade.lanes.utils import check_circuit
 
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
@@ -119,3 +123,25 @@ def test_default_and_always_merge_have_same_operations():
     print(always_program)
 
     assert default_ops == always_ops
+
+
+@pytest.mark.xfail
+def test_logical_compilation():
+    from bloqade.rewrite.passes import AggressiveUnroll
+
+    @kernel
+    def main():
+        reg = squin.qalloc(2)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+
+    logical_move = compile_squin_to_move(main)
+
+    decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
+
+    AggressiveUnroll(main.dialects).fixpoint(main)
+
+    decompiled_squin.print()
+    main.print()
+
+    assert check_circuit(main, decompiled_squin)
