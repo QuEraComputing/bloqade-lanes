@@ -16,6 +16,8 @@ def check_circuit(
             any arguments and return None.
         other_squin_method (ir.Method[[], None]): The second squin method. This method should not take
             any arguments and return None.
+        atol (float, optional): Absolute tolerance for state vector comparison. Defaults to 1.0e-5.
+        rtol (float, optional): Relative tolerance for state vector comparison. Defaults to 1
 
     Returns:
         bool: True if the methods are equivalent, False otherwise.
@@ -28,7 +30,12 @@ def check_circuit(
     state_vector = np.asarray(simulator.state_vector(squin_method))
     other_state_vector = np.asarray(simulator.state_vector(other_squin_method))
 
-    state_vector *= np.exp(-1j * np.angle(state_vector[0]))
-    other_state_vector *= np.exp(-1j * np.angle(other_state_vector[0]))
+    i = np.argmax(np.abs(state_vector))
+    j = np.argmax(np.abs(other_state_vector))
+    state_vector *= np.exp(-1j * np.angle(state_vector[i]))
+    other_state_vector *= np.exp(-1j * np.angle(other_state_vector[j]))
+
+    if state_vector.shape != other_state_vector.shape:
+        return False
 
     return np.allclose(state_vector, other_state_vector, atol=atol, rtol=rtol)
