@@ -21,7 +21,7 @@ def check_circuit(
         bool: True if the methods are equivalent, False otherwise.
 
     Note:
-        The methods should not perform any measurements. otherwise, the state vectors may not be comparable.
+        The methods should not perform any measurements. Otherwise, the state vectors may not be comparable.
     """
 
     simulator = StackMemorySimulator()
@@ -30,7 +30,5 @@ def check_circuit(
 
     state_vector *= np.exp(-1j * np.angle(state_vector[0]))
     other_state_vector *= np.exp(-1j * np.angle(other_state_vector[0]))
-    print(state_vector)
-    print(other_state_vector)
-    print(np.abs(np.vdot(state_vector, other_state_vector)))
+
     return np.allclose(state_vector, other_state_vector, atol=atol, rtol=rtol)
