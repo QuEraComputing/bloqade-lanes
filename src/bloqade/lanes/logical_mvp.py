@@ -54,7 +54,6 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_palindrome_moves=True,
-        merge_heuristic=always_merge_heuristic,
     )
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
