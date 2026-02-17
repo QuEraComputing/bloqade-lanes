@@ -15,36 +15,15 @@ from bloqade.gemini import logical as gemini_logical
 # %%
 from bloqade import squin
 
-# %%
-from bloqade.lanes.upstream import (  # noqa: E402; default_merge_heuristic,
-    NativeToPlace,
-    always_merge_heuristic,
-)
-
-# Option 1: use the default (merge only when both regions have no CZ gates).
-# merge_heuristic = default_merge_heuristic
-MERGE_HEURISTIC = always_merge_heuristic
-
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
 
 
-# @kernel
-# def example_kernel():
-#     reg = squin.qalloc(2)
-#     squin.cz(reg[0], reg[1])
-#     squin.cz()
-
-#     gemini_logical.terminal_measure(reg)
-
-
 @kernel
 def example_kernel():
-    reg = squin.qalloc(4)
-    squin.cz(reg[0], reg[1])
-    squin.cz(reg[0], reg[1])
-    squin.cz(reg[3], reg[2])
-    squin.cz(reg[3], reg[2])
+    reg = squin.qalloc(2)
+
+    squin.cx(reg[0], reg[1])
 
     gemini_logical.terminal_measure(reg)
 
@@ -59,7 +38,7 @@ example_kernel.print()
 # %%
 from bloqade.native.upstream import SquinToNative  # noqa: E402
 
-example_kernel = SquinToNative().emit(example_kernel, no_raise=False)
+example_kernel = SquinToNative().emit(example_kernel)
 example_kernel.print()
 
 # %% [markdown]
@@ -72,24 +51,11 @@ example_kernel.print()
 # placement and routing analyses. Another important aspect of the insert special qubit allocation
 # statements that are used to indicate the logical state prepration of the qubits. Given the nature
 # of how the current move synthesis works the call graph is flattened out into a single kernel.
-#
-# You can control how adjacent placement regions are merged via a **merge heuristic**: a function
-# `(region_a, region_b) -> bool`. Return `True` to merge the two regions into one, `False` to keep
-# them separate. The default only merges regions that contain no two-qubit gates (only R, Rz, Yield).
-# You can pass a custom heuristic to `NativeToPlace(merge_heuristic=...)`.
 
+# %%
+from bloqade.lanes.upstream import NativeToPlace  # noqa: E402
 
-# Option 2: define a custom heuristic. Example: always merge adjacent regions.
-# def merge_heuristic(region_a, region_b):
-#     return True
-
-# Option 3: never merge (each gate/region stays separate).
-# def merge_heuristic(region_a, region_b):
-#     return False
-
-example_kernel = NativeToPlace(merge_heuristic=MERGE_HEURISTIC).emit(
-    example_kernel, no_raise=False
-)
+example_kernel = NativeToPlace().emit(example_kernel)
 example_kernel.print()
 
 # %% [markdown]
@@ -106,20 +72,15 @@ from bloqade.analysis import address  # noqa: E402
 
 from bloqade.lanes.analysis import layout  # noqa: E402
 from bloqade.lanes.heuristics import fixed  # noqa: E402
-from bloqade.lanes.heuristics.logical_placement import (  # noqa: E402
-    LogicalPlacementStrategyNoHome,
-)
 
-address_analysis = address.AddressAnalysis(example_kernel.dialects)
-address_frame, _ = address_analysis.run(example_kernel)
+address_frame, _ = address.AddressAnalysis(example_kernel.dialects).run(example_kernel)
 
-# Use the actual qubit count from the address analysis (not a hardcoded size).
-all_qubits = tuple(range(address_analysis.next_address))
+
 layout_analysis = layout.LayoutAnalysis(
     example_kernel.dialects,
     fixed.LogicalLayoutHeuristic(),
     address_frame.entries,
-    all_qubits,
+    tuple(range(2)),
 )
 
 initial_layout = layout_analysis.get_layout(example_kernel)
@@ -135,12 +96,11 @@ logical_arch = get_arch_spec()
 
 ax = logical_arch.plot(show_words=(0, 1))
 
-positions = [
-    logical_arch.get_position(initial_layout[i]) for i in range(len(initial_layout))
-]
+pos_0 = logical_arch.get_position(initial_layout[0])
+pos_1 = logical_arch.get_position(initial_layout[1])
 ax.scatter(
-    [p[0] for p in positions],
-    [p[1] for p in positions],
+    [pos_0[0], pos_1[0]],
+    [pos_0[1], pos_1[1]],
     s=200,
     label="Initial Placement",
 )
@@ -157,7 +117,7 @@ placement_analysis = placement.PlacementAnalysis(
     example_kernel.dialects,
     initial_layout,
     address_frame.entries,
-    LogicalPlacementStrategyNoHome(),
+    fixed.LogicalPlacementStrategy(),
 )
 
 placement_frame, _ = placement_analysis.run(example_kernel)
@@ -179,9 +139,9 @@ from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
 
 example_kernel = PlaceToMove(
     fixed.LogicalLayoutHeuristic(),
-    LogicalPlacementStrategyNoHome(),
-    False,
-).emit(example_kernel, no_raise=False)
+    fixed.LogicalPlacementStrategy(),
+    True,
+).emit(example_kernel)
 
 example_kernel.print()
 
@@ -252,7 +212,7 @@ example_kernel = MoveToSquin(
     arch_spec=physical_arch,
     logical_initialization=steane7_initialize,
     noise_model=noise_model,
-).emit(example_kernel, no_raise=False)
+).emit(example_kernel)
 
 example_kernel.print()
 
