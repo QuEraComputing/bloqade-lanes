@@ -1,14 +1,19 @@
 import math
 from typing import Any
 
+import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
+from bloqade.lanes.arch.gemini.logical.spec import get_arch_spec
 from bloqade.lanes.logical_mvp import (
+    compile_squin_to_move,
     compile_to_physical_stim_program,
 )
+from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.utils import check_circuit
 
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
@@ -526,3 +531,25 @@ def test_stim_output():
             has_diff = True
 
     assert not has_diff
+
+
+@pytest.mark.xfail
+def test_logical_compilation():
+    from bloqade.rewrite.passes import AggressiveUnroll
+
+    @kernel
+    def main():
+        reg = squin.qalloc(2)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+
+    logical_move = compile_squin_to_move(main)
+
+    decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
+
+    AggressiveUnroll(main.dialects).fixpoint(main)
+
+    decompiled_squin.print()
+    main.print()
+
+    assert check_circuit(main, decompiled_squin)
