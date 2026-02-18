@@ -1,3 +1,4 @@
+from bloqade.decoders.dialects import annotate
 from kirin import interp
 from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func, ilist, py
@@ -11,12 +12,36 @@ from .analysis import (
 from .lattice import (
     AtomState,
     Bottom,
+    DetectorResult,
     IListResult,
     MeasureFuture,
     MeasureResult,
     MoveExecution,
+    ObservableResult,
+    TupleResult,
     Value,
 )
+
+
+@annotate.dialect.register(key="atom")
+class Annotate(interp.MethodTable):
+    @interp.impl(annotate.stmts.SetDetector)
+    def set_detector(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: annotate.stmts.SetDetector,
+    ):
+        return (DetectorResult(frame.get(stmt.measurements)),)
+
+    @interp.impl(annotate.stmts.SetObservable)
+    def set_observable(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: annotate.stmts.SetObservable,
+    ):
+        return (ObservableResult(frame.get(stmt.measurements)),)
 
 
 @move.dialect.register(key="atom")
@@ -169,7 +194,10 @@ class PyIndexingMethods(interp.MethodTable):
         obj = frame.get(stmt.obj)
         index = frame.get(stmt.index)
         match (obj, index):
-            case (IListResult(values), Value(i)) if isinstance(i, int):
+            case (IListResult(values), Value(i)) | (
+                TupleResult(values),
+                Value(i),
+            ) if isinstance(i, int):
                 try:
                     return (values[i],)
                 except IndexError:
@@ -189,6 +217,19 @@ class IListMethods(interp.MethodTable):
         stmt: ilist.New,
     ):
         return (IListResult(frame.get_values(stmt.values)),)
+
+
+@py.tuple.dialect.register(key="atom")
+class TupleMethods(interp.MethodTable):
+
+    @interp.impl(py.tuple.New)
+    def ilist_new(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: ilist.New,
+    ):
+        return (TupleResult(frame.get_values(stmt.args)),)
 
 
 @func.dialect.register(key="atom")

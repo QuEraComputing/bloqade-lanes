@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Sequence, TypeVar, cast
 
 import numpy as np
 from kirin import ir
@@ -10,6 +10,7 @@ from typing_extensions import Self
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
 
+from ._post_processing import constructor_function
 from .lattice import AtomState, MoveExecution
 
 
@@ -29,6 +30,9 @@ def _default_best_state_cost(state: AtomState) -> float:
         )
     )
     return 0.1 * np.mean(move_counts).astype(float) + np.std(move_counts).astype(float)
+
+
+RetType = TypeVar("RetType")
 
 
 @dataclass
@@ -56,3 +60,16 @@ class AtomInterpreter(Forward[MoveExecution]):
 
     def eval_fallback(self, frame: ForwardFrame[MoveExecution], node: ir.Statement):
         return tuple(MoveExecution.bottom() for _ in node.results)
+
+    def get_post_processing(self, method: ir.Method[..., RetType]):
+        _, output = self.run(method)
+
+        func = cast(Callable[[Sequence[bool]], RetType], constructor_function(output))
+
+        if func is None:
+            return None
+
+        def post_processing(measurement_results: Sequence[Sequence[bool]]):
+            yield from map(func, measurement_results)
+
+        return post_processing
