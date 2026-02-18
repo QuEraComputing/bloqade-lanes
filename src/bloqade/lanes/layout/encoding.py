@@ -9,7 +9,7 @@ from kirin.print import Printer
 if TYPE_CHECKING:
     from bloqade.lanes.layout.arch import ArchSpec
 
-USE_HEX_REPR = True
+USE_HEX_REPR = False
 
 
 class Direction(enum.IntEnum):

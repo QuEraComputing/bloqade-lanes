@@ -13,6 +13,8 @@ from .encoding import (
     WordLaneAddress,
 )
 
+from ..utils import no_none_elements_tuple
+
 
 @dataclass(frozen=True)
 class PathFinder:
@@ -88,7 +90,7 @@ class PathFinder:
                     self.end_points_cache[lane_addr] = (src_site, dst_site)
                     self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
-    def extract_lanes_from_path(self, path: list[int]):
+    def to_locations(self, path: list[int]):
         """Given a path as a list of node indices, extract the lane addresses."""
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
@@ -98,12 +100,7 @@ class PathFinder:
         self, start: LocationAddress, end: LocationAddress
     ) -> LaneAddress | None:
         """Get the LaneAddress connecting two LocationAddress sites."""
-        start_node = self.physical_address_map[start]
-        end_node = self.physical_address_map[end]
-        edge_data = self.site_graph.get_edge_data(start_node, end_node)
-        if edge_data is None:
-            return None
-        return edge_data
+        return self.spec.get_lane_address(start, end)
 
     def get_endpoints(self, lane: LaneAddress):
         """Get the start and end LocationAddress for a given LaneAddress."""
@@ -116,8 +113,8 @@ class PathFinder:
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[tuple[LocationAddress, ...]], float] = lambda _: 0.0,
-    ) -> tuple[LocationAddress, ...] | None:
+        path_heuristic: Callable[[tuple[LocationAddress, ...], tuple[LaneAddress, ...]], float] = lambda _, __: 0.0,
+    ) -> tuple[tuple[LocationAddress, ...], tuple[LaneAddress, ...]] | None:
         """Find a path from start to end avoiding occupied sites.
 
         Args:
@@ -136,20 +133,23 @@ class PathFinder:
         """
         start_node = self.physical_address_map[start]
         end_node = self.physical_address_map[end]
-
-        path_nodes = nx.all_simple_paths(self.site_graph, start_node, end_node)
-
-        def filter_occupied(path: list[int] | None):
-            if path is None:
-                return False
-            return all(self.physical_addresses[node] not in occupied for node in path)
-
-        valid_paths = list(filter(filter_occupied, path_nodes))
-        paths = list(filter(None, map(self.extract_lanes_from_path, valid_paths)))
-
-        if len(paths) == 0:
+        
+        
+        nodes = [i for i in range(self.site_graph.num_nodes()) if i not in occupied]
+        site_subgraph = self.site_graph.subgraph(nodes, preserve_attrs=False)        
+        subgraph_path_nodes = nx.digraph_all_shortest_paths(site_subgraph, nodes.index(start_node), nodes.index(end_node))
+        
+        if len(subgraph_path_nodes) == 0:
             return None
 
-        lanes = min(paths, key=lambda p: len(p) + path_heuristic(p))
+        def to_output_result(path: list[int]):
+            location_path = tuple(map(self.physical_addresses.__getitem__, map(nodes.__getitem__, path)))
+            lanes = tuple(map(self.get_lane, location_path, location_path[1:]))
+            assert no_none_elements_tuple(lanes), "A lane was not found in the path"
+            return location_path, lanes
 
-        return lanes
+        results = list(map(to_output_result, subgraph_path_nodes))
+        def eval_heuristic(result):
+            return path_heuristic(result[0], result[1])
+        
+        return min(results, key=eval_heuristic)
