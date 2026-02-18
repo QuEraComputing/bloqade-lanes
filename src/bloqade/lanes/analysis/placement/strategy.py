@@ -1,11 +1,15 @@
 import abc
+from dataclasses import dataclass
 
-from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAddress
 
 from .lattice import AtomState, ConcreteState, ExecuteCZ, ExecuteMeasure
 
 
+@dataclass
 class PlacementStrategyABC(abc.ABC):
+
+    arch_spec: ArchSpec
 
     @abc.abstractmethod
     def validate_initial_layout(
@@ -81,6 +85,13 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
+        if isinstance(state, ConcreteState):
+            # Strip CZ-specific metadata so non-CZ statements do not inherit stale move layers in downstream rewrite passes.
+            return ConcreteState(
+                occupied=state.occupied,
+                layout=state.layout,
+                move_count=state.move_count,
+            )
         return state  # No movement needed for single zone
 
     def measure_placements(

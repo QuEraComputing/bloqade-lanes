@@ -7,7 +7,12 @@ from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
 from bloqade.lanes.analysis.layout import LayoutAnalysis
-from bloqade.lanes.analysis.placement import AtomState, ConcreteState, PlacementAnalysis
+from bloqade.lanes.analysis.placement import (
+    AtomState,
+    ConcreteState,
+    ExecuteCZ,
+    PlacementAnalysis,
+)
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")
@@ -201,13 +206,16 @@ class PlacementMethods(interp.MethodTable):
     def impl_cz(
         self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: CZ
     ):
-        return (
-            _interp.placement_strategy.cz_placements(
-                frame.get(stmt.state_before),
-                stmt.controls,
-                stmt.targets,
-            ),
+        state = _interp.placement_strategy.cz_placements(
+            frame.get(stmt.state_before),
+            stmt.controls,
+            stmt.targets,
         )
+        if isinstance(state, ExecuteCZ) and not state.verify(
+            _interp.placement_strategy.arch_spec, stmt.targets, stmt.controls
+        ):
+            raise interp.InterpreterError("Invalid moves detected")
+        return (state,)
 
     @interp.impl(R)
     @interp.impl(Rz)
