@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import singledispatchmethod
+from typing import Callable
 
 from bloqade.analysis import address
 from kirin import ir
@@ -9,6 +10,7 @@ from kirin.rewrite.abc import RewriteResult, RewriteRule
 from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout import LocationAddress
+from bloqade.lanes.layout.encoding import LaneAddress
 
 
 @dataclass
@@ -38,6 +40,21 @@ class InsertMoves(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
+def palindrome_move_layers(
+    placement_analysis: dict[ir.SSAValue, placement.AtomState],
+    node: place.StaticPlacement,
+) -> tuple[tuple[LaneAddress, ...], ...] | None:
+    move_layers: list[tuple[LaneAddress, ...]] = []
+    for stmt in node.body.walk():
+        if not isinstance(stmt, move.Move):
+            continue
+        reversed_layer = tuple(lane.reverse() for lane in stmt.lanes)
+        move_layers.append(reversed_layer)
+
+    return tuple(reversed(move_layers))
+
+
+@dataclass
 class InsertPalindromeMoves(RewriteRule):
     """This rewrite goes through a static circuit and for every move statement,
     it inserts a reverse move statement at the end of the circuit to undo the move.
@@ -46,23 +63,33 @@ class InsertPalindromeMoves(RewriteRule):
 
     """
 
+    placement_analysis: dict[ir.SSAValue, placement.AtomState] = field(
+        default_factory=dict
+    )
+    revert_initial_position: Callable[
+        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
+        tuple[tuple[LaneAddress, ...], ...] | None,
+    ] = palindrome_move_layers
+
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, place.StaticPlacement):
             return RewriteResult()
 
-        yield_stmt = node.body.blocks[0].last_stmt
-        assert isinstance(yield_stmt, place.Yield)
+        last_stmt = node.body.blocks[0].last_stmt
+        if last_stmt is None:
+            return RewriteResult()
 
-        (current_state := move.Load()).insert_before(yield_stmt)
-        for stmt in node.body.walk(reverse=True):
-            if not isinstance(stmt, move.Move):
-                continue
-            reverse_moves = tuple(lane.reverse() for lane in stmt.lanes[::-1])
+        move_layers = self.revert_initial_position(self.placement_analysis, node)
+
+        if move_layers is None:
+            return RewriteResult()
+
+        (current_state := move.Load()).insert_before(last_stmt)
+        for move_layer in move_layers:
             (
-                current_state := move.Move(current_state.result, lanes=reverse_moves)
-            ).insert_before(yield_stmt)
-
-        (move.Store(current_state.result)).insert_before(yield_stmt)
+                current_state := move.Move(current_state.result, lanes=move_layer)
+            ).insert_before(last_stmt)
+        (move.Store(current_state.result)).insert_before(last_stmt)
 
         return RewriteResult(has_done_something=True)
 
