@@ -3,7 +3,7 @@ from functools import cached_property
 from typing import Generic, TypeVar
 
 import tsim as tsim_backend
-from kirin import ir
+from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
 from bloqade import tsim
@@ -19,10 +19,27 @@ from bloqade.lanes.transform import MoveToSquin
 RetType = TypeVar("RetType")
 
 
-@dataclass
+@dataclass(frozen=True)
 class Result(Generic[RetType]):
-    return_value: list[RetType]
-    detector_error_model: DetectorErrorModel
+    _raw_measurements: list[list[bool]]
+    _detector_error_model: DetectorErrorModel
+    _post_processing: atom.PostProcessing[RetType]
+
+    @property
+    def detector_error_model(self) -> DetectorErrorModel:
+        return self._detector_error_model
+
+    @cached_property
+    def return_values(self) -> list[RetType]:
+        return list(self._post_processing.emit_return(self._raw_measurements))
+
+    @cached_property
+    def detectors(self) -> list[list[bool]]:
+        return list(self._post_processing.emit_detectors(self._raw_measurements))
+
+    @cached_property
+    def observables(self) -> list[list[bool]]:
+        return list(self._post_processing.emit_observables(self._raw_measurements))
 
 
 @dataclass(frozen=True)
@@ -31,10 +48,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     noise_model: NoiseModelABC
 
     def __post_init__(self):
-        if self._post_processing is None:
-            raise ValueError(
-                "The provided logical_squin_kernel has invalid return values for measurement processing."
-            )
+        assert isinstance(self._post_processing, atom.PostProcessing)
 
     @cached_property
     def physical_arch_spec(self):
@@ -63,7 +77,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     @cached_property
     def tsim_circuit(self) -> tsim_backend.Circuit:
         physical_squin_kernel = self.physical_squin_kernel.similar()
-        RemoveReturn().rewrite(physical_squin_kernel.code)
+        rewrite.Walk(RemoveReturn()).rewrite(physical_squin_kernel.code)
         return tsim.Circuit(physical_squin_kernel)
 
     @cached_property
@@ -99,9 +113,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             )
 
     def run(self, shots: int = 1, with_noise: bool = True) -> Result[RetType]:
-        assert (
-            post_processing := self._post_processing
-        ) is not None, "validation failed during initialization"
+
         if with_noise:
             raw_results = self.measurement_sampler.sample(shots=shots).tolist()
         else:
@@ -110,8 +122,9 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             ).tolist()
 
         return Result(
-            list(post_processing(raw_results)),
+            raw_results,
             self.detector_error_model,
+            self._post_processing,
         )
 
 

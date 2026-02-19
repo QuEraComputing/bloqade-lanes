@@ -3,7 +3,6 @@ import math
 from collections import Counter
 from typing import Any
 
-import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from bloqade.stim.emit.stim_str import EmitStimMain
@@ -29,23 +28,20 @@ from bloqade.lanes.upstream import (
 )
 from bloqade.lanes.utils import check_circuit
 
-kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
-kernel.run_pass = squin.kernel.run_pass
 
-
-@kernel
+@gemini_logical.kernel(verify=False)
 def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
     annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
     annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
     annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
 
 
-@kernel
+@gemini_logical.kernel(verify=False)
 def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
     annotate.set_observable([meas[0], meas[1], meas[5]], index)
 
 
-@kernel
+@gemini_logical.kernel(aggressive_unroll=True)
 def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
@@ -125,11 +121,11 @@ def test_default_and_always_merge_have_same_operations():
     assert default_ops == always_ops
 
 
-@pytest.mark.xfail
+# @pytest.mark.xfail
 def test_logical_compilation():
     from bloqade.rewrite.passes import AggressiveUnroll
 
-    @kernel
+    @gemini_logical.kernel(aggressive_unroll=True)
     def main():
         reg = squin.qalloc(2)
         squin.h(reg[0])
