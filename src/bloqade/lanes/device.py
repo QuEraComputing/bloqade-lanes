@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, TypeVar
 
@@ -10,6 +10,7 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
 from bloqade.lanes.logical_mvp import compile_squin_to_move
+from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
@@ -33,15 +34,6 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         return generate_arch_hypercube(4)
 
     @cached_property
-    def physical_squin_kernel(self) -> ir.Method[[], RetType]:
-
-        return MoveToSquin(
-            generate_arch_hypercube(4),
-            steane7_initialize,
-            self.noise_model,
-        ).emit(self.physical_move_kernel)
-
-    @cached_property
     def physical_move_kernel(self) -> ir.Method[[], RetType]:
         return compile_squin_to_move(
             self.logical_squin_kernel, transversal_rewrite=True
@@ -52,6 +44,14 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         return atom.AtomInterpreter(
             self.physical_move_kernel.dialects, arch_spec=self.physical_arch_spec
         ).get_post_processing(self.physical_move_kernel)
+
+    @cached_property
+    def physical_squin_kernel(self) -> ir.Method[[], RetType]:
+        return MoveToSquin(
+            generate_arch_hypercube(4),
+            steane7_initialize,
+            self.noise_model,
+        ).emit(self.physical_move_kernel)
 
     @cached_property
     def tsim_circuit(self) -> tsim_backend.Circuit:
@@ -66,13 +66,6 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     @cached_property
     def detector_error_model(self):
         return self.tsim_circuit.detector_error_model(approximate_disjoint_errors=True)
-
-    @property
-    def post_processing(self):
-        assert (
-            self._post_processing is not None
-        ), "validation failed during initialization"
-        return self._post_processing
 
     def visualize(self, animated: bool = False, interactive: bool = True):
         from bloqade.lanes.visualize import animated_debugger, debugger
@@ -90,21 +83,24 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 interactive=interactive,
             )
 
-    def run(self, shots: int = 1):
+    def run(self, shots: int = 1) -> list[RetType]:
+        assert (
+            post_processing := self._post_processing
+        ) is not None, "validation failed during initialization"
         raw_results = self.measurement_sampler.sample(shots=shots).tolist()
-        return list(self.post_processing(raw_results))
+        return list(post_processing(raw_results))
 
 
 @dataclass
 class GeminiLogicalSimulator:
-    noise_model: NoiseModelABC
+    noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
 
     def task(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> GeminiLogicalSimulatorTask[RetType]:
         return GeminiLogicalSimulatorTask(
-            logical_squin_kernel=logical_squin_kernel,
-            noise_model=self.noise_model,
+            logical_squin_kernel,
+            self.noise_model,
         )
 
     def run(self, logical_squin_kernel: ir.Method[[], RetType], shots: int = 1):
@@ -114,3 +110,18 @@ class GeminiLogicalSimulator:
         self, logical_squin_kernel: ir.Method[[], RetType], animated: bool = False
     ):
         self.task(logical_squin_kernel).visualize(animated=animated)
+
+    def physical_squin_kernel(
+        self, logical_squin_kernel: ir.Method[[], RetType]
+    ) -> ir.Method[[], RetType]:
+        return self.task(logical_squin_kernel).physical_squin_kernel
+
+    def physical_move_kernel(
+        self, logical_squin_kernel: ir.Method[[], RetType]
+    ) -> ir.Method[[], RetType]:
+        return self.task(logical_squin_kernel).physical_move_kernel
+
+    def tsim_circuit(
+        self, logical_squin_kernel: ir.Method[[], RetType]
+    ) -> tsim_backend.Circuit:
+        return self.task(logical_squin_kernel).tsim_circuit

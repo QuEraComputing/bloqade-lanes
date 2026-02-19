@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, Sequence, TypeVar, cast
+from typing import Callable, Generator, Sequence, TypeVar, cast
 
 import numpy as np
 from kirin import ir
@@ -61,7 +61,9 @@ class AtomInterpreter(Forward[MoveExecution]):
     def eval_fallback(self, frame: ForwardFrame[MoveExecution], node: ir.Statement):
         return tuple(MoveExecution.bottom() for _ in node.results)
 
-    def get_post_processing(self, method: ir.Method[..., RetType]):
+    def get_post_processing(
+        self, method: ir.Method[..., RetType]
+    ) -> Callable[[Sequence[Sequence[bool]]], Generator[RetType, None, None]] | None:
         _, output = self.run(method)
 
         func = cast(Callable[[Sequence[bool]], RetType], constructor_function(output))
