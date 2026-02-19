@@ -4,6 +4,7 @@ from typing import Generic, TypeVar
 
 import tsim as tsim_backend
 from kirin import ir
+from stim import DetectorErrorModel
 
 from bloqade import tsim
 from bloqade.lanes.analysis import atom
@@ -16,6 +17,12 @@ from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
 
 RetType = TypeVar("RetType")
+
+
+@dataclass
+class Result(Generic[RetType]):
+    return_value: list[RetType]
+    detector_error_model: DetectorErrorModel
 
 
 @dataclass(frozen=True)
@@ -91,7 +98,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 interactive=interactive,
             )
 
-    def run(self, shots: int = 1, with_noise: bool = True) -> list[RetType]:
+    def run(self, shots: int = 1, with_noise: bool = True) -> Result[RetType]:
         assert (
             post_processing := self._post_processing
         ) is not None, "validation failed during initialization"
@@ -101,7 +108,11 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             raw_results = self.noiseless_measurement_sampler.sample(
                 shots=shots
             ).tolist()
-        return list(post_processing(raw_results))
+
+        return Result(
+            list(post_processing(raw_results)),
+            self.detector_error_model,
+        )
 
 
 @dataclass
@@ -121,7 +132,7 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-    ) -> list[RetType]:
+    ) -> Result[RetType]:
         return self.task(logical_squin_kernel).run(shots, with_noise)
 
     def visualize(
