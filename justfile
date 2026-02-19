@@ -24,7 +24,10 @@ demo-pipeline:
 pipeline-details:
     python demo/pipeline_details.py
 
-demo: demo-msd demo-pipeline
+simulator-device-demo:
+    python demo/simulator_device_demo.py
+
+demo: demo-msd demo-pipeline pipeline-details simulator-device-demo
 
 doc:
     mkdocs serve
