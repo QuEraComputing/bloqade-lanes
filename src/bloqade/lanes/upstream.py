@@ -3,7 +3,7 @@ from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
-from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
+from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll

@@ -1,7 +1,6 @@
 from typing import Sequence, TypeGuard, TypeVar
 
 import numpy as np
-from bloqade.pyqrack.device import StackMemorySimulator
 from kirin import ir
 
 T = TypeVar("T")
@@ -55,6 +54,7 @@ def check_circuit(
     Note:
         The methods should not perform any measurements. Otherwise, the state vectors may not be comparable.
     """
+    from bloqade.pyqrack.device import StackMemorySimulator
 
     simulator = StackMemorySimulator()
     state_vector = np.asarray(simulator.state_vector(squin_method))

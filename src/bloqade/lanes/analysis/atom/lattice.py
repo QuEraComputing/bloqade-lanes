@@ -135,6 +135,42 @@ class MeasureResult(MoveExecution):
 
 @final
 @dataclass
+class DetectorResult(MoveExecution):
+    data: MoveExecution
+
+    def copy(self):
+        return DetectorResult(self.data.copy())
+
+    def is_subseteq_DetectorResult(self, elem: "DetectorResult") -> bool:
+        return self.data.is_subseteq(elem.data)
+
+    def join_DetectorResult(self, other: "DetectorResult") -> "MoveExecution":
+        return DetectorResult(self.data.join(other.data))
+
+    def meet_DetectorResult(self, other: "DetectorResult") -> "MoveExecution":
+        return DetectorResult(self.data.meet(other.data))
+
+
+@final
+@dataclass
+class ObservableResult(MoveExecution):
+    data: MoveExecution
+
+    def copy(self):
+        return ObservableResult(self.data.copy())
+
+    def is_subseteq_ObservableResult(self, elem: "ObservableResult") -> bool:
+        return self.data.is_subseteq(elem.data)
+
+    def join_ObservableResult(self, other: "ObservableResult") -> "MoveExecution":
+        return ObservableResult(self.data.join(other.data))
+
+    def meet_ObservableResult(self, other: "ObservableResult") -> "MoveExecution":
+        return ObservableResult(self.data.meet(other.data))
+
+
+@final
+@dataclass
 class IListResult(MoveExecution):
     data: tuple[MoveExecution, ...]
 
@@ -157,3 +193,28 @@ class IListResult(MoveExecution):
             return Bottom()
 
         return IListResult(tuple(a.meet(b) for a, b in zip(self.data, other.data)))
+
+
+@dataclass
+class TupleResult(MoveExecution):
+    data: tuple[MoveExecution, ...]
+
+    def copy(self):
+        return TupleResult(tuple(item.copy() for item in self.data))
+
+    def is_subseteq_TupleResult(self, elem: "TupleResult") -> bool:
+        if len(self.data) != len(elem.data):
+            return False
+        return all(a.is_subseteq(b) for a, b in zip(self.data, elem.data))
+
+    def join_TupleResult(self, other: "TupleResult") -> "MoveExecution":
+        if len(self.data) != len(other.data):
+            return Unknown()
+
+        return TupleResult(tuple(a.join(b) for a, b in zip(self.data, other.data)))
+
+    def meet_TupleResult(self, other: "TupleResult") -> "MoveExecution":
+        if len(self.data) != len(other.data):
+            return Bottom()
+
+        return TupleResult(tuple(a.meet(b) for a, b in zip(self.data, other.data)))

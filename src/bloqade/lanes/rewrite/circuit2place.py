@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, TypeGuard
 
-from bloqade.gemini.dialects.logical import stmts as gemini_stmts
+from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir, types
 from kirin.dialects import ilist, py

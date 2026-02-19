@@ -1,13 +1,14 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bloqade.cirq_utils.noise.model import (
-    GeminiNoiseModelABC,
-    GeminiOneZoneNoiseModel,
-)
 from kirin.dialects import debug, ilist
 
 from bloqade import qubit, squin
 from bloqade.lanes.transform import SimpleNoiseModel
+
+if TYPE_CHECKING:
+    from bloqade.cirq_utils.noise.model import (
+        GeminiNoiseModelABC,
+    )
 
 PAIRED_KEYS = [
     "IX",
@@ -29,7 +30,7 @@ PAIRED_KEYS = [
 
 
 def generate_simple_noise_model(
-    noise_model: GeminiNoiseModelABC | None = None,
+    noise_model: "GeminiNoiseModelABC | None" = None,
     loss: bool = True,
 ) -> SimpleNoiseModel:
     """Generate a simple noise model from a bloqade-circuit noise model.
@@ -44,6 +45,7 @@ def generate_simple_noise_model(
             kernel.
 
     """
+    from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
 
     if noise_model is None:
         noise_model = GeminiOneZoneNoiseModel()
