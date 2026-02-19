@@ -74,13 +74,21 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         ), "validation failed during initialization"
         return self._post_processing
 
-    def visualize(self, animated: bool = False):
-        from bloqade.lanes.visualize import debugger
+    def visualize(self, animated: bool = False, interactive: bool = True):
+        from bloqade.lanes.visualize import animated_debugger, debugger
 
         if animated:
-            raise NotImplementedError("Animation not implemented yet.")
+            animated_debugger(
+                self.physical_move_kernel,
+                self.physical_arch_spec,
+                interactive=interactive,
+            )
         else:
-            debugger(self.physical_move_kernel, self.physical_arch_spec)
+            debugger(
+                self.physical_move_kernel,
+                self.physical_arch_spec,
+                interactive=interactive,
+            )
 
     def run(self, shots: int = 1):
         raw_results = self.measurement_sampler.sample(shots=shots).tolist()
