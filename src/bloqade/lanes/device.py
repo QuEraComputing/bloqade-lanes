@@ -60,8 +60,16 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         return tsim.Circuit(physical_squin_kernel)
 
     @cached_property
+    def noiseless_tsim_circuit(self) -> tsim_backend.Circuit:
+        return self.tsim_circuit.without_noise()
+
+    @cached_property
     def measurement_sampler(self):
         return self.tsim_circuit.compile_sampler()
+
+    @cached_property
+    def noiseless_measurement_sampler(self):
+        return self.noiseless_tsim_circuit.compile_sampler()
 
     @cached_property
     def detector_error_model(self):
@@ -83,11 +91,16 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 interactive=interactive,
             )
 
-    def run(self, shots: int = 1) -> list[RetType]:
+    def run(self, shots: int = 1, with_noise: bool = True) -> list[RetType]:
         assert (
             post_processing := self._post_processing
         ) is not None, "validation failed during initialization"
-        raw_results = self.measurement_sampler.sample(shots=shots).tolist()
+        if with_noise:
+            raw_results = self.measurement_sampler.sample(shots=shots).tolist()
+        else:
+            raw_results = self.noiseless_measurement_sampler.sample(
+                shots=shots
+            ).tolist()
         return list(post_processing(raw_results))
 
 
@@ -103,8 +116,13 @@ class GeminiLogicalSimulator:
             self.noise_model,
         )
 
-    def run(self, logical_squin_kernel: ir.Method[[], RetType], shots: int = 1):
-        return self.task(logical_squin_kernel).run(shots=shots)
+    def run(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+    ) -> list[RetType]:
+        return self.task(logical_squin_kernel).run(shots, with_noise)
 
     def visualize(
         self, logical_squin_kernel: ir.Method[[], RetType], animated: bool = False
@@ -122,6 +140,9 @@ class GeminiLogicalSimulator:
         return self.task(logical_squin_kernel).physical_move_kernel
 
     def tsim_circuit(
-        self, logical_squin_kernel: ir.Method[[], RetType]
+        self, logical_squin_kernel: ir.Method[[], RetType], with_noise: bool = True
     ) -> tsim_backend.Circuit:
-        return self.task(logical_squin_kernel).tsim_circuit
+        if with_noise:
+            return self.task(logical_squin_kernel).tsim_circuit
+        else:
+            return self.task(logical_squin_kernel).noiseless_tsim_circuit
