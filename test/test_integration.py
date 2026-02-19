@@ -121,7 +121,6 @@ def test_default_and_always_merge_have_same_operations():
     assert default_ops == always_ops
 
 
-# @pytest.mark.xfail
 def test_logical_compilation():
     from bloqade.rewrite.passes import AggressiveUnroll
 
