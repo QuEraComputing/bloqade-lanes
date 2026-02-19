@@ -1,4 +1,4 @@
-from bloqade.gemini.dialects import logical as gemini_logical
+from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import squin
@@ -6,11 +6,8 @@ from bloqade.lanes.logical_mvp import (
     compile_to_physical_stim_program,
 )
 
-kernel = squin.kernel.add(gemini_logical.dialect)
-kernel.run_pass = squin.kernel.run_pass
 
-
-@kernel
+@gemini_logical.kernel(aggressive_unroll=True)
 def main():
     q = squin.qalloc(9)
 

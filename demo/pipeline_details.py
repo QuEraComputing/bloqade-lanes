@@ -9,18 +9,14 @@
 # to start we create a simple squin kernel that uses the gemini logical dialect to define a
 # terminal measurement on the circuit.
 
-from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 
 # %%
 from bloqade import squin
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
 
-kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
-kernel.run_pass = squin.kernel.run_pass
 
-
-@kernel
+@gemini_logical.kernel(aggressive_unroll=True)
 def example_kernel():
     reg = squin.qalloc(2)
 
