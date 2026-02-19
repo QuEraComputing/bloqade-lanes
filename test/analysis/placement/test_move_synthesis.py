@@ -2,7 +2,11 @@
 
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.heuristics.move_synthesis import compute_move_layers
+from bloqade.lanes.heuristics.move_synthesis import (
+    compute_move_layers,
+    move_to_entangle,
+    move_to_left,
+)
 from bloqade.lanes.layout.encoding import (
     Direction,
     LocationAddress,
@@ -114,3 +118,44 @@ def test_compute_move_layers_no_diffs():
     )
     result = compute_move_layers(arch_spec, state, state)
     assert result == ()
+
+
+def test_move_to_entangle_wrapper():
+    arch_spec = get_arch_spec()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+        move_count=(0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(1, 5), LocationAddress(1, 0)),
+        move_count=(1, 0),
+    )
+
+    out_state, layers = move_to_entangle(arch_spec, state_before, state_after)
+    assert out_state == state_after
+    assert layers == compute_move_layers(arch_spec, state_before, state_after)
+
+
+def test_move_to_left_wrapper():
+    arch_spec = get_arch_spec()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(1, 5), LocationAddress(1, 0)),
+        move_count=(1, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+        move_count=(2, 0),
+    )
+
+    out_state, layers = move_to_left(arch_spec, state_before, state_after)
+    forward_layers = compute_move_layers(arch_spec, state_after, state_before)
+    expected_layers = tuple(
+        tuple(lane.reverse() for lane in move_lanes[::-1])
+        for move_lanes in forward_layers[::-1]
+    )
+    assert out_state == state_after
+    assert layers == expected_layers

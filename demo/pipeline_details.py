@@ -14,6 +14,7 @@ from bloqade.gemini import logical as gemini_logical
 
 # %%
 from bloqade import squin
+from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
 
 kernel = squin.kernel.add(gemini_logical.dialect).add(annotate)
 kernel.run_pass = squin.kernel.run_pass
@@ -117,7 +118,7 @@ placement_analysis = placement.PlacementAnalysis(
     example_kernel.dialects,
     initial_layout,
     address_frame.entries,
-    fixed.LogicalPlacementStrategy(),
+    LogicalPlacementStrategy(),
 )
 
 placement_frame, _ = placement_analysis.run(example_kernel)
@@ -139,7 +140,7 @@ from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
 
 example_kernel = PlaceToMove(
     fixed.LogicalLayoutHeuristic(),
-    fixed.LogicalPlacementStrategy(),
+    LogicalPlacementStrategy(),
     True,
 ).emit(example_kernel)
 
