@@ -69,7 +69,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         return MoveToSquin(
-            generate_arch_hypercube(4),
+            self.physical_arch_spec,
             steane7_initialize,
             self.noise_model,
         ).emit(self.physical_move_kernel)

@@ -227,11 +227,11 @@ class IListMethods(interp.MethodTable):
 class TupleMethods(interp.MethodTable):
 
     @interp.impl(py.tuple.New)
-    def ilist_new(
+    def tuple_new(
         self,
         interp_: AtomInterpreter,
         frame: ForwardFrame[MoveExecution],
-        stmt: ilist.New,
+        stmt: py.tuple.New,
     ):
         return (TupleResult(frame.get_values(stmt.args)),)
 
