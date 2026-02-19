@@ -61,11 +61,10 @@ def check_circuit(
     other_state_vector = np.asarray(simulator.state_vector(other_squin_method))
 
     i = np.argmax(np.abs(state_vector))
+    j = np.argmax(np.abs(other_state_vector))
     state_vector *= np.exp(-1j * np.angle(state_vector[i]))
-    other_state_vector *= np.exp(-1j * np.angle(other_state_vector[i]))
+    other_state_vector *= np.exp(-1j * np.angle(other_state_vector[j]))
 
-    print(state_vector)
-    print(other_state_vector)
     if state_vector.shape != other_state_vector.shape:
         return False
 
