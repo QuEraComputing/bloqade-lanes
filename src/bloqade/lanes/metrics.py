@@ -1,13 +1,13 @@
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
-from bloqade.lanes.dialects import move
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_simple_noise_model
@@ -92,7 +92,9 @@ def _count_move_events_and_lanes(move_mt: ir.Method) -> tuple[int, int]:
     return move_event_count, moved_lane_count
 
 
-def _compute_approx_lane_parallelism(move_event_count: int, moved_lane_count: int) -> float:
+def _compute_approx_lane_parallelism(
+    move_event_count: int, moved_lane_count: int
+) -> float:
     if move_event_count == 0:
         return 0.0
     return moved_lane_count / move_event_count
@@ -124,8 +126,9 @@ def _compute_const_jerk_min_dur_extracted(
     max_accel: float,
     max_jerk: float,
 ) -> float:
-    """Equivalent scalar form of flair's compute_const_jerk_min_dur. 
-    Idea is t1 time is ramp up time to max abs accel, t2 is hold time at max abs accel."""
+    """Equivalent scalar form of flair's compute_const_jerk_min_dur.
+    Idea is t1 time is ramp up time to max abs accel, t2 is hold time at max abs accel.
+    """
     max_dist = abs(max_dist)
     if max_dist < 1e-8:
         return 0.0
@@ -161,7 +164,7 @@ def _compute_lane_duration_with_extracted_flair(
         for distance_um in segment_distances_um
     ]
     # Derived from flair's linear_amplitude_impl
-    #amplitude delta is 1.0 based on bloqade-flair/src/bloqade/flair/stdlib/kernel_maker/move.py's ramp_on_aod_x
+    # amplitude delta is 1.0 based on bloqade-flair/src/bloqade/flair/stdlib/kernel_maker/move.py's ramp_on_aod_x
     ramp_time_us = abs(amplitude_delta) / _EXTRACTED_FLAIR_MAX_RAMP
     lane_duration_us = ramp_time_us + sum(segment_durations_us) + ramp_time_us
     return segment_durations_us, ramp_time_us, ramp_time_us, lane_duration_us
@@ -194,12 +197,14 @@ def _compile_kernel_to_noisy_physical_squin(
     )
     return transformer.emit(move_mt)
 
+
 def _analyze_move_time_from_move_ir(
     move_mt: ir.Method,
     *,
     flair_amplitude_delta: float,
 ) -> KernelMoveTimeMetrics:
     arch_spec = generate_arch_hypercube(4)
+    timing_model = "flair_extracted_const_jerk"
     events: list[MoveTimeEvent] = []
     for event_index, stmt in enumerate(move_mt.callable_region.walk()):
         if not isinstance(stmt, move.Move):
@@ -223,7 +228,6 @@ def _analyze_move_time_from_move_ir(
                 segment_distances_um,
                 amplitude_delta=flair_amplitude_delta,
             )
-            timing_model = "flair_extracted_const_jerk"
 
             lane_durations_us.append(lane_duration_us)
             lane_segment_distances_um.append(segment_distances_um)
@@ -232,8 +236,12 @@ def _analyze_move_time_from_move_ir(
             lane_drop_times_us.append(drop_time_us)
 
         event_duration_us = _compute_event_duration_us(lane_durations_us)
+        if len(lane_durations_us) == 0:
+            continue
 
-        rep_index = max(range(len(lane_durations_us)), key=lane_durations_us.__getitem__)
+        rep_index = max(
+            range(len(lane_durations_us)), key=lane_durations_us.__getitem__
+        )
         rep_lane = stmt.lanes[rep_index]
         events.append(
             MoveTimeEvent(
@@ -252,7 +260,6 @@ def _analyze_move_time_from_move_ir(
             )
         )
 
-    timing_model = "flair_extracted_const_jerk"
     total_move_time_us = sum(event.event_duration_us for event in events)
     return KernelMoveTimeMetrics(
         total_move_time_us=total_move_time_us,
