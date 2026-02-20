@@ -14,7 +14,7 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import LocationAddress, ZoneAddress
 
-from .. import utils
+from ... import utils
 from .base import AtomStateRewriter
 
 
@@ -95,8 +95,8 @@ class InsertGates(AtomStateRewriter):
             return rewrite_abc.RewriteResult()
 
         (quarter_turn := py.Constant(0.25)).insert_before(node)
-        (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
-        (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
+        (phi := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
+        (lam := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
         (reg := ilist.New(qubit_ssa)).insert_before(node)
         (
             gate_stmts.U3(node.rotation_angle, phi.result, lam.result, reg.result)
@@ -110,8 +110,8 @@ class InsertGates(AtomStateRewriter):
         qubit_ssas = [self.physical_ssa_values[qubit_id] for qubit_id in self.qubit_ids]
 
         (quarter_turn := py.Constant(0.25)).insert_before(node)
-        (phi := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
-        (lam := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
+        (phi := py.Sub(node.axis_angle, quarter_turn.result)).insert_before(node)
+        (lam := py.Sub(quarter_turn.result, node.axis_angle)).insert_before(node)
         (reg := ilist.New(qubit_ssas)).insert_before(node)
         (
             gate_stmts.U3(node.rotation_angle, phi.result, lam.result, reg.result)

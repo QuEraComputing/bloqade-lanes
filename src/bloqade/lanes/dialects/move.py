@@ -1,9 +1,7 @@
 from dataclasses import dataclass
-from typing import Any
 
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
-from kirin.dialects import ilist
 from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
@@ -226,4 +224,4 @@ def get_future_result(
     *,
     zone_address: ZoneAddress,
     location_address: LocationAddress,
-) -> ilist.IList[bloqade_types.MeasurementResult, Any]: ...
+) -> bloqade_types.MeasurementResult: ...

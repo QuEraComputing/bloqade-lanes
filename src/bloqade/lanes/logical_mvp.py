@@ -12,6 +12,7 @@ from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyN
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
+from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import squin_to_move
 
@@ -131,6 +132,7 @@ def compile_to_physical_stim_program(
 
     """
     noise_kernel = compile_to_physical_squin_noise_model(mt, noise_model)
+    RemoveReturn().rewrite(noise_kernel.code)
     noise_kernel = squin_to_stim(noise_kernel)
     buf = io.StringIO()
     emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)

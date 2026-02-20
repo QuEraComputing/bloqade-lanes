@@ -8,8 +8,7 @@ from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
-
-from .utils import no_none_elements
+from bloqade.lanes.utils import no_none_elements
 
 
 @dataclass
