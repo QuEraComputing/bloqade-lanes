@@ -1,10 +1,9 @@
 import io
 import math
 from collections import Counter
-from functools import reduce
-from operator import xor
 from typing import Any
 
+import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from bloqade.stim.emit.stim_str import EmitStimMain
@@ -149,22 +148,35 @@ def test_logical_compilation():
     assert check_circuit(main, decompiled_squin)
 
 
-def test_physical_compilation():
-
+@pytest.mark.parametrize("size", [2, 3, 4, 5, 6])
+def test_physical_compilation(size: int):
     @gemini_logical.kernel(aggressive_unroll=True)
     def main():
-        reg = qubit.qalloc(3)
+        reg = qubit.qalloc(1)
         squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        squin.cx(reg[1], reg[2])
+        for _ in range(size):
+            current = len(reg)
+            missing = size - current
+            if missing > current:
+                num_alloc = current
+            else:
+                num_alloc = missing
+
+            if num_alloc > 0:
+                new_qubits = qubit.qalloc(num_alloc)
+                squin.broadcast.cx(reg[-num_alloc:], new_qubits)
+                reg = reg + new_qubits
 
         meas = gemini_logical.terminal_measure(reg)
-        return [
-            squin.set_observable([meas[0][0], meas[0][1], meas[0][5]], 0),
-            squin.set_observable([meas[1][0], meas[1][1], meas[1][5]], 1),
-            squin.set_observable([meas[2][0], meas[2][1], meas[2][5]], 2),
-        ]
+
+        def set_observables(qubit_index: int):
+            return squin.set_observable(
+                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
+                qubit_index,
+            )
+
+        return ilist.map(set_observables, ilist.range(len(reg)))
 
     result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
     # checks to make sure logical GHZ state is created.
-    assert all(all(reduce(xor, rv) is v for v in rv) for rv in result.observables)
+    assert all(len(set(rv)) == 1 for rv in result.observables)
