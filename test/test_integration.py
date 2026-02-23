@@ -169,13 +169,13 @@ def test_physical_compilation(size: int):
 
         meas = gemini_logical.terminal_measure(reg)
 
-        def set_observables(qubit_index: int):
+        def set_observable(qubit_index: int):
             return squin.set_observable(
                 [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
                 qubit_index,
             )
 
-        return ilist.map(set_observables, ilist.range(len(reg)))
+        return ilist.map(set_observable, ilist.range(len(reg)))
 
     result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
     # checks to make sure logical GHZ state is created.
