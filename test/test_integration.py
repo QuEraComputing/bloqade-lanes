@@ -1,6 +1,7 @@
 import io
 import math
 from collections import Counter
+from functools import reduce
 from operator import xor
 from typing import Any
 
@@ -161,9 +162,9 @@ def test_physical_compilation():
         return [
             squin.set_observable([meas[0][0], meas[0][1], meas[0][5]], 0),
             squin.set_observable([meas[1][0], meas[1][1], meas[1][5]], 1),
-            squin.set_observable([meas[2][0], meas[2][2], meas[2][5]], 2),
+            squin.set_observable([meas[2][0], meas[2][1], meas[2][5]], 2),
         ]
 
     result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
     # checks to make sure logical GHZ state is created.
-    assert all(xor(bool(rv[0]), bool(rv[1])) is False for rv in result.return_values)
+    assert all(all(reduce(xor, rv) is v for v in rv) for rv in result.observables)
