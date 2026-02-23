@@ -1,6 +1,7 @@
 import io
 import math
 from collections import Counter
+from operator import xor
 from typing import Any
 
 from bloqade.decoders.dialects import annotate
@@ -13,6 +14,7 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.device import GeminiLogicalSimulator
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
@@ -126,9 +128,16 @@ def test_logical_compilation():
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def main():
-        reg = squin.qalloc(2)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
+        reg = qubit.qalloc(5)
+        squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
+
+        squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
+        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.sqrt_y(ilist.IList([reg[0], reg[3]]))
+        squin.broadcast.cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[2], reg[4]]))
+        squin.sqrt_x_adj(reg[0])
+        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
+        squin.broadcast.sqrt_y_adj(reg)
 
     logical_move = compile_squin_to_move(main)
 
@@ -136,7 +145,25 @@ def test_logical_compilation():
 
     AggressiveUnroll(main.dialects).fixpoint(main)
 
-    decompiled_squin.print()
-    main.print()
-
     assert check_circuit(main, decompiled_squin)
+
+
+def test_physical_compilation():
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def main():
+        reg = qubit.qalloc(3)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        squin.cx(reg[1], reg[2])
+
+        meas = gemini_logical.terminal_measure(reg)
+        return [
+            squin.set_observable([meas[0][0], meas[0][1], meas[0][5]], 0),
+            squin.set_observable([meas[1][0], meas[1][1], meas[1][5]], 1),
+            squin.set_observable([meas[2][0], meas[2][2], meas[2][5]], 2),
+        ]
+
+    result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
+    # checks to make sure logical GHZ state is created.
+    assert all(xor(bool(rv[0]), bool(rv[1])) is False for rv in result.return_values)
