@@ -3,6 +3,7 @@ from functools import cached_property
 from typing import Generic, TypeVar
 
 import tsim as tsim_backend
+from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
@@ -21,41 +22,61 @@ RetType = TypeVar("RetType")
 
 @dataclass(frozen=True)
 class Result(Generic[RetType]):
+    """Simulation result including measurement outcomes, detector error model, post-processing, and fidelity bounds."""
+
     _raw_measurements: list[list[bool]]
     _detector_error_model: DetectorErrorModel
     _post_processing: atom.PostProcessing[RetType]
+    _fidelity_min: float
+    _fidelity_max: float
+
+    def fidelity_bounds(self) -> tuple[float, float]:
+        """Return the upper and lower fidelity bounds.
+
+        Note: The upper and lower bounds are related to and branching logic in the kernel.
+
+        """
+        return (self._fidelity_min, self._fidelity_max)
 
     @property
     def detector_error_model(self) -> DetectorErrorModel:
+        """The STIM detector error model corresponding to the physical noise circuit."""
         return self._detector_error_model
 
     @cached_property
     def return_values(self) -> list[RetType]:
+        """The return values of the logical kernel"""
         return list(self._post_processing.emit_return(self._raw_measurements))
 
     @cached_property
     def detectors(self) -> list[list[bool]]:
+        """The detector outcomes from the simulation."""
         return list(self._post_processing.emit_detectors(self._raw_measurements))
 
     @cached_property
     def observables(self) -> list[list[bool]]:
+        """The observable outcomes from the simulation."""
         return list(self._post_processing.emit_observables(self._raw_measurements))
 
 
 @dataclass(frozen=True)
 class GeminiLogicalSimulatorTask(Generic[RetType]):
     logical_squin_kernel: ir.Method[[], RetType]
+    """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
+    """The noise model to be inserted into the physical squin kernel."""
 
     def __post_init__(self):
         assert isinstance(self._post_processing, atom.PostProcessing)
 
     @cached_property
     def physical_arch_spec(self):
+        """The physical architecture specification."""
         return generate_arch_hypercube(4)
 
     @cached_property
     def physical_move_kernel(self) -> ir.Method[[], RetType]:
+        """The physical move kernel that execute the logical squin kernel on the physical architecture."""
         return compile_squin_to_move(
             self.logical_squin_kernel, transversal_rewrite=True
         )
@@ -68,6 +89,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
+        """The physical squin kernel corresponding to the physical move kernel, including noise."""
         return MoveToSquin(
             self.physical_arch_spec,
             steane7_initialize,
@@ -76,27 +98,39 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     @cached_property
     def tsim_circuit(self) -> tsim_backend.Circuit:
+        """The tsim circuit corresponding to the physical squin kernel."""
         physical_squin_kernel = self.physical_squin_kernel.similar()
         rewrite.Walk(RemoveReturn()).rewrite(physical_squin_kernel.code)
         return tsim.Circuit(physical_squin_kernel)
 
     @cached_property
     def noiseless_tsim_circuit(self) -> tsim_backend.Circuit:
+        """The noiseless tsim circuit."""
         return self.tsim_circuit.without_noise()
 
     @cached_property
     def measurement_sampler(self):
+        """The tsim measurement sampler."""
         return self.tsim_circuit.compile_sampler()
 
     @cached_property
     def noiseless_measurement_sampler(self):
+        """The noiseless tsim measurement sampler."""
         return self.noiseless_tsim_circuit.compile_sampler()
 
     @cached_property
     def detector_error_model(self):
+        """The STIM detector error model corresponding to the tsim circuit."""
         return self.tsim_circuit.detector_error_model(approximate_disjoint_errors=True)
 
     def visualize(self, animated: bool = False, interactive: bool = True):
+        """Visualize the physical move kernel using the built-in debugger.
+
+        Args
+            animated (bool): Whether to use the animated debugger. Defaults to False.
+            interactive (bool): Whether to enable interactive mode. Defaults to True.
+
+        """
         from bloqade.lanes.visualize import animated_debugger, debugger
 
         if animated:
@@ -112,7 +146,30 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 interactive=interactive,
             )
 
+    def fidelity_bounds(self) -> tuple[float, float]:
+        analysis = FidelityAnalysis(self.physical_squin_kernel.dialects)
+        analysis.run(self.physical_squin_kernel)
+
+        max_fidelity = 1.0
+        min_fidelity = 1.0
+
+        for gate_fid in analysis.gate_fidelities:
+            min_fidelity *= gate_fid.min
+            max_fidelity *= gate_fid.max
+
+        return min_fidelity, max_fidelity
+
     def run(self, shots: int = 1, with_noise: bool = True) -> Result[RetType]:
+        """Run the kernel and get simulation results.
+
+        Args:
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+
+        Returns:
+            Result: The simulation result including measurement outcomes, detector error model, post-processing, and fidelity
+
+        """
 
         if with_noise:
             raw_results = self.measurement_sampler.sample(shots=shots).tolist()
@@ -125,6 +182,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             raw_results,
             self.detector_error_model,
             self._post_processing,
+            *self.fidelity_bounds(),
         )
 
 
@@ -149,24 +207,52 @@ class GeminiLogicalSimulator:
         return self.task(logical_squin_kernel).run(shots, with_noise)
 
     def visualize(
-        self, logical_squin_kernel: ir.Method[[], RetType], animated: bool = False
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        animated: bool = False,
+        interactive: bool = True,
     ):
-        self.task(logical_squin_kernel).visualize(animated=animated)
+        """Visualize the physical move kernel using the built-in debugger.
+
+        Args
+            logical_squin_kernel (ir.Method): The logical squin kernel to visualize.
+            animated (bool): Whether to use the animated debugger. Defaults to False.
+            interactive (bool): Whether to enable interactive mode. Defaults to True.
+
+        """
+        self.task(logical_squin_kernel).visualize(
+            animated=animated, interactive=interactive
+        )
 
     def physical_squin_kernel(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> ir.Method[[], RetType]:
+        """Compile the logical squin kernel to the physical squin kernel."""
         return self.task(logical_squin_kernel).physical_squin_kernel
 
     def physical_move_kernel(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> ir.Method[[], RetType]:
+        """Compile the logical squin kernel to the physical move kernel."""
         return self.task(logical_squin_kernel).physical_move_kernel
 
     def tsim_circuit(
         self, logical_squin_kernel: ir.Method[[], RetType], with_noise: bool = True
     ) -> tsim_backend.Circuit:
+        """Compile the logical squin kernel to the tsim circuit.
+
+        Args:
+            logical_squin_kernel (ir.Method): The logical squin kernel to compile.
+            with_noise (bool): Whether to include noise in the tsim circuit. Defaults to True.
+
+        """
         if with_noise:
             return self.task(logical_squin_kernel).tsim_circuit
         else:
             return self.task(logical_squin_kernel).noiseless_tsim_circuit
+
+    def fidelity_bounds(
+        self, logical_squin_kernel: ir.Method[[], RetType]
+    ) -> tuple[float, float]:
+        """Get the fidelity bounds for the logical squin kernel."""
+        return self.task(logical_squin_kernel).fidelity_bounds()
