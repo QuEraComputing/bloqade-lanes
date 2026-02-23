@@ -132,6 +132,12 @@ class ArchSpec:
         num_sites_per_word = len(self.words[0].site_indices)
         return len(self.words) * num_sites_per_word // 2
 
+    def yield_all_locations(self):
+        """Yield all location addresses in the architecture."""
+        for word_id, word in enumerate(self.words):
+            for site_id, _ in enumerate(word.site_indices):
+                yield LocationAddress(word_id, site_id)
+
     def yield_zone_locations(self, zone_address: ZoneAddress):
         """Yield all location addresses in a given zone address."""
         zone_id = zone_address.zone_id

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from itertools import product, starmap
 from typing import Callable
 
+import numpy as np
 import rustworkx as nx
 
 from .arch import ArchSpec
@@ -113,7 +114,9 @@ class PathFinder:
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[tuple[LocationAddress, ...], tuple[LaneAddress, ...]], float] = lambda _, __: 0.0,
+        path_heuristic: Callable[
+            [tuple[LocationAddress, ...], tuple[LaneAddress, ...]], float
+        ] = lambda _, __: 0.0,
     ) -> tuple[tuple[LocationAddress, ...], tuple[LaneAddress, ...]] | None:
         """Find a path from start to end avoiding occupied sites.
 
@@ -133,23 +136,48 @@ class PathFinder:
         """
         start_node = self.physical_address_map[start]
         end_node = self.physical_address_map[end]
-        
-        
-        nodes = [i for i in range(self.site_graph.num_nodes()) if i not in occupied]
-        site_subgraph = self.site_graph.subgraph(nodes, preserve_attrs=False)        
-        subgraph_path_nodes = nx.digraph_all_shortest_paths(site_subgraph, nodes.index(start_node), nodes.index(end_node))
-        
+
+        if start in occupied or end in occupied:
+            return None
+
+        nodes = [
+            i
+            for i in range(self.site_graph.num_nodes())
+            if self.physical_addresses[i] not in occupied
+        ]
+        site_subgraph = self.site_graph.subgraph(nodes, preserve_attrs=False)
+
+        edge_list = site_subgraph.edge_list()
+
+        def dist(edge: int):
+            src, dst = edge_list[edge]
+            src_addr = self.physical_addresses[nodes[src]]
+            dst_addr = self.physical_addresses[nodes[dst]]
+            src_pos = self.spec.get_position(src_addr)
+            dst_pos = self.spec.get_position(dst_addr)
+            return float(np.linalg.norm(np.array(src_pos) - np.array(dst_pos)))
+
+        subgraph_path_nodes = nx.digraph_all_shortest_paths(
+            site_subgraph,
+            nodes.index(start_node),
+            nodes.index(end_node),
+            weight_fn=dist,
+        )
+
         if len(subgraph_path_nodes) == 0:
             return None
 
         def to_output_result(path: list[int]):
-            location_path = tuple(map(self.physical_addresses.__getitem__, map(nodes.__getitem__, path)))
+            location_path = tuple(
+                map(self.physical_addresses.__getitem__, map(nodes.__getitem__, path))
+            )
             lanes = tuple(map(self.get_lane, location_path, location_path[1:]))
             assert no_none_elements_tuple(lanes), "A lane was not found in the path"
             return location_path, lanes
 
         results = list(map(to_output_result, subgraph_path_nodes))
+
         def eval_heuristic(result):
             return path_heuristic(result[0], result[1])
-        
+
         return min(results, key=eval_heuristic)
