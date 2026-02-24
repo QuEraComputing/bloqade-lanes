@@ -8,10 +8,13 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.lanes.device import GeminiLogicalSimulator
-
+from bloqade.decoders.dialects.annotate.types import Detector, Observable
 
 @logical.kernel(aggressive_unroll=True, verify=False)
-def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
+def set_detector(meas: ilist.IList[types.MeasurementResult, Any])->list[Detector]:
+    """
+    Define default detectors for the Steane code.
+    """
     return [
         squin.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0]),
         squin.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1]),
@@ -20,12 +23,27 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @logical.kernel(aggressive_unroll=True, verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int)->Observable:
+    """
+    Define default observables for the Steane code.
+    """
     return squin.set_observable([meas[0], meas[1], meas[5]], index)
 
+@logical.kernel(aggressive_unroll=True, verify=False)
+def default_observe(reg: ilist.IList[qubit.Qubit, Any])->tuple[list[Detector], list[Observable]]:
+    """
+    A default observe utility function that sets a default set of detectors and observables
+    """
+    measurements = logical.terminal_measure(reg)
+    detectors = []
+    observables = []
+    for i in range(len(reg)):
+        detectors = detectors + set_detector(measurements[i])
+        observables = observables + [set_observable(measurements[i], i)]
+    return detectors, observables
 
 @logical.kernel(aggressive_unroll=True, verify=False)
-def main():
+def main()->tuple[list[Detector], list[Observable]]:
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
     squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
@@ -38,20 +56,13 @@ def main():
     squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
     squin.broadcast.sqrt_y_adj(reg)
 
-    measurements = logical.terminal_measure(reg)
-    detectors = []
-    observables = []
-    for i in range(len(reg)):
-        detectors = detectors + set_detector(measurements[i])
-        observables = observables + [set_observable(measurements[i], i)]
-
-    return detectors, observables
+    return default_observe(reg)
 
 
 task = GeminiLogicalSimulator().task(main)
 
-result = task.run(1000, with_noise=True)
-result_wo_noise = task.run(1000, with_noise=False)
+result = task.run(10, with_noise=True)
+result_wo_noise = task.run(10, with_noise=False)
 return_values = result.return_values
 detectors = np.asarray(result.detectors)
 observables = np.asarray(result.observables)
