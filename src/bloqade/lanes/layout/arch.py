@@ -254,11 +254,14 @@ class ArchSpec:
             word.plot(ax, **scatter_kwargs)
 
         site_paths = self._get_site_bus_paths(show_words, show_site_bus)
-        word_paths = self._get_word_bus_paths(show_word_bus)
-        for path in itertools.chain(site_paths, word_paths):
+        for path in site_paths:
             x_vals, y_vals = zip(*path)
             ax.plot(x_vals, y_vals, linestyle="--")
 
+        word_paths = self._get_word_bus_paths(show_word_bus)
+        for path in word_paths:
+            x_vals, y_vals = zip(*path)
+            ax.plot(x_vals, y_vals, linestyle="-")
         return ax
 
     def show(
