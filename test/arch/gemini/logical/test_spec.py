@@ -1,7 +1,7 @@
 import pytest
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch
+from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     EncodingType,
@@ -11,7 +11,7 @@ from bloqade.lanes.layout.encoding import (
 
 
 def test_architecture_generation():
-    arch_physical = generate_arch()
+    arch_physical = generate_arch_hypercube()
 
     assert len(arch_physical.words) == 16
     assert len(arch_physical.site_buses) == 9
@@ -20,7 +20,7 @@ def test_architecture_generation():
 
 
 def test_get_zone_index():
-    arch_physical = generate_arch()
+    arch_physical = generate_arch_hypercube()
 
     loc_addr = LocationAddress(word_id=0, site_id=0)
     zone_id = ZoneAddress(0)
@@ -39,13 +39,15 @@ def test_get_zone_index():
 
 
 def test_logical_architecture():
-    assert logical.get_arch_spec() == generate_arch(hypercube_dims=1, word_size_y=5)
+    assert logical.get_arch_spec() == generate_arch_hypercube(
+        hypercube_dims=1, word_size_y=5
+    )
 
 
 def plot():
     from matplotlib import pyplot as plt
 
-    arch_physical = generate_arch()
+    arch_physical = generate_arch_hypercube()
     f, axs = plt.subplots(1, 1)
 
     ax = arch_physical.plot(

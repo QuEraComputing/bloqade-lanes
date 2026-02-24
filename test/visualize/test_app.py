@@ -11,38 +11,40 @@ from bloqade.lanes.visualize.app import DebuggerController
 
 class DummyController(DebuggerController):
     def __init__(self):
-        self.run_called = False
-        self.exit_called = False
-        self.next_called = False
-        self.prev_called = False
-        self.key_called = False
-        self.reset_called = False
+        self.run_called: bool = False
+        self.exit_called: bool = False
+        self.next_called: bool = False
+        self.prev_called: bool = False
+        self.key_called: bool = False
+        self.reset_called: bool = False
 
-    def run(self):
+    def run(self) -> None:
         self.run_called = True
 
-    def on_exit(self, event):
+    def on_exit(self, event: object) -> None:
         self.exit_called = True
 
-    def on_next(self, event):
+    def on_next(self, event: object) -> None:
         self.next_called = True
 
-    def on_prev(self, event):
+    def on_prev(self, event: object) -> None:
         self.prev_called = True
 
-    def on_key(self, event):
+    def on_key(self, event: object) -> None:
         self.key_called = True
 
-    def reset(self):
+    def reset(self) -> None:
         self.reset_called = True
 
-    def run_mpl_event_loop(self, ax, fig):
+    def run_mpl_event_loop(
+        self, ax: mpl_axes.Axes, fig: mpl_fig.Figure | mpl_fig.SubFigure
+    ) -> None:
         self.run()
         self.reset()
 
 
-def test_protocol_methods():
-    controller = DummyController()
+def test_protocol_methods() -> None:
+    controller: DummyController = DummyController()
     controller.run()
     controller.on_exit(None)
     controller.on_next(None)
@@ -57,10 +59,10 @@ def test_protocol_methods():
     assert controller.reset_called
 
 
-def test_run_mpl_event_loop_calls_methods(monkeypatch):
-    controller = DummyController()
-    ax = MagicMock(spec=mpl_axes.Axes)
-    fig = MagicMock(spec=mpl_fig.Figure)
+def test_run_mpl_event_loop_calls_methods(monkeypatch) -> None:
+    controller: DummyController = DummyController()
+    ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
+    fig: mpl_fig.Figure = MagicMock(spec=mpl_fig.Figure)
     monkeypatch.setattr(
         controller, "run", lambda: setattr(controller, "run_called", True)
     )
@@ -72,40 +74,41 @@ def test_run_mpl_event_loop_calls_methods(monkeypatch):
     assert controller.reset_called
 
 
-class TestableController(DummyController):
+@pytest.mark.usefixtures("monkeypatch")
+class _TestableController(DummyController):
     def __init__(self):
         super().__init__()
-        self.on_next_event = None
-        self.on_prev_event = None
-        self.on_exit_event = None
-        self.on_key_event = None
-        self.reset_event = False
+        self.on_next_event: object | None = None
+        self.on_prev_event: object | None = None
+        self.on_exit_event: object | None = None
+        self.on_key_event: object | None = None
+        self.reset_event: bool = False
 
-    def on_next(self, event):
+    def on_next(self, event: object) -> None:
         self.on_next_event = event
         super().on_next(event)
 
-    def on_prev(self, event):
+    def on_prev(self, event: object) -> None:
         self.on_prev_event = event
         super().on_prev(event)
 
-    def on_exit(self, event):
+    def on_exit(self, event: object) -> None:
         self.on_exit_event = event
         super().on_exit(event)
 
-    def on_key(self, event):
+    def on_key(self, event: object) -> None:
         self.on_key_event = event
         super().on_key(event)
 
-    def reset(self):
+    def reset(self) -> None:
         self.reset_event = True
         super().reset()
 
 
-def test_run_mpl_event_loop_button_callbacks(monkeypatch):
-    controller = TestableController()
-    ax = MagicMock(spec=mpl_axes.Axes)
-    fig = MagicMock(spec=mpl_fig.Figure)
+def test_run_mpl_event_loop_button_callbacks(monkeypatch) -> None:
+    controller: _TestableController = _TestableController()
+    ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
+    fig: mpl_fig.Figure = MagicMock(spec=mpl_fig.Figure)
     # Patch add_axes to return a MagicMock for each button
     fig.add_axes = MagicMock(side_effect=[MagicMock(), MagicMock(), MagicMock()])
     # Patch Button to allow callback registration
@@ -129,9 +132,7 @@ def test_run_mpl_event_loop_button_callbacks(monkeypatch):
     fig.add_axes.assert_called()
     fig.canvas.mpl_connect.assert_called_with("key_press_event", controller.on_key)
 
-
-def test_on_key_dispatch(monkeypatch):
-    controller = TestableController()
+    controller = _TestableController()
     # Patch prev/next/exit to track calls
     monkeypatch.setattr(
         controller, "on_prev", lambda event: setattr(controller, "prev_called", True)
@@ -145,12 +146,12 @@ def test_on_key_dispatch(monkeypatch):
 
     # Simulate key events
     class Event:
-        def __init__(self, key: str):
-            self.key = key
+        def __init__(self, key: str) -> None:
+            self.key: str = key
 
-    left_event = Event("left")
-    right_event = Event("right")
-    escape_event = Event("escape")
+    left_event: Event = Event("left")
+    right_event: Event = Event("right")
+    escape_event: Event = Event("escape")
     DebuggerController.on_key(controller, left_event)
     assert controller.prev_called
     DebuggerController.on_key(controller, right_event)
@@ -159,11 +160,11 @@ def test_on_key_dispatch(monkeypatch):
     assert controller.exit_called
 
 
-def test_debuggercontroller_notimplemented():
+def test_debuggercontroller_notimplemented() -> None:
     class IncompleteController(DebuggerController):
         pass
 
-    ctrl = IncompleteController()  # type: ignore
+    ctrl: DebuggerController = IncompleteController()  # type: ignore
     with pytest.raises(NotImplementedError):
         ctrl.run()
     with pytest.raises(NotImplementedError):
@@ -176,10 +177,10 @@ def test_debuggercontroller_notimplemented():
         ctrl.reset()
 
 
-def test_run_mpl_event_loop_closes_figure(monkeypatch):
-    controller = DummyController()
-    ax = MagicMock(spec=mpl_axes.Axes)
-    fig = MagicMock(spec=mpl_fig.Figure)
+def test_run_mpl_event_loop_closes_figure(monkeypatch) -> None:
+    controller: DummyController = DummyController()
+    ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
+    fig: mpl_fig.Figure = MagicMock(spec=mpl_fig.Figure)
     fig.add_axes = MagicMock(side_effect=[MagicMock(), MagicMock(), MagicMock()])
     fig.canvas = MagicMock()
     fig.canvas.mpl_connect = MagicMock()
@@ -192,9 +193,9 @@ def test_run_mpl_event_loop_closes_figure(monkeypatch):
     monkeypatch.setattr(
         controller, "reset", lambda: setattr(controller, "reset_called", True)
     )
-    close_called = {}
+    close_called: dict[str, object] = {}
 
-    def fake_close(f):
+    def fake_close(f: object) -> None:
         close_called["closed"] = f
 
     monkeypatch.setattr(plt, "close", fake_close)
@@ -202,19 +203,19 @@ def test_run_mpl_event_loop_closes_figure(monkeypatch):
     assert close_called["closed"] == fig
 
 
-def test_run_mpl_event_loop_subfigure(monkeypatch):
-    controller = DummyController()
-    ax = MagicMock(spec=mpl_axes.Axes)
+def test_run_mpl_event_loop_subfigure(monkeypatch) -> None:
+    controller: DummyController = DummyController()
+    ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
 
     class SubFigure:
-        def add_axes(self, *args, **kwargs):
+        def add_axes(self, *args, **kwargs) -> MagicMock:
             return MagicMock()
 
         @property
-        def canvas(self):
+        def canvas(self) -> MagicMock:
             return MagicMock()
 
-    fig = SubFigure()
+    fig: SubFigure = SubFigure()
     fig.canvas.mpl_connect = MagicMock()
     monkeypatch.setattr(
         "matplotlib.widgets.Button", lambda ax, label: MagicMock(on_clicked=MagicMock())
