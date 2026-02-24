@@ -63,34 +63,6 @@ class ArchSpec:
     )
     """Map of site-site tuples to the lane that addresses the move between that pair of sites (None if no lane exists). Note that direction is factored in."""
 
-    def _get_word_bus_paths(self, show_word_bus):
-        for lane_id in show_word_bus:
-            lane = self.word_buses[lane_id]
-            for site_id in self.has_word_buses:
-                for start_word_id, end_word_id in zip(lane.src, lane.dst):
-                    lane_addr = WordLaneAddress(
-                        word_id=start_word_id,
-                        site_id=site_id,
-                        bus_id=lane_id,
-                        direction=Direction.FORWARD,
-                    )
-                    yield self.get_path(lane_addr)
-
-    def _get_site_bus_paths(self, show_words, show_site_bus):
-        for word_id in show_words:
-            if word_id not in self.has_site_buses:
-                continue  # Only show lanes for words in has_site_buses
-            for lane_id in show_site_bus:
-                lane = self.site_buses[lane_id]
-                for i in range(len(lane.src)):
-                    lane_addr = SiteLaneAddress(
-                        word_id=word_id,
-                        site_id=lane.src[i],
-                        bus_id=lane_id,
-                        direction=Direction.FORWARD,
-                    )
-                    yield self.get_path(lane_addr)
-
     def __post_init__(self):
         if self.zones[0] != tuple(range(len(self.words))):
             raise ValueError("Zone 0 must include all words in the architecture")
@@ -235,6 +207,34 @@ class ArchSpec:
 
     def get_position(self, location: LocationAddress) -> tuple[float, float]:
         return self.words[location.word_id].site_position(location.site_id)
+
+    def _get_word_bus_paths(self, show_word_bus):
+        for lane_id in show_word_bus:
+            lane = self.word_buses[lane_id]
+            for site_id in self.has_word_buses:
+                for start_word_id, end_word_id in zip(lane.src, lane.dst):
+                    lane_addr = WordLaneAddress(
+                        word_id=start_word_id,
+                        site_id=site_id,
+                        bus_id=lane_id,
+                        direction=Direction.FORWARD,
+                    )
+                    yield self.get_path(lane_addr)
+
+    def _get_site_bus_paths(self, show_words, show_site_bus):
+        for word_id in show_words:
+            if word_id not in self.has_site_buses:
+                continue  # Only show lanes for words in has_site_buses
+            for lane_id in show_site_bus:
+                lane = self.site_buses[lane_id]
+                for i in range(len(lane.src)):
+                    lane_addr = SiteLaneAddress(
+                        word_id=word_id,
+                        site_id=lane.src[i],
+                        bus_id=lane_id,
+                        direction=Direction.FORWARD,
+                    )
+                    yield self.get_path(lane_addr)
 
     def plot(
         self,

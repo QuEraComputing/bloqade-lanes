@@ -1,6 +1,6 @@
-import pytest
+from unittest.mock import MagicMock, patch
 
-# Minimal valid ArchSpec for testing
+import pytest
 from bloqade.geometry.dialects.grid import Grid
 
 from bloqade.lanes.layout.arch import ArchSpec, Bus
@@ -28,6 +28,21 @@ arch_spec = ArchSpec(
     site_buses=(Bus(src=(0,), dst=(1,)),),
     word_buses=(Bus(src=(0,), dst=(1,)),),
 )
+
+
+def test_show_with_mocked_pyplot():
+    with (
+        patch("matplotlib.pyplot.gca") as mock_gca,
+        patch("matplotlib.pyplot.show") as mock_show,
+        patch("matplotlib.pyplot.plot") as mock_plot,
+    ):
+        mock_ax = MagicMock()
+        mock_gca.return_value = mock_ax
+        arch_spec.show(ax=mock_ax, show_words=[0], show_intra=[0], show_inter=[0])
+        # Check that plot was called (either on ax or pyplot)
+        assert mock_ax.plot.called or mock_plot.called
+        # Check that plt.show was called
+        assert mock_show.called
 
 
 def test_post_init_invalid_zone():
