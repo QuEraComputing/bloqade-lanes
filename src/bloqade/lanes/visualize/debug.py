@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import Callable
 
 from kirin import ir
@@ -10,15 +11,15 @@ from .app import DebuggerController
 from .artist import get_drawer, render_generator
 
 
+@dataclass
 class StaticDebuggerController(DebuggerController):
-    def __init__(self, ax, num_steps, draw: Callable[[int], None]):
-        self.ax = ax
-        self.num_steps = num_steps
-        self.step_index = 0
-        self.running = True
-        self.waiting = True
-        self.updated = False
-        self.draw = draw
+    ax: Axes
+    num_steps: int
+    draw: Callable[[int], None]
+    step_index: int = field(default=0, init=False)
+    running: bool = field(default=True, init=False)
+    waiting: bool = field(default=True, init=False)
+    updated: bool = field(default=False, init=False)
 
     def on_exit(self, event):
         self.running = False
@@ -49,6 +50,12 @@ class StaticDebuggerController(DebuggerController):
             case "escape":
                 self.on_exit(event)
 
+    def reset(self):
+        self.step_index = 0
+        self.running = True
+        self.waiting = True
+        self.updated = False
+
     def run(self):
         while self.running:
             self.draw(self.step_index)
@@ -58,22 +65,18 @@ class StaticDebuggerController(DebuggerController):
             self.updated = False
 
 
-class AnimatorController(StaticDebuggerController):
-    def __init__(
-        self,
-        ax,
-        num_steps,
-        get_renderer: Callable[[int], tuple[int, Callable[[int], None]]],
-    ):
-        self.ax = ax
-        self.num_steps = num_steps
-        self.step_index = 0
-        self.animation_step = 1
-        self.num_frames = 0
-        self.running = True
-        self.waiting = True
-        self.updated = False
-        self.get_renderer = get_renderer
+@dataclass
+class AnimatorController(DebuggerController):
+    ax: Axes
+    num_steps: int
+    get_renderer: Callable[[int], tuple[int, Callable[[int], None]]]
+    step_index: int = field(default=0, init=False)
+    animation_step: int = field(default=1, init=False)
+    num_frames: int = field(default=0, init=False)
+    running: bool = field(default=True, init=False)
+    waiting: bool = field(default=True, init=False)
+    updated: bool = field(default=False, init=False)
+    animation_step_index: int = field(default=0, init=False)
 
     def on_exit(self, event):
         self.running = False
@@ -100,6 +103,13 @@ class AnimatorController(StaticDebuggerController):
                 self.updated = True
         else:
             self.animation_step = -1
+
+    def reset(self):
+        self.step_index = 0
+        self.animation_step = 1
+        self.running = True
+        self.waiting = True
+        self.updated = False
 
     def run(self):
         while self.running:

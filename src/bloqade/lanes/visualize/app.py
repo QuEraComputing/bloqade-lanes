@@ -26,6 +26,9 @@ class DebuggerController(Protocol):
             case "escape":
                 self.on_exit(event)
 
+    def reset(self):
+        raise NotImplementedError
+
     def run_mpl_event_loop(
         self,
         ax: axes.Axes,
@@ -44,7 +47,7 @@ class DebuggerController(Protocol):
         prev_button.on_clicked(self.on_prev)
         exit_button.on_clicked(self.on_exit)
         fig.canvas.mpl_connect("key_press_event", self.on_key)
-
+        self.reset()
         self.run()
 
         if isinstance(fig, figure.Figure):
