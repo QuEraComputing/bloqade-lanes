@@ -1,10 +1,10 @@
-from typing import Protocol
+from abc import ABC
 
 from matplotlib import axes, figure, pyplot as plt
 from matplotlib.widgets import Button
 
 
-class DebuggerController(Protocol):
+class DebuggerController(ABC):
     def run(self):
         raise NotImplementedError
 

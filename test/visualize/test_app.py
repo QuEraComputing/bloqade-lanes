@@ -9,7 +9,7 @@ import pytest
 from bloqade.lanes.visualize.app import DebuggerController
 
 
-class DummyController:
+class DummyController(DebuggerController):
     def __init__(self):
         self.run_called = False
         self.exit_called = False

@@ -1,6 +1,7 @@
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Sequence
 
 import numpy as np
 from kirin import ir
@@ -134,7 +135,7 @@ def init_stationary_atoms(
     )
 
 
-class Renderer(Protocol):
+class Renderer(ABC):
 
     def max_time(self) -> float:
         raise NotImplementedError
@@ -144,7 +145,7 @@ class Renderer(Protocol):
 
 
 @dataclass
-class AODXLines:
+class AODXLines(Renderer):
     ax: Axes
     aod_x: list[interp1d]
     plot_params: PlotParameters
@@ -165,7 +166,7 @@ class AODXLines:
 
 
 @dataclass
-class AODYLines:
+class AODYLines(Renderer):
     ax: Axes
     aod_y: list[interp1d]
     plot_params: PlotParameters
