@@ -139,7 +139,7 @@ def test_logical_compilation():
         squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
         squin.broadcast.sqrt_y_adj(reg)
 
-    logical_move = compile_squin_to_move(main)
+    logical_move = compile_squin_to_move(main, no_raise=False)
 
     decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
 

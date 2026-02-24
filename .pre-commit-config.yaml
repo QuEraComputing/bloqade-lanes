@@ -30,9 +30,3 @@ repos:
       language: system
       pass_filenames: false
       always_run: true
-    - id: pytest-check
-      name: pytest-check
-      entry: uv run --locked pytest test
-      language: system
-      pass_filenames: false
-      always_run: true
