@@ -78,7 +78,10 @@ def compile_squin_to_move_and_visualize(
         mt (ir.Method): The Squin kernel to compile.
         interactive (bool, optional): Whether to display the visualization interactively. Defaults to True.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
-        animated: (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
+        animated (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
+        no_raise (bool, optional): If True, forward a no-raise mode to the compilation step so that
+            compilation errors are suppressed instead of raised. Visualization will still be invoked on
+            the resulting method returned by :func:`compile_squin_to_move`, regardless of this setting.
     """
     # Compile to move dialect
     mt = compile_squin_to_move(mt, transversal_rewrite, no_raise=no_raise)
