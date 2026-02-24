@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import matplotlib.axes as mpl_axes
 import matplotlib.pyplot as plt
@@ -97,6 +97,31 @@ def test_animator_controller_reset(dummy_ax, dummy_get_renderer):
     assert not ctrl.updated
 
 
+def test_animator_controller_on_key_dispatch(dummy_ax, dummy_get_renderer):
+    ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
+
+    # Simulate key events
+    class Event:
+        def __init__(self, key: str):
+            self.key = key
+
+    # Initially, animation_step should be 1
+    ctrl.animation_step = 0
+    ctrl.on_key(Event("right"))
+    assert (
+        ctrl.animation_step == 1
+    ), "Expected animation_step to be set to 1 on 'right' key"
+    ctrl.on_key(Event("left"))
+    assert (
+        ctrl.animation_step == -1
+    ), "Expected animation_step to be set to -1 on 'left' key"
+    ctrl.running = True
+    ctrl.waiting = True
+    ctrl.on_key(Event("escape"))
+    assert not ctrl.running, "Expected running to be False on 'escape' key"
+    assert not ctrl.waiting, "Expected waiting to be False on 'escape' key"
+
+
 def test_static_debugger_run(monkeypatch, dummy_ax, dummy_draw):
     ctrl = StaticDebuggerController(dummy_ax, 2, dummy_draw)
     call_count = {"draw": 0, "pause": 0}
@@ -147,24 +172,23 @@ def test_animator_controller_run(monkeypatch, dummy_ax, dummy_get_renderer):
 
 
 def test_debugger_noninteractive(monkeypatch, dummy_ax, dummy_draw):
-    # Patch get_drawer to return dummy_draw and 2 steps
-    monkeypatch.setattr(debug_mod, "get_drawer", lambda *a, **kw: (dummy_draw, 2))
-    monkeypatch.setattr(plt, "pause", lambda t: None)
-    monkeypatch.setattr(dummy_ax, "cla", lambda: None)
     called = []
 
     def draw(idx):
         called.append(idx)
 
-    debug_mod.debugger(
-        mt=MagicMock(),
-        arch_spec=MagicMock(),
-        interactive=False,
-        pause_time=0.01,
-        atom_marker="o",
-        ax=dummy_ax,
-    )
-    assert called == [] or isinstance(called, list)
+    with patch("bloqade.lanes.visualize.debug.get_drawer", return_value=(draw, 2)):
+        monkeypatch.setattr(plt, "pause", lambda t: None)
+        monkeypatch.setattr(dummy_ax, "cla", lambda: None)
+        debug_mod.debugger(
+            mt=MagicMock(),
+            arch_spec=MagicMock(),
+            interactive=False,
+            pause_time=0.01,
+            atom_marker="o",
+            ax=dummy_ax,
+        )
+    assert called == [0, 1], f"Expected draw to be called with [0, 1], got {called}"
 
 
 def test_animated_debugger_noninteractive(monkeypatch, dummy_ax):
