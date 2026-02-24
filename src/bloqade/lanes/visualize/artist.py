@@ -265,8 +265,8 @@ class MoveRenderer:
 
     @property
     def total_time(self) -> float:
-        # Return the max time from all renderers
-        return max((r.max_time() for r in self.renderers), default=0.0)
+        # Return the max time from all renderers, always as float
+        return float(max((r.max_time() for r in self.renderers), default=0.0))
 
     def update(self, time: float):
         for renderer in self.renderers:
