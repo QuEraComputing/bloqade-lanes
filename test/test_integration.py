@@ -130,7 +130,7 @@ def test_logical_compilation():
         squin.h(reg[0])
         squin.cx(reg[0], reg[1])
 
-    logical_move = compile_squin_to_move(main)
+    logical_move = compile_squin_to_move(main, no_raise=False)
 
     decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
 

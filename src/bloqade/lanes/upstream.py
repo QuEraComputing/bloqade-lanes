@@ -167,6 +167,7 @@ def squin_to_move(
     placement_strategy: placement.PlacementStrategyABC,
     insert_palindrome_moves: bool = True,
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
+    no_raise: bool = True,
 ) -> ir.Method:
     """Compile a squin kernel to move dialect.
 
@@ -189,13 +190,13 @@ def squin_to_move(
         ),
     )
     CallGraphPass(mt.dialects, rule)(out := mt.similar())
-    out = SquinToNative().emit(out)
-    out = NativeToPlace(merge_heuristic).emit(out)
+    out = SquinToNative().emit(out, no_raise=no_raise)
+    out = NativeToPlace(merge_heuristic).emit(out, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
         insert_palindrome_moves=insert_palindrome_moves,
-    ).emit(out)
+    ).emit(out, no_raise=no_raise)
 
     passes.TypeInfer(mt.dialects)(out)
     out.verify()

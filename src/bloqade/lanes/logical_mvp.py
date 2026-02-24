@@ -41,7 +41,9 @@ def transversal_rewrites(mt: ir.Method):
     return mt
 
 
-def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
+def compile_squin_to_move(
+    mt: ir.Method, transversal_rewrite: bool = False, no_raise: bool = True
+):
     """Compile a squin kernel to move dialect.
 
     Args:
@@ -55,6 +57,7 @@ def compile_squin_to_move(mt: ir.Method, transversal_rewrite: bool = False):
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_palindrome_moves=True,
+        no_raise=no_raise,
     )
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
@@ -67,6 +70,7 @@ def compile_squin_to_move_and_visualize(
     interactive: bool = True,
     transversal_rewrite: bool = False,
     animated: bool = False,
+    no_raise: bool = True,
 ):
     """Compile a squin kernel to moves and visualize the program.
 
@@ -77,7 +81,7 @@ def compile_squin_to_move_and_visualize(
         animated: (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
     """
     # Compile to move dialect
-    mt = compile_squin_to_move(mt, transversal_rewrite)
+    mt = compile_squin_to_move(mt, transversal_rewrite, no_raise=no_raise)
     if transversal_rewrite:
         arch_spec = generate_arch_hypercube(4)
         marker = "o"
@@ -94,7 +98,7 @@ def compile_squin_to_move_and_visualize(
 
 
 def compile_to_physical_squin_noise_model(
-    mt: ir.Method, noise_model: NoiseModelABC | None = None
+    mt: ir.Method, noise_model: NoiseModelABC | None = None, no_raise: bool = True
 ) -> ir.Method:
     """Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
 
@@ -108,7 +112,7 @@ def compile_to_physical_squin_noise_model(
     if noise_model is None:
         noise_model = generate_simple_noise_model()
 
-    move_mt = compile_squin_to_move(mt, transversal_rewrite=True)
+    move_mt = compile_squin_to_move(mt, transversal_rewrite=True, no_raise=no_raise)
     transformer = MoveToSquin(
         arch_spec=generate_arch_hypercube(4),
         logical_initialization=logical.steane7_initialize,
@@ -116,11 +120,11 @@ def compile_to_physical_squin_noise_model(
         aggressive_unroll=False,
     )
 
-    return transformer.emit(move_mt)
+    return transformer.emit(move_mt, no_raise=no_raise)
 
 
 def compile_to_physical_stim_program(
-    mt: ir.Method, noise_model: NoiseModelABC | None = None
+    mt: ir.Method, noise_model: NoiseModelABC | None = None, no_raise: bool = True
 ) -> str:
     """Compiles a logical squin kernel to a physical stim kernel with noise channels inserted.
 
@@ -131,7 +135,9 @@ def compile_to_physical_stim_program(
         The compiled physical stim program as a string.
 
     """
-    noise_kernel = compile_to_physical_squin_noise_model(mt, noise_model)
+    noise_kernel = compile_to_physical_squin_noise_model(
+        mt, noise_model, no_raise=no_raise
+    )
     RemoveReturn().rewrite(noise_kernel.code)
     noise_kernel = squin_to_stim(noise_kernel)
     buf = io.StringIO()
