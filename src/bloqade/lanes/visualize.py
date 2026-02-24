@@ -466,6 +466,54 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     return draw, len(steps)
 
 
+class DebuggerController:
+    def __init__(self, ax, num_steps, draw: Callable[[int], None]):
+        self.ax = ax
+        self.num_steps = num_steps
+        self.step_index = 0
+        self.running = True
+        self.waiting = True
+        self.updated = False
+        self.draw = draw
+
+    def on_exit(self, event):
+        self.running = False
+        self.waiting = False
+        if not self.updated:
+            self.updated = True
+
+    def on_next(self, event):
+        self.waiting = False
+        if not self.updated:
+            self.step_index = min(self.step_index + 1, self.num_steps - 1)
+            self.ax.cla()
+            self.updated = True
+
+    def on_prev(self, event):
+        self.waiting = False
+        if not self.updated:
+            self.step_index = max(self.step_index - 1, 0)
+            self.ax.cla()
+            self.updated = True
+
+    def on_key(self, event):
+        match event.key:
+            case "left":
+                self.on_prev(event)
+            case "right":
+                self.on_next(event)
+            case "escape":
+                self.on_exit(event)
+
+    def run(self):
+        while self.running:
+            self.draw(self.step_index)
+            while self.waiting:
+                plt.pause(0.01)
+            self.waiting = True
+            self.updated = False
+
+
 def interactive_debugger(
     draw: Callable[[int], None],
     num_steps: int,
@@ -473,10 +521,7 @@ def interactive_debugger(
 ):
 
     ax = plt.gca()
-    step_index = 0
-    running = True
-    waiting = True
-    updated = False
+    controller = DebuggerController(ax, num_steps, draw)
 
     prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
     exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
@@ -486,54 +531,12 @@ def interactive_debugger(
     next_button = Button(next_ax, "Next (>)")
     exit_button = Button(exit_ax, "Exit(Esc)")
 
-    def on_exit(event):
-        nonlocal running, waiting, updated
-        running = False
-        waiting = False
-        if not updated:
-            updated = True
+    next_button.on_clicked(controller.on_next)
+    prev_button.on_clicked(controller.on_prev)
+    exit_button.on_clicked(controller.on_exit)
+    fig.canvas.mpl_connect("key_press_event", controller.on_key)
 
-    def on_next(event):
-        nonlocal waiting, step_index, updated
-        waiting = False
-        if not updated:
-            step_index = min(step_index + 1, num_steps - 1)
-            ax.cla()
-            updated = True
-
-    def on_prev(event):
-        nonlocal waiting, step_index, updated
-        waiting = False
-        if not updated:
-            step_index = max(step_index - 1, 0)
-            ax.cla()
-            updated = True
-
-    # connect buttons to callbacks
-    next_button.on_clicked(on_next)
-    prev_button.on_clicked(on_prev)
-    exit_button.on_clicked(on_exit)
-
-    # connect keyboard shortcuts to callbacks
-    def on_key(event):
-        match event.key:
-            case "left":
-                on_prev(event)
-            case "right":
-                on_next(event)
-            case "escape":
-                on_exit(event)
-
-    fig.canvas.mpl_connect("key_press_event", on_key)
-
-    while running:
-        draw(step_index)
-
-        while waiting:
-            plt.pause(0.01)
-
-        waiting = True
-        updated = False
+    controller.run()
 
     if isinstance(fig, figure.Figure):
         plt.close(fig)
@@ -622,6 +625,77 @@ def render_generator(
     return get_renderer, len(steps)
 
 
+class AnimatorController:
+    def __init__(
+        self,
+        ax,
+        num_steps,
+        get_renderer: Callable[[int], tuple[int, Callable[[int], None]]],
+    ):
+        self.ax = ax
+        self.num_steps = num_steps
+        self.step_index = 0
+        self.animation_step = 1
+        self.num_frames = 0
+        self.running = True
+        self.waiting = True
+        self.updated = False
+        self.get_renderer = get_renderer
+
+    def on_exit(self, event):
+        self.running = False
+        self.waiting = False
+        if not self.updated:
+            self.updated = True
+
+    def on_next(self, event):
+        if self.animation_step == 1:
+            self.waiting = False
+            if not self.updated:
+                self.step_index = min(self.step_index + 1, self.num_steps - 1)
+                self.ax.cla()
+                self.updated = True
+        else:
+            self.animation_step = 1
+
+    def on_prev(self, event):
+        if self.animation_step == -1:
+            self.waiting = False
+            if not self.updated:
+                self.step_index = max(self.step_index - 1, 0)
+                self.ax.cla()
+                self.updated = True
+        else:
+            self.animation_step = -1
+
+    def on_key(self, event):
+        match event.key:
+            case "left":
+                self.on_prev(event)
+            case "right":
+                self.on_next(event)
+            case "escape":
+                self.on_exit(event)
+
+    def run(self):
+        while self.running:
+            self.num_frames, renderer = self.get_renderer(self.step_index)
+            self.animation_step_index = (
+                0 if self.animation_step == 1 else self.num_frames
+            )
+            while self.waiting:
+                renderer(self.animation_step_index)
+                self.animation_step_index += self.animation_step
+                self.animation_step_index = max(0, self.animation_step_index)
+                self.animation_step_index = min(
+                    self.animation_step_index, self.num_frames
+                )
+                plt.pause(0.01)
+
+            self.waiting = True
+            self.updated = False
+
+
 def interactive_animator(
     get_renderer: Callable[[int], tuple[int, Callable[[int], None]]],
     num_steps: int,
@@ -632,13 +706,7 @@ def interactive_animator(
     if fig is None:
         raise ValueError("Could not get figure from axes for interactive animator.")
 
-    step_index = 0
-    animation_step = 1
-    num_frames = 0
-
-    running = True
-    waiting = True
-    updated = False
+    controller = AnimatorController(ax, num_steps, get_renderer)
 
     prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
     exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
@@ -648,66 +716,12 @@ def interactive_animator(
     next_button = Button(next_ax, "Next (>)")
     exit_button = Button(exit_ax, "Exit(Esc)")
 
-    def on_exit(event):
-        nonlocal running, waiting, updated
-        running = False
-        waiting = False
-        if not updated:
-            updated = True
+    next_button.on_clicked(controller.on_next)
+    prev_button.on_clicked(controller.on_prev)
+    exit_button.on_clicked(controller.on_exit)
+    fig.canvas.mpl_connect("key_press_event", controller.on_key)
 
-    def on_next(event):
-        nonlocal waiting, step_index, updated, animation_step
-
-        if animation_step == 1:
-            waiting = False
-            if not updated:
-                step_index = min(step_index + 1, num_steps - 1)
-                ax.cla()
-                updated = True
-        else:
-            animation_step = 1
-
-    def on_prev(event):
-        nonlocal waiting, step_index, updated, animation_step
-        if animation_step == -1:
-            waiting = False
-            if not updated:
-                step_index = max(step_index - 1, 0)
-                ax.cla()
-                updated = True
-        else:
-            animation_step = -1
-
-    # connect buttons to callbacks
-    next_button.on_clicked(on_next)
-    prev_button.on_clicked(on_prev)
-    exit_button.on_clicked(on_exit)
-
-    # connect keyboard shortcuts to callbacks
-    def on_key(event):
-        match event.key:
-            case "left":
-                on_prev(event)
-            case "right":
-                on_next(event)
-            case "escape":
-                on_exit(event)
-
-    fig.canvas.mpl_connect("key_press_event", on_key)
-
-    while running:
-        num_frames, renderer = get_renderer(step_index)
-        animation_step_index = 0 if animation_step == 1 else num_frames
-
-        while waiting:
-            renderer(animation_step_index)
-            animation_step_index += animation_step
-            animation_step_index = max(0, animation_step_index)
-            animation_step_index = min(animation_step_index, num_frames)
-            plt.pause(0.01)
-
-        waiting = True
-        updated = False
+    controller.run()
 
     if isinstance(fig, figure.Figure):
         plt.close(fig)
