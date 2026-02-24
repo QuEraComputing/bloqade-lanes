@@ -1,4 +1,3 @@
-import itertools
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
