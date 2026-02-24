@@ -44,11 +44,14 @@ def transversal_rewrites(mt: ir.Method):
 def compile_squin_to_move(
     mt: ir.Method, transversal_rewrite: bool = False, no_raise: bool = True
 ):
-    """Compile a squin kernel to move dialect.
+    """
+    Compile a squin kernel to move dialect.
 
     Args:
         mt (ir.Method): The Squin kernel to compile.
-        transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False
+        transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
+        no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
+
     Returns:
         ir.Method: The compiled move dialect method.
     """
@@ -72,13 +75,15 @@ def compile_squin_to_move_and_visualize(
     animated: bool = False,
     no_raise: bool = True,
 ):
-    """Compile a squin kernel to moves and visualize the program.
+    """
+    Compile a squin kernel to moves and visualize the program.
 
     Args:
         mt (ir.Method): The Squin kernel to compile.
         interactive (bool, optional): Whether to display the visualization interactively. Defaults to True.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
-        animated: (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
+        animated (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
+        no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
     """
     # Compile to move dialect
     mt = compile_squin_to_move(mt, transversal_rewrite, no_raise=no_raise)
@@ -100,14 +105,16 @@ def compile_squin_to_move_and_visualize(
 def compile_to_physical_squin_noise_model(
     mt: ir.Method, noise_model: NoiseModelABC | None = None, no_raise: bool = True
 ) -> ir.Method:
-    """Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
+    """
+    Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
 
     Args:
-        mt: The logical squin method to compile.
-        noise_model: The noise model to insert during compilation.
-    Returns:
-        The compiled physical squin method.
+        mt (ir.Method): The logical squin method to compile.
+        noise_model (NoiseModelABC, optional): The noise model to insert during compilation. Defaults to None.
+        no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
 
+    Returns:
+        ir.Method: The compiled physical squin method.
     """
     if noise_model is None:
         noise_model = generate_simple_noise_model()
@@ -126,14 +133,16 @@ def compile_to_physical_squin_noise_model(
 def compile_to_physical_stim_program(
     mt: ir.Method, noise_model: NoiseModelABC | None = None, no_raise: bool = True
 ) -> str:
-    """Compiles a logical squin kernel to a physical stim kernel with noise channels inserted.
+    """
+    Compiles a logical squin kernel to a physical stim kernel with noise channels inserted.
 
     Args:
-        mt: The logical squin method to compile.
-        noise_model: The noise model to insert during compilation.
-    Returns:
-        The compiled physical stim program as a string.
+        mt (ir.Method): The logical squin method to compile.
+        noise_model (NoiseModelABC, optional): The noise model to insert during compilation. Defaults to None.
+        no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
 
+    Returns:
+        str: The compiled physical stim program as a string.
     """
     noise_kernel = compile_to_physical_squin_noise_model(
         mt, noise_model, no_raise=no_raise

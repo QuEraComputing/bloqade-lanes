@@ -33,17 +33,15 @@ def generate_simple_noise_model(
     noise_model: "GeminiNoiseModelABC | None" = None,
     loss: bool = True,
 ) -> SimpleNoiseModel:
-    """Generate a simple noise model from a bloqade-circuit noise model.
+    """
+    Generate a simple noise model from a bloqade-circuit noise model.
 
     Args:
-        noise_model (GeminiNoiseModelABC | None, optional): The bloqade-circuit noise model to use.
-            Defaults to None.
+        noise_model (GeminiNoiseModelABC | None, optional): The bloqade-circuit noise model to use. Defaults to None.
+        loss (bool, optional): Whether to include loss in the noise model. Defaults to True.
 
     Returns:
-        SimpleNoiseModel: A simple noise model compatible with bloqade-lanes. You can
-            use this to add noise when rewriting from the move dialect kernel to a squin
-            kernel.
-
+        SimpleNoiseModel: A simple noise model compatible with bloqade-lanes. You can use this to add noise when rewriting from the move dialect kernel to a squin kernel.
     """
     from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
 

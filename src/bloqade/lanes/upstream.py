@@ -169,14 +169,16 @@ def squin_to_move(
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
     no_raise: bool = True,
 ) -> ir.Method:
-    """Compile a squin kernel to move dialect.
+    """
+    Compile a squin kernel to move dialect.
 
     Args:
         mt (ir.Method): The Squin kernel to compile.
         layout_heuristic (layout.LayoutHeuristicABC): The layout heuristic to use.
         placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
-        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions.
-            Defaults to default_merge_heuristic.
+        insert_palindrome_moves (bool, optional): Whether to insert palindrome moves. Defaults to True.
+        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
+        no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
 
     Returns:
         ir.Method: The compiled move dialect method.
