@@ -12,7 +12,7 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.device import GeminiLogicalSimulator
 
 
-# helper functions to analyze statical distribution of logical measurements
+# helper functions to analyze statistical distribution of logical measurements
 def get_hist(obs_array: np.ndarray):
     return Counter(map(lambda x: tuple(map(int, x)), obs_array[:]))
 
