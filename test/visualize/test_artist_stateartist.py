@@ -47,7 +47,7 @@ def test_state_artist_move_renderer_and_draw_methods():
     fig, ax = plt.subplots()
     arch = make_arch_spec()
     params = artist.PlotParameters(1.0)
-    sa = artist.StateArtist(ax, arch, params)
+    sa = artist.StateArtist(ax, arch, params, 0, 10, 0, 10)
     state = make_atom_state()
     mr = sa.move_renderer(state, speed=1.0)
     assert mr is not None
@@ -60,7 +60,7 @@ def test_state_artist_show_methods():
     fig, ax = plt.subplots()
     arch = make_arch_spec()
     params = artist.PlotParameters(1.0)
-    sa = artist.StateArtist(ax, arch, params)
+    sa = artist.StateArtist(ax, arch, params, 0, 10, 0, 10)
     # Use mocks for move.* and ir.Statement
     stmt_localr = Mock(spec=move.LocalR)
     stmt_localr.location_addresses = [Mock(word_id=0, site_id=0)]
