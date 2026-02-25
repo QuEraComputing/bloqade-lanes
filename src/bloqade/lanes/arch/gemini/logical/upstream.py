@@ -54,6 +54,8 @@ def steane7_initialize(
     squin.broadcast.sqrt_y(qubits[2:])
     squin.broadcast.cz(evens[:-1], odds)
     squin.broadcast.sqrt_y(ilist.IList([qubits[1], qubits[2], qubits[4]]))
+    squin.x(qubits[3])
+    squin.broadcast.z(ilist.IList([qubits[1], qubits[5]]))
     debug.info("End Steane7 Initialize")
 
 
