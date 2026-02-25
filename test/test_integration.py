@@ -3,6 +3,7 @@ import math
 from collections import Counter
 from typing import Any
 
+import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from bloqade.stim.emit.stim_str import EmitStimMain
@@ -13,6 +14,7 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.device import GeminiLogicalSimulator
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
@@ -126,17 +128,55 @@ def test_logical_compilation():
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def main():
-        reg = squin.qalloc(2)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
+        reg = qubit.qalloc(5)
+        squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
 
-    logical_move = compile_squin_to_move(main)
+        squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
+        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.sqrt_y(ilist.IList([reg[0], reg[3]]))
+        squin.broadcast.cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[2], reg[4]]))
+        squin.sqrt_x_adj(reg[0])
+        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
+        squin.broadcast.sqrt_y_adj(reg)
+
+    logical_move = compile_squin_to_move(main, no_raise=False)
 
     decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
 
     AggressiveUnroll(main.dialects).fixpoint(main)
 
-    decompiled_squin.print()
-    main.print()
-
     assert check_circuit(main, decompiled_squin)
+
+
+@pytest.mark.parametrize("size", [2, 3, 4, 5, 6])
+def test_physical_compilation(size: int):
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def main():
+        reg = qubit.qalloc(1)
+        squin.h(reg[0])
+        for _ in range(size):
+            current = len(reg)
+            missing = size - current
+            if missing > current:
+                num_alloc = current
+            else:
+                num_alloc = missing
+
+            if num_alloc > 0:
+                new_qubits = qubit.qalloc(num_alloc)
+                squin.broadcast.cx(reg[-num_alloc:], new_qubits)
+                reg = reg + new_qubits
+
+        meas = gemini_logical.terminal_measure(reg)
+
+        def set_observable(qubit_index: int):
+            return squin.set_observable(
+                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
+                qubit_index,
+            )
+
+        return ilist.map(set_observable, ilist.range(len(reg)))
+
+    result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
+    # checks to make sure logical GHZ state is created.
+    assert all(len(set(rv)) == 1 for rv in result.observables)

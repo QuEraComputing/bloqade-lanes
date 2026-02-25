@@ -22,6 +22,7 @@ class LayoutHeuristicABC(abc.ABC):
         Compute the initial qubit layout from circuit stages.
 
         Args:
+            all_qubits: Tuple of logical qubit indices to be mapped.
             stages: List of circuit stages, where each stage is a tuple of (control, target)
                 qubit pairs representing two-qubit gates. For example:
                 [
