@@ -279,6 +279,10 @@ class StateArtist:
     ax: Axes
     arch_spec: ArchSpec
     plot_params: PlotParameters
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
 
     def _get_aod_paths(self, speed, move_execution: AtomState):
         waypoints: list[tuple[set[float], set[float]]] = []
@@ -539,7 +543,15 @@ def get_state_artist(
 
     plot_params = PlotParameters(scale, atom_marker=atom_marker)
 
-    return StateArtist(ax, arch_spec, plot_params=plot_params)
+    return StateArtist(
+        ax,
+        arch_spec,
+        plot_params=plot_params,
+        x_min=x_min,
+        x_max=x_max,
+        y_min=y_min,
+        y_max=y_max,
+    )
 
 
 def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"):
@@ -574,16 +586,12 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         stmt_str = stmt_str + ")"
         return stmt_str
 
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
-
     def draw(step_index: int):
         if len(steps) == 0:
             return
 
         stmt, _ = steps[step_index]
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
         ax.set_aspect("equal", adjustable="box")
         stmt, curr_state = steps[step_index]
         artist.show_slm(stmt, atom_marker)
@@ -592,7 +600,8 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
         visualize_fn(stmt)
         artist.draw_atoms(curr_state)
         artist.draw_moves(curr_state)
-
+        ax.set_xlim(artist.x_min, artist.x_max)
+        ax.set_ylim(artist.y_min, artist.y_max)
         plt.draw()
 
     return draw, len(steps)
@@ -613,15 +622,6 @@ def render_generator(
     }
 
     frame, _ = AtomInterpreter(mt.dialects, arch_spec=arch_spec).run(mt)
-
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
-    x_width = x_max - x_min
-    y_width = y_max - y_min
-
-    x_min -= 0.1 * x_width
-    x_max += 0.1 * x_width
-    y_min -= 0.1 * y_width
-    y_max += 0.1 * y_width
 
     steps: list[tuple[ir.Statement, AtomState]] = []
     constants = {}
@@ -652,9 +652,9 @@ def render_generator(
         stmt, curr_state = steps[step_index]
         artist.show_slm(stmt, atom_marker)
         ax.set_title(f"Step {step_index+1} / {len(steps)}: {stmt_text(stmt)}")
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
         ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(artist.x_min, artist.x_max)
+        ax.set_ylim(artist.y_min, artist.y_max)
 
         visualize_fn = methods.get(type(stmt))
         if visualize_fn is not None:

@@ -30,14 +30,15 @@ def ghz_optimal():
     squin.broadcast.sqrt_y(qs)
     squin.z(qs[0])
     squin.cz(qs[0], qs[5])
+    squin.broadcast.cz(ilist.IList([qs[0], qs[5]]), ilist.IList([qs[1], qs[6]]))
     squin.broadcast.cz(qs[:2] + qs[5:7], qs[2:4] + qs[7:9])
     squin.broadcast.cz(ilist.IList([qs[3], qs[8]]), ilist.IList([qs[4], qs[9]]))
     squin.broadcast.sqrt_y(qs)
     squin.sqrt_y_adj(qs[0])
 
 
-compile_squin_to_move_and_visualize(log_depth_ghz, animated=True)
-# compile_squin_to_move_and_visualize(ghz_optimal)
+compile_squin_to_move_and_visualize(log_depth_ghz)
+compile_squin_to_move_and_visualize(ghz_optimal)
 # compile_squin_to_move_and_visualize(
 #     ghz_optimal, transversal_rewrite=True, animated=True
 # )
