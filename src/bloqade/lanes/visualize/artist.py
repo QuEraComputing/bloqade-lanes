@@ -1,13 +1,12 @@
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from functools import cached_property
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 from kirin import ir
-from matplotlib import colormaps, figure, pyplot as plt
+from matplotlib import colormaps, pyplot as plt
 from matplotlib.axes import Axes
-from matplotlib.widgets import Button
 from scipy.interpolate import interp1d
 
 from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
@@ -89,67 +88,190 @@ class PlotParameters:
         }
 
 
+def init_aod_x_lines(ax: Axes, aod_x: Sequence[float], plot_params: PlotParameters):
+    y_min, y_max = ax.get_ylim()
+    return ax.vlines(aod_x, y_min, y_max, **plot_params.aod_line_args)
+
+
+def init_aod_y_lines(ax: Axes, aod_y: Sequence[float], plot_params: PlotParameters):
+    x_min, x_max = ax.get_xlim()
+    return ax.hlines(aod_y, x_min, x_max, **plot_params.aod_line_args)
+
+
+def init_aod_positions(
+    ax: Axes,
+    aod_x: Sequence[float],
+    aod_y: Sequence[float],
+    plot_params: PlotParameters,
+):
+    aod_x_positions, aod_y_positions = np.meshgrid(aod_x, aod_y)
+    return ax.scatter(
+        aod_x_positions.ravel(),
+        aod_y_positions.ravel(),
+        **plot_params.aod_marker_args,
+    )
+
+
+def init_moving_atoms(
+    ax: Axes,
+    moving_atoms_x_indices,
+    moving_atoms_y_indices,
+    aod_x,
+    aod_y,
+    plot_params: PlotParameters,
+):
+    moving_atom_x = list(map(aod_x.__getitem__, moving_atoms_x_indices))
+    moving_atom_y = list(map(aod_y.__getitem__, moving_atoms_y_indices))
+    return ax.scatter(moving_atom_x, moving_atom_y, **plot_params.atom_plot_args)
+
+
+def init_stationary_atoms(
+    ax: Axes, stationary_atoms_x, stationary_atoms_y, plot_params: PlotParameters
+):
+    return ax.scatter(
+        stationary_atoms_x,
+        stationary_atoms_y,
+        **plot_params.atom_plot_args,
+    )
+
+
+class Renderer(ABC):
+
+    def max_time(self) -> float:
+        raise NotImplementedError
+
+    def update(self, time: float):
+        raise NotImplementedError
+
+
 @dataclass
-class MoveRenderer:
+class AODXLines(Renderer):
+    ax: Axes
+    aod_x: list[interp1d]
+    plot_params: PlotParameters
+
+    def max_time(self) -> float:
+        if self.aod_x:
+            return max((f.x[-1] for f in self.aod_x), default=0.0)
+        return 0.0
+
+    def __post_init__(self):
+        x0 = [f(0) for f in self.aod_x]
+        self.lines = init_aod_x_lines(self.ax, x0, self.plot_params)
+
+    def update(self, time: float):
+        x = [f(time) for f in self.aod_x]
+        y_min, y_max = self.ax.get_ylim()
+        self.lines.set_segments([[(xi, y_min), (xi, y_max)] for xi in x])
+
+
+@dataclass
+class AODYLines(Renderer):
+    ax: Axes
+    aod_y: list[interp1d]
+    plot_params: PlotParameters
+
+    def max_time(self) -> float:
+        if self.aod_y:
+            return max((f.x[-1] for f in self.aod_y), default=0.0)
+        return 0.0
+
+    def __post_init__(self):
+        y0 = [f(0) for f in self.aod_y]
+        self.lines = init_aod_y_lines(self.ax, y0, self.plot_params)
+
+    def update(self, time: float):
+        y = [f(time) for f in self.aod_y]
+        x_min, x_max = self.ax.get_xlim()
+        self.lines.set_segments([[(x_min, yi), (x_max, yi)] for yi in y])
+
+
+@dataclass
+class AODPositions:
     ax: Axes
     aod_x: list[interp1d]
     aod_y: list[interp1d]
+    plot_params: PlotParameters
+
+    def max_time(self) -> float:
+        max_x = max((f.x[-1] for f in self.aod_x), default=0.0) if self.aod_x else 0.0
+        max_y = max((f.x[-1] for f in self.aod_y), default=0.0) if self.aod_y else 0.0
+        return max(max_x, max_y)
+
+    def __post_init__(self):
+        x0 = [f(0) for f in self.aod_x]
+        y0 = [f(0) for f in self.aod_y]
+        self.positions = init_aod_positions(self.ax, x0, y0, self.plot_params)
+
+    def update(self, time: float):
+        x = [f(time) for f in self.aod_x]
+        y = [f(time) for f in self.aod_y]
+        x_pos, y_pos = np.meshgrid(x, y)
+        self.positions.set_offsets(np.column_stack([x_pos.ravel(), y_pos.ravel()]))
+
+
+@dataclass
+class MovingAtomsScatter:
+    ax: Axes
     moving_atoms_x_indices: list[int]
     moving_atoms_y_indices: list[int]
+    aod_x: list[interp1d]
+    aod_y: list[interp1d]
+    plot_params: PlotParameters
+
+    def max_time(self) -> float:
+        max_x = max((f.x[-1] for f in self.aod_x), default=0.0) if self.aod_x else 0.0
+        max_y = max((f.x[-1] for f in self.aod_y), default=0.0) if self.aod_y else 0.0
+        return max(max_x, max_y)
+
+    def __post_init__(self):
+        x0 = [f(0) for f in self.aod_x]
+        y0 = [f(0) for f in self.aod_y]
+        moving_atom_x = list(map(x0.__getitem__, self.moving_atoms_x_indices))
+        moving_atom_y = list(map(y0.__getitem__, self.moving_atoms_y_indices))
+        self.scatter = self.ax.scatter(
+            moving_atom_x, moving_atom_y, **self.plot_params.atom_plot_args
+        )
+
+    def update(self, time: float):
+        x = [f(time) for f in self.aod_x]
+        y = [f(time) for f in self.aod_y]
+        moving_atom_x = list(map(x.__getitem__, self.moving_atoms_x_indices))
+        moving_atom_y = list(map(y.__getitem__, self.moving_atoms_y_indices))
+        self.scatter.set_offsets(np.column_stack([moving_atom_x, moving_atom_y]))
+
+
+@dataclass
+class StationaryAtomsScatter:
+    ax: Axes
     stationary_atoms_x: list[float]
     stationary_atoms_y: list[float]
     plot_params: PlotParameters
 
-    @cached_property
-    def total_time(self) -> float:
-        return max((func.x[-1] for func in self.aod_x + self.aod_y), default=0.0)
+    def max_time(self) -> float:
+        return 0.0
 
     def __post_init__(self):
-        aod_x = [func(0) for func in self.aod_x]
-        aod_y = [func(0) for func in self.aod_y]
-        moving_atom_x = list(map(aod_x.__getitem__, self.moving_atoms_x_indices))
-        moving_atom_y = list(map(aod_y.__getitem__, self.moving_atoms_y_indices))
-
-        x_min, x_max = self.ax.get_xlim()
-        y_min, y_max = self.ax.get_ylim()
-        self.aod_x_lines = self.ax.vlines(
-            aod_x, y_min, y_max, **self.plot_params.aod_line_args
-        )
-        self.aod_y_lines = self.ax.hlines(
-            aod_y, x_min, x_max, **self.plot_params.aod_line_args
-        )
-        aod_x_positions, aod_y_positions = np.meshgrid(aod_x, aod_y)
-
-        self.aod_positions = self.ax.scatter(
-            aod_x_positions.ravel(),
-            aod_y_positions.ravel(),
-            **self.plot_params.aod_marker_args,
-        )
-        self.moving_atoms_scatter = self.ax.scatter(
-            moving_atom_x, moving_atom_y, **self.plot_params.atom_plot_args
-        )
-        self.ax.scatter(
-            self.stationary_atoms_x,
-            self.stationary_atoms_y,
-            **self.plot_params.atom_plot_args,
+        self.scatter = init_stationary_atoms(
+            self.ax, self.stationary_atoms_x, self.stationary_atoms_y, self.plot_params
         )
 
     def update(self, time: float):
-        aod_x = [func(time) for func in self.aod_x]
-        aod_y = [func(time) for func in self.aod_y]
-        moving_atom_x = list(map(aod_x.__getitem__, self.moving_atoms_x_indices))
-        moving_atom_y = list(map(aod_y.__getitem__, self.moving_atoms_y_indices))
-        ymin, ymax = self.ax.get_ylim()
-        xmin, xmax = self.ax.get_xlim()
-        self.aod_x_lines.set_segments([[(x, ymin), (x, ymax)] for x in aod_x])
-        self.aod_y_lines.set_segments([[(xmin, y), (xmax, y)] for y in aod_y])
-        aod_x_positions, aod_y_positions = np.meshgrid(aod_x, aod_y)
-        self.aod_positions.set_offsets(
-            np.column_stack([aod_x_positions.ravel(), aod_y_positions.ravel()])
-        )
-        self.moving_atoms_scatter.set_offsets(
-            np.column_stack([moving_atom_x, moving_atom_y])
-        )
+        pass  # Stationary atoms do not change position
+
+
+@dataclass
+class MoveRenderer:
+    renderers: list[Renderer]
+
+    @property
+    def total_time(self) -> float:
+        # Return the max time from all renderers, always as float
+        return float(max((r.max_time() for r in self.renderers), default=0.0))
+
+    def update(self, time: float):
+        for renderer in self.renderers:
+            renderer.update(time)
 
 
 @dataclass
@@ -259,16 +381,26 @@ class StateArtist:
         stationary_atom_positions_x, stationary_atom_positions_y = (
             self._get_stationary_positions(move_execution)
         )
-        return MoveRenderer(
-            self.ax,
-            aod_x=aod_x_funcs,
-            aod_y=aod_y_funcs,
-            moving_atoms_x_indices=moving_atom_indices_x,
-            moving_atoms_y_indices=moving_atom_indices_y,
-            stationary_atoms_x=stationary_atom_positions_x,
-            stationary_atoms_y=stationary_atom_positions_y,
-            plot_params=self.plot_params,
-        )
+        renderers = [
+            AODXLines(self.ax, aod_x_funcs, self.plot_params),
+            AODYLines(self.ax, aod_y_funcs, self.plot_params),
+            AODPositions(self.ax, aod_x_funcs, aod_y_funcs, self.plot_params),
+            MovingAtomsScatter(
+                self.ax,
+                moving_atom_indices_x,
+                moving_atom_indices_y,
+                aod_x_funcs,
+                aod_y_funcs,
+                self.plot_params,
+            ),
+            StationaryAtomsScatter(
+                self.ax,
+                stationary_atom_positions_x,
+                stationary_atom_positions_y,
+                self.plot_params,
+            ),
+        ]
+        return MoveRenderer(renderers)
 
     def draw_atoms(
         self,
@@ -475,79 +607,6 @@ def get_drawer(mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = 
     return draw, len(steps)
 
 
-def interactive_debugger(
-    draw: Callable[[int], None],
-    num_steps: int,
-    fig: figure.Figure | figure.SubFigure,
-):
-
-    ax = plt.gca()
-    step_index = 0
-    running = True
-    waiting = True
-    updated = False
-
-    prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
-    exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
-    next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
-
-    prev_button = Button(prev_ax, "Prev (<)")
-    next_button = Button(next_ax, "Next (>)")
-    exit_button = Button(exit_ax, "Exit(Esc)")
-
-    def on_exit(event):
-        nonlocal running, waiting, updated
-        running = False
-        waiting = False
-        if not updated:
-            updated = True
-
-    def on_next(event):
-        nonlocal waiting, step_index, updated
-        waiting = False
-        if not updated:
-            step_index = min(step_index + 1, num_steps - 1)
-            ax.cla()
-            updated = True
-
-    def on_prev(event):
-        nonlocal waiting, step_index, updated
-        waiting = False
-        if not updated:
-            step_index = max(step_index - 1, 0)
-            ax.cla()
-            updated = True
-
-    # connect buttons to callbacks
-    next_button.on_clicked(on_next)
-    prev_button.on_clicked(on_prev)
-    exit_button.on_clicked(on_exit)
-
-    # connect keyboard shortcuts to callbacks
-    def on_key(event):
-        match event.key:
-            case "left":
-                on_prev(event)
-            case "right":
-                on_next(event)
-            case "escape":
-                on_exit(event)
-
-    fig.canvas.mpl_connect("key_press_event", on_key)
-
-    while running:
-        draw(step_index)
-
-        while waiting:
-            plt.pause(0.01)
-
-        waiting = True
-        updated = False
-
-    if isinstance(fig, figure.Figure):
-        plt.close(fig)
-
-
 def render_generator(
     mt: ir.Method, arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o", fps: int = 30
 ) -> tuple[Callable[[int], tuple[int, Callable[[int], None]]], int]:
@@ -620,147 +679,3 @@ def render_generator(
         return 3 * fps, _no_op
 
     return get_renderer, len(steps)
-
-
-def interactive_animator(
-    get_renderer: Callable[[int], tuple[int, Callable[[int], None]]],
-    num_steps: int,
-    ax: Axes,
-):
-    fig = ax.get_figure(True)
-
-    if fig is None:
-        raise ValueError("Could not get figure from axes for interactive animator.")
-
-    step_index = 0
-    animation_step = 1
-    num_frames = 0
-
-    running = True
-    waiting = True
-    updated = False
-
-    prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
-    exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
-    next_ax = fig.add_axes((0.41, 0.01, 0.1, 0.075))
-
-    prev_button = Button(prev_ax, "Prev (<)")
-    next_button = Button(next_ax, "Next (>)")
-    exit_button = Button(exit_ax, "Exit(Esc)")
-
-    def on_exit(event):
-        nonlocal running, waiting, updated
-        running = False
-        waiting = False
-        if not updated:
-            updated = True
-
-    def on_next(event):
-        nonlocal waiting, step_index, updated, animation_step
-
-        if animation_step == 1:
-            waiting = False
-            if not updated:
-                step_index = min(step_index + 1, num_steps - 1)
-                ax.cla()
-                updated = True
-        else:
-            animation_step = 1
-
-    def on_prev(event):
-        nonlocal waiting, step_index, updated, animation_step
-        if animation_step == -1:
-            waiting = False
-            if not updated:
-                step_index = max(step_index - 1, 0)
-                ax.cla()
-                updated = True
-        else:
-            animation_step = -1
-
-    # connect buttons to callbacks
-    next_button.on_clicked(on_next)
-    prev_button.on_clicked(on_prev)
-    exit_button.on_clicked(on_exit)
-
-    # connect keyboard shortcuts to callbacks
-    def on_key(event):
-        match event.key:
-            case "left":
-                on_prev(event)
-            case "right":
-                on_next(event)
-            case "escape":
-                on_exit(event)
-
-    fig.canvas.mpl_connect("key_press_event", on_key)
-
-    while running:
-        num_frames, renderer = get_renderer(step_index)
-        animation_step_index = 0 if animation_step == 1 else num_frames
-
-        while waiting:
-            renderer(animation_step_index)
-            animation_step_index += animation_step
-            animation_step_index = max(0, animation_step_index)
-            animation_step_index = min(animation_step_index, num_frames)
-            plt.pause(0.01)
-
-        waiting = True
-        updated = False
-
-    if isinstance(fig, figure.Figure):
-        plt.close(fig)
-
-
-def debugger(
-    mt: ir.Method,
-    arch_spec: ArchSpec,
-    interactive: bool = True,
-    pause_time: float = 1.0,
-    atom_marker: str = "o",
-    ax: Axes | None = None,
-):
-    # set up matplotlib figure with buttons
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(14, 8))
-    else:
-        fig = ax.figure
-
-    fig.subplots_adjust(bottom=0.2)
-
-    draw, num_steps = get_drawer(mt, arch_spec, ax, atom_marker)
-    if interactive:
-        interactive_debugger(draw, num_steps, fig)
-    else:
-        for step_index in range(num_steps):
-            draw(step_index)
-            plt.pause(pause_time)
-            ax.cla()
-
-
-def animated_debugger(
-    mt: ir.Method,
-    arch_spec: ArchSpec,
-    interactive: bool = True,
-    atom_marker: str = "o",
-    ax: Axes | None = None,
-    fps: int = 30,
-):
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(14, 8))
-    else:
-        fig = ax.figure
-
-    fig.subplots_adjust(bottom=0.2)
-
-    get_renderer, num_steps = render_generator(mt, arch_spec, ax, atom_marker, fps)
-    if interactive:
-        interactive_animator(get_renderer, num_steps, ax)
-    else:
-        for step_index in range(num_steps):
-            num_frames, renderer = get_renderer(step_index)
-            for animation_step_index in range(num_frames):
-                renderer(animation_step_index)
-                plt.pause(1.0 / fps)
-            ax.cla()
