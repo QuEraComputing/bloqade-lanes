@@ -3,15 +3,16 @@ from typing import Any
 
 import numpy as np
 from bloqade.decoders import BpLsdDecoder
+from bloqade.decoders.dialects.annotate.types import Detector, Observable
 from bloqade.gemini import logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.lanes.device import GeminiLogicalSimulator
-from bloqade.decoders.dialects.annotate.types import Detector, Observable
+
 
 @logical.kernel(aggressive_unroll=True, verify=False)
-def set_detector(meas: ilist.IList[types.MeasurementResult, Any])->list[Detector]:
+def set_detector(meas: ilist.IList[types.MeasurementResult, Any]) -> list[Detector]:
     """
     Define default detectors for the Steane code.
     """
@@ -23,14 +24,19 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any])->list[Detector
 
 
 @logical.kernel(aggressive_unroll=True, verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int)->Observable:
+def set_observable(
+    meas: ilist.IList[types.MeasurementResult, Any], index: int
+) -> Observable:
     """
     Define default observables for the Steane code.
     """
     return squin.set_observable([meas[0], meas[1], meas[5]], index)
 
+
 @logical.kernel(aggressive_unroll=True, verify=False)
-def default_observe(reg: ilist.IList[qubit.Qubit, Any])->tuple[list[Detector], list[Observable]]:
+def default_observe(
+    reg: ilist.IList[qubit.Qubit, Any],
+) -> tuple[list[Detector], list[Observable]]:
     """
     A default observe utility function that sets a default set of detectors and observables
     """
@@ -42,8 +48,9 @@ def default_observe(reg: ilist.IList[qubit.Qubit, Any])->tuple[list[Detector], l
         observables = observables + [set_observable(measurements[i], i)]
     return detectors, observables
 
+
 @logical.kernel(aggressive_unroll=True, verify=False)
-def main()->tuple[list[Detector], list[Observable]]:
+def main() -> tuple[list[Detector], list[Observable]]:
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
     squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
