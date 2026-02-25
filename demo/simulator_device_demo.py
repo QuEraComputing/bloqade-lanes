@@ -21,6 +21,8 @@ def kl_divergence(p_hist: Counter, q_hist: Counter) -> float:
     """Compute the KL divergence D_KL(P || Q) between two histograms."""
     total_p = sum(p_hist.values())
     total_q = sum(q_hist.values())
+    if total_p == 0 or total_q == 0:
+        return float("inf")  # Infinite divergence if one distribution is empty
     divergence = 0.0
     for key in p_hist:
         p_prob = p_hist[key] / total_p
