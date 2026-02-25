@@ -1,16 +1,18 @@
+from dataclasses import dataclass, field
 from functools import cached_property
 from itertools import chain, combinations, product, starmap
-from typing import cast, List, Sequence
+from typing import List, Sequence, cast
+
+import numpy as np
+import rustworkx as rx
+from bloqade.cirq_utils.lineprog import Expression, LPProblem, Variable
+from numpy import around, random
+
+from bloqade.lanes import layout
+from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini import impls
 from bloqade.lanes.layout.path import PathFinder
-from bloqade.lanes import layout
 from bloqade.lanes.utils import no_none_elements_tuple
-from numpy import random, around
-from bloqade.lanes.analysis.placement import ConcreteState
-from bloqade.cirq_utils.lineprog import LPProblem, Variable, Expression
-from dataclasses import dataclass, field
-import rustworkx as rx
-import numpy as np
 
 
 @dataclass(frozen=True)
@@ -26,8 +28,6 @@ class PathSegment:
     src: layout.LocationAddress
     dst: layout.LocationAddress
     var: Variable = field(init=False, default_factory=Variable)
-
-
 
 
 @dataclass(frozen=True)
@@ -227,14 +227,13 @@ class MoveSolver:
         dst_pos = np.array(self.arch_spec.get_position(move_op.dst))
         return float(np.linalg.norm(dst_pos - src_pos))
 
-
     @property
     def unoccupied_locations(self) -> frozenset[layout.LocationAddress]:
         unoccupied = set(self.arch_spec.yield_all_locations())
         unoccupied.difference_update(self.concrete_state.layout)
         unoccupied.difference_update(self.concrete_state.occupied)
         return frozenset(unoccupied)
-    
+
     @property
     def occupied_locations(self) -> frozenset[layout.LocationAddress]:
         occupied = set(self.concrete_state.occupied)
@@ -253,23 +252,21 @@ class MoveSolver:
         _, lanes = result
         return len(lanes)
 
-    def generate_paths(self, new_layout: tuple[layout.LocationAddress, ...]) -> dict[int, Path]:
-
+    def generate_paths(self, new_layout: tuple[layout.LocationAddress, ...]):
 
         # NOTE: one of the problems we run into here is that even if we remove swap moves,
         # we can still end up in deadlock situations because the temporary locations we
         # need to move to could block another atom's path. To try to mitigate this problem,
-        # we first try to find a path for all atoms and skip the ones that fail. 
-        # 
+        # we first try to find a path for all atoms and skip the ones that fail.
+        #
         # After that we can try to resolve deadlocks by building a dependency graph of the
-        # remaining moves and finding cycles. We should only break one cycle at a time to 
-        # prevent further deadlocks. 
-        
+        # remaining moves and finding cycles. We should only break one cycle at a time to
+        # prevent further deadlocks.
+
         current_layout = tuple(self.concrete_state.layout)
         next_layout = list(current_layout)
         new_layout = tuple(new_layout)
-        
-        
+
         move_ops = [
             MoveOp(
                 atom=i,
@@ -283,7 +280,7 @@ class MoveSolver:
         # start with longest paths first
         move_ops = sorted(move_ops, key=self.unemcumbered_path_len, reverse=True)
         occupied = set(self.concrete_state.occupied.union(current_layout))
-        
+
         paths: dict[int, Path] = {}
         while move_ops:
             new_paths: dict[int, Path] = {}
@@ -300,7 +297,6 @@ class MoveSolver:
                     occupied.add(move_op.dst)
                     new_paths[move_index] = Path.from_path_finder(*path)
 
-
             for move_index in new_paths.keys():
                 move_op = move_ops.pop(move_index)
                 paths[move_op.atom] = new_paths[move_index]
@@ -313,83 +309,95 @@ class MoveSolver:
         move_graph = rx.PyDiGraph()
         moveop_map = {move_op: move_graph.add_node(move_op) for move_op in move_ops}
 
-
-        edge_maps = {}
-        for (move_op1, node1), (move_op2, node2) in product(moveop_map.items(), repeat=2):
+        for (move_op1, node1), (move_op2, node2) in product(
+            moveop_map.items(), repeat=2
+        ):
             if node1 == node2:
                 continue
-            
+
             path1_with_src2 = self.path_finder.find_path(
-                move_op1.src,move_op2.src, occupied=frozenset(occupied)
+                move_op1.src, move_op2.src, occupied=frozenset(occupied)
             )
             path1_without_src2 = self.path_finder.find_path(
-                move_op1.src,move_op2.src, occupied=frozenset(occupied | {move_op2.src})
+                move_op1.src,
+                move_op2.src,
+                occupied=frozenset(occupied | {move_op2.src}),
             )
-            
+
             if path1_with_src2 is None and path1_without_src2 is not None:
                 # this indicates that move_op2.src is blocking move_op1's path
                 move_graph.add_edge(node1, node2, None)
-                
-                
-        # find the first cycle and break it
-        cycles = rx.digraph_find_cycle(move_graph)
-        
-        if cycles is None:
-            raise ValueError("No feasible paths found for all moves")
-        
-        # find node with highest predecessor count
-        cycle_nodes = list(set(node for pair in cycles for node in pair))
-        cycle_nodes.sort(key=move_graph.predecessors, reverse=True)
 
         # break cycle by attempting to find a temporary location for one of the nodes in the cycle
         # starting with the node that is blocking the most other nodes
         cycle_broken = False
-        for cycle_node in cycle_nodes:
-            move_op = move_ops[cycle_node]
-            
-            # find all possible temporary locations
-            # exclude any locations used in the preducessors' paths
-            
-            predecessors: list[MoveOp] = move_graph.predecessors(cycle_node)
-            
-            blocked_locations: set[layout.LocationAddress] = set()
-            tmp_occupied = frozenset(occupied | {move_op.src})
-            for pred in predecessors:
-                path = self.path_finder.find_path(
-                    pred.src, pred.dst, occupied=tmp_occupied
+        for cycle_nodes in rx.simple_cycles(move_graph):
+            # find node with lowest predecessor count
+            # this maximizes the potential places to put the atom to break the cycle
+            cycle_dep: dict[int, List[MoveOp]] = {
+                node: move_graph.predecessors(node) for node in cycle_nodes
+            }
+            cycle_nodes = sorted(cycle_nodes, key=lambda x: len(cycle_dep[x]))
+
+            for cycle_node in cycle_nodes:
+                move_op = move_ops[cycle_node]
+
+                # find all possible temporary locations
+                # exclude any locations used in the preducessors' paths
+
+                blocked_locations: set[layout.LocationAddress] = set()
+
+                def is_not_blocked(loc: layout.LocationAddress) -> bool:
+                    return loc not in blocked_locations
+
+                tmp_occupied = frozenset(occupied | {move_op.src})
+                for pred in cycle_dep[cycle_node]:
+                    path = self.path_finder.find_path(
+                        pred.src, pred.dst, occupied=tmp_occupied
+                    )
+                    assert (
+                        path is not None
+                    ), "predecessor path must exist if we remove cycle node"
+                    locs, _ = path
+                    blocked_locations.update(locs)
+
+                tmp_occupied = frozenset(tmp_occupied.union(blocked_locations))
+
+                tmp_locs = list(
+                    filter(is_not_blocked, self.path_finder.physical_addresses)
                 )
-                assert path is not None, "predecessor path must exist if we remove cycle node"
-                locs, _ = path
-                blocked_locations.update(locs)
-                
-            tmp_occupied = frozenset(tmp_occupied.union(blocked_locations))
-            tmp_locs =  [loc for loc in self.path_finder.physical_addresses if loc not in blocked_locations]
-            tmp_nodes = list(map(self.path_finder.physical_address_map.__getitem__, tmp_locs))
-            src_node = tmp_locs.index(move_op.src)
-            tmp_subgraph = self.path_finder.site_graph.subgraph(tmp_nodes)
-            
-            # find all neighbors reachable from move_op.src
-            neighbors: list[layout.LocationAddress] = tmp_subgraph.successors(src_node)
-            
-            if len(neighbors) > 0:            
-                # pick the closest neighbor as temporary location
-                def dist(loc: layout.LocationAddress) -> float:
-                    return self.dist(MoveOp(move_op.atom, move_op.src, loc))
-            
-                tmp_loc = min(neighbors, key=dist)
-                
-                tmp_move_op = MoveOp(
-                    atom=move_op.atom,
-                    src=move_op.src,
-                    dst=tmp_loc,
+                tmp_nodes = list(
+                    map(self.path_finder.physical_address_map.__getitem__, tmp_locs)
                 )
-                
-                move_ops[moveop_map[move_op]] = tmp_move_op
-                cycle_broken = True
+                src_node = tmp_locs.index(move_op.src)
+                tmp_subgraph = self.path_finder.site_graph.subgraph(tmp_nodes)
+
+                # find all neighbors reachable from move_op.src
+                neighbors = cast(
+                    list[layout.LocationAddress], tmp_subgraph.successors(src_node)
+                )
+
+                if len(neighbors) > 0:
+                    # pick the closest neighbor as temporary location
+                    def dist(loc: layout.LocationAddress) -> float:
+                        return self.dist(MoveOp(move_op.atom, move_op.src, loc))
+
+                    tmp_loc = min(neighbors, key=dist)
+
+                    tmp_move_op = MoveOp(
+                        atom=move_op.atom,
+                        src=move_op.src,
+                        dst=tmp_loc,
+                    )
+
+                    move_ops[moveop_map[move_op]] = tmp_move_op
+                    cycle_broken = True
+                    break
+
+            if cycle_broken:
                 break
-            
+
         if not cycle_broken:
             raise ValueError("Could not break cycle in move graph")
-        
+
         current_layout = tuple(next_layout)
-        
