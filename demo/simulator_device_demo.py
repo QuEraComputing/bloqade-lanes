@@ -90,8 +90,13 @@ def main() -> tuple[list[Detector], list[Observable]]:
 task = GeminiLogicalSimulator().task(main)
 
 # run simulation with and without noise
-result = task.run(100000)
-result_wo_noise = task.run(100000, with_noise=False)
+print("Running simulation with noise...")
+future = task.run_async(100000)
+print("Running simulation without noise...")
+future_wo_noise = task.run_async(100000, with_noise=False)
+
+result_wo_noise = future_wo_noise.result()
+result = future.result()
 
 # extract detectors and observables
 detectors = np.asarray(result.detectors)
