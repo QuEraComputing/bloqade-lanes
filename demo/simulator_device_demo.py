@@ -120,14 +120,14 @@ observables_wo_noise_hist = get_hist(observables_without_noise)
 
 # compute and print the KL divergence between the histograms
 print(
-    "KL divergence between noisy and raw observables:",
+    "KL divergence between noiseless and raw observables:",
     kl_divergence(observables_wo_noise_hist, observables_hist),
 )
 print(
-    "KL divergence between noisy and decoded observables:",
+    "KL divergence between noiseless and decoded observables:",
     kl_divergence(observables_wo_noise_hist, observables_decoded_hist),
 )
 print(
-    "KL divergence between noisy and post-selected observables:",
+    "KL divergence between noiseless and post-selected observables:",
     kl_divergence(observables_wo_noise_hist, observables_postselected_hist),
 )
