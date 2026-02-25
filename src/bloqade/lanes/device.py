@@ -1,3 +1,4 @@
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, TypeVar
@@ -65,6 +66,9 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
+    _thread_pool_executor: ThreadPoolExecutor = field(
+        default_factory=ThreadPoolExecutor, init=False
+    )
 
     def __post_init__(self):
         assert isinstance(self._post_processing, atom.PostProcessing)
@@ -185,6 +189,27 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             *self.fidelity_bounds(),
         )
 
+    def run_async(
+        self, shots: int = 1, with_noise: bool = True
+    ) -> Future[Result[RetType]]:
+        """Run the kernel asynchronously and get simulation results.
+
+        Args:
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+
+        Returns:
+            Future[Result]: A future that will resolve to the simulation result including
+                measurement outcomes, detector error model, post-processing, and fidelity bounds.
+        """
+
+        def _runner(
+            task: GeminiLogicalSimulatorTask[RetType], shots: int, with_noise: bool
+        ) -> Result[RetType]:
+            return task.run(shots, with_noise)
+
+        return self._thread_pool_executor.submit(_runner, self, shots, with_noise)
+
 
 @dataclass
 class GeminiLogicalSimulator:
@@ -205,6 +230,14 @@ class GeminiLogicalSimulator:
         with_noise: bool = True,
     ) -> Result[RetType]:
         return self.task(logical_squin_kernel).run(shots, with_noise)
+
+    def run_async(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+    ) -> Future[Result[RetType]]:
+        return self.task(logical_squin_kernel).run_async(shots, with_noise)
 
     def visualize(
         self,
