@@ -89,23 +89,29 @@ def main() -> tuple[list[Detector], list[Observable]]:
 
 task = GeminiLogicalSimulator().task(main)
 
+# run simulation with and without noise
 result = task.run(100000)
 result_wo_noise = task.run(100000, with_noise=False)
+
+# extract detectors and observables
 detectors = np.asarray(result.detectors)
 observables = np.asarray(result.observables)
 observables_without_noise = np.asarray(result_wo_noise.observables)
 
+# Decode the detectors to get the flips
 flips = BpLsdDecoder(task.detector_error_model).decode(detectors)
 
-
-observables_hist = get_hist(observables)
-observables_decoded_hist = get_hist(observables ^ flips)
-observables_wo_noise_hist = get_hist(observables_without_noise)
-
+# post-select on no detection events
 post_selection = np.all(detectors == 0, axis=1)
 observables_postselected = observables[post_selection, :]
-observables_postselected_hist = get_hist(observables_postselected)
 
+# get the histograms of the observables, decoded observables, observables without noise, and post-selected observables
+observables_hist = get_hist(observables)
+observables_decoded_hist = get_hist(observables ^ flips)
+observables_postselected_hist = get_hist(observables_postselected)
+observables_wo_noise_hist = get_hist(observables_without_noise)
+
+# compute and print the KL divergence between the histograms
 print(
     "KL divergence between noisy and raw observables:",
     kl_divergence(observables_wo_noise_hist, observables_hist),
