@@ -24,6 +24,19 @@ from bloqade.lanes.upstream import squin_to_move
 
 
 def run_squin_kernel_validation(mt: ir.Method):
+    """
+    Run validation checks on a Squin kernel method.
+
+    Args:
+        mt (ir.Method): The Squin kernel method to validate.
+
+    Returns:
+        ValidationResult: A validation result object containing the
+            validation errors, if they exist
+
+    Note: To trigger an error run `run_squin_kernel_validation(mt).raise_if_invalid()`.
+
+    """
     validator = ValidationSuite(
         [
             GeminiLogicalValidation,
