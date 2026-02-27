@@ -202,44 +202,11 @@ class StaticPlacement(ir.Statement):
 
 @dialect.register(key="runtime.placement")
 class PlacementMethods(interp.MethodTable):
-    @staticmethod
-    def _build_cz_buffer(
-        block: ir.Block,
-    ) -> list[tuple[tuple[int, ...], tuple[int, ...]]]:
-        return [
-            (node.controls, node.targets)
-            for node in block.stmts
-            if isinstance(node, CZ)
-        ]
-
-    @staticmethod
-    def _buffered_future_cz_layers(
-        _interp: PlacementAnalysis,
-        stmt: CZ,
-    ) -> tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]:
-        if stmt.parent_block is None:
-            return ()
-        block = stmt.parent_block
-        buffer = _interp.cz_lookahead_buffers.setdefault(
-            block, PlacementMethods._build_cz_buffer(block)
-        )
-        current_layer = (stmt.controls, stmt.targets)
-        if not buffer:
-            raise interp.InterpreterError(
-                "Lookahead CZ buffer is empty while executing a CZ statement"
-            )
-        if buffer[0] != current_layer:
-            raise interp.InterpreterError(
-                "Lookahead CZ buffer out of sync with executed CZ order"
-            )
-        buffer.pop(0)
-        return tuple(buffer)
-
     @interp.impl(CZ)
     def impl_cz(
         self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: CZ
     ):
-        lookahead_cz_layers = self._buffered_future_cz_layers(_interp, stmt)
+        lookahead_cz_layers = _interp.buffered_future_cz_layers(stmt)
 
         state = _interp.placement_strategy.cz_placements(
             frame.get(stmt.state_before),
@@ -279,7 +246,7 @@ class PlacementMethods(interp.MethodTable):
         stmt: StaticPlacement,
     ):
         body_block = stmt.body.blocks[0]
-        _interp.cz_lookahead_buffers[body_block] = self._build_cz_buffer(body_block)
+        _interp.cz_lookahead_buffers[body_block] = _interp.build_cz_buffer(body_block)
         initial_state = _interp.get_inintial_state(stmt.qubits)
         with _interp.new_frame(stmt, has_parent_access=True) as circuit_frame:
 
@@ -296,9 +263,11 @@ class PlacementMethods(interp.MethodTable):
                 for qid, qubit in enumerate(stmt.qubits):
                     _interp.move_count[qubit] += final_state.move_count[qid]
                 _interp.cz_lookahead_buffers.pop(body_block, None)
+                _interp.cz_lookahead_stmt_positions.pop(body_block, None)
                 return tuple(ret)
             case _:
                 _interp.cz_lookahead_buffers.pop(body_block, None)
+                _interp.cz_lookahead_stmt_positions.pop(body_block, None)
                 raise interp.InterpreterError(
                     "StaticPlacement body did not return a ConcreteState"
                 )
