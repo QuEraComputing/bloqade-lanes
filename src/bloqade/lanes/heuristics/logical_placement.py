@@ -228,9 +228,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     word_distance_weight: float = 10.0
     site_distance_weight: float = 1.0
     random_seed: int = 0
-    _lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = field(
-        default_factory=tuple, init=False, repr=False
-    )
     _lane_duration_cache: dict[layout.LaneAddress, float] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -273,15 +270,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             lane_dur = self._get_lane_duration(lane)
             sig_maxdur[sig] = max(sig_maxdur.get(sig, 0.0), lane_dur)
         return sig_maxdur
-
-    def set_lookahead_cz_layers(
-        self,
-        layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
-    ) -> None:
-        if self.H_lookahead <= 0:
-            self._lookahead_cz_layers = ()
-            return
-        self._lookahead_cz_layers = layers[: self.H_lookahead]
 
     def _left_sites(self) -> set[layout.LocationAddress]:
         return {
@@ -337,7 +325,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _dijkstra_best_path(
         self, src: layout.LocationAddress, dst: layout.LocationAddress
     ) -> tuple[layout.LaneAddress, ...] | None:
-        """Uses Dijkstra's algorithm to find the best path between two locations."""
+        """Uses Dijkstra's algorithm to find the best path between two locations. O((Sites + lanes) log Sites) per uncached (src, dst)"""
         self._build_move_graph()
         if src == dst:
             return ()
@@ -462,6 +450,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         *,
         col_count: int,
     ) -> tuple[float, tuple[int, ...] | None]:
+        """Dynamic programming algorithm to find the best assignment of columns to rows"""
         row_count = len(row_edges)
         if row_count == 0:
             return 0.0, ()
@@ -569,6 +558,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         state_before: ConcreteState,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
     ) -> list[tuple[layout.LocationAddress, ...]]:
+        """Generates candidate layouts for the next step of the DP algorithm"""
         if not lookahead_layers:
             return [self._nearest_left_layout(state_before)]
 
@@ -600,6 +590,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             tuple[int, int], dict[tuple[layout.MoveType, int, layout.Direction], float]
         ] = {}
         candidate_holes_by_returner: dict[int, set[int]] = {}
+        # For each returner, score site paths, keep the top K_candidates sites for each returner
         for ridx, qid in enumerate(returners):
             src = state_before.layout[qid]
             scored: list[tuple[float, int]] = []
@@ -749,15 +740,24 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         state_before: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
         _ = controls, targets
+        if self.H_lookahead <= 0:
+            bounded_lookahead = ()
+        else:
+            bounded_lookahead = lookahead_cz_layers[: self.H_lookahead]
         mid_state, left_move_layers, _ = self._single_step_return_choice(
-            state_before, self._lookahead_cz_layers
+            state_before, bounded_lookahead
         )
         return mid_state, left_move_layers
 
     def cz_placements(
-        self, state: AtomState, controls: tuple[int, ...], targets: tuple[int, ...]
+        self,
+        state: AtomState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
@@ -766,7 +766,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             return AtomState.top()
 
         mid_state, left_move_layers = self.choose_return_layout(
-            state, controls, targets
+            state, controls, targets, lookahead_cz_layers
         )
         state_after = self.desired_cz_layout(mid_state, controls, targets)
         final_move_layers = self.compute_moves(mid_state, state_after)

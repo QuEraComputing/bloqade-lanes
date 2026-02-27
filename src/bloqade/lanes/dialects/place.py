@@ -216,7 +216,6 @@ class PlacementMethods(interp.MethodTable):
     def _buffered_future_cz_layers(
         _interp: PlacementAnalysis,
         stmt: CZ,
-        horizon: int,
     ) -> tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]:
         if stmt.parent_block is None:
             return ()
@@ -234,25 +233,19 @@ class PlacementMethods(interp.MethodTable):
                 "Lookahead CZ buffer out of sync with executed CZ order"
             )
         buffer.pop(0)
-        if horizon <= 0:
-            return ()
-        return tuple(buffer[:horizon])
+        return tuple(buffer)
 
     @interp.impl(CZ)
     def impl_cz(
         self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: CZ
     ):
-        set_lookahead = getattr(
-            _interp.placement_strategy, "set_lookahead_cz_layers", None
-        )
-        if callable(set_lookahead):
-            horizon = int(getattr(_interp.placement_strategy, "H_lookahead", 0))
-            set_lookahead(self._buffered_future_cz_layers(_interp, stmt, horizon))
+        lookahead_cz_layers = self._buffered_future_cz_layers(_interp, stmt)
 
         state = _interp.placement_strategy.cz_placements(
             frame.get(stmt.state_before),
             stmt.controls,
             stmt.targets,
+            lookahead_cz_layers,
         )
         if isinstance(state, ExecuteCZ) and not state.verify(
             _interp.placement_strategy.arch_spec, stmt.targets, stmt.controls
