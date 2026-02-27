@@ -1,6 +1,5 @@
 import heapq
 import math
-import random
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
@@ -218,14 +217,6 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
         return compute_move_layers(self.arch_spec, state_before, state_after)
 
 
-params = {
-    "H_lookahead": 5,
-    "gamma": 0.9741233400974014,
-    "lambda_lookahead": 0.2787931114435196,
-    "K_candidates": 5,
-}
-
-
 @dataclass
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
@@ -234,9 +225,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     lambda_lookahead: float = 0.5
     K_candidates: int = 8
     large_cost: float = 1e9
-    word_distance_weight: float = 10.0
-    site_distance_weight: float = 1.0
-    random_seed: int = 0
+    lane_move_overhead_cost: float = 0.0
     _lane_duration_cache: dict[layout.LaneAddress, float] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -326,7 +315,13 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         ] = defaultdict(list)
 
         for (src, dst), lane in self.arch_spec._lane_map.items():
-            adjacency[src].append((dst, lane, self._get_lane_duration(lane)))
+            adjacency[src].append(
+                (
+                    dst,
+                    lane,
+                    self._get_lane_duration(lane) + self.lane_move_overhead_cost,
+                )
+            )
 
         self._adjacency_cache = dict(adjacency)
 
@@ -384,7 +379,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _path_cost(self, path: tuple[layout.LaneAddress, ...] | None) -> float:
         if path is None:
             return self.large_cost
-        return sum(self._get_lane_duration(lane) for lane in path)
+        return sum(
+            self._get_lane_duration(lane) + self.lane_move_overhead_cost
+            for lane in path
+        )
 
     def _nearest_left_layout(
         self, state_before: ConcreteState
@@ -499,9 +497,16 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 if tail_assign is None:
                     continue
                 total_cost = edge_cost + tail_cost
+                candidate_assign = (col,) + tail_assign
                 if total_cost < best_cost:
                     best_cost = total_cost
-                    best_assign = (col,) + tail_assign
+                    best_assign = candidate_assign
+                elif (
+                    total_cost == best_cost
+                    and best_assign is not None
+                    and candidate_assign < best_assign
+                ):
+                    best_assign = candidate_assign
             memo[key] = (best_cost, best_assign)
             return memo[key]
 
@@ -668,11 +673,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         ]
         max_assignments = 1 + len(top_signatures)
 
-        layout_seed = sum(
-            (addr.word_id * 17 + addr.site_id) * (idx + 1)
-            for idx, addr in enumerate(state_before.layout)
-        )
-        rng = random.Random(self.random_seed + layout_seed)
         assignments: set[tuple[int, ...]] = set()
 
         def maybe_add_assignment(row_edges: list[list[tuple[int, float]]]) -> None:
@@ -688,12 +688,11 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
         row_edges: list[list[tuple[int, float]]] = [[] for _ in returners]
         for ridx, _qid in enumerate(returners):
-            for hidx in candidate_holes_by_returner.get(ridx, set()):
+            for hidx in sorted(candidate_holes_by_returner.get(ridx, set())):
                 base_cost = edge_costs.get((ridx, hidx), self.large_cost)
                 if base_cost >= self.large_cost:
                     continue
-                jitter = rng.uniform(0.0, 0.01)
-                row_edges[ridx].append((hidx, base_cost + jitter))
+                row_edges[ridx].append((hidx, base_cost))
         maybe_add_assignment(row_edges)
 
         for sig in top_signatures:
@@ -702,7 +701,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             sig_reward_scale = duration_ref * sig_efficiency.get(sig, 0.0)
             row_edges = [[] for _ in returners]
             for ridx, _qid in enumerate(returners):
-                for hidx in candidate_holes_by_returner.get(ridx, set()):
+                for hidx in sorted(candidate_holes_by_returner.get(ridx, set())):
                     base_cost = edge_costs.get((ridx, hidx), self.large_cost)
                     if base_cost >= self.large_cost:
                         continue
@@ -711,12 +710,11 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                         if sig in edge_sigs.get((ridx, hidx), frozenset())
                         else 0.0
                     )
-                    jitter = rng.uniform(0.0, 0.01)
-                    row_edges[ridx].append((hidx, base_cost - reward + jitter))
+                    row_edges[ridx].append((hidx, base_cost - reward))
             maybe_add_assignment(row_edges)
 
         candidate_layouts: list[tuple[layout.LocationAddress, ...]] = []
-        for assignment in assignments:
+        for assignment in sorted(assignments):
             new_layout = list(state_before.layout)
             for ridx, hidx in enumerate(assignment):
                 new_layout[returners[ridx]] = holes[hidx]

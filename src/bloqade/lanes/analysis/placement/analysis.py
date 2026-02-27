@@ -85,11 +85,12 @@ class PlacementAnalysis(Forward[AtomState]):
         if stmt.parent_block is None:
             return ()
         block = stmt.parent_block
-        if (
-            block not in self.cz_lookahead_buffers
-            or block not in self.cz_lookahead_stmt_positions
-        ):
-            self.cz_lookahead_buffers[block] = self.build_cz_buffer(block)
+        assert (
+            block in self.cz_lookahead_buffers
+        ), "Expected CZ lookahead buffer for block to be initialized before CZ execution"
+        assert (
+            block in self.cz_lookahead_stmt_positions
+        ), "Expected CZ lookahead statement positions for block to be initialized before CZ execution"
         buffer = self.cz_lookahead_buffers[block]
         stmt_positions = self.cz_lookahead_stmt_positions[block]
 
