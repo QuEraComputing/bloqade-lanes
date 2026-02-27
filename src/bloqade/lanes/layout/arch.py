@@ -3,8 +3,6 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Sequence
 
-import numpy as np
-
 from bloqade.lanes.layout.encoding import (
     Direction,
     EncodingType,
@@ -209,6 +207,34 @@ class ArchSpec:
     def get_position(self, location: LocationAddress) -> tuple[float, float]:
         return self.words[location.word_id].site_position(location.site_id)
 
+    def _get_word_bus_paths(self, show_word_bus):
+        for lane_id in show_word_bus:
+            lane = self.word_buses[lane_id]
+            for site_id in self.has_word_buses:
+                for start_word_id, end_word_id in zip(lane.src, lane.dst):
+                    lane_addr = WordLaneAddress(
+                        word_id=start_word_id,
+                        site_id=site_id,
+                        bus_id=lane_id,
+                        direction=Direction.FORWARD,
+                    )
+                    yield self.get_path(lane_addr)
+
+    def _get_site_bus_paths(self, show_words, show_site_bus):
+        for word_id in show_words:
+            if word_id not in self.has_site_buses:
+                continue  # Only show lanes for words in has_site_buses
+            for lane_id in show_site_bus:
+                lane = self.site_buses[lane_id]
+                for i in range(len(lane.src)):
+                    lane_addr = SiteLaneAddress(
+                        word_id=word_id,
+                        site_id=lane.src[i],
+                        bus_id=lane_id,
+                        direction=Direction.FORWARD,
+                    )
+                    yield self.get_path(lane_addr)
+
     def plot(
         self,
         ax=None,
@@ -218,7 +244,6 @@ class ArchSpec:
         **scatter_kwargs,
     ):
         import matplotlib.pyplot as plt  # type: ignore
-        from scipy import interpolate as interp  # type: ignore
 
         if ax is None:
             ax = plt.gca()
@@ -227,81 +252,15 @@ class ArchSpec:
             word = self.words[word_id]
             word.plot(ax, **scatter_kwargs)
 
-        x_min, x_max = ax.get_xlim()
-        y_min, y_max = ax.get_ylim()
+        site_paths = self._get_site_bus_paths(show_words, show_site_bus)
+        for path in site_paths:
+            x_vals, y_vals = zip(*path)
+            ax.plot(x_vals, y_vals, linestyle="--")
 
-        bow_y = (y_max - y_min) * 0.025
-        bow_x = (x_max - x_min) * 0.025
-
-        colors = {}
-        for word_id in show_words:
-            word = self.words[word_id]
-            for lane_id in show_site_bus:
-                lane = self.site_buses[lane_id]
-
-                for start, end in zip(lane.src, lane.dst):
-                    start = word[start]
-                    end = word[end]
-
-                    x_start, y_start = start.position()
-                    x_end, y_end = end.position()
-
-                    mid_x = (x_start + x_end) / 2
-                    mid_y = (y_start + y_end) / 2
-
-                    if x_start == x_end:
-                        mid_x += bow_y
-                    elif y_start == y_end:
-                        mid_y += bow_x
-
-                    f = interp.interp1d(
-                        [x_start, mid_x, x_end],
-                        [y_start, mid_y, y_end],
-                        kind="quadratic",
-                    )
-                    x_vals = np.linspace(x_start, x_end, num=10)
-                    y_vals = f(x_vals)
-
-                    (ln,) = ax.plot(
-                        x_vals, y_vals, color=colors.get(lane), linestyle="--"
-                    )
-                    if lane not in colors:
-                        colors[lane] = ln.get_color()
-
-        for lane in show_word_bus:
-            lane = self.word_buses[lane]
-            for start_word_id, end_word_id in zip(lane.src, lane.dst):
-                start_word = self.words[start_word_id]
-                end_word = self.words[end_word_id]
-
-                for site in self.has_word_buses:
-                    start = start_word[site]
-                    end = end_word[site]
-                    (x_start, y_start), (x_end, y_end) = (
-                        start.position(),
-                        end.position(),
-                    )
-                    mid_x = (x_start + x_end) / 2
-                    mid_y = (y_start + y_end) / 2
-
-                    if x_start == x_end:
-                        mid_x += bow_y
-                    elif y_start == y_end:
-                        mid_y += bow_x
-
-                    f = interp.interp1d(
-                        [x_start, mid_x, x_end],
-                        [y_start, mid_y, y_end],
-                        kind="quadratic",
-                    )
-                    x_vals = np.linspace(x_start, x_end, num=10)
-                    y_vals = f(x_vals)
-                    (ln,) = ax.plot(
-                        x_vals, y_vals, color=colors.get(lane), linestyle="-"
-                    )
-                    if lane not in colors:
-                        colors[lane] = ln.get_color()
-
+        word_paths = self._get_word_bus_paths(show_word_bus)
+        for path in word_paths:
+            x_vals, y_vals = zip(*path)
+            ax.plot(x_vals, y_vals, linestyle="-")
         return ax
 
     def show(

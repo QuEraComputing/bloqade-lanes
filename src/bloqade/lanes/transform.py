@@ -68,9 +68,15 @@ class MoveToSquin:
             SquinU3ToClifford(),
         ).rewrite(main.code)
 
-        rewrite.Fixpoint(rewrite.Walk(move2squin.CleanUpMoveDialect())).rewrite(
-            main.code
-        )
+        rewrite.Fixpoint(
+            rewrite.Walk(
+                rewrite.Chain(
+                    move2squin.CleanUpMoveDialect(),
+                    rewrite.DeadCodeElimination(),
+                    rewrite.CommonSubexpressionElimination(),
+                )
+            )
+        ).rewrite(main.code)
 
         out = main.similar(main.dialects.discard(move.dialect))
 

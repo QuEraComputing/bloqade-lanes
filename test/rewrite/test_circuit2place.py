@@ -1,4 +1,4 @@
-from bloqade.gemini.dialects.logical import stmts as gemini_stmts
+from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gates
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite

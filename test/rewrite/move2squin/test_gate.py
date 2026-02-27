@@ -172,8 +172,8 @@ def test_gate_rewrite_global_r():
     expected_block = ir.Block(
         [
             const_quarter := py.Constant(0.25),
-            phi := py.Sub(const_quarter.result, axis_angle),
-            lam := py.Sub(axis_angle, const_quarter.result),
+            phi := py.Sub(axis_angle, const_quarter.result),
+            lam := py.Sub(const_quarter.result, axis_angle),
             reg := ilist.New((zero, one)),
             squin.gate.stmts.U3(rotation_angle, phi.result, lam.result, reg.result),
             move.GlobalR(
@@ -232,8 +232,8 @@ def test_gate_rewrite_local_r():
     expected_block = ir.Block(
         [
             const_quarter := py.Constant(0.25),
-            phi := py.Sub(const_quarter.result, axis_angle),
-            lam := py.Sub(axis_angle, const_quarter.result),
+            phi := py.Sub(axis_angle, const_quarter.result),
+            lam := py.Sub(const_quarter.result, axis_angle),
             reg := ilist.New((zero, one)),
             squin.gate.stmts.U3(rotation_angle, phi.result, lam.result, reg.result),
             gate_node,

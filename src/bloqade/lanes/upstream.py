@@ -3,7 +3,7 @@ from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
-from bloqade.gemini.rewrite.initialize import __RewriteU3ToInitialize
+from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
@@ -167,15 +167,18 @@ def squin_to_move(
     placement_strategy: placement.PlacementStrategyABC,
     insert_palindrome_moves: bool = True,
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
+    no_raise: bool = True,
 ) -> ir.Method:
-    """Compile a squin kernel to move dialect.
+    """
+    Compile a squin kernel to move dialect.
 
     Args:
         mt (ir.Method): The Squin kernel to compile.
         layout_heuristic (layout.LayoutHeuristicABC): The layout heuristic to use.
         placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
-        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions.
-            Defaults to default_merge_heuristic.
+        insert_palindrome_moves (bool, optional): Whether to insert palindrome moves. Defaults to True.
+        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
+        no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
 
     Returns:
         ir.Method: The compiled move dialect method.
@@ -189,13 +192,13 @@ def squin_to_move(
         ),
     )
     CallGraphPass(mt.dialects, rule)(out := mt.similar())
-    out = SquinToNative().emit(out)
-    out = NativeToPlace(merge_heuristic).emit(out)
+    out = SquinToNative().emit(out, no_raise=no_raise)
+    out = NativeToPlace(merge_heuristic).emit(out, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
         insert_palindrome_moves=insert_palindrome_moves,
-    ).emit(out)
+    ).emit(out, no_raise=no_raise)
 
     passes.TypeInfer(mt.dialects)(out)
     out.verify()
