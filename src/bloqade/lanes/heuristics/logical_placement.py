@@ -4,7 +4,6 @@ import random
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
-from itertools import combinations
 from itertools import starmap
 
 from bloqade.lanes import layout
@@ -45,7 +44,9 @@ def _const_jerk_min_duration(max_dist: float) -> float:
 def _path_segment_distances_um(path: tuple[tuple[float, float], ...]) -> list[float]:
     if len(path) <= 1:
         return []
-    return [max(abs(x1 - x0), abs(y1 - y0)) for (x0, y0), (x1, y1) in zip(path, path[1:])]
+    return [
+        max(abs(x1 - x0), abs(y1 - y0)) for (x0, y0), (x1, y1) in zip(path, path[1:])
+    ]
 
 
 def _lane_duration_us(arch_spec: layout.ArchSpec, lane: layout.LaneAddress) -> float:
@@ -217,6 +218,14 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
         return compute_move_layers(self.arch_spec, state_before, state_after)
 
 
+params = {
+    "H_lookahead": 5,
+    "gamma": 0.9741233400974014,
+    "lambda_lookahead": 0.2787931114435196,
+    "K_candidates": 5,
+}
+
+
 @dataclass
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
@@ -240,7 +249,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         list[tuple[layout.LocationAddress, layout.LaneAddress, float]],
     ] = field(default_factory=dict, init=False, repr=False)
     top_bus_signatures: int = 6
-    bus_reward_rho: float = 1.0
+    bus_reward_rho: float = 0.7
 
     def _lane_sig(
         self, lane: layout.LaneAddress
@@ -309,7 +318,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return self._lane_duration_cache[lane]
 
     def _build_move_graph(self) -> None:
-        """Builds the adjacency via lanes"""
         if self._adjacency_cache:
             return
         adjacency: dict[
@@ -325,13 +333,14 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _dijkstra_best_path(
         self, src: layout.LocationAddress, dst: layout.LocationAddress
     ) -> tuple[layout.LaneAddress, ...] | None:
-        """Uses Dijkstra's algorithm to find the best path between two locations. O((Sites + lanes) log Sites) per uncached (src, dst)"""
         self._build_move_graph()
         if src == dst:
             return ()
 
         dist: dict[layout.LocationAddress, float] = {src: 0.0}
-        prev: dict[layout.LocationAddress, tuple[layout.LocationAddress, layout.LaneAddress]] = {}
+        prev: dict[
+            layout.LocationAddress, tuple[layout.LocationAddress, layout.LaneAddress]
+        ] = {}
         queue: list[tuple[float, int, layout.LocationAddress]] = [(0.0, 0, src)]
         push_id = 1
 
@@ -367,14 +376,12 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         src: layout.LocationAddress,
         dst: layout.LocationAddress,
     ) -> tuple[layout.LaneAddress, ...] | None:
-        """Attempts to access memoized Dijkstra path costs; else computes them"""
         key = (src, dst)
         if key not in self._best_path_cache:
             self._best_path_cache[key] = self._dijkstra_best_path(src, dst)
         return self._best_path_cache[key]
 
     def _path_cost(self, path: tuple[layout.LaneAddress, ...] | None) -> float:
-        """Convert lanes to path cost"""
         if path is None:
             return self.large_cost
         return sum(self._get_lane_duration(lane) for lane in path)
@@ -407,7 +414,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         self,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
     ) -> dict[int, dict[int, float]]:
-        """Calculates partner weights for each qubit based on lookahead layers"""
         partners: dict[int, dict[int, float]] = defaultdict(dict)
         for depth, (controls, targets) in enumerate(lookahead_layers):
             weight = self.gamma**depth
@@ -450,7 +456,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         *,
         col_count: int,
     ) -> tuple[float, tuple[int, ...] | None]:
-        """Dynamic programming algorithm to find the best assignment of columns to rows"""
         row_count = len(row_edges)
         if row_count == 0:
             return 0.0, ()
@@ -558,27 +563,36 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         state_before: ConcreteState,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
     ) -> list[tuple[layout.LocationAddress, ...]]:
-        """Generates candidate layouts for the next step of the DP algorithm"""
         if not lookahead_layers:
             return [self._nearest_left_layout(state_before)]
 
         left_sites = self._left_sites()
         used_left_sites = {addr for addr in state_before.layout if addr.site_id < 5}
         used_left_sites |= {addr for addr in state_before.occupied if addr.site_id < 5}
-        holes = sorted(left_sites - used_left_sites, key=lambda x: (x.word_id, x.site_id))
-        returners = [qid for qid, addr in enumerate(state_before.layout) if addr.site_id >= 5]
+        holes = sorted(
+            left_sites - used_left_sites, key=lambda x: (x.word_id, x.site_id)
+        )
+        returners = [
+            qid for qid, addr in enumerate(state_before.layout) if addr.site_id >= 5
+        ]
         if not returners:
             return [state_before.layout]
         if len(holes) < len(returners):
-            raise ValueError("No empty left-column site available for right-column return move")
+            raise ValueError(
+                "No empty left-column site available for right-column return move"
+            )
 
         partner_weights = self._partner_weights(lookahead_layers)
         baseline_layout = self._nearest_left_layout(state_before)
         baseline_guess = {
-            qid: baseline_layout[qid] for qid in returners if baseline_layout[qid].site_id < 5
+            qid: baseline_layout[qid]
+            for qid in returners
+            if baseline_layout[qid].site_id < 5
         }
         left_stayers = {
-            qid: addr for qid, addr in enumerate(state_before.layout) if addr.site_id < 5
+            qid: addr
+            for qid, addr in enumerate(state_before.layout)
+            if addr.site_id < 5
         }
         reference_positions = {**left_stayers, **baseline_guess}
 
@@ -590,7 +604,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             tuple[int, int], dict[tuple[layout.MoveType, int, layout.Direction], float]
         ] = {}
         candidate_holes_by_returner: dict[int, set[int]] = {}
-        # For each returner, score site paths, keep the top K_candidates sites for each returner
         for ridx, qid in enumerate(returners):
             src = state_before.layout[qid]
             scored: list[tuple[float, int]] = []
@@ -617,9 +630,9 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             keep = {hidx for _, hidx in scored[: max(1, self.K_candidates)]}
             candidate_holes_by_returner[ridx] = keep
 
-        sig_coverage: dict[
-            tuple[layout.MoveType, int, layout.Direction], set[int]
-        ] = defaultdict(set)
+        sig_coverage: dict[tuple[layout.MoveType, int, layout.Direction], set[int]] = (
+            defaultdict(set)
+        )
         sig_typical_duration: dict[
             tuple[layout.MoveType, int, layout.Direction], float
         ] = {}
@@ -629,7 +642,9 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 for sig in sigs:
                     sig_coverage[sig].add(ridx)
                     sig_dur = edge_sig_maxdur.get((ridx, hidx), {}).get(sig, 0.0)
-                    sig_typical_duration[sig] = max(sig_typical_duration.get(sig, 0.0), sig_dur)
+                    sig_typical_duration[sig] = max(
+                        sig_typical_duration.get(sig, 0.0), sig_dur
+                    )
 
         duration_values = [dur for dur in sig_typical_duration.values() if dur > 0.0]
         duration_ref = (
@@ -638,8 +653,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             else 1.0
         )
         sig_efficiency: dict[tuple[layout.MoveType, int, layout.Direction], float] = {
-            sig: duration_ref / dur
-            for sig, dur in sig_typical_duration.items()
+            sig: duration_ref / dur for sig, dur in sig_typical_duration.items()
         }
 
         sig_values: list[
@@ -649,10 +663,15 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             value = float(len(ridx_set)) * sig_efficiency.get(sig, 0.0)
             sig_values.append((value, sig))
         sig_values.sort(key=lambda x: (-x[0], self._sig_sort_key(x[1])))
-        top_signatures = [sig for _, sig in sig_values[: max(0, self.top_bus_signatures)]]
+        top_signatures = [
+            sig for _, sig in sig_values[: max(0, self.top_bus_signatures)]
+        ]
         max_assignments = 1 + len(top_signatures)
 
-        layout_seed = sum((addr.word_id * 17 + addr.site_id) * (idx + 1) for idx, addr in enumerate(state_before.layout))
+        layout_seed = sum(
+            (addr.word_id * 17 + addr.site_id) * (idx + 1)
+            for idx, addr in enumerate(state_before.layout)
+        )
         rng = random.Random(self.random_seed + layout_seed)
         assignments: set[tuple[int, ...]] = set()
 
@@ -713,11 +732,14 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
     ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...], float]:
         candidate_layouts = self._candidate_layouts(state_before, lookahead_layers)
-        best: tuple[
-            float,
-            ConcreteState,
-            tuple[tuple[layout.LaneAddress, ...], ...],
-        ] | None = None
+        best: (
+            tuple[
+                float,
+                ConcreteState,
+                tuple[tuple[layout.LaneAddress, ...], ...],
+            ]
+            | None
+        ) = None
 
         for layout_after_return in candidate_layouts:
             mid_state = self._mid_state_for_layout(state_before, layout_after_return)
