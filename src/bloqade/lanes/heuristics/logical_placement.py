@@ -1,5 +1,10 @@
+import heapq
+import math
+import random
+from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+from itertools import combinations
 from itertools import starmap
 
 from bloqade.lanes import layout
@@ -13,6 +18,41 @@ from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
+
+_FLAIR_MAX_RAMP = 0.2
+_FLAIR_MAX_JERK = 0.0004
+_FLAIR_MAX_ACCEL = 0.0015
+
+
+def _const_jerk_min_duration(max_dist: float) -> float:
+    max_dist = abs(max_dist)
+    if max_dist < 1e-8:
+        return 0.0
+
+    t1 = _FLAIR_MAX_ACCEL / _FLAIR_MAX_JERK
+    a = _FLAIR_MAX_JERK * t1
+    b = 3 * _FLAIR_MAX_JERK * t1**2
+    c = 2 * _FLAIR_MAX_JERK * t1**3 - max_dist
+    if c >= 0:
+        t1_jerk = (max_dist / (2 * _FLAIR_MAX_JERK)) ** (1 / 3)
+        return 4 * t1_jerk
+
+    discriminant = b**2 - 4 * a * c
+    t2 = (-b + math.sqrt(discriminant)) / (2 * a)
+    return 4 * t1 + 2 * t2
+
+
+def _path_segment_distances_um(path: tuple[tuple[float, float], ...]) -> list[float]:
+    if len(path) <= 1:
+        return []
+    return [max(abs(x1 - x0), abs(y1 - y0)) for (x0, y0), (x1, y1) in zip(path, path[1:])]
+
+
+def _lane_duration_us(arch_spec: layout.ArchSpec, lane: layout.LaneAddress) -> float:
+    segment_distances = _path_segment_distances_um(arch_spec.get_path(lane))
+    return 2 * (1.0 / _FLAIR_MAX_RAMP) + sum(
+        _const_jerk_min_duration(distance) for distance in segment_distances
+    )
 
 
 @dataclass(frozen=True)
@@ -180,6 +220,524 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 @dataclass
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    H_lookahead: int = 4
+    gamma: float = 0.85
+    lambda_lookahead: float = 0.5
+    K_candidates: int = 8
+    large_cost: float = 1e9
+    word_distance_weight: float = 10.0
+    site_distance_weight: float = 1.0
+    random_seed: int = 0
+    _lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = field(
+        default_factory=tuple, init=False, repr=False
+    )
+    _lane_duration_cache: dict[layout.LaneAddress, float] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _best_path_cache: dict[
+        tuple[layout.LocationAddress, layout.LocationAddress],
+        tuple[layout.LaneAddress, ...] | None,
+    ] = field(default_factory=dict, init=False, repr=False)
+    _adjacency_cache: dict[
+        layout.LocationAddress,
+        list[tuple[layout.LocationAddress, layout.LaneAddress, float]],
+    ] = field(default_factory=dict, init=False, repr=False)
+    top_bus_signatures: int = 6
+    bus_reward_rho: float = 1.0
+
+    def _lane_sig(
+        self, lane: layout.LaneAddress
+    ) -> tuple[layout.MoveType, int, layout.Direction]:
+        return (lane.move_type, lane.bus_id, lane.direction)
+
+    def _sig_sort_key(
+        self, sig: tuple[layout.MoveType, int, layout.Direction]
+    ) -> tuple[int, int, int]:
+        return (sig[0].value, sig[1], sig[2].value)
+
+    def _path_sigs(
+        self, path: tuple[layout.LaneAddress, ...] | None
+    ) -> frozenset[tuple[layout.MoveType, int, layout.Direction]]:
+        if path is None:
+            return frozenset()
+        return frozenset(self._lane_sig(lane) for lane in path)
+
+    def _path_sig_maxdur(
+        self, path: tuple[layout.LaneAddress, ...] | None
+    ) -> dict[tuple[layout.MoveType, int, layout.Direction], float]:
+        if path is None:
+            return {}
+        sig_maxdur: dict[tuple[layout.MoveType, int, layout.Direction], float] = {}
+        for lane in path:
+            sig = self._lane_sig(lane)
+            lane_dur = self._get_lane_duration(lane)
+            sig_maxdur[sig] = max(sig_maxdur.get(sig, 0.0), lane_dur)
+        return sig_maxdur
+
+    def set_lookahead_cz_layers(
+        self,
+        layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+    ) -> None:
+        if self.H_lookahead <= 0:
+            self._lookahead_cz_layers = ()
+            return
+        self._lookahead_cz_layers = layers[: self.H_lookahead]
+
+    def _left_sites(self) -> set[layout.LocationAddress]:
+        return {
+            layout.LocationAddress(word_id, site_id)
+            for word_id in range(2)
+            for site_id in range(5)
+        }
+
+    def _distance_key(
+        self,
+        right_addr: layout.LocationAddress,
+        left_addr: layout.LocationAddress,
+    ) -> tuple[int, int, int, int]:
+        right_row = right_addr.site_id - 5
+        word_distance = 0 if left_addr.word_id == right_addr.word_id else 1
+        site_distance = abs(left_addr.site_id - right_row)
+        return (
+            word_distance,
+            site_distance,
+            left_addr.word_id,
+            left_addr.site_id,
+        )
+
+    def _pair_distance(
+        self,
+        addr0: layout.LocationAddress,
+        addr1: layout.LocationAddress,
+    ) -> float:
+        # Use architecture-derived shortest lane-time as the lookahead proximity metric.
+        # This aligns future-partner scoring with the same lane timing model used for
+        # immediate return path costs.
+        return self._path_cost(self._best_path(addr0, addr1))
+
+    def _get_lane_duration(self, lane: layout.LaneAddress) -> float:
+        if lane not in self._lane_duration_cache:
+            self._lane_duration_cache[lane] = _lane_duration_us(self.arch_spec, lane)
+        return self._lane_duration_cache[lane]
+
+    def _build_move_graph(self) -> None:
+        """Builds the adjacency via lanes"""
+        if self._adjacency_cache:
+            return
+        adjacency: dict[
+            layout.LocationAddress,
+            list[tuple[layout.LocationAddress, layout.LaneAddress, float]],
+        ] = defaultdict(list)
+
+        for (src, dst), lane in self.arch_spec._lane_map.items():
+            adjacency[src].append((dst, lane, self._get_lane_duration(lane)))
+
+        self._adjacency_cache = dict(adjacency)
+
+    def _dijkstra_best_path(
+        self, src: layout.LocationAddress, dst: layout.LocationAddress
+    ) -> tuple[layout.LaneAddress, ...] | None:
+        """Uses Dijkstra's algorithm to find the best path between two locations."""
+        self._build_move_graph()
+        if src == dst:
+            return ()
+
+        dist: dict[layout.LocationAddress, float] = {src: 0.0}
+        prev: dict[layout.LocationAddress, tuple[layout.LocationAddress, layout.LaneAddress]] = {}
+        queue: list[tuple[float, int, layout.LocationAddress]] = [(0.0, 0, src)]
+        push_id = 1
+
+        while queue:
+            cost, _, node = heapq.heappop(queue)
+            if node == dst:
+                break
+            if cost > dist.get(node, float("inf")):
+                continue
+            for next_node, lane, lane_cost in self._adjacency_cache.get(node, []):
+                new_cost = cost + lane_cost
+                if new_cost >= dist.get(next_node, float("inf")):
+                    continue
+                dist[next_node] = new_cost
+                prev[next_node] = (node, lane)
+                heapq.heappush(queue, (new_cost, push_id, next_node))
+                push_id += 1
+
+        if dst not in prev:
+            return None
+
+        lanes: list[layout.LaneAddress] = []
+        node = dst
+        while node != src:
+            prev_node, lane = prev[node]
+            lanes.append(lane)
+            node = prev_node
+        lanes.reverse()
+        return tuple(lanes)
+
+    def _best_path(
+        self,
+        src: layout.LocationAddress,
+        dst: layout.LocationAddress,
+    ) -> tuple[layout.LaneAddress, ...] | None:
+        """Attempts to access memoized Dijkstra path costs; else computes them"""
+        key = (src, dst)
+        if key not in self._best_path_cache:
+            self._best_path_cache[key] = self._dijkstra_best_path(src, dst)
+        return self._best_path_cache[key]
+
+    def _path_cost(self, path: tuple[layout.LaneAddress, ...] | None) -> float:
+        """Convert lanes to path cost"""
+        if path is None:
+            return self.large_cost
+        return sum(self._get_lane_duration(lane) for lane in path)
+
+    def _nearest_left_layout(
+        self, state_before: ConcreteState
+    ) -> tuple[layout.LocationAddress, ...]:
+        left_sites = self._left_sites()
+        used_left_sites = {addr for addr in state_before.layout if addr.site_id < 5}
+        used_left_sites |= {addr for addr in state_before.occupied if addr.site_id < 5}
+        available_left_sites = set(left_sites - used_left_sites)
+        return_layout = list(state_before.layout)
+
+        for qid, addr in enumerate(state_before.layout):
+            if addr.site_id < 5:
+                continue
+            if not available_left_sites:
+                raise ValueError(
+                    "No empty left-column site available for right-column return move"
+                )
+            best_left_site = min(
+                available_left_sites,
+                key=lambda left_site: self._distance_key(addr, left_site),
+            )
+            return_layout[qid] = best_left_site
+            available_left_sites.remove(best_left_site)
+        return tuple(return_layout)
+
+    def _partner_weights(
+        self,
+        lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+    ) -> dict[int, dict[int, float]]:
+        """Calculates partner weights for each qubit based on lookahead layers"""
+        partners: dict[int, dict[int, float]] = defaultdict(dict)
+        for depth, (controls, targets) in enumerate(lookahead_layers):
+            weight = self.gamma**depth
+            for c, t in zip(controls, targets):
+                partners[c][t] = partners[c].get(t, 0.0) + weight
+                partners[t][c] = partners[t].get(c, 0.0) + weight
+        return partners
+
+    def _lookahead_penalty(
+        self,
+        layout_after_return: tuple[layout.LocationAddress, ...],
+        partner_weights: dict[int, dict[int, float]],
+    ) -> float:
+        penalty = 0.0
+        for qid, neigh in partner_weights.items():
+            for pid, weight in neigh.items():
+                if pid <= qid:
+                    continue
+                penalty += weight * self._pair_distance(
+                    layout_after_return[qid], layout_after_return[pid]
+                )
+        return penalty
+
+    def _estimate_layers_time(
+        self, layers: tuple[tuple[layout.LaneAddress, ...], ...]
+    ) -> float:
+        total = 0.0
+        for layer in layers:
+            if not layer:
+                continue
+            total += max(self._get_lane_duration(lane) for lane in layer)
+        return total
+
+    def _assignment_dp(
+        self,
+        row_edges: list[list[tuple[int, float]]],
+        edge_sigs: dict[
+            tuple[int, int], frozenset[tuple[layout.MoveType, int, layout.Direction]]
+        ],
+        *,
+        col_count: int,
+    ) -> tuple[float, tuple[int, ...] | None]:
+        row_count = len(row_edges)
+        if row_count == 0:
+            return 0.0, ()
+        if col_count < row_count:
+            return float("inf"), None
+        if any(len(edges) == 0 for edges in row_edges):
+            return float("inf"), None
+
+        memo: dict[
+            tuple[int, int, tuple[layout.MoveType, int, layout.Direction] | None],
+            tuple[float, tuple[int, ...] | None],
+        ] = {}
+
+        def solve(
+            row: int,
+            used_mask: int,
+            locked_word_sig: tuple[layout.MoveType, int, layout.Direction] | None,
+        ) -> tuple[float, tuple[int, ...] | None]:
+            key = (row, used_mask, locked_word_sig)
+            if key in memo:
+                return memo[key]
+            if row == row_count:
+                return 0.0, ()
+
+            best_cost = self.large_cost
+            best_assign: tuple[int, ...] | None = None
+            for col, edge_cost in row_edges[row]:
+                if used_mask & (1 << col):
+                    continue
+                edge_sigset = edge_sigs.get((row, col), frozenset())
+                ok, next_locked_word_sig = self._word_sig_transition(
+                    locked_word_sig, edge_sigset
+                )
+                if not ok:
+                    continue
+                tail_cost, tail_assign = solve(
+                    row + 1,
+                    used_mask | (1 << col),
+                    next_locked_word_sig,
+                )
+                if tail_assign is None:
+                    continue
+                total_cost = edge_cost + tail_cost
+                if total_cost < best_cost:
+                    best_cost = total_cost
+                    best_assign = (col,) + tail_assign
+            memo[key] = (best_cost, best_assign)
+            return memo[key]
+
+        return solve(0, 0, None)
+
+    def _mid_state_for_layout(
+        self,
+        state_before: ConcreteState,
+        layout_after_return: tuple[layout.LocationAddress, ...],
+    ) -> ConcreteState:
+        return ConcreteState(
+            occupied=state_before.occupied,
+            layout=layout_after_return,
+            move_count=tuple(
+                mc + int(src != dst)
+                for mc, src, dst in zip(
+                    state_before.move_count,
+                    state_before.layout,
+                    layout_after_return,
+                )
+            ),
+        )
+
+    def _is_direction_mode_allowed(
+        self,
+        *,
+        src_word: int,
+        dst_word: int,
+        mode: str,
+    ) -> bool:
+        if src_word == dst_word:
+            return True
+        if mode == "none":
+            return False
+        if mode == "01":
+            return src_word == 0 and dst_word == 1
+        if mode == "10":
+            return src_word == 1 and dst_word == 0
+        raise ValueError(f"Unknown direction mode: {mode}")
+
+    def _word_sig_transition(
+        self,
+        locked_word_sig: tuple[layout.MoveType, int, layout.Direction] | None,
+        edge_sigset: frozenset[tuple[layout.MoveType, int, layout.Direction]],
+    ) -> tuple[bool, tuple[layout.MoveType, int, layout.Direction] | None]:
+        word_sigs = tuple(sig for sig in edge_sigset if sig[0] is layout.MoveType.WORD)
+        if not word_sigs:
+            return True, locked_word_sig
+        unique_word_sigs = set(word_sigs)
+        if len(unique_word_sigs) != 1:
+            return False, locked_word_sig
+        edge_word_sig = next(iter(unique_word_sigs))
+        if locked_word_sig is None or locked_word_sig == edge_word_sig:
+            return True, edge_word_sig
+        return False, locked_word_sig
+
+    def _candidate_layouts(
+        self,
+        state_before: ConcreteState,
+        lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+    ) -> list[tuple[layout.LocationAddress, ...]]:
+        if not lookahead_layers:
+            return [self._nearest_left_layout(state_before)]
+
+        left_sites = self._left_sites()
+        used_left_sites = {addr for addr in state_before.layout if addr.site_id < 5}
+        used_left_sites |= {addr for addr in state_before.occupied if addr.site_id < 5}
+        holes = sorted(left_sites - used_left_sites, key=lambda x: (x.word_id, x.site_id))
+        returners = [qid for qid, addr in enumerate(state_before.layout) if addr.site_id >= 5]
+        if not returners:
+            return [state_before.layout]
+        if len(holes) < len(returners):
+            raise ValueError("No empty left-column site available for right-column return move")
+
+        partner_weights = self._partner_weights(lookahead_layers)
+        baseline_layout = self._nearest_left_layout(state_before)
+        baseline_guess = {
+            qid: baseline_layout[qid] for qid in returners if baseline_layout[qid].site_id < 5
+        }
+        left_stayers = {
+            qid: addr for qid, addr in enumerate(state_before.layout) if addr.site_id < 5
+        }
+        reference_positions = {**left_stayers, **baseline_guess}
+
+        edge_costs: dict[tuple[int, int], float] = {}
+        edge_sigs: dict[
+            tuple[int, int], frozenset[tuple[layout.MoveType, int, layout.Direction]]
+        ] = {}
+        edge_sig_maxdur: dict[
+            tuple[int, int], dict[tuple[layout.MoveType, int, layout.Direction], float]
+        ] = {}
+        candidate_holes_by_returner: dict[int, set[int]] = {}
+        for ridx, qid in enumerate(returners):
+            src = state_before.layout[qid]
+            scored: list[tuple[float, int]] = []
+            for hidx, hole in enumerate(holes):
+                path = self._best_path(src, hole)
+                path_cost = self._path_cost(path)
+                if path_cost >= self.large_cost:
+                    continue
+                path_sigs = self._path_sigs(path)
+                path_sig_maxdur = self._path_sig_maxdur(path)
+                future_delta = 0.0
+                for pid, weight in partner_weights.get(qid, {}).items():
+                    partner_pos = reference_positions.get(pid)
+                    if partner_pos is None:
+                        continue
+                    future_delta += weight * self._pair_distance(hole, partner_pos)
+                score = path_cost + self.lambda_lookahead * future_delta
+                edge_costs[(ridx, hidx)] = score
+                edge_sigs[(ridx, hidx)] = path_sigs
+                edge_sig_maxdur[(ridx, hidx)] = path_sig_maxdur
+                scored.append((score, hidx))
+
+            scored.sort(key=lambda x: (x[0], x[1]))
+            keep = {hidx for _, hidx in scored[: max(1, self.K_candidates)]}
+            candidate_holes_by_returner[ridx] = keep
+
+        sig_coverage: dict[
+            tuple[layout.MoveType, int, layout.Direction], set[int]
+        ] = defaultdict(set)
+        sig_typical_duration: dict[
+            tuple[layout.MoveType, int, layout.Direction], float
+        ] = {}
+        for ridx in range(len(returners)):
+            for hidx in candidate_holes_by_returner.get(ridx, set()):
+                sigs = edge_sigs.get((ridx, hidx), frozenset())
+                for sig in sigs:
+                    sig_coverage[sig].add(ridx)
+                    sig_dur = edge_sig_maxdur.get((ridx, hidx), {}).get(sig, 0.0)
+                    sig_typical_duration[sig] = max(sig_typical_duration.get(sig, 0.0), sig_dur)
+
+        duration_values = [dur for dur in sig_typical_duration.values() if dur > 0.0]
+        duration_ref = (
+            (sum(duration_values) / float(len(duration_values)))
+            if duration_values
+            else 1.0
+        )
+        sig_efficiency: dict[tuple[layout.MoveType, int, layout.Direction], float] = {
+            sig: duration_ref / dur
+            for sig, dur in sig_typical_duration.items()
+        }
+
+        sig_values: list[
+            tuple[float, tuple[layout.MoveType, int, layout.Direction]]
+        ] = []
+        for sig, ridx_set in sig_coverage.items():
+            value = float(len(ridx_set)) * sig_efficiency.get(sig, 0.0)
+            sig_values.append((value, sig))
+        sig_values.sort(key=lambda x: (-x[0], self._sig_sort_key(x[1])))
+        top_signatures = [sig for _, sig in sig_values[: max(0, self.top_bus_signatures)]]
+        max_assignments = 1 + len(top_signatures)
+
+        layout_seed = sum((addr.word_id * 17 + addr.site_id) * (idx + 1) for idx, addr in enumerate(state_before.layout))
+        rng = random.Random(self.random_seed + layout_seed)
+        assignments: set[tuple[int, ...]] = set()
+
+        def maybe_add_assignment(row_edges: list[list[tuple[int, float]]]) -> None:
+            if len(assignments) >= max_assignments:
+                return
+            _, assignment = self._assignment_dp(
+                row_edges,
+                edge_sigs=edge_sigs,
+                col_count=len(holes),
+            )
+            if assignment is not None:
+                assignments.add(assignment)
+
+        row_edges: list[list[tuple[int, float]]] = [[] for _ in returners]
+        for ridx, _qid in enumerate(returners):
+            for hidx in candidate_holes_by_returner.get(ridx, set()):
+                base_cost = edge_costs.get((ridx, hidx), self.large_cost)
+                if base_cost >= self.large_cost:
+                    continue
+                jitter = rng.uniform(0.0, 0.01)
+                row_edges[ridx].append((hidx, base_cost + jitter))
+        maybe_add_assignment(row_edges)
+
+        for sig in top_signatures:
+            if len(assignments) >= max_assignments:
+                break
+            sig_reward_scale = duration_ref * sig_efficiency.get(sig, 0.0)
+            row_edges = [[] for _ in returners]
+            for ridx, _qid in enumerate(returners):
+                for hidx in candidate_holes_by_returner.get(ridx, set()):
+                    base_cost = edge_costs.get((ridx, hidx), self.large_cost)
+                    if base_cost >= self.large_cost:
+                        continue
+                    reward = (
+                        self.bus_reward_rho * sig_reward_scale
+                        if sig in edge_sigs.get((ridx, hidx), frozenset())
+                        else 0.0
+                    )
+                    jitter = rng.uniform(0.0, 0.01)
+                    row_edges[ridx].append((hidx, base_cost - reward + jitter))
+            maybe_add_assignment(row_edges)
+
+        candidate_layouts: list[tuple[layout.LocationAddress, ...]] = []
+        for assignment in assignments:
+            new_layout = list(state_before.layout)
+            for ridx, hidx in enumerate(assignment):
+                new_layout[returners[ridx]] = holes[hidx]
+            candidate_layouts.append(tuple(new_layout))
+
+        if not candidate_layouts:
+            candidate_layouts = [baseline_layout]
+        return candidate_layouts[:max_assignments]
+
+    def _single_step_return_choice(
+        self,
+        state_before: ConcreteState,
+        lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+    ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...], float]:
+        candidate_layouts = self._candidate_layouts(state_before, lookahead_layers)
+        best: tuple[
+            float,
+            ConcreteState,
+            tuple[tuple[layout.LaneAddress, ...], ...],
+        ] | None = None
+
+        for layout_after_return in candidate_layouts:
+            mid_state = self._mid_state_for_layout(state_before, layout_after_return)
+            _, left_move_layers = move_to_left(self.arch_spec, state_before, mid_state)
+            return_time = self._estimate_layers_time(left_move_layers)
+            objective = return_time
+            if best is None or objective < best[0]:
+                best = (objective, mid_state, left_move_layers)
+
+        assert best is not None, "At least one return candidate should exist"
+        return best[1], best[2], best[0]
 
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
@@ -192,58 +750,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         controls: tuple[int, ...],
         targets: tuple[int, ...],
     ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
-        del controls, targets
-        left_sites = {
-            layout.LocationAddress(word_id, site_id)
-            for word_id in range(2)
-            for site_id in range(5)
-        }
-
-        used_left_sites = {addr for addr in state_before.layout if addr.site_id < 5}
-        used_left_sites |= {addr for addr in state_before.occupied if addr.site_id < 5}
-        available_left_sites = left_sites - used_left_sites
-        return_layout = list(state_before.layout)
-
-        def distance_key(
-            right_addr: layout.LocationAddress, left_addr: layout.LocationAddress
-        ) -> tuple[int, int, int, int]:
-            right_row = right_addr.site_id - 5
-            word_distance = 0 if left_addr.word_id == right_addr.word_id else 1
-            site_distance = abs(left_addr.site_id - right_row)
-            return (
-                word_distance,
-                site_distance,
-                left_addr.word_id,
-                left_addr.site_id,
-            )
-
-        for qid, addr in enumerate(state_before.layout):
-            if addr.site_id < 5:
-                continue
-            if not available_left_sites:
-                raise ValueError(
-                    "No empty left-column site available for right-column return move"
-                )
-            best_left_site = min(
-                available_left_sites,
-                key=lambda left_site: distance_key(addr, left_site),
-            )
-            return_layout[qid] = best_left_site
-            available_left_sites.remove(best_left_site)
-
-        mid_state = ConcreteState(
-            occupied=state_before.occupied,
-            layout=tuple(return_layout),
-            move_count=tuple(
-                mc + int(src != dst)
-                for mc, src, dst in zip(
-                    state_before.move_count,
-                    state_before.layout,
-                    return_layout,
-                )
-            ),
+        _ = controls, targets
+        mid_state, left_move_layers, _ = self._single_step_return_choice(
+            state_before, self._lookahead_cz_layers
         )
-        _, left_move_layers = move_to_left(self.arch_spec, state_before, mid_state)
         return mid_state, left_move_layers
 
     def cz_placements(

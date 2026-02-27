@@ -21,6 +21,9 @@ class PlacementAnalysis(Forward[AtomState]):
     initial_layout: tuple[LocationAddress, ...]
     address_analysis: dict[ir.SSAValue, Address]
     move_count: defaultdict[ir.SSAValue, int] = field(init=False)
+    cz_lookahead_buffers: dict[
+        ir.Block, list[tuple[tuple[int, ...], tuple[int, ...]]]
+    ] = field(default_factory=dict, init=False, repr=False)
 
     placement_strategy: PlacementStrategyABC
     """The strategy function to use for calculating placements."""
@@ -32,6 +35,7 @@ class PlacementAnalysis(Forward[AtomState]):
 
     def initialize(self) -> Self:
         self.move_count = defaultdict(int)
+        self.cz_lookahead_buffers.clear()
         return super().initialize()
 
     def get_inintial_state(self, qubits: tuple[ir.SSAValue, ...]):
