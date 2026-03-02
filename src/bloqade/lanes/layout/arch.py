@@ -165,8 +165,7 @@ class ArchSpec:
         if len(path) <= 1:
             return ()
         return tuple(
-            max(abs(x1 - x0), abs(y1 - y0))
-            for (x0, y0), (x1, y1) in zip(path, path[1:])
+            math.hypot(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in zip(path, path[1:])
         )
 
     def _const_jerk_min_duration_us(self, max_dist_um: float) -> float:
