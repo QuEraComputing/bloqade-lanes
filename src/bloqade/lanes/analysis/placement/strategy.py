@@ -23,6 +23,7 @@ class PlacementStrategyABC(abc.ABC):
         state: AtomState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState: ...
 
     @abc.abstractmethod
@@ -58,8 +59,13 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
     ) -> ConcreteState: ...
 
     def cz_placements(
-        self, state: AtomState, controls: tuple[int, ...], targets: tuple[int, ...]
+        self,
+        state: AtomState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
+        _ = lookahead_cz_layers
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
 
