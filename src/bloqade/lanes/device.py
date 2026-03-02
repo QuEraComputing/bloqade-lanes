@@ -55,6 +55,11 @@ class Result(Generic[RetType]):
         return list(self._post_processing.emit_detectors(self._raw_measurements))
 
     @cached_property
+    def measurements(self) -> list[list[bool]]:
+        """The raw measurement outcomes used to compute detectors and observables."""
+        return list(map(list, self._raw_measurements))
+
+    @cached_property
     def observables(self) -> list[list[bool]]:
         """The observable outcomes from the simulation."""
         return list(self._post_processing.emit_observables(self._raw_measurements))
