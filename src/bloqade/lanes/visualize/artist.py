@@ -87,6 +87,16 @@ class PlotParameters:
             "zorder": -100,
         }
 
+    @property
+    def atom_label_args(self) -> dict:
+        return {
+            "color": "white",
+            "fontsize": max(4.0, self.scale * 6.0),
+            "ha": "center",
+            "va": "center",
+            "zorder": 200,
+        }
+
 
 def init_aod_x_lines(ax: Axes, aod_x: Sequence[float], plot_params: PlotParameters):
     y_min, y_max = ax.get_ylim()
@@ -215,6 +225,7 @@ class MovingAtomsScatter:
     ax: Axes
     moving_atoms_x_indices: list[int]
     moving_atoms_y_indices: list[int]
+    moving_atom_labels: list[int]
     aod_x: list[interp1d]
     aod_y: list[interp1d]
     plot_params: PlotParameters
@@ -232,6 +243,17 @@ class MovingAtomsScatter:
         self.scatter = self.ax.scatter(
             moving_atom_x, moving_atom_y, **self.plot_params.atom_plot_args
         )
+        self.labels = [
+            self.ax.text(
+                x_pos,
+                y_pos,
+                str(label),
+                **self.plot_params.atom_label_args,
+            )
+            for x_pos, y_pos, label in zip(
+                moving_atom_x, moving_atom_y, self.moving_atom_labels
+            )
+        ]
 
     def update(self, time: float):
         x = [f(time) for f in self.aod_x]
@@ -239,6 +261,8 @@ class MovingAtomsScatter:
         moving_atom_x = list(map(x.__getitem__, self.moving_atoms_x_indices))
         moving_atom_y = list(map(y.__getitem__, self.moving_atoms_y_indices))
         self.scatter.set_offsets(np.column_stack([moving_atom_x, moving_atom_y]))
+        for label, x_pos, y_pos in zip(self.labels, moving_atom_x, moving_atom_y):
+            label.set_position((x_pos, y_pos))
 
 
 @dataclass
@@ -246,6 +270,7 @@ class StationaryAtomsScatter:
     ax: Axes
     stationary_atoms_x: list[float]
     stationary_atoms_y: list[float]
+    stationary_atom_labels: list[int]
     plot_params: PlotParameters
 
     def max_time(self) -> float:
@@ -255,6 +280,19 @@ class StationaryAtomsScatter:
         self.scatter = init_stationary_atoms(
             self.ax, self.stationary_atoms_x, self.stationary_atoms_y, self.plot_params
         )
+        self.labels = [
+            self.ax.text(
+                x_pos,
+                y_pos,
+                str(label),
+                **self.plot_params.atom_label_args,
+            )
+            for x_pos, y_pos, label in zip(
+                self.stationary_atoms_x,
+                self.stationary_atoms_y,
+                self.stationary_atom_labels,
+            )
+        ]
 
     def update(self, time: float):
         pass  # Stationary atoms do not change position
@@ -329,39 +367,56 @@ class StateArtist:
         last_xs, last_ys = sorted_waypoints[-1]
         return (aod_x_funcs, aod_y_funcs), (last_xs, last_ys)
 
-    def _get_moving_indices(
-        self, move_execution: AtomState, last_xs: list[float], last_ys: list[float]
-    ) -> tuple[list[int], list[int]]:
-        src_locs = [
-            self.arch_spec.get_position(move_execution.data.qubit_to_locations[qubit])
-            for qubit in move_execution.data.prev_lanes.keys()
-        ]
+    def _draw_atom_labels(
+        self,
+        x_positions: Sequence[float],
+        y_positions: Sequence[float],
+        atom_labels: Sequence[int],
+    ):
+        for x_pos, y_pos, atom_label in zip(x_positions, y_positions, atom_labels):
+            self.ax.text(
+                x_pos,
+                y_pos,
+                str(atom_label),
+                **self.plot_params.atom_label_args,
+            )
 
-        moving_atom_indices = [
-            (last_xs.index(x), last_ys.index(y))
-            for x, y in src_locs
-            if x in last_xs and y in last_ys
-        ]
-        x_indices, y_indices = (
-            zip(*moving_atom_indices) if len(moving_atom_indices) > 0 else ([], [])
-        )
-        return list(x_indices), list(y_indices)
+    def _get_moving_atom_data(
+        self, move_execution: AtomState, last_xs: list[float], last_ys: list[float]
+    ) -> tuple[list[int], list[int], list[int]]:
+        moving_atom_data: list[tuple[int, int, int]] = []
+        for qubit in move_execution.data.prev_lanes.keys():
+            x, y = self.arch_spec.get_position(
+                move_execution.data.qubit_to_locations[qubit]
+            )
+            if x in last_xs and y in last_ys:
+                moving_atom_data.append((last_xs.index(x), last_ys.index(y), qubit))
+
+        if len(moving_atom_data) == 0:
+            return [], [], []
+
+        x_indices, y_indices, labels = zip(*moving_atom_data)
+        return list(x_indices), list(y_indices), list(labels)
 
     def _get_stationary_positions(
         self, move_execution: AtomState
-    ) -> tuple[list[float], list[float]]:
-        stationary_atom_positions = [
-            self.arch_spec.get_position(location)
+    ) -> tuple[list[float], list[float], list[int]]:
+        stationary_atom_data = [
+            (*self.arch_spec.get_position(location), qubit)
             for qubit, location in move_execution.data.qubit_to_locations.items()
             if qubit not in move_execution.data.prev_lanes.keys()
         ]
-        stationary_atom_positions_x, stationary_atom_positions_y = (
-            zip(*stationary_atom_positions)
-            if len(stationary_atom_positions) > 0
-            else ([], [])
-        )
+        if len(stationary_atom_data) == 0:
+            return [], [], []
 
-        return list(stationary_atom_positions_x), list(stationary_atom_positions_y)
+        stationary_atom_positions_x, stationary_atom_positions_y, labels = zip(
+            *stationary_atom_data
+        )
+        return (
+            list(stationary_atom_positions_x),
+            list(stationary_atom_positions_y),
+            list(labels),
+        )
 
     def move_renderer(
         self, move_execution: MoveExecution, speed: float
@@ -375,10 +430,10 @@ class StateArtist:
         (aod_x_funcs, aod_y_funcs), (first_xs, first_ys) = self._get_aod_paths(
             speed, move_execution
         )
-        moving_atom_indices_x, moving_atom_indices_y = self._get_moving_indices(
-            move_execution, first_xs, first_ys
+        moving_atom_indices_x, moving_atom_indices_y, moving_atom_labels = (
+            self._get_moving_atom_data(move_execution, first_xs, first_ys)
         )
-        stationary_atom_positions_x, stationary_atom_positions_y = (
+        stationary_atom_positions_x, stationary_atom_positions_y, stationary_labels = (
             self._get_stationary_positions(move_execution)
         )
         renderers = [
@@ -389,6 +444,7 @@ class StateArtist:
                 self.ax,
                 moving_atom_indices_x,
                 moving_atom_indices_y,
+                moving_atom_labels,
                 aod_x_funcs,
                 aod_y_funcs,
                 self.plot_params,
@@ -397,6 +453,7 @@ class StateArtist:
                 self.ax,
                 stationary_atom_positions_x,
                 stationary_atom_positions_y,
+                stationary_labels,
                 self.plot_params,
             ),
         ]
@@ -409,7 +466,9 @@ class StateArtist:
         if not isinstance(state, AtomState):
             return
 
-        locations = list(state.data.locations_to_qubit)
+        atoms = list(state.data.locations_to_qubit.items())
+        locations = [location for location, _ in atoms]
+        labels = [qubit for _, qubit in atoms]
 
         x, y = (
             zip(*map(self.arch_spec.get_position, locations))
@@ -417,6 +476,7 @@ class StateArtist:
             else ([], [])
         )
         self.ax.scatter(x, y, **self.plot_params.atom_plot_args)
+        self._draw_atom_labels(x, y, labels)
 
     def draw_moves(
         self,

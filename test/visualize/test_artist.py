@@ -15,6 +15,7 @@ from bloqade.lanes.visualize.artist import (
 def test_plot_parameters_properties():
     params = PlotParameters(scale=1.0)
     assert isinstance(params.atom_plot_args, dict)
+    assert isinstance(params.atom_label_args, dict)
     assert isinstance(params.gate_spot_args, dict)
     assert isinstance(params.slm_plot_args, dict)
     assert isinstance(params.aod_line_args, dict)
@@ -51,7 +52,9 @@ def test_aod_positions():
 def test_moving_atoms_scatter():
     fig, ax = plt.subplots()
     interp = interp1d([0, 1], [0, 1])
-    scatter = MovingAtomsScatter(ax, [0], [0], [interp], [interp], PlotParameters(1.0))
+    scatter = MovingAtomsScatter(
+        ax, [0], [0], [0], [interp], [interp], PlotParameters(1.0)
+    )
     assert isinstance(scatter, MovingAtomsScatter)
     scatter.update(0.5)
     plt.close(fig)
@@ -59,7 +62,7 @@ def test_moving_atoms_scatter():
 
 def test_stationary_atoms_scatter():
     fig, ax = plt.subplots()
-    scatter = StationaryAtomsScatter(ax, [0.0], [0.0], PlotParameters(1.0))
+    scatter = StationaryAtomsScatter(ax, [0.0], [0.0], [0], PlotParameters(1.0))
     assert isinstance(scatter, StationaryAtomsScatter)
     scatter.update(0.5)
     plt.close(fig)
