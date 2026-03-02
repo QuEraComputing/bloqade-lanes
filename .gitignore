@@ -1,6 +1,6 @@
 # misc
 .DS_Store
-
+.tmp*
 debug/
 
 # Byte-compiled / optimized / DLL files

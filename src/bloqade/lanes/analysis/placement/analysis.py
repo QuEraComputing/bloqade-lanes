@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from bloqade.analysis.address.lattice import Address, AddressQubit
 from kirin import ir
@@ -13,6 +14,9 @@ from bloqade.lanes.layout import LocationAddress
 from .lattice import AtomState, ConcreteState
 from .strategy import PlacementStrategyABC
 
+if TYPE_CHECKING:
+    from bloqade.lanes.dialects.place import CZ
+
 
 @dataclass
 class PlacementAnalysis(Forward[AtomState]):
@@ -21,6 +25,12 @@ class PlacementAnalysis(Forward[AtomState]):
     initial_layout: tuple[LocationAddress, ...]
     address_analysis: dict[ir.SSAValue, Address]
     move_count: defaultdict[ir.SSAValue, int] = field(init=False)
+    cz_lookahead_buffers: dict[
+        ir.Block, tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
+    ] = field(default_factory=dict, init=False, repr=False)
+    cz_lookahead_stmt_positions: dict[ir.Block, dict["CZ", int]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     placement_strategy: PlacementStrategyABC
     """The strategy function to use for calculating placements."""
@@ -32,6 +42,8 @@ class PlacementAnalysis(Forward[AtomState]):
 
     def initialize(self) -> Self:
         self.move_count = defaultdict(int)
+        self.cz_lookahead_buffers.clear()
+        self.cz_lookahead_stmt_positions.clear()
         return super().initialize()
 
     def get_inintial_state(self, qubits: tuple[ir.SSAValue, ...]):
@@ -52,6 +64,47 @@ class PlacementAnalysis(Forward[AtomState]):
             occupied=frozenset(occupied),
             move_count=tuple(move_count),
         )
+
+    def build_cz_buffer(
+        self, block: ir.Block
+    ) -> tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]:
+        from bloqade.lanes.dialects.place import CZ
+
+        buffer: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+        stmt_positions: dict[CZ, int] = {}
+        for node in block.stmts:
+            if isinstance(node, CZ):
+                stmt_positions[node] = len(buffer)
+                buffer.append((node.controls, node.targets))
+        self.cz_lookahead_stmt_positions[block] = stmt_positions
+        return tuple(buffer)
+
+    def buffered_future_cz_layers(
+        self, stmt: "CZ"
+    ) -> tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]:
+        if stmt.parent_block is None:
+            return ()
+        block = stmt.parent_block
+        assert (
+            block in self.cz_lookahead_buffers
+        ), "Expected CZ lookahead buffer for block to be initialized before CZ execution"
+        assert (
+            block in self.cz_lookahead_stmt_positions
+        ), "Expected CZ lookahead statement positions for block to be initialized before CZ execution"
+        buffer = self.cz_lookahead_buffers[block]
+        stmt_positions = self.cz_lookahead_stmt_positions[block]
+
+        current_layer = (stmt.controls, stmt.targets)
+        stmt_position = stmt_positions.get(stmt)
+        if stmt_position is None:
+            raise InterpreterError(
+                "Lookahead CZ buffer missing current CZ statement mapping"
+            )
+        if stmt_position >= len(buffer) or buffer[stmt_position] != current_layer:
+            raise InterpreterError(
+                "Lookahead CZ buffer out of sync with executed CZ order"
+            )
+        return buffer[stmt_position + 1 :]
 
     def method_self(self, method: ir.Method) -> AtomState:
         return AtomState.bottom()

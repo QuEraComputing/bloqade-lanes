@@ -206,10 +206,13 @@ class PlacementMethods(interp.MethodTable):
     def impl_cz(
         self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: CZ
     ):
+        lookahead_cz_layers = _interp.buffered_future_cz_layers(stmt)
+
         state = _interp.placement_strategy.cz_placements(
             frame.get(stmt.state_before),
             stmt.controls,
             stmt.targets,
+            lookahead_cz_layers,
         )
         if isinstance(state, ExecuteCZ) and not state.verify(
             _interp.placement_strategy.arch_spec, stmt.targets, stmt.controls
@@ -242,7 +245,8 @@ class PlacementMethods(interp.MethodTable):
         frame: ForwardFrame[AtomState],
         stmt: StaticPlacement,
     ):
-
+        body_block = stmt.body.blocks[0]
+        _interp.cz_lookahead_buffers[body_block] = _interp.build_cz_buffer(body_block)
         initial_state = _interp.get_inintial_state(stmt.qubits)
         with _interp.new_frame(stmt, has_parent_access=True) as circuit_frame:
 
@@ -258,9 +262,12 @@ class PlacementMethods(interp.MethodTable):
             case (ConcreteState() as final_state, *ret):
                 for qid, qubit in enumerate(stmt.qubits):
                     _interp.move_count[qubit] += final_state.move_count[qid]
-
+                _interp.cz_lookahead_buffers.pop(body_block, None)
+                _interp.cz_lookahead_stmt_positions.pop(body_block, None)
                 return tuple(ret)
             case _:
+                _interp.cz_lookahead_buffers.pop(body_block, None)
+                _interp.cz_lookahead_stmt_positions.pop(body_block, None)
                 raise interp.InterpreterError(
                     "StaticPlacement body did not return a ConcreteState"
                 )
