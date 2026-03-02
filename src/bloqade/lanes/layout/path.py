@@ -131,15 +131,18 @@ class PathFinder:
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
         path_heuristic: Callable[[tuple[LocationAddress, ...]], float] = lambda _: 0.0,
+        edge_weight: Callable[[LaneAddress], float] | None = None,
     ) -> tuple[tuple[LaneAddress, ...], tuple[LocationAddress, ...]] | None:
-        """Find a shortest path from start to end avoiding occupied locations.
+        """Find a duration-weighted shortest path from start to end.
 
         Args:
             start: The starting location.
             end: The ending location.
             occupied: Locations to exclude when searching for a path.
             path_heuristic: A heuristic function over candidate shortest paths, used to
-                select among multiple shortest paths with the same hop count.
+                select among multiple shortest paths with the same total duration.
+            edge_weight: Optional edge weight function used for shortest-path costs.
+                Defaults to `ArchSpec.get_lane_duration_us` when not provided.
 
         Returns:
             A tuple containing:
@@ -164,10 +167,16 @@ class PathFinder:
         ):
             return None
 
+        if edge_weight is None:
+            resolved_edge_weight = self.spec.get_lane_duration_us
+        else:
+            resolved_edge_weight = edge_weight
+
         path_nodes = nx.all_shortest_paths(
             subgraph,
             original_to_subgraph[start_node],
             original_to_subgraph[end_node],
+            weight_fn=resolved_edge_weight,
         )
         paths = [
             (
@@ -189,7 +198,7 @@ class PathFinder:
             ],
         ) -> float:
             _, locations = path_and_locations
-            return len(locations) + path_heuristic(locations)
+            return path_heuristic(locations)
 
         lanes_and_locations = min(paths, key=path_cost)
 
