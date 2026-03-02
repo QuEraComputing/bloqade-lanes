@@ -88,10 +88,24 @@ class PathFinder:
                     self.end_points_cache[lane_addr] = (src_site, dst_site)
                     self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
-    def extract_lanes_from_path(self, path: list[int]):
-        """Given a path as a list of node indices, extract the lane addresses."""
+    def extract_lanes_from_path(self, path: list[int]) -> tuple[LaneAddress, ...]:
+        """Given a path as node indices, extract the lane addresses."""
         if len(path) < 2:
             raise ValueError("Path must have at least two nodes to extract lanes.")
+        lanes = []
+        for start_node, end_node in zip(path, path[1:]):
+            lane = self.site_graph.get_edge_data(start_node, end_node)
+            if lane is None:
+                raise ValueError(
+                    f"No lane exists between nodes {start_node} and {end_node}."
+                )
+            lanes.append(lane)
+        return tuple(lanes)
+
+    def extract_locations_from_path(
+        self, path: list[int]
+    ) -> tuple[LocationAddress, ...]:
+        """Given a path as node indices, extract the location addresses."""
         return tuple(self.physical_addresses[ele] for ele in path)
 
     def get_lane(
@@ -116,40 +130,64 @@ class PathFinder:
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[tuple[LocationAddress, ...]], float] = lambda _: 0.0,
-    ) -> tuple[LocationAddress, ...] | None:
-        """Find a path from start to end avoiding occupied sites.
+        path_heuristic: Callable[
+            [tuple[LaneAddress, ...], tuple[LocationAddress, ...]], float
+        ] = lambda _, __: 0.0,
+        edge_weight: Callable[[LaneAddress], float] | None = None,
+    ) -> tuple[tuple[LaneAddress, ...], tuple[LocationAddress, ...]] | None:
+        """Find a weighted shortest path from start to end.
 
         Args:
-            start: The starting site as a PhysicalAddress.
-            end: The ending site as a PhysicalAddress.
-            occupied: A frozenset of sites PhysicalAddress that are occupied.
-            path_heuristic: A heuristic function that takes a list of sites and returns a float
-                cost for the path. Used to select among multiple shortest paths.
+            start: The starting location.
+            end: The ending location.
+            occupied: Locations to exclude when searching for a path. If this excludes
+                `start` or `end`, no path is returned.
+            path_heuristic: A tie-breaker over candidate shortest paths, evaluated on
+                the candidate location sequence.
+            edge_weight: Optional edge weight function used for shortest-path costs.
+                Defaults to `ArchSpec.get_lane_duration_us` when not provided.
 
         Returns:
             A tuple containing:
-                - A list of lane addresses representing the path, or None if no path found.
-                - An updated frozenset of occupied sites including those used in the path.
-        Raises:
-            ValueError: If start or end sites are already occupied.
+                - The selected path as `LaneAddress` values.
+                - The same path as `LocationAddress` values (including start and end).
+            Returns `None` when no valid path exists.
         """
         start_node = self.physical_address_map[start]
         end_node = self.physical_address_map[end]
 
-        path_nodes = nx.all_simple_paths(self.site_graph, start_node, end_node)
+        available_nodes = [
+            node
+            for node, address in enumerate(self.physical_addresses)
+            if address not in occupied
+        ]
+        subgraph, node_map = self.site_graph.subgraph_with_nodemap(available_nodes)
+        original_to_subgraph = {original: sub for sub, original in node_map.items()}
 
-        def filter_occupied(path: list[int] | None):
-            if path is None:
-                return False
-            return all(self.physical_addresses[node] not in occupied for node in path)
-
-        valid_paths = list(filter(filter_occupied, path_nodes))
-        paths = list(filter(None, map(self.extract_lanes_from_path, valid_paths)))
-
-        if len(paths) == 0:
+        if (
+            start_node not in original_to_subgraph
+            or end_node not in original_to_subgraph
+        ):
             return None
 
-        lanes = min(paths, key=lambda p: len(p) + path_heuristic(p))
+        if edge_weight is None:
+            resolved_edge_weight = self.spec.get_lane_duration_us
+        else:
+            resolved_edge_weight = edge_weight
 
-        return lanes
+        path_nodes = nx.all_shortest_paths(
+            subgraph,
+            original_to_subgraph[start_node],
+            original_to_subgraph[end_node],
+            weight_fn=resolved_edge_weight,
+        )
+        original_paths = ([node_map[node] for node in path] for path in path_nodes)
+        paths = [
+            (
+                self.extract_lanes_from_path(original_path),
+                self.extract_locations_from_path(original_path),
+            )
+            for original_path in original_paths
+            if len(original_path) >= 2
+        ]
+        return min(paths, key=lambda p: path_heuristic(*p))
