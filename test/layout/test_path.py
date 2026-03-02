@@ -92,3 +92,21 @@ def test_find_path_uses_custom_edge_weight_shortest_path():
     assert result is not None
     _, locations = result
     assert locations == path_via_word2
+
+
+@pytest.mark.parametrize(
+    "occupied",
+    [
+        frozenset({LocationAddress(0, 5)}),
+        frozenset({LocationAddress(3, 5)}),
+    ],
+)
+def test_find_path_returns_none_when_start_or_end_is_occupied(
+    occupied: frozenset[LocationAddress],
+):
+    path_finder = _build_pathfinder()
+    start = LocationAddress(0, 5)
+    end = LocationAddress(3, 5)
+
+    result = path_finder.find_path(start, end, occupied=occupied)
+    assert result is None
