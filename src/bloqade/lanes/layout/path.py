@@ -130,17 +130,20 @@ class PathFinder:
         start: LocationAddress,
         end: LocationAddress,
         occupied: frozenset[LocationAddress] = frozenset(),
-        path_heuristic: Callable[[tuple[LocationAddress, ...]], float] = lambda _: 0.0,
+        path_heuristic: Callable[
+            [tuple[LaneAddress, ...], tuple[LocationAddress, ...]], float
+        ] = lambda _, __: 0.0,
         edge_weight: Callable[[LaneAddress], float] | None = None,
     ) -> tuple[tuple[LaneAddress, ...], tuple[LocationAddress, ...]] | None:
-        """Find a duration-weighted shortest path from start to end.
+        """Find a weighted shortest path from start to end.
 
         Args:
             start: The starting location.
             end: The ending location.
-            occupied: Locations to exclude when searching for a path.
-            path_heuristic: A heuristic function over candidate shortest paths, used to
-                select among multiple shortest paths with the same total duration.
+            occupied: Locations to exclude when searching for a path. If this excludes
+                `start` or `end`, no path is returned.
+            path_heuristic: A tie-breaker over candidate shortest paths, evaluated on
+                the candidate location sequence.
             edge_weight: Optional edge weight function used for shortest-path costs.
                 Defaults to `ArchSpec.get_lane_duration_us` when not provided.
 
@@ -178,28 +181,13 @@ class PathFinder:
             original_to_subgraph[end_node],
             weight_fn=resolved_edge_weight,
         )
+        original_paths = ([node_map[node] for node in path] for path in path_nodes)
         paths = [
             (
-                self.extract_lanes_from_path(
-                    original_path := [node_map[node] for node in path]
-                ),
+                self.extract_lanes_from_path(original_path),
                 self.extract_locations_from_path(original_path),
             )
-            for path in path_nodes
-            if len(path) >= 2
+            for original_path in original_paths
+            if len(original_path) >= 2
         ]
-
-        if len(paths) == 0:
-            return None
-
-        def path_cost(
-            path_and_locations: tuple[
-                tuple[LaneAddress, ...], tuple[LocationAddress, ...]
-            ],
-        ) -> float:
-            _, locations = path_and_locations
-            return path_heuristic(locations)
-
-        lanes_and_locations = min(paths, key=path_cost)
-
-        return lanes_and_locations
+        return min(paths, key=lambda p: path_heuristic(*p))
