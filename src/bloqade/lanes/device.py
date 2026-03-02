@@ -57,7 +57,7 @@ class Result(Generic[RetType]):
     @cached_property
     def measurements(self) -> list[list[bool]]:
         """The raw measurement outcomes used to compute detectors and observables."""
-        return list(self._raw_measurements)
+        return list(map(list, self._raw_measurements))
 
     @cached_property
     def observables(self) -> list[list[bool]]:
