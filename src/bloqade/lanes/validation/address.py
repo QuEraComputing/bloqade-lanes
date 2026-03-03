@@ -192,3 +192,15 @@ class Validation(ValidationPass):
         frame, _ = analysis.run(method)
 
         return frame, analysis.get_validation_errors()
+
+
+T = TypeVar("T", bound=Validation)
+
+
+def assign_arch_spec(cls: type[T], *, arch_spec_to_assign: ArchSpec):
+
+    @dataclass
+    class _ValidationWithArchSpec(cls):
+        arch_spec: ArchSpec = arch_spec_to_assign
+
+    return _ValidationWithArchSpec

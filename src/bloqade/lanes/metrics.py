@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
+from kirin.validation import ValidationSuite
 
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import logical
@@ -16,6 +17,7 @@ from bloqade.lanes.upstream import (
     default_merge_heuristic,
     squin_to_move,
 )
+from bloqade.lanes.validation import address
 
 
 @dataclass(frozen=True)
@@ -239,6 +241,15 @@ def analyze_kernel_moves_with_strategy(
         insert_palindrome_moves=insert_palindrome_moves,
         merge_heuristic=merge_heuristic,
     )
+    validator = ValidationSuite(
+        [
+            address.assign_arch_spec(
+                address.Validation, arch_spec_to_assign=placement_strategy.arch_spec
+            )
+        ]
+    )
+    validator.validate(move_mt).raise_if_invalid()
+
     move_event_count, moved_lane_count = _count_move_events_and_lanes(move_mt)
     return KernelMoveMetrics(
         approx_lane_parallelism=_compute_approx_lane_parallelism(
