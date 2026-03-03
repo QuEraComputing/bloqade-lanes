@@ -5,9 +5,9 @@ from kirin import ir
 
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.layout import ArchSpec, LaneAddress
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
@@ -36,15 +36,17 @@ class KernelMoveMetrics:
 
 @dataclass(frozen=True)
 class MoveTimeEvent:
-    """Per-move event timing details in microseconds."""
+    """Per-move event timing details in microseconds.
+
+    ``move_duration_us`` is shared across all lanes in ``lanes``.
+    """
 
     event_index: int
-    lane_count: int
     move_type: str
     bus_id: int
     direction: str
-    lane_durations_us: list[float]
-    event_duration_us: float
+    lanes: list[LaneAddress]
+    move_duration_us: float
     timing_model: str
 
 
@@ -89,12 +91,6 @@ def _compute_approx_lane_parallelism(
     return moved_lane_count / move_event_count
 
 
-def _compute_event_duration_us(lane_durations_us: list[float]) -> float:
-    if len(lane_durations_us) == 0:
-        return 0.0
-    return max(lane_durations_us)
-
-
 def _compile_kernel_to_noisy_physical_squin(
     mt: ir.Method,
     *,
@@ -115,7 +111,7 @@ def _compile_kernel_to_noisy_physical_squin(
     )
     move_mt = transversal_rewrites(move_mt)
     transformer = MoveToSquin(
-        arch_spec=generate_arch_hypercube(4),
+        arch_spec=placement_strategy.arch_spec,
         logical_initialization=logical.steane7_initialize,
         noise_model=noise_model,
         aggressive_unroll=False,
@@ -126,9 +122,9 @@ def _compile_kernel_to_noisy_physical_squin(
 def _analyze_move_time_from_move_ir(
     move_mt: ir.Method,
     *,
+    arch_spec: ArchSpec,
     flair_amplitude_delta: float,
 ) -> KernelMoveTimeMetrics:
-    arch_spec = generate_arch_hypercube(4)
     timing_model = "arch_spec_get_lane_duration_us"
     events: list[MoveTimeEvent] = []
     for event_index, stmt in enumerate(move_mt.callable_region.walk()):
@@ -145,28 +141,29 @@ def _analyze_move_time_from_move_ir(
 
             lane_durations_us.append(lane_duration_us)
 
-        event_duration_us = _compute_event_duration_us(lane_durations_us)
         if len(lane_durations_us) == 0:
             continue
 
-        rep_index = max(
-            range(len(lane_durations_us)), key=lane_durations_us.__getitem__
-        )
-        rep_lane = stmt.lanes[rep_index]
+        move_duration_us = lane_durations_us[0]
+        if any(duration != move_duration_us for duration in lane_durations_us[1:]):
+            raise ValueError(
+                "All lanes in a move event must have the same duration; "
+                f"got {lane_durations_us}"
+            )
+        rep_lane = stmt.lanes[0]
         events.append(
             MoveTimeEvent(
                 event_index=event_index,
-                lane_count=len(stmt.lanes),
                 move_type=rep_lane.move_type.name,
                 bus_id=rep_lane.bus_id,
                 direction=rep_lane.direction.name,
-                lane_durations_us=lane_durations_us,
-                event_duration_us=event_duration_us,
+                lanes=list(stmt.lanes),
+                move_duration_us=move_duration_us,
                 timing_model=timing_model,
             )
         )
 
-    total_move_time_us = sum(event.event_duration_us for event in events)
+    total_move_time_us = sum(event.move_duration_us for event in events)
     return KernelMoveTimeMetrics(
         total_move_time_us=total_move_time_us,
         events=events,
@@ -253,11 +250,10 @@ def analyze_kernel_move_time_with_strategy(
     Analyze move-time metadata with explicit move-compilation strategy control.
 
     The kernel is compiled to Move IR and each ``move.Move`` statement is
-    treated as one move event. Lane durations inside an event are evaluated
-    independently, and event duration is the maximum lane duration.
-    Per-lane duration is delegated to
+    treated as one move event. Per-lane duration is delegated to
     ``ArchSpec.get_lane_duration_us(lane, amplitude_delta=...)`` from the
-    generated architecture specification.
+    architecture owned by ``placement_strategy``. Events record one shared
+    duration and the explicit lanes moved during the event.
     """
     move_mt = squin_to_move(
         mt,
@@ -268,5 +264,6 @@ def analyze_kernel_move_time_with_strategy(
     )
     return _analyze_move_time_from_move_ir(
         move_mt,
+        arch_spec=placement_strategy.arch_spec,
         flair_amplitude_delta=flair_amplitude_delta,
     )
