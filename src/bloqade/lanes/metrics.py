@@ -7,7 +7,7 @@ from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics import fixed
-from bloqade.lanes.layout import ArchSpec, LaneAddress
+from bloqade.lanes.layout import ArchSpec, LocationAddress
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
@@ -38,14 +38,14 @@ class KernelMoveMetrics:
 class MoveTimeEvent:
     """Per-move event timing details in microseconds.
 
-    ``move_duration_us`` is shared across all lanes in ``lanes``.
+    ``move_duration_us`` is shared across all lane source addresses.
     """
 
     event_index: int
     move_type: str
     bus_id: int
     direction: str
-    lanes: list[LaneAddress]
+    src_addresses: list[LocationAddress]
     move_duration_us: float
     timing_model: str
 
@@ -151,13 +151,23 @@ def _analyze_move_time_from_move_ir(
                 f"got {lane_durations_us}"
             )
         rep_lane = stmt.lanes[0]
+        if any(
+            lane.move_type != rep_lane.move_type
+            or lane.bus_id != rep_lane.bus_id
+            or lane.direction != rep_lane.direction
+            for lane in stmt.lanes[1:]
+        ):
+            raise ValueError(
+                "All lanes in a move event must share move_type, bus_id, and direction"
+            )
+
         events.append(
             MoveTimeEvent(
                 event_index=event_index,
                 move_type=rep_lane.move_type.name,
                 bus_id=rep_lane.bus_id,
                 direction=rep_lane.direction.name,
-                lanes=list(stmt.lanes),
+                src_addresses=[lane.src_site() for lane in stmt.lanes],
                 move_duration_us=move_duration_us,
                 timing_model=timing_model,
             )
@@ -253,7 +263,7 @@ def analyze_kernel_move_time_with_strategy(
     treated as one move event. Per-lane duration is delegated to
     ``ArchSpec.get_lane_duration_us(lane, amplitude_delta=...)`` from the
     architecture owned by ``placement_strategy``. Events record one shared
-    duration and the explicit lanes moved during the event.
+    duration and the source location addresses moved during the event.
     """
     move_mt = squin_to_move(
         mt,
