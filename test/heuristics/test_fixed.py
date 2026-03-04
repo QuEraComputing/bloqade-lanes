@@ -528,3 +528,89 @@ def test_nohome_cz_placements_combines_return_and_entangle_layers():
         ),
     )
     assert result.get_move_layers() == left_move_layers + entangle_move_layers
+
+
+def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyPatch):
+    """Tests best_path uses pathfinder instead of old Dijkstra implementation; verifes memoized path; verifies returned lane"""
+    placement = LogicalPlacementStrategyNoHome()
+    src = LocationAddress(0, 0)
+    dst = LocationAddress(0, 5)
+    lane = placement.arch_spec.get_lane_address(src, dst)
+    assert lane is not None
+
+    calls = {"count": 0}
+
+    def fake_find_path(
+        _pathfinder,
+        start,
+        end,
+        occupied=frozenset(),
+        path_heuristic=None,
+        edge_weight=None,
+    ):
+        _ = occupied, path_heuristic
+        assert start == src
+        assert end == dst
+        assert edge_weight is not None
+        calls["count"] += 1
+        return ((lane,), (src, dst))
+
+    monkeypatch.setattr(type(placement._path_finder), "find_path", fake_find_path)
+
+    first = placement._best_path(src, dst)
+    second = placement._best_path(src, dst)
+    assert first == (lane,)
+    assert second == (lane,)
+    assert calls["count"] == 1
+
+
+def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatch):
+    """Tests if no path is found"""
+    placement = LogicalPlacementStrategyNoHome()
+    src = LocationAddress(0, 0)
+    dst = LocationAddress(0, 5)
+
+    monkeypatch.setattr(
+        type(placement._path_finder), "find_path", lambda *_args, **_kwargs: None
+    )
+    path = placement._best_path(src, dst)
+    assert path is None
+    assert placement._path_cost(path) == placement.large_cost
+
+
+def test_nohome_lookahead_can_change_return_word_choice():
+    """Tests that lookahead can change the return word choice"""
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(1, 9),
+            LocationAddress(0, 4),
+        ),
+        move_count=(0, 0),
+    )
+    lookahead = (((0,), (1,)),)
+
+    placement_no_lookahead = LogicalPlacementStrategyNoHome(
+        lambda_lookahead=0.0,
+        H_lookahead=1,
+    )
+    no_lookahead_state, _ = placement_no_lookahead.choose_return_layout(
+        state_before,
+        controls=(0,),
+        targets=(1,),
+        lookahead_cz_layers=lookahead,
+    )
+
+    placement_with_lookahead = LogicalPlacementStrategyNoHome(
+        lambda_lookahead=20.0,
+        H_lookahead=1,
+    )
+    lookahead_state, _ = placement_with_lookahead.choose_return_layout(
+        state_before,
+        controls=(0,),
+        targets=(1,),
+        lookahead_cz_layers=lookahead,
+    )
+
+    assert no_lookahead_state.layout[0].word_id == 1
+    assert lookahead_state.layout[0].word_id == 0

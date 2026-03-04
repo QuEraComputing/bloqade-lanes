@@ -94,6 +94,35 @@ def test_find_path_uses_custom_edge_weight_shortest_path():
     assert locations == path_via_word2
 
 
+def test_find_path_tie_breaks_with_path_heuristic():
+    """Tests the path heuristic as a tie-breaker for shortest paths"""
+    path_finder = _build_pathfinder()
+    start = LocationAddress(0, 5)
+    end = LocationAddress(3, 5)
+
+    def constant_weight(_lane_address: LaneAddress) -> float:
+        return 1.0
+
+    def prefer_word2(
+        _lanes: tuple[LaneAddress, ...], locations: tuple[LocationAddress, ...]
+    ) -> float:
+        return 0.0 if LocationAddress(2, 5) in locations else 1.0
+
+    result = path_finder.find_path(
+        start,
+        end,
+        edge_weight=constant_weight,
+        path_heuristic=prefer_word2,
+    )
+    assert result is not None
+    _, locations = result
+    assert locations == (
+        LocationAddress(0, 5),
+        LocationAddress(2, 5),
+        LocationAddress(3, 5),
+    )
+
+
 @pytest.mark.parametrize(
     "occupied",
     [
@@ -107,6 +136,24 @@ def test_find_path_returns_none_when_start_or_end_is_occupied(
     path_finder = _build_pathfinder()
     start = LocationAddress(0, 5)
     end = LocationAddress(3, 5)
+
+    result = path_finder.find_path(start, end, occupied=occupied)
+    assert result is None
+
+
+def test_find_path_returns_none_when_intermediate_nodes_block_all_routes():
+    """Tests that find_path returns None when intermediate nodes block all possible paths"""
+    path_finder = _build_pathfinder()
+    start = LocationAddress(0, 5)
+    end = LocationAddress(3, 5)
+    word_size = len(path_finder.spec.words[0].site_indices)
+    occupied = frozenset(
+        {
+            LocationAddress(word_id, site_id)
+            for word_id in (1, 2)
+            for site_id in range(word_size)
+        }
+    )
 
     result = path_finder.find_path(start, end, occupied=occupied)
     assert result is None
