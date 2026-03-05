@@ -1,5 +1,3 @@
-import heapq
-import math
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
@@ -16,43 +14,7 @@ from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
-
-_FLAIR_MAX_RAMP = 0.2
-_FLAIR_MAX_JERK = 0.0004
-_FLAIR_MAX_ACCEL = 0.0015
-
-
-def _const_jerk_min_duration(max_dist: float) -> float:
-    max_dist = abs(max_dist)
-    if max_dist < 1e-8:
-        return 0.0
-
-    t1 = _FLAIR_MAX_ACCEL / _FLAIR_MAX_JERK
-    a = _FLAIR_MAX_JERK * t1
-    b = 3 * _FLAIR_MAX_JERK * t1**2
-    c = 2 * _FLAIR_MAX_JERK * t1**3 - max_dist
-    if c >= 0:
-        t1_jerk = (max_dist / (2 * _FLAIR_MAX_JERK)) ** (1 / 3)
-        return 4 * t1_jerk
-
-    discriminant = b**2 - 4 * a * c
-    t2 = (-b + math.sqrt(discriminant)) / (2 * a)
-    return 4 * t1 + 2 * t2
-
-
-def _path_segment_distances_um(path: tuple[tuple[float, float], ...]) -> list[float]:
-    if len(path) <= 1:
-        return []
-    return [
-        max(abs(x1 - x0), abs(y1 - y0)) for (x0, y0), (x1, y1) in zip(path, path[1:])
-    ]
-
-
-def _lane_duration_us(arch_spec: layout.ArchSpec, lane: layout.LaneAddress) -> float:
-    segment_distances = _path_segment_distances_um(arch_spec.get_path(lane))
-    return 2 * (1.0 / _FLAIR_MAX_RAMP) + sum(
-        _const_jerk_min_duration(distance) for distance in segment_distances
-    )
+from bloqade.lanes.layout.path import PathFinder
 
 
 @dataclass(frozen=True)
@@ -226,19 +188,16 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     K_candidates: int = 8
     large_cost: float = 1e9
     lane_move_overhead_cost: float = 0.0
-    _lane_duration_cache: dict[layout.LaneAddress, float] = field(
-        default_factory=dict, init=False, repr=False
-    )
+    _path_finder: PathFinder = field(init=False, repr=False)
     _best_path_cache: dict[
         tuple[layout.LocationAddress, layout.LocationAddress],
         tuple[layout.LaneAddress, ...] | None,
     ] = field(default_factory=dict, init=False, repr=False)
-    _adjacency_cache: dict[
-        layout.LocationAddress,
-        list[tuple[layout.LocationAddress, layout.LaneAddress, float]],
-    ] = field(default_factory=dict, init=False, repr=False)
     top_bus_signatures: int = 6
     bus_reward_rho: float = 0.7
+
+    def __post_init__(self):
+        self._path_finder = PathFinder(self.arch_spec)
 
     def _lane_sig(
         self, lane: layout.LaneAddress
@@ -257,17 +216,17 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             return frozenset()
         return frozenset(self._lane_sig(lane) for lane in path)
 
-    def _path_sig_maxdur(
+    def _path_sig_maxcost(
         self, path: tuple[layout.LaneAddress, ...] | None
     ) -> dict[tuple[layout.MoveType, int, layout.Direction], float]:
         if path is None:
             return {}
-        sig_maxdur: dict[tuple[layout.MoveType, int, layout.Direction], float] = {}
+        sig_maxcost: dict[tuple[layout.MoveType, int, layout.Direction], float] = {}
         for lane in path:
             sig = self._lane_sig(lane)
-            lane_dur = self._get_lane_duration(lane)
-            sig_maxdur[sig] = max(sig_maxdur.get(sig, 0.0), lane_dur)
-        return sig_maxdur
+            lane_cost = self._get_lane_cost(lane)
+            sig_maxcost[sig] = max(sig_maxcost.get(sig, 0.0), lane_cost)
+        return sig_maxcost
 
     def _left_sites(self) -> set[layout.LocationAddress]:
         return {
@@ -296,92 +255,41 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         addr0: layout.LocationAddress,
         addr1: layout.LocationAddress,
     ) -> float:
-        # Use architecture-derived shortest lane-time as the lookahead proximity metric.
-        # This aligns future-partner scoring with the same lane timing model used for
-        # immediate return path costs.
+        # Use shortest-path lane cost as the lookahead proximity metric so both
+        # immediate return selection and lookahead terms use the same objective.
         return self._path_cost(self._best_path(addr0, addr1))
 
     def _get_lane_duration(self, lane: layout.LaneAddress) -> float:
-        if lane not in self._lane_duration_cache:
-            self._lane_duration_cache[lane] = _lane_duration_us(self.arch_spec, lane)
-        return self._lane_duration_cache[lane]
+        return self.arch_spec.get_lane_duration_us(lane)
 
-    def _build_move_graph(self) -> None:
-        if self._adjacency_cache:
-            return
-        adjacency: dict[
-            layout.LocationAddress,
-            list[tuple[layout.LocationAddress, layout.LaneAddress, float]],
-        ] = defaultdict(list)
-
-        for (src, dst), lane in self.arch_spec._lane_map.items():
-            adjacency[src].append(
-                (
-                    dst,
-                    lane,
-                    self._get_lane_duration(lane) + self.lane_move_overhead_cost,
-                )
-            )
-
-        self._adjacency_cache = dict(adjacency)
-
-    def _dijkstra_best_path(
-        self, src: layout.LocationAddress, dst: layout.LocationAddress
-    ) -> tuple[layout.LaneAddress, ...] | None:
-        self._build_move_graph()
-        if src == dst:
-            return ()
-
-        dist: dict[layout.LocationAddress, float] = {src: 0.0}
-        prev: dict[
-            layout.LocationAddress, tuple[layout.LocationAddress, layout.LaneAddress]
-        ] = {}
-        queue: list[tuple[float, int, layout.LocationAddress]] = [(0.0, 0, src)]
-        push_id = 1
-
-        while queue:
-            cost, _, node = heapq.heappop(queue)
-            if node == dst:
-                break
-            if cost > dist.get(node, float("inf")):
-                continue
-            for next_node, lane, lane_cost in self._adjacency_cache.get(node, []):
-                new_cost = cost + lane_cost
-                if new_cost >= dist.get(next_node, float("inf")):
-                    continue
-                dist[next_node] = new_cost
-                prev[next_node] = (node, lane)
-                heapq.heappush(queue, (new_cost, push_id, next_node))
-                push_id += 1
-
-        if dst not in prev:
-            return None
-
-        lanes: list[layout.LaneAddress] = []
-        node = dst
-        while node != src:
-            prev_node, lane = prev[node]
-            lanes.append(lane)
-            node = prev_node
-        lanes.reverse()
-        return tuple(lanes)
+    def _get_lane_cost(self, lane: layout.LaneAddress) -> float:
+        return self.arch_spec.get_lane_duration_cost(lane)
 
     def _best_path(
         self,
         src: layout.LocationAddress,
         dst: layout.LocationAddress,
     ) -> tuple[layout.LaneAddress, ...] | None:
+        if src == dst:
+            return ()
         key = (src, dst)
         if key not in self._best_path_cache:
-            self._best_path_cache[key] = self._dijkstra_best_path(src, dst)
+            # Canonical placement objective: normalized lane duration cost with
+            # optional per-move overhead to tune route complexity.
+            result = self._path_finder.find_path(
+                src,
+                dst,
+                edge_weight=lambda lane: self._get_lane_cost(lane)
+                + self.lane_move_overhead_cost,
+            )
+            self._best_path_cache[key] = result[0] if result is not None else None
         return self._best_path_cache[key]
 
     def _path_cost(self, path: tuple[layout.LaneAddress, ...] | None) -> float:
         if path is None:
             return self.large_cost
         return sum(
-            self._get_lane_duration(lane) + self.lane_move_overhead_cost
-            for lane in path
+            self._get_lane_cost(lane) + self.lane_move_overhead_cost for lane in path
         )
 
     def _nearest_left_layout(
@@ -605,7 +513,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         edge_sigs: dict[
             tuple[int, int], frozenset[tuple[layout.MoveType, int, layout.Direction]]
         ] = {}
-        edge_sig_maxdur: dict[
+        edge_sig_maxcost: dict[
             tuple[int, int], dict[tuple[layout.MoveType, int, layout.Direction], float]
         ] = {}
         candidate_holes_by_returner: dict[int, set[int]] = {}
@@ -618,7 +526,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 if path_cost >= self.large_cost:
                     continue
                 path_sigs = self._path_sigs(path)
-                path_sig_maxdur = self._path_sig_maxdur(path)
+                path_sig_maxcost = self._path_sig_maxcost(path)
                 future_delta = 0.0
                 for pid, weight in partner_weights.get(qid, {}).items():
                     partner_pos = reference_positions.get(pid)
@@ -628,7 +536,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 score = path_cost + self.lambda_lookahead * future_delta
                 edge_costs[(ridx, hidx)] = score
                 edge_sigs[(ridx, hidx)] = path_sigs
-                edge_sig_maxdur[(ridx, hidx)] = path_sig_maxdur
+                edge_sig_maxcost[(ridx, hidx)] = path_sig_maxcost
                 scored.append((score, hidx))
 
             scored.sort(key=lambda x: (x[0], x[1]))
@@ -646,9 +554,9 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 sigs = edge_sigs.get((ridx, hidx), frozenset())
                 for sig in sigs:
                     sig_coverage[sig].add(ridx)
-                    sig_dur = edge_sig_maxdur.get((ridx, hidx), {}).get(sig, 0.0)
+                    sig_cost = edge_sig_maxcost.get((ridx, hidx), {}).get(sig, 0.0)
                     sig_typical_duration[sig] = max(
-                        sig_typical_duration.get(sig, 0.0), sig_dur
+                        sig_typical_duration.get(sig, 0.0), sig_cost
                     )
 
         duration_values = [dur for dur in sig_typical_duration.values() if dur > 0.0]
