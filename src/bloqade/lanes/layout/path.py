@@ -155,6 +155,8 @@ class PathFinder:
         """
         start_node = self.physical_address_map[start]
         end_node = self.physical_address_map[end]
+        if start == end:
+            return (), (start,)
 
         available_nodes = [
             node
@@ -175,12 +177,15 @@ class PathFinder:
         else:
             resolved_edge_weight = edge_weight
 
-        path_nodes = nx.all_shortest_paths(
-            subgraph,
-            original_to_subgraph[start_node],
-            original_to_subgraph[end_node],
-            weight_fn=resolved_edge_weight,
-        )
+        try:
+            path_nodes = nx.all_shortest_paths(
+                subgraph,
+                original_to_subgraph[start_node],
+                original_to_subgraph[end_node],
+                weight_fn=resolved_edge_weight,
+            )
+        except nx.NoPathFound:
+            return None
         original_paths = ([node_map[node] for node in path] for path in path_nodes)
         paths = [
             (
@@ -190,4 +195,6 @@ class PathFinder:
             for original_path in original_paths
             if len(original_path) >= 2
         ]
+        if len(paths) == 0:
+            return None
         return min(paths, key=lambda p: path_heuristic(*p))
