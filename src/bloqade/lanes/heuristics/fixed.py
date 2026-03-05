@@ -101,11 +101,7 @@ class LogicalLayoutHeuristicRecencyWeighted(LogicalLayoutHeuristic):
     layout_lookahead_layers: int | None = None
     layout_decay_gamma: float = 0.85
 
-    def compute_layout(
-        self,
-        all_qubits: tuple[int, ...],
-        stages: list[tuple[tuple[int, int], ...]],
-    ) -> tuple[layout.LocationAddress, ...]:
+    def __post_init__(self):
         if not 0.0 < self.layout_decay_gamma <= 1.0:
             raise ValueError("layout_decay_gamma must be in the interval (0, 1].")
 
@@ -115,6 +111,11 @@ class LogicalLayoutHeuristicRecencyWeighted(LogicalLayoutHeuristic):
         ):
             raise ValueError("layout_lookahead_layers must be non-negative or None.")
 
+    def compute_layout(
+        self,
+        all_qubits: tuple[int, ...],
+        stages: list[tuple[tuple[int, int], ...]],
+    ) -> tuple[layout.LocationAddress, ...]:
         if self.layout_lookahead_layers is None:
             considered_layers = stages
         else:
