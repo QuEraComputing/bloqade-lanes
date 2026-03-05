@@ -11,6 +11,7 @@ from kirin import ir, rewrite
 from kirin.validation import ValidationSuite
 
 from bloqade.lanes import visualize
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics import fixed
@@ -72,7 +73,10 @@ def transversal_rewrites(mt: ir.Method):
 
 
 def compile_squin_to_move(
-    mt: ir.Method, transversal_rewrite: bool = False, no_raise: bool = True
+    mt: ir.Method,
+    transversal_rewrite: bool = False,
+    no_raise: bool = True,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ):
     """
     Compile a squin kernel to move dialect.
@@ -85,9 +89,12 @@ def compile_squin_to_move(
     Returns:
         ir.Method: The compiled move dialect method.
     """
+    if layout_heuristic is None:
+        layout_heuristic = fixed.LogicalLayoutHeuristic()
+
     mt = squin_to_move(
         mt,
-        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        layout_heuristic=layout_heuristic,
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_palindrome_moves=True,
         no_raise=no_raise,
@@ -104,6 +111,7 @@ def compile_squin_to_move_and_visualize(
     transversal_rewrite: bool = False,
     animated: bool = False,
     no_raise: bool = True,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ):
     """
     Compile a squin kernel to moves and visualize the program.
@@ -116,7 +124,12 @@ def compile_squin_to_move_and_visualize(
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
     """
     # Compile to move dialect
-    mt = compile_squin_to_move(mt, transversal_rewrite, no_raise=no_raise)
+    mt = compile_squin_to_move(
+        mt,
+        transversal_rewrite,
+        no_raise=no_raise,
+        layout_heuristic=layout_heuristic,
+    )
     if transversal_rewrite:
         arch_spec = generate_arch_hypercube(4)
         marker = "o"
@@ -133,7 +146,10 @@ def compile_squin_to_move_and_visualize(
 
 
 def compile_to_physical_squin_noise_model(
-    mt: ir.Method, noise_model: NoiseModelABC | None = None, no_raise: bool = True
+    mt: ir.Method,
+    noise_model: NoiseModelABC | None = None,
+    no_raise: bool = True,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> ir.Method:
     """
     Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
@@ -149,7 +165,12 @@ def compile_to_physical_squin_noise_model(
     if noise_model is None:
         noise_model = generate_simple_noise_model()
 
-    move_mt = compile_squin_to_move(mt, transversal_rewrite=True, no_raise=no_raise)
+    move_mt = compile_squin_to_move(
+        mt,
+        transversal_rewrite=True,
+        no_raise=no_raise,
+        layout_heuristic=layout_heuristic,
+    )
     transformer = MoveToSquin(
         arch_spec=generate_arch_hypercube(4),
         logical_initialization=logical.steane7_initialize,
@@ -161,7 +182,10 @@ def compile_to_physical_squin_noise_model(
 
 
 def compile_to_physical_stim_program(
-    mt: ir.Method, noise_model: NoiseModelABC | None = None, no_raise: bool = True
+    mt: ir.Method,
+    noise_model: NoiseModelABC | None = None,
+    no_raise: bool = True,
+    layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> str:
     """
     Compiles a logical squin kernel to a physical stim kernel with noise channels inserted.
@@ -175,7 +199,10 @@ def compile_to_physical_stim_program(
         str: The compiled physical stim program as a string.
     """
     noise_kernel = compile_to_physical_squin_noise_model(
-        mt, noise_model, no_raise=no_raise
+        mt,
+        noise_model,
+        no_raise=no_raise,
+        layout_heuristic=layout_heuristic,
     )
     RemoveReturn().rewrite(noise_kernel.code)
     noise_kernel = squin_to_stim(noise_kernel)
