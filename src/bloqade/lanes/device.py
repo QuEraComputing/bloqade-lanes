@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, TypeVar
 
+import numpy as np
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir, rewrite
@@ -71,6 +72,10 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
+    m2dets: np.ndarray | None = None
+    """The matrix of detectors to be used in the simulation."""
+    m2obs: np.ndarray | None = None
+    """The matrix of observables to be used in the simulation."""
     _thread_pool_executor: ThreadPoolExecutor = field(
         default_factory=ThreadPoolExecutor, init=False
     )
@@ -110,7 +115,22 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         """The tsim circuit corresponding to the physical squin kernel."""
         physical_squin_kernel = self.physical_squin_kernel.similar()
         rewrite.Walk(RemoveReturn()).rewrite(physical_squin_kernel.code)
-        return tsim.Circuit(physical_squin_kernel)
+        c: tsim_backend.Circuit = tsim.Circuit(physical_squin_kernel)
+        if self.m2obs is not None:
+            num_meas = self.m2obs.shape[0]
+
+            for i in range(self.m2obs.shape[1]):
+                recs = np.flatnonzero(self.m2obs[:, i]) - num_meas
+                rec_str = " ".join(f"rec[{rec}]" for rec in recs)
+                print(f"OBSERVABLE_INCLUDE({i}) {rec_str}\n")
+                c.append_from_stim_program_text(f"OBSERVABLE_INCLUDE({i}) {rec_str}\n")
+        if self.m2dets is not None:
+            for i in range(self.m2dets.shape[1]):
+                recs = np.flatnonzero(self.m2dets[:, i]) - self.m2dets.shape[0]
+                rec_str = " ".join(f"rec[{rec}]" for rec in recs)
+                print(f"DETECTOR {rec_str}\n")
+                c.append_from_stim_program_text(f"DETECTOR {rec_str}\n")
+        return c
 
     @cached_property
     def noiseless_tsim_circuit(self) -> tsim_backend.Circuit:
@@ -221,12 +241,32 @@ class GeminiLogicalSimulator:
     noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
 
     def task(
-        self, logical_squin_kernel: ir.Method[[], RetType]
+        self,
+        logical_kernel: ir.Method[[], RetType],
+        m2dets: np.ndarray | None = None,
+        m2obs: np.ndarray | None = None,
     ) -> GeminiLogicalSimulatorTask[RetType]:
+        from cudaq.kernel.kernel_decorator import PyKernelDecorator
+        from qbraid_qir.squin import load
+        import cudaq
+        from bloqade.gemini import logical
+
+        if isinstance(logical_kernel, PyKernelDecorator):
+            qir_str = cudaq.translate(logical_kernel, format="qir-base")
+            _kernel = load(qir_str, dialects=logical.kernel)
+
+            @logical.kernel(aggressive_unroll=True, verify=True)
+            def logical_squin_kernel():
+                _kernel()
+        else:
+            logical_squin_kernel = logical_kernel
+
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
+            m2dets,
+            m2obs,
         )
 
     def run(

@@ -56,6 +56,8 @@ class NativeToPlace:
             circuit2place.RewritePlaceOperations(),
         ).rewrite(out.code)
 
+        rewrite.Walk(circuit2place.AutoMeasureVoidReturn()).rewrite(out.code)
+
         rewrite.Walk(
             rewrite.Chain(
                 rewrite.DeadCodeElimination(), rewrite.CommonSubexpressionElimination()

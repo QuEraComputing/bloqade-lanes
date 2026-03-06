@@ -180,3 +180,25 @@ def test_physical_compilation(size: int):
     result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
     # checks to make sure logical GHZ state is created.
     assert all(len(set(rv)) == 1 for rv in result.observables)
+
+
+def test_void_return_auto_measures_allocated_qubits():
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def main():
+        qubit.qalloc(2)
+
+    result = GeminiLogicalSimulator().run(main, 4, with_noise=False)
+
+    assert len(result.return_values) == 4
+    assert all(len(shot) == 2 for shot in result.return_values)
+    assert all(
+        len(logical_measurements) == 7
+        for shot in result.return_values
+        for logical_measurements in shot
+    )
+    assert all(
+        isinstance(bit, bool)
+        for shot in result.return_values
+        for logical_measurements in shot
+        for bit in logical_measurements
+    )

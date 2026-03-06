@@ -4,7 +4,7 @@ from typing import Callable, TypeGuard
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir, types
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
@@ -86,7 +86,25 @@ class InitializeNewQubits(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
-@dataclass
+def prep_region() -> tuple[ir.Region, ir.Block, ir.SSAValue]:
+    body = ir.Region(block := ir.Block())
+    entry_state = block.args.append_from(StateType, name="entry_state")
+    return body, block, entry_state
+
+
+def construct_execute(
+    quantum_stmt: place.QuantumStmt,
+    *,
+    qubits: tuple[ir.SSAValue, ...],
+    body: ir.Region,
+    block: ir.Block,
+) -> place.StaticPlacement:
+    block.stmts.append(quantum_stmt)
+    block.stmts.append(place.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:]))
+
+    return place.StaticPlacement(qubits=qubits, body=body)
+
+
 class RewritePlaceOperations(abc.RewriteRule):
     """
     Rewrite rule to convert native operations to place operations.
@@ -109,32 +127,12 @@ class RewritePlaceOperations(abc.RewriteRule):
         rewrite_method = getattr(self, rewrite_method_name)
         return rewrite_method(node)
 
-    def prep_region(self) -> tuple[ir.Region, ir.Block, ir.SSAValue]:
-        body = ir.Region(block := ir.Block())
-        entry_state = block.args.append_from(StateType, name="entry_state")
-        return body, block, entry_state
-
-    def construct_execute(
-        self,
-        quantum_stmt: place.QuantumStmt,
-        *,
-        qubits: tuple[ir.SSAValue, ...],
-        body: ir.Region,
-        block: ir.Block,
-    ) -> place.StaticPlacement:
-        block.stmts.append(quantum_stmt)
-        block.stmts.append(
-            place.Yield(quantum_stmt.state_after, *quantum_stmt.results[1:])
-        )
-
-        return place.StaticPlacement(qubits=qubits, body=body)
-
     def rewrite_Initialize(self, node: gemini_stmts.Initialize) -> abc.RewriteResult:
         if not isinstance(args_list := node.qubits.owner, ilist.New):
             return abc.RewriteResult()
 
         inputs = args_list.values
-        body, block, entry_state = self.prep_region()
+        body, block, entry_state = prep_region()
         gate_stmt = place.Initialize(
             entry_state,
             phi=node.phi,
@@ -143,7 +141,7 @@ class RewritePlaceOperations(abc.RewriteRule):
             qubits=tuple(range(len(inputs))),
         )
         node.replace_by(
-            self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
+            construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
         )
 
         return abc.RewriteResult(has_done_something=True)
@@ -155,14 +153,12 @@ class RewritePlaceOperations(abc.RewriteRule):
             return abc.RewriteResult()
 
         inputs = args_list.values
-        body, block, entry_state = self.prep_region()
+        body, block, entry_state = prep_region()
         gate_stmt = place.EndMeasure(
             entry_state,
             qubits=tuple(range(len(inputs))),
         )
-        new_node = self.construct_execute(
-            gate_stmt, qubits=inputs, body=body, block=block
-        )
+        new_node = construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
         new_node.insert_before(node)
         node.replace_by(
             place.ConvertToPhysicalMeasurements(
@@ -185,16 +181,14 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         all_qubits = tuple(range(len(targets) + len(controls)))
 
-        body, block, entry_state = self.prep_region()
+        body, block, entry_state = prep_region()
         stmt = place.CZ(
             entry_state,
             qubits=all_qubits,
         )
 
         node.replace_by(
-            self.construct_execute(
-                stmt, qubits=controls + targets, body=body, block=block
-            )
+            construct_execute(stmt, qubits=controls + targets, body=body, block=block)
         )
 
         return abc.RewriteResult(has_done_something=True)
@@ -205,7 +199,7 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         inputs = args_list.values
 
-        body, block, entry_state = self.prep_region()
+        body, block, entry_state = prep_region()
         gate_stmt = place.R(
             entry_state,
             qubits=tuple(range(len(inputs))),
@@ -213,7 +207,7 @@ class RewritePlaceOperations(abc.RewriteRule):
             rotation_angle=node.rotation_angle,
         )
         node.replace_by(
-            self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
+            construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
         )
 
         return abc.RewriteResult(has_done_something=True)
@@ -224,8 +218,7 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         inputs = args_list.values
 
-        body = ir.Region(block := ir.Block())
-        entry_state = block.args.append_from(StateType, name="entry_state")
+        body, block, entry_state = prep_region()
 
         gate_stmt = place.Rz(
             entry_state,
@@ -234,10 +227,52 @@ class RewritePlaceOperations(abc.RewriteRule):
         )
 
         node.replace_by(
-            self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
+            construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
         )
 
         return abc.RewriteResult(has_done_something=True)
+
+
+class AutoMeasureVoidReturn(abc.RewriteRule):
+    """Replace `return None` with a terminal measurement over allocated qubits."""
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, func.Function):
+            return abc.RewriteResult()
+
+        qubits = tuple(
+            stmt.result
+            for stmt in node.walk()
+            if isinstance(stmt, place.NewLogicalQubit)
+        )
+        if len(qubits) == 0:
+            return abc.RewriteResult()
+
+        has_done_something = False
+        for block in node.body.blocks:
+            last_stmt = block.last_stmt
+            if not (
+                isinstance(last_stmt, func.Return)
+                and len(last_stmt.args) == 1
+                and isinstance(last_stmt.value.owner, func.ConstantNone)
+            ):
+                continue
+
+            body, measure_block, entry_state = prep_region()
+            gate_stmt = place.EndMeasure(entry_state, qubits=tuple(range(len(qubits))))
+            measure_stmt = construct_execute(
+                gate_stmt, qubits=qubits, body=body, block=measure_block
+            )
+            measure_stmt.insert_before(last_stmt)
+            (
+                physical_measurements := place.ConvertToPhysicalMeasurements(
+                    tuple(measure_stmt.results)
+                )
+            ).insert_before(last_stmt)
+            last_stmt.replace_by(func.Return(physical_measurements.result))
+            has_done_something = True
+
+        return abc.RewriteResult(has_done_something=has_done_something)
 
 
 class HoistConstants(abc.RewriteRule):
