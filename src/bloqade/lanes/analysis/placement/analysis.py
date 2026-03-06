@@ -104,7 +104,7 @@ class PlacementAnalysis(Forward[AtomState]):
             raise InterpreterError(
                 "Lookahead CZ buffer out of sync with executed CZ order"
             )
-        return buffer[stmt_position + 1 :]
+        return buffer[stmt_position:]
 
     def method_self(self, method: ir.Method) -> AtomState:
         return AtomState.bottom()
