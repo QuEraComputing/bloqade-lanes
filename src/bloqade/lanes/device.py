@@ -42,6 +42,8 @@ class Result(Generic[RetType]):
     _post_processing: atom.PostProcessing[RetType] | None = None
     _detectors: list[list[bool]] | None = None
     _observables: list[list[bool]] | None = None
+    _return_values: list[RetType] | None = None
+    _measurements: list[list[bool]] | None = None
 
     def fidelity_bounds(self) -> tuple[float, float]:
         """Return the upper and lower fidelity bounds.
@@ -55,9 +57,6 @@ class Result(Generic[RetType]):
     def detector_error_model(self) -> DetectorErrorModel:
         """The STIM detector error model corresponding to the physical noise circuit."""
         return self._detector_error_model
-
-    _return_values: list[RetType] | None = None
-    _measurements: list[list[bool]] | None = None
 
     @property
     def return_values(self) -> list[RetType]:
@@ -337,7 +336,7 @@ class GeminiLogicalSimulator:
                 types.NoneType
             ):
                 raise ValueError(
-                    "Kernel must have a None return type when " "`no_measurements=True`"
+                    "Kernel must have a None return type when `no_measurements=True`"
                 )
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
