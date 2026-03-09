@@ -56,6 +56,9 @@ class Result(Generic[RetType]):
         """The STIM detector error model corresponding to the physical noise circuit."""
         return self._detector_error_model
 
+    _return_values: list[RetType] | None = None
+    _measurements: list[list[bool]] | None = None
+
     @property
     def return_values(self) -> list[RetType]:
         """The return values of the logical kernel.
@@ -63,9 +66,13 @@ class Result(Generic[RetType]):
         Raises:
             ValueError: If the result was produced with ``no_measurements=True``.
         """
+        if self._return_values is not None:
+            return self._return_values
         if self._post_processing is None or self._raw_measurements is None:
             raise ValueError("return values not accessible with `no_measurements=True`")
-        return list(self._post_processing.emit_return(self._raw_measurements))
+        result = list(self._post_processing.emit_return(self._raw_measurements))
+        object.__setattr__(self, "_return_values", result)
+        return result
 
     @property
     def detectors(self) -> list[list[bool]]:
@@ -77,7 +84,9 @@ class Result(Generic[RetType]):
                 "detectors not accessible with `no_measurements=True`; "
                 "use the detector sampler API on the task instead"
             )
-        return list(self._post_processing.emit_detectors(self._raw_measurements))
+        result = list(self._post_processing.emit_detectors(self._raw_measurements))
+        object.__setattr__(self, "_detectors", result)
+        return result
 
     @property
     def measurements(self) -> list[list[bool]]:
@@ -86,9 +95,13 @@ class Result(Generic[RetType]):
         Raises:
             ValueError: If the result was produced with ``no_measurements=True``.
         """
+        if self._measurements is not None:
+            return self._measurements
         if self._raw_measurements is None:
             raise ValueError("measurements not accessible with `no_measurements=True`")
-        return list(map(list, self._raw_measurements))
+        result = list(map(list, self._raw_measurements))
+        object.__setattr__(self, "_measurements", result)
+        return result
 
     @property
     def observables(self) -> list[list[bool]]:
@@ -100,7 +113,9 @@ class Result(Generic[RetType]):
                 "observables not accessible with `no_measurements=True`; "
                 "use the detector sampler API on the task instead"
             )
-        return list(self._post_processing.emit_observables(self._raw_measurements))
+        result = list(self._post_processing.emit_observables(self._raw_measurements))
+        object.__setattr__(self, "_observables", result)
+        return result
 
 
 @dataclass(frozen=True)
