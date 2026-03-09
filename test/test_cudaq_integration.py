@@ -31,7 +31,7 @@ def _make_kernel(num_qubits: int, *, with_measure: bool = False):
 
 
 def _count_stmts(mt, stmt_type) -> int:
-    return sum(1 for s in mt.code.body.walk() if isinstance(s, stmt_type))
+    return sum(1 for s in mt.callable_region.walk() if isinstance(s, stmt_type))
 
 
 @pytest.mark.parametrize("n", [1, 3])
@@ -51,7 +51,7 @@ def test_find_return_stmt():
     mt = _make_kernel(1)
     ret = _find_return_stmt(mt)
     assert isinstance(ret, func.Return)
-    assert ret is mt.code.body.blocks[0].last_stmt
+    assert ret is mt.callable_region.blocks[0].last_stmt
 
 
 def test_raises_when_both_matrices_none():

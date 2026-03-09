@@ -195,8 +195,8 @@ def _steane_matrices(num_qubits: int):
         ]
     )
     o = np.array([[1, 1, 0, 0, 0, 1, 0]])
-    m2dets = block_diag(*[d.T] * num_qubits).tolist()
-    m2obs = block_diag(*[o.T] * num_qubits).tolist()
+    m2dets = block_diag(*[d.T] * num_qubits).tolist()  # pyright: ignore
+    m2obs = block_diag(*[o.T] * num_qubits).tolist()  # pyright: ignore
     return m2dets, m2obs
 
 
@@ -253,8 +253,8 @@ def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
     @cudaq.kernel
     def bell_pair():
         q = cudaq.qvector(num_qubits)
-        h(q[0])
-        cx(q[0], q[1])
+        h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+        cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
 
     task = GeminiLogicalSimulator().task(
         bell_pair,

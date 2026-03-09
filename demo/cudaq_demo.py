@@ -1,5 +1,3 @@
-from typing import Literal
-
 import cudaq
 import numpy as np
 from scipy.linalg import block_diag
@@ -17,17 +15,18 @@ def get_measurement_to_detector_matrices(
     return m2dets.tolist(), m2obs.tolist()
 
 
+m2dets, m2obs = get_measurement_to_detector_matrices(5)
+
+
 @cudaq.kernel
 def main_cuda():
     q = cudaq.qvector(5)
-    h(q[0])
-    cx(q[0], q[1])
-    h(q[2])
-    h(q[3])
-    h(q[4])
+    h(q[0])  # noqa: F821  # pyright: ignore
+    cx(q[0], q[1])  # noqa: F821  # pyright: ignore
+    h(q[2])  # noqa: F821  # pyright: ignore
+    h(q[3])  # noqa: F821  # pyright: ignore
+    h(q[4])  # noqa: F821  # pyright: ignore
 
-
-m2dets, m2obs = get_measurement_to_detector_matrices(5, "steane")
 
 task = GeminiLogicalSimulator().task(main_cuda, m2dets=m2dets, m2obs=m2obs)
 
