@@ -14,7 +14,7 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.device import GeminiLogicalSimulator
+from bloqade.lanes.device import GeminiLogicalSimulator, GeminiLogicalSimulatorTask
 from bloqade.lanes.heuristics import fixed
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
@@ -180,3 +180,56 @@ def test_physical_compilation(size: int):
     result = GeminiLogicalSimulator().run(main, 1000, with_noise=False)
     # checks to make sure logical GHZ state is created.
     assert all(len(set(rv)) == 1 for rv in result.observables)
+
+
+def test_no_measurements_run():
+    """Test that no_measurements mode uses detector sampler and produces detectors/observables."""
+    sim = GeminiLogicalSimulator(no_measurements=True)
+    result = sim.run(main, shots=10, with_noise=False)
+
+    assert len(result.detectors) == 10
+    assert len(result.observables) == 10
+    assert result.fidelity_bounds() is not None
+    assert result.detector_error_model is not None
+
+
+def test_no_measurements_blocks_measurements_access():
+    """Test that accessing measurements raises ValueError in no_measurements mode."""
+    sim = GeminiLogicalSimulator(no_measurements=True)
+    result = sim.run(main, shots=10, with_noise=False)
+
+    with pytest.raises(ValueError, match="measurements not accessible"):
+        result.measurements
+
+
+def test_no_measurements_blocks_return_values_access():
+    """Test that accessing return_values raises ValueError in no_measurements mode."""
+    sim = GeminiLogicalSimulator(no_measurements=True)
+    result = sim.run(main, shots=10, with_noise=False)
+
+    with pytest.raises(ValueError, match="return values not accessible"):
+        result.return_values
+
+
+def test_no_measurements_rejects_non_none_return_type():
+    """Test that no_measurements mode rejects kernels with non-None return type."""
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def returning_kernel():
+        reg = qubit.qalloc(1)
+        squin.h(reg[0])
+        meas = gemini_logical.terminal_measure(reg)
+        return squin.set_observable([meas[0][0], meas[0][1], meas[0][5]], 0)
+
+    sim = GeminiLogicalSimulator(no_measurements=True)
+    with pytest.raises(ValueError, match="None return type"):
+        sim.task(returning_kernel)
+
+
+def test_no_measurements_task_directly():
+    """Test creating a GeminiLogicalSimulatorTask with no_measurements=True."""
+    noise_model = generate_simple_noise_model()
+    task = GeminiLogicalSimulatorTask(main, noise_model, no_measurements=True)
+    result = task.run(shots=5, with_noise=False)
+    assert len(result.detectors) == 5
+    assert len(result.observables) == 5

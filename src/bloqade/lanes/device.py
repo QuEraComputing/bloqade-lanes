@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, TypeVar
 
+import numpy as np
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir, rewrite
@@ -25,11 +26,13 @@ RetType = TypeVar("RetType")
 class Result(Generic[RetType]):
     """Simulation result including measurement outcomes, detector error model, post-processing, and fidelity bounds."""
 
-    _raw_measurements: list[list[bool]]
     _detector_error_model: DetectorErrorModel
-    _post_processing: atom.PostProcessing[RetType]
     _fidelity_min: float
     _fidelity_max: float
+    _raw_measurements: list[list[bool]] | None = None
+    _post_processing: atom.PostProcessing[RetType] | None = None
+    _detectors: list[list[bool]] | None = None
+    _observables: list[list[bool]] | None = None
 
     def fidelity_bounds(self) -> tuple[float, float]:
         """Return the upper and lower fidelity bounds.
@@ -44,24 +47,42 @@ class Result(Generic[RetType]):
         """The STIM detector error model corresponding to the physical noise circuit."""
         return self._detector_error_model
 
-    @cached_property
+    @property
     def return_values(self) -> list[RetType]:
         """The return values of the logical kernel"""
+        if self._post_processing is None or self._raw_measurements is None:
+            raise ValueError("return values not accessible with `no_measurements=True`")
         return list(self._post_processing.emit_return(self._raw_measurements))
 
-    @cached_property
+    @property
     def detectors(self) -> list[list[bool]]:
         """The detector outcomes from the simulation."""
+        if self._detectors is not None:
+            return self._detectors
+        if self._post_processing is None or self._raw_measurements is None:
+            raise ValueError(
+                "detectors not accessible with `no_measurements=True`; "
+                "use the detector sampler API on the task instead"
+            )
         return list(self._post_processing.emit_detectors(self._raw_measurements))
 
-    @cached_property
+    @property
     def measurements(self) -> list[list[bool]]:
         """The raw measurement outcomes used to compute detectors and observables."""
+        if self._raw_measurements is None:
+            raise ValueError("measurements not accessible with `no_measurements=True`")
         return list(map(list, self._raw_measurements))
 
-    @cached_property
+    @property
     def observables(self) -> list[list[bool]]:
         """The observable outcomes from the simulation."""
+        if self._observables is not None:
+            return self._observables
+        if self._post_processing is None or self._raw_measurements is None:
+            raise ValueError(
+                "observables not accessible with `no_measurements=True`; "
+                "use the detector sampler API on the task instead"
+            )
         return list(self._post_processing.emit_observables(self._raw_measurements))
 
 
@@ -71,12 +92,15 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
+    no_measurements: bool = False
+    """When True, skip the measurement sampler and use the detector sampler instead."""
     _thread_pool_executor: ThreadPoolExecutor = field(
         default_factory=ThreadPoolExecutor, init=False
     )
 
     def __post_init__(self):
-        assert isinstance(self._post_processing, atom.PostProcessing)
+        if not self.no_measurements:
+            assert isinstance(self._post_processing, atom.PostProcessing)
 
     @cached_property
     def physical_arch_spec(self):
@@ -126,6 +150,16 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def noiseless_measurement_sampler(self):
         """The noiseless tsim measurement sampler."""
         return self.noiseless_tsim_circuit.compile_sampler()
+
+    @cached_property
+    def detector_sampler(self):
+        """The tsim detector sampler."""
+        return self.tsim_circuit.compile_detector_sampler()
+
+    @cached_property
+    def noiseless_detector_sampler(self):
+        """The noiseless tsim detector sampler."""
+        return self.noiseless_tsim_circuit.compile_detector_sampler()
 
     @cached_property
     def detector_error_model(self):
@@ -179,6 +213,24 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             Result: The simulation result including measurement outcomes, detector error model, post-processing, and fidelity
 
         """
+        fidelity_min, fidelity_max = self.fidelity_bounds()
+
+        if self.no_measurements:
+            sampler = (
+                self.detector_sampler if with_noise else self.noiseless_detector_sampler
+            )
+            det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
+                shots=shots, separate_observables=True
+            )
+            detectors = det_obs[0].tolist()
+            observables = det_obs[1].tolist()
+            return Result(
+                _detector_error_model=self.detector_error_model,
+                _fidelity_min=fidelity_min,
+                _fidelity_max=fidelity_max,
+                _detectors=detectors,
+                _observables=observables,
+            )
 
         if with_noise:
             raw_results = self.measurement_sampler.sample(shots=shots).tolist()
@@ -188,10 +240,11 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             ).tolist()
 
         return Result(
-            raw_results,
-            self.detector_error_model,
-            self._post_processing,
-            *self.fidelity_bounds(),
+            _detector_error_model=self.detector_error_model,
+            _fidelity_min=fidelity_min,
+            _fidelity_max=fidelity_max,
+            _raw_measurements=raw_results,
+            _post_processing=self._post_processing,
         )
 
     def run_async(
@@ -219,14 +272,27 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 @dataclass
 class GeminiLogicalSimulator:
     noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
+    no_measurements: bool = False
+    """When True, skip the measurement sampler and use the detector sampler instead.
+    The kernel must have a None return type when this is enabled."""
 
     def task(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> GeminiLogicalSimulatorTask[RetType]:
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
+        if self.no_measurements:
+            from kirin import types
+
+            if not logical_squin_kernel.return_type.is_structurally_equal(
+                types.NoneType
+            ):
+                raise ValueError(
+                    "Kernel must have a None return type when " "`no_measurements=True`"
+                )
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
+            no_measurements=self.no_measurements,
         )
 
     def run(
