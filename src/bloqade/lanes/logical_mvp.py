@@ -77,6 +77,7 @@ def compile_squin_to_move(
     transversal_rewrite: bool = False,
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
+    insert_return_moves: bool = True,
 ):
     """
     Compile a squin kernel to move dialect.
@@ -96,7 +97,7 @@ def compile_squin_to_move(
         mt,
         layout_heuristic=layout_heuristic,
         placement_strategy=LogicalPlacementStrategyNoHome(),
-        insert_palindrome_moves=True,
+        insert_return_moves=insert_return_moves,
         no_raise=no_raise,
     )
     if transversal_rewrite:

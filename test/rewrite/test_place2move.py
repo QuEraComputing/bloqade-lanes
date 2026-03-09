@@ -101,7 +101,7 @@ def test_insert_palindrom_moves():
 
     state_before = ir.TestValue()
 
-    rule = rewrite.Walk(place2move.InsertPalindromeMoves())
+    rule = rewrite.Walk(place2move.InsertReturnMoves())
 
     test_body = ir.Region(
         ir.Block(
