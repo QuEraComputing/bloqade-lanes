@@ -37,8 +37,8 @@ def test_build_cz_buffer_records_order_and_positions():
     assert analysis.cz_lookahead_stmt_positions[block][cz2] == 2
 
 
-def test_buffered_future_cz_layers_returns_shrinking_suffix():
-    """Test that the buffered future CZ layers returns the shrinking suffix of the buffer."""
+def test_buffered_future_cz_layers_returns_suffix_including_current():
+    """Test that buffered CZ layers return a shrinking suffix including the current CZ."""
     analysis = _build_analysis()
     block = ir.Block(
         [
@@ -49,9 +49,13 @@ def test_buffered_future_cz_layers_returns_shrinking_suffix():
     )
     analysis.cz_lookahead_buffers[block] = analysis.build_cz_buffer(block)
 
-    assert analysis.buffered_future_cz_layers(cz0) == (((2,), (3,)), ((4,), (5,)))
-    assert analysis.buffered_future_cz_layers(cz1) == (((4,), (5,)),)
-    assert analysis.buffered_future_cz_layers(cz2) == ()
+    assert analysis.buffered_future_cz_layers(cz0) == (
+        ((0,), (1,)),
+        ((2,), (3,)),
+        ((4,), (5,)),
+    )
+    assert analysis.buffered_future_cz_layers(cz1) == (((2,), (3,)), ((4,), (5,)))
+    assert analysis.buffered_future_cz_layers(cz2) == (((4,), (5,)),)
 
 
 def test_buffered_future_cz_layers_raises_on_missing_stmt_mapping():
