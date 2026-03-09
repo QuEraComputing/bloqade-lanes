@@ -221,6 +221,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cudaq = [
+    { name = "cudaq" },
+    { name = "qbraid-qir", extra = ["squin"] },
+]
 visualization = [
     { name = "matplotlib" },
     { name = "pyqt5", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -262,16 +266,18 @@ doc = [
 requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "qasm2", "tsim"], specifier = ">=0.12.0,<0.14.0" },
     { name = "bloqade-geometry", specifier = "~=0.5.0" },
+    { name = "cudaq", marker = "extra == 'cudaq'" },
     { name = "deprecated", specifier = ">=1.3.1" },
     { name = "kirin-toolchain", specifier = "~=0.22.6" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pyqt5", marker = "sys_platform == 'darwin' and extra == 'visualization'", specifier = ">=5.15.11" },
     { name = "pyqt5", marker = "sys_platform == 'linux' and extra == 'visualization'", specifier = ">=5.15.11" },
+    { name = "qbraid-qir", extras = ["squin"], marker = "extra == 'cudaq'" },
     { name = "rustworkx", specifier = ">=0.17.1" },
     { name = "scipy", marker = "extra == 'visualization'", specifier = ">=1.15.3" },
 ]
-provides-extras = ["visualization"]
+provides-extras = ["cudaq", "visualization"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -930,6 +936,12 @@ name = "csscompressor"
 version = "0.9.5"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f1/2a/8c3ac3d8bc94e6de8d7ae270bb5bc437b210bb9d6d9e46630c98f4abd20c/csscompressor-0.9.5.tar.gz", hash = "sha256:afa22badbcf3120a4f392e4d22f9fff485c044a1feda4a950ecc5eba9dd31a05", size = 237808, upload-time = "2017-11-26T21:13:08.238Z" }
+
+[[package]]
+name = "cudaq"
+version = "0.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/7e/e87a3f735e24e8355a290ebf34ab8ab35a05afea3ca98d5c166392997304/cudaq-0.13.0.tar.gz", hash = "sha256:9b49d281780f7c62b17cd16f840cc2d03fae4da76459c7f15dbfc1f44159c6e5", size = 9188, upload-time = "2025-11-18T22:18:25.72Z" }
 
 [[package]]
 name = "cycler"
@@ -3397,6 +3409,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pyqir"
+version = "0.12.3"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/48/4bab05ea1bc1ccb6e721d89957f1d9ebb833bf705fc68778740142324565/pyqir-0.12.3-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:d2e5298b14350b7edb1145ebedeeab61f260df880542c0b5d557991b2f49334f", size = 2118377, upload-time = "2025-12-19T18:27:00.584Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/0e/ef16d3deb2c8143746499b1b15172332bf95a5e5692da3f582b77179f3f8/pyqir-0.12.3-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:eb2c41c124dd05dabfafa934dd0a6228783fdd1b32b93effecd4128bb931f2e1", size = 2027564, upload-time = "2025-12-19T18:27:02.47Z" },
+    { url = "https://files.pythonhosted.org/packages/50/ba/9bb1e84a2eb13058d2f1253805af52c7d14e531078c70f64f846623b3e4a/pyqir-0.12.3-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:9ceeb69a009c906a22569f048967c8e59c269f2ed5856116d1ce474a27b38c28", size = 2573715, upload-time = "2025-12-19T18:27:04.232Z" },
+    { url = "https://files.pythonhosted.org/packages/92/8d/e071b2daf23ba8f5f1680c3ce184542e40118253ea3148355ce5d889cf32/pyqir-0.12.3-cp39-abi3-manylinux_2_38_aarch64.whl", hash = "sha256:37e5fd01d5e2261f522c9274c309a3e67210d0560c44209397a87818c1b7588c", size = 2619446, upload-time = "2025-12-19T18:27:05.98Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/cd/7482249691fbe1115ad4a59517ae72dde31e28dd1b4d27eba28b23b9821f/pyqir-0.12.3-cp39-abi3-win_amd64.whl", hash = "sha256:d0516b7f5f44987647398f8f589424a720878928d3178b2a852783e9cf2ff204", size = 1927713, upload-time = "2025-12-19T18:27:07.588Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/a1/e923765c9b1bcfb22a9c48aea2fc90bd11c0fd6e770c1f5bd48d60843803/pyqir-0.12.3-cp39-abi3-win_arm64.whl", hash = "sha256:cf25cdb2e750cb1a9ebe205c7ad27fe1a188cb2c01e15072389ec5b88df0e37b", size = 1803265, upload-time = "2025-12-19T18:27:08.862Z" },
+]
+
+[[package]]
 name = "pyqrack-cpu"
 version = "1.84.6"
 source = { registry = "https://pypi.org/simple" }
@@ -3651,6 +3676,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/22/d3/160c226916130b4995de2e8e95949ed065fe26636c7d359fecabbf66884d/pyzx_param-0.9.2.tar.gz", hash = "sha256:8a4c7136f12c974f032934fa2fa0f66489b9b95eebd6850a3fa41e9adc6d7a98", size = 357647, upload-time = "2026-01-29T01:31:06.499Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/40/ca0b3e02add85fc8e3e7ad88c99c454f86a3f55e3cc3b08b02175be112ab/pyzx_param-0.9.2-py3-none-any.whl", hash = "sha256:32ccd56c172e88102e21e9660d5ba05deff00ea862ba35f080b73d9a130b45ee", size = 393805, upload-time = "2026-01-29T01:31:05.158Z" },
+]
+
+[[package]]
+name = "qbraid-qir"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyqir" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/d3/018f339bed9c2605196777e1736a0893953e9ce5c2e26cdcb104adfd303a/qbraid_qir-0.5.1.tar.gz", hash = "sha256:9e58d12c32c0c9e869a1694accfe3f44e2a5d625c4fcf66bdc9b3d7d0e82e58d", size = 198369, upload-time = "2026-02-10T21:08:10.366Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/cd/8a22099420e8bb2e915d60e44764fc21a4f9be4ba0638901611f8462780f/qbraid_qir-0.5.1-py3-none-any.whl", hash = "sha256:985a38af8ae7a5cde7571c063f2f46c8f37c13f6989a3e0bb4014e138c54120c", size = 48834, upload-time = "2026-02-10T21:08:08.834Z" },
+]
+
+[package.optional-dependencies]
+squin = [
+    { name = "bloqade-circuit" },
+    { name = "kirin-toolchain" },
 ]
 
 [[package]]

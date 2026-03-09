@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -5,6 +7,7 @@ from typing import Generic, TypeVar
 
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
+from bloqade.gemini import logical
 from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
@@ -221,8 +224,47 @@ class GeminiLogicalSimulator:
     noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
 
     def task(
-        self, logical_squin_kernel: ir.Method[[], RetType]
+        self,
+        logical_kernel: ir.Method[[], RetType],
+        m2dets: list[list[int]] | None = None,
+        m2obs: list[list[int]] | None = None,
     ) -> GeminiLogicalSimulatorTask[RetType]:
+        try:
+            from cudaq.kernel.kernel_decorator import PyKernelDecorator
+        except ImportError:
+            PyKernelDecorator = None
+
+        is_cudaq = PyKernelDecorator is not None and isinstance(
+            logical_kernel, PyKernelDecorator
+        )
+
+        if is_cudaq:
+            import cudaq as cudaq_module
+            from qbraid_qir.squin import load
+
+            if m2dets is None and m2obs is None:
+                raise ValueError(
+                    "At least one of m2dets or m2obs must be provided for CUDA-Q kernels"
+                )
+
+            qir_str = cudaq_module.translate(logical_kernel, format="qir-base")
+            logical_squin_kernel = load(qir_str, dialects=logical.kernel)
+        else:
+            logical_squin_kernel = logical_kernel
+
+        if m2dets is not None or m2obs is not None:
+            from bloqade.lanes.cudaq_integration import (
+                append_measurements_and_annotations,
+            )
+
+            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
+
+        if is_cudaq:
+            # QIR-loaded kernels contain func.Invoke calls for qubit allocations
+            # and gates that must be inlined.
+            assert (run_pass := logical.kernel.run_pass) is not None
+            run_pass(logical_squin_kernel, aggressive_unroll=True, verify=False)
+
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
