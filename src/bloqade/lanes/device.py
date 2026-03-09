@@ -24,7 +24,16 @@ RetType = TypeVar("RetType")
 
 @dataclass(frozen=True)
 class Result(Generic[RetType]):
-    """Simulation result including measurement outcomes, detector error model, post-processing, and fidelity bounds."""
+    """Simulation result including detector error model, fidelity bounds, and sampling outcomes.
+
+    When constructed via the default measurement sampler path, ``measurements``,
+    ``return_values``, ``detectors``, and ``observables`` are all available.
+
+    When constructed via the ``no_measurements=True`` path, only ``detectors``
+    and ``observables`` are populated directly from the detector sampler.
+    Accessing ``measurements`` or ``return_values`` in this mode raises
+    ``ValueError``.
+    """
 
     _detector_error_model: DetectorErrorModel
     _fidelity_min: float
@@ -49,7 +58,11 @@ class Result(Generic[RetType]):
 
     @property
     def return_values(self) -> list[RetType]:
-        """The return values of the logical kernel"""
+        """The return values of the logical kernel.
+
+        Raises:
+            ValueError: If the result was produced with ``no_measurements=True``.
+        """
         if self._post_processing is None or self._raw_measurements is None:
             raise ValueError("return values not accessible with `no_measurements=True`")
         return list(self._post_processing.emit_return(self._raw_measurements))
@@ -68,7 +81,11 @@ class Result(Generic[RetType]):
 
     @property
     def measurements(self) -> list[list[bool]]:
-        """The raw measurement outcomes used to compute detectors and observables."""
+        """The raw measurement outcomes used to compute detectors and observables.
+
+        Raises:
+            ValueError: If the result was produced with ``no_measurements=True``.
+        """
         if self._raw_measurements is None:
             raise ValueError("measurements not accessible with `no_measurements=True`")
         return list(map(list, self._raw_measurements))
@@ -205,12 +222,18 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def run(self, shots: int = 1, with_noise: bool = True) -> Result[RetType]:
         """Run the kernel and get simulation results.
 
+        When ``no_measurements=True``, the detector sampler is used instead of
+        the full measurement sampler for improved performance. In this mode the
+        returned ``Result`` provides ``detectors`` and ``observables`` but
+        accessing ``measurements`` or ``return_values`` will raise ``ValueError``.
+
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
-            Result: The simulation result including measurement outcomes, detector error model, post-processing, and fidelity
+            Result: The simulation result including detector error model, fidelity bounds,
+                and sampling outcomes.
 
         """
         fidelity_min, fidelity_max = self.fidelity_bounds()
@@ -279,6 +302,16 @@ class GeminiLogicalSimulator:
     def task(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> GeminiLogicalSimulatorTask[RetType]:
+        """Create a simulation task for the given kernel.
+
+        Args:
+            logical_squin_kernel: The logical squin kernel to compile and run.
+
+        Raises:
+            ValueError: If ``no_measurements=True`` and the kernel return type
+                is not ``None``.
+
+        """
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         if self.no_measurements:
             from kirin import types
