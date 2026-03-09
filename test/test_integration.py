@@ -233,3 +233,16 @@ def test_no_measurements_task_directly():
     result = task.run(shots=5, with_noise=False)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
+
+
+def test_no_measurements_via_run_override():
+    """Test passing no_measurements as a per-run override on GeminiLogicalSimulator."""
+    sim = GeminiLogicalSimulator()
+    assert sim.no_measurements is False
+    result = sim.run(main, shots=5, with_noise=False, no_measurements=True)
+    # instance-level setting should be restored
+    assert sim.no_measurements is False
+    assert len(result.detectors) == 5
+    assert len(result.observables) == 5
+    with pytest.raises(ValueError, match="measurements not accessible"):
+        result.measurements

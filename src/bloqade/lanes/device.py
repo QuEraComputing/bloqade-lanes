@@ -333,16 +333,64 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
+        no_measurements: bool | None = None,
     ) -> Result[RetType]:
-        return self.task(logical_squin_kernel).run(shots, with_noise)
+        """Run the kernel and get simulation results.
+
+        Args:
+            logical_squin_kernel: The logical squin kernel to run.
+            shots: Number of shots to run. Defaults to 1.
+            with_noise: Whether to include noise in the simulation. Defaults to True.
+            no_measurements: If provided, overrides the instance-level
+                ``no_measurements`` setting for this run. When ``True``, the
+                detector sampler is used instead of the measurement sampler.
+                The kernel must have a ``None`` return type.
+
+        Returns:
+            Result: The simulation result.
+
+        """
+        if no_measurements is not None:
+            prev = self.no_measurements
+            self.no_measurements = no_measurements
+            try:
+                task = self.task(logical_squin_kernel)
+            finally:
+                self.no_measurements = prev
+        else:
+            task = self.task(logical_squin_kernel)
+        return task.run(shots, with_noise)
 
     def run_async(
         self,
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
+        no_measurements: bool | None = None,
     ) -> Future[Result[RetType]]:
-        return self.task(logical_squin_kernel).run_async(shots, with_noise)
+        """Run the kernel asynchronously and get simulation results.
+
+        Args:
+            logical_squin_kernel: The logical squin kernel to run.
+            shots: Number of shots to run. Defaults to 1.
+            with_noise: Whether to include noise in the simulation. Defaults to True.
+            no_measurements: If provided, overrides the instance-level
+                ``no_measurements`` setting for this run.
+
+        Returns:
+            Future[Result]: A future resolving to the simulation result.
+
+        """
+        if no_measurements is not None:
+            prev = self.no_measurements
+            self.no_measurements = no_measurements
+            try:
+                task = self.task(logical_squin_kernel)
+            finally:
+                self.no_measurements = prev
+        else:
+            task = self.task(logical_squin_kernel)
+        return task.run_async(shots, with_noise)
 
     def visualize(
         self,
