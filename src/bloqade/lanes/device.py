@@ -295,17 +295,19 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 @dataclass
 class GeminiLogicalSimulator:
     noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
-    no_measurements: bool = False
-    """When True, skip the measurement sampler and use the detector sampler instead.
-    The kernel must have a None return type when this is enabled."""
 
     def task(
-        self, logical_squin_kernel: ir.Method[[], RetType]
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        no_measurements: bool = False,
     ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
 
         Args:
             logical_squin_kernel: The logical squin kernel to compile and run.
+            no_measurements: When ``True``, skip the measurement sampler and
+                use the detector sampler instead. The kernel must have a
+                ``None`` return type.
 
         Raises:
             ValueError: If ``no_measurements=True`` and the kernel return type
@@ -313,7 +315,7 @@ class GeminiLogicalSimulator:
 
         """
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
-        if self.no_measurements:
+        if no_measurements:
             from kirin import types
 
             if not logical_squin_kernel.return_type.is_structurally_equal(
@@ -325,7 +327,7 @@ class GeminiLogicalSimulator:
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
-            no_measurements=self.no_measurements,
+            no_measurements=no_measurements,
         )
 
     def run(
@@ -333,7 +335,7 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        no_measurements: bool | None = None,
+        no_measurements: bool = False,
     ) -> Result[RetType]:
         """Run the kernel and get simulation results.
 
@@ -341,32 +343,24 @@ class GeminiLogicalSimulator:
             logical_squin_kernel: The logical squin kernel to run.
             shots: Number of shots to run. Defaults to 1.
             with_noise: Whether to include noise in the simulation. Defaults to True.
-            no_measurements: If provided, overrides the instance-level
-                ``no_measurements`` setting for this run. When ``True``, the
-                detector sampler is used instead of the measurement sampler.
-                The kernel must have a ``None`` return type.
+            no_measurements: When ``True``, use the detector sampler instead of
+                the measurement sampler for improved performance. The kernel must
+                have a ``None`` return type. Defaults to False.
 
         Returns:
             Result: The simulation result.
 
         """
-        if no_measurements is not None:
-            prev = self.no_measurements
-            self.no_measurements = no_measurements
-            try:
-                task = self.task(logical_squin_kernel)
-            finally:
-                self.no_measurements = prev
-        else:
-            task = self.task(logical_squin_kernel)
-        return task.run(shots, with_noise)
+        return self.task(logical_squin_kernel, no_measurements=no_measurements).run(
+            shots, with_noise
+        )
 
     def run_async(
         self,
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        no_measurements: bool | None = None,
+        no_measurements: bool = False,
     ) -> Future[Result[RetType]]:
         """Run the kernel asynchronously and get simulation results.
 
@@ -374,23 +368,16 @@ class GeminiLogicalSimulator:
             logical_squin_kernel: The logical squin kernel to run.
             shots: Number of shots to run. Defaults to 1.
             with_noise: Whether to include noise in the simulation. Defaults to True.
-            no_measurements: If provided, overrides the instance-level
-                ``no_measurements`` setting for this run.
+            no_measurements: When ``True``, use the detector sampler instead of
+                the measurement sampler. Defaults to False.
 
         Returns:
             Future[Result]: A future resolving to the simulation result.
 
         """
-        if no_measurements is not None:
-            prev = self.no_measurements
-            self.no_measurements = no_measurements
-            try:
-                task = self.task(logical_squin_kernel)
-            finally:
-                self.no_measurements = prev
-        else:
-            task = self.task(logical_squin_kernel)
-        return task.run_async(shots, with_noise)
+        return self.task(
+            logical_squin_kernel, no_measurements=no_measurements
+        ).run_async(shots, with_noise)
 
     def visualize(
         self,

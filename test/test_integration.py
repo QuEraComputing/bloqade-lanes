@@ -184,8 +184,8 @@ def test_physical_compilation(size: int):
 
 def test_no_measurements_run():
     """Test that no_measurements mode uses detector sampler and produces detectors/observables."""
-    sim = GeminiLogicalSimulator(no_measurements=True)
-    result = sim.run(main, shots=10, with_noise=False)
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=10, with_noise=False, no_measurements=True)
 
     assert len(result.detectors) == 10
     assert len(result.observables) == 10
@@ -195,8 +195,8 @@ def test_no_measurements_run():
 
 def test_no_measurements_blocks_measurements_access():
     """Test that accessing measurements raises ValueError in no_measurements mode."""
-    sim = GeminiLogicalSimulator(no_measurements=True)
-    result = sim.run(main, shots=10, with_noise=False)
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=10, with_noise=False, no_measurements=True)
 
     with pytest.raises(ValueError, match="measurements not accessible"):
         result.measurements
@@ -204,8 +204,8 @@ def test_no_measurements_blocks_measurements_access():
 
 def test_no_measurements_blocks_return_values_access():
     """Test that accessing return_values raises ValueError in no_measurements mode."""
-    sim = GeminiLogicalSimulator(no_measurements=True)
-    result = sim.run(main, shots=10, with_noise=False)
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=10, with_noise=False, no_measurements=True)
 
     with pytest.raises(ValueError, match="return values not accessible"):
         result.return_values
@@ -221,9 +221,9 @@ def test_no_measurements_rejects_non_none_return_type():
         meas = gemini_logical.terminal_measure(reg)
         return squin.set_observable([meas[0][0], meas[0][1], meas[0][5]], 0)
 
-    sim = GeminiLogicalSimulator(no_measurements=True)
+    sim = GeminiLogicalSimulator()
     with pytest.raises(ValueError, match="None return type"):
-        sim.task(returning_kernel)
+        sim.task(returning_kernel, no_measurements=True)
 
 
 def test_no_measurements_task_directly():
@@ -235,13 +235,11 @@ def test_no_measurements_task_directly():
     assert len(result.observables) == 5
 
 
-def test_no_measurements_via_run_override():
-    """Test passing no_measurements as a per-run override on GeminiLogicalSimulator."""
+def test_no_measurements_via_task():
+    """Test passing no_measurements to task() on GeminiLogicalSimulator."""
     sim = GeminiLogicalSimulator()
-    assert sim.no_measurements is False
-    result = sim.run(main, shots=5, with_noise=False, no_measurements=True)
-    # instance-level setting should be restored
-    assert sim.no_measurements is False
+    task = sim.task(main, no_measurements=True)
+    result = task.run(shots=5, with_noise=False)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
     with pytest.raises(ValueError, match="measurements not accessible"):
