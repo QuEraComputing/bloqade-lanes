@@ -58,7 +58,8 @@ def _site_moves(
 
     bus_moves: dict[int, list[layout.LaneAddress]] = {}
     for before, end in diffs:
-        bus_id = (end.site_id % 5) - (before.site_id % 5)
+        n_rows = arch_spec.words[0].n_rows
+        bus_id = (end.site_id % n_rows) - (before.site_id % n_rows)
         if bus_id < 0:
             bus_id += len(arch_spec.site_buses)  # wrap around sites
         bus_moves.setdefault(bus_id, []).append(
