@@ -578,6 +578,29 @@ def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatc
     assert placement._path_cost(path) == placement.large_cost
 
 
+@pytest.mark.parametrize("word_size_y", [3, 5, 7])
+def test_initial_layout_variable_word_size(word_size_y):
+    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+
+    arch_spec = generate_arch_hypercube(hypercube_dims=1, word_size_y=word_size_y)
+    layout_heuristic = fixed.LogicalLayoutHeuristic()
+    layout_heuristic.arch_spec = arch_spec
+
+    num_qubits = word_size_y
+    edges = {(i, j): 1 for i in range(num_qubits) for j in range(i + 1, num_qubits)}
+    edges[(0, 1)] = 10
+    edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
+
+    result = layout_heuristic.compute_layout(tuple(range(num_qubits)), [edges])
+
+    assert len(result) == num_qubits
+    # all addresses should have site_id < word_size_y (first column only)
+    for addr in result:
+        assert addr.site_id < word_size_y
+        site_idx = arch_spec.words[addr.word_id].site_indices[addr.site_id]
+        assert site_idx[0] == 0
+
+
 def test_nohome_lookahead_can_change_return_word_choice():
     """Tests that lookahead can change the return word choice"""
     state_before = ConcreteState(
