@@ -133,10 +133,9 @@ def append_measurements_and_annotations(
             obs_idx = _insert_before(py.Constant(j), return_stmt)
             _insert_before(SetObservable(meas_list.result, obs_idx.result), return_stmt)
 
-    if terminal_measurement is None:
-        # TODO: remove this once post-processing of None return values is supported
+    # TODO: remove this once post-processing of None return values is supported
+    if isinstance(return_stmt.value.owner, func.ConstantNone):
         none_owner = return_stmt.value.owner
         return_stmt.replace_by(func.Return(term_meas.result))
-        if isinstance(none_owner, func.ConstantNone):
-            none_owner.delete()
+        none_owner.delete()
         passes.TypeInfer(mt.dialects, no_raise=True)(mt)

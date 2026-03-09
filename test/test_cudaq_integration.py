@@ -100,8 +100,8 @@ def test_rewrites_return_when_no_existing_terminal():
     assert not isinstance(_find_return_stmt(mt).value.owner, func.ConstantNone)
 
 
-def test_preserves_return_when_terminal_exists():
+def test_rewrites_return_when_terminal_exists():
     mt = _make_kernel(1, with_measure=True)
-    owner_type = type(_find_return_stmt(mt).value.owner)
+    assert isinstance(_find_return_stmt(mt).value.owner, func.ConstantNone)
     append_measurements_and_annotations(mt, DETS, OBS)
-    assert type(_find_return_stmt(mt).value.owner) == owner_type
+    assert isinstance(_find_return_stmt(mt).value.owner, TerminalLogicalMeasurement)
