@@ -88,4 +88,7 @@ def test_impl_cz_forwards_buffered_lookahead_layers():
     methods.impl_cz(analysis, cast(ForwardFrame[AtomState], frame), cz0)
     methods.impl_cz(analysis, cast(ForwardFrame[AtomState], frame), cz1)
 
-    assert strategy.captured_lookahead == [(((2,), (3,)),), ()]
+    assert strategy.captured_lookahead == [
+        (((0,), (1,)), ((2,), (3,))),
+        (((2,), (3,)),),
+    ]
