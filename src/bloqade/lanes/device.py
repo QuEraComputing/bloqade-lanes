@@ -7,7 +7,6 @@ from typing import Any, Callable, Generic, TypeVar, Union
 
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
-from bloqade.gemini import logical
 from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
@@ -15,8 +14,12 @@ from bloqade import tsim
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
-from bloqade.lanes.cudaq_integration import append_measurements_and_annotations
-from bloqade.lanes.logical_mvp import compile_squin_to_move, run_squin_kernel_validation
+from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
+from bloqade.lanes.logical_mvp import (
+    append_measurements_and_annotations,
+    compile_squin_to_move,
+    run_squin_kernel_validation,
+)
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
@@ -230,32 +233,16 @@ class GeminiLogicalSimulator:
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
     ) -> GeminiLogicalSimulatorTask[RetType]:
-        try:
-            from cudaq import PyKernelDecorator  # type: ignore[reportMissingImports]
-        except ImportError:
-            PyKernelDecorator = None  # pragma: no cover
-
-        is_cudaq = PyKernelDecorator is not None and isinstance(
-            logical_kernel, PyKernelDecorator
-        )
-
-        if is_cudaq:
-            import cudaq as cudaq_module  # type: ignore[reportMissingImports]
-            from qbraid_qir.squin import load  # type: ignore[reportMissingImports]
-
+        if is_cudaq_kernel(logical_kernel):
             if m2dets is None and m2obs is None:
                 raise ValueError(
                     "At least one of m2dets or m2obs must be provided for CUDA-Q kernels"
                 )
-
-            qir_str = cudaq_module.translate(logical_kernel, format="qir-base")
-            logical_squin_kernel: ir.Method = load(qir_str, dialects=logical.kernel)
-        else:
-            assert isinstance(logical_kernel, ir.Method)
+            logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+        elif isinstance(logical_kernel, ir.Method):
             logical_squin_kernel = logical_kernel
-
-        assert (run_pass := logical.kernel.run_pass) is not None
-        run_pass(logical_squin_kernel, aggressive_unroll=True, verify=False)
+        else:
+            raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
 
         if m2dets is not None or m2obs is not None:
             append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)

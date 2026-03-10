@@ -83,7 +83,6 @@ class AtomInterpreter(Forward[MoveExecution]):
         _, output = self.run(method)
 
         func = cast(Callable[[Sequence[bool]], RetType], constructor_function(output))
-        print(func)
         if func is None:
             raise ValueError("Unable to infer return result value from method output")
 

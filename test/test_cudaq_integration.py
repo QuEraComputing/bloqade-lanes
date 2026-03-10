@@ -9,7 +9,7 @@ from bloqade.gemini.logical.dialects.operations.stmts import (
 from kirin.dialects import func
 
 from bloqade import qubit, squin
-from bloqade.lanes.cudaq_integration import (
+from bloqade.lanes.logical_mvp import (
     _find_qubit_ssas,
     _find_return_stmt,
     append_measurements_and_annotations,
