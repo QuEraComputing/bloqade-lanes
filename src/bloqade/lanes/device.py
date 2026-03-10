@@ -6,7 +6,7 @@ from typing import Generic, TypeVar
 import numpy as np
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
-from kirin import ir, rewrite
+from kirin import ir, rewrite, types
 from stim import DetectorErrorModel
 
 from bloqade import tsim
@@ -130,7 +130,14 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     )
 
     def __post_init__(self):
-        if not self.no_measurements:
+        if self.no_measurements:
+            if not self.logical_squin_kernel.return_type.is_structurally_equal(
+                types.NoneType
+            ):
+                raise ValueError(
+                    "Kernel must have a None return type when `no_measurements=True`"
+                )
+        else:
             assert isinstance(self._post_processing, atom.PostProcessing)
 
     @cached_property
@@ -329,15 +336,6 @@ class GeminiLogicalSimulator:
 
         """
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
-        if no_measurements:
-            from kirin import types
-
-            if not logical_squin_kernel.return_type.is_structurally_equal(
-                types.NoneType
-            ):
-                raise ValueError(
-                    "Kernel must have a None return type when `no_measurements=True`"
-                )
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
