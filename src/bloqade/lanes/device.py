@@ -137,6 +137,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     )
 
     def __post_init__(self):
+        assert isinstance(self._post_processing, atom.PostProcessing)
         if self.no_measurements:
             if not self.logical_squin_kernel.return_type.is_structurally_equal(
                 types.NoneType
@@ -144,8 +145,6 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 raise ValueError(
                     "Kernel must have a None return type when `no_measurements=True`"
                 )
-        else:
-            assert isinstance(self._post_processing, atom.PostProcessing)
 
     @cached_property
     def physical_arch_spec(self):
