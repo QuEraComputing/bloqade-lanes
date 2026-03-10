@@ -15,6 +15,7 @@ from kirin.ir.method import Method
 
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.layout.encoding import LaneAddress
 from bloqade.lanes.rewrite import circuit2place, place2move, state
 
 
@@ -88,7 +89,11 @@ class NativeToPlace:
 class PlaceToMove:
     layout_heuristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
-    insert_palindrome_moves: bool = True
+    insert_return_moves: bool = True
+    revert_initial_position: Callable[
+        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
+        tuple[tuple[LaneAddress, ...], ...] | None,
+    ] = place2move.palindrome_move_layers
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(move))
@@ -129,8 +134,13 @@ class PlaceToMove:
         )
         rewrite.Walk(rule).rewrite(out.code)
 
-        if self.insert_palindrome_moves:
-            rewrite.Walk(place2move.InsertPalindromeMoves()).rewrite(out.code)
+        if self.insert_return_moves:
+            rewrite.Walk(
+                place2move.InsertReturnMoves(
+                    placement_analysis=placement_frame.entries,
+                    revert_initial_position=self.revert_initial_position,
+                )
+            ).rewrite(out.code)
 
         rewrite.Walk(
             rewrite.Chain(
@@ -165,7 +175,11 @@ def squin_to_move(
     mt: ir.Method,
     layout_heuristic: layout.LayoutHeuristicABC,
     placement_strategy: placement.PlacementStrategyABC,
-    insert_palindrome_moves: bool = True,
+    insert_return_moves: bool = True,
+    revert_initial_position: Callable[
+        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
+        tuple[tuple[LaneAddress, ...], ...] | None,
+    ] = place2move.palindrome_move_layers,
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
     no_raise: bool = True,
 ) -> ir.Method:
@@ -176,7 +190,10 @@ def squin_to_move(
         mt (ir.Method): The Squin kernel to compile.
         layout_heuristic (layout.LayoutHeuristicABC): The layout heuristic to use.
         placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
-        insert_palindrome_moves (bool, optional): Whether to insert palindrome moves. Defaults to True.
+        insert_return_moves (bool, optional): Whether to insert return moves. Defaults to True.
+        revert_initial_position (Callable, optional): Callback returning move
+            layers to insert near the end of each static placement region.
+            Defaults to palindrome_move_layers.
         merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
 
@@ -197,7 +214,8 @@ def squin_to_move(
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        insert_palindrome_moves=insert_palindrome_moves,
+        insert_return_moves=insert_return_moves,
+        revert_initial_position=revert_initial_position,
     ).emit(out, no_raise=no_raise)
 
     passes.TypeInfer(mt.dialects)(out)
