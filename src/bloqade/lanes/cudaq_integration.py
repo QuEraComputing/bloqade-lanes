@@ -17,13 +17,11 @@ _S = TypeVar("_S", bound=ir.Statement)
 
 def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
     """Walk the squin IR and collect SSA values for all qubit allocations."""
-    qubit_ssas: list[ir.SSAValue] = []
-    for stmt in mt.callable_region.walk():
-        if isinstance(stmt, func.Invoke) and stmt.callee is qubit.new:
-            qubit_ssas.append(stmt.result)
-        elif isinstance(stmt, qubit.stmts.New):
-            qubit_ssas.append(stmt.result)
-    return qubit_ssas
+    return [
+        stmt.result
+        for stmt in mt.callable_region.walk()
+        if isinstance(stmt, qubit.stmts.New)
+    ]
 
 
 def _find_return_stmt(mt: ir.Method) -> func.Return:

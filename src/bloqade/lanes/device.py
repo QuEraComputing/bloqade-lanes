@@ -233,7 +233,7 @@ class GeminiLogicalSimulator:
         try:
             from cudaq import PyKernelDecorator  # type: ignore[reportMissingImports]
         except ImportError:
-            PyKernelDecorator = None
+            PyKernelDecorator = None  # pragma: no cover
 
         is_cudaq = PyKernelDecorator is not None and isinstance(
             logical_kernel, PyKernelDecorator
@@ -241,7 +241,7 @@ class GeminiLogicalSimulator:
 
         if is_cudaq:
             import cudaq as cudaq_module  # type: ignore[reportMissingImports]
-            from qbraid_qir.squin import load
+            from qbraid_qir.squin import load  # type: ignore[reportMissingImports]
 
             if m2dets is None and m2obs is None:
                 raise ValueError(
@@ -254,15 +254,11 @@ class GeminiLogicalSimulator:
             assert isinstance(logical_kernel, ir.Method)
             logical_squin_kernel = logical_kernel
 
+        assert (run_pass := logical.kernel.run_pass) is not None
+        run_pass(logical_squin_kernel, aggressive_unroll=True, verify=False)
+
         if m2dets is not None or m2obs is not None:
             append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
-
-        if is_cudaq:
-            # QIR-loaded kernels contain func.Invoke calls for qubit allocations
-            # and gates that must be inlined.
-            assert (run_pass := logical.kernel.run_pass) is not None
-            run_pass(logical_squin_kernel, aggressive_unroll=True, verify=False)
-            logical_squin_kernel.print()
 
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         return GeminiLogicalSimulatorTask(

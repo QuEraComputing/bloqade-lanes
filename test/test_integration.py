@@ -183,7 +183,6 @@ def test_physical_compilation(size: int):
 
 
 def _steane_matrices(num_qubits: int):
-    """Return (m2dets, m2obs) as plain lists for `num_qubits` Steane-code blocks."""
     import numpy as np
     from scipy.linalg import block_diag
 
@@ -238,13 +237,28 @@ def test_append_annotations_to_kernel_with_terminal_measure(
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
 
 
+def test_cudaq_kernel_requires_annotation_matrices():
+    cudaq = pytest.importorskip("cudaq")
+
+    @cudaq.kernel
+    def bell_pair():
+        q = cudaq.qvector(2)
+        h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+        cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+
+    with pytest.raises(
+        ValueError,
+        match="At least one of m2dets or m2obs must be provided for CUDA-Q kernels",
+    ):
+        GeminiLogicalSimulator().task(bell_pair)
+
+
 @pytest.mark.parametrize(
     "use_dets, use_obs",
     [(True, True), (True, False), (False, True)],
     ids=["both", "dets_only", "obs_only"],
 )
 def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
-    """End-to-end: CUDA-Q kernel -> task() with different matrix combinations."""
     cudaq = pytest.importorskip("cudaq")
 
     num_qubits = 2
