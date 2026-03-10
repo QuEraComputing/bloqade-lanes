@@ -57,8 +57,8 @@ def _site_moves(
     ), "Start site ids must be unique"
 
     bus_moves: dict[int, list[layout.LaneAddress]] = {}
+    n_rows = arch_spec.words[0].n_rows
     for before, end in diffs:
-        n_rows = arch_spec.words[0].n_rows
         bus_id = (end.site_id % n_rows) - (before.site_id % n_rows)
         if bus_id < 0:
             bus_id += len(arch_spec.site_buses)  # wrap around sites
