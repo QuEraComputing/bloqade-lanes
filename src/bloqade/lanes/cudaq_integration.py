@@ -68,6 +68,9 @@ def append_measurements_and_annotations(
     assert m2 is not None
     num_total_meas = len(m2)
     meas_per_qubit = num_total_meas // num_qubits
+    assert (
+        meas_per_qubit * num_qubits == num_total_meas
+    ), "Incompatible shape of m2dets or m2obs"
 
     return_stmt = _find_return_stmt(mt)
 

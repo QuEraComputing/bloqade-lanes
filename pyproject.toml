@@ -18,8 +18,8 @@ requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 cudaq = [
-    "cudaq",
-    "qbraid-qir[squin]",
+    "cudaq>=0.13.0",
+    "qbraid-qir[squin]>=0.5.1",
 ]
 visualization = [
     "matplotlib>=3.9.4",

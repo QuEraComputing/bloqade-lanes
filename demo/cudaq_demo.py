@@ -1,4 +1,4 @@
-import cudaq
+import cudaq  # type: ignore[reportMissingImports]
 import numpy as np
 from scipy.linalg import block_diag
 
@@ -12,6 +12,8 @@ def get_measurement_to_detector_matrices(
     o = np.array([[1, 1, 0, 0, 0, 1, 0]])
     m2obs = block_diag(*[o.T] * n)  # shape (n * 7, n) - n * 7 meas, n observables
     m2dets = block_diag(*[d.T] * n)  # shape (n * 7, n * 3) - n * 7 meas, n * 3 dets
+    assert isinstance(m2dets, np.ndarray)
+    assert isinstance(m2obs, np.ndarray)
     return m2dets.tolist(), m2obs.tolist()
 
 
@@ -32,4 +34,3 @@ task = GeminiLogicalSimulator().task(main_cuda, m2dets=m2dets, m2obs=m2obs)
 
 result = task.run(10)
 print(result.detectors)
-result.return_values

@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar, Union
 
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
@@ -15,6 +15,7 @@ from bloqade import tsim
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
+from bloqade.lanes.cudaq_integration import append_measurements_and_annotations
 from bloqade.lanes.logical_mvp import compile_squin_to_move, run_squin_kernel_validation
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
@@ -225,12 +226,12 @@ class GeminiLogicalSimulator:
 
     def task(
         self,
-        logical_kernel: ir.Method[[], RetType],
+        logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
     ) -> GeminiLogicalSimulatorTask[RetType]:
         try:
-            from cudaq.kernel.kernel_decorator import PyKernelDecorator
+            from cudaq import PyKernelDecorator  # type: ignore[reportMissingImports]
         except ImportError:
             PyKernelDecorator = None
 
@@ -239,7 +240,7 @@ class GeminiLogicalSimulator:
         )
 
         if is_cudaq:
-            import cudaq as cudaq_module
+            import cudaq as cudaq_module  # type: ignore[reportMissingImports]
             from qbraid_qir.squin import load
 
             if m2dets is None and m2obs is None:
@@ -248,15 +249,12 @@ class GeminiLogicalSimulator:
                 )
 
             qir_str = cudaq_module.translate(logical_kernel, format="qir-base")
-            logical_squin_kernel = load(qir_str, dialects=logical.kernel)
+            logical_squin_kernel: ir.Method = load(qir_str, dialects=logical.kernel)
         else:
+            assert isinstance(logical_kernel, ir.Method)
             logical_squin_kernel = logical_kernel
 
         if m2dets is not None or m2obs is not None:
-            from bloqade.lanes.cudaq_integration import (
-                append_measurements_and_annotations,
-            )
-
             append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
 
         if is_cudaq:
@@ -264,6 +262,7 @@ class GeminiLogicalSimulator:
             # and gates that must be inlined.
             assert (run_pass := logical.kernel.run_pass) is not None
             run_pass(logical_squin_kernel, aggressive_unroll=True, verify=False)
+            logical_squin_kernel.print()
 
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         return GeminiLogicalSimulatorTask(
