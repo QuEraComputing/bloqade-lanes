@@ -17,6 +17,10 @@ dependencies = [
 requires-python = ">= 3.10"
 
 [project.optional-dependencies]
+cudaq = [
+    "cudaq>=0.13.0",
+    "qbraid-qir[squin]>=0.5.1",
+]
 visualization = [
     "matplotlib>=3.9.4",
     "scipy>=1.15.3",

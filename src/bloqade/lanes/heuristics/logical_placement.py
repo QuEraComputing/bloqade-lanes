@@ -54,6 +54,10 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 class LogicalPlacementMethods:
     arch_spec: layout.ArchSpec
 
+    @property
+    def _n_rows(self) -> int:
+        return self.arch_spec.words[0].n_rows
+
     def desired_cz_layout(
         self,
         state: ConcreteState,
@@ -75,9 +79,10 @@ class LogicalPlacementMethods:
                 raise ValueError(
                     "Initial layout contains invalid word id for logical arch"
                 )
-            if addr.site_id >= 5:
+            if addr.site_id >= self._n_rows:
                 raise ValueError(
-                    "Initial layout should only site ids < 5 for logical arch"
+                    "Initial layout should only site ids < "
+                    f"{self._n_rows} for logical arch"
                 )
 
     def _word_balance(
@@ -121,8 +126,9 @@ class LogicalPlacementMethods:
         c_addr = state.layout[control]
         t_addr = state.layout[target]
 
-        c_addr_dst = layout.LocationAddress(t_addr.word_id, t_addr.site_id + 5)
-        t_addr_dst = layout.LocationAddress(c_addr.word_id, c_addr.site_id + 5)
+        n_rows = self._n_rows
+        c_addr_dst = layout.LocationAddress(t_addr.word_id, t_addr.site_id + n_rows)
+        t_addr_dst = layout.LocationAddress(c_addr.word_id, c_addr.site_id + n_rows)
         c_move_count = state.move_count[control]
         t_move_count = state.move_count[target]
 
@@ -229,10 +235,11 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return sig_maxcost
 
     def _left_sites(self) -> set[layout.LocationAddress]:
+        n_rows = self._n_rows
         return {
             layout.LocationAddress(word_id, site_id)
             for word_id in range(2)
-            for site_id in range(5)
+            for site_id in range(n_rows)
         }
 
     def _distance_key(
@@ -240,7 +247,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         right_addr: layout.LocationAddress,
         left_addr: layout.LocationAddress,
     ) -> tuple[int, int, int, int]:
-        right_row = right_addr.site_id - 5
+        right_row = right_addr.site_id - self._n_rows
         word_distance = 0 if left_addr.word_id == right_addr.word_id else 1
         site_distance = abs(left_addr.site_id - right_row)
         return (
@@ -295,14 +302,19 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _nearest_left_layout(
         self, state_before: ConcreteState
     ) -> tuple[layout.LocationAddress, ...]:
+        n_rows = self._n_rows
         left_sites = self._left_sites()
-        used_left_sites = {addr for addr in state_before.layout if addr.site_id < 5}
-        used_left_sites |= {addr for addr in state_before.occupied if addr.site_id < 5}
+        used_left_sites = {
+            addr for addr in state_before.layout if addr.site_id < n_rows
+        }
+        used_left_sites |= {
+            addr for addr in state_before.occupied if addr.site_id < n_rows
+        }
         available_left_sites = set(left_sites - used_left_sites)
         return_layout = list(state_before.layout)
 
         for qid, addr in enumerate(state_before.layout):
-            if addr.site_id < 5:
+            if addr.site_id < n_rows:
                 continue
             if not available_left_sites:
                 raise ValueError(
@@ -479,14 +491,21 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         if not lookahead_layers:
             return [self._nearest_left_layout(state_before)]
 
+        n_rows = self._n_rows
         left_sites = self._left_sites()
-        used_left_sites = {addr for addr in state_before.layout if addr.site_id < 5}
-        used_left_sites |= {addr for addr in state_before.occupied if addr.site_id < 5}
+        used_left_sites = {
+            addr for addr in state_before.layout if addr.site_id < n_rows
+        }
+        used_left_sites |= {
+            addr for addr in state_before.occupied if addr.site_id < n_rows
+        }
         holes = sorted(
             left_sites - used_left_sites, key=lambda x: (x.word_id, x.site_id)
         )
         returners = [
-            qid for qid, addr in enumerate(state_before.layout) if addr.site_id >= 5
+            qid
+            for qid, addr in enumerate(state_before.layout)
+            if addr.site_id >= n_rows
         ]
         if not returners:
             return [state_before.layout]
@@ -500,12 +519,12 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         baseline_guess = {
             qid: baseline_layout[qid]
             for qid in returners
-            if baseline_layout[qid].site_id < 5
+            if baseline_layout[qid].site_id < n_rows
         }
         left_stayers = {
             qid: addr
             for qid, addr in enumerate(state_before.layout)
-            if addr.site_id < 5
+            if addr.site_id < n_rows
         }
         reference_positions = {**left_stayers, **baseline_guess}
 

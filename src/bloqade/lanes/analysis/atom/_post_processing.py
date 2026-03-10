@@ -12,6 +12,7 @@ from .lattice import (
     MoveExecution,
     ObservableResult,
     TupleResult,
+    Value,
 )
 
 
@@ -52,5 +53,11 @@ def constructor_function(
             return tuple(func(measurements) for func in inner_funcs)
 
         return _get_tuple
+    elif isinstance(elem, Value):
+
+        def _return_value(measurements: Sequence[bool]):
+            return elem.value
+
+        return _return_value
     else:
         return None

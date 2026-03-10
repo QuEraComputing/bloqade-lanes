@@ -174,7 +174,6 @@ class Move(interp.MethodTable):
 
 @py.constant.dialect.register(key="atom")
 class PyConstantMethods(interp.MethodTable):
-
     @interp.impl(py.Constant)
     def constant(
         self,
@@ -187,7 +186,6 @@ class PyConstantMethods(interp.MethodTable):
 
 @py.indexing.dialect.register(key="atom")
 class PyIndexingMethods(interp.MethodTable):
-
     @interp.impl(py.GetItem)
     def index(
         self,
@@ -212,7 +210,6 @@ class PyIndexingMethods(interp.MethodTable):
 
 @ilist.dialect.register(key="atom")
 class IListMethods(interp.MethodTable):
-
     @interp.impl(ilist.New)
     def ilist_new(
         self,
@@ -225,7 +222,6 @@ class IListMethods(interp.MethodTable):
 
 @py.tuple.dialect.register(key="atom")
 class TupleMethods(interp.MethodTable):
-
     @interp.impl(py.tuple.New)
     def tuple_new(
         self,
@@ -238,7 +234,6 @@ class TupleMethods(interp.MethodTable):
 
 @func.dialect.register(key="atom")
 class FuncMethods(interp.MethodTable):
-
     @interp.impl(func.Return)
     def func_return(
         self,
@@ -247,3 +242,12 @@ class FuncMethods(interp.MethodTable):
         stmt: func.Return,
     ):
         return interp.ReturnValue(frame.get(stmt.value))
+
+    @interp.impl(func.ConstantNone)
+    def const_none(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: func.ConstantNone,
+    ):
+        return (Value(None),)

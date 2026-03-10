@@ -55,12 +55,11 @@ def palindrome_move_layers(
 
 
 @dataclass
-class InsertPalindromeMoves(RewriteRule):
-    """This rewrite goes through a static circuit and for every move statement,
-    it inserts a reverse move statement at the end of the circuit to undo the move.
+class InsertReturnMoves(RewriteRule):
+    """Insert return move layers near the end of each static placement region.
 
-    The idea here you can cancel out some systematic move errors by playing moves backwards.
-
+    The default return strategy mirrors existing move layers in reverse order so
+    callers can recover the initial configuration after executing a region.
     """
 
     placement_analysis: dict[ir.SSAValue, placement.AtomState] = field(

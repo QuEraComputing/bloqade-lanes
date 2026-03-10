@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar, Union
 
 import numpy as np
 import tsim as tsim_backend
@@ -13,7 +15,12 @@ from bloqade import tsim
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
-from bloqade.lanes.logical_mvp import compile_squin_to_move, run_squin_kernel_validation
+from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
+from bloqade.lanes.logical_mvp import (
+    append_measurements_and_annotations,
+    compile_squin_to_move,
+    run_squin_kernel_validation,
+)
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
@@ -319,7 +326,9 @@ class GeminiLogicalSimulator:
 
     def task(
         self,
-        logical_squin_kernel: ir.Method[[], RetType],
+        logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
+        m2dets: list[list[int]] | None = None,
+        m2obs: list[list[int]] | None = None,
         no_measurements: bool = False,
     ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
@@ -335,6 +344,20 @@ class GeminiLogicalSimulator:
                 is not ``None``.
 
         """
+        if is_cudaq_kernel(logical_kernel):
+            if m2dets is None and m2obs is None:
+                raise ValueError(
+                    "At least one of m2dets or m2obs must be provided for CUDA-Q kernels"
+                )
+            logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+        elif isinstance(logical_kernel, ir.Method):
+            logical_squin_kernel = logical_kernel
+        else:
+            raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
+
+        if m2dets is not None or m2obs is not None:
+            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
+
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,

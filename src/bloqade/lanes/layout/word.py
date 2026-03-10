@@ -14,6 +14,11 @@ class Word:
     has_cz: tuple[LocationAddress, ...] | None = None
     """defines which sites in the word have a controlled-Z (CZ) interaction, e.g. has_cz[i] = j means site i has a CZ with site j"""
 
+    @property
+    def n_rows(self) -> int:
+        """Number of rows (sites per column) in this word."""
+        return int(self.positions.shape[1])
+
     def __post_init__(self):
         if len(self.positions.positions) != len(self.site_indices):
             raise ValueError("Number of positions must match number of site indices")
