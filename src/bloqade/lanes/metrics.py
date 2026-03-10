@@ -174,7 +174,7 @@ def _compile_kernel_to_noisy_physical_squin(
     mt: ir.Method,
     *,
     placement_strategy: PlacementStrategyABC,
-    insert_palindrome_moves: bool,
+    insert_return_moves: bool,
     merge_heuristic=default_merge_heuristic,
     noise_model: NoiseModelABC | None = None,
 ) -> ir.Method:
@@ -185,7 +185,7 @@ def _compile_kernel_to_noisy_physical_squin(
         mt,
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=placement_strategy,
-        insert_palindrome_moves=insert_palindrome_moves,
+        insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,
     )
     move_mt = transversal_rewrites(move_mt)
@@ -272,7 +272,7 @@ def analyze_kernel_fidelity_with_strategy(
     mt: ir.Method,
     *,
     placement_strategy: PlacementStrategyABC,
-    insert_palindrome_moves: bool,
+    insert_return_moves: bool,
     merge_heuristic=default_merge_heuristic,
     noise_model: NoiseModelABC | None = None,
 ) -> KernelFidelityMetrics:
@@ -291,7 +291,7 @@ def analyze_kernel_fidelity_with_strategy(
     physical_squin = _compile_kernel_to_noisy_physical_squin(
         mt,
         placement_strategy=placement_strategy,
-        insert_palindrome_moves=insert_palindrome_moves,
+        insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,
         noise_model=noise_model,
     )
@@ -308,7 +308,7 @@ def analyze_kernel_moves_with_strategy(
     mt: ir.Method,
     *,
     placement_strategy: PlacementStrategyABC,
-    insert_palindrome_moves: bool,
+    insert_return_moves: bool,
     merge_heuristic=default_merge_heuristic,
 ) -> KernelMoveMetrics:
     """
@@ -323,7 +323,7 @@ def analyze_kernel_moves_with_strategy(
         mt,
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=placement_strategy,
-        insert_palindrome_moves=insert_palindrome_moves,
+        insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,
     )
     move_event_count, moved_lane_count = _count_move_events_and_lanes(move_mt)
@@ -339,7 +339,7 @@ def analyze_kernel_move_time_with_strategy(
     mt: ir.Method,
     *,
     placement_strategy: PlacementStrategyABC,
-    insert_palindrome_moves: bool,
+    insert_return_moves: bool,
     merge_heuristic=default_merge_heuristic,
     flair_amplitude_delta: float = 1.0,
 ) -> KernelMoveTimeMetrics:
@@ -359,7 +359,7 @@ def analyze_kernel_move_time_with_strategy(
         mt,
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=placement_strategy,
-        insert_palindrome_moves=insert_palindrome_moves,
+        insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,
     )
     return _analyze_move_time_from_move_ir(

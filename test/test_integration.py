@@ -68,7 +68,7 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
         mt,
         layout_heuristic=fixed.LogicalLayoutHeuristic(),
         placement_strategy=LogicalPlacementStrategyNoHome(),
-        insert_palindrome_moves=True,
+        insert_return_moves=True,
         merge_heuristic=merge_heuristic,
     )
     move_mt = transversal_rewrites(move_mt)

@@ -124,11 +124,11 @@ example_kernel.print(analysis=placement_frame.entries)
 # With the placement analysis complete we can now proceed to rewrite the place dialect to the
 # move dialect. This involves using the MoveScheduler to insert move operations before gates
 # in the place dialect to based on the current placement of qubits and the placement of the qubits
-# required for the gate operation. There are also options to insert palindrome moves after gates
+# required for the gate operation. There are also options to insert return moves after gates
 # to move the qubits back to their original locations at the end of the StaticPlacement body.
 # Here we never have more than one CZ operation within a StaticPlacement body because we want
 # the logical qubits to always return back to their original locations after each gate. Hence
-# we set `insert_palindrome_moves=True` in the MoveToSquin transformer.
+# we set `insert_return_moves=True` in the MoveToSquin transformer.
 
 
 # %%
