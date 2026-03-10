@@ -7,7 +7,7 @@ from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
-from kirin import ir, passes
+from kirin import ir
 from kirin.dialects import func, ilist, py
 
 from bloqade import qubit
@@ -133,10 +133,3 @@ def append_measurements_and_annotations(
 
             obs_idx = _insert_before(py.Constant(j), return_stmt)
             _insert_before(SetObservable(meas_list.result, obs_idx.result), return_stmt)
-
-    # TODO: remove this once post-processing of None return values is supported
-    if isinstance(return_stmt.value.owner, func.ConstantNone):
-        none_owner = return_stmt.value.owner
-        return_stmt.replace_by(func.Return(term_meas.result))
-        none_owner.delete()
-        passes.TypeInfer(mt.dialects, no_raise=True)(mt)
