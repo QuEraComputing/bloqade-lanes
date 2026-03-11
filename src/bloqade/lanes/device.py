@@ -8,7 +8,7 @@ from typing import Any, Callable, Generic, TypeVar, Union
 import numpy as np
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
-from kirin import ir, rewrite, types
+from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
 from bloqade import tsim
@@ -30,98 +30,125 @@ RetType = TypeVar("RetType")
 
 
 @dataclass(frozen=True)
-class Result(Generic[RetType]):
-    """Simulation result including detector error model, fidelity bounds, and sampling outcomes.
-
-    When constructed via the default measurement sampler path, ``measurements``,
-    ``return_values``, ``detectors``, and ``observables`` are all available.
-
-    When constructed via the ``no_measurements=True`` path, only ``detectors``
-    and ``observables`` are populated directly from the detector sampler.
-    Accessing ``measurements`` or ``return_values`` in this mode raises
-    ``ValueError``.
-    """
+class DetectorResult:
+    """Result from the detector sampler containing only detector and observable outcomes."""
 
     _detector_error_model: DetectorErrorModel
     _fidelity_min: float
     _fidelity_max: float
-    _raw_measurements: list[list[bool]] | None = None
-    _post_processing: atom.PostProcessing[RetType] | None = None
-    _detectors: list[list[bool]] | None = None
-    _observables: list[list[bool]] | None = None
-    _return_values: list[RetType] | None = None
-    _measurements: list[list[bool]] | None = None
+    _detectors: list[list[bool]]
+    _observables: list[list[bool]]
 
     def fidelity_bounds(self) -> tuple[float, float]:
         """Return the upper and lower fidelity bounds.
 
-        Note: The upper and lower bounds are related to and branching logic in the kernel.
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
 
         """
         return (self._fidelity_min, self._fidelity_max)
 
     @property
     def detector_error_model(self) -> DetectorErrorModel:
-        """The STIM detector error model corresponding to the physical noise circuit."""
+        """The STIM detector error model corresponding to the physical noise circuit.
+
+        Returns:
+            DetectorErrorModel: The STIM detector error model.
+
+        """
         return self._detector_error_model
 
     @property
-    def return_values(self) -> list[RetType]:
-        """The return values of the logical kernel.
-
-        Raises:
-            ValueError: If the result was produced with ``no_measurements=True``.
-        """
-        if self._return_values is not None:
-            return self._return_values
-        if self._post_processing is None or self._raw_measurements is None:
-            raise ValueError("return values not accessible with `no_measurements=True`")
-        result = list(self._post_processing.emit_return(self._raw_measurements))
-        object.__setattr__(self, "_return_values", result)
-        return result
-
-    @property
     def detectors(self) -> list[list[bool]]:
-        """The detector outcomes from the simulation."""
-        if self._detectors is not None:
-            return self._detectors
-        if self._post_processing is None or self._raw_measurements is None:
-            raise ValueError(
-                "detectors not accessible with `no_measurements=True`; "
-                "use the detector sampler API on the task instead"
-            )
-        result = list(self._post_processing.emit_detectors(self._raw_measurements))
-        object.__setattr__(self, "_detectors", result)
-        return result
+        """The detector outcomes from the simulation.
 
-    @property
-    def measurements(self) -> list[list[bool]]:
-        """The raw measurement outcomes used to compute detectors and observables.
+        Returns:
+            list[list[bool]]: The detector outcomes, one list per shot.
 
-        Raises:
-            ValueError: If the result was produced with ``no_measurements=True``.
         """
-        if self._measurements is not None:
-            return self._measurements
-        if self._raw_measurements is None:
-            raise ValueError("measurements not accessible with `no_measurements=True`")
-        result = list(map(list, self._raw_measurements))
-        object.__setattr__(self, "_measurements", result)
-        return result
+        return self._detectors
 
     @property
     def observables(self) -> list[list[bool]]:
-        """The observable outcomes from the simulation."""
-        if self._observables is not None:
-            return self._observables
-        if self._post_processing is None or self._raw_measurements is None:
-            raise ValueError(
-                "observables not accessible with `no_measurements=True`; "
-                "use the detector sampler API on the task instead"
-            )
-        result = list(self._post_processing.emit_observables(self._raw_measurements))
-        object.__setattr__(self, "_observables", result)
-        return result
+        """The observable outcomes from the simulation.
+
+        Returns:
+            list[list[bool]]: The observable outcomes, one list per shot.
+
+        """
+        return self._observables
+
+
+@dataclass(frozen=True)
+class Result(Generic[RetType]):
+    """Simulation result including measurement outcomes, detector error model, post-processing, and fidelity bounds."""
+
+    _raw_measurements: list[list[bool]]
+    _detector_error_model: DetectorErrorModel
+    _post_processing: atom.PostProcessing[RetType]
+    _fidelity_min: float
+    _fidelity_max: float
+
+    def fidelity_bounds(self) -> tuple[float, float]:
+        """Return the upper and lower fidelity bounds.
+
+        Note: The upper and lower bounds are related to and branching logic in the kernel.
+
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
+
+        """
+        return (self._fidelity_min, self._fidelity_max)
+
+    @property
+    def detector_error_model(self) -> DetectorErrorModel:
+        """The STIM detector error model corresponding to the physical noise circuit.
+
+        Returns:
+            DetectorErrorModel: The STIM detector error model.
+
+        """
+        return self._detector_error_model
+
+    @cached_property
+    def return_values(self) -> list[RetType]:
+        """The return values of the logical kernel.
+
+        Returns:
+            list[RetType]: The return values, one per shot.
+
+        """
+        return list(self._post_processing.emit_return(self._raw_measurements))
+
+    @cached_property
+    def detectors(self) -> list[list[bool]]:
+        """The detector outcomes from the simulation.
+
+        Returns:
+            list[list[bool]]: The detector outcomes, one list per shot.
+
+        """
+        return list(self._post_processing.emit_detectors(self._raw_measurements))
+
+    @cached_property
+    def measurements(self) -> list[list[bool]]:
+        """The raw measurement outcomes used to compute detectors and observables.
+
+        Returns:
+            list[list[bool]]: The raw measurement outcomes, one list per shot.
+
+        """
+        return list(map(list, self._raw_measurements))
+
+    @cached_property
+    def observables(self) -> list[list[bool]]:
+        """The observable outcomes from the simulation.
+
+        Returns:
+            list[list[bool]]: The observable outcomes, one list per shot.
+
+        """
+        return list(self._post_processing.emit_observables(self._raw_measurements))
 
 
 @dataclass(frozen=True)
@@ -130,21 +157,12 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
-    no_measurements: bool = False
-    """When True, skip the measurement sampler and use the detector sampler instead."""
     _thread_pool_executor: ThreadPoolExecutor = field(
         default_factory=ThreadPoolExecutor, init=False
     )
 
     def __post_init__(self):
         assert isinstance(self._post_processing, atom.PostProcessing)
-        if self.no_measurements:
-            if not self.logical_squin_kernel.return_type.is_structurally_equal(
-                types.NoneType
-            ):
-                raise ValueError(
-                    "Kernel must have a None return type when `no_measurements=True`"
-                )
 
     @cached_property
     def physical_arch_spec(self):
@@ -234,6 +252,12 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             )
 
     def fidelity_bounds(self) -> tuple[float, float]:
+        """Compute the fidelity bounds for the physical squin kernel.
+
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
+
+        """
         analysis = FidelityAnalysis(self.physical_squin_kernel.dialects)
         analysis.run(self.physical_squin_kernel)
 
@@ -249,39 +273,15 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def run(self, shots: int = 1, with_noise: bool = True) -> Result[RetType]:
         """Run the kernel and get simulation results.
 
-        When ``no_measurements=True``, the detector sampler is used instead of
-        the full measurement sampler for improved performance. In this mode the
-        returned ``Result`` provides ``detectors`` and ``observables`` but
-        accessing ``measurements`` or ``return_values`` will raise ``ValueError``.
-
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
-            Result: The simulation result including detector error model, fidelity bounds,
-                and sampling outcomes.
+            Result[RetType]: The simulation result including measurement outcomes,
+                detector error model, post-processing, and fidelity bounds.
 
         """
-        fidelity_min, fidelity_max = self.fidelity_bounds()
-
-        if self.no_measurements:
-            sampler = (
-                self.detector_sampler if with_noise else self.noiseless_detector_sampler
-            )
-            det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
-                shots=shots, separate_observables=True
-            )
-            detectors = det_obs[0].tolist()
-            observables = det_obs[1].tolist()
-            return Result(
-                _detector_error_model=self.detector_error_model,
-                _fidelity_min=fidelity_min,
-                _fidelity_max=fidelity_max,
-                _detectors=detectors,
-                _observables=observables,
-            )
-
         if with_noise:
             raw_results = self.measurement_sampler.sample(shots=shots).tolist()
         else:
@@ -289,12 +289,43 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 shots=shots
             ).tolist()
 
+        fidelity_min, fidelity_max = self.fidelity_bounds()
         return Result(
+            raw_results,
+            self.detector_error_model,
+            self._post_processing,
+            fidelity_min,
+            fidelity_max,
+        )
+
+    def run_detectors(self, shots: int = 1, with_noise: bool = True) -> DetectorResult:
+        """Run the detector sampler for faster detector/observable sampling.
+
+        This skips the full measurement sampler and directly samples detector
+        and observable outcomes, which is significantly faster when only
+        detectors and observables are needed.
+
+        Args:
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+
+        Returns:
+            DetectorResult: The result containing detector and observable outcomes.
+
+        """
+        sampler = (
+            self.detector_sampler if with_noise else self.noiseless_detector_sampler
+        )
+        det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
+            shots=shots, separate_observables=True
+        )
+        fidelity_min, fidelity_max = self.fidelity_bounds()
+        return DetectorResult(
             _detector_error_model=self.detector_error_model,
             _fidelity_min=fidelity_min,
             _fidelity_max=fidelity_max,
-            _raw_measurements=raw_results,
-            _post_processing=self._post_processing,
+            _detectors=det_obs[0].tolist(),
+            _observables=det_obs[1].tolist(),
         )
 
     def run_async(
@@ -307,16 +338,25 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
-            Future[Result]: A future that will resolve to the simulation result including
-                measurement outcomes, detector error model, post-processing, and fidelity bounds.
+            Future[Result[RetType]]: A future that will resolve to the simulation result.
+
         """
+        return self._thread_pool_executor.submit(self.run, shots, with_noise)
 
-        def _runner(
-            task: GeminiLogicalSimulatorTask[RetType], shots: int, with_noise: bool
-        ) -> Result[RetType]:
-            return task.run(shots, with_noise)
+    def run_detectors_async(
+        self, shots: int = 1, with_noise: bool = True
+    ) -> Future[DetectorResult]:
+        """Run the detector sampler asynchronously.
 
-        return self._thread_pool_executor.submit(_runner, self, shots, with_noise)
+        Args:
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+
+        Returns:
+            Future[DetectorResult]: A future that will resolve to the detector result.
+
+        """
+        return self._thread_pool_executor.submit(self.run_detectors, shots, with_noise)
 
 
 @dataclass
@@ -328,19 +368,17 @@ class GeminiLogicalSimulator:
         logical_kernel: Union[ir.Method[[], RetType], Callable[..., Any]],
         m2dets: list[list[int]] | None = None,
         m2obs: list[list[int]] | None = None,
-        no_measurements: bool = False,
     ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
 
         Args:
-            logical_squin_kernel: The logical squin kernel to compile and run.
-            no_measurements: When ``True``, skip the measurement sampler and
-                use the detector sampler instead. The kernel must have a
-                ``None`` return type.
+            logical_kernel (Union[ir.Method[[], RetType], Callable[..., Any]]): The logical
+                squin or CUDA-Q kernel to compile and run.
+            m2dets (list[list[int]] | None): Optional detector annotation matrix for CUDA-Q kernels.
+            m2obs (list[list[int]] | None): Optional observable annotation matrix for CUDA-Q kernels.
 
-        Raises:
-            ValueError: If ``no_measurements=True`` and the kernel return type
-                is not ``None``.
+        Returns:
+            GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.
 
         """
         if is_cudaq_kernel(logical_kernel):
@@ -361,7 +399,6 @@ class GeminiLogicalSimulator:
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
-            no_measurements=no_measurements,
         )
 
     def run(
@@ -369,49 +406,76 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        no_measurements: bool = False,
     ) -> Result[RetType]:
         """Run the kernel and get simulation results.
 
         Args:
-            logical_squin_kernel: The logical squin kernel to run.
-            shots: Number of shots to run. Defaults to 1.
-            with_noise: Whether to include noise in the simulation. Defaults to True.
-            no_measurements: When ``True``, use the detector sampler instead of
-                the measurement sampler for improved performance. The kernel must
-                have a ``None`` return type. Defaults to False.
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
-            Result: The simulation result.
+            Result[RetType]: The simulation result.
 
         """
-        return self.task(logical_squin_kernel, no_measurements=no_measurements).run(
-            shots, with_noise
-        )
+        return self.task(logical_squin_kernel).run(shots, with_noise)
 
     def run_async(
         self,
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        no_measurements: bool = False,
     ) -> Future[Result[RetType]]:
         """Run the kernel asynchronously and get simulation results.
 
         Args:
-            logical_squin_kernel: The logical squin kernel to run.
-            shots: Number of shots to run. Defaults to 1.
-            with_noise: Whether to include noise in the simulation. Defaults to True.
-            no_measurements: When ``True``, use the detector sampler instead of
-                the measurement sampler. Defaults to False.
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
 
         Returns:
-            Future[Result]: A future resolving to the simulation result.
+            Future[Result[RetType]]: A future resolving to the simulation result.
 
         """
-        return self.task(
-            logical_squin_kernel, no_measurements=no_measurements
-        ).run_async(shots, with_noise)
+        return self.task(logical_squin_kernel).run_async(shots, with_noise)
+
+    def run_detectors(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+    ) -> DetectorResult:
+        """Run the detector sampler for faster detector/observable sampling.
+
+        Args:
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+
+        Returns:
+            DetectorResult: The result containing detector and observable outcomes.
+
+        """
+        return self.task(logical_squin_kernel).run_detectors(shots, with_noise)
+
+    def run_detectors_async(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+    ) -> Future[DetectorResult]:
+        """Run the detector sampler asynchronously.
+
+        Args:
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
+            shots (int): Number of shots to run. Defaults to 1.
+            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+
+        Returns:
+            Future[DetectorResult]: A future resolving to the detector result.
+
+        """
+        return self.task(logical_squin_kernel).run_detectors_async(shots, with_noise)
 
     def visualize(
         self,
@@ -421,8 +485,8 @@ class GeminiLogicalSimulator:
     ):
         """Visualize the physical move kernel using the built-in debugger.
 
-        Args
-            logical_squin_kernel (ir.Method): The logical squin kernel to visualize.
+        Args:
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to visualize.
             animated (bool): Whether to use the animated debugger. Defaults to False.
             interactive (bool): Whether to enable interactive mode. Defaults to True.
 
@@ -434,13 +498,29 @@ class GeminiLogicalSimulator:
     def physical_squin_kernel(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> ir.Method[[], RetType]:
-        """Compile the logical squin kernel to the physical squin kernel."""
+        """Compile the logical squin kernel to the physical squin kernel.
+
+        Args:
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
+
+        Returns:
+            ir.Method[[], RetType]: The physical squin kernel.
+
+        """
         return self.task(logical_squin_kernel).physical_squin_kernel
 
     def physical_move_kernel(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> ir.Method[[], RetType]:
-        """Compile the logical squin kernel to the physical move kernel."""
+        """Compile the logical squin kernel to the physical move kernel.
+
+        Args:
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
+
+        Returns:
+            ir.Method[[], RetType]: The physical move kernel.
+
+        """
         return self.task(logical_squin_kernel).physical_move_kernel
 
     def tsim_circuit(
@@ -449,8 +529,11 @@ class GeminiLogicalSimulator:
         """Compile the logical squin kernel to the tsim circuit.
 
         Args:
-            logical_squin_kernel (ir.Method): The logical squin kernel to compile.
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to compile.
             with_noise (bool): Whether to include noise in the tsim circuit. Defaults to True.
+
+        Returns:
+            tsim.Circuit: The compiled tsim circuit.
 
         """
         if with_noise:
@@ -461,5 +544,13 @@ class GeminiLogicalSimulator:
     def fidelity_bounds(
         self, logical_squin_kernel: ir.Method[[], RetType]
     ) -> tuple[float, float]:
-        """Get the fidelity bounds for the logical squin kernel."""
+        """Get the fidelity bounds for the logical squin kernel.
+
+        Args:
+            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to analyze.
+
+        Returns:
+            tuple[float, float]: The (min, max) fidelity bounds.
+
+        """
         return self.task(logical_squin_kernel).fidelity_bounds()
