@@ -1,4 +1,5 @@
-from bloqade.lanes import generate_simple_noise_model, kernel
+from bloqade.lanes import generate_simple_noise_model
+from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import (

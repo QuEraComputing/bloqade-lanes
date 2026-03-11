@@ -37,6 +37,7 @@ __all__ = [
     "compile_squin_to_move_and_visualize",
     "compile_to_physical_squin_noise_model",
     "compile_to_physical_stim_program",
+    "transversal_rewrites",
     "append_measurements_and_annotations",
 ]
 

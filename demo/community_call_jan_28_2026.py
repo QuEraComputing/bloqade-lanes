@@ -19,7 +19,7 @@ logical_arch = generate_arch_hypercube(1, 5)
 show_lanes(logical_arch)
 
 # %%
-from bloqade.lanes import kernel  # noqa F402
+from bloqade.lanes._prelude import kernel  # noqa F402
 from bloqade.lanes.dialects import move  # noqa F402
 from bloqade.lanes.layout import (  # noqa F402
     Direction,

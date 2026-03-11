@@ -7,7 +7,8 @@ from kirin.analysis import forward
 from kirin.dialects import func, ilist, py
 
 from bloqade import qubit, squin, types as bloqade_types
-from bloqade.lanes import kernel, layout
+from bloqade.lanes import layout
+from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move

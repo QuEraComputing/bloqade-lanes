@@ -25,6 +25,7 @@ from bloqade.lanes.logical_mvp import (
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
 
 RetType = TypeVar("RetType")
@@ -425,18 +426,27 @@ class GeminiLogicalSimulator:
 
         """
         if is_cudaq_kernel(logical_kernel):
-            if m2dets is None and m2obs is None:
-                raise ValueError(
-                    "At least one of m2dets or m2obs must be provided for CUDA-Q kernels"
-                )
             logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+
+            # Default to Steane [[7,1,3]] annotation matrices when not provided
+            if m2dets is None and m2obs is None:
+                from bloqade import qubit
+
+                num_qubits = sum(
+                    1
+                    for s in logical_squin_kernel.callable_region.walk()
+                    if isinstance(s, qubit.stmts.New)
+                )
+                m2dets = steane7_m2dets(num_qubits)
+                m2obs = steane7_m2obs(num_qubits)
+
+            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
         elif isinstance(logical_kernel, ir.Method):
             logical_squin_kernel = logical_kernel
+            if m2dets is not None or m2obs is not None:
+                append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
         else:
             raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
-
-        if m2dets is not None or m2obs is not None:
-            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
 
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
 

@@ -1,4 +1,3 @@
-from ._prelude import kernel as kernel
 from .device import (
     DetectorResult as DetectorResult,
     GeminiLogicalSimulator as GeminiLogicalSimulator,
