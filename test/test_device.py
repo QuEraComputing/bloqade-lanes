@@ -13,6 +13,7 @@ from bloqade.lanes.device import (
     Result,
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 
 @gemini_logical.kernel(verify=False)
@@ -196,20 +197,7 @@ def test_result_property_caching():
 
 
 def _steane_matrices(num_qubits: int):
-    import numpy as np
-    from scipy.linalg import block_diag
-
-    d = np.array(
-        [
-            [1, 1, 1, 1, 0, 0, 0],
-            [0, 1, 1, 0, 1, 1, 0],
-            [0, 0, 1, 1, 1, 0, 1],
-        ]
-    )
-    o = np.array([[1, 1, 0, 0, 0, 1, 0]])
-    m2dets = block_diag(*[d.T] * num_qubits).tolist()  # pyright: ignore
-    m2obs = block_diag(*[o.T] * num_qubits).tolist()  # pyright: ignore
-    return m2dets, m2obs
+    return steane7_m2dets(num_qubits), steane7_m2obs(num_qubits)
 
 
 @pytest.mark.parametrize(
