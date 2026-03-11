@@ -275,7 +275,8 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         self,
         shots: int = 1,
         with_noise: bool = True,
-        run_detectors: Literal[False] = False,
+        *,
+        run_detectors: Literal[False] = ...,
     ) -> Result[RetType]: ...
 
     @overload
@@ -287,10 +288,20 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         run_detectors: Literal[True],
     ) -> DetectorResult: ...
 
+    @overload
     def run(
         self,
         shots: int = 1,
         with_noise: bool = True,
+        *,
+        run_detectors: bool,
+    ) -> Result[RetType] | DetectorResult: ...
+
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
         run_detectors: bool = False,
     ) -> Result[RetType] | DetectorResult:
         """Run the kernel and get simulation results.
@@ -363,7 +374,8 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         self,
         shots: int = 1,
         with_noise: bool = True,
-        run_detectors: Literal[False] = False,
+        *,
+        run_detectors: Literal[False] = ...,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -379,6 +391,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         self,
         shots: int = 1,
         with_noise: bool = True,
+        *,
         run_detectors: bool = False,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the kernel asynchronously and get simulation results.
@@ -396,9 +409,11 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
                 to the detector result.
 
         """
-        return self._thread_pool_executor.submit(
-            self.run, shots, with_noise, run_detectors  # type: ignore[arg-type]
-        )
+        if run_detectors:
+            return self._thread_pool_executor.submit(
+                self._run_detectors, shots, with_noise
+            )
+        return self._thread_pool_executor.submit(self.run, shots, with_noise)
 
 
 @dataclass
@@ -449,7 +464,8 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        run_detectors: Literal[False] = False,
+        *,
+        run_detectors: Literal[False] = ...,
     ) -> Result[RetType]: ...
 
     @overload
@@ -462,11 +478,22 @@ class GeminiLogicalSimulator:
         run_detectors: Literal[True],
     ) -> DetectorResult: ...
 
+    @overload
     def run(
         self,
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
+        *,
+        run_detectors: bool,
+    ) -> Result[RetType] | DetectorResult: ...
+
+    def run(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
         run_detectors: bool = False,
     ) -> Result[RetType] | DetectorResult:
         """Run the kernel and get simulation results.
@@ -486,7 +513,7 @@ class GeminiLogicalSimulator:
 
         """
         return self.task(logical_squin_kernel).run(
-            shots, with_noise, run_detectors  # type: ignore[arg-type]
+            shots, with_noise, run_detectors=run_detectors
         )
 
     @overload
@@ -495,7 +522,8 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-        run_detectors: Literal[False] = False,
+        *,
+        run_detectors: Literal[False] = ...,
     ) -> Future[Result[RetType]]: ...
 
     @overload
@@ -513,6 +541,7 @@ class GeminiLogicalSimulator:
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
+        *,
         run_detectors: bool = False,
     ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the kernel asynchronously and get simulation results.
@@ -531,9 +560,10 @@ class GeminiLogicalSimulator:
                 to the detector result.
 
         """
-        return self.task(logical_squin_kernel).run_async(
-            shots, with_noise, run_detectors  # type: ignore[arg-type]
-        )
+        task = self.task(logical_squin_kernel)
+        if run_detectors:
+            return task.run_async(shots, with_noise, run_detectors=True)
+        return task.run_async(shots, with_noise)
 
     def visualize(
         self,
