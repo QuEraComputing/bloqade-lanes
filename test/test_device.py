@@ -11,6 +11,7 @@ from bloqade.lanes.device import (
     DetectorResult,
     GeminiLogicalSimulator,
     GeminiLogicalSimulatorTask,
+    Result,
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
 
@@ -82,10 +83,20 @@ def test_physical_compilation(size: int):
     assert all(len(set(rv)) == 1 for rv in result.observables)
 
 
-def test_run_detectors():
-    """Test that run_detectors uses detector sampler and produces detectors/observables."""
+def test_run_default():
+    """Test that run() without run_detectors returns a Result."""
     sim = GeminiLogicalSimulator()
-    result = sim.run_detectors(main, shots=10, with_noise=False)
+    result = sim.run(main, shots=5, with_noise=False)
+
+    assert isinstance(result, Result)
+    assert result.fidelity_bounds() is not None
+    assert result.detector_error_model is not None
+
+
+def test_run_with_run_detectors_flag():
+    """Test that run(run_detectors=True) returns a DetectorResult."""
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=10, with_noise=False, run_detectors=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -95,9 +106,9 @@ def test_run_detectors():
 
 
 def test_run_detectors_with_noise():
-    """Test run_detectors with noise enabled uses the noisy detector sampler."""
+    """Test run(run_detectors=True) with noise enabled uses the noisy detector sampler."""
     sim = GeminiLogicalSimulator()
-    result = sim.run_detectors(main, shots=10, with_noise=True)
+    result = sim.run(main, shots=10, with_noise=True, run_detectors=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -105,10 +116,10 @@ def test_run_detectors_with_noise():
     assert result.fidelity_bounds() is not None
 
 
-def test_run_detectors_async():
-    """Test run_detectors_async returns a Future with valid DetectorResult."""
+def test_run_async_with_run_detectors_flag():
+    """Test run_async(run_detectors=True) returns a Future[DetectorResult]."""
     sim = GeminiLogicalSimulator()
-    future = sim.run_detectors_async(main, shots=5, with_noise=False)
+    future = sim.run_async(main, shots=5, with_noise=False, run_detectors=True)
     result = future.result()
 
     assert isinstance(result, DetectorResult)
@@ -117,10 +128,10 @@ def test_run_detectors_async():
 
 
 def test_run_detectors_via_task():
-    """Test calling run_detectors on a task directly."""
+    """Test calling run(run_detectors=True) on a task directly."""
     sim = GeminiLogicalSimulator()
     task = sim.task(main)
-    result = task.run_detectors(shots=5, with_noise=False)
+    result = task.run(shots=5, with_noise=False, run_detectors=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
@@ -128,19 +139,19 @@ def test_run_detectors_via_task():
 
 
 def test_run_detectors_task_directly():
-    """Test creating a GeminiLogicalSimulatorTask and calling run_detectors."""
+    """Test creating a GeminiLogicalSimulatorTask and calling run(run_detectors=True)."""
     noise_model = generate_simple_noise_model()
     task = GeminiLogicalSimulatorTask(main, noise_model)
-    result = task.run_detectors(shots=5, with_noise=False)
+    result = task.run(shots=5, with_noise=False, run_detectors=True)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
 
 
 def test_run_detectors_task_async():
-    """Test run_detectors_async directly on GeminiLogicalSimulatorTask."""
+    """Test run_async(run_detectors=True) directly on GeminiLogicalSimulatorTask."""
     noise_model = generate_simple_noise_model()
     task = GeminiLogicalSimulatorTask(main, noise_model)
-    future = task.run_detectors_async(shots=5, with_noise=False)
+    future = task.run_async(shots=5, with_noise=False, run_detectors=True)
     result = future.result()
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
