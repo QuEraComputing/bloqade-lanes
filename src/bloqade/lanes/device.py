@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Callable, Generic, TypeVar, Union
+from typing import Any, Callable, Generic, Literal, TypeVar, Union, overload
 
 import numpy as np
 import tsim as tsim_backend
@@ -270,18 +270,48 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
         return min_fidelity, max_fidelity
 
-    def run(self, shots: int = 1, with_noise: bool = True) -> Result[RetType]:
+    @overload
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        run_detectors: Literal[False] = False,
+    ) -> Result[RetType]: ...
+
+    @overload
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+    ) -> DetectorResult: ...
+
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        run_detectors: bool = False,
+    ) -> Result[RetType] | DetectorResult:
         """Run the kernel and get simulation results.
 
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            run_detectors (bool): When ``True``, use the detector sampler instead of
+                the measurement sampler for faster detector/observable sampling.
+                Defaults to False.
 
         Returns:
-            Result[RetType]: The simulation result including measurement outcomes,
-                detector error model, post-processing, and fidelity bounds.
+            Result[RetType]: When ``run_detectors=False``, the full simulation result
+                including measurement outcomes, return values, detectors, and observables.
+            DetectorResult: When ``run_detectors=True``, the result containing only
+                detector and observable outcomes.
 
         """
+        if run_detectors:
+            return self._run_detectors(shots, with_noise)
+
         if with_noise:
             raw_results = self.measurement_sampler.sample(shots=shots).tolist()
         else:
@@ -298,7 +328,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             fidelity_max,
         )
 
-    def run_detectors(self, shots: int = 1, with_noise: bool = True) -> DetectorResult:
+    def _run_detectors(self, shots: int = 1, with_noise: bool = True) -> DetectorResult:
         """Run the detector sampler for faster detector/observable sampling.
 
         This skips the full measurement sampler and directly samples detector
@@ -328,35 +358,47 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             _observables=det_obs[1].tolist(),
         )
 
+    @overload
     def run_async(
-        self, shots: int = 1, with_noise: bool = True
-    ) -> Future[Result[RetType]]:
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        run_detectors: Literal[False] = False,
+    ) -> Future[Result[RetType]]: ...
+
+    @overload
+    def run_async(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+    ) -> Future[DetectorResult]: ...
+
+    def run_async(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        run_detectors: bool = False,
+    ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the kernel asynchronously and get simulation results.
 
         Args:
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            run_detectors (bool): When ``True``, use the detector sampler instead of
+                the measurement sampler. Defaults to False.
 
         Returns:
-            Future[Result[RetType]]: A future that will resolve to the simulation result.
+            Future[Result[RetType]]: When ``run_detectors=False``, a future resolving
+                to the full simulation result.
+            Future[DetectorResult]: When ``run_detectors=True``, a future resolving
+                to the detector result.
 
         """
-        return self._thread_pool_executor.submit(self.run, shots, with_noise)
-
-    def run_detectors_async(
-        self, shots: int = 1, with_noise: bool = True
-    ) -> Future[DetectorResult]:
-        """Run the detector sampler asynchronously.
-
-        Args:
-            shots (int): Number of shots to run. Defaults to 1.
-            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-
-        Returns:
-            Future[DetectorResult]: A future that will resolve to the detector result.
-
-        """
-        return self._thread_pool_executor.submit(self.run_detectors, shots, with_noise)
+        return self._thread_pool_executor.submit(
+            self.run, shots, with_noise, run_detectors  # type: ignore[arg-type]
+        )
 
 
 @dataclass
@@ -401,81 +443,97 @@ class GeminiLogicalSimulator:
             self.noise_model,
         )
 
+    @overload
     def run(
         self,
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-    ) -> Result[RetType]:
+        run_detectors: Literal[False] = False,
+    ) -> Result[RetType]: ...
+
+    @overload
+    def run(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+    ) -> DetectorResult: ...
+
+    def run(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+        run_detectors: bool = False,
+    ) -> Result[RetType] | DetectorResult:
         """Run the kernel and get simulation results.
 
         Args:
             logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            run_detectors (bool): When ``True``, use the detector sampler instead of
+                the measurement sampler for faster detector/observable sampling.
+                Defaults to False.
 
         Returns:
-            Result[RetType]: The simulation result.
+            Result[RetType]: When ``run_detectors=False``, the full simulation result.
+            DetectorResult: When ``run_detectors=True``, the result containing only
+                detector and observable outcomes.
 
         """
-        return self.task(logical_squin_kernel).run(shots, with_noise)
+        return self.task(logical_squin_kernel).run(
+            shots, with_noise, run_detectors  # type: ignore[arg-type]
+        )
+
+    @overload
+    def run_async(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+        run_detectors: Literal[False] = False,
+    ) -> Future[Result[RetType]]: ...
+
+    @overload
+    def run_async(
+        self,
+        logical_squin_kernel: ir.Method[[], RetType],
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+    ) -> Future[DetectorResult]: ...
 
     def run_async(
         self,
         logical_squin_kernel: ir.Method[[], RetType],
         shots: int = 1,
         with_noise: bool = True,
-    ) -> Future[Result[RetType]]:
+        run_detectors: bool = False,
+    ) -> Future[Result[RetType]] | Future[DetectorResult]:
         """Run the kernel asynchronously and get simulation results.
 
         Args:
             logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
             shots (int): Number of shots to run. Defaults to 1.
             with_noise (bool): Whether to include noise in the simulation. Defaults to True.
+            run_detectors (bool): When ``True``, use the detector sampler instead of
+                the measurement sampler. Defaults to False.
 
         Returns:
-            Future[Result[RetType]]: A future resolving to the simulation result.
+            Future[Result[RetType]]: When ``run_detectors=False``, a future resolving
+                to the full simulation result.
+            Future[DetectorResult]: When ``run_detectors=True``, a future resolving
+                to the detector result.
 
         """
-        return self.task(logical_squin_kernel).run_async(shots, with_noise)
-
-    def run_detectors(
-        self,
-        logical_squin_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-    ) -> DetectorResult:
-        """Run the detector sampler for faster detector/observable sampling.
-
-        Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
-            shots (int): Number of shots to run. Defaults to 1.
-            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-
-        Returns:
-            DetectorResult: The result containing detector and observable outcomes.
-
-        """
-        return self.task(logical_squin_kernel).run_detectors(shots, with_noise)
-
-    def run_detectors_async(
-        self,
-        logical_squin_kernel: ir.Method[[], RetType],
-        shots: int = 1,
-        with_noise: bool = True,
-    ) -> Future[DetectorResult]:
-        """Run the detector sampler asynchronously.
-
-        Args:
-            logical_squin_kernel (ir.Method[[], RetType]): The logical squin kernel to run.
-            shots (int): Number of shots to run. Defaults to 1.
-            with_noise (bool): Whether to include noise in the simulation. Defaults to True.
-
-        Returns:
-            Future[DetectorResult]: A future resolving to the detector result.
-
-        """
-        return self.task(logical_squin_kernel).run_detectors_async(shots, with_noise)
+        return self.task(logical_squin_kernel).run_async(
+            shots, with_noise, run_detectors  # type: ignore[arg-type]
+        )
 
     def visualize(
         self,
