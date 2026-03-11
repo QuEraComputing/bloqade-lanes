@@ -7,7 +7,11 @@ from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
-from bloqade.lanes.device import GeminiLogicalSimulator, GeminiLogicalSimulatorTask
+from bloqade.lanes.device import (
+    DetectorResult,
+    GeminiLogicalSimulator,
+    GeminiLogicalSimulatorTask,
+)
 from bloqade.lanes.noise_model import generate_simple_noise_model
 
 
@@ -78,111 +82,68 @@ def test_physical_compilation(size: int):
     assert all(len(set(rv)) == 1 for rv in result.observables)
 
 
-def test_no_measurements_run():
-    """Test that no_measurements mode uses detector sampler and produces detectors/observables."""
+def test_run_detectors():
+    """Test that run_detectors uses detector sampler and produces detectors/observables."""
     sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=10, with_noise=False, no_measurements=True)
+    result = sim.run_detectors(main, shots=10, with_noise=False)
 
+    assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
     assert len(result.observables) == 10
     assert result.fidelity_bounds() is not None
     assert result.detector_error_model is not None
 
 
-def test_no_measurements_blocks_measurements_access():
-    """Test that accessing measurements raises ValueError in no_measurements mode."""
+def test_run_detectors_with_noise():
+    """Test run_detectors with noise enabled uses the noisy detector sampler."""
     sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=10, with_noise=False, no_measurements=True)
+    result = sim.run_detectors(main, shots=10, with_noise=True)
 
-    with pytest.raises(ValueError, match="measurements not accessible"):
-        result.measurements
-
-
-def test_no_measurements_blocks_return_values_access():
-    """Test that accessing return_values raises ValueError in no_measurements mode."""
-    sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=10, with_noise=False, no_measurements=True)
-
-    with pytest.raises(ValueError, match="return values not accessible"):
-        result.return_values
-
-
-def test_no_measurements_rejects_non_none_return_type():
-    """Test that no_measurements mode rejects kernels with non-None return type."""
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def returning_kernel():
-        reg = qubit.qalloc(1)
-        squin.h(reg[0])
-        meas = gemini_logical.terminal_measure(reg)
-        return squin.set_observable([meas[0][0], meas[0][1], meas[0][5]], 0)
-
-    sim = GeminiLogicalSimulator()
-    with pytest.raises(ValueError, match="None return type"):
-        sim.task(returning_kernel, no_measurements=True)
-
-
-def test_no_measurements_task_directly():
-    """Test creating a GeminiLogicalSimulatorTask with no_measurements=True."""
-    noise_model = generate_simple_noise_model()
-    task = GeminiLogicalSimulatorTask(main, noise_model, no_measurements=True)
-    result = task.run(shots=5, with_noise=False)
-    assert len(result.detectors) == 5
-    assert len(result.observables) == 5
-
-
-def test_no_measurements_via_task():
-    """Test passing no_measurements to task() on GeminiLogicalSimulator."""
-    sim = GeminiLogicalSimulator()
-    task = sim.task(main, no_measurements=True)
-    result = task.run(shots=5, with_noise=False)
-    assert len(result.detectors) == 5
-    assert len(result.observables) == 5
-    with pytest.raises(ValueError, match="measurements not accessible"):
-        result.measurements
-
-
-def test_no_measurements_with_noise():
-    """Test no_measurements mode with noise enabled uses the noisy detector sampler."""
-    sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=10, with_noise=True, no_measurements=True)
-
+    assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
     assert len(result.observables) == 10
     assert result.fidelity_bounds() is not None
 
 
-def test_no_measurements_run_async():
-    """Test run_async with no_measurements=True returns a Future with valid Result."""
+def test_run_detectors_async():
+    """Test run_detectors_async returns a Future with valid DetectorResult."""
     sim = GeminiLogicalSimulator()
-    future = sim.run_async(main, shots=5, with_noise=False, no_measurements=True)
+    future = sim.run_detectors_async(main, shots=5, with_noise=False)
     result = future.result()
 
+    assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
-    with pytest.raises(ValueError, match="measurements not accessible"):
-        result.measurements
 
 
-def test_no_measurements_blocks_detectors_observables_error_messages():
-    """Test that detectors/observables have distinct error messages in no_measurements mode.
-
-    When Result is constructed via the no_measurements path, detectors and
-    observables are populated directly, so they should not raise. But
-    measurements and return_values should raise with their specific messages.
-    """
+def test_run_detectors_via_task():
+    """Test calling run_detectors on a task directly."""
     sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=5, with_noise=False, no_measurements=True)
+    task = sim.task(main)
+    result = task.run_detectors(shots=5, with_noise=False)
 
-    # detectors and observables should be accessible
+    assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
 
-    # measurements and return_values should raise with distinct messages
-    with pytest.raises(ValueError, match="measurements not accessible"):
-        result.measurements
-    with pytest.raises(ValueError, match="return values not accessible"):
-        result.return_values
+
+def test_run_detectors_task_directly():
+    """Test creating a GeminiLogicalSimulatorTask and calling run_detectors."""
+    noise_model = generate_simple_noise_model()
+    task = GeminiLogicalSimulatorTask(main, noise_model)
+    result = task.run_detectors(shots=5, with_noise=False)
+    assert len(result.detectors) == 5
+    assert len(result.observables) == 5
+
+
+def test_run_detectors_task_async():
+    """Test run_detectors_async directly on GeminiLogicalSimulatorTask."""
+    noise_model = generate_simple_noise_model()
+    task = GeminiLogicalSimulatorTask(main, noise_model)
+    future = task.run_detectors_async(shots=5, with_noise=False)
+    result = future.result()
+    assert len(result.detectors) == 5
+    assert len(result.observables) == 5
 
 
 def test_result_property_caching():
@@ -222,30 +183,6 @@ def test_result_property_caching():
     return_values_first = result.return_values
     return_values_second = result.return_values
     assert return_values_first is return_values_second
-
-
-def test_no_measurements_result_property_caching():
-    """Test that Result properties cache correctly in no_measurements mode."""
-    sim = GeminiLogicalSimulator()
-    result = sim.run(main, shots=5, with_noise=False, no_measurements=True)
-
-    detectors_first = result.detectors
-    detectors_second = result.detectors
-    assert detectors_first is detectors_second
-
-    observables_first = result.observables
-    observables_second = result.observables
-    assert observables_first is observables_second
-
-
-def test_no_measurements_task_run_async():
-    """Test run_async directly on GeminiLogicalSimulatorTask with no_measurements."""
-    noise_model = generate_simple_noise_model()
-    task = GeminiLogicalSimulatorTask(main, noise_model, no_measurements=True)
-    future = task.run_async(shots=5, with_noise=False)
-    result = future.result()
-    assert len(result.detectors) == 5
-    assert len(result.observables) == 5
 
 
 def _steane_matrices(num_qubits: int):
