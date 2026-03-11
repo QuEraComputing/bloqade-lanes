@@ -10,7 +10,6 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.device import (
     DetectorResult,
     GeminiLogicalSimulator,
-    GeminiLogicalSimulatorTask,
     Result,
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
@@ -140,8 +139,8 @@ def test_run_detectors_via_task():
 
 def test_run_detectors_task_directly():
     """Test creating a GeminiLogicalSimulatorTask and calling run(run_detectors=True)."""
-    noise_model = generate_simple_noise_model()
-    task = GeminiLogicalSimulatorTask(main, noise_model)
+    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    task = sim.task(main)
     result = task.run(shots=5, with_noise=False, run_detectors=True)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
@@ -149,8 +148,8 @@ def test_run_detectors_task_directly():
 
 def test_run_detectors_task_async():
     """Test run_async(run_detectors=True) directly on GeminiLogicalSimulatorTask."""
-    noise_model = generate_simple_noise_model()
-    task = GeminiLogicalSimulatorTask(main, noise_model)
+    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    task = sim.task(main)
     future = task.run_async(shots=5, with_noise=False, run_detectors=True)
     result = future.result()
     assert len(result.detectors) == 5

@@ -16,6 +16,7 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.logical_mvp import (
     append_measurements_and_annotations,
     compile_squin_to_move,
@@ -157,30 +158,15 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
+    physical_arch_spec: ArchSpec = field(repr=False)
+    """The physical architecture specification."""
+    physical_move_kernel: ir.Method[[], RetType] = field(repr=False)
+    """The physical move kernel that executes the logical squin kernel on the physical architecture."""
+    _post_processing: atom.PostProcessing[RetType] = field(repr=False)
+    """The post-processing object for extracting detectors, observables, and return values."""
     _thread_pool_executor: ThreadPoolExecutor = field(
         default_factory=ThreadPoolExecutor, init=False
     )
-
-    def __post_init__(self):
-        assert isinstance(self._post_processing, atom.PostProcessing)
-
-    @cached_property
-    def physical_arch_spec(self):
-        """The physical architecture specification."""
-        return generate_arch_hypercube(4)
-
-    @cached_property
-    def physical_move_kernel(self) -> ir.Method[[], RetType]:
-        """The physical move kernel that execute the logical squin kernel on the physical architecture."""
-        return compile_squin_to_move(
-            self.logical_squin_kernel, transversal_rewrite=True
-        )
-
-    @cached_property
-    def _post_processing(self):
-        return atom.AtomInterpreter(
-            self.physical_move_kernel.dialects, arch_spec=self.physical_arch_spec
-        ).get_post_processing(self.physical_move_kernel)
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
@@ -453,9 +439,21 @@ class GeminiLogicalSimulator:
             append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
 
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
+
+        physical_arch_spec = generate_arch_hypercube(4)
+        physical_move_kernel = compile_squin_to_move(
+            logical_squin_kernel, transversal_rewrite=True
+        )
+        post_processing = atom.AtomInterpreter(
+            physical_move_kernel.dialects, arch_spec=physical_arch_spec
+        ).get_post_processing(physical_move_kernel)
+
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
+            physical_arch_spec,
+            physical_move_kernel,
+            post_processing,
         )
 
     @overload
