@@ -94,7 +94,7 @@ class Result(Generic[RetType]):
     def fidelity_bounds(self) -> tuple[float, float]:
         """Return the upper and lower fidelity bounds.
 
-        Note: The upper and lower bounds are related to and branching logic in the kernel.
+        Note: The upper and lower bounds are related to branching logic in the kernel.
 
         Returns:
             tuple[float, float]: The (min, max) fidelity bounds.
@@ -155,6 +155,15 @@ class Result(Generic[RetType]):
 
 @dataclass(frozen=True)
 class GeminiLogicalSimulatorTask(Generic[RetType]):
+    """A compiled simulation task for the Gemini logical simulator.
+
+    Created by :meth:`GeminiLogicalSimulator.task`. The squin-to-move compilation
+    and post-processing extraction are performed eagerly at construction time.
+    Simulation artifacts (physical squin kernel, stim circuits, samplers, detector
+    error model) are computed lazily on first access since they depend on the
+    noise model.
+    """
+
     logical_squin_kernel: ir.Method[[], RetType]
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
@@ -218,7 +227,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def visualize(self, animated: bool = False, interactive: bool = True):
         """Visualize the physical move kernel using the built-in debugger.
 
-        Args
+        Args:
             animated (bool): Whether to use the animated debugger. Defaults to False.
             interactive (bool): Whether to enable interactive mode. Defaults to True.
 
@@ -405,7 +414,16 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
 @dataclass
 class GeminiLogicalSimulator:
+    """Logical simulator targeting the Gemini neutral-atom architecture.
+
+    This is the primary entry point for compiling and simulating logical quantum
+    circuits on the Gemini architecture. Use :meth:`task` to compile a kernel into
+    a reusable :class:`GeminiLogicalSimulatorTask`, or :meth:`run` for one-shot
+    compile-and-execute convenience.
+    """
+
     noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
+    """The noise model used for simulation. Defaults to :func:`generate_simple_noise_model`."""
 
     def task(
         self,
@@ -415,11 +433,17 @@ class GeminiLogicalSimulator:
     ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
 
+        Eagerly compiles the kernel through squin-to-move and extracts post-processing.
+        For CUDA-Q kernels, detector and observable annotation matrices default to
+        Steane [[7,1,3]] parity checks when not provided.
+
         Args:
             logical_kernel (Union[ir.Method[[], RetType], Callable[..., Any]]): The logical
                 squin or CUDA-Q kernel to compile and run.
-            m2dets (list[list[int]] | None): Optional detector annotation matrix for CUDA-Q kernels.
-            m2obs (list[list[int]] | None): Optional observable annotation matrix for CUDA-Q kernels.
+            m2dets (list[list[int]] | None): Binary measurement-to-detector matrix.
+                For CUDA-Q kernels, defaults to Steane [[7,1,3]] detectors if ``None``.
+            m2obs (list[list[int]] | None): Binary measurement-to-observable matrix.
+                For CUDA-Q kernels, defaults to Steane [[7,1,3]] observables if ``None``.
 
         Returns:
             GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.
