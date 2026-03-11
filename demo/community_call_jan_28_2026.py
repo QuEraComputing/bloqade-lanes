@@ -101,7 +101,7 @@ transversal_main.print()
 debugger(transversal_main, arch_spec=physical_arch)
 
 # %%
-from bloqade.lanes.noise_model import generate_simple_noise_model  # noqa F402
+from bloqade.lanes import generate_simple_noise_model  # noqa F402
 from bloqade.lanes.transform import MoveToSquin  # noqa F402
 
 squin_kernel = MoveToSquin(

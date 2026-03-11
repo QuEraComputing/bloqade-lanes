@@ -37,8 +37,8 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @gemini_logical.kernel(verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
-    annotate.set_observable([meas[0], meas[1], meas[5]], index)
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
+    annotate.set_observable([meas[0], meas[1], meas[5]])
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -59,7 +59,7 @@ def main():
 
     for i in range(len(reg)):
         set_detector(measurements[i])
-        set_observable(measurements[i], i)
+        set_observable(measurements[i])
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):

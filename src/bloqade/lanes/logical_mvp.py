@@ -351,6 +351,4 @@ def append_measurements_and_annotations(
                 for idx in indices
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)
-
-            obs_idx = _insert_before(py.Constant(j), return_stmt)
-            _insert_before(SetObservable(meas_list.result, obs_idx.result), return_stmt)
+            _insert_before(SetObservable(meas_list.result), return_stmt)

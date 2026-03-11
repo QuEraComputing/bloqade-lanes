@@ -69,7 +69,7 @@ def test_get_post_processing():
             location_address=move.LocationAddress(0, 0),
         )
         return squin.set_detector([results_1, results_2], [0, 1]), squin.set_observable(
-            [results_1, results_2], 0
+            [results_1, results_2]
         )
 
     interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())

@@ -24,8 +24,8 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @gemini_logical.kernel(verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
-    annotate.set_observable([meas[0], meas[1], meas[5]], index)
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
+    annotate.set_observable([meas[0], meas[1], meas[5]])
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -46,7 +46,7 @@ def main():
 
     for i in range(len(reg)):
         set_detector(measurements[i])
-        set_observable(measurements[i], i)
+        set_observable(measurements[i])
 
 
 @pytest.mark.parametrize("size", [2, 3, 4, 5, 6])
@@ -72,8 +72,7 @@ def test_physical_compilation(size: int):
 
         def set_observable(qubit_index: int):
             return squin.set_observable(
-                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
-                qubit_index,
+                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]]
             )
 
         return ilist.map(set_observable, ilist.range(len(reg)))
@@ -169,8 +168,7 @@ def test_result_property_caching():
 
         def set_observable(qubit_index: int):
             return squin.set_observable(
-                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
-                qubit_index,
+                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]]
             )
 
         return ilist.map(set_observable, ilist.range(len(reg)))
