@@ -31,6 +31,15 @@ from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import squin_to_move
 
+__all__ = [
+    "run_squin_kernel_validation",
+    "compile_squin_to_move",
+    "compile_squin_to_move_and_visualize",
+    "compile_to_physical_squin_noise_model",
+    "compile_to_physical_stim_program",
+    "append_measurements_and_annotations",
+]
+
 
 def run_squin_kernel_validation(mt: ir.Method):
     """
