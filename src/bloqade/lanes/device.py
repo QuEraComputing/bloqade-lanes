@@ -18,6 +18,7 @@ from bloqade.lanes.arch.gemini.logical import steane7_initialize
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.logical_mvp import (
+    _find_qubit_ssas,
     append_measurements_and_annotations,
     compile_squin_to_move,
     run_squin_kernel_validation,
@@ -454,13 +455,7 @@ class GeminiLogicalSimulator:
 
             # Default to Steane [[7,1,3]] annotation matrices when not provided
             if m2dets is None and m2obs is None:
-                from bloqade import qubit
-
-                num_qubits = sum(
-                    1
-                    for s in logical_squin_kernel.callable_region.walk()
-                    if isinstance(s, qubit.stmts.New)
-                )
+                num_qubits = len(_find_qubit_ssas(logical_squin_kernel))
                 m2dets = steane7_m2dets(num_qubits)
                 m2obs = steane7_m2obs(num_qubits)
 
