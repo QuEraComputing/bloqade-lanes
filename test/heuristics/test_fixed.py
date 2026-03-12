@@ -4,7 +4,7 @@ from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import (
     LogicalPlacementStrategy,
     LogicalPlacementStrategyNoHome,
@@ -359,7 +359,7 @@ def test_fixed_invalid_initial_layout_2():
 
 
 def test_initial_layout():
-    layout_heuristic = fixed.LogicalLayoutHeuristic()
+    layout_heuristic = logical_layout.LogicalLayoutHeuristic()
     edges = {(i, j): 1 for i in range(10) for j in range(i + 1, 10, 1)}
 
     edges[(0, 1)] = 10
@@ -583,7 +583,7 @@ def test_initial_layout_variable_word_size(word_size_y):
     from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 
     arch_spec = generate_arch_hypercube(hypercube_dims=1, word_size_y=word_size_y)
-    layout_heuristic = fixed.LogicalLayoutHeuristic()
+    layout_heuristic = logical_layout.LogicalLayoutHeuristic()
     layout_heuristic.arch_spec = arch_spec
 
     num_qubits = word_size_y
