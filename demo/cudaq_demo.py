@@ -1,23 +1,8 @@
 import cudaq  # type: ignore[reportMissingImports]
-import numpy as np
-from scipy.linalg import block_diag
 
-from bloqade.lanes.device import GeminiLogicalSimulator
+from bloqade.lanes import GeminiLogicalSimulator, steane7_m2dets, steane7_m2obs
 
-
-def get_measurement_to_detector_matrices(
-    n: int,
-) -> tuple[list[list[int]], list[list[int]]]:
-    d = np.array([[1, 1, 1, 1, 0, 0, 0], [0, 1, 1, 0, 1, 1, 0], [0, 0, 1, 1, 1, 0, 1]])
-    o = np.array([[1, 1, 0, 0, 0, 1, 0]])
-    m2obs = block_diag(*[o.T] * n)  # shape (n * 7, n) - n * 7 meas, n observables
-    m2dets = block_diag(*[d.T] * n)  # shape (n * 7, n * 3) - n * 7 meas, n * 3 dets
-    assert isinstance(m2dets, np.ndarray)
-    assert isinstance(m2obs, np.ndarray)
-    return m2dets.tolist(), m2obs.tolist()
-
-
-m2dets, m2obs = get_measurement_to_detector_matrices(5)
+m2dets, m2obs = steane7_m2dets(5), steane7_m2obs(5)
 
 
 @cudaq.kernel

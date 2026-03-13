@@ -31,6 +31,16 @@ from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import squin_to_move
 
+__all__ = [
+    "run_squin_kernel_validation",
+    "compile_squin_to_move",
+    "compile_squin_to_move_and_visualize",
+    "compile_to_physical_squin_noise_model",
+    "compile_to_physical_stim_program",
+    "transversal_rewrites",
+    "append_measurements_and_annotations",
+]
+
 
 def run_squin_kernel_validation(mt: ir.Method):
     """
@@ -59,11 +69,14 @@ def run_squin_kernel_validation(mt: ir.Method):
 def transversal_rewrites(mt: ir.Method):
     """Apply transversal rewrite rules to a squin method.
 
+    Expands logical operations into their transversal (physical qubit) equivalents
+    using the Steane [[7,1,3]] transversal map. The method is rewritten in place.
+
     Args:
-        mt (ir.Method): rewrite the method in place.
+        mt (ir.Method): The squin method to rewrite.
 
     Returns:
-        ir.Method: The rewritten method.
+        ir.Method: The rewritten method (same object, mutated in place).
 
     """
 
@@ -87,16 +100,20 @@ def compile_squin_to_move(
     layout_heuristic: LayoutHeuristicABC | None = None,
     insert_return_moves: bool = True,
 ):
-    """
-    Compile a squin kernel to move dialect.
+    """Compile a squin kernel to the move dialect.
 
     Args:
-        mt (ir.Method): The Squin kernel to compile.
+        mt (ir.Method): The squin kernel to compile.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
+        layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
+            placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
+        insert_return_moves (bool, optional): Whether to insert return moves at the end
+            of the program. Defaults to True.
 
     Returns:
         ir.Method: The compiled move dialect method.
+
     """
     if layout_heuristic is None:
         layout_heuristic = fixed.LogicalLayoutHeuristic()
@@ -122,15 +139,17 @@ def compile_squin_to_move_and_visualize(
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ):
-    """
-    Compile a squin kernel to moves and visualize the program.
+    """Compile a squin kernel to moves and visualize the program.
 
     Args:
-        mt (ir.Method): The Squin kernel to compile.
+        mt (ir.Method): The squin kernel to compile.
         interactive (bool, optional): Whether to display the visualization interactively. Defaults to True.
         transversal_rewrite (bool, optional): Whether to apply transversal rewrite rules. Defaults to False.
         animated (bool, optional): Whether to use animated visualization for displaying moves. Defaults to False.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
+        layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
+            placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
+
     """
     # Compile to move dialect
     mt = compile_squin_to_move(
@@ -160,16 +179,19 @@ def compile_to_physical_squin_noise_model(
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> ir.Method:
-    """
-    Compiles a logical squin kernel to a physical squin kernel with noise channels inserted.
+    """Compile a logical squin kernel to a physical squin kernel with noise channels inserted.
 
     Args:
         mt (ir.Method): The logical squin method to compile.
-        noise_model (NoiseModelABC, optional): The noise model to insert during compilation. Defaults to None.
+        noise_model (NoiseModelABC | None, optional): The noise model to insert during
+            compilation. Defaults to ``None`` (uses :func:`generate_simple_noise_model`).
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
+        layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
+            placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
 
     Returns:
-        ir.Method: The compiled physical squin method.
+        ir.Method: The compiled physical squin method with noise channels.
+
     """
     if noise_model is None:
         noise_model = generate_simple_noise_model()
@@ -196,16 +218,19 @@ def compile_to_physical_stim_program(
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> str:
-    """
-    Compiles a logical squin kernel to a physical stim kernel with noise channels inserted.
+    """Compile a logical squin kernel to a Stim program string with noise channels inserted.
 
     Args:
         mt (ir.Method): The logical squin method to compile.
-        noise_model (NoiseModelABC, optional): The noise model to insert during compilation. Defaults to None.
+        noise_model (NoiseModelABC | None, optional): The noise model to insert during
+            compilation. Defaults to ``None`` (uses :func:`generate_simple_noise_model`).
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
+        layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
+            placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
 
     Returns:
-        str: The compiled physical stim program as a string.
+        str: The compiled Stim program as a string.
+
     """
     noise_kernel = compile_to_physical_squin_noise_model(
         mt,
@@ -342,6 +367,4 @@ def append_measurements_and_annotations(
                 for idx in indices
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)
-
-            obs_idx = _insert_before(py.Constant(j), return_stmt)
-            _insert_before(SetObservable(meas_list.result, obs_idx.result), return_stmt)
+            _insert_before(SetObservable(meas_list.result), return_stmt)

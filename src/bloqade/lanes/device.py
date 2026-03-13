@@ -16,7 +16,9 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import steane7_initialize
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.logical_mvp import (
+    _find_qubit_ssas,
     append_measurements_and_annotations,
     compile_squin_to_move,
     run_squin_kernel_validation,
@@ -24,6 +26,7 @@ from bloqade.lanes.logical_mvp import (
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
 
 RetType = TypeVar("RetType")
@@ -92,7 +95,7 @@ class Result(Generic[RetType]):
     def fidelity_bounds(self) -> tuple[float, float]:
         """Return the upper and lower fidelity bounds.
 
-        Note: The upper and lower bounds are related to and branching logic in the kernel.
+        Note: The upper and lower bounds are related to branching logic in the kernel.
 
         Returns:
             tuple[float, float]: The (min, max) fidelity bounds.
@@ -153,34 +156,28 @@ class Result(Generic[RetType]):
 
 @dataclass(frozen=True)
 class GeminiLogicalSimulatorTask(Generic[RetType]):
+    """A compiled simulation task for the Gemini logical simulator.
+
+    Created by :meth:`GeminiLogicalSimulator.task`. The squin-to-move compilation
+    and post-processing extraction are performed eagerly at construction time.
+    Simulation artifacts (physical squin kernel, stim circuits, samplers, detector
+    error model) are computed lazily on first access since they depend on the
+    noise model.
+    """
+
     logical_squin_kernel: ir.Method[[], RetType]
     """The input logical squin kernel to be executed on the Gemini architecture."""
     noise_model: NoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
+    physical_arch_spec: ArchSpec = field(repr=False)
+    """The physical architecture specification."""
+    physical_move_kernel: ir.Method[[], RetType] = field(repr=False)
+    """The physical move kernel that executes the logical squin kernel on the physical architecture."""
+    _post_processing: atom.PostProcessing[RetType] = field(repr=False)
+    """The post-processing object for extracting detectors, observables, and return values."""
     _thread_pool_executor: ThreadPoolExecutor = field(
         default_factory=ThreadPoolExecutor, init=False
     )
-
-    def __post_init__(self):
-        assert isinstance(self._post_processing, atom.PostProcessing)
-
-    @cached_property
-    def physical_arch_spec(self):
-        """The physical architecture specification."""
-        return generate_arch_hypercube(4)
-
-    @cached_property
-    def physical_move_kernel(self) -> ir.Method[[], RetType]:
-        """The physical move kernel that execute the logical squin kernel on the physical architecture."""
-        return compile_squin_to_move(
-            self.logical_squin_kernel, transversal_rewrite=True
-        )
-
-    @cached_property
-    def _post_processing(self):
-        return atom.AtomInterpreter(
-            self.physical_move_kernel.dialects, arch_spec=self.physical_arch_spec
-        ).get_post_processing(self.physical_move_kernel)
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
@@ -231,7 +228,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def visualize(self, animated: bool = False, interactive: bool = True):
         """Visualize the physical move kernel using the built-in debugger.
 
-        Args
+        Args:
             animated (bool): Whether to use the animated debugger. Defaults to False.
             interactive (bool): Whether to enable interactive mode. Defaults to True.
 
@@ -418,7 +415,16 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
 @dataclass
 class GeminiLogicalSimulator:
+    """Logical simulator targeting the Gemini neutral-atom architecture.
+
+    This is the primary entry point for compiling and simulating logical quantum
+    circuits on the Gemini architecture. Use :meth:`task` to compile a kernel into
+    a reusable :class:`GeminiLogicalSimulatorTask`, or :meth:`run` for one-shot
+    compile-and-execute convenience.
+    """
+
     noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
+    """The noise model used for simulation. Defaults to :func:`generate_simple_noise_model`."""
 
     def task(
         self,
@@ -428,34 +434,55 @@ class GeminiLogicalSimulator:
     ) -> GeminiLogicalSimulatorTask[RetType]:
         """Create a simulation task for the given kernel.
 
+        Eagerly compiles the kernel through squin-to-move and extracts post-processing.
+        For CUDA-Q kernels, detector and observable annotation matrices default to
+        Steane [[7,1,3]] parity checks when not provided.
+
         Args:
             logical_kernel (Union[ir.Method[[], RetType], Callable[..., Any]]): The logical
                 squin or CUDA-Q kernel to compile and run.
-            m2dets (list[list[int]] | None): Optional detector annotation matrix for CUDA-Q kernels.
-            m2obs (list[list[int]] | None): Optional observable annotation matrix for CUDA-Q kernels.
+            m2dets (list[list[int]] | None): Binary measurement-to-detector matrix.
+                For CUDA-Q kernels, defaults to Steane [[7,1,3]] detectors if ``None``.
+            m2obs (list[list[int]] | None): Binary measurement-to-observable matrix.
+                For CUDA-Q kernels, defaults to Steane [[7,1,3]] observables if ``None``.
 
         Returns:
             GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.
 
         """
         if is_cudaq_kernel(logical_kernel):
-            if m2dets is None and m2obs is None:
-                raise ValueError(
-                    "At least one of m2dets or m2obs must be provided for CUDA-Q kernels"
-                )
             logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+
+            # Default to Steane [[7,1,3]] annotation matrices when not provided
+            if m2dets is None and m2obs is None:
+                num_qubits = len(_find_qubit_ssas(logical_squin_kernel))
+                m2dets = steane7_m2dets(num_qubits)
+                m2obs = steane7_m2obs(num_qubits)
+
+            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
         elif isinstance(logical_kernel, ir.Method):
             logical_squin_kernel = logical_kernel
+            if m2dets is not None or m2obs is not None:
+                append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
         else:
             raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
 
-        if m2dets is not None or m2obs is not None:
-            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
-
         run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
+
+        physical_arch_spec = generate_arch_hypercube(4)
+        physical_move_kernel = compile_squin_to_move(
+            logical_squin_kernel, transversal_rewrite=True
+        )
+        post_processing = atom.AtomInterpreter(
+            physical_move_kernel.dialects, arch_spec=physical_arch_spec
+        ).get_post_processing(physical_move_kernel)
+
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,
+            physical_arch_spec,
+            physical_move_kernel,
+            post_processing,
         )
 
     @overload

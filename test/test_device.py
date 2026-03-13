@@ -10,10 +10,10 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.device import (
     DetectorResult,
     GeminiLogicalSimulator,
-    GeminiLogicalSimulatorTask,
     Result,
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 
 @gemini_logical.kernel(verify=False)
@@ -24,8 +24,8 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @gemini_logical.kernel(verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
-    annotate.set_observable([meas[0], meas[1], meas[5]], index)
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
+    annotate.set_observable([meas[0], meas[1], meas[5]])
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -46,7 +46,7 @@ def main():
 
     for i in range(len(reg)):
         set_detector(measurements[i])
-        set_observable(measurements[i], i)
+        set_observable(measurements[i])
 
 
 @pytest.mark.parametrize("size", [2, 3, 4, 5, 6])
@@ -72,8 +72,7 @@ def test_physical_compilation(size: int):
 
         def set_observable(qubit_index: int):
             return squin.set_observable(
-                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
-                qubit_index,
+                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]]
             )
 
         return ilist.map(set_observable, ilist.range(len(reg)))
@@ -140,8 +139,8 @@ def test_run_detectors_via_task():
 
 def test_run_detectors_task_directly():
     """Test creating a GeminiLogicalSimulatorTask and calling run(run_detectors=True)."""
-    noise_model = generate_simple_noise_model()
-    task = GeminiLogicalSimulatorTask(main, noise_model)
+    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    task = sim.task(main)
     result = task.run(shots=5, with_noise=False, run_detectors=True)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
@@ -149,8 +148,8 @@ def test_run_detectors_task_directly():
 
 def test_run_detectors_task_async():
     """Test run_async(run_detectors=True) directly on GeminiLogicalSimulatorTask."""
-    noise_model = generate_simple_noise_model()
-    task = GeminiLogicalSimulatorTask(main, noise_model)
+    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    task = sim.task(main)
     future = task.run_async(shots=5, with_noise=False, run_detectors=True)
     result = future.result()
     assert len(result.detectors) == 5
@@ -169,8 +168,7 @@ def test_result_property_caching():
 
         def set_observable(qubit_index: int):
             return squin.set_observable(
-                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]],
-                qubit_index,
+                [meas[qubit_index][0], meas[qubit_index][1], meas[qubit_index][5]]
             )
 
         return ilist.map(set_observable, ilist.range(len(reg)))
@@ -197,20 +195,7 @@ def test_result_property_caching():
 
 
 def _steane_matrices(num_qubits: int):
-    import numpy as np
-    from scipy.linalg import block_diag
-
-    d = np.array(
-        [
-            [1, 1, 1, 1, 0, 0, 0],
-            [0, 1, 1, 0, 1, 1, 0],
-            [0, 0, 1, 1, 1, 0, 1],
-        ]
-    )
-    o = np.array([[1, 1, 0, 0, 0, 1, 0]])
-    m2dets = block_diag(*[d.T] * num_qubits).tolist()  # pyright: ignore
-    m2obs = block_diag(*[o.T] * num_qubits).tolist()  # pyright: ignore
-    return m2dets, m2obs
+    return steane7_m2dets(num_qubits), steane7_m2obs(num_qubits)
 
 
 @pytest.mark.parametrize(

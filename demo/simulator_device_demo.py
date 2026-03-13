@@ -1,15 +1,14 @@
 import math
 from collections import Counter
-from typing import Any
 
 import numpy as np
 from bloqade.decoders import BpLsdDecoder
-from bloqade.decoders.dialects.annotate.types import Detector, Observable
 from bloqade.gemini import logical
+from bloqade.gemini.logical.stdlib import default_post_processing
 from kirin.dialects import ilist
 
-from bloqade import qubit, squin, types
-from bloqade.lanes.device import GeminiLogicalSimulator
+from bloqade import qubit, squin
+from bloqade.lanes import GeminiLogicalSimulator
 
 
 # helper functions to analyze statistical distribution of logical measurements
@@ -34,46 +33,8 @@ def kl_divergence(p_hist: Counter, q_hist: Counter) -> float:
     return divergence
 
 
-@logical.kernel(aggressive_unroll=True, verify=False)
-def set_detector(meas: ilist.IList[types.MeasurementResult, Any]) -> list[Detector]:
-    """
-    Define default detectors for the Steane code.
-    """
-    return [
-        squin.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0]),
-        squin.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1]),
-        squin.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2]),
-    ]
-
-
-@logical.kernel(aggressive_unroll=True, verify=False)
-def set_observable(
-    meas: ilist.IList[types.MeasurementResult, Any], index: int
-) -> Observable:
-    """
-    Define default observables for the Steane code.
-    """
-    return squin.set_observable([meas[0], meas[1], meas[5]], index)
-
-
-@logical.kernel(aggressive_unroll=True, verify=False)
-def default_observe(
-    reg: ilist.IList[qubit.Qubit, Any],
-) -> tuple[list[Detector], list[Observable]]:
-    """
-    A default observe utility function that sets a default set of detectors and observables
-    """
-    measurements = logical.terminal_measure(reg)
-    detectors = []
-    observables = []
-    for i in range(len(reg)):
-        detectors = detectors + set_detector(measurements[i])
-        observables = observables + [set_observable(measurements[i], i)]
-    return detectors, observables
-
-
 @logical.kernel(aggressive_unroll=True)
-def main() -> tuple[list[Detector], list[Observable]]:
+def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
     squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
@@ -86,7 +47,7 @@ def main() -> tuple[list[Detector], list[Observable]]:
     squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
     squin.broadcast.sqrt_y_adj(reg)
 
-    return default_observe(reg)
+    return default_post_processing(reg)
 
 
 task = GeminiLogicalSimulator().task(main)

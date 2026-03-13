@@ -200,8 +200,8 @@ example_kernel.print(analysis=frame.entries)
 
 # %%
 
+from bloqade.lanes import generate_simple_noise_model  # noqa: E402
 from bloqade.lanes.arch.gemini.logical import steane7_initialize  # noqa: E402
-from bloqade.lanes.noise_model import generate_simple_noise_model  # noqa: E402
 from bloqade.lanes.transform import MoveToSquin  # noqa: E402
 
 noise_model = generate_simple_noise_model()

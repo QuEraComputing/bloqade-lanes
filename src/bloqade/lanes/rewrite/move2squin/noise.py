@@ -19,50 +19,75 @@ Len = TypeVar("Len")
 
 
 class NoiseModelABC(abc.ABC):
+    """Abstract base class for noise models used during move-to-squin compilation.
+
+    Subclass this to define custom noise kernels for each physical operation
+    (lane moves, CZ gates, idle periods, local/global rotations). Methods that
+    return ``None`` indicate no noise is inserted for that operation.
+    """
+
     def get_cz_paired_noise(
         self, zone_address: ZoneAddress
     ) -> (
         ir.Method[[ilist.IList[qubit.Qubit, Len], ilist.IList[qubit.Qubit, Len]], None]
         | None
     ):
+        """Return the noise kernel for paired qubits during a CZ gate, or ``None``."""
         return None
 
     def get_global_rz_noise(
         self,
     ) -> ir.Method[[ilist.IList[qubit.Qubit, Any], float], None] | None:
+        """Return the noise kernel for global Rz rotations, or ``None``."""
         return None
 
     def get_local_rz_noise(
         self, locations: Sequence[LocationAddress]
     ) -> ir.Method[[ilist.IList[qubit.Qubit, Any], float], None] | None:
+        """Return the noise kernel for local Rz rotations, or ``None``."""
         return None
 
     def get_global_r_noise(
         self,
     ) -> ir.Method[[ilist.IList[qubit.Qubit, Any], float, float], None] | None:
+        """Return the noise kernel for global R rotations, or ``None``."""
         return None
 
     def get_local_r_noise(
         self, locations: Sequence[LocationAddress]
     ) -> ir.Method[[ilist.IList[qubit.Qubit, Any], float, float], None] | None:
+        """Return the noise kernel for local R rotations, or ``None``."""
         return None
 
     @abc.abstractmethod
-    def get_lane_noise(self, lane: LaneAddress) -> ir.Method[[qubit.Qubit], None]: ...
+    def get_lane_noise(self, lane: LaneAddress) -> ir.Method[[qubit.Qubit], None]:
+        """Return the noise kernel applied to a qubit after a lane move."""
+        ...
 
     @abc.abstractmethod
     def get_bus_idle_noise(
         self, move_type: MoveType, bus_id: int
-    ) -> ir.Method[[ilist.IList[qubit.Qubit, Any]], None]: ...
+    ) -> ir.Method[[ilist.IList[qubit.Qubit, Any]], None]:
+        """Return the noise kernel applied to stationary qubits during a move."""
+        ...
 
     @abc.abstractmethod
     def get_cz_unpaired_noise(
         self, zone_address: ZoneAddress
-    ) -> ir.Method[[ilist.IList[qubit.Qubit, Any]], None]: ...
+    ) -> ir.Method[[ilist.IList[qubit.Qubit, Any]], None]:
+        """Return the noise kernel for unpaired qubits during a CZ gate."""
+        ...
 
 
 @dataclass
 class SimpleNoiseModel(NoiseModelABC):
+    """A concrete noise model that applies the same noise kernel for each operation type.
+
+    Unlike :class:`NoiseModelABC`, which allows different noise per zone or location,
+    this model uses a single kernel per operation category (e.g. one kernel for all
+    lane moves, one for all CZ gates). Created by :func:`~bloqade.lanes.noise_model.generate_simple_noise_model`.
+    """
+
     lane_noise: ir.Method[[qubit.Qubit], None]
     idle_noise: ir.Method[[ilist.IList[qubit.Qubit, Any]], None]
     cz_unpaired_noise: ir.Method[[ilist.IList[qubit.Qubit, Any]], None]
