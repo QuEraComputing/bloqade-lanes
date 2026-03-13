@@ -32,11 +32,7 @@ def patch():
     config = tomllib.loads(content)
     maturin = config.get("tool", {}).get("maturin", {})
     if "python-packages" not in maturin:
-        print(
-            "ERROR: [tool.maturin] python-packages not found in pyproject.toml",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        raise ValueError("[tool.maturin] python-packages not found in pyproject.toml")
 
     # Insert data directive after the python-packages line
     lines = content.splitlines(keepends=True)
@@ -45,11 +41,9 @@ def patch():
             lines.insert(i + 1, f"{DIRECTIVE}\n")
             break
     else:
-        print(
-            "ERROR: Could not locate python-packages line to insert data directive",
-            file=sys.stderr,
+        raise RuntimeError(
+            "Could not locate python-packages line to insert data directive"
         )
-        sys.exit(1)
 
     shutil.copy2(PYPROJECT, BACKUP)
     PYPROJECT.write_text("".join(lines))
@@ -58,8 +52,7 @@ def patch():
 
 def restore():
     if not BACKUP.exists():
-        print(f"No backup found at {BACKUP}", file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError(f"No backup found at {BACKUP}")
 
     BACKUP.replace(PYPROJECT)
     print(f"Restored {PYPROJECT} from backup")
@@ -67,8 +60,7 @@ def restore():
 
 def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ("patch", "restore"):
-        print(f"Usage: {sys.argv[0]} {{patch|restore}}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(f"Usage: {sys.argv[0]} {{patch|restore}}")
 
     {"patch": patch, "restore": restore}[sys.argv[1]]()
 
