@@ -132,9 +132,9 @@ stage-clib release_dir="target/release":
 maturin-with-data args:
     #!/usr/bin/env bash
     set -euo pipefail
-    scripts/patch_pyproject_data.sh patch
-    maturin {{ args }} || { scripts/patch_pyproject_data.sh restore; exit 1; }
-    scripts/patch_pyproject_data.sh restore
+    python3 scripts/patch_pyproject_data.py patch
+    maturin {{ args }} || { python3 scripts/patch_pyproject_data.py restore; exit 1; }
+    python3 scripts/patch_pyproject_data.py restore
 
 # Build the Python wheel with bundled CLI + C library
 build-wheel: build-cli stage-clib

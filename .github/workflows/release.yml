@@ -71,7 +71,7 @@ jobs:
 
       # Temporarily add data directive so maturin includes dist-data/ in the wheel.
       - name: Patch pyproject.toml for bundled artifacts
-        run: scripts/patch_pyproject_data.sh patch
+        run: python3 scripts/patch_pyproject_data.py patch
 
       # manylinux_2_28 targets glibc 2.28+ (AlmaLinux 8 / Ubuntu 20.04+).
       - name: Build wheel
@@ -82,7 +82,7 @@ jobs:
           manylinux: "2_28"
 
       - name: Restore pyproject.toml
-        run: scripts/patch_pyproject_data.sh restore
+        run: python3 scripts/patch_pyproject_data.py restore
 
       - name: Upload wheel
         uses: actions/upload-artifact@v7
