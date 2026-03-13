@@ -1,0 +1,5 @@
+.version 1
+; Invalid: site_id=15 out of range (only 10 sites per word)
+
+const_loc 0x0000000f    ; word 0, site 15
+halt

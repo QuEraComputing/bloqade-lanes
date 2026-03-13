@@ -1,0 +1,12 @@
+[package]
+name = "bloqade-lanes-bytecode-python"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+bloqade-lanes-bytecode-core = { path = "../bloqade-lanes-bytecode-core" }
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }

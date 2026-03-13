@@ -1,0 +1,6 @@
+.version 1
+; Invalid: cz expects zone, but stack has float
+
+const_float 1.0
+cz
+halt

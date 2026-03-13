@@ -1,0 +1,5 @@
+.version 1
+; Invalid: bus_id=20 does not exist (site buses 0-8 only)
+
+const_lane 0x0000001400000000   ; fwd, site_bus, word 0, site 0, bus 20
+halt

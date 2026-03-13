@@ -1,0 +1,10 @@
+.version 1
+; Move 2 lanes on the same word_bus, same direction.
+; word_bus 0: src=[0] dst=[1]
+; sites_with_word_buses: [5,6,7,8,9]
+; mt=1 (word_bus) -> bit 30 of data1 set -> data1=0x40000000
+
+const_lane 0x4000000000000005   ; fwd, word_bus, word 0, site 5, bus 0
+const_lane 0x4000000000000006   ; fwd, word_bus, word 0, site 6, bus 0
+move 2
+halt

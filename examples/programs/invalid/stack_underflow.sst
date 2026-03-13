@@ -1,0 +1,5 @@
+.version 1
+; Invalid: pop on empty stack
+
+pop
+halt

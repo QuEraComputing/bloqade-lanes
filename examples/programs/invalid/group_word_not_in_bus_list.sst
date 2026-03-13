@@ -1,0 +1,8 @@
+.version 1
+; Invalid: site_bus move on word 2, which is NOT in words_with_site_buses [0, 1]
+; Word 2 has no bus connections.
+
+const_lane 0x0000000000020000   ; fwd, site_bus, word 2, site 0, bus 0
+const_lane 0x0000000000020001   ; fwd, site_bus, word 2, site 1, bus 0
+move 2
+halt

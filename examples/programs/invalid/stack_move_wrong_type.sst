@@ -1,0 +1,7 @@
+.version 1
+; Invalid: move expects lane-typed values, but stack has locations
+
+const_loc 0x00000000    ; word 0, site 0
+const_loc 0x00000001    ; word 0, site 1
+move 2
+halt

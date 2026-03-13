@@ -1,0 +1,7 @@
+.version 1
+; Invalid: initial_fill must be the first non-constant instruction
+; halt is a non-constant instruction before initial_fill
+
+halt
+const_loc 0x00000000
+initial_fill 1

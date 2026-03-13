@@ -1,0 +1,6 @@
+.version 1
+; Valid zone address
+; full.json has zone 0
+
+const_zone 0x00000000   ; zone 0
+halt

@@ -1,0 +1,12 @@
+.version 1
+; Valid locations for words 0 and 1 in full.json
+; word 0 has sites 0-9, word 1 has sites 0-9
+
+const_loc 0x00000000    ; word 0, site 0
+const_loc 0x00000005    ; word 0, site 5
+const_loc 0x00000009    ; word 0, site 9
+const_loc 0x00010000    ; word 1, site 0
+const_loc 0x00010005    ; word 1, site 5
+const_loc 0x00010009    ; word 1, site 9
+initial_fill 6
+halt

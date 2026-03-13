@@ -1,0 +1,5 @@
+.version 1
+; Invalid: word_id=5 does not exist (only words 0, 1, and 2)
+
+const_loc 0x00000500    ; word 5, site 0
+halt

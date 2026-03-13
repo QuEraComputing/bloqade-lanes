@@ -1,0 +1,1157 @@
+"""Type stubs for the _native PyO3 extension module."""
+
+from typing import Optional, final
+
+# ── Enums ──
+
+@final
+class Direction:
+    """Atom movement direction along a bus.
+
+    Attributes:
+        Forward: Movement from source to destination (value 0).
+        Backward: Movement from destination to source (value 1).
+    """
+
+    Forward: Direction
+    Backward: Direction
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+
+@final
+class MoveType:
+    """Type of bus used for an atom move operation.
+
+    Attributes:
+        SiteBus: Moves atoms between sites within a word (value 0).
+        WordBus: Moves atoms between words (value 1).
+    """
+
+    SiteBus: MoveType
+    WordBus: MoveType
+    def __eq__(self, other: object) -> bool: ...
+    def __int__(self) -> int: ...
+
+# ── Address Types ──
+
+@final
+class LocationAddr:
+    """Bit-packed atom location address.
+
+    Encodes a physical atom location as ``word_id`` (16 bits) and
+    ``site_id`` (16 bits) into a 32-bit word.
+
+    Layout: ``[word_id:16][site_id:16]``
+
+    Args:
+        word_id (int): Word identifier (0..65535).
+        site_id (int): Site identifier within the word (0..65535).
+    """
+
+    def __init__(self, word_id: int, site_id: int) -> None: ...
+    @property
+    def word_id(self) -> int:
+        """Word identifier."""
+        ...
+
+    @property
+    def site_id(self) -> int:
+        """Site identifier within the word."""
+        ...
+
+    def encode(self) -> int:
+        """Encode to a 32-bit packed integer.
+
+        Returns:
+            int: The 32-bit packed representation.
+        """
+        ...
+
+    @staticmethod
+    def decode(bits: int) -> LocationAddr:
+        """Decode a 32-bit packed integer into a LocationAddr.
+
+        Args:
+            bits (int): The 32-bit packed representation.
+
+        Returns:
+            LocationAddr: The decoded address.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class LaneAddr:
+    """Bit-packed lane address for atom move operations.
+
+    Encodes direction (1 bit), move_type (1 bit), word_id (16 bits),
+    site_id (16 bits), and bus_id (16 bits) across two 32-bit data words,
+    returned as a combined 64-bit value.
+
+    Layout:
+        data0: ``[word_id:16][site_id:16]``
+        data1: ``[dir:1][mt:1][pad:14][bus_id:16]``
+
+    Args:
+        direction (Direction): Forward or Backward.
+        move_type (MoveType): SiteBus or WordBus.
+        word_id (int): Word identifier (0..65535).
+        site_id (int): Site identifier within the word (0..65535).
+        bus_id (int): Bus identifier (0..65535).
+    """
+
+    def __init__(
+        self,
+        direction: Direction,
+        move_type: MoveType,
+        word_id: int,
+        site_id: int,
+        bus_id: int,
+    ) -> None: ...
+    @property
+    def direction(self) -> Direction:
+        """Movement direction (Forward or Backward)."""
+        ...
+
+    @property
+    def move_type(self) -> MoveType:
+        """Bus type (SiteBus or WordBus)."""
+        ...
+
+    @property
+    def word_id(self) -> int:
+        """Word identifier."""
+        ...
+
+    @property
+    def site_id(self) -> int:
+        """Site identifier within the word."""
+        ...
+
+    @property
+    def bus_id(self) -> int:
+        """Bus identifier."""
+        ...
+
+    def encode(self) -> int:
+        """Encode to a 64-bit packed integer.
+
+        Returns:
+            int: The 64-bit packed representation (data0 | data1 << 32).
+        """
+        ...
+
+    @staticmethod
+    def decode(bits: int) -> LaneAddr:
+        """Decode a 64-bit packed integer into a LaneAddr.
+
+        Args:
+            bits (int): The 64-bit packed representation.
+
+        Returns:
+            LaneAddr: The decoded address.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
+class ZoneAddr:
+    """Bit-packed zone address.
+
+    Encodes a zone identifier (16 bits) into a 32-bit value.
+
+    Layout: ``[pad:16][zone_id:16]``
+
+    Args:
+        zone_id (int): Zone identifier (0..65535).
+    """
+
+    def __init__(self, zone_id: int) -> None: ...
+    @property
+    def zone_id(self) -> int:
+        """Zone identifier."""
+        ...
+
+    def encode(self) -> int:
+        """Encode to a 32-bit packed integer.
+
+        Returns:
+            int: The 32-bit packed representation.
+        """
+        ...
+
+    @staticmethod
+    def decode(bits: int) -> ZoneAddr:
+        """Decode a 32-bit packed integer into a ZoneAddr.
+
+        Args:
+            bits (int): The 32-bit packed representation.
+
+        Returns:
+            ZoneAddr: The decoded address.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
+# ── Arch Spec Types ──
+
+@final
+class Grid:
+    """Coordinate grid defining physical positions for atom sites.
+
+    A grid defines positions via a start coordinate and spacing values.
+    The x-coordinates are ``[x_start, x_start + x_spacing[0], ...]``
+    (cumulative sum of spacings from the start). Same for y.
+
+    Args:
+        x_start (float): X-coordinate of the first grid point.
+        y_start (float): Y-coordinate of the first grid point.
+        x_spacing (list[float]): Spacing between consecutive x-coordinates.
+        y_spacing (list[float]): Spacing between consecutive y-coordinates.
+    """
+
+    def __init__(
+        self,
+        x_start: float,
+        y_start: float,
+        x_spacing: list[float],
+        y_spacing: list[float],
+    ) -> None: ...
+    @classmethod
+    def from_positions(cls, x_positions: list[float], y_positions: list[float]) -> Grid:
+        """Construct a Grid from explicit position arrays.
+
+        The first element becomes the start value and consecutive differences
+        become the spacing vector.
+
+        Args:
+            x_positions (list[float]): X-coordinates (at least one element).
+            y_positions (list[float]): Y-coordinates (at least one element).
+
+        Returns:
+            Grid: The constructed grid.
+
+        Raises:
+            ValueError: If either list is empty.
+        """
+        ...
+
+    @property
+    def num_x(self) -> int:
+        """Number of x-axis grid points (``len(x_spacing) + 1``)."""
+        ...
+
+    @property
+    def num_y(self) -> int:
+        """Number of y-axis grid points (``len(y_spacing) + 1``)."""
+        ...
+
+    @property
+    def x_start(self) -> float:
+        """X-coordinate of the first grid point."""
+        ...
+
+    @property
+    def y_start(self) -> float:
+        """Y-coordinate of the first grid point."""
+        ...
+
+    @property
+    def x_spacing(self) -> list[float]:
+        """Spacing between consecutive x-coordinates."""
+        ...
+
+    @property
+    def y_spacing(self) -> list[float]:
+        """Spacing between consecutive y-coordinates."""
+        ...
+
+    @property
+    def x_positions(self) -> list[float]:
+        """Computed x-axis coordinate values."""
+        ...
+
+    @property
+    def y_positions(self) -> list[float]:
+        """Computed y-axis coordinate values."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class Word:
+    """A group of atom sites that share a coordinate grid.
+
+    Each word contains a fixed number of sites (determined by
+    ``Geometry.sites_per_word``). Sites are positioned on the word's
+    grid via ``(x_idx, y_idx)`` index pairs.
+
+    Args:
+        grid (Grid): Coordinate grid for this word's sites.
+        sites (list[tuple[int, int]]): Site positions as ``(x_idx, y_idx)`` grid index pairs.
+        cz_pairs (Optional[list[tuple[int, int]]]): Pairs of site indices that can
+            perform CZ gates, default = None.
+
+    Note: A word's identity is determined by its position in the ``Geometry.words`` list.
+    """
+
+    def __init__(
+        self,
+        grid: Grid,
+        sites: list[tuple[int, int]],
+        cz_pairs: Optional[list[tuple[int, int]]] = None,
+    ) -> None: ...
+    @property
+    def grid(self) -> Grid:
+        """Coordinate grid for this word's sites."""
+        ...
+
+    @property
+    def sites(self) -> list[tuple[int, int]]:
+        """Site positions as ``(x_idx, y_idx)`` grid index pairs."""
+        ...
+
+    @property
+    def cz_pairs(self) -> Optional[list[tuple[int, int]]]:
+        """Pairs of site indices that can perform CZ gates, or None."""
+        ...
+
+    def site_position(self, site_idx: int) -> Optional[tuple[float, float]]:
+        """Look up the ``(x, y)`` physical position of a site by index.
+
+        Args:
+            site_idx (int): Index of the site within this word.
+
+        Returns:
+            tuple[float, float]: The ``(x, y)`` physical position, or None if out of range.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class Bus:
+    """A transport bus that maps source positions to destination positions.
+
+    The ``src`` and ``dst`` lists are parallel arrays: ``src[i]`` maps to
+    ``dst[i]``. For site buses, values are site indices within a word. For
+    word buses, values are word IDs. Whether a bus is a site bus or word bus
+    is determined by which list it belongs to in ``Buses``.
+
+    Args:
+        src (list[int]): Source indices (site indices for site buses, word IDs for word buses).
+        dst (list[int]): Destination indices.
+
+    Note: A bus's identity is determined by its position in the parent list.
+    """
+
+    def __init__(self, src: list[int], dst: list[int]) -> None: ...
+    @property
+    def src(self) -> list[int]:
+        """Source indices."""
+        ...
+
+    @property
+    def dst(self) -> list[int]:
+        """Destination indices."""
+        ...
+
+    def resolve_forward(self, src: int) -> Optional[int]:
+        """Map a source value to its destination.
+
+        Args:
+            src (int): Source index to look up.
+
+        Returns:
+            int: The corresponding destination index, or None if not found.
+        """
+        ...
+
+    def resolve_backward(self, dst: int) -> Optional[int]:
+        """Map a destination value back to its source.
+
+        Args:
+            dst (int): Destination index to look up.
+
+        Returns:
+            int: The corresponding source index, or None if not found.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class Buses:
+    """Container for all site buses and word buses in an architecture.
+
+    Args:
+        site_buses (list[Bus]): Site bus definitions.
+        word_buses (list[Bus]): Word bus definitions.
+    """
+
+    def __init__(self, site_buses: list[Bus], word_buses: list[Bus]) -> None: ...
+    @property
+    def site_buses(self) -> list[Bus]:
+        """All site bus definitions."""
+        ...
+
+    @property
+    def word_buses(self) -> list[Bus]:
+        """All word bus definitions."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class Zone:
+    """A group of words that form a logical zone.
+
+    Zones partition words for operations like entangling gates and
+    measurement. Zone 0 must contain all words.
+
+    Args:
+        words (list[int]): Word identifiers belonging to this zone.
+
+    Note: A zone's identity is determined by its position in the ``ArchSpec.zones`` list.
+    """
+
+    def __init__(self, words: list[int]) -> None: ...
+    @property
+    def words(self) -> list[int]:
+        """Word identifiers belonging to this zone."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class Geometry:
+    """Device geometry: the set of words and their site layout.
+
+    Args:
+        sites_per_word (int): Number of atom sites in each word.
+        words (list[Word]): Word definitions.
+    """
+
+    def __init__(self, sites_per_word: int, words: list[Word]) -> None: ...
+    @property
+    def sites_per_word(self) -> int:
+        """Number of atom sites in each word."""
+        ...
+
+    @property
+    def words(self) -> list[Word]:
+        """All word definitions."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class TransportPath:
+    """A transport path for a lane, defined by waypoints.
+
+    The lane is identified by a ``LaneAddr`` which encodes the direction,
+    move type, word, site, and bus.
+
+    Args:
+        lane (LaneAddr): Lane address identifying the transport lane.
+        waypoints (list[tuple[float, float]]): Sequence of ``(x, y)`` coordinate waypoints.
+
+    Note: In JSON, the lane is serialized as a 16-digit hex string (e.g. ``"0xC000000000010000"``).
+    """
+
+    def __init__(
+        self,
+        lane: LaneAddr,
+        waypoints: list[tuple[float, float]],
+    ) -> None: ...
+    @property
+    def lane(self) -> LaneAddr:
+        """Decoded lane address."""
+        ...
+
+    @property
+    def lane_encoded(self) -> int:
+        """Raw encoded lane address as a 64-bit integer."""
+        ...
+
+    @property
+    def waypoints(self) -> list[tuple[float, float]]:
+        """Sequence of ``(x, y)`` coordinate waypoints."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class ArchSpec:
+    """Architecture specification for a quantum device.
+
+    Describes the full hardware topology: geometry (words, sites, grids),
+    bus connectivity, zones, and operational constraints. Can be loaded
+    from JSON or constructed programmatically.
+
+    Args:
+        version (tuple[int, int]): Spec version as ``(major, minor)``.
+        geometry (Geometry): Device geometry (words and sites).
+        buses (Buses): Bus connectivity (site buses and word buses).
+        words_with_site_buses (list[int]): Word IDs that participate in site-bus moves.
+        sites_with_word_buses (list[int]): Site indices that participate in word-bus moves.
+        zones (list[Zone]): Zone definitions partitioning words.
+        entangling_zones (list[int]): Zone IDs where entangling gates are allowed.
+        measurement_mode_zones (list[int]): Zone IDs for measurement (first must be zone 0).
+        paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
+    """
+
+    def __init__(
+        self,
+        version: tuple[int, int],
+        geometry: Geometry,
+        buses: Buses,
+        words_with_site_buses: list[int],
+        sites_with_word_buses: list[int],
+        zones: list[Zone],
+        entangling_zones: list[int],
+        measurement_mode_zones: list[int],
+        paths: Optional[list[TransportPath]] = None,
+    ) -> None: ...
+    @staticmethod
+    def from_json(json: str) -> ArchSpec:
+        """Parse an architecture spec from a JSON string.
+
+        Args:
+            json (str): JSON string containing the architecture spec.
+
+        Returns:
+            ArchSpec: The parsed architecture spec.
+
+        Raises:
+            ValueError: If the JSON is malformed or missing required fields.
+        """
+        ...
+
+    @staticmethod
+    def from_json_validated(json: str) -> ArchSpec:
+        """Parse an architecture spec from JSON and validate it.
+
+        Equivalent to calling ``from_json()`` followed by ``validate()``.
+
+        Args:
+            json (str): JSON string containing the architecture spec.
+
+        Returns:
+            ArchSpec: The parsed and validated architecture spec.
+
+        Raises:
+            ValueError: If the JSON is malformed or missing required fields.
+            ArchSpecError: If structural validation fails.
+        """
+        ...
+
+    def validate(self) -> None:
+        """Validate the architecture specification.
+
+        Checks structural constraints (zone coverage, bus consistency,
+        site/word bounds, etc.). Collects all errors and raises once
+        with the full list.
+
+        Raises:
+            ArchSpecError: With ``.errors`` list containing individual
+                error subclass instances.
+        """
+        ...
+
+    @property
+    def version(self) -> tuple[int, int]:
+        """Spec version as ``(major, minor)``."""
+        ...
+
+    @property
+    def geometry(self) -> Geometry:
+        """Device geometry."""
+        ...
+
+    @property
+    def buses(self) -> Buses:
+        """Bus connectivity."""
+        ...
+
+    @property
+    def words_with_site_buses(self) -> list[int]:
+        """Word IDs that participate in site-bus moves."""
+        ...
+
+    @property
+    def sites_with_word_buses(self) -> list[int]:
+        """Site indices that participate in word-bus moves."""
+        ...
+
+    @property
+    def zones(self) -> list[Zone]:
+        """Zone definitions."""
+        ...
+
+    @property
+    def entangling_zones(self) -> list[int]:
+        """Zone IDs where entangling gates are allowed."""
+        ...
+
+    @property
+    def measurement_mode_zones(self) -> list[int]:
+        """Zone IDs for measurement mode."""
+        ...
+
+    @property
+    def paths(self) -> Optional[list[TransportPath]]:
+        """Transport paths between locations, or None."""
+        ...
+
+    def word_by_id(self, id: int) -> Optional[Word]:
+        """Look up a word by its index.
+
+        Args:
+            id (int): Word index in ``geometry.words``.
+
+        Returns:
+            Word: The word, or None if not found.
+        """
+        ...
+
+    def zone_by_id(self, id: int) -> Optional[Zone]:
+        """Look up a zone by its index.
+
+        Args:
+            id (int): Zone index in ``zones``.
+
+        Returns:
+            Zone: The zone, or None if not found.
+        """
+        ...
+
+    def site_bus_by_id(self, id: int) -> Optional[Bus]:
+        """Look up a site bus by its index.
+
+        Args:
+            id (int): Site bus index in ``buses.site_buses``.
+
+        Returns:
+            Bus: The site bus, or None if not found.
+        """
+        ...
+
+    def word_bus_by_id(self, id: int) -> Optional[Bus]:
+        """Look up a word bus by its index.
+
+        Args:
+            id (int): Word bus index in ``buses.word_buses``.
+
+        Returns:
+            Bus: The word bus, or None if not found.
+        """
+        ...
+
+    def location_position(self, loc: LocationAddr) -> Optional[tuple[float, float]]:
+        """Get the ``(x, y)`` physical position for an atom location.
+
+        Args:
+            loc (LocationAddr): The location address to look up.
+
+        Returns:
+            tuple[float, float]: The ``(x, y)`` position, or None if the word or site
+                is not found.
+        """
+        ...
+
+    def lane_endpoints(
+        self, lane: LaneAddr
+    ) -> Optional[tuple[LocationAddr, LocationAddr]]:
+        """Resolve a lane address to its source and destination locations.
+
+        Traces through the appropriate bus (site bus or word bus) in the
+        specified direction (forward or backward) to determine which two
+        ``LocationAddr`` endpoints the lane connects.
+
+        Args:
+            lane (LaneAddr): The lane address to resolve.
+
+        Returns:
+            tuple[LocationAddr, LocationAddr]: A ``(src, dst)`` pair, or None if the
+                lane references an invalid bus, word, or site.
+        """
+        ...
+
+    def check_zone(self, addr: ZoneAddr) -> Optional[str]:
+        """Check whether a zone address is valid.
+
+        Args:
+            addr (ZoneAddr): The zone address to check.
+
+        Returns:
+            str: An error message if invalid, or None if valid.
+        """
+        ...
+
+    def check_locations(self, locations: list[LocationAddr]) -> list[Exception]:
+        """Validate a group of location addresses against this architecture.
+
+        Checks for duplicate addresses and invalid word/site combinations.
+
+        Args:
+            locations (list[LocationAddr]): Location addresses to validate.
+
+        Returns:
+            list[Exception]: ``LocationGroupError`` subclass instances (empty if all valid).
+        """
+        ...
+
+    def check_lanes(self, lanes: list[LaneAddr]) -> list[Exception]:
+        """Validate a group of lane addresses against this architecture.
+
+        Checks for duplicates, invalid addresses, bus consistency, and
+        AOD constraints.
+
+        Args:
+            lanes (list[LaneAddr]): Lane addresses to validate.
+
+        Returns:
+            list[Exception]: ``LaneGroupError`` subclass instances (empty if all valid).
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+# ── Instruction ──
+
+@final
+class Instruction:
+    """A single bytecode instruction.
+
+    Instructions are created via static factory methods -- there is no
+    direct constructor. All instances are immutable.
+
+    Instruction categories:
+
+    - **Constants**: Push typed values onto the stack.
+    - **Stack**: Manipulate the operand stack (pop, dup, swap).
+    - **Atom ops**: Fill sites and move atoms (initial_fill, fill, move).
+    - **Gates**: Quantum gate operations (local_r, local_rz, global_r, global_rz, cz).
+    - **Measurement**: Measure atoms and await results.
+    - **Arrays**: Construct and index arrays (new_array, get_item).
+    - **Data**: Build detector and observable records.
+    - **Control flow**: Return and halt.
+    """
+
+    # -- Constants --
+
+    @staticmethod
+    def const_float(value: float) -> Instruction:
+        """Push a 64-bit float constant onto the stack.
+
+        Args:
+            value (float): The float value to push.
+
+        Returns:
+            Instruction: The constant instruction.
+        """
+        ...
+
+    @staticmethod
+    def const_int(value: int) -> Instruction:
+        """Push a 64-bit signed integer constant onto the stack.
+
+        Args:
+            value (int): The signed integer value to push.
+
+        Returns:
+            Instruction: The constant instruction.
+        """
+        ...
+
+    @staticmethod
+    def const_loc(word_id: int, site_id: int) -> Instruction:
+        """Push a location address constant onto the stack.
+
+        Args:
+            word_id (int): Word identifier (0..255).
+            site_id (int): Site identifier (0..255).
+
+        Returns:
+            Instruction: The constant instruction.
+        """
+        ...
+
+    @staticmethod
+    def const_lane(
+        direction: Direction,
+        move_type: MoveType,
+        word_id: int,
+        site_id: int,
+        bus_id: int,
+    ) -> Instruction:
+        """Push a lane address constant onto the stack.
+
+        Args:
+            direction (Direction): Forward or Backward.
+            move_type (MoveType): SiteBus or WordBus.
+            word_id (int): Word identifier (0..255).
+            site_id (int): Site identifier (0..255).
+            bus_id (int): Bus identifier (0..255).
+
+        Returns:
+            Instruction: The constant instruction.
+        """
+        ...
+
+    @staticmethod
+    def const_zone(zone_id: int) -> Instruction:
+        """Push a zone address constant onto the stack.
+
+        Args:
+            zone_id (int): Zone identifier (0..255).
+
+        Returns:
+            Instruction: The constant instruction.
+        """
+        ...
+    # -- Stack manipulation --
+
+    @staticmethod
+    def pop() -> Instruction:
+        """Pop and discard the top stack value.
+
+        Returns:
+            Instruction: The pop instruction.
+        """
+        ...
+
+    @staticmethod
+    def dup() -> Instruction:
+        """Duplicate the top stack value.
+
+        Returns:
+            Instruction: The dup instruction.
+        """
+        ...
+
+    @staticmethod
+    def swap() -> Instruction:
+        """Swap the top two stack values.
+
+        Returns:
+            Instruction: The swap instruction.
+        """
+        ...
+    # -- Atom operations --
+
+    @staticmethod
+    def initial_fill(arity: int) -> Instruction:
+        """Initial atom fill. Must be the first non-constant instruction.
+
+        Pops ``arity`` location addresses from the stack.
+
+        Args:
+            arity (int): Number of location addresses to pop.
+
+        Returns:
+            Instruction: The initial_fill instruction.
+        """
+        ...
+
+    @staticmethod
+    def fill(arity: int) -> Instruction:
+        """Fill atom sites.
+
+        Pops ``arity`` location addresses from the stack.
+
+        Args:
+            arity (int): Number of location addresses to pop.
+
+        Returns:
+            Instruction: The fill instruction.
+        """
+        ...
+
+    @staticmethod
+    def move_(arity: int) -> Instruction:
+        """Move atoms along lanes.
+
+        Pops ``arity`` lane addresses from the stack.
+
+        Args:
+            arity (int): Number of lane addresses to pop.
+
+        Returns:
+            Instruction: The move instruction.
+
+        Note: Named ``move_`` to avoid shadowing the Python builtin.
+        """
+        ...
+    # -- Gate operations --
+
+    @staticmethod
+    def local_r(arity: int) -> Instruction:
+        """Local R rotation gate on ``arity`` locations.
+
+        Pops ``arity`` locations, then theta and phi angles from the stack.
+
+        Args:
+            arity (int): Number of locations to apply the gate to.
+
+        Returns:
+            Instruction: The local_r instruction.
+        """
+        ...
+
+    @staticmethod
+    def local_rz(arity: int) -> Instruction:
+        """Local Rz rotation gate on ``arity`` locations.
+
+        Pops ``arity`` locations, then a phi angle from the stack.
+
+        Args:
+            arity (int): Number of locations to apply the gate to.
+
+        Returns:
+            Instruction: The local_rz instruction.
+        """
+        ...
+
+    @staticmethod
+    def global_r() -> Instruction:
+        """Global R rotation gate.
+
+        Pops theta and phi angles from the stack.
+
+        Returns:
+            Instruction: The global_r instruction.
+        """
+        ...
+
+    @staticmethod
+    def global_rz() -> Instruction:
+        """Global Rz rotation gate.
+
+        Pops a phi angle from the stack.
+
+        Returns:
+            Instruction: The global_rz instruction.
+        """
+        ...
+
+    @staticmethod
+    def cz() -> Instruction:
+        """CZ entangling gate.
+
+        Pops a zone address from the stack.
+
+        Returns:
+            Instruction: The cz instruction.
+        """
+        ...
+    # -- Measurement --
+
+    @staticmethod
+    def measure(arity: int) -> Instruction:
+        """Measure atoms at ``arity`` locations.
+
+        Pops ``arity`` location addresses from the stack.
+
+        Args:
+            arity (int): Number of locations to measure.
+
+        Returns:
+            Instruction: The measure instruction.
+        """
+        ...
+
+    @staticmethod
+    def await_measure() -> Instruction:
+        """Block until the most recent measurement completes.
+
+        Returns:
+            Instruction: The await_measure instruction.
+        """
+        ...
+    # -- Array operations --
+
+    @staticmethod
+    def new_array(type_tag: int, dim0: int, dim1: int = 0) -> Instruction:
+        """Create a new array.
+
+        Args:
+            type_tag (int): Element type tag.
+            dim0 (int): First dimension size (must be > 0).
+            dim1 (int): Second dimension size, default = 0 (1-D array).
+
+        Returns:
+            Instruction: The new_array instruction.
+        """
+        ...
+
+    @staticmethod
+    def get_item(ndims: int) -> Instruction:
+        """Index into an array.
+
+        Pops ``ndims`` index values then the array from the stack.
+
+        Args:
+            ndims (int): Number of index dimensions to pop.
+
+        Returns:
+            Instruction: The get_item instruction.
+        """
+        ...
+    # -- Data construction --
+
+    @staticmethod
+    def set_detector() -> Instruction:
+        """Build a detector record from the top-of-stack array.
+
+        Returns:
+            Instruction: The set_detector instruction.
+        """
+        ...
+
+    @staticmethod
+    def set_observable() -> Instruction:
+        """Build an observable record from the top-of-stack array.
+
+        Returns:
+            Instruction: The set_observable instruction.
+        """
+        ...
+    # -- Control flow --
+
+    @staticmethod
+    def return_() -> Instruction:
+        """Return from the current program.
+
+        Returns:
+            Instruction: The return instruction.
+
+        Note: Named ``return_`` to avoid shadowing the Python keyword.
+        """
+        ...
+
+    @staticmethod
+    def halt() -> Instruction:
+        """Halt execution.
+
+        Returns:
+            Instruction: The halt instruction.
+        """
+        ...
+    # -- Instance members --
+
+    @property
+    def opcode(self) -> int:
+        """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
+# ── Program ──
+
+@final
+class Program:
+    """A bytecode program consisting of a version and instruction sequence.
+
+    Programs can be constructed directly, parsed from SST text assembly,
+    or deserialized from BLQD binary format.
+
+    Args:
+        version (tuple[int, int]): Program version as ``(major, minor)``.
+        instructions (list[Instruction]): Instructions in execution order.
+    """
+
+    def __init__(
+        self, version: tuple[int, int], instructions: list[Instruction]
+    ) -> None: ...
+    @staticmethod
+    def from_text(source: str) -> Program:
+        """Parse a program from SST text assembly format.
+
+        Args:
+            source (str): SST text assembly source.
+
+        Returns:
+            Program: The parsed program.
+
+        Raises:
+            ParseError: If the source text is malformed.
+        """
+        ...
+
+    def to_text(self) -> str:
+        """Serialize the program to SST text assembly format.
+
+        Returns:
+            str: The SST text representation.
+        """
+        ...
+
+    @staticmethod
+    def from_binary(data: bytes) -> Program:
+        """Deserialize a program from BLQD binary format.
+
+        Args:
+            data (bytes): Raw BLQD binary data.
+
+        Returns:
+            Program: The deserialized program.
+
+        Raises:
+            ProgramError: If the binary data is malformed.
+        """
+        ...
+
+    def to_binary(self) -> bytes:
+        """Serialize the program to BLQD binary format.
+
+        Returns:
+            bytes: The BLQD binary representation.
+        """
+        ...
+
+    def validate(self, arch: Optional[ArchSpec] = None, stack: bool = False) -> None:
+        """Validate the program.
+
+        Validation runs in layers:
+        - **Structural** (always): operand bounds, arity limits, instruction ordering.
+        - **Architecture** (when ``arch`` is provided): address validity against the device spec.
+        - **Stack simulation** (when ``stack=True``): type checking via abstract interpretation.
+
+        All errors are collected before raising.
+
+        Args:
+            arch (Optional[ArchSpec]): Architecture spec for address validation, default = None.
+            stack (bool): If True, run stack type simulation (uses ``arch`` if provided),
+                default = False.
+
+        Raises:
+            ValidationError: With ``.errors`` list containing individual
+                error subclass instances.
+        """
+        ...
+
+    @property
+    def version(self) -> tuple[int, int]:
+        """Program version as ``(major, minor)``."""
+        ...
+
+    @property
+    def instructions(self) -> list[Instruction]:
+        """Instructions in execution order."""
+        ...
+
+    def __repr__(self) -> str: ...
+    def __len__(self) -> int:
+        """Number of instructions in the program."""
+        ...
+
+    def __eq__(self, other: object) -> bool: ...

@@ -1,0 +1,9 @@
+.version 1
+; Invalid: word_bus move with site_id not in sites_with_word_buses
+; sites_with_word_buses: [5,6,7,8,9] -- site 0 is NOT in the list
+; mt=1 (word_bus) -> bit 30 of data1 -> data1=0x40000000
+
+const_lane 0x4000000000000000   ; fwd, word_bus, word 0, site 0, bus 0
+const_lane 0x4000000000000001   ; fwd, word_bus, word 0, site 1, bus 0
+move 2
+halt

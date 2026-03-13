@@ -1,0 +1,30 @@
+{
+    "version": 1,
+    "geometry": {
+        "sites_per_word": 5,
+        "words": [
+            {
+                "grid": {
+                    "x_start": 1.0,
+                    "y_start": 2.0,
+                    "x_spacing": [2.0, 2.0, 2.0, 2.0],
+                    "y_spacing": []
+                },
+                "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]
+            }
+        ]
+    },
+    "buses": {
+        "site_buses": [
+            { "src": [0, 1], "dst": [3, 4] }
+        ],
+        "word_buses": []
+    },
+    "words_with_site_buses": [0],
+    "sites_with_word_buses": [],
+    "zones": [
+        { "words": [0] }
+    ],
+    "entangling_zones": [],
+    "measurement_mode_zones": [0]
+}

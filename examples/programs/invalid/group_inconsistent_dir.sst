@@ -1,0 +1,9 @@
+.version 1
+; Invalid: move group has lanes with different direction
+; Lane 0: forward, Lane 1: backward
+; dir=1 (backward) sets bit 31 of data1 -> data1=0x80000000
+
+const_lane 0x0000000000000000   ; fwd, site_bus, word 0, site 0, bus 0
+const_lane 0x8000000000000001   ; bwd, site_bus, word 0, site 1, bus 0
+move 2
+halt

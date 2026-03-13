@@ -1,0 +1,6 @@
+.version 1
+; Invalid: initial_fill expects location, but stack has float
+
+const_float 1.0
+initial_fill 1
+halt
