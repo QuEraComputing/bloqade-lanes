@@ -109,10 +109,6 @@ test: test-rust test-python
 clean-staged:
     rm -rf dist-data
 
-# Bump patch version on a release branch, commit, and tag
-release-patch:
-    ./scripts/release_patch.sh
-
 # Full clean
 clean: clean-staged
     cargo clean
