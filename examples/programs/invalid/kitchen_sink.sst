@@ -1,0 +1,17 @@
+.version 1
+; Multiple errors in one file to demonstrate multi-error collection.
+
+; Error 1: invalid location (word 5 doesn't exist)
+const_loc 0x00000500    ; word 5, site 0
+
+; Error 2: invalid zone (zone 5 doesn't exist)
+const_zone 0x00000005   ; zone 5
+
+; Error 3: type mismatch -- cz expects zone, gets float
+const_float 99.0
+cz
+
+; Error 4: stack underflow -- pop on empty stack
+pop
+
+halt

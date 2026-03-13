@@ -1,0 +1,12 @@
+[package]
+name = "bloqade-lanes-bytecode-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "bloqade_lanes_bytecode_core"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

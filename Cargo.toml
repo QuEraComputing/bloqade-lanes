@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/bloqade-lanes-bytecode-core",
+    "crates/bloqade-lanes-bytecode-python",
+    "crates/bloqade-lanes-bytecode-cli",
+]
+resolver = "2"

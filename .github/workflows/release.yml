@@ -1,90 +1,172 @@
-name: Publish Python 🐍 distribution 📦 to PyPI and TestPyPI
+name: Publish Python distribution to PyPI
 
-on: push
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build wheels only — skip publish and release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   build:
-    name: Build distribution 📦
-    runs-on: ubuntu-latest
+    name: Build wheel (${{ matrix.target }} on ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        # Install a specific version of uv.
-        version: "0.5.5"
-    - name: Install the project
-      run: uv sync --all-extras
-    - name: Build distribution 📦
-      run: uv build
-    - name: Store the distribution packages
-      uses: actions/upload-artifact@v7
-      with:
-        name: python-package-distributions
-        path: dist/
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Build the CLI crate and stage C lib artifacts before maturin
+      # runs, so they get included in the wheel via data = "dist-data".
+      - name: Build CLI + C library
+        if: ${{ !startsWith(matrix.target, 'aarch64-unknown-linux') }}
+        run: just build-cli stage-clib
+
+      # For Linux aarch64 cross-compilation, the CLI crate must be
+      # cross-compiled separately since maturin-action handles PyO3
+      # in a container but stage-clib runs on the host.
+      - name: Install aarch64 cross-compilation toolchain
+        if: ${{ startsWith(matrix.target, 'aarch64-unknown-linux') }}
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build CLI + C library (Linux aarch64 cross)
+        if: ${{ startsWith(matrix.target, 'aarch64-unknown-linux') }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release -p bloqade-lanes-bytecode-cli --target aarch64-unknown-linux-gnu
+          just stage-clib target/aarch64-unknown-linux-gnu/release
+
+      # Temporarily add data directive so maturin includes dist-data/ in the wheel.
+      - name: Patch pyproject.toml for bundled artifacts
+        run: scripts/patch_pyproject_data.sh patch
+
+      # manylinux_2_28 targets glibc 2.28+ (AlmaLinux 8 / Ubuntu 20.04+).
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: "2_28"
+
+      - name: Restore pyproject.toml
+        run: scripts/patch_pyproject_data.sh restore
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+
+  # Build source distribution (platform-independent)
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/*.tar.gz
 
   publish-to-pypi:
-    name: >-
-      Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
-    needs:
-    - build
+    name: Publish to PyPI
+    if: ${{ startsWith(github.ref, 'refs/tags/') && !inputs.dry_run }}
+    needs: [build, sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/bloqade-lanes  # Replace <package-name> with your PyPI project name
+      url: https://pypi.org/p/bloqade-lanes
     permissions:
-      id-token: write  # IMPORTANT: mandatory for trusted publishing
+      id-token: write
 
     steps:
-    - name: Download all the dists
-      uses: actions/download-artifact@v8
-      with:
-        name: python-package-distributions
-        path: dist/
-    - name: Publish distribution 📦 to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    name: >-
-      Sign the Python 🐍 distribution 📦 with Sigstore
-      and upload them to GitHub Release
-    needs:
-    - publish-to-pypi
+    name: Sign and create GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/') && !inputs.dry_run }}
+    needs: [publish-to-pypi]
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write  # IMPORTANT: mandatory for making GitHub Releases
-      id-token: write  # IMPORTANT: mandatory for sigstore
+      contents: write
+      id-token: write
 
     steps:
-    - name: Download all the dists
-      uses: actions/download-artifact@v8
-      with:
-        name: python-package-distributions
-        path: dist/
-    - name: Sign the dists with Sigstore
-      uses: sigstore/gh-action-sigstore-python@v3.2.0
-      with:
-        inputs: >-
-          ./dist/*.tar.gz
-          ./dist/*.whl
-    - name: Create GitHub Release
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-      run: >-
-        gh release create
-        '${{ github.ref_name }}'
-        --repo '${{ github.repository }}'
-        --notes ""
-    - name: Upload artifact signatures to GitHub Release
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-      # Upload to GitHub Release using the `gh` CLI.
-      # `dist/` contains the built packages, and the
-      # sigstore-produced signatures and certificates.
-      run: >-
-        gh release upload
-        '${{ github.ref_name }}' dist/**
-        --repo '${{ github.repository }}'
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Sign with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.2.0
+        with:
+          inputs: >-
+            ./dist/*.tar.gz
+            ./dist/*.whl
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create
+          '${{ github.ref_name }}'
+          --repo '${{ github.repository }}'
+          --notes ""
+
+      - name: Upload artifacts to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload
+          '${{ github.ref_name }}' dist/**
+          --repo '${{ github.repository }}'

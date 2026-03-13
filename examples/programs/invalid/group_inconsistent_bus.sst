@@ -1,0 +1,8 @@
+.version 1
+; Invalid: move group has lanes with different bus_id
+; Lane 0: bus 0, Lane 1: bus 1
+
+const_lane 0x0000000000000000   ; fwd, site_bus, word 0, site 0, bus 0
+const_lane 0x0000000100000001   ; fwd, site_bus, word 0, site 1, bus 1
+move 2
+halt

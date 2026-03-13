@@ -1,0 +1,8 @@
+.version 1
+; Move 2 lanes on the same site_bus, same direction.
+; site_bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
+
+const_lane 0x0000000000000000   ; fwd, site_bus, word 0, site 0, bus 0
+const_lane 0x0000000000000001   ; fwd, site_bus, word 0, site 1, bus 0
+move 2
+halt

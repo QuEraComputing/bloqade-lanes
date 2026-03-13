@@ -1,0 +1,7 @@
+.version 1
+; Minimal valid program: load two sites, fill, halt
+
+const_loc 0x00000000    ; word 0, site 0
+const_loc 0x00000001    ; word 0, site 1
+initial_fill 2
+halt

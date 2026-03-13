@@ -9,31 +9,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: extractions/setup-just@v2
+
+      - run: just format-check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v2
+
+      - run: just lint
+
   isort:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: isort/isort-action@v1
         with:
-            sortPaths: "src" # only sort files in the src directory
+            sortPaths: "python"
+
   ruff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: chartboost/ruff-action@v1
+        with:
+          src: "./python"
+
   black:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: psf/black@stable
+        with:
+          src: "./python"
+
   pyright:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          # Install a specific version of uv.
           version: "0.6.14"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
