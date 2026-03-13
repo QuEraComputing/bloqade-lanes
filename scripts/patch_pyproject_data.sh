@@ -15,15 +15,40 @@ BACKUP="pyproject.toml.bak"
 
 case "${1:-}" in
     patch)
+        if grep -q '^data = "dist-data"' "$PYPROJECT"; then
+            echo "Already patched, skipping."
+            exit 0
+        fi
         cp "$PYPROJECT" "$BACKUP"
-        # Insert data directive after python-packages line
         python3 -c "
-p = open('$PYPROJECT').read()
-p = p.replace(
-    'python-packages = [\"bloqade\"]',
-    'python-packages = [\"bloqade\"]\ndata = \"dist-data\"',
-)
-open('$PYPROJECT', 'w').write(p)
+import sys, tomllib
+
+with open('$PYPROJECT', 'rb') as f:
+    config = tomllib.load(f)
+
+maturin = config.get('tool', {}).get('maturin', {})
+if 'python-packages' not in maturin:
+    print('ERROR: [tool.maturin] python-packages not found in $PYPROJECT', file=sys.stderr)
+    sys.exit(1)
+
+with open('$PYPROJECT') as f:
+    content = f.read()
+
+# Insert data directive after the python-packages line in [tool.maturin]
+lines = content.splitlines(True)
+patched = False
+for i, line in enumerate(lines):
+    if line.startswith('python-packages'):
+        lines.insert(i + 1, 'data = \"dist-data\"\n')
+        patched = True
+        break
+
+if not patched:
+    print('ERROR: Could not locate python-packages line to insert data directive', file=sys.stderr)
+    sys.exit(1)
+
+with open('$PYPROJECT', 'w') as f:
+    f.writelines(lines)
 "
         echo "Patched $PYPROJECT (backup: $BACKUP)"
         ;;
