@@ -8,7 +8,7 @@ from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
@@ -183,7 +183,7 @@ def _compile_kernel_to_noisy_physical_squin(
 
     move_mt = squin_to_move(
         mt,
-        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
         placement_strategy=placement_strategy,
         insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,
@@ -321,7 +321,7 @@ def analyze_kernel_moves_with_strategy(
     """
     move_mt = squin_to_move(
         mt,
-        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
         placement_strategy=placement_strategy,
         insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,
@@ -357,7 +357,7 @@ def analyze_kernel_move_time_with_strategy(
     """
     move_mt = squin_to_move(
         mt,
-        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
         placement_strategy=placement_strategy,
         insert_return_moves=insert_return_moves,
         merge_heuristic=merge_heuristic,

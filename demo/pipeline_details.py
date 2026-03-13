@@ -62,20 +62,20 @@ example_kernel.print()
 # part of the input to the layout analysis is the layout heuristic which takes data collected from
 # the analysis interpreter to generate the initial layout. In this example we use a heuristic
 # that priorities placing qubits that interact frequently within the same word. This heuristic
-# is implemented in the `fixed` module inside bloqade-lanes.
+# is implemented in the `logical_layout` module inside bloqade-lanes.
 
 # %%
 from bloqade.analysis import address  # noqa: E402
 
 from bloqade.lanes.analysis import layout  # noqa: E402
-from bloqade.lanes.heuristics import fixed  # noqa: E402
+from bloqade.lanes.heuristics import logical_layout  # noqa: E402
 
 address_frame, _ = address.AddressAnalysis(example_kernel.dialects).run(example_kernel)
 
 
 layout_analysis = layout.LayoutAnalysis(
     example_kernel.dialects,
-    fixed.LogicalLayoutHeuristic(),
+    logical_layout.LogicalLayoutHeuristic(),
     address_frame.entries,
     tuple(range(2)),
 )
@@ -135,7 +135,7 @@ example_kernel.print(analysis=placement_frame.entries)
 from bloqade.lanes.upstream import PlaceToMove  # noqa: E402
 
 example_kernel = PlaceToMove(
-    fixed.LogicalLayoutHeuristic(),
+    logical_layout.LogicalLayoutHeuristic(),
     LogicalPlacementStrategy(),
     True,
 ).emit(example_kernel)
