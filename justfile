@@ -21,6 +21,25 @@ coverage-open: coverage-html
 
 coverage: coverage-run coverage-xml coverage-report
 
+# ── Rust Coverage ───────────────────────────────────────────────────
+
+# Run Rust tests with coverage and generate lcov report
+coverage-rust:
+    cargo llvm-cov --lcov --output-path rust-lcov.info -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+
+# Generate Rust HTML coverage report
+coverage-rust-html:
+    cargo llvm-cov --html -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+
+# Open Rust HTML coverage report
+coverage-rust-open: coverage-rust-html
+    open target/llvm-cov/html/index.html
+
+# ── Combined Coverage ──────────────────────────────────────────────
+
+# Run all tests with coverage (Python + Rust)
+coverage-all: coverage-run coverage-xml coverage-report coverage-rust
+
 demo-msd:
     python demo/msd.py
 
