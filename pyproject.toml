@@ -61,6 +61,7 @@ dev = [
     "mypy>=1.13.0",
     "numpy>=1.26.4",
     "pre-commit>=4.0.1",
+    "pycobertura>=4.1.0",
     "pyinstrument>=5.1.2",
     "pyright[nodejs]>=1.1.408",
     "pyspy>=0.1.1",

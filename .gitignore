@@ -56,7 +56,9 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-rust-lcov.info
+rust-coverage.xml
+combined-coverage.xml
+htmlcov-all/
 htmlcov/
 .tox/
 .nox/

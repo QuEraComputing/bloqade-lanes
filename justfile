@@ -23,22 +23,22 @@ coverage: coverage-run coverage-xml coverage-report
 
 # ── Rust Coverage ───────────────────────────────────────────────────
 
-# Run Rust tests with coverage and generate lcov report
+# Run Rust tests with coverage and generate Cobertura XML
 coverage-rust:
-    cargo llvm-cov --lcov --output-path rust-lcov.info -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
-
-# Generate Rust HTML coverage report
-coverage-rust-html:
-    cargo llvm-cov --html -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
-
-# Open Rust HTML coverage report
-coverage-rust-open: coverage-rust-html
-    open target/llvm-cov/html/index.html
+    cargo llvm-cov --cobertura --output-path rust-coverage.xml -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
 
 # ── Combined Coverage ──────────────────────────────────────────────
 
-# Run all tests with coverage (Python + Rust)
-coverage-all: coverage-run coverage-xml coverage-report coverage-rust
+# Run all tests with coverage and generate merged HTML report (Python + Rust)
+coverage-all: coverage-run coverage-xml coverage-rust
+    uv run python scripts/merge_coverage.py coverage.xml rust-coverage.xml -o combined-coverage.xml
+    mkdir -p htmlcov-all
+    uv run pycobertura show --format html --output htmlcov-all/index.html combined-coverage.xml
+    @echo "Combined coverage report: htmlcov-all/index.html"
+
+# Open combined coverage HTML report
+coverage-all-open: coverage-all
+    open htmlcov-all/index.html
 
 demo-msd:
     python demo/msd.py
