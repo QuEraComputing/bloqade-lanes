@@ -13,7 +13,7 @@ from bloqade import qubit, squin, types
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.heuristics import fixed
+from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import (
     compile_squin_to_move,
@@ -66,7 +66,7 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
     noise_model = generate_simple_noise_model()
     move_mt = squin_to_move(
         mt,
-        layout_heuristic=fixed.LogicalLayoutHeuristic(),
+        layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_return_moves=True,
         merge_heuristic=merge_heuristic,
