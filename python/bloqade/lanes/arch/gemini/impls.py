@@ -1,4 +1,3 @@
-from dataclasses import replace
 from itertools import product
 from typing import Sequence
 
@@ -215,15 +214,15 @@ def _generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
     measurement_zones = (0,)
 
     return ArchSpec(
-        words,
-        (gate_zone,),
-        measurement_zones,
-        cz_gate_zones,
-        frozenset(range(num_words_x)),
-        frozenset(as_flat_tuple_int(site_ids[:, 1])),
-        _site_buses(site_ids),
-        (),
-        _calc_site_path_dict(words),
+        words=words,
+        zones=(gate_zone,),
+        measurement_mode_zones=measurement_zones,
+        entangling_zones=cz_gate_zones,
+        has_site_buses=frozenset(range(num_words_x)),
+        has_word_buses=frozenset(as_flat_tuple_int(site_ids[:, 1])),
+        site_buses=_site_buses(site_ids),
+        word_buses=(),
+        paths=_calc_site_path_dict(words),
     )
 
 
@@ -232,14 +231,34 @@ def generate_arch_hypercube(hypercube_dims: int = 4, word_size_y: int = 5) -> Ar
     base_arch = _generate_base_arch(num_words_x, word_size_y)
     word_buses = _hypercube_busses(hypercube_dims)
     base_arch.paths.update(_calc_hypercube_word_path_dict(base_arch.words))
-    return replace(base_arch, word_buses=word_buses)
+    return ArchSpec(
+        words=base_arch.words,
+        zones=base_arch.zones,
+        measurement_mode_zones=base_arch.measurement_mode_zones,
+        entangling_zones=base_arch.entangling_zones,
+        has_site_buses=base_arch.has_site_buses,
+        has_word_buses=base_arch.has_word_buses,
+        site_buses=base_arch.site_buses,
+        word_buses=word_buses,
+        paths=base_arch.paths,
+    )
 
 
 def generate_arch_linear(num_words: int = 16, word_size_y: int = 5) -> ArchSpec:
     base_arch = _generate_base_arch(num_words, word_size_y)
     word_buses = _generate_linear_busses(num_words)
     base_arch.paths.update(_calc_linear_word_path_dict(base_arch.words))
-    return replace(base_arch, word_buses=word_buses)
+    return ArchSpec(
+        words=base_arch.words,
+        zones=base_arch.zones,
+        measurement_mode_zones=base_arch.measurement_mode_zones,
+        entangling_zones=base_arch.entangling_zones,
+        has_site_buses=base_arch.has_site_buses,
+        has_word_buses=base_arch.has_word_buses,
+        site_buses=base_arch.site_buses,
+        word_buses=word_buses,
+        paths=base_arch.paths,
+    )
 
 
 @deprecated(
