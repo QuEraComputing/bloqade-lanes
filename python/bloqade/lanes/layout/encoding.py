@@ -30,10 +30,10 @@ class Encoder(ir.Data):
         return self
 
     def print_impl(self, printer: Printer):
-        printer.plain_print(f"0x{self.encode():08x}")
+        printer.plain_print(f"0x{self.encode():016x}")
 
     def __repr__(self) -> str:
-        return f"0x{self.encode():08x}"
+        return f"0x{self.encode():016x}"
 
 
 class ZoneAddress(Encoder):
