@@ -4,6 +4,23 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::arch::types as rs;
 use bloqade_lanes_bytecode_core::version::Version;
 
+/// Validate that a field value fits in 16 bits (0..=65535).
+fn validate_u16_field(name: &str, value: i64) -> PyResult<u32> {
+    if value < 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{}={} must be non-negative",
+            name, value
+        )));
+    }
+    if value > 0xFFFF {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{}={} exceeds maximum 65535",
+            name, value
+        )));
+    }
+    Ok(value as u32)
+}
+
 // ── Direction enum ──
 
 #[pyclass(
@@ -105,19 +122,9 @@ pub struct PyLocationAddr {
 #[pymethods]
 impl PyLocationAddr {
     #[new]
-    fn new(word_id: u32, site_id: u32) -> PyResult<Self> {
-        if word_id > 0xFFFF {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "word_id={} exceeds maximum 65535",
-                word_id
-            )));
-        }
-        if site_id > 0xFFFF {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "site_id={} exceeds maximum 65535",
-                site_id
-            )));
-        }
+    fn new(word_id: i64, site_id: i64) -> PyResult<Self> {
+        let word_id = validate_u16_field("word_id", word_id)?;
+        let site_id = validate_u16_field("site_id", site_id)?;
         Ok(Self {
             inner: rs_addr::LocationAddr { word_id, site_id },
         })
@@ -174,29 +181,14 @@ impl PyLaneAddr {
     #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn new(
         move_type: &PyMoveType,
-        word_id: u32,
-        site_id: u32,
-        bus_id: u32,
+        word_id: i64,
+        site_id: i64,
+        bus_id: i64,
         direction: PyDirection,
     ) -> PyResult<Self> {
-        if word_id > 0xFFFF {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "word_id={} exceeds maximum 65535",
-                word_id
-            )));
-        }
-        if site_id > 0xFFFF {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "site_id={} exceeds maximum 65535",
-                site_id
-            )));
-        }
-        if bus_id > 0xFFFF {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "bus_id={} exceeds maximum 65535",
-                bus_id
-            )));
-        }
+        let word_id = validate_u16_field("word_id", word_id)?;
+        let site_id = validate_u16_field("site_id", site_id)?;
+        let bus_id = validate_u16_field("bus_id", bus_id)?;
         Ok(Self {
             inner: rs_addr::LaneAddr {
                 direction: direction.to_rs(),
@@ -283,13 +275,8 @@ pub struct PyZoneAddr {
 #[pymethods]
 impl PyZoneAddr {
     #[new]
-    fn new(zone_id: u32) -> PyResult<Self> {
-        if zone_id > 0xFFFF {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "zone_id={} exceeds maximum 65535",
-                zone_id
-            )));
-        }
+    fn new(zone_id: i64) -> PyResult<Self> {
+        let zone_id = validate_u16_field("zone_id", zone_id)?;
         Ok(Self {
             inner: rs_addr::ZoneAddr { zone_id },
         })

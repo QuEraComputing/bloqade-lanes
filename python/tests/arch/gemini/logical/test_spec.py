@@ -83,7 +83,7 @@ def test_location_validation(
 
 def test_negative_location_ids_rejected():
     """Negative IDs are rejected at construction time by the Rust-backed type."""
-    with pytest.raises(OverflowError):
+    with pytest.raises(ValueError, match="must be non-negative"):
         LocationAddress(-1, 0)
-    with pytest.raises(OverflowError):
+    with pytest.raises(ValueError, match="must be non-negative"):
         LocationAddress(0, -1)

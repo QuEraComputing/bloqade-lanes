@@ -50,8 +50,8 @@ def test_sitelaneaddress_and_wordlaneaddress():
     assert wla.move_type == encoding.MoveType.WORD
 
 
-class TestOverflowValidation:
-    """IDs exceeding 16-bit range (0xFFFF) are rejected at construction."""
+class TestRangeValidation:
+    """IDs outside 0..65535 are rejected at construction with ValueError."""
 
     def test_zone_address_overflow(self):
         with pytest.raises(ValueError, match="zone_id=65536 exceeds maximum"):
@@ -82,3 +82,21 @@ class TestOverflowValidation:
         encoding.ZoneAddress(zone_id=0xFFFF)
         encoding.LocationAddress(word_id=0xFFFF, site_id=0xFFFF)
         encoding.LaneAddress(encoding.MoveType.SITE, 0xFFFF, 0xFFFF, 0xFFFF)
+
+    def test_zone_address_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            encoding.ZoneAddress(zone_id=-1)
+
+    def test_location_address_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            encoding.LocationAddress(word_id=-1, site_id=0)
+        with pytest.raises(ValueError, match="must be non-negative"):
+            encoding.LocationAddress(word_id=0, site_id=-1)
+
+    def test_lane_address_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            encoding.LaneAddress(encoding.MoveType.SITE, -1, 0, 0)
+        with pytest.raises(ValueError, match="must be non-negative"):
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, -1, 0)
+        with pytest.raises(ValueError, match="must be non-negative"):
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, -1)
