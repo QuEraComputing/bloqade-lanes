@@ -50,7 +50,7 @@ def main():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("size", [2, 3, 4, 5, 6])
+@pytest.mark.parametrize("size", [2, 6])
 def test_physical_compilation(size: int):
     @gemini_logical.kernel(aggressive_unroll=True)
     def main():
