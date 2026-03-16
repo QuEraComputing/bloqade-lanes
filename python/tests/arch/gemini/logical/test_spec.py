@@ -4,7 +4,6 @@ from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
-    EncodingType,
     LocationAddress,
     ZoneAddress,
 )
@@ -16,7 +15,6 @@ def test_architecture_generation():
     assert len(arch_physical.words) == 16
     assert len(arch_physical.site_buses) == 9
     assert len(arch_physical.word_buses) == 4
-    assert arch_physical.encoding is EncodingType.BIT32
 
 
 def test_get_zone_index():

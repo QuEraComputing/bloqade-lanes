@@ -6,7 +6,6 @@ from typing import ClassVar, Sequence
 
 from bloqade.lanes.layout.encoding import (
     Direction,
-    EncodingType,
     LaneAddress,
     LocationAddress,
     MoveType,
@@ -49,8 +48,6 @@ class ArchSpec:
     """List of all site buses in the architecture by site address."""
     word_buses: tuple[Bus, ...]
     """List of all word buses in the architecture by word address."""
-    encoding: EncodingType = field(init=False)
-    """Mapping from location addresses to zone addresses and indices within the zone."""
     zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
         init=False, default_factory=dict
     )
@@ -106,8 +103,6 @@ class ArchSpec:
                     zone_address_map[loc_addr][zone_address] = index
                     index += 1
         object.__setattr__(self, "zone_address_map", dict(zone_address_map))
-        object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
-
         lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
         for word_id in self.has_site_buses:
             for bus_id, bus in enumerate(self.site_buses):
