@@ -121,6 +121,10 @@ test-rust:
 test-python:
     uv run --locked pytest python/tests/ -v
 
+# Run fast Python tests only (skip slow integration tests)
+test-python-fast:
+    uv run --locked pytest python/tests/ -v -m "not slow"
+
 # Run all tests
 test: test-rust test-python
 
