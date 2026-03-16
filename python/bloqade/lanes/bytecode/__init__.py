@@ -9,9 +9,9 @@ Core types:
     - :class:`ArchSpec` -- device architecture specification
 
 Address types:
-    - :class:`LocationAddr` -- bit-packed atom location (word + site)
-    - :class:`LaneAddr` -- bit-packed lane address (direction, move type, word, site, bus)
-    - :class:`ZoneAddr` -- bit-packed zone address
+    - :class:`LocationAddress` -- bit-packed atom location (word + site)
+    - :class:`LaneAddress` -- bit-packed lane address (direction, move type, word, site, bus)
+    - :class:`ZoneAddress` -- bit-packed zone address
 
 Architecture building blocks:
     - :class:`Geometry`, :class:`Word`, :class:`Grid`
@@ -19,8 +19,8 @@ Architecture building blocks:
     - :class:`Zone`, :class:`TransportPath`
 
 Enums:
-    - :class:`Direction` -- Forward / Backward
-    - :class:`MoveType` -- SiteBus / WordBus
+    - :class:`Direction` -- FORWARD / BACKWARD
+    - :class:`MoveType` -- SITE / WORD
 
 C library helpers:
     - :func:`has_clib`, :func:`include_dir`, :func:`lib_dir`, :func:`lib_path`
@@ -47,14 +47,14 @@ from bloqade.lanes.bytecode._native import (
     Geometry as Geometry,
     Grid as Grid,
     Instruction as Instruction,
-    LaneAddr as LaneAddr,
-    LocationAddr as LocationAddr,
+    LaneAddress as LaneAddress,
+    LocationAddress as LocationAddress,
     MoveType as MoveType,
     Program as Program,
     TransportPath as TransportPath,
     Word as Word,
     Zone as Zone,
-    ZoneAddr as ZoneAddr,
+    ZoneAddress as ZoneAddress,
 )
 from bloqade.lanes.bytecode.exceptions import (
     ArchSpecError as ArchSpecError,

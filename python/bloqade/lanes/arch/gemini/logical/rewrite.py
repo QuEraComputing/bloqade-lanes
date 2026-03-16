@@ -43,7 +43,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         # This assumes validation has already occurred so only valid moves are present
         move_type, y_mask_ref, word, bus_id, direction = self.get_address_info(node)
         node.result.replace_by(node.current_state)
-        if move_type is MoveType.SITE:
+        if move_type == MoveType.SITE:
             node.replace_by(
                 stmts.SiteBusMove(
                     current_state=node.current_state,
@@ -53,7 +53,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
                     direction=direction,
                 )
             )
-        elif move_type is MoveType.WORD:
+        elif move_type == MoveType.WORD:
             node.replace_by(
                 stmts.WordBusMove(
                     current_state=node.current_state,

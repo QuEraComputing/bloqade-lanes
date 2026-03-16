@@ -6,7 +6,6 @@ from typing import ClassVar, Sequence
 
 from bloqade.lanes.layout.encoding import (
     Direction,
-    EncodingType,
     LaneAddress,
     LocationAddress,
     MoveType,
@@ -49,8 +48,6 @@ class ArchSpec:
     """List of all site buses in the architecture by site address."""
     word_buses: tuple[Bus, ...]
     """List of all word buses in the architecture by word address."""
-    encoding: EncodingType = field(init=False)
-    """Mapping from location addresses to zone addresses and indices within the zone."""
     zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
         init=False, default_factory=dict
     )
@@ -106,8 +103,6 @@ class ArchSpec:
                     zone_address_map[loc_addr][zone_address] = index
                     index += 1
         object.__setattr__(self, "zone_address_map", dict(zone_address_map))
-        object.__setattr__(self, "encoding", EncodingType.infer(self))  # type: ignore
-
         lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
         for word_id in self.has_site_buses:
             for bus_id, bus in enumerate(self.site_buses):
@@ -442,7 +437,7 @@ class ArchSpec:
         """Check if a lane address is valid in this architecture."""
         errors = self.validate_location(lane_address.src_site())
 
-        if lane_address.move_type is MoveType.WORD:
+        if lane_address.move_type == MoveType.WORD:
             if lane_address.site_id not in self.has_word_buses:
                 errors.add(
                     f"Site {lane_address.site_id} does not support word-bus moves"
@@ -458,7 +453,7 @@ class ArchSpec:
             if lane_address.word_id not in bus.src:
                 errors.add(f"Word {lane_address.word_id} not in bus source {bus.src}")
 
-        elif lane_address.move_type is MoveType.SITE:
+        elif lane_address.move_type == MoveType.SITE:
             if lane_address.word_id not in self.has_site_buses:
                 errors.add(
                     f"Word {lane_address.word_id} does not support site-bus moves"
@@ -483,18 +478,18 @@ class ArchSpec:
 
     def get_endpoints(self, lane_address: LaneAddress):
         src = lane_address.src_site()
-        if lane_address.move_type is MoveType.WORD:
+        if lane_address.move_type == MoveType.WORD:
             bus = self.word_buses[lane_address.bus_id]
             dst_word = bus.dst[bus.src.index(src.word_id)]
             dst = LocationAddress(dst_word, src.site_id)
-        elif lane_address.move_type is MoveType.SITE:
+        elif lane_address.move_type == MoveType.SITE:
             bus = self.site_buses[lane_address.bus_id]
             dst_site = bus.dst[bus.src.index(src.site_id)]
             dst = LocationAddress(src.word_id, dst_site)
         else:
             raise ValueError("Unsupported lane address type")
 
-        if lane_address.direction is Direction.FORWARD:
+        if lane_address.direction == Direction.FORWARD:
             return src, dst
         else:
             return dst, src

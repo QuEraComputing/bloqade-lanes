@@ -4,19 +4,50 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::arch::types as rs;
 use bloqade_lanes_bytecode_core::version::Version;
 
+/// Validate that a field value fits in 16 bits (0..=65535).
+fn validate_u16_field(name: &str, value: i64) -> PyResult<u32> {
+    if value < 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{}={} must be non-negative",
+            name, value
+        )));
+    }
+    if value > 0xFFFF {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{}={} exceeds maximum 65535",
+            name, value
+        )));
+    }
+    Ok(value as u32)
+}
+
 // ── Direction enum ──
 
 #[pyclass(
     name = "Direction",
     eq,
     eq_int,
+    hash,
     frozen,
     module = "bloqade.lanes.bytecode"
 )]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyDirection {
+    #[pyo3(name = "FORWARD")]
     Forward = 0,
+    #[pyo3(name = "BACKWARD")]
     Backward = 1,
+}
+
+#[pymethods]
+impl PyDirection {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            PyDirection::Forward => "FORWARD",
+            PyDirection::Backward => "BACKWARD",
+        }
+    }
 }
 
 impl PyDirection {
@@ -41,13 +72,27 @@ impl PyDirection {
     name = "MoveType",
     eq,
     eq_int,
+    hash,
     frozen,
     module = "bloqade.lanes.bytecode"
 )]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyMoveType {
+    #[pyo3(name = "SITE")]
     SiteBus = 0,
+    #[pyo3(name = "WORD")]
     WordBus = 1,
+}
+
+#[pymethods]
+impl PyMoveType {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            PyMoveType::SiteBus => "SITE",
+            PyMoveType::WordBus => "WORD",
+        }
+    }
 }
 
 impl PyMoveType {
@@ -68,7 +113,7 @@ impl PyMoveType {
 
 // ── LocationAddr ──
 
-#[pyclass(name = "LocationAddr", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "LocationAddress", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyLocationAddr {
     pub(crate) inner: rs_addr::LocationAddr,
@@ -77,10 +122,12 @@ pub struct PyLocationAddr {
 #[pymethods]
 impl PyLocationAddr {
     #[new]
-    fn new(word_id: u32, site_id: u32) -> Self {
-        Self {
+    fn new(word_id: i64, site_id: i64) -> PyResult<Self> {
+        let word_id = validate_u16_field("word_id", word_id)?;
+        let site_id = validate_u16_field("site_id", site_id)?;
+        Ok(Self {
             inner: rs_addr::LocationAddr { word_id, site_id },
-        }
+        })
     }
 
     #[getter]
@@ -106,7 +153,7 @@ impl PyLocationAddr {
 
     fn __repr__(&self) -> String {
         format!(
-            "LocationAddr(word_id={}, site_id={})",
+            "LocationAddress(word_id={}, site_id={})",
             self.inner.word_id, self.inner.site_id
         )
     }
@@ -114,11 +161,15 @@ impl PyLocationAddr {
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
+
+    fn __hash__(&self) -> u64 {
+        self.inner.encode() as u64
+    }
 }
 
 // ── LaneAddr ──
 
-#[pyclass(name = "LaneAddr", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "LaneAddress", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyLaneAddr {
     pub(crate) inner: rs_addr::LaneAddr,
@@ -127,14 +178,18 @@ pub struct PyLaneAddr {
 #[pymethods]
 impl PyLaneAddr {
     #[new]
+    #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn new(
-        direction: &PyDirection,
         move_type: &PyMoveType,
-        word_id: u32,
-        site_id: u32,
-        bus_id: u32,
-    ) -> Self {
-        Self {
+        word_id: i64,
+        site_id: i64,
+        bus_id: i64,
+        direction: PyDirection,
+    ) -> PyResult<Self> {
+        let word_id = validate_u16_field("word_id", word_id)?;
+        let site_id = validate_u16_field("site_id", site_id)?;
+        let bus_id = validate_u16_field("bus_id", bus_id)?;
+        Ok(Self {
             inner: rs_addr::LaneAddr {
                 direction: direction.to_rs(),
                 move_type: move_type.to_rs(),
@@ -142,7 +197,7 @@ impl PyLaneAddr {
                 site_id,
                 bus_id,
             },
-        }
+        })
     }
 
     #[getter]
@@ -186,27 +241,32 @@ impl PyLaneAddr {
 
     fn __repr__(&self) -> String {
         let dir = match self.inner.direction {
-            rs_addr::Direction::Forward => "Direction.Forward",
-            rs_addr::Direction::Backward => "Direction.Backward",
+            rs_addr::Direction::Forward => "Direction.FORWARD",
+            rs_addr::Direction::Backward => "Direction.BACKWARD",
         };
         let mt = match self.inner.move_type {
-            rs_addr::MoveType::SiteBus => "MoveType.SiteBus",
-            rs_addr::MoveType::WordBus => "MoveType.WordBus",
+            rs_addr::MoveType::SiteBus => "MoveType.SITE",
+            rs_addr::MoveType::WordBus => "MoveType.WORD",
         };
         format!(
-            "LaneAddr(direction={}, move_type={}, word_id={}, site_id={}, bus_id={})",
-            dir, mt, self.inner.word_id, self.inner.site_id, self.inner.bus_id
+            "LaneAddress(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
+            mt, self.inner.word_id, self.inner.site_id, self.inner.bus_id, dir
         )
     }
 
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
+
+    fn __hash__(&self) -> u64 {
+        let (d0, d1) = self.inner.encode();
+        (d0 as u64) | ((d1 as u64) << 32)
+    }
 }
 
 // ── ZoneAddr ──
 
-#[pyclass(name = "ZoneAddr", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "ZoneAddress", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyZoneAddr {
     pub(crate) inner: rs_addr::ZoneAddr,
@@ -215,10 +275,11 @@ pub struct PyZoneAddr {
 #[pymethods]
 impl PyZoneAddr {
     #[new]
-    fn new(zone_id: u32) -> Self {
-        Self {
+    fn new(zone_id: i64) -> PyResult<Self> {
+        let zone_id = validate_u16_field("zone_id", zone_id)?;
+        Ok(Self {
             inner: rs_addr::ZoneAddr { zone_id },
-        }
+        })
     }
 
     #[getter]
@@ -238,11 +299,15 @@ impl PyZoneAddr {
     }
 
     fn __repr__(&self) -> String {
-        format!("ZoneAddr(zone_id={})", self.inner.zone_id)
+        format!("ZoneAddress(zone_id={})", self.inner.zone_id)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        self.inner.encode() as u64
     }
 }
 
