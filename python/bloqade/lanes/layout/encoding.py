@@ -1,5 +1,4 @@
 import abc
-import enum
 from dataclasses import dataclass
 from typing import Self
 
@@ -7,52 +6,14 @@ from kirin import ir, types
 from kirin.print import Printer
 
 from bloqade.lanes.bytecode._native import (
-    Direction as _RustDirection,
+    Direction as Direction,
     LaneAddress as _RustLaneAddress,
     LocationAddress as _RustLocationAddress,
-    MoveType as _RustMoveType,
+    MoveType as MoveType,
     ZoneAddress as _RustZoneAddress,
 )
 
 USE_HEX_REPR = True
-
-
-class Direction(enum.IntEnum):
-    FORWARD = 0
-    BACKWARD = 1
-
-    def __repr__(self):
-        return f"Direction.{self.name}"
-
-    def _to_rust(self) -> _RustDirection:
-        if self == Direction.FORWARD:
-            return _RustDirection.FORWARD
-        return _RustDirection.BACKWARD
-
-    @staticmethod
-    def _from_rust(d: _RustDirection) -> "Direction":
-        if d == _RustDirection.FORWARD:
-            return Direction.FORWARD
-        return Direction.BACKWARD
-
-
-class MoveType(enum.IntEnum):
-    SITE = 0
-    WORD = 1
-
-    def __repr__(self):
-        return f"MoveType.{self.name}"
-
-    def _to_rust(self) -> _RustMoveType:
-        if self == MoveType.SITE:
-            return _RustMoveType.SITE
-        return _RustMoveType.WORD
-
-    @staticmethod
-    def _from_rust(m: _RustMoveType) -> "MoveType":
-        if m == _RustMoveType.SITE:
-            return MoveType.SITE
-        return MoveType.WORD
 
 
 @dataclass()
@@ -195,17 +156,17 @@ class LaneAddress(Encoder):
         direction: Direction = Direction.FORWARD,
     ):
         self._inner = _RustLaneAddress(
-            move_type._to_rust(),
+            move_type,
             word_id,
             site_id,
             bus_id,
-            direction._to_rust(),
+            direction,
         )
         self.__post_init__()
 
     @property
     def move_type(self) -> MoveType:
-        return MoveType._from_rust(self._inner.move_type)
+        return self._inner.move_type
 
     @property
     def word_id(self) -> int:
@@ -221,7 +182,7 @@ class LaneAddress(Encoder):
 
     @property
     def direction(self) -> Direction:
-        return Direction._from_rust(self._inner.direction)
+        return self._inner.direction
 
     def reverse(self) -> "LaneAddress":
         new_direction = (

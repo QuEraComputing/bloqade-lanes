@@ -10,15 +10,27 @@ use bloqade_lanes_bytecode_core::version::Version;
     name = "Direction",
     eq,
     eq_int,
+    hash,
     frozen,
     module = "bloqade.lanes.bytecode"
 )]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyDirection {
     #[pyo3(name = "FORWARD")]
     Forward = 0,
     #[pyo3(name = "BACKWARD")]
     Backward = 1,
+}
+
+#[pymethods]
+impl PyDirection {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            PyDirection::Forward => "FORWARD",
+            PyDirection::Backward => "BACKWARD",
+        }
+    }
 }
 
 impl PyDirection {
@@ -43,15 +55,27 @@ impl PyDirection {
     name = "MoveType",
     eq,
     eq_int,
+    hash,
     frozen,
     module = "bloqade.lanes.bytecode"
 )]
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyMoveType {
     #[pyo3(name = "SITE")]
     SiteBus = 0,
     #[pyo3(name = "WORD")]
     WordBus = 1,
+}
+
+#[pymethods]
+impl PyMoveType {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            PyMoveType::SiteBus => "SITE",
+            PyMoveType::WordBus => "WORD",
+        }
+    }
 }
 
 impl PyMoveType {

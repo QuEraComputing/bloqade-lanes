@@ -437,7 +437,7 @@ class ArchSpec:
         """Check if a lane address is valid in this architecture."""
         errors = self.validate_location(lane_address.src_site())
 
-        if lane_address.move_type is MoveType.WORD:
+        if lane_address.move_type == MoveType.WORD:
             if lane_address.site_id not in self.has_word_buses:
                 errors.add(
                     f"Site {lane_address.site_id} does not support word-bus moves"
@@ -453,7 +453,7 @@ class ArchSpec:
             if lane_address.word_id not in bus.src:
                 errors.add(f"Word {lane_address.word_id} not in bus source {bus.src}")
 
-        elif lane_address.move_type is MoveType.SITE:
+        elif lane_address.move_type == MoveType.SITE:
             if lane_address.word_id not in self.has_site_buses:
                 errors.add(
                     f"Word {lane_address.word_id} does not support site-bus moves"
@@ -478,18 +478,18 @@ class ArchSpec:
 
     def get_endpoints(self, lane_address: LaneAddress):
         src = lane_address.src_site()
-        if lane_address.move_type is MoveType.WORD:
+        if lane_address.move_type == MoveType.WORD:
             bus = self.word_buses[lane_address.bus_id]
             dst_word = bus.dst[bus.src.index(src.word_id)]
             dst = LocationAddress(dst_word, src.site_id)
-        elif lane_address.move_type is MoveType.SITE:
+        elif lane_address.move_type == MoveType.SITE:
             bus = self.site_buses[lane_address.bus_id]
             dst_site = bus.dst[bus.src.index(src.site_id)]
             dst = LocationAddress(src.word_id, dst_site)
         else:
             raise ValueError("Unsupported lane address type")
 
-        if lane_address.direction is Direction.FORWARD:
+        if lane_address.direction == Direction.FORWARD:
             return src, dst
         else:
             return dst, src

@@ -213,7 +213,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _sig_sort_key(
         self, sig: tuple[layout.MoveType, int, layout.Direction]
     ) -> tuple[int, int, int]:
-        return (sig[0].value, sig[1], sig[2].value)
+        return (int(sig[0]), sig[1], int(sig[2]))
 
     def _path_sigs(
         self, path: tuple[layout.LaneAddress, ...] | None
