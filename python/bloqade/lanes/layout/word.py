@@ -93,7 +93,7 @@ class Word:
         )
 
     def __hash__(self) -> int:
-        return hash((self.site_indices, self.has_cz))
+        return hash((self._inner.grid, self.site_indices, self.has_cz))
 
     def __repr__(self) -> str:
         return f"Word(sites={len(self.site_indices)})"
