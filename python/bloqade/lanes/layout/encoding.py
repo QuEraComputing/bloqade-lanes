@@ -13,8 +13,6 @@ from bloqade.lanes.bytecode._native import (
     ZoneAddress as _RustZoneAddress,
 )
 
-USE_HEX_REPR = True
-
 
 @dataclass()
 class Encoder(ir.Data):
@@ -66,34 +64,6 @@ class ZoneAddress(Encoder):
         if not isinstance(other, ZoneAddress):
             return NotImplemented
         return self.zone_id < other.zone_id
-
-
-@dataclass(repr=not USE_HEX_REPR, order=True)
-class WordAddress(Encoder):
-    """Data class representing a word address in the architecture."""
-
-    word_id: int
-    """The ID of the word."""
-
-    def encode(self) -> int:
-        return self.word_id
-
-    def __hash__(self) -> int:
-        return self.word_id
-
-
-@dataclass(repr=not USE_HEX_REPR, order=True)
-class SiteAddress(Encoder):
-    """Data class representing a site address in the architecture."""
-
-    site_id: int
-    """The ID of the site."""
-
-    def encode(self) -> int:
-        return self.site_id
-
-    def __hash__(self) -> int:
-        return self.site_id
 
 
 class LocationAddress(Encoder):

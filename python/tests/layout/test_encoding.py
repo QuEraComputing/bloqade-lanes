@@ -1,12 +1,6 @@
 from bloqade.lanes.layout import encoding
 
 
-def test_default_hex_repr():
-    assert (
-        encoding.USE_HEX_REPR is True
-    ), "Expected USE_HEX_REPR to be True by default, please set it back to True"
-
-
 def test_direction_repr():
     assert repr(encoding.Direction.FORWARD) == "Direction.FORWARD"
     assert repr(encoding.Direction.BACKWARD) == "Direction.BACKWARD"
@@ -20,16 +14,6 @@ def test_movetype_repr():
 def test_zoneaddress_encode():
     za = encoding.ZoneAddress(zone_id=42)
     assert za.encode() == 42
-
-
-def test_wordaddress_encode():
-    wa = encoding.WordAddress(word_id=42)
-    assert wa.encode() == 42
-
-
-def test_siteaddress_encode():
-    sa = encoding.SiteAddress(site_id=42)
-    assert sa.encode() == 42
 
 
 def test_locationaddress_encode():
