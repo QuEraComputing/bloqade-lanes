@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bloqade.geometry.dialects.grid import Grid
 
+from bloqade.lanes.bytecode.exceptions import ArchSpecError
 from bloqade.lanes.layout.arch import ArchSpec, Bus
 from bloqade.lanes.layout.encoding import (
     Direction,
@@ -18,15 +19,15 @@ word = Word(
     site_indices=((0, 0), (1, 0)),
     has_cz=None,
 )
-arch_spec = ArchSpec(
+arch_spec = ArchSpec.from_components(
     words=(word, word),
     zones=((0, 1),),
     measurement_mode_zones=(0,),
     entangling_zones=frozenset([0]),
     has_site_buses=frozenset([0]),
     has_word_buses=frozenset([0]),
-    site_buses=(Bus(src=(0,), dst=(1,)),),
-    word_buses=(Bus(src=(0,), dst=(1,)),),
+    site_buses=(Bus(src=[0], dst=[1]),),
+    word_buses=(Bus(src=[0], dst=[1]),),
 )
 
 
@@ -64,16 +65,16 @@ def test_show_with_mocked_pyplot():
 
 
 def test_post_init_invalid_zone():
-    with pytest.raises(ValueError):
-        ArchSpec(
+    with pytest.raises(ArchSpecError, match="zone 0 must include all words"):
+        ArchSpec.from_components(
             words=(word, word),
             zones=((1,),),
             measurement_mode_zones=(0,),
             entangling_zones=frozenset([0]),
             has_site_buses=frozenset([0]),
             has_word_buses=frozenset([0]),
-            site_buses=(Bus(src=(0,), dst=(1,)),),
-            word_buses=(Bus(src=(0,), dst=(1,)),),
+            site_buses=(Bus(src=[0], dst=[1]),),
+            word_buses=(Bus(src=[0], dst=[1]),),
         )
 
 

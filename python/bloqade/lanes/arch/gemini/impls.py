@@ -1,4 +1,3 @@
-from dataclasses import replace
 from itertools import product
 from typing import Sequence
 
@@ -9,7 +8,7 @@ from deprecated import deprecated
 from bloqade.lanes import layout
 from bloqade.lanes.layout.arch import ArchSpec, Bus
 from bloqade.lanes.layout.encoding import LaneAddress, SiteLaneAddress, WordLaneAddress
-from bloqade.lanes.layout.numpy_compat import as_flat_tuple_int
+from bloqade.lanes.layout.numpy_compat import as_flat_list_int
 from bloqade.lanes.layout.word import Word
 
 
@@ -136,8 +135,8 @@ def _site_buses(site_addresses: np.ndarray):
     for shift in range(word_size_y):
         site_buses.append(
             Bus(
-                src=as_flat_tuple_int(site_addresses[: word_size_y - shift, 0]),
-                dst=as_flat_tuple_int(site_addresses[shift:, 1]),
+                src=as_flat_list_int(site_addresses[: word_size_y - shift, 0]),
+                dst=as_flat_list_int(site_addresses[shift:, 1]),
             )
         )
 
@@ -145,8 +144,8 @@ def _site_buses(site_addresses: np.ndarray):
         shift = word_size_y - diff
         site_buses.append(
             Bus(
-                dst=as_flat_tuple_int(site_addresses[: word_size_y - shift, 1]),
-                src=as_flat_tuple_int(site_addresses[shift:, 0]),
+                dst=as_flat_list_int(site_addresses[: word_size_y - shift, 1]),
+                src=as_flat_list_int(site_addresses[shift:, 0]),
             )
         )
     return tuple(site_buses)
@@ -167,7 +166,7 @@ def _hypercube_busses(hypercube_dims: int):
             srcs.append(src)
             dsts.append(dst)
 
-        word_buses.append(Bus(tuple(srcs), tuple(dsts)))
+        word_buses.append(Bus(srcs, dsts))
 
     return tuple(word_buses)
 
@@ -177,7 +176,7 @@ def _generate_linear_busses(num_words: int):
 
     for shift in range(1, num_words):
         buses.append(
-            Bus(src=tuple(range(num_words - shift)), dst=tuple(range(shift, num_words)))
+            Bus(src=list(range(num_words - shift)), dst=list(range(shift, num_words)))
         )
 
     return tuple(buses)
@@ -214,16 +213,16 @@ def _generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
     cz_gate_zones = frozenset([0])
     measurement_zones = (0,)
 
-    return ArchSpec(
-        words,
-        (gate_zone,),
-        measurement_zones,
-        cz_gate_zones,
-        frozenset(range(num_words_x)),
-        frozenset(as_flat_tuple_int(site_ids[:, 1])),
-        _site_buses(site_ids),
-        (),
-        _calc_site_path_dict(words),
+    return ArchSpec.from_components(
+        words=words,
+        zones=(gate_zone,),
+        measurement_mode_zones=measurement_zones,
+        entangling_zones=cz_gate_zones,
+        has_site_buses=frozenset(range(num_words_x)),
+        has_word_buses=frozenset(as_flat_list_int(site_ids[:, 1])),
+        site_buses=_site_buses(site_ids),
+        word_buses=(),
+        paths=_calc_site_path_dict(words),
     )
 
 
@@ -232,14 +231,34 @@ def generate_arch_hypercube(hypercube_dims: int = 4, word_size_y: int = 5) -> Ar
     base_arch = _generate_base_arch(num_words_x, word_size_y)
     word_buses = _hypercube_busses(hypercube_dims)
     base_arch.paths.update(_calc_hypercube_word_path_dict(base_arch.words))
-    return replace(base_arch, word_buses=word_buses)
+    return ArchSpec.from_components(
+        words=base_arch.words,
+        zones=base_arch.zones,
+        measurement_mode_zones=base_arch.measurement_mode_zones,
+        entangling_zones=base_arch.entangling_zones,
+        has_site_buses=base_arch.has_site_buses,
+        has_word_buses=base_arch.has_word_buses,
+        site_buses=base_arch.site_buses,
+        word_buses=word_buses,
+        paths=base_arch.paths,
+    )
 
 
 def generate_arch_linear(num_words: int = 16, word_size_y: int = 5) -> ArchSpec:
     base_arch = _generate_base_arch(num_words, word_size_y)
     word_buses = _generate_linear_busses(num_words)
     base_arch.paths.update(_calc_linear_word_path_dict(base_arch.words))
-    return replace(base_arch, word_buses=word_buses)
+    return ArchSpec.from_components(
+        words=base_arch.words,
+        zones=base_arch.zones,
+        measurement_mode_zones=base_arch.measurement_mode_zones,
+        entangling_zones=base_arch.entangling_zones,
+        has_site_buses=base_arch.has_site_buses,
+        has_word_buses=base_arch.has_word_buses,
+        site_buses=base_arch.site_buses,
+        word_buses=word_buses,
+        paths=base_arch.paths,
+    )
 
 
 @deprecated(

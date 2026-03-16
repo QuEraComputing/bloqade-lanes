@@ -226,16 +226,13 @@ impl PyLaneAddr {
     }
 
     fn encode(&self) -> u64 {
-        let (d0, d1) = self.inner.encode();
-        (d0 as u64) | ((d1 as u64) << 32)
+        self.inner.encode_u64()
     }
 
     #[staticmethod]
     fn decode(bits: u64) -> Self {
-        let d0 = bits as u32;
-        let d1 = (bits >> 32) as u32;
         Self {
-            inner: rs_addr::LaneAddr::decode(d0, d1),
+            inner: rs_addr::LaneAddr::decode_u64(bits),
         }
     }
 
@@ -259,8 +256,7 @@ impl PyLaneAddr {
     }
 
     fn __hash__(&self) -> u64 {
-        let (d0, d1) = self.inner.encode();
-        (d0 as u64) | ((d1 as u64) << 32)
+        self.inner.encode_u64()
     }
 }
 
@@ -322,15 +318,19 @@ pub struct PyGrid {
 #[pymethods]
 impl PyGrid {
     #[new]
-    fn new(x_start: f64, y_start: f64, x_spacing: Vec<f64>, y_spacing: Vec<f64>) -> Self {
-        Self {
-            inner: rs::Grid {
-                x_start,
-                y_start,
-                x_spacing,
-                y_spacing,
-            },
+    fn new(x_start: f64, y_start: f64, x_spacing: Vec<f64>, y_spacing: Vec<f64>) -> PyResult<Self> {
+        let grid = rs::Grid {
+            x_start,
+            y_start,
+            x_spacing,
+            y_spacing,
+        };
+        if let Err(field) = grid.check_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{field} contains non-finite value (NaN or Inf)"
+            )));
         }
+        Ok(Self { inner: grid })
     }
 
     /// Construct a Grid from explicit position arrays.
@@ -405,6 +405,17 @@ impl PyGrid {
             "Grid(x_start={}, y_start={}, x_spacing={:?}, y_spacing={:?})",
             self.inner.x_start, self.inner.y_start, self.inner.x_spacing, self.inner.y_spacing
         )
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -544,6 +555,17 @@ impl PyBus {
     fn __repr__(&self) -> String {
         format!("Bus(src={:?}, dst={:?})", self.inner.src, self.inner.dst)
     }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 // ── Buses ──
@@ -631,22 +653,23 @@ pub struct PyTransportPath {
 #[pymethods]
 impl PyTransportPath {
     #[new]
-    fn new(lane: &PyLaneAddr, waypoints: Vec<(f64, f64)>) -> Self {
-        let (d0, d1) = lane.inner.encode();
-        Self {
-            inner: rs::TransportPath {
-                lane: (d0 as u64) | ((d1 as u64) << 32),
-                waypoints: waypoints.into_iter().map(|(x, y)| [x, y]).collect(),
-            },
+    fn new(lane: &PyLaneAddr, waypoints: Vec<(f64, f64)>) -> PyResult<Self> {
+        let path = rs::TransportPath {
+            lane: lane.inner.encode_u64(),
+            waypoints: waypoints.into_iter().map(|(x, y)| [x, y]).collect(),
+        };
+        if !path.check_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "waypoints contain non-finite coordinate (NaN or Inf)",
+            ));
         }
+        Ok(Self { inner: path })
     }
 
     #[getter]
     fn lane(&self) -> PyLaneAddr {
-        let d0 = self.inner.lane as u32;
-        let d1 = (self.inner.lane >> 32) as u32;
         PyLaneAddr {
-            inner: rs_addr::LaneAddr::decode(d0, d1),
+            inner: rs_addr::LaneAddr::decode_u64(self.inner.lane),
         }
     }
 
@@ -666,6 +689,17 @@ impl PyTransportPath {
             self.inner.lane,
             self.inner.waypoints.len()
         )
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -866,5 +900,16 @@ impl PyArchSpec {
             "ArchSpec(version=({}, {}))",
             self.inner.version.major, self.inner.version.minor
         )
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
     }
 }

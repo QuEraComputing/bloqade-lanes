@@ -9,6 +9,9 @@ pub enum ArchSpecError {
     #[error("zone 0 must include all words: missing word IDs {missing:?}")]
     Zone0MissingWords { missing: Vec<u32> },
 
+    #[error("measurement_mode_zones must not be empty")]
+    MeasurementModeZonesEmpty,
+
     #[error("measurement_mode_zones[0] must be zone 0, got {got}")]
     MeasurementModeFirstNotZone0 { got: u32 },
 
@@ -91,6 +94,12 @@ pub enum ArchSpecError {
         ref_x_len: usize,
         ref_y_len: usize,
     },
+
+    #[error("word {word_id} grid contains non-finite value in {field}")]
+    NonFiniteGridValue { word_id: u32, field: &'static str },
+
+    #[error("paths[{index}]: waypoint contains non-finite coordinate")]
+    NonFiniteWaypoint { index: usize },
 
     #[error("paths[{index}]: lane 0x{lane:016X} is invalid: {message}")]
     InvalidPathLane {
@@ -187,10 +196,14 @@ fn check_zone0_includes_all_words(
 }
 
 fn check_measurement_mode_first_is_zone0(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
-    if let Some(&first) = spec.measurement_mode_zones.first()
-        && first != 0
-    {
-        errors.push(ArchSpecError::MeasurementModeFirstNotZone0 { got: first });
+    if spec.measurement_mode_zones.is_empty() {
+        errors.push(ArchSpecError::MeasurementModeZonesEmpty);
+        return;
+    }
+    if spec.measurement_mode_zones[0] != 0 {
+        errors.push(ArchSpecError::MeasurementModeFirstNotZone0 {
+            got: spec.measurement_mode_zones[0],
+        });
     }
 }
 
@@ -218,6 +231,9 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     let sites_per_word = spec.geometry.sites_per_word;
     for (word_id, word) in spec.geometry.words.iter().enumerate() {
         let word_id = word_id as u32;
+        if let Err(field) = word.grid.check_finite() {
+            errors.push(ArchSpecError::NonFiniteGridValue { word_id, field });
+        }
         if word.sites.len() != sites_per_word as usize {
             errors.push(ArchSpecError::WrongSiteCount {
                 word_id,
@@ -342,9 +358,10 @@ fn check_consistent_grid_shape(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>)
 fn check_path_lanes(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     if let Some(paths) = &spec.paths {
         for (index, path) in paths.iter().enumerate() {
-            let d0 = path.lane as u32;
-            let d1 = (path.lane >> 32) as u32;
-            let lane = crate::arch::addr::LaneAddr::decode(d0, d1);
+            if !path.check_finite() {
+                errors.push(ArchSpecError::NonFiniteWaypoint { index });
+            }
+            let lane = crate::arch::addr::LaneAddr::decode_u64(path.lane);
             let lane_errors = spec.check_lane(&lane);
             for message in lane_errors {
                 errors.push(ArchSpecError::InvalidPathLane {

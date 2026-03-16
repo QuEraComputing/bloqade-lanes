@@ -53,6 +53,11 @@ impl LaneAddr {
         (data0, data1)
     }
 
+    pub fn encode_u64(&self) -> u64 {
+        let (d0, d1) = self.encode();
+        (d0 as u64) | ((d1 as u64) << 32)
+    }
+
     pub fn decode(data0: u32, data1: u32) -> Self {
         let direction = if (data1 >> 31) & 1 == 0 {
             Direction::Forward
@@ -71,6 +76,10 @@ impl LaneAddr {
             site_id: data0 & 0xFFFF,
             bus_id: data1 & 0xFFFF,
         }
+    }
+
+    pub fn decode_u64(bits: u64) -> Self {
+        Self::decode(bits as u32, (bits >> 32) as u32)
     }
 }
 

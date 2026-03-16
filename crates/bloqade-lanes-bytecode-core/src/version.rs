@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Semantic version with major.minor components.
 ///
 /// Packed as `(major << 16) | minor` for binary format compatibility (4 bytes LE).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version {
     pub major: u16,
     pub minor: u16,
