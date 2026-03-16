@@ -4,22 +4,7 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::arch::types as rs;
 use bloqade_lanes_bytecode_core::version::Version;
 
-/// Validate that a field value fits in 16 bits (0..=65535).
-fn validate_u16_field(name: &str, value: i64) -> PyResult<u32> {
-    if value < 0 {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{}={} must be non-negative",
-            name, value
-        )));
-    }
-    if value > 0xFFFF {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{}={} exceeds maximum 65535",
-            name, value
-        )));
-    }
-    Ok(value as u32)
-}
+use crate::validation::validate_u16_field;
 
 // ── Direction enum ──
 
