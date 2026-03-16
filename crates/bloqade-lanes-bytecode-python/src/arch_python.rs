@@ -406,6 +406,24 @@ impl PyGrid {
             self.inner.x_start, self.inner.y_start, self.inner.x_spacing, self.inner.y_spacing
         )
     }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.x_start.to_bits().hash(&mut hasher);
+        self.inner.y_start.to_bits().hash(&mut hasher);
+        for v in &self.inner.x_spacing {
+            v.to_bits().hash(&mut hasher);
+        }
+        for v in &self.inner.y_spacing {
+            v.to_bits().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
 }
 
 // ── Word ──
