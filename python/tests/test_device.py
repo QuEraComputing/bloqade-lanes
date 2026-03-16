@@ -15,30 +15,6 @@ from bloqade.lanes.device import (
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
-# ── Shared simulator and task fixtures ──
-
-
-@pytest.fixture(scope="module")
-def simulator():
-    return GeminiLogicalSimulator()
-
-
-@pytest.fixture(scope="module")
-def noisy_simulator():
-    return GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
-
-
-@pytest.fixture(scope="module")
-def compiled_task(simulator):
-    """Pre-compiled task for the main kernel, shared across tests."""
-    return simulator.task(main)
-
-
-@pytest.fixture(scope="module")
-def noisy_compiled_task(noisy_simulator):
-    """Pre-compiled noisy task for the main kernel."""
-    return noisy_simulator.task(main)
-
 
 @gemini_logical.kernel(verify=False)
 def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
@@ -108,9 +84,10 @@ def test_physical_compilation(size: int):
 
 
 @pytest.mark.slow
-def test_run_default(compiled_task):
+def test_run_default():
     """Test that run() without run_detectors returns a Result."""
-    result = compiled_task.run(shots=5, with_noise=False)
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=5, with_noise=False)
 
     assert isinstance(result, Result)
     assert result.fidelity_bounds() is not None
@@ -118,9 +95,10 @@ def test_run_default(compiled_task):
 
 
 @pytest.mark.slow
-def test_run_with_run_detectors_flag(compiled_task):
+def test_run_with_run_detectors_flag():
     """Test that run(run_detectors=True) returns a DetectorResult."""
-    result = compiled_task.run(shots=10, with_noise=False, run_detectors=True)
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=10, with_noise=False, run_detectors=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -130,9 +108,10 @@ def test_run_with_run_detectors_flag(compiled_task):
 
 
 @pytest.mark.slow
-def test_run_detectors_with_noise(compiled_task):
+def test_run_detectors_with_noise():
     """Test run(run_detectors=True) with noise enabled uses the noisy detector sampler."""
-    result = compiled_task.run(shots=10, with_noise=True, run_detectors=True)
+    sim = GeminiLogicalSimulator()
+    result = sim.run(main, shots=10, with_noise=True, run_detectors=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 10
@@ -141,9 +120,10 @@ def test_run_detectors_with_noise(compiled_task):
 
 
 @pytest.mark.slow
-def test_run_async_with_run_detectors_flag(compiled_task):
+def test_run_async_with_run_detectors_flag():
     """Test run_async(run_detectors=True) returns a Future[DetectorResult]."""
-    future = compiled_task.run_async(shots=5, with_noise=False, run_detectors=True)
+    sim = GeminiLogicalSimulator()
+    future = sim.run_async(main, shots=5, with_noise=False, run_detectors=True)
     result = future.result()
 
     assert isinstance(result, DetectorResult)
@@ -152,9 +132,11 @@ def test_run_async_with_run_detectors_flag(compiled_task):
 
 
 @pytest.mark.slow
-def test_run_detectors_via_task(compiled_task):
+def test_run_detectors_via_task():
     """Test calling run(run_detectors=True) on a task directly."""
-    result = compiled_task.run(shots=5, with_noise=False, run_detectors=True)
+    sim = GeminiLogicalSimulator()
+    task = sim.task(main)
+    result = task.run(shots=5, with_noise=False, run_detectors=True)
 
     assert isinstance(result, DetectorResult)
     assert len(result.detectors) == 5
@@ -162,19 +144,21 @@ def test_run_detectors_via_task(compiled_task):
 
 
 @pytest.mark.slow
-def test_run_detectors_task_directly(noisy_compiled_task):
+def test_run_detectors_task_directly():
     """Test creating a GeminiLogicalSimulatorTask and calling run(run_detectors=True)."""
-    result = noisy_compiled_task.run(shots=5, with_noise=False, run_detectors=True)
+    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    task = sim.task(main)
+    result = task.run(shots=5, with_noise=False, run_detectors=True)
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
 
 
 @pytest.mark.slow
-def test_run_detectors_task_async(noisy_compiled_task):
+def test_run_detectors_task_async():
     """Test run_async(run_detectors=True) directly on GeminiLogicalSimulatorTask."""
-    future = noisy_compiled_task.run_async(
-        shots=5, with_noise=False, run_detectors=True
-    )
+    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    task = sim.task(main)
+    future = task.run_async(shots=5, with_noise=False, run_detectors=True)
     result = future.result()
     assert len(result.detectors) == 5
     assert len(result.observables) == 5
