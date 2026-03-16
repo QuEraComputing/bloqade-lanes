@@ -4,6 +4,7 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 
 use crate::arch_python::{PyDirection, PyMoveType};
+use crate::validation::validate_u16_field;
 
 #[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
@@ -30,42 +31,47 @@ impl PyInstruction {
     }
 
     #[staticmethod]
-    fn const_loc(word_id: u32, site_id: u32) -> Self {
+    fn const_loc(word_id: i64, site_id: i64) -> PyResult<Self> {
+        let word_id = validate_u16_field("word_id", word_id)?;
+        let site_id = validate_u16_field("site_id", site_id)?;
         let addr = rs_addr::LocationAddr { word_id, site_id };
-        Self {
+        Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(addr.encode())),
-        }
+        })
     }
 
     #[staticmethod]
     #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn const_lane(
         move_type: &PyMoveType,
-        word_id: u32,
-        site_id: u32,
-        bus_id: u32,
+        word_id: i64,
+        site_id: i64,
+        bus_id: i64,
         direction: PyDirection,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        let word_id = validate_u16_field("word_id", word_id)?;
+        let site_id = validate_u16_field("site_id", site_id)?;
+        let bus_id = validate_u16_field("bus_id", bus_id)?;
         let addr = rs_addr::LaneAddr {
             direction: direction.to_rs(),
             move_type: move_type.to_rs(),
-
             word_id,
             site_id,
             bus_id,
         };
         let (d0, d1) = addr.encode();
-        Self {
+        Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLane(d0, d1)),
-        }
+        })
     }
 
     #[staticmethod]
-    fn const_zone(zone_id: u32) -> Self {
+    fn const_zone(zone_id: i64) -> PyResult<Self> {
+        let zone_id = validate_u16_field("zone_id", zone_id)?;
         let addr = rs_addr::ZoneAddr { zone_id };
-        Self {
+        Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(addr.encode())),
-        }
+        })
     }
 
     // ── Stack manipulation ──

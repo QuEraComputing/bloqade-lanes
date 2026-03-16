@@ -201,6 +201,49 @@ class TestInstruction:
         assert a != c
 
 
+class TestInstructionAddressValidation:
+    """Instruction address constants validate 16-bit range."""
+
+    def test_const_loc_negative_word_id(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.const_loc(word_id=-1, site_id=0)
+
+    def test_const_loc_negative_site_id(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.const_loc(word_id=0, site_id=-1)
+
+    def test_const_loc_overflow(self):
+        with pytest.raises(ValueError, match="exceeds maximum"):
+            Instruction.const_loc(word_id=0x10000, site_id=0)
+
+    def test_const_lane_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.const_lane(
+                move_type=MoveType.SITE, word_id=-1, site_id=0, bus_id=0
+            )
+
+    def test_const_lane_overflow(self):
+        with pytest.raises(ValueError, match="exceeds maximum"):
+            Instruction.const_lane(
+                move_type=MoveType.SITE, word_id=0, site_id=0, bus_id=0x10000
+            )
+
+    def test_const_zone_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.const_zone(zone_id=-1)
+
+    def test_const_zone_overflow(self):
+        with pytest.raises(ValueError, match="exceeds maximum"):
+            Instruction.const_zone(zone_id=0x10000)
+
+    def test_max_valid_values(self):
+        Instruction.const_loc(word_id=0xFFFF, site_id=0xFFFF)
+        Instruction.const_lane(
+            move_type=MoveType.SITE, word_id=0xFFFF, site_id=0xFFFF, bus_id=0xFFFF
+        )
+        Instruction.const_zone(zone_id=0xFFFF)
+
+
 # ── Program ──
 
 
