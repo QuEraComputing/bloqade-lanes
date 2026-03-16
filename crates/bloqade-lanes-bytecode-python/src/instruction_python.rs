@@ -4,9 +4,7 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 
 use crate::arch_python::{PyDirection, PyMoveType};
-use crate::validation::{
-    validate_u8_field, validate_u16_field, validate_u16_field_strict, validate_u32_field,
-};
+use crate::validation::validate_field;
 
 #[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
@@ -34,8 +32,8 @@ impl PyInstruction {
 
     #[staticmethod]
     fn const_loc(word_id: i64, site_id: i64) -> PyResult<Self> {
-        let word_id = validate_u16_field("word_id", word_id)?;
-        let site_id = validate_u16_field("site_id", site_id)?;
+        let word_id = validate_field::<u16>("word_id", word_id)? as u32;
+        let site_id = validate_field::<u16>("site_id", site_id)? as u32;
         let addr = rs_addr::LocationAddr { word_id, site_id };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(addr.encode())),
@@ -51,9 +49,9 @@ impl PyInstruction {
         bus_id: i64,
         direction: PyDirection,
     ) -> PyResult<Self> {
-        let word_id = validate_u16_field("word_id", word_id)?;
-        let site_id = validate_u16_field("site_id", site_id)?;
-        let bus_id = validate_u16_field("bus_id", bus_id)?;
+        let word_id = validate_field::<u16>("word_id", word_id)? as u32;
+        let site_id = validate_field::<u16>("site_id", site_id)? as u32;
+        let bus_id = validate_field::<u16>("bus_id", bus_id)? as u32;
         let addr = rs_addr::LaneAddr {
             direction: direction.to_rs(),
             move_type: move_type.to_rs(),
@@ -69,7 +67,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn const_zone(zone_id: i64) -> PyResult<Self> {
-        let zone_id = validate_u16_field("zone_id", zone_id)?;
+        let zone_id = validate_field::<u16>("zone_id", zone_id)? as u32;
         let addr = rs_addr::ZoneAddr { zone_id };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(addr.encode())),
@@ -103,7 +101,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn initial_fill(arity: i64) -> PyResult<Self> {
-        let arity = validate_u32_field("arity", arity)?;
+        let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
             inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::InitialFill {
                 arity,
@@ -113,7 +111,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn fill(arity: i64) -> PyResult<Self> {
-        let arity = validate_u32_field("arity", arity)?;
+        let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
             inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::Fill { arity }),
         })
@@ -122,7 +120,7 @@ impl PyInstruction {
     #[staticmethod]
     #[pyo3(name = "move_")]
     fn move_instr(arity: i64) -> PyResult<Self> {
-        let arity = validate_u32_field("arity", arity)?;
+        let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
             inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::Move { arity }),
         })
@@ -132,7 +130,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn local_r(arity: i64) -> PyResult<Self> {
-        let arity = validate_u32_field("arity", arity)?;
+        let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
             inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::LocalR { arity }),
         })
@@ -140,7 +138,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn local_rz(arity: i64) -> PyResult<Self> {
-        let arity = validate_u32_field("arity", arity)?;
+        let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
             inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::LocalRz { arity }),
         })
@@ -171,7 +169,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn measure(arity: i64) -> PyResult<Self> {
-        let arity = validate_u32_field("arity", arity)?;
+        let arity = validate_field::<u32>("arity", arity)?;
         Ok(Self {
             inner: rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }),
         })
@@ -189,9 +187,9 @@ impl PyInstruction {
     #[staticmethod]
     #[pyo3(signature = (type_tag, dim0, dim1=0))]
     fn new_array(type_tag: i64, dim0: i64, dim1: i64) -> PyResult<Self> {
-        let type_tag = validate_u8_field("type_tag", type_tag)?;
-        let dim0 = validate_u16_field_strict("dim0", dim0)?;
-        let dim1 = validate_u16_field_strict("dim1", dim1)?;
+        let type_tag = validate_field::<u8>("type_tag", type_tag)?;
+        let dim0 = validate_field::<u16>("dim0", dim0)?;
+        let dim1 = validate_field::<u16>("dim1", dim1)?;
         Ok(Self {
             inner: rs::Instruction::Array(rs::ArrayInstruction::NewArray {
                 type_tag,
@@ -203,7 +201,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn get_item(ndims: i64) -> PyResult<Self> {
-        let ndims = validate_u16_field_strict("ndims", ndims)?;
+        let ndims = validate_field::<u16>("ndims", ndims)?;
         Ok(Self {
             inner: rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }),
         })
