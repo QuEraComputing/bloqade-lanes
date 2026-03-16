@@ -18,7 +18,7 @@ word = Word(
     site_indices=((0, 0), (1, 0)),
     has_cz=None,
 )
-arch_spec = ArchSpec(
+arch_spec = ArchSpec.from_components(
     words=(word, word),
     zones=((0, 1),),
     measurement_mode_zones=(0,),
@@ -65,7 +65,7 @@ def test_show_with_mocked_pyplot():
 
 def test_post_init_invalid_zone():
     with pytest.raises(Exception):  # ArchSpecError from Rust validation
-        ArchSpec(
+        ArchSpec.from_components(
             words=(word, word),
             zones=((1,),),
             measurement_mode_zones=(0,),

@@ -91,7 +91,7 @@ def test_verify_no_czs():
         ((0, 0), (1, 0), (2, 0)),
     )
 
-    arch_spec = layout.ArchSpec(
+    arch_spec = layout.ArchSpec.from_components(
         (word,),
         ((0,),),
         (0,),
@@ -126,7 +126,7 @@ def test_verify_custom_large_arch():
         )
         for ix in range(4)
     )
-    arch_spec = layout.ArchSpec(
+    arch_spec = layout.ArchSpec.from_components(
         words,
         (tuple(range(4)),),
         (0,),

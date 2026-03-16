@@ -35,13 +35,6 @@ class ArchSpec:
 
     _inner: _RustArchSpec
     words: tuple[Word, ...]
-    zones: tuple[tuple[int, ...], ...]
-    measurement_mode_zones: tuple[int, ...]
-    entangling_zones: frozenset[int]
-    has_site_buses: frozenset[int]
-    has_word_buses: frozenset[int]
-    site_buses: tuple[Bus, ...]
-    word_buses: tuple[Bus, ...]
     paths: dict[LaneAddress, tuple[tuple[float, float], ...]]
     zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]]
     _lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress]
@@ -54,69 +47,20 @@ class ArchSpec:
 
     def __init__(
         self,
+        inner: _RustArchSpec,
         words: tuple[Word, ...],
-        zones: tuple[tuple[int, ...], ...],
-        measurement_mode_zones: tuple[int, ...],
-        entangling_zones: frozenset[int],
-        has_site_buses: frozenset[int],
-        has_word_buses: frozenset[int],
-        site_buses: tuple[Bus, ...],
-        word_buses: tuple[Bus, ...],
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
     ):
+        self._inner = inner
         self.words = words
-        self.zones = zones
-        self.measurement_mode_zones = measurement_mode_zones
-        self.entangling_zones = entangling_zones
-        self.has_site_buses = has_site_buses
-        self.has_word_buses = has_word_buses
-        self.site_buses = site_buses
-        self.word_buses = word_buses
         self.paths = paths if paths is not None else {}
         self._lane_duration_cache_us = {}
         self._max_lane_duration_cache_us = {}
 
-        # Build Rust inner
-        sites_per_word = len(words[0].site_indices) if words else 0
-        rust_geometry = _RustGeometry(
-            sites_per_word=sites_per_word,
-            words=[w._inner for w in words],
-        )
-        rust_buses = _RustBuses(
-            site_buses=list(site_buses),
-            word_buses=list(word_buses),
-        )
-        rust_zones = [_RustZone(words=list(z)) for z in zones]
-
-        rust_paths = None
-        if self.paths:
-            rust_paths = [
-                _RustTransportPath(
-                    lane=_RustLaneAddress(
-                        lane.move_type,
-                        lane.word_id,
-                        lane.site_id,
-                        lane.bus_id,
-                        lane.direction,
-                    ),
-                    waypoints=list(waypoints),
-                )
-                for lane, waypoints in self.paths.items()
-            ]
-
-        self._inner = _RustArchSpec(
-            version=(1, 0),
-            geometry=rust_geometry,
-            buses=rust_buses,
-            words_with_site_buses=sorted(has_site_buses),
-            sites_with_word_buses=sorted(has_word_buses),
-            zones=rust_zones,
-            entangling_zones=sorted(entangling_zones),
-            measurement_mode_zones=list(measurement_mode_zones),
-            paths=rust_paths,
-        )
         self._inner.validate()
+        self._build_caches()
 
+    def _build_caches(self) -> None:
         # Build zone_address_map
         zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(
             dict
@@ -159,6 +103,92 @@ class ArchSpec:
                         src, dst = self.get_endpoints(lane_addr)
                         lane_map[(src, dst)] = lane_addr
         self._lane_map = lane_map
+
+    # ── Properties derived from Rust inner ──
+
+    @property
+    def zones(self) -> tuple[tuple[int, ...], ...]:
+        return tuple(tuple(z.words) for z in self._inner.zones)
+
+    @property
+    def measurement_mode_zones(self) -> tuple[int, ...]:
+        return tuple(self._inner.measurement_mode_zones)
+
+    @property
+    def entangling_zones(self) -> frozenset[int]:
+        return frozenset(self._inner.entangling_zones)
+
+    @property
+    def has_site_buses(self) -> frozenset[int]:
+        return frozenset(self._inner.words_with_site_buses)
+
+    @property
+    def has_word_buses(self) -> frozenset[int]:
+        return frozenset(self._inner.sites_with_word_buses)
+
+    @property
+    def site_buses(self) -> tuple[Bus, ...]:
+        return tuple(self._inner.buses.site_buses)
+
+    @property
+    def word_buses(self) -> tuple[Bus, ...]:
+        return tuple(self._inner.buses.word_buses)
+
+    # ── Constructor classmethod ──
+
+    @classmethod
+    def from_components(
+        cls,
+        words: tuple[Word, ...],
+        zones: tuple[tuple[int, ...], ...],
+        measurement_mode_zones: tuple[int, ...],
+        entangling_zones: frozenset[int],
+        has_site_buses: frozenset[int],
+        has_word_buses: frozenset[int],
+        site_buses: tuple[Bus, ...],
+        word_buses: tuple[Bus, ...],
+        paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
+    ) -> ArchSpec:
+        """Construct an ArchSpec from Python component types."""
+        sites_per_word = len(words[0].site_indices) if words else 0
+        rust_geometry = _RustGeometry(
+            sites_per_word=sites_per_word,
+            words=[w._inner for w in words],
+        )
+        rust_buses = _RustBuses(
+            site_buses=list(site_buses),
+            word_buses=list(word_buses),
+        )
+        rust_zones = [_RustZone(words=list(z)) for z in zones]
+
+        rust_paths = None
+        if paths:
+            rust_paths = [
+                _RustTransportPath(
+                    lane=_RustLaneAddress(
+                        lane.move_type,
+                        lane.word_id,
+                        lane.site_id,
+                        lane.bus_id,
+                        lane.direction,
+                    ),
+                    waypoints=list(waypoints),
+                )
+                for lane, waypoints in paths.items()
+            ]
+
+        inner = _RustArchSpec(
+            version=(1, 0),
+            geometry=rust_geometry,
+            buses=rust_buses,
+            words_with_site_buses=sorted(has_site_buses),
+            sites_with_word_buses=sorted(has_word_buses),
+            zones=rust_zones,
+            entangling_zones=sorted(entangling_zones),
+            measurement_mode_zones=list(measurement_mode_zones),
+            paths=rust_paths,
+        )
+        return cls(inner, words, paths)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ArchSpec):

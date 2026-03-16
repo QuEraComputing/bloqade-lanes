@@ -213,7 +213,7 @@ def _generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
     cz_gate_zones = frozenset([0])
     measurement_zones = (0,)
 
-    return ArchSpec(
+    return ArchSpec.from_components(
         words=words,
         zones=(gate_zone,),
         measurement_mode_zones=measurement_zones,
@@ -231,7 +231,7 @@ def generate_arch_hypercube(hypercube_dims: int = 4, word_size_y: int = 5) -> Ar
     base_arch = _generate_base_arch(num_words_x, word_size_y)
     word_buses = _hypercube_busses(hypercube_dims)
     base_arch.paths.update(_calc_hypercube_word_path_dict(base_arch.words))
-    return ArchSpec(
+    return ArchSpec.from_components(
         words=base_arch.words,
         zones=base_arch.zones,
         measurement_mode_zones=base_arch.measurement_mode_zones,
@@ -248,7 +248,7 @@ def generate_arch_linear(num_words: int = 16, word_size_y: int = 5) -> ArchSpec:
     base_arch = _generate_base_arch(num_words, word_size_y)
     word_buses = _generate_linear_busses(num_words)
     base_arch.paths.update(_calc_linear_word_path_dict(base_arch.words))
-    return ArchSpec(
+    return ArchSpec.from_components(
         words=base_arch.words,
         zones=base_arch.zones,
         measurement_mode_zones=base_arch.measurement_mode_zones,
