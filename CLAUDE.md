@@ -144,3 +144,65 @@ bloqade-lanes/
 ├── demo/                    # Python demo scripts
 └── dist-data/               # Staged artifacts for wheel packaging (gitignored)
 ```
+
+## Commit Message Convention
+
+This project follows [Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
+
+### Format
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types
+
+| Type | Purpose |
+|------|---------|
+| `feat` | New functionality (SemVer MINOR) |
+| `fix` | Bug fix (SemVer PATCH) |
+| `docs` | Documentation only |
+| `style` | Formatting, whitespace (no logic change) |
+| `refactor` | Code change that neither fixes a bug nor adds a feature |
+| `perf` | Performance improvement |
+| `test` | Adding or correcting tests |
+| `build` | Build system or external dependencies |
+| `ci` | CI configuration and scripts |
+| `chore` | Other changes that don't modify src or test files |
+
+### Scopes
+
+Use the crate or subsystem name as scope when the change is focused:
+
+- `core`, `python`, `cli` — crate-level scopes
+- `arch`, `bytecode`, `ffi` — subsystem scopes
+- Omit scope for cross-cutting changes
+
+Examples:
+```
+feat(bytecode): add new SWAP instruction encoding
+fix(python): correct exception mapping for LaneGroupError
+docs: update AGENT.md with commit conventions
+refactor(arch): simplify Grid validation logic
+ci: add pyright to lint workflow
+```
+
+### Breaking Changes
+
+Signal breaking changes in one of two ways:
+
+1. **Footer**: Add `BREAKING CHANGE: <description>` in the commit footer
+2. **Type suffix**: Append `!` before the colon — e.g., `feat(bytecode)!: redesign instruction encoding`
+
+Breaking changes map to SemVer MAJOR.
+
+### Rules
+
+- The description MUST immediately follow the type/scope prefix colon and space
+- The body, if present, MUST begin one blank line after the description
+- Footers, if present, MUST begin one blank line after the body
+- Use imperative mood in the description ("add", not "added" or "adds")
