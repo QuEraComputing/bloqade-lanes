@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from bloqade.geometry.dialects.grid import Grid
 
+from bloqade.lanes.bytecode.exceptions import ArchSpecError
 from bloqade.lanes.layout.arch import ArchSpec, Bus
 from bloqade.lanes.layout.encoding import (
     Direction,
@@ -64,7 +65,7 @@ def test_show_with_mocked_pyplot():
 
 
 def test_post_init_invalid_zone():
-    with pytest.raises(Exception):  # ArchSpecError from Rust validation
+    with pytest.raises(ArchSpecError, match="zone 0 must include all words"):
         ArchSpec.from_components(
             words=(word, word),
             zones=((1,),),
