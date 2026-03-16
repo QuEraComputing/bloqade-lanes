@@ -68,6 +68,19 @@ class WrongCzPairsCountError(ArchSpecError):
         )
 
 
+class NonFiniteGridValueError(ArchSpecError):
+    def __init__(self, word_id: int, field: str):
+        self.word_id = word_id
+        self.field = field
+        super().__init__(f"word {word_id} grid contains non-finite value in {field}")
+
+
+class NonFiniteWaypointError(ArchSpecError):
+    def __init__(self, index: int):
+        self.index = index
+        super().__init__(f"paths[{index}]: waypoint contains non-finite coordinate")
+
+
 class SiteXIndexOutOfRangeError(ArchSpecError):
     def __init__(self, word_id: int, site_idx: int, x_idx: int, x_len: int):
         self.word_id = word_id

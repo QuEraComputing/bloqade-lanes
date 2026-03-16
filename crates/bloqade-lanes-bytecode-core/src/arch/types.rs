@@ -33,6 +33,15 @@ pub struct TransportPath {
     pub waypoints: Vec<[f64; 2]>,
 }
 
+impl TransportPath {
+    /// Check that all waypoint coordinates are finite (not NaN or Inf).
+    pub fn check_finite(&self) -> bool {
+        self.waypoints
+            .iter()
+            .all(|wp| wp[0].is_finite() && wp[1].is_finite())
+    }
+}
+
 impl Eq for TransportPath {}
 
 impl Hash for TransportPath {
@@ -112,6 +121,25 @@ impl Hash for Grid {
 }
 
 impl Grid {
+    /// Check that all float values are finite (not NaN or Inf).
+    pub fn check_finite(&self) -> Result<(), &'static str> {
+        if !self.x_start.is_finite() {
+            return Err("x_start");
+        }
+        if !self.y_start.is_finite() {
+            return Err("y_start");
+        }
+        if let Some(v) = self.x_spacing.iter().find(|v| !v.is_finite()) {
+            let _ = v;
+            return Err("x_spacing");
+        }
+        if let Some(v) = self.y_spacing.iter().find(|v| !v.is_finite()) {
+            let _ = v;
+            return Err("y_spacing");
+        }
+        Ok(())
+    }
+
     /// Construct a `Grid` from explicit position arrays.
     ///
     /// The first element becomes the start value and consecutive differences

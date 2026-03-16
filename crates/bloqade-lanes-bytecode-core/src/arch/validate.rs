@@ -95,6 +95,12 @@ pub enum ArchSpecError {
         ref_y_len: usize,
     },
 
+    #[error("word {word_id} grid contains non-finite value in {field}")]
+    NonFiniteGridValue { word_id: u32, field: &'static str },
+
+    #[error("paths[{index}]: waypoint contains non-finite coordinate")]
+    NonFiniteWaypoint { index: usize },
+
     #[error("paths[{index}]: lane 0x{lane:016X} is invalid: {message}")]
     InvalidPathLane {
         index: usize,
@@ -225,6 +231,9 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     let sites_per_word = spec.geometry.sites_per_word;
     for (word_id, word) in spec.geometry.words.iter().enumerate() {
         let word_id = word_id as u32;
+        if let Err(field) = word.grid.check_finite() {
+            errors.push(ArchSpecError::NonFiniteGridValue { word_id, field });
+        }
         if word.sites.len() != sites_per_word as usize {
             errors.push(ArchSpecError::WrongSiteCount {
                 word_id,
@@ -349,6 +358,9 @@ fn check_consistent_grid_shape(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>)
 fn check_path_lanes(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     if let Some(paths) = &spec.paths {
         for (index, path) in paths.iter().enumerate() {
+            if !path.check_finite() {
+                errors.push(ArchSpecError::NonFiniteWaypoint { index });
+            }
             let lane = crate::arch::addr::LaneAddr::decode_u64(path.lane);
             let lane_errors = spec.check_lane(&lane);
             for message in lane_errors {

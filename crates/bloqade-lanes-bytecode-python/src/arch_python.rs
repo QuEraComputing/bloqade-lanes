@@ -318,15 +318,19 @@ pub struct PyGrid {
 #[pymethods]
 impl PyGrid {
     #[new]
-    fn new(x_start: f64, y_start: f64, x_spacing: Vec<f64>, y_spacing: Vec<f64>) -> Self {
-        Self {
-            inner: rs::Grid {
-                x_start,
-                y_start,
-                x_spacing,
-                y_spacing,
-            },
+    fn new(x_start: f64, y_start: f64, x_spacing: Vec<f64>, y_spacing: Vec<f64>) -> PyResult<Self> {
+        let grid = rs::Grid {
+            x_start,
+            y_start,
+            x_spacing,
+            y_spacing,
+        };
+        if let Err(field) = grid.check_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{field} contains non-finite value (NaN or Inf)"
+            )));
         }
+        Ok(Self { inner: grid })
     }
 
     /// Construct a Grid from explicit position arrays.
@@ -649,13 +653,17 @@ pub struct PyTransportPath {
 #[pymethods]
 impl PyTransportPath {
     #[new]
-    fn new(lane: &PyLaneAddr, waypoints: Vec<(f64, f64)>) -> Self {
-        Self {
-            inner: rs::TransportPath {
-                lane: lane.inner.encode_u64(),
-                waypoints: waypoints.into_iter().map(|(x, y)| [x, y]).collect(),
-            },
+    fn new(lane: &PyLaneAddr, waypoints: Vec<(f64, f64)>) -> PyResult<Self> {
+        let path = rs::TransportPath {
+            lane: lane.inner.encode_u64(),
+            waypoints: waypoints.into_iter().map(|(x, y)| [x, y]).collect(),
+        };
+        if !path.check_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "waypoints contain non-finite coordinate (NaN or Inf)",
+            ));
         }
+        Ok(Self { inner: path })
     }
 
     #[getter]

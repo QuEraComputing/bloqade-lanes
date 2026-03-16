@@ -112,6 +112,14 @@ fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyOb
             let cls = module.getattr("InvalidSiteWithWordBusError")?;
             cls.call1((*site_idx, *sites_per_word))?
         }
+        ArchSpecError::NonFiniteGridValue { word_id, field } => {
+            let cls = module.getattr("NonFiniteGridValueError")?;
+            cls.call1((*word_id, *field))?
+        }
+        ArchSpecError::NonFiniteWaypoint { index } => {
+            let cls = module.getattr("NonFiniteWaypointError")?;
+            cls.call1((*index,))?
+        }
         ArchSpecError::InvalidPathLane {
             index,
             lane,
