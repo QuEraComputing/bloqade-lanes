@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import abc
 from dataclasses import dataclass
-from typing import Self
+from typing import TYPE_CHECKING
 
 from kirin import ir, types
 from kirin.print import Printer
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 from bloqade.lanes.bytecode._native import (
     Direction as Direction,

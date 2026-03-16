@@ -1,3 +1,5 @@
+import pytest
+
 from bloqade.lanes.layout import encoding
 
 
@@ -46,3 +48,37 @@ def test_sitelaneaddress_and_wordlaneaddress():
         word_id=1, site_id=2, bus_id=3, direction=encoding.Direction.FORWARD
     )
     assert wla.move_type == encoding.MoveType.WORD
+
+
+class TestOverflowValidation:
+    """IDs exceeding 16-bit range (0xFFFF) are rejected at construction."""
+
+    def test_zone_address_overflow(self):
+        with pytest.raises(ValueError, match="zone_id=65536 exceeds maximum"):
+            encoding.ZoneAddress(zone_id=0x10000)
+
+    def test_location_address_word_id_overflow(self):
+        with pytest.raises(ValueError, match="word_id=65536 exceeds maximum"):
+            encoding.LocationAddress(word_id=0x10000, site_id=0)
+
+    def test_location_address_site_id_overflow(self):
+        with pytest.raises(ValueError, match="site_id=65536 exceeds maximum"):
+            encoding.LocationAddress(word_id=0, site_id=0x10000)
+
+    def test_lane_address_word_id_overflow(self):
+        with pytest.raises(ValueError, match="word_id=65536 exceeds maximum"):
+            encoding.LaneAddress(encoding.MoveType.SITE, 0x10000, 0, 0)
+
+    def test_lane_address_site_id_overflow(self):
+        with pytest.raises(ValueError, match="site_id=65536 exceeds maximum"):
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0x10000, 0)
+
+    def test_lane_address_bus_id_overflow(self):
+        with pytest.raises(ValueError, match="bus_id=65536 exceeds maximum"):
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, 0x10000)
+
+    def test_max_valid_values_accepted(self):
+        """0xFFFF is the maximum valid value for all fields."""
+        encoding.ZoneAddress(zone_id=0xFFFF)
+        encoding.LocationAddress(word_id=0xFFFF, site_id=0xFFFF)
+        encoding.LaneAddress(encoding.MoveType.SITE, 0xFFFF, 0xFFFF, 0xFFFF)

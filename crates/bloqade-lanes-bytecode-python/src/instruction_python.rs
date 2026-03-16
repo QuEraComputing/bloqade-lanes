@@ -274,8 +274,8 @@ fn format_instruction(instr: &rs::Instruction) -> String {
                     rs_addr::MoveType::WordBus => "MoveType.WORD",
                 };
                 format!(
-                    "Instruction.const_lane(direction={}, move_type={}, word_id={}, site_id={}, bus_id={})",
-                    dir, mt, addr.word_id, addr.site_id, addr.bus_id
+                    "Instruction.const_lane(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
+                    mt, addr.word_id, addr.site_id, addr.bus_id, dir
                 )
             }
             rs::LaneConstInstruction::ConstZone(bits) => {

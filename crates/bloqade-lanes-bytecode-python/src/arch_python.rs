@@ -105,10 +105,22 @@ pub struct PyLocationAddr {
 #[pymethods]
 impl PyLocationAddr {
     #[new]
-    fn new(word_id: u32, site_id: u32) -> Self {
-        Self {
-            inner: rs_addr::LocationAddr { word_id, site_id },
+    fn new(word_id: u32, site_id: u32) -> PyResult<Self> {
+        if word_id > 0xFFFF {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "word_id={} exceeds maximum 65535",
+                word_id
+            )));
         }
+        if site_id > 0xFFFF {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "site_id={} exceeds maximum 65535",
+                site_id
+            )));
+        }
+        Ok(Self {
+            inner: rs_addr::LocationAddr { word_id, site_id },
+        })
     }
 
     #[getter]
@@ -166,8 +178,26 @@ impl PyLaneAddr {
         site_id: u32,
         bus_id: u32,
         direction: PyDirection,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        if word_id > 0xFFFF {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "word_id={} exceeds maximum 65535",
+                word_id
+            )));
+        }
+        if site_id > 0xFFFF {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "site_id={} exceeds maximum 65535",
+                site_id
+            )));
+        }
+        if bus_id > 0xFFFF {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "bus_id={} exceeds maximum 65535",
+                bus_id
+            )));
+        }
+        Ok(Self {
             inner: rs_addr::LaneAddr {
                 direction: direction.to_rs(),
                 move_type: move_type.to_rs(),
@@ -175,7 +205,7 @@ impl PyLaneAddr {
                 site_id,
                 bus_id,
             },
-        }
+        })
     }
 
     #[getter]
@@ -253,10 +283,16 @@ pub struct PyZoneAddr {
 #[pymethods]
 impl PyZoneAddr {
     #[new]
-    fn new(zone_id: u32) -> Self {
-        Self {
-            inner: rs_addr::ZoneAddr { zone_id },
+    fn new(zone_id: u32) -> PyResult<Self> {
+        if zone_id > 0xFFFF {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "zone_id={} exceeds maximum 65535",
+                zone_id
+            )));
         }
+        Ok(Self {
+            inner: rs_addr::ZoneAddr { zone_id },
+        })
     }
 
     #[getter]
