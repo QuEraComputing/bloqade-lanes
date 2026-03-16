@@ -4,6 +4,17 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::version::Version;
 
+/// Normalize -0.0 to 0.0 for consistent hashing (since -0.0 == 0.0
+/// under PartialEq but to_bits() differs).
+#[inline]
+fn canonical_f64_bits(v: f64) -> u64 {
+    if v == 0.0 {
+        0.0_f64.to_bits()
+    } else {
+        v.to_bits()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArchSpec {
     pub version: Version,
@@ -48,8 +59,8 @@ impl Hash for TransportPath {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.lane.hash(state);
         for wp in &self.waypoints {
-            wp[0].to_bits().hash(state);
-            wp[1].to_bits().hash(state);
+            canonical_f64_bits(wp[0]).hash(state);
+            canonical_f64_bits(wp[1]).hash(state);
         }
     }
 }
@@ -109,13 +120,13 @@ impl Eq for Grid {}
 
 impl Hash for Grid {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.x_start.to_bits().hash(state);
-        self.y_start.to_bits().hash(state);
+        canonical_f64_bits(self.x_start).hash(state);
+        canonical_f64_bits(self.y_start).hash(state);
         for v in &self.x_spacing {
-            v.to_bits().hash(state);
+            canonical_f64_bits(*v).hash(state);
         }
         for v in &self.y_spacing {
-            v.to_bits().hash(state);
+            canonical_f64_bits(*v).hash(state);
         }
     }
 }
