@@ -1,8 +1,10 @@
+use std::hash::{Hash, Hasher};
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::version::Version;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArchSpec {
     pub version: Version,
     pub geometry: Geometry,
@@ -31,6 +33,18 @@ pub struct TransportPath {
     pub waypoints: Vec<[f64; 2]>,
 }
 
+impl Eq for TransportPath {}
+
+impl Hash for TransportPath {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.lane.hash(state);
+        for wp in &self.waypoints {
+            wp[0].to_bits().hash(state);
+            wp[1].to_bits().hash(state);
+        }
+    }
+}
+
 fn serialize_lane_hex<S: Serializer>(lane: &u64, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&format!("0x{:016X}", lane))
 }
@@ -56,13 +70,13 @@ fn deserialize_lane_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u6
     u64::from_str_radix(hex, 16).map_err(serde::de::Error::custom)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Geometry {
     pub sites_per_word: u32,
     pub words: Vec<Word>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Word {
     pub grid: Grid,
     /// Each entry is `[x_idx, y_idx]` indexing into the grid's x and y
@@ -80,6 +94,21 @@ pub struct Grid {
     pub y_start: f64,
     pub x_spacing: Vec<f64>,
     pub y_spacing: Vec<f64>,
+}
+
+impl Eq for Grid {}
+
+impl Hash for Grid {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.x_start.to_bits().hash(state);
+        self.y_start.to_bits().hash(state);
+        for v in &self.x_spacing {
+            v.to_bits().hash(state);
+        }
+        for v in &self.y_spacing {
+            v.to_bits().hash(state);
+        }
+    }
 }
 
 impl Grid {
@@ -155,19 +184,19 @@ impl Grid {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Buses {
     pub site_buses: Vec<Bus>,
     pub word_buses: Vec<Bus>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Bus {
     pub src: Vec<u32>,
     pub dst: Vec<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Zone {
     pub words: Vec<u32>,
 }

@@ -349,9 +349,7 @@ fn check_consistent_grid_shape(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>)
 fn check_path_lanes(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     if let Some(paths) = &spec.paths {
         for (index, path) in paths.iter().enumerate() {
-            let d0 = path.lane as u32;
-            let d1 = (path.lane >> 32) as u32;
-            let lane = crate::arch::addr::LaneAddr::decode(d0, d1);
+            let lane = crate::arch::addr::LaneAddr::decode_u64(path.lane);
             let lane_errors = spec.check_lane(&lane);
             for message in lane_errors {
                 errors.push(ArchSpecError::InvalidPathLane {

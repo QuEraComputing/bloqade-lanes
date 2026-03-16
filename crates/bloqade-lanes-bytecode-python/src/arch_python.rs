@@ -226,16 +226,13 @@ impl PyLaneAddr {
     }
 
     fn encode(&self) -> u64 {
-        let (d0, d1) = self.inner.encode();
-        (d0 as u64) | ((d1 as u64) << 32)
+        self.inner.encode_u64()
     }
 
     #[staticmethod]
     fn decode(bits: u64) -> Self {
-        let d0 = bits as u32;
-        let d1 = (bits >> 32) as u32;
         Self {
-            inner: rs_addr::LaneAddr::decode(d0, d1),
+            inner: rs_addr::LaneAddr::decode_u64(bits),
         }
     }
 
@@ -259,8 +256,7 @@ impl PyLaneAddr {
     }
 
     fn __hash__(&self) -> u64 {
-        let (d0, d1) = self.inner.encode();
-        (d0 as u64) | ((d1 as u64) << 32)
+        self.inner.encode_u64()
     }
 }
 
@@ -414,14 +410,7 @@ impl PyGrid {
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.x_start.to_bits().hash(&mut hasher);
-        self.inner.y_start.to_bits().hash(&mut hasher);
-        for v in &self.inner.x_spacing {
-            v.to_bits().hash(&mut hasher);
-        }
-        for v in &self.inner.y_spacing {
-            v.to_bits().hash(&mut hasher);
-        }
+        self.inner.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -570,8 +559,7 @@ impl PyBus {
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.src.hash(&mut hasher);
-        self.inner.dst.hash(&mut hasher);
+        self.inner.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -662,10 +650,9 @@ pub struct PyTransportPath {
 impl PyTransportPath {
     #[new]
     fn new(lane: &PyLaneAddr, waypoints: Vec<(f64, f64)>) -> Self {
-        let (d0, d1) = lane.inner.encode();
         Self {
             inner: rs::TransportPath {
-                lane: (d0 as u64) | ((d1 as u64) << 32),
+                lane: lane.inner.encode_u64(),
                 waypoints: waypoints.into_iter().map(|(x, y)| [x, y]).collect(),
             },
         }
@@ -673,10 +660,8 @@ impl PyTransportPath {
 
     #[getter]
     fn lane(&self) -> PyLaneAddr {
-        let d0 = self.inner.lane as u32;
-        let d1 = (self.inner.lane >> 32) as u32;
         PyLaneAddr {
-            inner: rs_addr::LaneAddr::decode(d0, d1),
+            inner: rs_addr::LaneAddr::decode_u64(self.inner.lane),
         }
     }
 
@@ -905,14 +890,7 @@ impl PyArchSpec {
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        // Hash version + geometry word count + bus counts + zone count
-        self.inner.version.major.hash(&mut hasher);
-        self.inner.version.minor.hash(&mut hasher);
-        self.inner.geometry.words.len().hash(&mut hasher);
-        self.inner.geometry.sites_per_word.hash(&mut hasher);
-        self.inner.buses.site_buses.len().hash(&mut hasher);
-        self.inner.buses.word_buses.len().hash(&mut hasher);
-        self.inner.zones.len().hash(&mut hasher);
+        self.inner.hash(&mut hasher);
         hasher.finish()
     }
 }
