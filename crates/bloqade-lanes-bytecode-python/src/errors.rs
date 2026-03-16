@@ -19,6 +19,10 @@ fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyOb
             let missing_list = PyList::new(py, missing)?;
             cls.call1((missing_list,))?
         }
+        ArchSpecError::MeasurementModeZonesEmpty => {
+            let cls = module.getattr("MeasurementModeZonesEmptyError")?;
+            cls.call0()?
+        }
         ArchSpecError::MeasurementModeFirstNotZone0 { got } => {
             let cls = module.getattr("MeasurementModeFirstNotZone0Error")?;
             cls.call1((*got,))?

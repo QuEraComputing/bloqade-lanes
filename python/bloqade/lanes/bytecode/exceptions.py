@@ -25,6 +25,11 @@ class Zone0MissingWordsError(ArchSpecError):
         super().__init__(f"zone 0 must include all words: missing word IDs {missing}")
 
 
+class MeasurementModeZonesEmptyError(ArchSpecError):
+    def __init__(self):
+        super().__init__("measurement_mode_zones must not be empty")
+
+
 class MeasurementModeFirstNotZone0Error(ArchSpecError):
     def __init__(self, got: int):
         self.got = got

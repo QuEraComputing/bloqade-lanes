@@ -9,6 +9,9 @@ pub enum ArchSpecError {
     #[error("zone 0 must include all words: missing word IDs {missing:?}")]
     Zone0MissingWords { missing: Vec<u32> },
 
+    #[error("measurement_mode_zones must not be empty")]
+    MeasurementModeZonesEmpty,
+
     #[error("measurement_mode_zones[0] must be zone 0, got {got}")]
     MeasurementModeFirstNotZone0 { got: u32 },
 
@@ -187,10 +190,14 @@ fn check_zone0_includes_all_words(
 }
 
 fn check_measurement_mode_first_is_zone0(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
-    if let Some(&first) = spec.measurement_mode_zones.first()
-        && first != 0
-    {
-        errors.push(ArchSpecError::MeasurementModeFirstNotZone0 { got: first });
+    if spec.measurement_mode_zones.is_empty() {
+        errors.push(ArchSpecError::MeasurementModeZonesEmpty);
+        return;
+    }
+    if spec.measurement_mode_zones[0] != 0 {
+        errors.push(ArchSpecError::MeasurementModeFirstNotZone0 {
+            got: spec.measurement_mode_zones[0],
+        });
     }
 }
 

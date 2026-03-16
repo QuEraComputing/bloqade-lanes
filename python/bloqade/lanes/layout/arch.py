@@ -76,28 +76,6 @@ class ArchSpec:
         self._lane_duration_cache_us = {}
         self._max_lane_duration_cache_us = {}
 
-        # Validation
-        if self.zones[0] != tuple(range(len(self.words))):
-            raise ValueError("Zone 0 must include all words in the architecture")
-
-        if len(self.measurement_mode_zones) == 0:
-            raise ValueError("There must be at least one measurement mode zone")
-
-        if self.measurement_mode_zones[0] != 0:
-            raise ValueError("Measurement mode zone 0 must be zone 0")
-
-        if any(
-            zone_id < 0 or zone_id >= len(self.zones)
-            for zone_id in self.entangling_zones
-        ):
-            raise ValueError("Entangling zone ids must be valid zone ids")
-
-        if any(
-            zone_id < 0 or zone_id >= len(self.zones)
-            for zone_id in self.measurement_mode_zones
-        ):
-            raise ValueError("Measurement mode zone ids must be valid zone ids")
-
         # Build Rust inner
         sites_per_word = len(words[0].site_indices) if words else 0
         rust_geometry = _RustGeometry(
@@ -137,6 +115,7 @@ class ArchSpec:
             measurement_mode_zones=list(measurement_mode_zones),
             paths=rust_paths,
         )
+        self._inner.validate()
 
         # Build zone_address_map
         zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(

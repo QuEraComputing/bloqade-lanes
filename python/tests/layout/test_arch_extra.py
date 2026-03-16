@@ -64,7 +64,7 @@ def test_show_with_mocked_pyplot():
 
 
 def test_post_init_invalid_zone():
-    with pytest.raises(ValueError):
+    with pytest.raises(Exception):  # ArchSpecError from Rust validation
         ArchSpec(
             words=(word, word),
             zones=((1,),),
