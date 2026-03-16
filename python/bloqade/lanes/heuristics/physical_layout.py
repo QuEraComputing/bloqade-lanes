@@ -23,41 +23,17 @@ def _to_cz_layers(
 
 
 @dataclass
-class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
-
-    @property
-    def left_site_count(self) -> int:
-        return len(self.arch_spec.words[0].site_indices) // 2
-
-    def compute_layout(
-        self,
-        all_qubits: tuple[int, ...],
-        stages: list[tuple[tuple[int, int], ...]],
-    ) -> tuple[layout.LocationAddress, ...]:
-        _ = stages
-        qubits = tuple(sorted(all_qubits))
-        sites: list[layout.LocationAddress] = []
-        for word_id in range(len(self.arch_spec.words)):
-            for site_id in range(self.left_site_count):
-                sites.append(layout.LocationAddress(word_id, site_id))
-        return tuple(sites[: len(qubits)])
-
-
-@dataclass
 class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
-    preferred_fill: int | None = None
     max_words: int | None = None
-    metis_ubvec: float = 1.001
-    metis_recursive: bool = False
+    u_factor: int = 1
+    metis_seed: int = 0
 
     @property
     def left_site_count(self) -> int:
         return len(self.arch_spec.words[0].site_indices) // 2
 
     def _effective_fill(self) -> int:
-        _ = self.preferred_fill
         # Pack words by physical capacity first: full words, then one partial word.
         return self.left_site_count
 
@@ -75,6 +51,10 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             size = min(self.left_site_count, remaining)
             sizes.append(size)
             remaining -= size
+            if remaining == 0:
+                break
+        if remaining > 0:
+            raise RuntimeError(f"Too many qubits to fill {k_words}")
         return tuple(sizes)
 
     def _build_weighted_graph(
@@ -88,10 +68,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         edge_weights: dict[tuple[int, int], int] = defaultdict(int)
         for controls, targets in cz_layers:
             for c, t in zip(controls, targets):
-                if c == t:
-                    continue
-                if c not in q_to_node or t not in q_to_node:
-                    continue
+                assert c != t, "invalid CZ pair"
                 u = q_to_node[c]
                 v = q_to_node[t]
                 if u > v:
@@ -107,12 +84,16 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         k_words: int,
         target_sizes: tuple[int, ...],
     ) -> dict[int, int]:
+        # build weighted graph of CZs
         q_to_node, edge_weights = self._build_weighted_graph(qubits, cz_layers)
         qids = tuple(sorted(set(qubits)))
         n = len(qids)
+
+        # if only 1 word, no metis needed
         if k_words == 1:
             return {qid: 0 for qid in qids}
 
+        # target sizes for each word and adjacency list/weights
         tpwgts = [size / float(n) for size in target_sizes]
         adjacency: list[list[int]] = [[] for _ in range(n)]
         adjacency_w: list[list[int]] = [[] for _ in range(n)]
@@ -124,28 +105,27 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         xadj = [0]
         adjncy: list[int] = []
         eweights: list[int] = []
+        # METIS wants CSR arrays/lists rather than dicts for contiguous memory
         for node in range(n):
             adjncy.extend(adjacency[node])
             eweights.extend(adjacency_w[node])
             xadj.append(len(adjncy))
 
-        ufactor = max(1, int(round((self.metis_ubvec - 1.0) * 1000.0)))
-        options = pymetis.Options(ufactor=ufactor)
+        # METIS ufactor is imbalance tolerance; 1 -> up to .1% more elements per partition
+        # (effectively very strict partition target sizes to ensure words match hardware sizes)
+        options = pymetis.Options(ufactor=self.u_factor, seed=self.metis_seed)
+        # represents the adjacency list in CSR format
         csr_adjacency = pymetis.CSRAdjacency(xadj, adjncy)
+        # Partition into k_words; metis_recursive is a boolean flag for recursive algo which is
         graph_partition = pymetis.part_graph(
             nparts=k_words,
             adjacency=csr_adjacency,
             eweights=eweights,
             tpwgts=tpwgts,
-            recursive=self.metis_recursive,
             options=options,
         )
-        if hasattr(graph_partition, "vertex_part"):
-            parts = graph_partition.vertex_part
-        else:
-            _, parts = graph_partition
-        if len(parts) != n:
-            raise RuntimeError("METIS returned unexpected partition size.")
+        parts = graph_partition.vertex_part
+        assert len(parts) == n, "METIS returned unexpected partition size."
         q_to_word = {qid: int(parts[q_to_node[qid]]) for qid in qids}
         return q_to_word
 

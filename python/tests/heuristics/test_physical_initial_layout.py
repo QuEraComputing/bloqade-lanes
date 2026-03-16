@@ -2,9 +2,9 @@ import pytest
 
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics.physical_layout import (
-    PhysicalLayoutHeuristicFixed,
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
+from bloqade.lanes.heuristics.simple_layout import PhysicalLayoutHeuristicFixed
 
 pymetis = pytest.importorskip("pymetis")
 
@@ -45,7 +45,6 @@ def _layout_affinity_cost(
 def test_initial_layout_is_left_only_and_full_word_first():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(1),
-        preferred_fill=4,
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -91,7 +90,6 @@ def test_fill_capacity_enforcement_avoids_balanced_split_when_target_is_5_3():
 def test_initial_layout_is_deterministic():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(1),
-        preferred_fill=4,
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -115,7 +113,6 @@ def test_initial_layout_is_deterministic():
 def test_partition_word_fill_is_full_then_partial_left_to_right():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(1),
-        preferred_fill=3,
         max_words=2,
     )
     qubits = tuple(range(6))
@@ -141,7 +138,6 @@ def test_partition_word_fill_is_full_then_partial_left_to_right():
 def test_within_word_affinity_cost_beats_naive_ordering():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(1),
-        preferred_fill=5,
         max_words=1,
     )
     qubits = tuple(range(5))
@@ -168,7 +164,6 @@ def test_within_word_affinity_cost_beats_naive_ordering():
 def test_word_assignment_overflow_expands_to_next_word():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(4),
-        preferred_fill=2,
         max_words=4,
     )
     qubits = tuple(range(8))
@@ -189,7 +184,6 @@ def test_word_assignment_overflow_expands_to_next_word():
 def test_final_partial_word_places_from_lowest_site_up():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(1, word_size_y=7),
-        preferred_fill=1,
         max_words=1,
     )
     qubits = (0,)
@@ -202,7 +196,6 @@ def test_final_partial_word_places_from_lowest_site_up():
 def test_relabel_words_fill_left_to_right():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=generate_arch_hypercube(2),
-        preferred_fill=2,
         max_words=4,
     )
     # Partition ids are arbitrary METIS labels; largest block should map to leftmost word.

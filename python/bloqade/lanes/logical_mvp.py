@@ -1,6 +1,5 @@
-import io
 from functools import cache
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
@@ -11,35 +10,20 @@ from bloqade.gemini.analysis.measurement_validation import (
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
-from bloqade.stim.emit.stim_str import EmitStimMain
-from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, rewrite
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
-from bloqade.lanes import visualize
+from bloqade.lanes import compile as compile_api, visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.dialects import move
+from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import (
-    LogicalPlacementStrategy,
-    LogicalPlacementStrategyNoHome,
-)
-from bloqade.lanes.heuristics.physical_layout import (
-    PhysicalLayoutHeuristicFixed,
-    PhysicalLayoutHeuristicGraphPartitionCenterOut,
-)
-from bloqade.lanes.heuristics.physical_placement import PhysicalGreedyPlacementStrategy
+from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
-from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.upstream import squin_to_move
 
 __all__ = [
     "run_squin_kernel_validation",
@@ -107,9 +91,7 @@ def compile_squin_to_move(
     mt: ir.Method,
     transversal_rewrite: bool = False,
     no_raise: bool = True,
-    placement_mode: Literal["logical", "physical"] = "logical",
     layout_heuristic: LayoutHeuristicABC | None = None,
-    placement_strategy: PlacementStrategyABC | None = None,
     insert_return_moves: bool = True,
 ):
     """Compile a squin kernel to the move dialect.
@@ -128,81 +110,18 @@ def compile_squin_to_move(
 
     """
 
-    def _layout_mode(
-        layout_h: LayoutHeuristicABC,
-    ) -> Literal["logical", "physical"] | None:
-        if isinstance(
-            layout_h,
-            (
-                PhysicalLayoutHeuristicFixed,
-                PhysicalLayoutHeuristicGraphPartitionCenterOut,
-            ),
-        ):
-            return "physical"
-        if isinstance(layout_h, logical_layout.LogicalLayoutHeuristic):
-            return "logical"
-        return None
-
-    def _strategy_mode(
-        strategy: PlacementStrategyABC,
-    ) -> Literal["logical", "physical"] | None:
-        if isinstance(strategy, PhysicalGreedyPlacementStrategy):
-            return "physical"
-        if isinstance(
-            strategy, (LogicalPlacementStrategy, LogicalPlacementStrategyNoHome)
-        ):
-            return "logical"
-        return None
-
-    if placement_mode not in ("logical", "physical"):
-        raise ValueError(
-            f"Unsupported placement_mode={placement_mode!r}; expected 'logical' or 'physical'."
-        )
-    physical_arch_spec = None
-    if placement_mode == "physical" and (
-        layout_heuristic is None or placement_strategy is None
-    ):
-        physical_arch_spec = get_physical_arch_spec()
     if layout_heuristic is None:
-        if placement_mode == "logical":
-            layout_heuristic = logical_layout.LogicalLayoutHeuristic()
-        else:
-            assert physical_arch_spec is not None
-            layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-                arch_spec=physical_arch_spec
-            )
-    if placement_strategy is None:
-        if placement_mode == "logical":
-            placement_strategy = LogicalPlacementStrategyNoHome()
-        else:
-            assert physical_arch_spec is not None
-            placement_strategy = PhysicalGreedyPlacementStrategy(
-                arch_spec=physical_arch_spec
-            )
+        layout_heuristic = logical_layout.LogicalLayoutHeuristic()
 
-    layout_mode = _layout_mode(layout_heuristic)
-    strategy_mode = _strategy_mode(placement_strategy)
-    if layout_mode is not None and layout_mode != placement_mode:
-        raise ValueError(
-            "layout_heuristic is incompatible with placement_mode="
-            f"{placement_mode!r}; inferred mode is {layout_mode!r}."
-        )
-    if strategy_mode is not None and strategy_mode != placement_mode:
-        raise ValueError(
-            "placement_strategy is incompatible with placement_mode="
-            f"{placement_mode!r}; inferred mode is {strategy_mode!r}."
-        )
-    mt = squin_to_move(
+    return compile_api.compile_squin_to_move(
         mt,
-        layout_heuristic=layout_heuristic,
-        placement_strategy=placement_strategy,
-        insert_return_moves=insert_return_moves,
+        transversal_rewrite=transversal_rewrite,
         no_raise=no_raise,
+        placement_mode="logical",
+        layout_heuristic=layout_heuristic,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
+        insert_return_moves=insert_return_moves,
     )
-    if transversal_rewrite:
-        mt = transversal_rewrites(mt)
-
-    return mt
 
 
 def compile_squin_to_move_and_visualize(
@@ -211,10 +130,7 @@ def compile_squin_to_move_and_visualize(
     transversal_rewrite: bool = False,
     animated: bool = False,
     no_raise: bool = True,
-    placement_mode: Literal["logical", "physical"] = "logical",
     layout_heuristic: LayoutHeuristicABC | None = None,
-    placement_strategy: PlacementStrategyABC | None = None,
-    insert_palindrome_moves: bool = True,
 ):
     """Compile a squin kernel to moves and visualize the program.
 
@@ -233,25 +149,10 @@ def compile_squin_to_move_and_visualize(
         mt,
         transversal_rewrite,
         no_raise=no_raise,
-        placement_mode=placement_mode,
         layout_heuristic=layout_heuristic,
-        placement_strategy=placement_strategy,
-        insert_return_moves=insert_palindrome_moves,
     )
-    use_physical_visualization = (
-        transversal_rewrite
-        or placement_mode == "physical"
-        or isinstance(
-            layout_heuristic,
-            (
-                PhysicalLayoutHeuristicFixed,
-                PhysicalLayoutHeuristicGraphPartitionCenterOut,
-            ),
-        )
-        or isinstance(placement_strategy, PhysicalGreedyPlacementStrategy)
-    )
-    if use_physical_visualization:
-        arch_spec = get_physical_arch_spec()
+    if transversal_rewrite:
+        arch_spec = generate_arch_hypercube(4)
         marker = "o"
     else:
         arch_spec = logical.get_arch_spec()
@@ -269,11 +170,7 @@ def compile_to_physical_squin_noise_model(
     mt: ir.Method,
     noise_model: NoiseModelABC | None = None,
     no_raise: bool = True,
-    arch_spec=None,
-    placement_mode: Literal["logical", "physical"] = "physical",
     layout_heuristic: LayoutHeuristicABC | None = None,
-    placement_strategy: PlacementStrategyABC | None = None,
-    insert_palindrome_moves: bool = True,
 ) -> ir.Method:
     """Compile a logical squin kernel to a physical squin kernel with noise channels inserted.
 
@@ -291,47 +188,24 @@ def compile_to_physical_squin_noise_model(
     """
     if noise_model is None:
         noise_model = generate_simple_noise_model()
-    if arch_spec is None:
-        arch_spec = get_physical_arch_spec()
-    use_physical_defaults = (
-        placement_mode == "physical" and move.dialect not in mt.dialects
-    )
-    if use_physical_defaults:
-        if layout_heuristic is None:
-            layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-                arch_spec=arch_spec
-            )
-        if placement_strategy is None:
-            placement_strategy = PhysicalGreedyPlacementStrategy(arch_spec=arch_spec)
 
-    move_mt = compile_squin_to_move(
+    return compile_api.compile_to_physical_squin_noise_model(
         mt,
-        transversal_rewrite=True,
-        no_raise=no_raise,
-        placement_mode=placement_mode,
-        layout_heuristic=layout_heuristic,
-        placement_strategy=placement_strategy,
-        insert_return_moves=insert_palindrome_moves,
-    )
-    transformer = MoveToSquin(
-        arch_spec=arch_spec,
-        logical_initialization=logical.steane7_initialize,
         noise_model=noise_model,
-        aggressive_unroll=False,
+        no_raise=no_raise,
+        arch_spec=generate_arch_hypercube(4),
+        placement_mode="logical",
+        layout_heuristic=layout_heuristic,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
+        insert_palindrome_moves=True,
     )
-
-    return transformer.emit(move_mt, no_raise=no_raise)
 
 
 def compile_to_physical_stim_program(
     mt: ir.Method,
     noise_model: NoiseModelABC | None = None,
     no_raise: bool = True,
-    arch_spec=None,
-    placement_mode: Literal["logical", "physical"] = "physical",
     layout_heuristic: LayoutHeuristicABC | None = None,
-    placement_strategy: PlacementStrategyABC | None = None,
-    insert_palindrome_moves: bool = True,
 ) -> str:
     """Compile a logical squin kernel to a Stim program string with noise channels inserted.
 
@@ -347,24 +221,16 @@ def compile_to_physical_stim_program(
         str: The compiled Stim program as a string.
 
     """
-    noise_kernel = compile_to_physical_squin_noise_model(
+    return compile_api.compile_to_physical_stim_program(
         mt,
-        noise_model,
+        noise_model=noise_model,
         no_raise=no_raise,
-        arch_spec=arch_spec,
-        placement_mode=placement_mode,
+        arch_spec=generate_arch_hypercube(4),
+        placement_mode="logical",
         layout_heuristic=layout_heuristic,
-        placement_strategy=placement_strategy,
-        insert_palindrome_moves=insert_palindrome_moves,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
+        insert_palindrome_moves=True,
     )
-    RemoveReturn().rewrite(noise_kernel.code)
-    noise_kernel = squin_to_stim(noise_kernel)
-    buf = io.StringIO()
-    emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
-    emit.initialize()
-    emit.run(node=noise_kernel)
-
-    return buf.getvalue().strip()
 
 
 _S = TypeVar("_S", bound=ir.Statement)
