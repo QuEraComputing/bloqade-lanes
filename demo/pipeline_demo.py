@@ -3,7 +3,7 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.lanes.logical_mvp import (
-    compile_to_physical_stim_program,
+    compile_to_stim_program,
 )
 
 
@@ -35,5 +35,5 @@ def main():
     gemini_logical.terminal_measure(q)
 
 
-error_model = compile_to_physical_stim_program(main)
+error_model = compile_to_stim_program(main)
 print(error_model)

@@ -6,7 +6,7 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.lanes.logical_mvp import (
-    compile_to_physical_stim_program,
+    compile_to_stim_program,
 )
 
 
@@ -30,4 +30,4 @@ def main():
 ### Visualize ###
 # from bloqade.lanes.logical_mvp import compile_squin_to_move_and_visualize
 # compile_squin_to_move_and_visualize(main, transversal_rewrite=True)
-result = compile_to_physical_stim_program(main)
+result = compile_to_stim_program(main)

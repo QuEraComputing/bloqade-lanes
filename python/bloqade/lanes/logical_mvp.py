@@ -1,3 +1,4 @@
+import io
 from functools import cache
 from typing import TypeVar
 
@@ -10,12 +11,14 @@ from bloqade.gemini.analysis.measurement_validation import (
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
+from bloqade.stim.emit.stim_str import EmitStimMain
+from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, rewrite
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
-from bloqade.lanes import compile as compile_api, visualize
+from bloqade.lanes import visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
@@ -24,13 +27,16 @@ from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyN
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
+from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.upstream import squin_to_move
 
 __all__ = [
     "run_squin_kernel_validation",
     "compile_squin_to_move",
     "compile_squin_to_move_and_visualize",
     "compile_to_physical_squin_noise_model",
-    "compile_to_physical_stim_program",
+    "compile_to_stim_program",
     "transversal_rewrites",
     "append_measurements_and_annotations",
 ]
@@ -113,15 +119,17 @@ def compile_squin_to_move(
     if layout_heuristic is None:
         layout_heuristic = logical_layout.LogicalLayoutHeuristic()
 
-    return compile_api.compile_squin_to_move(
+    mt = squin_to_move(
         mt,
-        transversal_rewrite=transversal_rewrite,
-        no_raise=no_raise,
-        placement_mode="logical",
         layout_heuristic=layout_heuristic,
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_return_moves=insert_return_moves,
+        no_raise=no_raise,
     )
+    if transversal_rewrite:
+        mt = transversal_rewrites(mt)
+
+    return mt
 
 
 def compile_squin_to_move_and_visualize(
@@ -189,19 +197,22 @@ def compile_to_physical_squin_noise_model(
     if noise_model is None:
         noise_model = generate_simple_noise_model()
 
-    return compile_api.compile_to_physical_squin_noise_model(
+    move_mt = compile_squin_to_move(
         mt,
-        noise_model=noise_model,
+        transversal_rewrite=True,
         no_raise=no_raise,
-        arch_spec=generate_arch_hypercube(4),
-        placement_mode="logical",
         layout_heuristic=layout_heuristic,
-        placement_strategy=LogicalPlacementStrategyNoHome(),
-        insert_palindrome_moves=True,
     )
+    transformer = MoveToSquin(
+        arch_spec=generate_arch_hypercube(4),
+        logical_initialization=logical.steane7_initialize,
+        noise_model=noise_model,
+        aggressive_unroll=False,
+    )
+    return transformer.emit(move_mt, no_raise=no_raise)
 
 
-def compile_to_physical_stim_program(
+def compile_to_stim_program(
     mt: ir.Method,
     noise_model: NoiseModelABC | None = None,
     no_raise: bool = True,
@@ -221,16 +232,19 @@ def compile_to_physical_stim_program(
         str: The compiled Stim program as a string.
 
     """
-    return compile_api.compile_to_physical_stim_program(
+    noise_kernel = compile_to_physical_squin_noise_model(
         mt,
-        noise_model=noise_model,
+        noise_model,
         no_raise=no_raise,
-        arch_spec=generate_arch_hypercube(4),
-        placement_mode="logical",
         layout_heuristic=layout_heuristic,
-        placement_strategy=LogicalPlacementStrategyNoHome(),
-        insert_palindrome_moves=True,
     )
+    RemoveReturn().rewrite(noise_kernel.code)
+    noise_kernel = squin_to_stim(noise_kernel)
+    buf = io.StringIO()
+    emit = EmitStimMain(dialects=noise_kernel.dialects, io=buf)
+    emit.initialize()
+    emit.run(node=noise_kernel)
+    return buf.getvalue().strip()
 
 
 _S = TypeVar("_S", bound=ir.Statement)
