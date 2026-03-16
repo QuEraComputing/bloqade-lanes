@@ -70,7 +70,8 @@ jobs:
       - name: Build and run C smoke test
         run: just test-c-ffi
 
-  build:
+  python-fast:
+    name: Python fast tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -93,7 +94,35 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Install the project
         run: uv sync --all-extras --dev
-      - name: Run tests
+      - name: Run fast tests
+        run: uv run pytest python/tests -m "not slow" -v
+
+  python-full:
+    name: Python full tests with coverage (${{ matrix.python-version }})
+    needs: python-fast
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.1"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+      - name: Install the project
+        run: uv sync --all-extras --dev
+      - name: Run all tests with coverage
         run: uv run just coverage
       - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -139,7 +168,7 @@ jobs:
 
   post:
     runs-on: ubuntu-latest
-    needs: build
+    needs: python-full
     if: github.event.pull_request
     steps:
         - uses: actions/checkout@v6
