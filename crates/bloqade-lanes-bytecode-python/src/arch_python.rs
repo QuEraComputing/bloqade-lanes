@@ -4,7 +4,7 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::arch::types as rs;
 use bloqade_lanes_bytecode_core::version::Version;
 
-use crate::validation::validate_u16_field;
+use crate::validation::{validate_u16_field, validate_u32_field, validate_u32_vec};
 
 // ── Direction enum ──
 
@@ -466,13 +466,14 @@ pub struct PyGeometry {
 #[pymethods]
 impl PyGeometry {
     #[new]
-    fn new(sites_per_word: u32, words: Vec<PyRef<'_, PyWord>>) -> Self {
-        Self {
+    fn new(sites_per_word: i64, words: Vec<PyRef<'_, PyWord>>) -> PyResult<Self> {
+        let sites_per_word = validate_u32_field("sites_per_word", sites_per_word)?;
+        Ok(Self {
             inner: rs::Geometry {
                 sites_per_word,
                 words: words.iter().map(|w| w.inner.clone()).collect(),
             },
-        }
+        })
     }
 
     #[getter]
@@ -509,10 +510,12 @@ pub struct PyBus {
 #[pymethods]
 impl PyBus {
     #[new]
-    fn new(src: Vec<u32>, dst: Vec<u32>) -> Self {
-        Self {
+    fn new(src: Vec<i64>, dst: Vec<i64>) -> PyResult<Self> {
+        let src = validate_u32_vec("src", src)?;
+        let dst = validate_u32_vec("dst", dst)?;
+        Ok(Self {
             inner: rs::Bus { src, dst },
-        }
+        })
     }
 
     #[getter]
@@ -611,10 +614,11 @@ pub struct PyZone {
 #[pymethods]
 impl PyZone {
     #[new]
-    fn new(words: Vec<u32>) -> Self {
-        Self {
+    fn new(words: Vec<i64>) -> PyResult<Self> {
+        let words = validate_u32_vec("words", words)?;
+        Ok(Self {
             inner: rs::Zone { words },
-        }
+        })
     }
 
     #[getter]
@@ -705,14 +709,21 @@ impl PyArchSpec {
         version: (u16, u16),
         geometry: &PyGeometry,
         buses: &PyBuses,
-        words_with_site_buses: Vec<u32>,
-        sites_with_word_buses: Vec<u32>,
+        words_with_site_buses: Vec<i64>,
+        sites_with_word_buses: Vec<i64>,
         zones: Vec<PyRef<'_, PyZone>>,
-        entangling_zones: Vec<u32>,
-        measurement_mode_zones: Vec<u32>,
+        entangling_zones: Vec<i64>,
+        measurement_mode_zones: Vec<i64>,
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let words_with_site_buses =
+            validate_u32_vec("words_with_site_buses", words_with_site_buses)?;
+        let sites_with_word_buses =
+            validate_u32_vec("sites_with_word_buses", sites_with_word_buses)?;
+        let entangling_zones = validate_u32_vec("entangling_zones", entangling_zones)?;
+        let measurement_mode_zones =
+            validate_u32_vec("measurement_mode_zones", measurement_mode_zones)?;
+        Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
                 geometry: geometry.inner.clone(),
@@ -724,7 +735,7 @@ impl PyArchSpec {
                 measurement_mode_zones,
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
             },
-        }
+        })
     }
 
     #[staticmethod]

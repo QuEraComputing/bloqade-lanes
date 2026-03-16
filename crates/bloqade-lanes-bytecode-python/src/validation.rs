@@ -27,6 +27,9 @@ impl From<FieldRangeError> for pyo3::PyErr {
 }
 
 /// Validate that a field value fits in 16 bits (0..=65535).
+///
+/// Returns `u32` (not `u16`) because the core Rust address types
+/// store fields as `u32` despite the 16-bit encoding constraint.
 pub fn validate_u16_field(name: &str, value: i64) -> Result<u32, FieldRangeError> {
     if value < 0 {
         return Err(FieldRangeError::Negative {
@@ -60,6 +63,16 @@ pub fn validate_u32_field(name: &str, value: i64) -> Result<u32, FieldRangeError
         });
     }
     Ok(value as u32)
+}
+
+/// Validate that every element in a vector fits in 32 bits (0..=4294967295).
+/// Error messages include the field name and index (e.g. "zones[3]=-1").
+pub fn validate_u32_vec(name: &str, values: Vec<i64>) -> Result<Vec<u32>, FieldRangeError> {
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| validate_u32_field(&format!("{name}[{i}]"), v))
+        .collect()
 }
 
 #[cfg(test)]
@@ -110,5 +123,42 @@ mod tests {
         let err = validate_u32_field("n", u32::MAX as i64 + 1).unwrap_err();
         assert!(matches!(err, FieldRangeError::Overflow { .. }));
         assert!(err.to_string().contains("exceeds maximum"));
+    }
+
+    // ── validate_u32_vec ──
+
+    #[test]
+    fn vec_empty() {
+        let result: Vec<u32> = validate_u32_vec("x", vec![]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn vec_valid() {
+        assert_eq!(
+            validate_u32_vec("x", vec![0, 1, 2]).unwrap(),
+            vec![0u32, 1, 2]
+        );
+    }
+
+    #[test]
+    fn vec_negative_includes_index() {
+        let err = validate_u32_vec("zones", vec![0, 1, -5]).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Negative { .. }));
+        assert!(err.to_string().contains("zones[2]=-5"), "got: {err}");
+    }
+
+    #[test]
+    fn vec_overflow_includes_index() {
+        let err = validate_u32_vec("ids", vec![0, u32::MAX as i64 + 1]).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Overflow { .. }));
+        assert!(err.to_string().contains("ids[1]"), "got: {err}");
+    }
+
+    #[test]
+    fn vec_short_circuits_on_first_error() {
+        // Second and third elements are also invalid, but we only get the first
+        let err = validate_u32_vec("x", vec![-1, -2, -3]).unwrap_err();
+        assert!(err.to_string().contains("x[0]=-1"), "got: {err}");
     }
 }
