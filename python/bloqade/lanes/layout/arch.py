@@ -36,10 +36,6 @@ class ArchSpec:
     _inner: _RustArchSpec
     words: tuple[Word, ...]
     paths: dict[LaneAddress, tuple[tuple[float, float], ...]]
-    zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]]
-    _lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress]
-    _lane_duration_cache_us: dict[tuple[LaneAddress, float], float]
-    _max_lane_duration_cache_us: dict[float, float]
 
     _FLAIR_MAX_RAMP_US: ClassVar[float] = 0.2
     _FLAIR_MAX_JERK_UM_PER_US3: ClassVar[float] = 0.0004
@@ -54,17 +50,14 @@ class ArchSpec:
         self._inner = inner
         self.words = words
         self.paths = paths if paths is not None else {}
-        self._lane_duration_cache_us = {}
-        self._max_lane_duration_cache_us = {}
+        self._lane_duration_cache_us: dict[tuple[LaneAddress, float], float] = {}
+        self._max_lane_duration_cache_us: dict[float, float] = {}
 
         self._inner.validate()
-        self._build_caches()
 
-    def _build_caches(self) -> None:
-        # Build zone_address_map
-        zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(
-            dict
-        )
+    @cached_property
+    def zone_address_map(self) -> dict[LocationAddress, dict[ZoneAddress, int]]:
+        result: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(dict)
         for zone_id, zone in enumerate(self.zones):
             index = 0
             for word_id in zone:
@@ -72,11 +65,12 @@ class ArchSpec:
                 for site_id, _ in enumerate(word.site_indices):
                     loc_addr = LocationAddress(word_id, site_id)
                     zone_address = ZoneAddress(zone_id)
-                    zone_address_map[loc_addr][zone_address] = index
+                    result[loc_addr][zone_address] = index
                     index += 1
-        self.zone_address_map = dict(zone_address_map)
+        return dict(result)
 
-        # Build lane map
+    @cached_property
+    def _lane_map(self) -> dict[tuple[LocationAddress, LocationAddress], LaneAddress]:
         lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
         for word_id in self.has_site_buses:
             for bus_id, bus in enumerate(self.site_buses):
@@ -102,7 +96,7 @@ class ArchSpec:
                         )
                         src, dst = self.get_endpoints(lane_addr)
                         lane_map[(src, dst)] = lane_addr
-        self._lane_map = lane_map
+        return lane_map
 
     # ── Properties derived from Rust inner ──
 
@@ -193,30 +187,10 @@ class ArchSpec:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ArchSpec):
             return NotImplemented
-        return (
-            self.words == other.words
-            and self.zones == other.zones
-            and self.measurement_mode_zones == other.measurement_mode_zones
-            and self.entangling_zones == other.entangling_zones
-            and self.has_site_buses == other.has_site_buses
-            and self.has_word_buses == other.has_word_buses
-            and self.site_buses == other.site_buses
-            and self.word_buses == other.word_buses
-        )
+        return self._inner == other._inner and self.words == other.words
 
     def __hash__(self) -> int:
-        return hash(
-            (
-                self.words,
-                self.zones,
-                self.measurement_mode_zones,
-                self.entangling_zones,
-                tuple(sorted(self.has_site_buses)),
-                tuple(sorted(self.has_word_buses)),
-                self.site_buses,
-                self.word_buses,
-            )
-        )
+        return hash(self._inner)
 
     @property
     def max_qubits(self) -> int:

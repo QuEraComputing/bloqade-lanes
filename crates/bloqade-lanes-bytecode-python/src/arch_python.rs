@@ -897,4 +897,22 @@ impl PyArchSpec {
             self.inner.version.major, self.inner.version.minor
         )
     }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // Hash version + geometry word count + bus counts + zone count
+        self.inner.version.major.hash(&mut hasher);
+        self.inner.version.minor.hash(&mut hasher);
+        self.inner.geometry.words.len().hash(&mut hasher);
+        self.inner.geometry.sites_per_word.hash(&mut hasher);
+        self.inner.buses.site_buses.len().hash(&mut hasher);
+        self.inner.buses.word_buses.len().hash(&mut hasher);
+        self.inner.zones.len().hash(&mut hasher);
+        hasher.finish()
+    }
 }
