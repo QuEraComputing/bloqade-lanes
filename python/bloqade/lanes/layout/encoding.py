@@ -1,10 +1,18 @@
 import abc
 import enum
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kirin import ir, types
 from kirin.print import Printer
+
+from bloqade.lanes.bytecode._native import (
+    Direction as _RustDirection,
+    LaneAddress as _RustLaneAddress,
+    LocationAddress as _RustLocationAddress,
+    MoveType as _RustMoveType,
+    ZoneAddress as _RustZoneAddress,
+)
 
 if TYPE_CHECKING:
     from bloqade.lanes.layout.arch import ArchSpec
@@ -19,6 +27,17 @@ class Direction(enum.IntEnum):
     def __repr__(self):
         return f"Direction.{self.name}"
 
+    def _to_rust(self) -> _RustDirection:
+        if self == Direction.FORWARD:
+            return _RustDirection.FORWARD
+        return _RustDirection.BACKWARD
+
+    @staticmethod
+    def _from_rust(d: _RustDirection) -> "Direction":
+        if d == _RustDirection.FORWARD:
+            return Direction.FORWARD
+        return Direction.BACKWARD
+
 
 class MoveType(enum.IntEnum):
     SITE = 0
@@ -26,6 +45,17 @@ class MoveType(enum.IntEnum):
 
     def __repr__(self):
         return f"MoveType.{self.name}"
+
+    def _to_rust(self) -> _RustMoveType:
+        if self == MoveType.SITE:
+            return _RustMoveType.SITE
+        return _RustMoveType.WORD
+
+    @staticmethod
+    def _from_rust(m: _RustMoveType) -> "MoveType":
+        if m == _RustMoveType.SITE:
+            return MoveType.SITE
+        return MoveType.WORD
 
 
 class EncodingType(enum.IntEnum):
@@ -96,13 +126,31 @@ class Encoder(ir.Data):
             return f"0x{self.get_address(EncodingType.BIT64):016x}"
 
 
-@dataclass(repr=not USE_HEX_REPR, order=True)
 class ZoneAddress(Encoder):
-    zone_id: int
-    """The ID of the zone."""
+    """Address identifying a zone in the architecture."""
+
+    _inner: _RustZoneAddress
+
+    def __init__(self, zone_id: int):
+        self._inner = _RustZoneAddress(zone_id)
+        self.__post_init__()
+
+    @property
+    def zone_id(self) -> int:
+        return self._inner.zone_id
 
     def __hash__(self) -> int:
-        return self.get_address(EncodingType.BIT64)
+        return self._inner.encode()
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ZoneAddress):
+            return NotImplemented
+        return self._inner == other._inner
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, ZoneAddress):
+            return NotImplemented
+        return self.zone_id < other.zone_id
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -172,20 +220,37 @@ class SiteAddress(Encoder):
         return site_id_enc
 
 
-@dataclass(repr=not USE_HEX_REPR, order=True)
 class LocationAddress(Encoder):
-    """Data class representing a physical address in the architecture."""
+    """Address identifying a physical atom location (word + site)."""
 
-    word_id: int
-    """The ID of the word."""
-    site_id: int
-    """The ID of the site within the word."""
+    _inner: _RustLocationAddress
+
+    def __init__(self, word_id: int, site_id: int):
+        self._inner = _RustLocationAddress(word_id, site_id)
+        self.__post_init__()
+
+    @property
+    def word_id(self) -> int:
+        return self._inner.word_id
+
+    @property
+    def site_id(self) -> int:
+        return self._inner.site_id
 
     def __hash__(self) -> int:
-        return self.get_address(EncodingType.BIT64)
+        return self._inner.encode()
 
-    def get_address(self, encoding: EncodingType):
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LocationAddress):
+            return NotImplemented
+        return self._inner == other._inner
 
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, LocationAddress):
+            return NotImplemented
+        return (self.word_id, self.site_id) < (other.word_id, other.site_id)
+
+    def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
             mask = 0xFF
             shift = 8
@@ -206,27 +271,60 @@ class LocationAddress(Encoder):
 
         address = site_id_enc
         address |= word_id_enc << shift
-        assert address.bit_length() <= (
-            32 if encoding == EncodingType.BIT32 else 64
-        ), "Bug in encoding"
         return address
 
 
-@dataclass(repr=not USE_HEX_REPR)
 class LaneAddress(Encoder):
-    move_type: MoveType
-    word_id: int
-    site_id: int
-    bus_id: int
-    direction: Direction = field(default=Direction.FORWARD)
+    """Address identifying a transport lane."""
 
-    def reverse(self):
+    _inner: _RustLaneAddress
+
+    def __init__(
+        self,
+        move_type: MoveType,
+        word_id: int,
+        site_id: int,
+        bus_id: int,
+        direction: Direction = Direction.FORWARD,
+    ):
+        self._inner = _RustLaneAddress(
+            move_type._to_rust(),
+            word_id,
+            site_id,
+            bus_id,
+            direction._to_rust(),
+        )
+        self.__post_init__()
+
+    @property
+    def move_type(self) -> MoveType:
+        return MoveType._from_rust(self._inner.move_type)
+
+    @property
+    def word_id(self) -> int:
+        return self._inner.word_id
+
+    @property
+    def site_id(self) -> int:
+        return self._inner.site_id
+
+    @property
+    def bus_id(self) -> int:
+        return self._inner.bus_id
+
+    @property
+    def direction(self) -> Direction:
+        return Direction._from_rust(self._inner.direction)
+
+    def reverse(self) -> "LaneAddress":
         new_direction = (
             Direction.BACKWARD
             if self.direction == Direction.FORWARD
             else Direction.FORWARD
         )
-        return replace(self, direction=new_direction)
+        return LaneAddress(
+            self.move_type, self.word_id, self.site_id, self.bus_id, new_direction
+        )
 
     def get_address(self, encoding: EncodingType) -> int:
         if encoding == EncodingType.BIT32:
@@ -258,30 +356,42 @@ class LaneAddress(Encoder):
         address |= word_id_enc << (2 * shift)
         address |= self.move_type.value << (3 * shift + padding)
         address |= self.direction.value << (3 * shift + padding + 1)
-        assert address.bit_length() <= (
-            32 if encoding == EncodingType.BIT32 else 64
-        ), "Bug in encoding"
         return address
 
     def src_site(self) -> LocationAddress:
-        """Get the source site as a PhysicalAddress."""
+        """Get the source site as a LocationAddress."""
         return LocationAddress(self.word_id, self.site_id)
 
     def __hash__(self) -> int:
-        return self.get_address(EncodingType.BIT64)
+        return self._inner.encode()
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LaneAddress):
+            return NotImplemented
+        return self._inner == other._inner
 
 
-@dataclass(repr=not USE_HEX_REPR)
 class SiteLaneAddress(LaneAddress):
-    move_type: MoveType = field(default=MoveType.SITE, init=False, repr=False)
+    """LaneAddress with move_type fixed to MoveType.SITE."""
 
-    def __hash__(self) -> int:
-        return self.get_address(EncodingType.BIT64)
+    def __init__(
+        self,
+        word_id: int,
+        site_id: int,
+        bus_id: int,
+        direction: Direction = Direction.FORWARD,
+    ):
+        super().__init__(MoveType.SITE, word_id, site_id, bus_id, direction)
 
 
-@dataclass(repr=not USE_HEX_REPR)
 class WordLaneAddress(LaneAddress):
-    move_type: MoveType = field(default=MoveType.WORD, init=False, repr=False)
+    """LaneAddress with move_type fixed to MoveType.WORD."""
 
-    def __hash__(self) -> int:
-        return self.get_address(EncodingType.BIT64)
+    def __init__(
+        self,
+        word_id: int,
+        site_id: int,
+        bus_id: int,
+        direction: Direction = Direction.FORWARD,
+    ):
+        super().__init__(MoveType.WORD, word_id, site_id, bus_id, direction)

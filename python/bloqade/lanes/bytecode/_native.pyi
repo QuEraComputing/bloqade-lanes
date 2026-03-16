@@ -9,12 +9,12 @@ class Direction:
     """Atom movement direction along a bus.
 
     Attributes:
-        Forward: Movement from source to destination (value 0).
-        Backward: Movement from destination to source (value 1).
+        FORWARD: Movement from source to destination (value 0).
+        BACKWARD: Movement from destination to source (value 1).
     """
 
-    Forward: Direction
-    Backward: Direction
+    FORWARD: Direction
+    BACKWARD: Direction
     def __eq__(self, other: object) -> bool: ...
     def __int__(self) -> int: ...
 
@@ -23,19 +23,19 @@ class MoveType:
     """Type of bus used for an atom move operation.
 
     Attributes:
-        SiteBus: Moves atoms between sites within a word (value 0).
-        WordBus: Moves atoms between words (value 1).
+        SITE: Moves atoms between sites within a word (value 0).
+        WORD: Moves atoms between words (value 1).
     """
 
-    SiteBus: MoveType
-    WordBus: MoveType
+    SITE: MoveType
+    WORD: MoveType
     def __eq__(self, other: object) -> bool: ...
     def __int__(self) -> int: ...
 
 # ── Address Types ──
 
 @final
-class LocationAddr:
+class LocationAddress:
     """Bit-packed atom location address.
 
     Encodes a physical atom location as ``word_id`` (16 bits) and
@@ -68,22 +68,23 @@ class LocationAddr:
         ...
 
     @staticmethod
-    def decode(bits: int) -> LocationAddr:
-        """Decode a 32-bit packed integer into a LocationAddr.
+    def decode(bits: int) -> LocationAddress:
+        """Decode a 32-bit packed integer into a LocationAddress.
 
         Args:
             bits (int): The 32-bit packed representation.
 
         Returns:
-            LocationAddr: The decoded address.
+            LocationAddress: The decoded address.
         """
         ...
 
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
-class LaneAddr:
+class LaneAddress:
     """Bit-packed lane address for atom move operations.
 
     Encodes direction (1 bit), move_type (1 bit), word_id (16 bits),
@@ -95,29 +96,29 @@ class LaneAddr:
         data1: ``[dir:1][mt:1][pad:14][bus_id:16]``
 
     Args:
-        direction (Direction): Forward or Backward.
-        move_type (MoveType): SiteBus or WordBus.
+        move_type (MoveType): SITE or WORD.
         word_id (int): Word identifier (0..65535).
         site_id (int): Site identifier within the word (0..65535).
         bus_id (int): Bus identifier (0..65535).
+        direction (Direction): Forward or Backward. Default: Direction.FORWARD.
     """
 
     def __init__(
         self,
-        direction: Direction,
         move_type: MoveType,
         word_id: int,
         site_id: int,
         bus_id: int,
+        direction: Direction = ...,
     ) -> None: ...
     @property
     def direction(self) -> Direction:
-        """Movement direction (Forward or Backward)."""
+        """Movement direction (FORWARD or BACKWARD)."""
         ...
 
     @property
     def move_type(self) -> MoveType:
-        """Bus type (SiteBus or WordBus)."""
+        """Bus type (SITE or WORD)."""
         ...
 
     @property
@@ -144,22 +145,23 @@ class LaneAddr:
         ...
 
     @staticmethod
-    def decode(bits: int) -> LaneAddr:
-        """Decode a 64-bit packed integer into a LaneAddr.
+    def decode(bits: int) -> LaneAddress:
+        """Decode a 64-bit packed integer into a LaneAddress.
 
         Args:
             bits (int): The 64-bit packed representation.
 
         Returns:
-            LaneAddr: The decoded address.
+            LaneAddress: The decoded address.
         """
         ...
 
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
-class ZoneAddr:
+class ZoneAddress:
     """Bit-packed zone address.
 
     Encodes a zone identifier (16 bits) into a 32-bit value.
@@ -185,19 +187,20 @@ class ZoneAddr:
         ...
 
     @staticmethod
-    def decode(bits: int) -> ZoneAddr:
-        """Decode a 32-bit packed integer into a ZoneAddr.
+    def decode(bits: int) -> ZoneAddress:
+        """Decode a 32-bit packed integer into a ZoneAddress.
 
         Args:
             bits (int): The 32-bit packed representation.
 
         Returns:
-            ZoneAddr: The decoded address.
+            ZoneAddress: The decoded address.
         """
         ...
 
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 # ── Arch Spec Types ──
 
@@ -455,11 +458,11 @@ class Geometry:
 class TransportPath:
     """A transport path for a lane, defined by waypoints.
 
-    The lane is identified by a ``LaneAddr`` which encodes the direction,
+    The lane is identified by a ``LaneAddress`` which encodes the direction,
     move type, word, site, and bus.
 
     Args:
-        lane (LaneAddr): Lane address identifying the transport lane.
+        lane (LaneAddress): Lane address identifying the transport lane.
         waypoints (list[tuple[float, float]]): Sequence of ``(x, y)`` coordinate waypoints.
 
     Note: In JSON, the lane is serialized as a 16-digit hex string (e.g. ``"0xC000000000010000"``).
@@ -467,11 +470,11 @@ class TransportPath:
 
     def __init__(
         self,
-        lane: LaneAddr,
+        lane: LaneAddress,
         waypoints: list[tuple[float, float]],
     ) -> None: ...
     @property
-    def lane(self) -> LaneAddr:
+    def lane(self) -> LaneAddress:
         """Decoded lane address."""
         ...
 
@@ -654,11 +657,11 @@ class ArchSpec:
         """
         ...
 
-    def location_position(self, loc: LocationAddr) -> Optional[tuple[float, float]]:
+    def location_position(self, loc: LocationAddress) -> Optional[tuple[float, float]]:
         """Get the ``(x, y)`` physical position for an atom location.
 
         Args:
-            loc (LocationAddr): The location address to look up.
+            loc (LocationAddress): The location address to look up.
 
         Returns:
             tuple[float, float]: The ``(x, y)`` position, or None if the word or site
@@ -667,55 +670,55 @@ class ArchSpec:
         ...
 
     def lane_endpoints(
-        self, lane: LaneAddr
-    ) -> Optional[tuple[LocationAddr, LocationAddr]]:
+        self, lane: LaneAddress
+    ) -> Optional[tuple[LocationAddress, LocationAddress]]:
         """Resolve a lane address to its source and destination locations.
 
         Traces through the appropriate bus (site bus or word bus) in the
         specified direction (forward or backward) to determine which two
-        ``LocationAddr`` endpoints the lane connects.
+        ``LocationAddress`` endpoints the lane connects.
 
         Args:
-            lane (LaneAddr): The lane address to resolve.
+            lane (LaneAddress): The lane address to resolve.
 
         Returns:
-            tuple[LocationAddr, LocationAddr]: A ``(src, dst)`` pair, or None if the
+            tuple[LocationAddress, LocationAddress]: A ``(src, dst)`` pair, or None if the
                 lane references an invalid bus, word, or site.
         """
         ...
 
-    def check_zone(self, addr: ZoneAddr) -> Optional[str]:
+    def check_zone(self, addr: ZoneAddress) -> Optional[str]:
         """Check whether a zone address is valid.
 
         Args:
-            addr (ZoneAddr): The zone address to check.
+            addr (ZoneAddress): The zone address to check.
 
         Returns:
             str: An error message if invalid, or None if valid.
         """
         ...
 
-    def check_locations(self, locations: list[LocationAddr]) -> list[Exception]:
+    def check_locations(self, locations: list[LocationAddress]) -> list[Exception]:
         """Validate a group of location addresses against this architecture.
 
         Checks for duplicate addresses and invalid word/site combinations.
 
         Args:
-            locations (list[LocationAddr]): Location addresses to validate.
+            locations (list[LocationAddress]): Location addresses to validate.
 
         Returns:
             list[Exception]: ``LocationGroupError`` subclass instances (empty if all valid).
         """
         ...
 
-    def check_lanes(self, lanes: list[LaneAddr]) -> list[Exception]:
+    def check_lanes(self, lanes: list[LaneAddress]) -> list[Exception]:
         """Validate a group of lane addresses against this architecture.
 
         Checks for duplicates, invalid addresses, bus consistency, and
         AOD constraints.
 
         Args:
-            lanes (list[LaneAddr]): Lane addresses to validate.
+            lanes (list[LaneAddress]): Lane addresses to validate.
 
         Returns:
             list[Exception]: ``LaneGroupError`` subclass instances (empty if all valid).
@@ -786,20 +789,20 @@ class Instruction:
 
     @staticmethod
     def const_lane(
-        direction: Direction,
         move_type: MoveType,
         word_id: int,
         site_id: int,
         bus_id: int,
+        direction: Direction = ...,
     ) -> Instruction:
         """Push a lane address constant onto the stack.
 
         Args:
-            direction (Direction): Forward or Backward.
-            move_type (MoveType): SiteBus or WordBus.
+            move_type (MoveType): SITE or WORD.
             word_id (int): Word identifier (0..255).
             site_id (int): Site identifier (0..255).
             bus_id (int): Bus identifier (0..255).
+            direction (Direction): FORWARD or BACKWARD. Default: FORWARD.
 
         Returns:
             Instruction: The constant instruction.

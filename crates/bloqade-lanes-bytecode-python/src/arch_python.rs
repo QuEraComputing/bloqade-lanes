@@ -15,7 +15,9 @@ use bloqade_lanes_bytecode_core::version::Version;
 )]
 #[derive(Clone, PartialEq)]
 pub enum PyDirection {
+    #[pyo3(name = "FORWARD")]
     Forward = 0,
+    #[pyo3(name = "BACKWARD")]
     Backward = 1,
 }
 
@@ -46,7 +48,9 @@ impl PyDirection {
 )]
 #[derive(Clone, PartialEq)]
 pub enum PyMoveType {
+    #[pyo3(name = "SITE")]
     SiteBus = 0,
+    #[pyo3(name = "WORD")]
     WordBus = 1,
 }
 
@@ -68,7 +72,7 @@ impl PyMoveType {
 
 // ── LocationAddr ──
 
-#[pyclass(name = "LocationAddr", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "LocationAddress", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyLocationAddr {
     pub(crate) inner: rs_addr::LocationAddr,
@@ -106,7 +110,7 @@ impl PyLocationAddr {
 
     fn __repr__(&self) -> String {
         format!(
-            "LocationAddr(word_id={}, site_id={})",
+            "LocationAddress(word_id={}, site_id={})",
             self.inner.word_id, self.inner.site_id
         )
     }
@@ -114,11 +118,15 @@ impl PyLocationAddr {
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
+
+    fn __hash__(&self) -> u64 {
+        self.inner.encode() as u64
+    }
 }
 
 // ── LaneAddr ──
 
-#[pyclass(name = "LaneAddr", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "LaneAddress", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyLaneAddr {
     pub(crate) inner: rs_addr::LaneAddr,
@@ -127,12 +135,13 @@ pub struct PyLaneAddr {
 #[pymethods]
 impl PyLaneAddr {
     #[new]
+    #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn new(
-        direction: &PyDirection,
         move_type: &PyMoveType,
         word_id: u32,
         site_id: u32,
         bus_id: u32,
+        direction: PyDirection,
     ) -> Self {
         Self {
             inner: rs_addr::LaneAddr {
@@ -186,27 +195,32 @@ impl PyLaneAddr {
 
     fn __repr__(&self) -> String {
         let dir = match self.inner.direction {
-            rs_addr::Direction::Forward => "Direction.Forward",
-            rs_addr::Direction::Backward => "Direction.Backward",
+            rs_addr::Direction::Forward => "Direction.FORWARD",
+            rs_addr::Direction::Backward => "Direction.BACKWARD",
         };
         let mt = match self.inner.move_type {
-            rs_addr::MoveType::SiteBus => "MoveType.SiteBus",
-            rs_addr::MoveType::WordBus => "MoveType.WordBus",
+            rs_addr::MoveType::SiteBus => "MoveType.SITE",
+            rs_addr::MoveType::WordBus => "MoveType.WORD",
         };
         format!(
-            "LaneAddr(direction={}, move_type={}, word_id={}, site_id={}, bus_id={})",
-            dir, mt, self.inner.word_id, self.inner.site_id, self.inner.bus_id
+            "LaneAddress(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
+            mt, self.inner.word_id, self.inner.site_id, self.inner.bus_id, dir
         )
     }
 
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
+
+    fn __hash__(&self) -> u64 {
+        let (d0, d1) = self.inner.encode();
+        (d0 as u64) | ((d1 as u64) << 32)
+    }
 }
 
 // ── ZoneAddr ──
 
-#[pyclass(name = "ZoneAddr", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "ZoneAddress", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyZoneAddr {
     pub(crate) inner: rs_addr::ZoneAddr,
@@ -238,11 +252,15 @@ impl PyZoneAddr {
     }
 
     fn __repr__(&self) -> String {
-        format!("ZoneAddr(zone_id={})", self.inner.zone_id)
+        format!("ZoneAddress(zone_id={})", self.inner.zone_id)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        self.inner.encode() as u64
     }
 }
 

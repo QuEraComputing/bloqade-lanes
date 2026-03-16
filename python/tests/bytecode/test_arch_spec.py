@@ -5,8 +5,8 @@ import pytest
 from bloqade.lanes.bytecode import (
     ArchSpecError,
     Direction,
-    LaneAddr,
-    LocationAddr,
+    LaneAddress,
+    LocationAddress,
     MoveType,
 )
 from bloqade.lanes.bytecode.arch import (
@@ -172,8 +172,12 @@ def _build_spec_from_python():
         measurement_mode_zones=[0],
         paths=[
             TransportPath(
-                lane=LaneAddr(
-                    Direction.Backward, MoveType.WordBus, word_id=1, site_id=0, bus_id=0
+                lane=LaneAddress(
+                    MoveType.WORD,
+                    word_id=1,
+                    site_id=0,
+                    bus_id=0,
+                    direction=Direction.BACKWARD,
                 ),
                 waypoints=[(1.0, 12.5), (1.0, 7.5), (1.0, 2.5)],
             )
@@ -329,8 +333,8 @@ class TestPropertyAccess:
         assert len(spec.paths) == 1
         assert spec.paths[0].lane_encoded == 0xC000000000010000
         lane = spec.paths[0].lane
-        assert lane.direction == Direction.Backward
-        assert lane.move_type == MoveType.WordBus
+        assert lane.direction == Direction.BACKWARD
+        assert lane.move_type == MoveType.WORD
         assert lane.word_id == 1
         assert lane.site_id == 0
         assert lane.bus_id == 0
@@ -430,35 +434,35 @@ class TestRepr:
 class TestLocationPosition:
     def test_valid(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        loc = LocationAddr(word_id=0, site_id=0)
+        loc = LocationAddress(word_id=0, site_id=0)
         assert spec.location_position(loc) == (1.0, 2.5)
 
     def test_different_site(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        loc = LocationAddr(word_id=0, site_id=5)
+        loc = LocationAddress(word_id=0, site_id=5)
         assert spec.location_position(loc) == (1.0, 5.0)
 
     def test_invalid_word(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        loc = LocationAddr(word_id=99, site_id=0)
+        loc = LocationAddress(word_id=99, site_id=0)
         assert spec.location_position(loc) is None
 
     def test_invalid_site(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        loc = LocationAddr(word_id=0, site_id=99)
+        loc = LocationAddress(word_id=0, site_id=99)
         assert spec.location_position(loc) is None
 
 
 class TestCheckLocations:
     def test_valid(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        locs = [LocationAddr(word_id=0, site_id=0)]
+        locs = [LocationAddress(word_id=0, site_id=0)]
         errors = spec.check_locations(locs)
         assert errors == []
 
     def test_invalid(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        locs = [LocationAddr(word_id=99, site_id=0)]
+        locs = [LocationAddress(word_id=99, site_id=0)]
         errors = spec.check_locations(locs)
         assert len(errors) > 0
         assert any(isinstance(e, LocationGroupError) for e in errors)
@@ -466,9 +470,9 @@ class TestCheckLocations:
     def test_duplicate(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         locs = [
-            LocationAddr(word_id=0, site_id=0),
-            LocationAddr(word_id=0, site_id=1),
-            LocationAddr(word_id=0, site_id=0),
+            LocationAddress(word_id=0, site_id=0),
+            LocationAddress(word_id=0, site_id=1),
+            LocationAddress(word_id=0, site_id=0),
         ]
         errors = spec.check_locations(locs)
         assert len(errors) > 0
@@ -478,9 +482,7 @@ class TestCheckLanes:
     def test_valid(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=0, bus_id=0
-            ),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert errors == []
@@ -488,9 +490,7 @@ class TestCheckLanes:
     def test_invalid_bus(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=0, bus_id=99
-            ),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=99),
         ]
         errors = spec.check_lanes(lanes)
         assert len(errors) > 0
@@ -499,12 +499,8 @@ class TestCheckLanes:
     def test_consistency_pass(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=0, bus_id=0
-            ),
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=1, bus_id=0
-            ),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=1, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert errors == []
@@ -512,11 +508,13 @@ class TestCheckLanes:
     def test_consistency_fail_direction(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=0, bus_id=0
-            ),
-            LaneAddr(
-                Direction.Backward, MoveType.SiteBus, word_id=0, site_id=1, bus_id=0
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(
+                MoveType.SITE,
+                word_id=0,
+                site_id=1,
+                bus_id=0,
+                direction=Direction.BACKWARD,
             ),
         ]
         errors = spec.check_lanes(lanes)
@@ -526,9 +524,7 @@ class TestCheckLanes:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         # 2x2 rectangle: sites 0,1,5,6
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=s, bus_id=0
-            )
+            LaneAddress(MoveType.SITE, word_id=0, site_id=s, bus_id=0)
             for s in [0, 1, 5, 6]
         ]
         errors = spec.check_lanes(lanes)
@@ -538,9 +534,7 @@ class TestCheckLanes:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         # L-shape: sites 0,1,5
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=s, bus_id=0
-            )
+            LaneAddress(MoveType.SITE, word_id=0, site_id=s, bus_id=0)
             for s in [0, 1, 5]
         ]
         errors = spec.check_lanes(lanes)
@@ -549,15 +543,9 @@ class TestCheckLanes:
     def test_duplicate(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         lanes = [
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=0, bus_id=0
-            ),
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=1, bus_id=0
-            ),
-            LaneAddr(
-                Direction.Forward, MoveType.SiteBus, word_id=0, site_id=0, bus_id=0
-            ),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=1, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert len(errors) > 0

@@ -1,4 +1,3 @@
-from dataclasses import replace
 from typing import Iterator, Literal, TypeVar
 
 from kirin import ir, rewrite
@@ -17,6 +16,21 @@ from .stmts import dialect
 AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
 
 
+def _replace_word_id(address: AddressType, word_id: int) -> AddressType:
+    """Create a copy of an address with a different word_id."""
+    if isinstance(address, LaneAddress):
+        return LaneAddress(  # type: ignore[return-value]
+            address.move_type,
+            word_id,
+            address.site_id,
+            address.bus_id,
+            address.direction,
+        )
+    elif isinstance(address, LocationAddress):
+        return LocationAddress(word_id, address.site_id)  # type: ignore[return-value]
+    raise TypeError(f"Unsupported address type: {type(address)}")
+
+
 def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | None:
     """This function is used to map logical addresses to physical addresses.
 
@@ -30,9 +44,9 @@ def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | Non
 
     """
     if address.word_id == 0:
-        return (replace(address, word_id=word_id) for word_id in range(7))
+        return (_replace_word_id(address, word_id) for word_id in range(7))
     elif address.word_id == 1:
-        return (replace(address, word_id=word_id) for word_id in range(8, 15, 1))
+        return (_replace_word_id(address, word_id) for word_id in range(8, 15, 1))
     else:
         return None
 

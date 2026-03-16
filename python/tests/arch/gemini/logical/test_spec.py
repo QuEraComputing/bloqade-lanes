@@ -74,8 +74,6 @@ def invalid_locations():
     arch_spec = logical.get_arch_spec()
     yield arch_spec, LocationAddress(16, 0), set(["Word id 16 out of range of 2"])
     yield arch_spec, LocationAddress(0, 32), set(["Site id 32 out of range of 10"])
-    yield arch_spec, LocationAddress(-1, 0), set(["Word id -1 out of range of 2"])
-    yield arch_spec, LocationAddress(0, -1), set(["Site id -1 out of range of 10"])
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())
@@ -83,3 +81,11 @@ def test_location_validation(
     arch_spec: ArchSpec, location_address: LocationAddress, message: set[str]
 ):
     assert message == arch_spec.validate_location(location_address)
+
+
+def test_negative_location_ids_rejected():
+    """Negative IDs are rejected at construction time by the Rust-backed type."""
+    with pytest.raises(OverflowError):
+        LocationAddress(-1, 0)
+    with pytest.raises(OverflowError):
+        LocationAddress(0, -1)
