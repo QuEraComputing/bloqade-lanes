@@ -8,7 +8,7 @@ from deprecated import deprecated
 from bloqade.lanes import layout
 from bloqade.lanes.layout.arch import ArchSpec, Bus
 from bloqade.lanes.layout.encoding import LaneAddress, SiteLaneAddress, WordLaneAddress
-from bloqade.lanes.layout.numpy_compat import as_flat_tuple_int
+from bloqade.lanes.layout.numpy_compat import as_flat_list_int
 from bloqade.lanes.layout.word import Word
 
 
@@ -135,8 +135,8 @@ def _site_buses(site_addresses: np.ndarray):
     for shift in range(word_size_y):
         site_buses.append(
             Bus(
-                src=as_flat_tuple_int(site_addresses[: word_size_y - shift, 0]),
-                dst=as_flat_tuple_int(site_addresses[shift:, 1]),
+                src=as_flat_list_int(site_addresses[: word_size_y - shift, 0]),
+                dst=as_flat_list_int(site_addresses[shift:, 1]),
             )
         )
 
@@ -144,8 +144,8 @@ def _site_buses(site_addresses: np.ndarray):
         shift = word_size_y - diff
         site_buses.append(
             Bus(
-                dst=as_flat_tuple_int(site_addresses[: word_size_y - shift, 1]),
-                src=as_flat_tuple_int(site_addresses[shift:, 0]),
+                dst=as_flat_list_int(site_addresses[: word_size_y - shift, 1]),
+                src=as_flat_list_int(site_addresses[shift:, 0]),
             )
         )
     return tuple(site_buses)
@@ -166,7 +166,7 @@ def _hypercube_busses(hypercube_dims: int):
             srcs.append(src)
             dsts.append(dst)
 
-        word_buses.append(Bus(tuple(srcs), tuple(dsts)))
+        word_buses.append(Bus(srcs, dsts))
 
     return tuple(word_buses)
 
@@ -176,7 +176,7 @@ def _generate_linear_busses(num_words: int):
 
     for shift in range(1, num_words):
         buses.append(
-            Bus(src=tuple(range(num_words - shift)), dst=tuple(range(shift, num_words)))
+            Bus(src=list(range(num_words - shift)), dst=list(range(shift, num_words)))
         )
 
     return tuple(buses)
@@ -219,7 +219,7 @@ def _generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
         measurement_mode_zones=measurement_zones,
         entangling_zones=cz_gate_zones,
         has_site_buses=frozenset(range(num_words_x)),
-        has_word_buses=frozenset(as_flat_tuple_int(site_ids[:, 1])),
+        has_word_buses=frozenset(as_flat_list_int(site_ids[:, 1])),
         site_buses=_site_buses(site_ids),
         word_buses=(),
         paths=_calc_site_path_dict(words),

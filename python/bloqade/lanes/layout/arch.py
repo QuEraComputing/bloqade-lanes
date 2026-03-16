@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, Sequence
 
 from bloqade.lanes.bytecode._native import (
     ArchSpec as _RustArchSpec,
-    Bus as _RustBus,
+    Bus as Bus,
     Buses as _RustBuses,
     Geometry as _RustGeometry,
     LaneAddress as _RustLaneAddress,
@@ -28,41 +28,6 @@ from .word import Word
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-
-class Bus:
-    """A transport bus mapping source positions to destination positions.
-
-    For word-buses, src and dst are the word indices involved in the bus.
-    For site-buses, src are the source site indices and dst are the destination site indices.
-
-    """
-
-    _inner: _RustBus
-
-    def __init__(
-        self, src: tuple[int, ...] | list[int], dst: tuple[int, ...] | list[int]
-    ):
-        self._inner = _RustBus(src=list(src), dst=list(dst))
-
-    @property
-    def src(self) -> tuple[int, ...]:
-        return tuple(self._inner.src)
-
-    @property
-    def dst(self) -> tuple[int, ...]:
-        return tuple(self._inner.dst)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Bus):
-            return NotImplemented
-        return self.src == other.src and self.dst == other.dst
-
-    def __hash__(self) -> int:
-        return hash((self.src, self.dst))
-
-    def __repr__(self) -> str:
-        return f"Bus(src={self.src}, dst={self.dst})"
 
 
 class ArchSpec:
@@ -140,8 +105,8 @@ class ArchSpec:
             words=[w._inner for w in words],
         )
         rust_buses = _RustBuses(
-            site_buses=[b._inner for b in site_buses],
-            word_buses=[b._inner for b in word_buses],
+            site_buses=list(site_buses),
+            word_buses=list(word_buses),
         )
         rust_zones = [_RustZone(words=list(z)) for z in zones]
 

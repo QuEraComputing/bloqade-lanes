@@ -562,6 +562,18 @@ impl PyBus {
     fn __repr__(&self) -> String {
         format!("Bus(src={:?}, dst={:?})", self.inner.src, self.inner.dst)
     }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.src.hash(&mut hasher);
+        self.inner.dst.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 // ── Buses ──

@@ -25,8 +25,8 @@ arch_spec = ArchSpec(
     entangling_zones=frozenset([0]),
     has_site_buses=frozenset([0]),
     has_word_buses=frozenset([0]),
-    site_buses=(Bus(src=(0,), dst=(1,)),),
-    word_buses=(Bus(src=(0,), dst=(1,)),),
+    site_buses=(Bus(src=[0], dst=[1]),),
+    word_buses=(Bus(src=[0], dst=[1]),),
 )
 
 
@@ -72,8 +72,8 @@ def test_post_init_invalid_zone():
             entangling_zones=frozenset([0]),
             has_site_buses=frozenset([0]),
             has_word_buses=frozenset([0]),
-            site_buses=(Bus(src=(0,), dst=(1,)),),
-            word_buses=(Bus(src=(0,), dst=(1,)),),
+            site_buses=(Bus(src=[0], dst=[1]),),
+            word_buses=(Bus(src=[0], dst=[1]),),
         )
 
 
