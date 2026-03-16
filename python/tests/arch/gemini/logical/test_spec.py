@@ -4,7 +4,6 @@ from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
-    EncodingType,
     LocationAddress,
     ZoneAddress,
 )
@@ -16,7 +15,6 @@ def test_architecture_generation():
     assert len(arch_physical.words) == 16
     assert len(arch_physical.site_buses) == 9
     assert len(arch_physical.word_buses) == 4
-    assert arch_physical.encoding is EncodingType.BIT32
 
 
 def test_get_zone_index():
@@ -74,8 +72,6 @@ def invalid_locations():
     arch_spec = logical.get_arch_spec()
     yield arch_spec, LocationAddress(16, 0), set(["Word id 16 out of range of 2"])
     yield arch_spec, LocationAddress(0, 32), set(["Site id 32 out of range of 10"])
-    yield arch_spec, LocationAddress(-1, 0), set(["Word id -1 out of range of 2"])
-    yield arch_spec, LocationAddress(0, -1), set(["Site id -1 out of range of 10"])
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())
@@ -83,3 +79,11 @@ def test_location_validation(
     arch_spec: ArchSpec, location_address: LocationAddress, message: set[str]
 ):
     assert message == arch_spec.validate_location(location_address)
+
+
+def test_negative_location_ids_rejected():
+    """Negative IDs are rejected at construction time by the Rust-backed type."""
+    with pytest.raises(ValueError, match="must be non-negative"):
+        LocationAddress(-1, 0)
+    with pytest.raises(ValueError, match="must be non-negative"):
+        LocationAddress(0, -1)

@@ -3,12 +3,12 @@ import pytest
 from bloqade.lanes.bytecode import (
     Direction,
     Instruction,
-    LaneAddr,
-    LocationAddr,
+    LaneAddress,
+    LocationAddress,
     MoveType,
     Program,
     ValidationError,
-    ZoneAddr,
+    ZoneAddress,
 )
 from bloqade.lanes.bytecode.exceptions import (
     BadMagicError,
@@ -21,71 +21,101 @@ from bloqade.lanes.bytecode.exceptions import (
 # ── Address Types ──
 
 
-class TestLocationAddr:
+class TestLocationAddress:
     def test_construct_and_getters(self):
-        addr = LocationAddr(word_id=1, site_id=2)
+        addr = LocationAddress(word_id=1, site_id=2)
         assert addr.word_id == 1
         assert addr.site_id == 2
 
     def test_encode_decode_round_trip(self):
-        addr = LocationAddr(word_id=3, site_id=7)
+        addr = LocationAddress(word_id=3, site_id=7)
         bits = addr.encode()
-        decoded = LocationAddr.decode(bits)
+        decoded = LocationAddress.decode(bits)
         assert decoded == addr
 
     def test_repr(self):
-        addr = LocationAddr(word_id=0, site_id=1)
-        assert "LocationAddr" in repr(addr)
+        addr = LocationAddress(word_id=0, site_id=1)
+        assert "LocationAddress" in repr(addr)
         assert "word_id=0" in repr(addr)
         assert "site_id=1" in repr(addr)
 
+    def test_hash(self):
+        a = LocationAddress(word_id=0, site_id=1)
+        b = LocationAddress(word_id=0, site_id=1)
+        assert hash(a) == hash(b)
+        d = {a: "value"}
+        assert d[b] == "value"
 
-class TestLaneAddr:
+
+class TestLaneAddress:
     def test_construct_and_getters(self):
-        addr = LaneAddr(
-            direction=Direction.Forward,
-            move_type=MoveType.SiteBus,
+        addr = LaneAddress(
+            move_type=MoveType.SITE,
             word_id=0,
             site_id=1,
             bus_id=0,
+            direction=Direction.FORWARD,
         )
-        assert addr.direction == Direction.Forward
-        assert addr.move_type == MoveType.SiteBus
+        assert addr.direction == Direction.FORWARD
+        assert addr.move_type == MoveType.SITE
         assert addr.word_id == 0
         assert addr.site_id == 1
         assert addr.bus_id == 0
 
+    def test_default_direction(self):
+        addr = LaneAddress(
+            move_type=MoveType.SITE,
+            word_id=0,
+            site_id=1,
+            bus_id=0,
+        )
+        assert addr.direction == Direction.FORWARD
+
     def test_encode_decode_round_trip(self):
-        addr = LaneAddr(
-            direction=Direction.Backward,
-            move_type=MoveType.WordBus,
+        addr = LaneAddress(
+            move_type=MoveType.WORD,
             word_id=1,
             site_id=2,
             bus_id=3,
+            direction=Direction.BACKWARD,
         )
         bits = addr.encode()
-        decoded = LaneAddr.decode(bits)
+        decoded = LaneAddress.decode(bits)
         assert decoded == addr
 
     def test_direction_enum_values(self):
-        assert int(Direction.Forward) == 0
-        assert int(Direction.Backward) == 1
+        assert int(Direction.FORWARD) == 0
+        assert int(Direction.BACKWARD) == 1
 
     def test_move_type_enum_values(self):
-        assert int(MoveType.SiteBus) == 0
-        assert int(MoveType.WordBus) == 1
+        assert int(MoveType.SITE) == 0
+        assert int(MoveType.WORD) == 1
+
+    def test_hash(self):
+        a = LaneAddress(move_type=MoveType.SITE, word_id=0, site_id=1, bus_id=0)
+        b = LaneAddress(move_type=MoveType.SITE, word_id=0, site_id=1, bus_id=0)
+        assert hash(a) == hash(b)
+        d = {a: "value"}
+        assert d[b] == "value"
 
 
-class TestZoneAddr:
+class TestZoneAddress:
     def test_construct_and_getters(self):
-        addr = ZoneAddr(zone_id=5)
+        addr = ZoneAddress(zone_id=5)
         assert addr.zone_id == 5
 
     def test_encode_decode_round_trip(self):
-        addr = ZoneAddr(zone_id=42)
+        addr = ZoneAddress(zone_id=42)
         bits = addr.encode()
-        decoded = ZoneAddr.decode(bits)
+        decoded = ZoneAddress.decode(bits)
         assert decoded == addr
+
+    def test_hash(self):
+        a = ZoneAddress(zone_id=5)
+        b = ZoneAddress(zone_id=5)
+        assert hash(a) == hash(b)
+        d = {a: "value"}
+        assert d[b] == "value"
 
 
 # ── Instruction ──
@@ -111,11 +141,11 @@ class TestInstruction:
 
     def test_const_lane(self):
         inst = Instruction.const_lane(
-            direction=Direction.Forward,
-            move_type=MoveType.SiteBus,
+            move_type=MoveType.SITE,
             word_id=0,
             site_id=1,
             bus_id=0,
+            direction=Direction.FORWARD,
         )
         assert inst.opcode == 0x010F  # LaneConst device=0x0F, inst=0x01
 

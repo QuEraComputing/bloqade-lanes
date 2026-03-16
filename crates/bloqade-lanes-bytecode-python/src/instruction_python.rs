@@ -38,16 +38,18 @@ impl PyInstruction {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn const_lane(
-        direction: &PyDirection,
         move_type: &PyMoveType,
         word_id: u32,
         site_id: u32,
         bus_id: u32,
+        direction: PyDirection,
     ) -> Self {
         let addr = rs_addr::LaneAddr {
             direction: direction.to_rs(),
             move_type: move_type.to_rs(),
+
             word_id,
             site_id,
             bus_id,
@@ -268,12 +270,12 @@ fn format_instruction(instr: &rs::Instruction) -> String {
                     rs_addr::Direction::Backward => "Direction.BACKWARD",
                 };
                 let mt = match addr.move_type {
-                    rs_addr::MoveType::SiteBus => "MoveType.SITE_BUS",
-                    rs_addr::MoveType::WordBus => "MoveType.WORD_BUS",
+                    rs_addr::MoveType::SiteBus => "MoveType.SITE",
+                    rs_addr::MoveType::WordBus => "MoveType.WORD",
                 };
                 format!(
-                    "Instruction.const_lane(direction={}, move_type={}, word_id={}, site_id={}, bus_id={})",
-                    dir, mt, addr.word_id, addr.site_id, addr.bus_id
+                    "Instruction.const_lane(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
+                    mt, addr.word_id, addr.site_id, addr.bus_id, dir
                 )
             }
             rs::LaneConstInstruction::ConstZone(bits) => {

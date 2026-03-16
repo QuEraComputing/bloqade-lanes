@@ -5,7 +5,6 @@ from .encoding import (
     LocationAddress as LocationAddress,
     MoveType as MoveType,
     SiteLaneAddress as SiteLaneAddress,
-    WordAddress as WordAddress,
     WordLaneAddress as WordLaneAddress,
     ZoneAddress as ZoneAddress,
 )
