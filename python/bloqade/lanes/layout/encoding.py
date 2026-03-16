@@ -1,7 +1,7 @@
 import abc
 import enum
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from kirin import ir, types
 from kirin.print import Printer
@@ -273,6 +273,10 @@ class LocationAddress(Encoder):
         address |= word_id_enc << shift
         return address
 
+    def replace_word_id(self, word_id: int) -> Self:
+        """Return a copy with a different word_id."""
+        return LocationAddress(word_id, self.site_id)  # type: ignore[return-value]
+
 
 class LaneAddress(Encoder):
     """Address identifying a transport lane."""
@@ -361,6 +365,12 @@ class LaneAddress(Encoder):
     def src_site(self) -> LocationAddress:
         """Get the source site as a LocationAddress."""
         return LocationAddress(self.word_id, self.site_id)
+
+    def replace_word_id(self, word_id: int) -> Self:
+        """Return a copy with a different word_id."""
+        return LaneAddress(  # type: ignore[return-value]
+            self.move_type, word_id, self.site_id, self.bus_id, self.direction
+        )
 
     def __hash__(self) -> int:
         return self._inner.encode()
