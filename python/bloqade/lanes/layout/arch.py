@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import ClassVar, Sequence
 
+from bloqade.lanes.bytecode._native import Bus as _RustBus
 from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
@@ -17,17 +18,39 @@ from bloqade.lanes.layout.encoding import (
 from .word import Word
 
 
-@dataclass(frozen=True)
 class Bus:
-    """A group of word-buses that can be executed in parallel.
+    """A transport bus mapping source positions to destination positions.
 
-    For word-buses, src and dst are the word indices involved in the word-bus.
+    For word-buses, src and dst are the word indices involved in the bus.
     For site-buses, src are the source site indices and dst are the destination site indices.
 
     """
 
-    src: tuple[int, ...]
-    dst: tuple[int, ...]
+    _inner: _RustBus
+
+    def __init__(
+        self, src: tuple[int, ...] | list[int], dst: tuple[int, ...] | list[int]
+    ):
+        self._inner = _RustBus(src=list(src), dst=list(dst))
+
+    @property
+    def src(self) -> tuple[int, ...]:
+        return tuple(self._inner.src)
+
+    @property
+    def dst(self) -> tuple[int, ...]:
+        return tuple(self._inner.dst)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Bus):
+            return NotImplemented
+        return self.src == other.src and self.dst == other.dst
+
+    def __hash__(self) -> int:
+        return hash((self.src, self.dst))
+
+    def __repr__(self) -> str:
+        return f"Bus(src={self.src}, dst={self.dst})"
 
 
 @dataclass(frozen=True)
