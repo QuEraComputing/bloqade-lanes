@@ -4,7 +4,9 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 
 use crate::arch_python::{PyDirection, PyMoveType};
-use crate::validation::{validate_u16_field, validate_u32_field};
+use crate::validation::{
+    validate_u8_field, validate_u16_field, validate_u16_field_strict, validate_u32_field,
+};
 
 #[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
@@ -186,21 +188,25 @@ impl PyInstruction {
 
     #[staticmethod]
     #[pyo3(signature = (type_tag, dim0, dim1=0))]
-    fn new_array(type_tag: u8, dim0: u16, dim1: u16) -> Self {
-        Self {
+    fn new_array(type_tag: i64, dim0: i64, dim1: i64) -> PyResult<Self> {
+        let type_tag = validate_u8_field("type_tag", type_tag)?;
+        let dim0 = validate_u16_field_strict("dim0", dim0)?;
+        let dim1 = validate_u16_field_strict("dim1", dim1)?;
+        Ok(Self {
             inner: rs::Instruction::Array(rs::ArrayInstruction::NewArray {
                 type_tag,
                 dim0,
                 dim1,
             }),
-        }
+        })
     }
 
     #[staticmethod]
-    fn get_item(ndims: u16) -> Self {
-        Self {
+    fn get_item(ndims: i64) -> PyResult<Self> {
+        let ndims = validate_u16_field_strict("ndims", ndims)?;
+        Ok(Self {
             inner: rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }),
-        }
+        })
     }
 
     // ── Detector / Observable ──

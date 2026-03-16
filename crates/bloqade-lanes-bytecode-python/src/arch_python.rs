@@ -530,14 +530,16 @@ impl PyBus {
 
     /// Map a source value to its destination (forward move).
     /// Returns None if not found.
-    fn resolve_forward(&self, src: u32) -> Option<u32> {
-        self.inner.resolve_forward(src)
+    fn resolve_forward(&self, src: i64) -> PyResult<Option<u32>> {
+        let src = validate_u32_field("src", src)?;
+        Ok(self.inner.resolve_forward(src))
     }
 
     /// Map a destination value back to its source (backward move).
     /// Returns None if not found.
-    fn resolve_backward(&self, dst: u32) -> Option<u32> {
-        self.inner.resolve_backward(dst)
+    fn resolve_backward(&self, dst: i64) -> PyResult<Option<u32>> {
+        let dst = validate_u32_field("dst", dst)?;
+        Ok(self.inner.resolve_backward(dst))
     }
 
     fn __repr__(&self) -> String {
@@ -815,30 +817,38 @@ impl PyArchSpec {
         })
     }
 
-    fn word_by_id(&self, id: u32) -> Option<PyWord> {
-        self.inner
+    fn word_by_id(&self, id: i64) -> PyResult<Option<PyWord>> {
+        let id = validate_u32_field("id", id)?;
+        Ok(self
+            .inner
             .word_by_id(id)
-            .map(|w| PyWord { inner: w.clone() })
+            .map(|w| PyWord { inner: w.clone() }))
     }
 
-    fn zone_by_id(&self, id: u32) -> Option<PyZone> {
-        self.inner
+    fn zone_by_id(&self, id: i64) -> PyResult<Option<PyZone>> {
+        let id = validate_u32_field("id", id)?;
+        Ok(self
+            .inner
             .zone_by_id(id)
-            .map(|z| PyZone { inner: z.clone() })
+            .map(|z| PyZone { inner: z.clone() }))
     }
 
     /// Look up a site bus by its identifier. Returns None if not found.
-    fn site_bus_by_id(&self, id: u32) -> Option<PyBus> {
-        self.inner
+    fn site_bus_by_id(&self, id: i64) -> PyResult<Option<PyBus>> {
+        let id = validate_u32_field("id", id)?;
+        Ok(self
+            .inner
             .site_bus_by_id(id)
-            .map(|b| PyBus { inner: b.clone() })
+            .map(|b| PyBus { inner: b.clone() }))
     }
 
     /// Look up a word bus by its identifier. Returns None if not found.
-    fn word_bus_by_id(&self, id: u32) -> Option<PyBus> {
-        self.inner
+    fn word_bus_by_id(&self, id: i64) -> PyResult<Option<PyBus>> {
+        let id = validate_u32_field("id", id)?;
+        Ok(self
+            .inner
             .word_bus_by_id(id)
-            .map(|b| PyBus { inner: b.clone() })
+            .map(|b| PyBus { inner: b.clone() }))
     }
 
     /// Resolve a location address to its physical (x, y) coordinates.

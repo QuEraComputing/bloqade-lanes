@@ -26,6 +26,43 @@ impl From<FieldRangeError> for pyo3::PyErr {
     }
 }
 
+/// Validate that a field value fits in 8 bits (0..=255).
+pub fn validate_u8_field(name: &str, value: i64) -> Result<u8, FieldRangeError> {
+    if value < 0 {
+        return Err(FieldRangeError::Negative {
+            name: name.to_string(),
+            value,
+        });
+    }
+    if value > 0xFF {
+        return Err(FieldRangeError::Overflow {
+            name: name.to_string(),
+            value,
+            max: 0xFF,
+        });
+    }
+    Ok(value as u8)
+}
+
+/// Validate that a field value fits in 16 bits (0..=65535).
+/// Returns `u16`.
+pub fn validate_u16_field_strict(name: &str, value: i64) -> Result<u16, FieldRangeError> {
+    if value < 0 {
+        return Err(FieldRangeError::Negative {
+            name: name.to_string(),
+            value,
+        });
+    }
+    if value > 0xFFFF {
+        return Err(FieldRangeError::Overflow {
+            name: name.to_string(),
+            value,
+            max: 0xFFFF,
+        });
+    }
+    Ok(value as u16)
+}
+
 /// Validate that a field value fits in 16 bits (0..=65535).
 ///
 /// Returns `u32` (not `u16`) because the core Rust address types
@@ -78,6 +115,52 @@ pub fn validate_u32_vec(name: &str, values: Vec<i64>) -> Result<Vec<u32>, FieldR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── validate_u8_field ──
+
+    #[test]
+    fn u8_valid_range() {
+        assert_eq!(validate_u8_field("x", 0).unwrap(), 0u8);
+        assert_eq!(validate_u8_field("x", 128).unwrap(), 128u8);
+        assert_eq!(validate_u8_field("x", 255).unwrap(), 255u8);
+    }
+
+    #[test]
+    fn u8_negative() {
+        let err = validate_u8_field("tag", -1).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Negative { .. }));
+        assert!(err.to_string().contains("tag=-1"));
+    }
+
+    #[test]
+    fn u8_overflow() {
+        let err = validate_u8_field("tag", 256).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Overflow { .. }));
+        assert!(err.to_string().contains("tag=256"));
+        assert!(err.to_string().contains("255"));
+    }
+
+    // ── validate_u16_field_strict ──
+
+    #[test]
+    fn u16_strict_valid_range() {
+        assert_eq!(validate_u16_field_strict("x", 0).unwrap(), 0u16);
+        assert_eq!(validate_u16_field_strict("x", 0xFFFF).unwrap(), 0xFFFFu16);
+    }
+
+    #[test]
+    fn u16_strict_negative() {
+        let err = validate_u16_field_strict("dim", -1).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Negative { .. }));
+    }
+
+    #[test]
+    fn u16_strict_overflow() {
+        let err = validate_u16_field_strict("dim", 0x10000).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Overflow { .. }));
+    }
+
+    // ── validate_u16_field (returns u32) ──
 
     #[test]
     fn u16_valid_range() {
