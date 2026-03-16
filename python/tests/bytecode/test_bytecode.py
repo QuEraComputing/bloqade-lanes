@@ -244,6 +244,39 @@ class TestInstructionAddressValidation:
         Instruction.const_zone(zone_id=0xFFFF)
 
 
+class TestInstructionArityValidation:
+    """Instruction arity params validate non-negative u32 range."""
+
+    def test_initial_fill_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.initial_fill(-1)
+
+    def test_fill_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.fill(-1)
+
+    def test_move_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.move_(-1)
+
+    def test_local_r_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.local_r(-1)
+
+    def test_local_rz_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.local_rz(-1)
+
+    def test_measure_negative(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            Instruction.measure(-1)
+
+    def test_valid_zero(self):
+        Instruction.fill(0)
+        Instruction.local_r(0)
+        Instruction.measure(0)
+
+
 # ── Program ──
 
 

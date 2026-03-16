@@ -4,7 +4,7 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 
 use crate::arch_python::{PyDirection, PyMoveType};
-use crate::validation::validate_u16_field;
+use crate::validation::{validate_u16_field, validate_u32_field};
 
 #[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
@@ -100,43 +100,48 @@ impl PyInstruction {
     // ── Atom operations ──
 
     #[staticmethod]
-    fn initial_fill(arity: u32) -> Self {
-        Self {
+    fn initial_fill(arity: i64) -> PyResult<Self> {
+        let arity = validate_u32_field("arity", arity)?;
+        Ok(Self {
             inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::InitialFill {
                 arity,
             }),
-        }
+        })
     }
 
     #[staticmethod]
-    fn fill(arity: u32) -> Self {
-        Self {
+    fn fill(arity: i64) -> PyResult<Self> {
+        let arity = validate_u32_field("arity", arity)?;
+        Ok(Self {
             inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::Fill { arity }),
-        }
+        })
     }
 
     #[staticmethod]
     #[pyo3(name = "move_")]
-    fn move_instr(arity: u32) -> Self {
-        Self {
+    fn move_instr(arity: i64) -> PyResult<Self> {
+        let arity = validate_u32_field("arity", arity)?;
+        Ok(Self {
             inner: rs::Instruction::AtomArrangement(rs::AtomArrangementInstruction::Move { arity }),
-        }
+        })
     }
 
     // ── Gate operations ──
 
     #[staticmethod]
-    fn local_r(arity: u32) -> Self {
-        Self {
+    fn local_r(arity: i64) -> PyResult<Self> {
+        let arity = validate_u32_field("arity", arity)?;
+        Ok(Self {
             inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::LocalR { arity }),
-        }
+        })
     }
 
     #[staticmethod]
-    fn local_rz(arity: u32) -> Self {
-        Self {
+    fn local_rz(arity: i64) -> PyResult<Self> {
+        let arity = validate_u32_field("arity", arity)?;
+        Ok(Self {
             inner: rs::Instruction::QuantumGate(rs::QuantumGateInstruction::LocalRz { arity }),
-        }
+        })
     }
 
     #[staticmethod]
@@ -163,10 +168,11 @@ impl PyInstruction {
     // ── Measurement ──
 
     #[staticmethod]
-    fn measure(arity: u32) -> Self {
-        Self {
+    fn measure(arity: i64) -> PyResult<Self> {
+        let arity = validate_u32_field("arity", arity)?;
+        Ok(Self {
             inner: rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }),
-        }
+        })
     }
 
     #[staticmethod]
