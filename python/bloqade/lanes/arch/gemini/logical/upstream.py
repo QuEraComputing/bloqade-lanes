@@ -29,9 +29,9 @@ def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | Non
 
     """
     if address.word_id == 0:
-        return (address.replace_word_id(word_id) for word_id in range(7))
+        return (address.replace(word_id=word_id) for word_id in range(7))
     elif address.word_id == 1:
-        return (address.replace_word_id(word_id) for word_id in range(8, 15, 1))
+        return (address.replace(word_id=word_id) for word_id in range(8, 15, 1))
     else:
         return None
 

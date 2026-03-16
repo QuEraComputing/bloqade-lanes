@@ -168,9 +168,17 @@ class LocationAddress(Encoder):
             return NotImplemented
         return (self.word_id, self.site_id) < (other.word_id, other.site_id)
 
-    def replace_word_id(self, word_id: int) -> Self:
-        """Return a copy with a different word_id."""
-        return LocationAddress(word_id, self.site_id)  # type: ignore[return-value]
+    def replace(
+        self,
+        *,
+        word_id: int | None = None,
+        site_id: int | None = None,
+    ) -> Self:
+        """Return a copy, optionally replacing fields."""
+        return LocationAddress(  # type: ignore[return-value]
+            word_id if word_id is not None else self.word_id,
+            site_id if site_id is not None else self.site_id,
+        )
 
 
 class LaneAddress(Encoder):
@@ -221,9 +229,7 @@ class LaneAddress(Encoder):
             if self.direction == Direction.FORWARD
             else Direction.FORWARD
         )
-        return LaneAddress(
-            self.move_type, self.word_id, self.site_id, self.bus_id, new_direction
-        )
+        return self.replace(direction=new_direction)
 
     def encode(self) -> int:
         return self._inner.encode()
@@ -232,10 +238,22 @@ class LaneAddress(Encoder):
         """Get the source site as a LocationAddress."""
         return LocationAddress(self.word_id, self.site_id)
 
-    def replace_word_id(self, word_id: int) -> Self:
-        """Return a copy with a different word_id."""
+    def replace(
+        self,
+        *,
+        move_type: MoveType | None = None,
+        word_id: int | None = None,
+        site_id: int | None = None,
+        bus_id: int | None = None,
+        direction: Direction | None = None,
+    ) -> Self:
+        """Return a copy, optionally replacing fields."""
         return LaneAddress(  # type: ignore[return-value]
-            self.move_type, word_id, self.site_id, self.bus_id, self.direction
+            move_type if move_type is not None else self.move_type,
+            word_id if word_id is not None else self.word_id,
+            site_id if site_id is not None else self.site_id,
+            bus_id if bus_id is not None else self.bus_id,
+            direction if direction is not None else self.direction,
         )
 
     def __hash__(self) -> int:
