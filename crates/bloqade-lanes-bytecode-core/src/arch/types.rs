@@ -1,8 +1,21 @@
+use std::hash::{Hash, Hasher};
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::version::Version;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Normalize -0.0 to 0.0 for consistent hashing (since -0.0 == 0.0
+/// under PartialEq but to_bits() differs).
+#[inline]
+fn canonical_f64_bits(v: f64) -> u64 {
+    if v == 0.0 {
+        0.0_f64.to_bits()
+    } else {
+        v.to_bits()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArchSpec {
     pub version: Version,
     pub geometry: Geometry,
@@ -31,6 +44,27 @@ pub struct TransportPath {
     pub waypoints: Vec<[f64; 2]>,
 }
 
+impl TransportPath {
+    /// Check that all waypoint coordinates are finite (not NaN or Inf).
+    pub fn check_finite(&self) -> bool {
+        self.waypoints
+            .iter()
+            .all(|wp| wp[0].is_finite() && wp[1].is_finite())
+    }
+}
+
+impl Eq for TransportPath {}
+
+impl Hash for TransportPath {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.lane.hash(state);
+        for wp in &self.waypoints {
+            canonical_f64_bits(wp[0]).hash(state);
+            canonical_f64_bits(wp[1]).hash(state);
+        }
+    }
+}
+
 fn serialize_lane_hex<S: Serializer>(lane: &u64, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&format!("0x{:016X}", lane))
 }
@@ -56,13 +90,13 @@ fn deserialize_lane_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u6
     u64::from_str_radix(hex, 16).map_err(serde::de::Error::custom)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Geometry {
     pub sites_per_word: u32,
     pub words: Vec<Word>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Word {
     pub grid: Grid,
     /// Each entry is `[x_idx, y_idx]` indexing into the grid's x and y
@@ -82,7 +116,41 @@ pub struct Grid {
     pub y_spacing: Vec<f64>,
 }
 
+impl Eq for Grid {}
+
+impl Hash for Grid {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        canonical_f64_bits(self.x_start).hash(state);
+        canonical_f64_bits(self.y_start).hash(state);
+        for v in &self.x_spacing {
+            canonical_f64_bits(*v).hash(state);
+        }
+        for v in &self.y_spacing {
+            canonical_f64_bits(*v).hash(state);
+        }
+    }
+}
+
 impl Grid {
+    /// Check that all float values are finite (not NaN or Inf).
+    pub fn check_finite(&self) -> Result<(), &'static str> {
+        if !self.x_start.is_finite() {
+            return Err("x_start");
+        }
+        if !self.y_start.is_finite() {
+            return Err("y_start");
+        }
+        if let Some(v) = self.x_spacing.iter().find(|v| !v.is_finite()) {
+            let _ = v;
+            return Err("x_spacing");
+        }
+        if let Some(v) = self.y_spacing.iter().find(|v| !v.is_finite()) {
+            let _ = v;
+            return Err("y_spacing");
+        }
+        Ok(())
+    }
+
     /// Construct a `Grid` from explicit position arrays.
     ///
     /// The first element becomes the start value and consecutive differences
@@ -155,19 +223,19 @@ impl Grid {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Buses {
     pub site_buses: Vec<Bus>,
     pub word_buses: Vec<Bus>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Bus {
     pub src: Vec<u32>,
     pub dst: Vec<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Zone {
     pub words: Vec<u32>,
 }

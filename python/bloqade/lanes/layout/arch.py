@@ -1,9 +1,19 @@
+from __future__ import annotations
+
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
 from functools import cached_property
-from typing import ClassVar, Sequence
+from typing import TYPE_CHECKING, ClassVar, Sequence
 
+from bloqade.lanes.bytecode._native import (
+    ArchSpec as _RustArchSpec,
+    Bus as Bus,
+    Buses as _RustBuses,
+    Geometry as _RustGeometry,
+    LaneAddress as _RustLaneAddress,
+    TransportPath as _RustTransportPath,
+    Zone as _RustZone,
+)
 from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
@@ -16,83 +26,38 @@ from bloqade.lanes.layout.encoding import (
 
 from .word import Word
 
-
-@dataclass(frozen=True)
-class Bus:
-    """A group of word-buses that can be executed in parallel.
-
-    For word-buses, src and dst are the word indices involved in the word-bus.
-    For site-buses, src are the source site indices and dst are the destination site indices.
-
-    """
-
-    src: tuple[int, ...]
-    dst: tuple[int, ...]
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
-@dataclass(frozen=True)
 class ArchSpec:
+    """Architecture specification for a quantum device."""
+
+    _inner: _RustArchSpec
     words: tuple[Word, ...]
-    """tuple of all words in the architecture. words[i] gives the word at word address i."""
-    zones: tuple[tuple[int, ...], ...]
-    """A tuple of zones where a zone is a tuple of word addresses and zone[i] gives the ith zone."""
-    measurement_mode_zones: tuple[int, ...]
-    """Map from from contiguous mode value to zone id for measurement mode operations."""
-    entangling_zones: frozenset[int]
-    """Set of zone ids that support CZ gates."""
-    has_site_buses: frozenset[int]
-    """Set of words that have site-bus moves."""
-    has_word_buses: frozenset[int]
-    """Set of sites (by index) that have word-bus moves. These sites are the same across all words."""
-    site_buses: tuple[Bus, ...]
-    """List of all site buses in the architecture by site address."""
-    word_buses: tuple[Bus, ...]
-    """List of all word buses in the architecture by word address."""
-    zone_address_map: dict[LocationAddress, dict[ZoneAddress, int]] = field(
-        init=False, default_factory=dict
-    )
-    paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = field(
-        default_factory=dict, hash=False, compare=False
-    )
-    """Optional precomputed paths for lanes in the architecture."""
-    _lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = field(
-        init=False, default_factory=dict, compare=False, hash=False
-    )
-    """Map of site-site tuples to the lane that addresses the move between that pair of sites (None if no lane exists). Note that direction is factored in."""
-    _lane_duration_cache_us: dict[tuple[LaneAddress, float], float] = field(
-        init=False, default_factory=dict, compare=False, hash=False
-    )
-    _max_lane_duration_cache_us: dict[float, float] = field(
-        init=False, default_factory=dict, compare=False, hash=False
-    )
+    paths: dict[LaneAddress, tuple[tuple[float, float], ...]]
 
     _FLAIR_MAX_RAMP_US: ClassVar[float] = 0.2
     _FLAIR_MAX_JERK_UM_PER_US3: ClassVar[float] = 0.0004
     _FLAIR_MAX_ACCEL_UM_PER_US2: ClassVar[float] = 0.0015
 
-    def __post_init__(self):
-        if self.zones[0] != tuple(range(len(self.words))):
-            raise ValueError("Zone 0 must include all words in the architecture")
+    def __init__(
+        self,
+        inner: _RustArchSpec,
+        words: tuple[Word, ...],
+        paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
+    ):
+        self._inner = inner
+        self.words = words
+        self.paths = paths if paths is not None else {}
+        self._lane_duration_cache_us: dict[tuple[LaneAddress, float], float] = {}
+        self._max_lane_duration_cache_us: dict[float, float] = {}
 
-        if len(self.measurement_mode_zones) == 0:
-            raise ValueError("There must be at least one measurement mode zone")
+        self._inner.validate()
 
-        if self.measurement_mode_zones[0] != 0:
-            raise ValueError("Measurement mode zone 0 must be zone 0")
-
-        if any(
-            zone_id < 0 or zone_id >= len(self.zones)
-            for zone_id in self.entangling_zones
-        ):
-            raise ValueError("Entangling zone ids must be valid zone ids")
-
-        if any(
-            zone_id < 0 or zone_id >= len(self.zones)
-            for zone_id in self.measurement_mode_zones
-        ):
-            raise ValueError("Measurement mode zone ids must be valid zone ids")
-
-        zone_address_map = defaultdict(dict)
+    @cached_property
+    def zone_address_map(self) -> dict[LocationAddress, dict[ZoneAddress, int]]:
+        result: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(dict)
         for zone_id, zone in enumerate(self.zones):
             index = 0
             for word_id in zone:
@@ -100,9 +65,12 @@ class ArchSpec:
                 for site_id, _ in enumerate(word.site_indices):
                     loc_addr = LocationAddress(word_id, site_id)
                     zone_address = ZoneAddress(zone_id)
-                    zone_address_map[loc_addr][zone_address] = index
+                    result[loc_addr][zone_address] = index
                     index += 1
-        object.__setattr__(self, "zone_address_map", dict(zone_address_map))
+        return dict(result)
+
+    @cached_property
+    def _lane_map(self) -> dict[tuple[LocationAddress, LocationAddress], LaneAddress]:
         lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
         for word_id in self.has_site_buses:
             for bus_id, bus in enumerate(self.site_buses):
@@ -128,7 +96,101 @@ class ArchSpec:
                         )
                         src, dst = self.get_endpoints(lane_addr)
                         lane_map[(src, dst)] = lane_addr
-        super().__setattr__("_lane_map", lane_map)
+        return lane_map
+
+    # ── Properties derived from Rust inner ──
+
+    @property
+    def zones(self) -> tuple[tuple[int, ...], ...]:
+        return tuple(tuple(z.words) for z in self._inner.zones)
+
+    @property
+    def measurement_mode_zones(self) -> tuple[int, ...]:
+        return tuple(self._inner.measurement_mode_zones)
+
+    @property
+    def entangling_zones(self) -> frozenset[int]:
+        return frozenset(self._inner.entangling_zones)
+
+    @property
+    def has_site_buses(self) -> frozenset[int]:
+        return frozenset(self._inner.words_with_site_buses)
+
+    @property
+    def has_word_buses(self) -> frozenset[int]:
+        return frozenset(self._inner.sites_with_word_buses)
+
+    @property
+    def site_buses(self) -> tuple[Bus, ...]:
+        return tuple(self._inner.buses.site_buses)
+
+    @property
+    def word_buses(self) -> tuple[Bus, ...]:
+        return tuple(self._inner.buses.word_buses)
+
+    # ── Constructor classmethod ──
+
+    @classmethod
+    def from_components(
+        cls,
+        words: tuple[Word, ...],
+        zones: tuple[tuple[int, ...], ...],
+        measurement_mode_zones: tuple[int, ...],
+        entangling_zones: frozenset[int],
+        has_site_buses: frozenset[int],
+        has_word_buses: frozenset[int],
+        site_buses: tuple[Bus, ...],
+        word_buses: tuple[Bus, ...],
+        paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
+    ) -> ArchSpec:
+        """Construct an ArchSpec from Python component types."""
+        sites_per_word = len(words[0].site_indices) if words else 0
+        rust_geometry = _RustGeometry(
+            sites_per_word=sites_per_word,
+            words=[w._inner for w in words],
+        )
+        rust_buses = _RustBuses(
+            site_buses=list(site_buses),
+            word_buses=list(word_buses),
+        )
+        rust_zones = [_RustZone(words=list(z)) for z in zones]
+
+        rust_paths = None
+        if paths:
+            rust_paths = [
+                _RustTransportPath(
+                    lane=_RustLaneAddress(
+                        lane.move_type,
+                        lane.word_id,
+                        lane.site_id,
+                        lane.bus_id,
+                        lane.direction,
+                    ),
+                    waypoints=list(waypoints),
+                )
+                for lane, waypoints in paths.items()
+            ]
+
+        inner = _RustArchSpec(
+            version=(1, 0),
+            geometry=rust_geometry,
+            buses=rust_buses,
+            words_with_site_buses=sorted(has_site_buses),
+            sites_with_word_buses=sorted(has_word_buses),
+            zones=rust_zones,
+            entangling_zones=sorted(entangling_zones),
+            measurement_mode_zones=list(measurement_mode_zones),
+            paths=rust_paths,
+        )
+        return cls(inner, words, paths)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ArchSpec):
+            return NotImplemented
+        return self._inner == other._inner and self.words == other.words
+
+    def __hash__(self) -> int:
+        return hash(self._inner)
 
     @property
     def max_qubits(self) -> int:
@@ -136,7 +198,9 @@ class ArchSpec:
         num_sites_per_word = len(self.words[0].site_indices)
         return len(self.words) * num_sites_per_word // 2
 
-    def yield_zone_locations(self, zone_address: ZoneAddress):
+    def yield_zone_locations(
+        self, zone_address: ZoneAddress
+    ) -> Iterator[LocationAddress]:
         """Yield all location addresses in a given zone address."""
         zone_id = zone_address.zone_id
         zone = self.zones[zone_id]
@@ -296,7 +360,9 @@ class ArchSpec:
     def get_position(self, location: LocationAddress) -> tuple[float, float]:
         return self.words[location.word_id].site_position(location.site_id)
 
-    def _get_word_bus_paths(self, show_word_bus):
+    def _get_word_bus_paths(
+        self, show_word_bus: Sequence[int]
+    ) -> Iterator[tuple[tuple[float, float], ...]]:
         for lane_id in show_word_bus:
             lane = self.word_buses[lane_id]
             for site_id in self.has_word_buses:
@@ -309,10 +375,12 @@ class ArchSpec:
                     )
                     yield self.get_path(lane_addr)
 
-    def _get_site_bus_paths(self, show_words, show_site_bus):
+    def _get_site_bus_paths(
+        self, show_words: Sequence[int], show_site_bus: Sequence[int]
+    ) -> Iterator[tuple[tuple[float, float], ...]]:
         for word_id in show_words:
             if word_id not in self.has_site_buses:
-                continue  # Only show lanes for words in has_site_buses
+                continue
             for lane_id in show_site_bus:
                 lane = self.site_buses[lane_id]
                 for i in range(len(lane.src)):
@@ -326,13 +394,13 @@ class ArchSpec:
 
     def plot(
         self,
-        ax=None,
+        ax=None,  # type: ignore[no-untyped-def]
         show_words: Sequence[int] = (),
         show_site_bus: Sequence[int] = (),
         show_word_bus: Sequence[int] = (),
-        **scatter_kwargs,
-    ):
-        import matplotlib.pyplot as plt  # type: ignore
+        **scatter_kwargs,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        import matplotlib.pyplot as plt  # type: ignore[import-untyped]
 
         if ax is None:
             ax = plt.gca()
@@ -354,13 +422,13 @@ class ArchSpec:
 
     def show(
         self,
-        ax=None,
+        ax=None,  # type: ignore[no-untyped-def]
         show_words: Sequence[int] = (),
         show_intra: Sequence[int] = (),
         show_inter: Sequence[int] = (),
-        **scatter_kwargs,
-    ):
-        import matplotlib.pyplot as plt  # type: ignore
+        **scatter_kwargs,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        import matplotlib.pyplot as plt  # type: ignore[import-untyped]
 
         self.plot(
             ax,
@@ -372,18 +440,11 @@ class ArchSpec:
         plt.show()
 
     def compatible_lane_error(self, lane1: LaneAddress, lane2: LaneAddress) -> set[str]:
-        """Get the error message if two lanes are not compatible, or None if they are.
-
-        Args:
-            lane1: The first lane address.
-            lane2: The second lane address.
-        Returns:
-            set[str]: A set of error messages indicating why the lanes are not compatible.
+        """Get error messages if two lanes are not compatible.
 
         NOTE: this function assumes that both lanes are valid.
-
         """
-        errors = set()
+        errors: set[str] = set()
         if lane1.direction != lane2.direction:
             errors.add("Lanes have different directions")
 
@@ -408,10 +469,10 @@ class ArchSpec:
 
     def validate_location(self, location_address: LocationAddress) -> set[str]:
         """Check if a location address is valid in this architecture."""
-        errors = set()
+        errors: set[str] = set()
 
         num_words = len(self.words)
-        if location_address.word_id < 0 or location_address.word_id >= num_words:
+        if location_address.word_id >= num_words:
             errors.add(
                 f"Word id {location_address.word_id} out of range of {num_words}"
             )
@@ -420,7 +481,7 @@ class ArchSpec:
         word = self.words[location_address.word_id]
 
         num_sites = len(word.site_indices)
-        if location_address.site_id < 0 or location_address.site_id >= num_sites:
+        if location_address.site_id >= num_sites:
             errors.add(
                 f"Site id {location_address.site_id} out of range of {num_sites}"
             )
@@ -443,7 +504,7 @@ class ArchSpec:
                     f"Site {lane_address.site_id} does not support word-bus moves"
                 )
             num_word_buses = len(self.word_buses)
-            if lane_address.bus_id < 0 or lane_address.bus_id >= num_word_buses:
+            if lane_address.bus_id >= num_word_buses:
                 errors.add(
                     f"Bus id {lane_address.bus_id} out of range of {num_word_buses}"
                 )
@@ -460,7 +521,7 @@ class ArchSpec:
                 )
 
             num_site_buses = len(self.site_buses)
-            if lane_address.bus_id < 0 or lane_address.bus_id >= num_site_buses:
+            if lane_address.bus_id >= num_site_buses:
                 errors.add(
                     f"Bus id {lane_address.bus_id} out of range of {num_site_buses}"
                 )
@@ -476,7 +537,9 @@ class ArchSpec:
 
         return errors
 
-    def get_endpoints(self, lane_address: LaneAddress):
+    def get_endpoints(
+        self, lane_address: LaneAddress
+    ) -> tuple[LocationAddress, LocationAddress]:
         src = lane_address.src_site()
         if lane_address.move_type == MoveType.WORD:
             bus = self.word_buses[lane_address.bus_id]
@@ -497,12 +560,5 @@ class ArchSpec:
     def get_blockaded_location(
         self, location: LocationAddress
     ) -> LocationAddress | None:
-        """Get the blockaded location (CZ pair) for a given location.
-
-        Args:
-            location: The location address to find the blockaded location for.
-
-        Returns:
-            The LocationAddress of the blockaded location if one exists, None otherwise.
-        """
+        """Get the blockaded location (CZ pair) for a given location."""
         return self.words[location.word_id][location.site_id].cz_pair

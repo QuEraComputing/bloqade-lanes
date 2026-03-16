@@ -25,6 +25,11 @@ class Zone0MissingWordsError(ArchSpecError):
         super().__init__(f"zone 0 must include all words: missing word IDs {missing}")
 
 
+class MeasurementModeZonesEmptyError(ArchSpecError):
+    def __init__(self):
+        super().__init__("measurement_mode_zones must not be empty")
+
+
 class MeasurementModeFirstNotZone0Error(ArchSpecError):
     def __init__(self, got: int):
         self.got = got
@@ -61,6 +66,19 @@ class WrongCzPairsCountError(ArchSpecError):
         super().__init__(
             f"word {word_id} has {got} cz_pairs, expected {expected} (sites_per_word)"
         )
+
+
+class NonFiniteGridValueError(ArchSpecError):
+    def __init__(self, word_id: int, field: str):
+        self.word_id = word_id
+        self.field = field
+        super().__init__(f"word {word_id} grid contains non-finite value in {field}")
+
+
+class NonFiniteWaypointError(ArchSpecError):
+    def __init__(self, index: int):
+        self.index = index
+        super().__init__(f"paths[{index}]: waypoint contains non-finite coordinate")
 
 
 class SiteXIndexOutOfRangeError(ArchSpecError):

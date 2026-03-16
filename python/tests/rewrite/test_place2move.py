@@ -14,7 +14,7 @@ from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout import word
 from bloqade.lanes.rewrite import place2move
 
-ARCH_SPEC = layout.ArchSpec(
+ARCH_SPEC = layout.ArchSpec.from_components(
     (
         word.Word(
             positions=grid.Grid.from_positions([0], [0, 1]),

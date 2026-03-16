@@ -41,7 +41,7 @@ def test_get_blockaded_location_without_pair():
         has_cz=None,  # No CZ pairs defined
     )
 
-    arch_spec = layout.ArchSpec(
+    arch_spec = layout.ArchSpec.from_components(
         (word,),
         ((0,),),
         (0,),
@@ -71,7 +71,7 @@ def test_get_blockaded_location_multiple_words():
         for ix in range(4)
     )
 
-    arch_spec = layout.ArchSpec(
+    arch_spec = layout.ArchSpec.from_components(
         words,
         (tuple(range(4)),),  # All 4 words in zone 0
         (0,),
