@@ -4,22 +4,7 @@ use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::arch::types as rs;
 use bloqade_lanes_bytecode_core::version::Version;
 
-/// Validate that a field value fits in 16 bits (0..=65535).
-fn validate_u16_field(name: &str, value: i64) -> PyResult<u32> {
-    if value < 0 {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{}={} must be non-negative",
-            name, value
-        )));
-    }
-    if value > 0xFFFF {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{}={} exceeds maximum 65535",
-            name, value
-        )));
-    }
-    Ok(value as u32)
-}
+use crate::validation::{validate_field, validate_vec};
 
 // ── Direction enum ──
 
@@ -123,8 +108,8 @@ pub struct PyLocationAddr {
 impl PyLocationAddr {
     #[new]
     fn new(word_id: i64, site_id: i64) -> PyResult<Self> {
-        let word_id = validate_u16_field("word_id", word_id)?;
-        let site_id = validate_u16_field("site_id", site_id)?;
+        let word_id = validate_field::<u16>("word_id", word_id)? as u32;
+        let site_id = validate_field::<u16>("site_id", site_id)? as u32;
         Ok(Self {
             inner: rs_addr::LocationAddr { word_id, site_id },
         })
@@ -186,9 +171,9 @@ impl PyLaneAddr {
         bus_id: i64,
         direction: PyDirection,
     ) -> PyResult<Self> {
-        let word_id = validate_u16_field("word_id", word_id)?;
-        let site_id = validate_u16_field("site_id", site_id)?;
-        let bus_id = validate_u16_field("bus_id", bus_id)?;
+        let word_id = validate_field::<u16>("word_id", word_id)? as u32;
+        let site_id = validate_field::<u16>("site_id", site_id)? as u32;
+        let bus_id = validate_field::<u16>("bus_id", bus_id)? as u32;
         Ok(Self {
             inner: rs_addr::LaneAddr {
                 direction: direction.to_rs(),
@@ -272,7 +257,7 @@ pub struct PyZoneAddr {
 impl PyZoneAddr {
     #[new]
     fn new(zone_id: i64) -> PyResult<Self> {
-        let zone_id = validate_u16_field("zone_id", zone_id)?;
+        let zone_id = validate_field::<u16>("zone_id", zone_id)? as u32;
         Ok(Self {
             inner: rs_addr::ZoneAddr { zone_id },
         })
@@ -481,13 +466,14 @@ pub struct PyGeometry {
 #[pymethods]
 impl PyGeometry {
     #[new]
-    fn new(sites_per_word: u32, words: Vec<PyRef<'_, PyWord>>) -> Self {
-        Self {
+    fn new(sites_per_word: i64, words: Vec<PyRef<'_, PyWord>>) -> PyResult<Self> {
+        let sites_per_word = validate_field::<u32>("sites_per_word", sites_per_word)?;
+        Ok(Self {
             inner: rs::Geometry {
                 sites_per_word,
                 words: words.iter().map(|w| w.inner.clone()).collect(),
             },
-        }
+        })
     }
 
     #[getter]
@@ -524,10 +510,12 @@ pub struct PyBus {
 #[pymethods]
 impl PyBus {
     #[new]
-    fn new(src: Vec<u32>, dst: Vec<u32>) -> Self {
-        Self {
+    fn new(src: Vec<i64>, dst: Vec<i64>) -> PyResult<Self> {
+        let src = validate_vec::<u32>("src", src)?;
+        let dst = validate_vec::<u32>("dst", dst)?;
+        Ok(Self {
             inner: rs::Bus { src, dst },
-        }
+        })
     }
 
     #[getter]
@@ -542,14 +530,16 @@ impl PyBus {
 
     /// Map a source value to its destination (forward move).
     /// Returns None if not found.
-    fn resolve_forward(&self, src: u32) -> Option<u32> {
-        self.inner.resolve_forward(src)
+    fn resolve_forward(&self, src: i64) -> PyResult<Option<u32>> {
+        let src = validate_field::<u32>("src", src)?;
+        Ok(self.inner.resolve_forward(src))
     }
 
     /// Map a destination value back to its source (backward move).
     /// Returns None if not found.
-    fn resolve_backward(&self, dst: u32) -> Option<u32> {
-        self.inner.resolve_backward(dst)
+    fn resolve_backward(&self, dst: i64) -> PyResult<Option<u32>> {
+        let dst = validate_field::<u32>("dst", dst)?;
+        Ok(self.inner.resolve_backward(dst))
     }
 
     fn __repr__(&self) -> String {
@@ -626,10 +616,11 @@ pub struct PyZone {
 #[pymethods]
 impl PyZone {
     #[new]
-    fn new(words: Vec<u32>) -> Self {
-        Self {
+    fn new(words: Vec<i64>) -> PyResult<Self> {
+        let words = validate_vec::<u32>("words", words)?;
+        Ok(Self {
             inner: rs::Zone { words },
-        }
+        })
     }
 
     #[getter]
@@ -720,14 +711,21 @@ impl PyArchSpec {
         version: (u16, u16),
         geometry: &PyGeometry,
         buses: &PyBuses,
-        words_with_site_buses: Vec<u32>,
-        sites_with_word_buses: Vec<u32>,
+        words_with_site_buses: Vec<i64>,
+        sites_with_word_buses: Vec<i64>,
         zones: Vec<PyRef<'_, PyZone>>,
-        entangling_zones: Vec<u32>,
-        measurement_mode_zones: Vec<u32>,
+        entangling_zones: Vec<i64>,
+        measurement_mode_zones: Vec<i64>,
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let words_with_site_buses =
+            validate_vec::<u32>("words_with_site_buses", words_with_site_buses)?;
+        let sites_with_word_buses =
+            validate_vec::<u32>("sites_with_word_buses", sites_with_word_buses)?;
+        let entangling_zones = validate_vec::<u32>("entangling_zones", entangling_zones)?;
+        let measurement_mode_zones =
+            validate_vec::<u32>("measurement_mode_zones", measurement_mode_zones)?;
+        Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
                 geometry: geometry.inner.clone(),
@@ -739,7 +737,7 @@ impl PyArchSpec {
                 measurement_mode_zones,
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
             },
-        }
+        })
     }
 
     #[staticmethod]
@@ -819,30 +817,38 @@ impl PyArchSpec {
         })
     }
 
-    fn word_by_id(&self, id: u32) -> Option<PyWord> {
-        self.inner
+    fn word_by_id(&self, id: i64) -> PyResult<Option<PyWord>> {
+        let id = validate_field::<u32>("id", id)?;
+        Ok(self
+            .inner
             .word_by_id(id)
-            .map(|w| PyWord { inner: w.clone() })
+            .map(|w| PyWord { inner: w.clone() }))
     }
 
-    fn zone_by_id(&self, id: u32) -> Option<PyZone> {
-        self.inner
+    fn zone_by_id(&self, id: i64) -> PyResult<Option<PyZone>> {
+        let id = validate_field::<u32>("id", id)?;
+        Ok(self
+            .inner
             .zone_by_id(id)
-            .map(|z| PyZone { inner: z.clone() })
+            .map(|z| PyZone { inner: z.clone() }))
     }
 
     /// Look up a site bus by its identifier. Returns None if not found.
-    fn site_bus_by_id(&self, id: u32) -> Option<PyBus> {
-        self.inner
+    fn site_bus_by_id(&self, id: i64) -> PyResult<Option<PyBus>> {
+        let id = validate_field::<u32>("id", id)?;
+        Ok(self
+            .inner
             .site_bus_by_id(id)
-            .map(|b| PyBus { inner: b.clone() })
+            .map(|b| PyBus { inner: b.clone() }))
     }
 
     /// Look up a word bus by its identifier. Returns None if not found.
-    fn word_bus_by_id(&self, id: u32) -> Option<PyBus> {
-        self.inner
+    fn word_bus_by_id(&self, id: i64) -> PyResult<Option<PyBus>> {
+        let id = validate_field::<u32>("id", id)?;
+        Ok(self
+            .inner
             .word_bus_by_id(id)
-            .map(|b| PyBus { inner: b.clone() })
+            .map(|b| PyBus { inner: b.clone() }))
     }
 
     /// Resolve a location address to its physical (x, y) coordinates.

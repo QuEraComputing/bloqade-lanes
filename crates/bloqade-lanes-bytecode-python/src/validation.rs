@@ -1,0 +1,190 @@
+use std::fmt;
+
+/// Error returned when a field value is outside its valid range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldRangeError {
+    Negative { name: String, value: i64 },
+    Overflow { name: String, value: i64, max: u64 },
+}
+
+impl fmt::Display for FieldRangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FieldRangeError::Negative { name, value } => {
+                write!(f, "{}={} must be non-negative", name, value)
+            }
+            FieldRangeError::Overflow { name, value, max } => {
+                write!(f, "{}={} exceeds maximum {}", name, value, max)
+            }
+        }
+    }
+}
+
+impl From<FieldRangeError> for pyo3::PyErr {
+    fn from(err: FieldRangeError) -> pyo3::PyErr {
+        pyo3::exceptions::PyValueError::new_err(err.to_string())
+    }
+}
+
+/// Trait for unsigned integer types that can be validated from i64.
+pub trait ValidateFromI64: Sized + Copy {
+    const MAX_VALUE: u64;
+
+    /// Try to convert a non-negative i64 that is within range.
+    /// Caller guarantees 0 <= value <= MAX_VALUE.
+    fn from_i64_unchecked(value: i64) -> Self;
+}
+
+impl ValidateFromI64 for u8 {
+    const MAX_VALUE: u64 = u8::MAX as u64;
+    fn from_i64_unchecked(value: i64) -> Self {
+        value as u8
+    }
+}
+
+impl ValidateFromI64 for u16 {
+    const MAX_VALUE: u64 = u16::MAX as u64;
+    fn from_i64_unchecked(value: i64) -> Self {
+        value as u16
+    }
+}
+
+impl ValidateFromI64 for u32 {
+    const MAX_VALUE: u64 = u32::MAX as u64;
+    fn from_i64_unchecked(value: i64) -> Self {
+        value as u32
+    }
+}
+
+/// Validate that an i64 value fits in the range of `T` (0..=T::MAX_VALUE).
+pub fn validate_field<T: ValidateFromI64>(name: &str, value: i64) -> Result<T, FieldRangeError> {
+    if value < 0 {
+        return Err(FieldRangeError::Negative {
+            name: name.to_string(),
+            value,
+        });
+    }
+    if value as u64 > T::MAX_VALUE {
+        return Err(FieldRangeError::Overflow {
+            name: name.to_string(),
+            value,
+            max: T::MAX_VALUE,
+        });
+    }
+    Ok(T::from_i64_unchecked(value))
+}
+
+/// Validate that every element in a vector fits in the range of `T`.
+/// Error messages include the field name and index (e.g. "zones[3]=-1").
+pub fn validate_vec<T: ValidateFromI64>(
+    name: &str,
+    values: Vec<i64>,
+) -> Result<Vec<T>, FieldRangeError> {
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| validate_field::<T>(&format!("{name}[{i}]"), v))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── validate_field generic ──
+
+    #[test]
+    fn generic_u8() {
+        assert_eq!(validate_field::<u8>("x", 0).unwrap(), 0u8);
+        assert_eq!(validate_field::<u8>("x", 255).unwrap(), 255u8);
+        assert!(validate_field::<u8>("x", 256).is_err());
+        assert!(validate_field::<u8>("x", -1).is_err());
+    }
+
+    #[test]
+    fn generic_u16() {
+        assert_eq!(validate_field::<u16>("x", 0).unwrap(), 0u16);
+        assert_eq!(validate_field::<u16>("x", 0xFFFF).unwrap(), 0xFFFFu16);
+        assert!(validate_field::<u16>("x", 0x10000).is_err());
+        assert!(validate_field::<u16>("x", -1).is_err());
+    }
+
+    #[test]
+    fn generic_u32() {
+        assert_eq!(validate_field::<u32>("x", 0).unwrap(), 0u32);
+        assert_eq!(
+            validate_field::<u32>("x", u32::MAX as i64).unwrap(),
+            u32::MAX
+        );
+        assert!(validate_field::<u32>("x", u32::MAX as i64 + 1).is_err());
+        assert!(validate_field::<u32>("x", -1).is_err());
+    }
+
+    // ── validate_vec generic ──
+
+    #[test]
+    fn generic_vec_u32() {
+        assert_eq!(
+            validate_vec::<u32>("x", vec![0, 1, 2]).unwrap(),
+            vec![0u32, 1, 2]
+        );
+    }
+
+    #[test]
+    fn generic_vec_u16() {
+        assert_eq!(
+            validate_vec::<u16>("x", vec![0, 100]).unwrap(),
+            vec![0u16, 100]
+        );
+        assert!(validate_vec::<u16>("x", vec![0, 0x10000]).is_err());
+    }
+
+    // ── validate_vec edge cases ──
+
+    #[test]
+    fn vec_empty() {
+        let result: Vec<u32> = validate_vec::<u32>("x", vec![]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn vec_negative_includes_index() {
+        let err = validate_vec::<u32>("zones", vec![0, 1, -5]).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Negative { .. }));
+        assert!(err.to_string().contains("zones[2]=-5"), "got: {err}");
+    }
+
+    #[test]
+    fn vec_overflow_includes_index() {
+        let err = validate_vec::<u32>("ids", vec![0, u32::MAX as i64 + 1]).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Overflow { .. }));
+        assert!(err.to_string().contains("ids[1]"), "got: {err}");
+    }
+
+    #[test]
+    fn vec_short_circuits_on_first_error() {
+        let err = validate_vec::<u32>("x", vec![-1, -2, -3]).unwrap_err();
+        assert!(err.to_string().contains("x[0]=-1"), "got: {err}");
+    }
+
+    // ── error messages ──
+
+    #[test]
+    fn error_display_negative() {
+        let err = FieldRangeError::Negative {
+            name: "foo".into(),
+            value: -42,
+        };
+        assert_eq!(err.to_string(), "foo=-42 must be non-negative");
+    }
+
+    #[test]
+    fn error_display_overflow() {
+        let err = FieldRangeError::Overflow {
+            name: "bar".into(),
+            value: 999,
+            max: 255,
+        };
+        assert_eq!(err.to_string(), "bar=999 exceeds maximum 255");
+    }
+}

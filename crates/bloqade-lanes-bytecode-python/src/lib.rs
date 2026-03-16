@@ -4,6 +4,7 @@ mod arch_python;
 pub(crate) mod errors;
 mod instruction_python;
 mod program_python;
+pub(crate) mod validation;
 
 #[pymodule]
 #[pyo3(name = "_native")]
