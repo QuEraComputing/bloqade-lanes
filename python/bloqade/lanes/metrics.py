@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from typing import Any
 
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
@@ -118,6 +119,76 @@ def _compute_event_duration_us(lane_durations_us: list[float]) -> float:
     if len(lane_durations_us) == 0:
         return 0.0
     return max(lane_durations_us)
+
+
+def _lane_distance_um(arch_spec: Any, lane) -> float:
+    path = arch_spec.get_path(lane)
+    return sum(_path_segment_distances_um(path))
+
+
+def _infer_initial_qubit_layout(
+    move_mt: ir.Method,
+) -> dict[int, Any] | None:
+    for stmt in move_mt.callable_region.walk():
+        if isinstance(stmt, move.LogicalInitialize):
+            return {
+                qubit_id: location
+                for qubit_id, location in enumerate(stmt.location_addresses)
+            }
+    return None
+
+
+def _compute_per_cz_moving_qubit_motion_from_move_ir(
+    move_mt: ir.Method,
+) -> tuple[float, float]:
+    """Average hops and traveled distance per moving qubit per CZ episode.
+
+    A CZ episode is the full sequence of Move operations between the previous CZ
+    boundary (or initialization) and the current CZ. For each episode, we
+    compute per-qubit totals over qubits that actually moved.
+    """
+    initial_layout = _infer_initial_qubit_layout(move_mt)
+    if initial_layout is None or len(initial_layout) == 0:
+        return 0.0, 0.0
+
+    arch_spec = generate_arch_hypercube(4)
+    qubit_by_location = {
+        location: qubit_id for qubit_id, location in initial_layout.items()
+    }
+
+    per_cz_hops: list[float] = []
+    per_cz_distance_um: list[float] = []
+
+    episode_stats: dict[int, tuple[int, float]] = {}
+
+    for stmt in move_mt.callable_region.walk():
+        if isinstance(stmt, move.Move):
+            for lane in stmt.lanes:
+                src, dst = arch_spec.get_endpoints(lane)
+                qubit_id = qubit_by_location.pop(src, None)
+                if qubit_id is None:
+                    continue
+                qubit_by_location[dst] = qubit_id
+                hop_count, distance_um = episode_stats.get(qubit_id, (0, 0.0))
+                episode_stats[qubit_id] = (
+                    hop_count + 1,
+                    distance_um + _lane_distance_um(arch_spec, lane),
+                )
+            continue
+
+        if isinstance(stmt, move.CZ):
+            if len(episode_stats) > 0:
+                for hop_count, distance_um in episode_stats.values():
+                    per_cz_hops.append(float(hop_count))
+                    per_cz_distance_um.append(distance_um)
+            episode_stats = {}
+
+    if len(per_cz_hops) == 0:
+        return 0.0, 0.0
+    return (
+        sum(per_cz_hops) / len(per_cz_hops),
+        sum(per_cz_distance_um) / len(per_cz_distance_um),
+    )
 
 
 def _compute_const_jerk_min_dur_extracted(
