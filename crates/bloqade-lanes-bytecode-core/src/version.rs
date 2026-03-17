@@ -6,7 +6,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 ///
 /// Packed as `(major << 16) | minor` for binary format compatibility (4 bytes LE).
 /// Serialized to JSON as a `"major.minor"` string (e.g. `"1.0"`).
-/// Deserializes from either a string `"1.0"` or a legacy integer `1`.
+/// Deserializes from:
+/// - A string `"major.minor"` (e.g. `"1.0"`) — canonical format.
+/// - A small integer N (≤ 65535) — legacy format, interpreted as major=N, minor=0.
+/// - A packed integer (> 65535) — legacy format, decoded as `(N >> 16, N & 0xFFFF)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version {
     pub major: u16,
@@ -54,7 +57,8 @@ impl Serialize for Version {
 
 /// Deserializes from either:
 /// - A string `"major.minor"` (e.g. `"1.0"`) — the canonical format.
-/// - A legacy integer N — interpreted as major=N, minor=0 (for backwards compatibility).
+/// - A small integer N (≤ 65535) — legacy format, major=N, minor=0.
+/// - A packed integer (> 65535, ≤ u32::MAX) — legacy format, decoded as `(N >> 16, N & 0xFFFF)`.
 impl<'de> Deserialize<'de> for Version {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::{self, Visitor};
@@ -81,14 +85,18 @@ impl<'de> Deserialize<'de> for Version {
             }
 
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<Version, E> {
-                if v > u16::MAX as u64 {
+                if v > u32::MAX as u64 {
                     Err(de::Error::custom(format!(
                         "legacy version integer {} exceeds maximum {}",
                         v,
-                        u16::MAX
+                        u32::MAX
                     )))
-                } else {
+                } else if v <= u16::MAX as u64 {
+                    // Small integer: treat as major version (minor = 0)
                     Ok(Version::new(v as u16, 0))
+                } else {
+                    // Packed format: (major << 16) | minor
+                    Ok(Version::from(v as u32))
                 }
             }
 
@@ -192,8 +200,24 @@ mod tests {
     }
 
     #[test]
+    fn test_version_serde_legacy_packed_integer() {
+        // 65536 = (1 << 16) | 0 = Version(1, 0)
+        let deserialized: Version = serde_json::from_str("65536").unwrap();
+        assert_eq!(deserialized, Version::new(1, 0));
+
+        // 65537 = (1 << 16) | 1 = Version(1, 1)
+        let deserialized: Version = serde_json::from_str("65537").unwrap();
+        assert_eq!(deserialized, Version::new(1, 1));
+
+        // 131077 = (2 << 16) | 5 = Version(2, 5)
+        let deserialized: Version = serde_json::from_str("131077").unwrap();
+        assert_eq!(deserialized, Version::new(2, 5));
+    }
+
+    #[test]
     fn test_version_serde_legacy_integer_overflow() {
-        let err = serde_json::from_str::<Version>("70000").unwrap_err();
+        // u32::MAX + 1 should be rejected
+        let err = serde_json::from_str::<Version>("4294967296").unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"));
     }
 
