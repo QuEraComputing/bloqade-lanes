@@ -123,9 +123,9 @@ impl Bus {
 impl Word {
     /// Resolve a site's grid indices to physical (x, y) coordinates.
     pub fn site_position(&self, site_idx: usize) -> Option<(f64, f64)> {
-        let pair = self.sites.get(site_idx)?;
-        let x = self.grid.x_position(pair[0] as usize)?;
-        let y = self.grid.y_position(pair[1] as usize)?;
+        let pair = self.site_indices.get(site_idx)?;
+        let x = self.positions.x_position(pair[0] as usize)?;
+        let y = self.positions.y_position(pair[1] as usize)?;
         Some((x, y))
     }
 }
@@ -476,7 +476,7 @@ mod tests {
     fn word_by_id_found() {
         let spec = example_arch_spec();
         let word = spec.word_by_id(0).unwrap();
-        assert_eq!(word.sites.len(), 10);
+        assert_eq!(word.site_indices.len(), 10);
     }
 
     #[test]
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn from_json_validated_invalid() {
         // Missing required fields
-        let json = r#"{"version": 1}"#;
+        let json = r#"{"version": "1.0"}"#;
         let result = super::super::ArchSpec::from_json_validated(json);
         assert!(result.is_err());
     }

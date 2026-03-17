@@ -1,16 +1,16 @@
 {
-    "version": 1,
+    "version": "1.0",
     "geometry": {
         "sites_per_word": 5,
         "words": [
             {
-                "grid": {
+                "positions": {
                     "x_start": 1.0,
                     "y_start": 2.0,
                     "x_spacing": [2.0, 2.0, 2.0, 2.0],
                     "y_spacing": []
                 },
-                "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]
+                "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]
             }
         ]
     },
