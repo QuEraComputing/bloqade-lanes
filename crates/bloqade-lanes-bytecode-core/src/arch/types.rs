@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn optional_fields_absent() {
         let json = r#"{
-            "version": 1,
+            "version": "1.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [

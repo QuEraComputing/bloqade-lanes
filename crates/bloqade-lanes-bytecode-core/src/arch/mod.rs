@@ -12,7 +12,7 @@ pub use validate::ArchSpecError;
 #[cfg(test)]
 pub(crate) fn example_arch_spec() -> ArchSpec {
     let json = r#"{
-        "version": 1,
+        "version": "1.0",
         "geometry": {
             "sites_per_word": 10,
             "words": [

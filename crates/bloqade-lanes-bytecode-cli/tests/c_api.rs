@@ -291,7 +291,7 @@ fn simulate_stack_with_errors() {
 fn arch_from_json_valid() {
     let json = CString::new(
         r#"{
-        "version": 1,
+        "version": "1.0",
         "geometry": {
             "sites_per_word": 2,
             "words": [{
@@ -340,7 +340,7 @@ fn validate_addresses_with_arch() {
 
     let json = CString::new(
         r#"{
-        "version": 1,
+        "version": "1.0",
         "geometry": {
             "sites_per_word": 2,
             "words": [{

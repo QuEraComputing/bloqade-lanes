@@ -17,9 +17,9 @@
   "additionalProperties": false,
   "properties": {
     "version": {
-      "description": "Arch spec format version. Legacy format: a small integer N (where N <= 65535) is interpreted as major=N, minor=0. Packed format: (major << 16) | minor (e.g. 65537 = major 1, minor 1).",
-      "type": "integer",
-      "minimum": 0
+      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"1.0\"). Both major and minor components must fit in a u16 (0..65535).",
+      "type": "string",
+      "pattern": "^[0-9]{1,5}\\.[0-9]{1,5}$"
     },
     "geometry": {
       "$ref": "#/$defs/Geometry"
