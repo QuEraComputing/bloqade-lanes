@@ -54,12 +54,6 @@ simulator-device-demo:
 
 demo: demo-msd demo-pipeline pipeline-details simulator-device-demo
 
-doc:
-    mkdocs serve
-
-doc-build:
-    mkdocs build
-
 # Build Rust API documentation
 doc-rust:
     cargo doc --no-deps -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
