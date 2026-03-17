@@ -27,7 +27,7 @@ from bloqade.lanes.bytecode.exceptions import (
 
 EXAMPLE_JSON = json.dumps(
     {
-        "version": 1,
+        "version": "1.0",
         "geometry": {
             "sites_per_word": 10,
             "words": [
@@ -221,7 +221,7 @@ class TestLoadFromJson:
     def test_from_json_validated_bad_schema(self):
         bad = json.dumps(
             {
-                "version": 1,
+                "version": "1.0",
                 "geometry": {
                     "sites_per_word": 2,
                     "words": [
@@ -258,7 +258,7 @@ class TestValidation:
     def test_validate_invalid_raises(self):
         bad = json.dumps(
             {
-                "version": 1,
+                "version": "1.0",
                 "geometry": {
                     "sites_per_word": 2,
                     "words": [

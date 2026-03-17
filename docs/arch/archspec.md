@@ -8,7 +8,7 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 
 ```jsonc
 {
-  "version": 1,
+  "version": "1.0",
   "geometry": { ... },
   "buses": { ... },
   "words_with_site_buses": [...],
@@ -22,7 +22,7 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 
 | Field | Type | Description |
 |---|---|---|
-| `version` | integer | Format version. A small integer N (≤ 65535) means major=N, minor=0. Packed format: `(major << 16) \| minor`. |
+| `version` | string | Format version as `"major.minor"` (e.g. `"1.0"`). Legacy integer format is accepted for backwards compatibility. |
 | `geometry` | object | Physical geometry — words, grids, and site positions. |
 | `buses` | object | Transport bus definitions (site buses and word buses). |
 | `words_with_site_buses` | integer[] | Word IDs with intra-word site transport capability. |
@@ -248,7 +248,7 @@ Minimal spec with one word and one site bus:
 
 ```json
 {
-  "version": 1,
+  "version": "1.0",
   "geometry": {
     "sites_per_word": 5,
     "words": [
