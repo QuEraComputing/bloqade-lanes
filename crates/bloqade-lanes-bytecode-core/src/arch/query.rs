@@ -1,3 +1,6 @@
+//! Arch spec queries: JSON loading, position lookup, lane resolution,
+//! and group-level address validation.
+
 use std::collections::HashSet;
 use std::fmt;
 
@@ -7,6 +10,7 @@ use super::addr::{LaneAddr, LocationAddr, MoveType};
 use super::types::{ArchSpec, Bus, Word};
 use super::validate::ArchSpecError;
 
+/// Error returned when loading an arch spec from JSON fails.
 #[derive(Debug, Error)]
 pub enum ArchSpecLoadError {
     #[error("JSON parse error: {0}")]

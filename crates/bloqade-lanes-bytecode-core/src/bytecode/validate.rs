@@ -1,3 +1,11 @@
+//! Bytecode program validation: structural checks, address validation,
+//! and stack-type simulation.
+//!
+//! Validation runs in layers:
+//! - **Structural** (always): operand bounds, arity limits, instruction ordering
+//! - **Architecture** (when arch spec provided): address validity
+//! - **Stack simulation** (when enabled): type checking via abstract interpretation
+
 use std::collections::HashSet;
 use std::fmt;
 
