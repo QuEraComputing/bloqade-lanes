@@ -822,7 +822,7 @@ mod tests {
 
     fn test_arch_spec() -> ArchSpec {
         let json = r#"{
-            "version": 1,
+            "version": "1.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn test_lane_group_word_not_in_site_bus_list() {
         let json = r#"{
-            "version": 1,
+            "version": "1.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [

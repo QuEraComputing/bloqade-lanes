@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn from_json_validated_invalid() {
         // Missing required fields
-        let json = r#"{"version": 1}"#;
+        let json = r#"{"version": "1.0"}"#;
         let result = super::super::ArchSpec::from_json_validated(json);
         assert!(result.is_err());
     }
