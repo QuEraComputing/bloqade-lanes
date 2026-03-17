@@ -10,3 +10,4 @@ build-dir = "target/book"
 [output.html]
 git-repository-url = "https://github.com/QuEraComputing/bloqade-lanes"
 edit-url-template = "https://github.com/QuEraComputing/bloqade-lanes/edit/main/{path}"
+additional-js = ["theme/version-switcher.js"]
