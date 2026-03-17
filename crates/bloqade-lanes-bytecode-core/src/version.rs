@@ -181,4 +181,52 @@ mod tests {
         let err = serde_json::from_str::<Version>("-1").unwrap_err();
         assert!(err.to_string().contains("non-negative"));
     }
+
+    #[test]
+    fn test_version_serde_round_trip_with_minor() {
+        let v = Version::new(1, 2);
+        let json = serde_json::to_string(&v).unwrap();
+        assert_eq!(json, r#""1.2""#);
+        let deserialized: Version = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, deserialized);
+    }
+
+    #[test]
+    fn test_version_serde_legacy_integer_overflow() {
+        let err = serde_json::from_str::<Version>("70000").unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_version_serde_legacy_integer_zero() {
+        let deserialized: Version = serde_json::from_str("0").unwrap();
+        assert_eq!(deserialized, Version::new(0, 0));
+    }
+
+    #[test]
+    fn test_version_serde_invalid_major() {
+        let err = serde_json::from_str::<Version>(r#""abc.1""#).unwrap_err();
+        assert!(err.to_string().contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_version_serde_invalid_minor() {
+        let err = serde_json::from_str::<Version>(r#""1.abc""#).unwrap_err();
+        assert!(err.to_string().contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_version_serde_wrong_type() {
+        let err = serde_json::from_str::<Version>("true").unwrap_err();
+        assert!(err.to_string().contains("version string"));
+    }
+
+    #[test]
+    fn test_version_serde_zero_zero() {
+        let v = Version::new(0, 0);
+        let json = serde_json::to_string(&v).unwrap();
+        assert_eq!(json, r#""0.0""#);
+        let deserialized: Version = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, deserialized);
+    }
 }
