@@ -5,6 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Semantic version with major.minor components.
 ///
 /// Packed as `(major << 16) | minor` for binary format compatibility (4 bytes LE).
+/// Serialized to JSON as a `"major.minor"` string (e.g. `"1.0"`).
+/// Deserializes from either a string `"1.0"` or a legacy integer `1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version {
     pub major: u16,
@@ -43,26 +45,66 @@ impl From<Version> for u32 {
     }
 }
 
-/// Custom serde: serializes as a u32 using the packed `(major << 16) | minor` format.
-/// On deserialization, if the value fits in u16 (high 16 bits are zero), it is
-/// treated as a legacy format where the integer is the major version (minor = 0).
-/// Otherwise, the packed format is used.
+/// Serializes as a `"major.minor"` string (e.g. `"1.0"`).
 impl Serialize for Version {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let packed: u32 = (*self).into();
-        packed.serialize(serializer)
+        serializer.serialize_str(&self.to_string())
     }
 }
 
+/// Deserializes from either:
+/// - A string `"major.minor"` (e.g. `"1.0"`) — the canonical format.
+/// - A legacy integer N — interpreted as major=N, minor=0 (for backwards compatibility).
 impl<'de> Deserialize<'de> for Version {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let v = u32::deserialize(deserializer)?;
-        // Legacy format: small integers like 1, 2, 3 mean major=N, minor=0
-        if v <= u16::MAX as u32 {
-            Ok(Version::new(v as u16, 0))
-        } else {
-            Ok(Version::from(v))
+        use serde::de::{self, Visitor};
+
+        struct VersionVisitor;
+
+        impl<'de> Visitor<'de> for VersionVisitor {
+            type Value = Version;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a version string like \"1.0\" or a legacy integer")
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Version, E> {
+                let (major, minor) = v.split_once('.').ok_or_else(|| {
+                    de::Error::custom(format!(
+                        "invalid version string '{}': expected 'major.minor'",
+                        v
+                    ))
+                })?;
+                let major: u16 = major.parse().map_err(de::Error::custom)?;
+                let minor: u16 = minor.parse().map_err(de::Error::custom)?;
+                Ok(Version::new(major, minor))
+            }
+
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Version, E> {
+                if v > u16::MAX as u64 {
+                    Err(de::Error::custom(format!(
+                        "legacy version integer {} exceeds maximum {}",
+                        v,
+                        u16::MAX
+                    )))
+                } else {
+                    Ok(Version::new(v as u16, 0))
+                }
+            }
+
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Version, E> {
+                if v < 0 {
+                    Err(de::Error::custom(format!(
+                        "version must be non-negative, got {}",
+                        v
+                    )))
+                } else {
+                    self.visit_u64(v as u64)
+                }
+            }
         }
+
+        deserializer.deserialize_any(VersionVisitor)
     }
 }
 
@@ -91,7 +133,6 @@ mod tests {
 
     #[test]
     fn test_version_from_u32_packed() {
-        // From raw packed format: 1 → major=0, minor=1
         let v = Version::from(1u32);
         assert_eq!(v, Version::new(0, 1));
     }
@@ -111,15 +152,33 @@ mod tests {
     fn test_version_serde_round_trip() {
         let v = Version::new(1, 0);
         let json = serde_json::to_string(&v).unwrap();
-        assert_eq!(json, "65536"); // 0x00010000
+        assert_eq!(json, r#""1.0""#);
         let deserialized: Version = serde_json::from_str(&json).unwrap();
         assert_eq!(v, deserialized);
     }
 
     #[test]
-    fn test_version_serde_legacy_format() {
+    fn test_version_serde_string_with_minor() {
+        let deserialized: Version = serde_json::from_str(r#""2.3""#).unwrap();
+        assert_eq!(deserialized, Version::new(2, 3));
+    }
+
+    #[test]
+    fn test_version_serde_legacy_integer() {
         // Legacy JSON "version": 1 deserializes as Version { major: 1, minor: 0 }
         let deserialized: Version = serde_json::from_str("1").unwrap();
         assert_eq!(deserialized, Version::new(1, 0));
+    }
+
+    #[test]
+    fn test_version_serde_invalid_string() {
+        let err = serde_json::from_str::<Version>(r#""bad""#).unwrap_err();
+        assert!(err.to_string().contains("expected 'major.minor'"));
+    }
+
+    #[test]
+    fn test_version_serde_negative_integer() {
+        let err = serde_json::from_str::<Version>("-1").unwrap_err();
+        assert!(err.to_string().contains("non-negative"));
     }
 }
