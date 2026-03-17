@@ -16,23 +16,46 @@ Examples:
 
 import argparse
 import json
+import logging
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+log = logging.getLogger("deploy_docs")
 
 
 def build_docs() -> None:
     """Build the mdBook site and Rust API docs via `just doc-all`."""
-    subprocess.run(["just", "doc-all"], check=True)
+    log.info("Building documentation with `just doc-all`...")
+    result = subprocess.run(["just", "doc-all"], capture_output=True, text=True)
+    if result.stdout:
+        log.info(result.stdout.rstrip())
+    if result.returncode != 0:
+        log.error("Documentation build failed (exit code %d)", result.returncode)
+        if result.stderr:
+            log.error(result.stderr.rstrip())
+        sys.exit(1)
+    log.info("Documentation build succeeded.")
 
 
 def update_versions(
-    versions_file: Path, version: str, base_url: str
+    versions_file: Path,
+    version: str,
+    base_url: str,
 ) -> list[dict[str, str]]:
     """Load or create versions.json and add/update the given version."""
     if versions_file.exists():
-        versions = json.loads(versions_file.read_text())
+        try:
+            versions = json.loads(versions_file.read_text())
+            if not isinstance(versions, list):
+                log.warning("versions.json is not a list, resetting: %s", versions_file)
+                versions = []
+        except json.JSONDecodeError as e:
+            log.warning("Corrupt versions.json, resetting: %s", e)
+            versions = []
     else:
+        log.info("No existing versions.json found, creating new manifest.")
         versions = []
 
     # Remove existing entry for this version
@@ -51,6 +74,7 @@ def update_versions(
     versions = releases + dev
 
     versions_file.write_text(json.dumps(versions, indent=2) + "\n")
+    log.info("Updated versions.json with %d version(s).", len(versions))
     return versions
 
 
@@ -67,6 +91,7 @@ def write_redirect(index_path: Path, target: str) -> None:
 </body>
 </html>
 """)
+    log.info("Root redirect → %s/", target)
 
 
 def main() -> None:
@@ -101,19 +126,46 @@ def main() -> None:
         action="store_true",
         help="Skip building docs (assume target/book already exists).",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose (DEBUG) logging.",
+    )
     args = parser.parse_args()
 
-    print(f"=== Deploying documentation for version: {args.version} ===")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
+
+    log.info("Deploying documentation for version: %s", args.version)
 
     # Build docs
     if not args.skip_build:
         build_docs()
+    else:
+        log.info("Skipping build (--skip-build).")
+
+    # Verify book output exists
+    if not args.book_dir.exists():
+        log.error(
+            "Book output directory does not exist: %s. "
+            "Run `just doc-all` first or remove --skip-build.",
+            args.book_dir,
+        )
+        sys.exit(1)
+
+    # Create site directory
+    args.site_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy built docs into versioned directory
     version_dir = args.site_dir / args.version
     if version_dir.exists():
+        log.info("Removing existing version directory: %s", version_dir)
         shutil.rmtree(version_dir)
     shutil.copytree(args.book_dir, version_dir)
+    log.info("Copied docs to %s", version_dir)
 
     # Update versions.json
     versions_file = args.site_dir / "versions.json"
@@ -127,15 +179,19 @@ def main() -> None:
     write_redirect(args.site_dir / "index.html", latest)
 
     # Copy versions.json into each version directory for the switcher
+    copied = 0
     for child in args.site_dir.iterdir():
         if child.is_dir():
             shutil.copy2(versions_file, child / "versions.json")
+            copied += 1
+    log.info("Copied versions.json into %d version directories.", copied)
 
-    print(f"=== Site built at {args.site_dir}/ ===")
-    print(f"  Version: {args.version}")
-    print(f"  Redirect → {latest}")
+    # Summary
+    log.info("Site built at %s/", args.site_dir)
+    log.info("  Version: %s", args.version)
+    log.info("  Redirect → %s", latest)
     for item in sorted(args.site_dir.iterdir()):
-        print(f"  {item.name}")
+        log.info("  %s", item.name)
 
 
 if __name__ == "__main__":
