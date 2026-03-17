@@ -22,7 +22,7 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 
 | Field | Type | Description |
 |---|---|---|
-| `version` | string \| integer | Format version as `"major.minor"` (e.g. `"1.0"`). Legacy integer formats accepted: small integer N (major=N, minor=0) or packed integer `(major<<16)\|minor`. |
+| `version` | string | Format version as `"major.minor"` (e.g. `"1.0"`). |
 | `geometry` | object | Physical geometry — words, grids, and site positions. |
 | `buses` | object | Transport bus definitions (site buses and word buses). |
 | `words_with_site_buses` | integer[] | Word IDs with intra-word site transport capability. |

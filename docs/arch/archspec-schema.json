@@ -17,11 +17,9 @@
   "additionalProperties": false,
   "properties": {
     "version": {
-      "description": "Arch spec format version. Canonical format is a \"major.minor\" string (e.g. \"1.0\"). Legacy formats accepted: small integer N (major=N, minor=0) or packed integer ((major<<16)|minor).",
-      "anyOf": [
-        { "type": "string", "pattern": "^\\d+\\.\\d+$" },
-        { "type": "integer", "minimum": 0 }
-      ]
+      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"1.0\").",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
     },
     "geometry": {
       "$ref": "#/$defs/Geometry"
