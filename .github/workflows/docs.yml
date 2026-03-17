@@ -30,14 +30,10 @@ jobs:
         with:
           mdbook-version: "0.4.36"
 
-      - name: Build mdBook
-        run: mdbook build
+      - uses: extractions/setup-just@v3
 
-      - name: Build Rust API docs
-        run: cargo doc --no-deps -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
-
-      - name: Copy Rust API docs into book output
-        run: cp -r target/doc target/book/api
+      - name: Build documentation site
+        run: just doc-all
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
