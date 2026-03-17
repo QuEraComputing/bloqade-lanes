@@ -1,0 +1,12 @@
+[book]
+title = "Bloqade Lanes"
+authors = ["QuEra Computing"]
+language = "en"
+src = "docs/src"
+
+[build]
+build-dir = "target/book"
+
+[output.html]
+git-repository-url = "https://github.com/QuEraComputing/bloqade-lanes"
+edit-url-template = "https://github.com/QuEraComputing/bloqade-lanes/edit/main/{path}"
