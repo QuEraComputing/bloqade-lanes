@@ -415,41 +415,33 @@ pub struct PyWord {
 #[pymethods]
 impl PyWord {
     #[new]
-    #[pyo3(signature = (positions, site_indices, has_cz=None))]
-    fn new(
-        positions: &PyGrid,
-        site_indices: Vec<(u32, u32)>,
-        has_cz: Option<Vec<(u32, u32)>>,
-    ) -> Self {
+    #[pyo3(signature = (grid, sites, cz_pairs=None))]
+    fn new(grid: &PyGrid, sites: Vec<(u32, u32)>, cz_pairs: Option<Vec<(u32, u32)>>) -> Self {
         Self {
             inner: rs::Word {
-                positions: positions.inner.clone(),
-                site_indices: site_indices.into_iter().map(|(x, y)| [x, y]).collect(),
-                has_cz: has_cz.map(|v| v.into_iter().map(|(a, b)| [a, b]).collect()),
+                grid: grid.inner.clone(),
+                sites: sites.into_iter().map(|(x, y)| [x, y]).collect(),
+                cz_pairs: cz_pairs.map(|v| v.into_iter().map(|(a, b)| [a, b]).collect()),
             },
         }
     }
 
     #[getter]
-    fn positions(&self) -> PyGrid {
+    fn grid(&self) -> PyGrid {
         PyGrid {
-            inner: self.inner.positions.clone(),
+            inner: self.inner.grid.clone(),
         }
     }
 
     #[getter]
-    fn site_indices(&self) -> Vec<(u32, u32)> {
-        self.inner
-            .site_indices
-            .iter()
-            .map(|s| (s[0], s[1]))
-            .collect()
+    fn sites(&self) -> Vec<(u32, u32)> {
+        self.inner.sites.iter().map(|s| (s[0], s[1])).collect()
     }
 
     #[getter]
-    fn has_cz(&self) -> Option<Vec<(u32, u32)>> {
+    fn cz_pairs(&self) -> Option<Vec<(u32, u32)>> {
         self.inner
-            .has_cz
+            .cz_pairs
             .as_ref()
             .map(|v| v.iter().map(|p| (p[0], p[1])).collect())
     }
@@ -459,7 +451,7 @@ impl PyWord {
     }
 
     fn __repr__(&self) -> String {
-        format!("Word(site_indices={})", self.inner.site_indices.len())
+        format!("Word(sites={})", self.inner.sites.len())
     }
 }
 

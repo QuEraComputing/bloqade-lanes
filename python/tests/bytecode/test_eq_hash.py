@@ -275,7 +275,7 @@ class TestTransportPathEqHash:
 def _minimal_arch_spec(entangling_zones: list[int] | None = None) -> ArchSpec:
     """Build a minimal valid ArchSpec for testing."""
     grid = Grid(0.0, 0.0, [], [])
-    word = Word(positions=grid, site_indices=[(0, 0)])
+    word = Word(grid=grid, sites=[(0, 0)])
     return ArchSpec(
         version=(1, 0),
         geometry=Geometry(sites_per_word=1, words=[word]),

@@ -206,7 +206,3 @@ Breaking changes map to SemVer MAJOR.
 - The body, if present, MUST begin one blank line after the description
 - Footers, if present, MUST begin one blank line after the body
 - Use imperative mood in the description ("add", not "added" or "adds")
-
-### Pull Request Labels
-
-- Tag PRs with the `breaking` label when they contain breaking changes

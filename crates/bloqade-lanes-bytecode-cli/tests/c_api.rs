@@ -291,12 +291,12 @@ fn simulate_stack_with_errors() {
 fn arch_from_json_valid() {
     let json = CString::new(
         r#"{
-        "version": "1.0",
+        "version": 1,
         "geometry": {
             "sites_per_word": 2,
             "words": [{
-                "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                "site_indices": [[0, 0], [0, 1]]
+                "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
+                "sites": [[0, 0], [0, 1]]
             }]
         },
         "buses": { "site_buses": [], "word_buses": [] },
@@ -340,12 +340,12 @@ fn validate_addresses_with_arch() {
 
     let json = CString::new(
         r#"{
-        "version": "1.0",
+        "version": 1,
         "geometry": {
             "sites_per_word": 2,
             "words": [{
-                "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                "site_indices": [[0, 0], [0, 1]]
+                "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
+                "sites": [[0, 0], [0, 1]]
             }]
         },
         "buses": { "site_buses": [], "word_buses": [] },
