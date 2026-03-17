@@ -17,9 +17,9 @@
   "additionalProperties": false,
   "properties": {
     "version": {
-      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"1.0\").",
+      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"1.0\"). Both major and minor components must fit in a u16 (0..65535).",
       "type": "string",
-      "pattern": "^\\d+\\.\\d+$"
+      "pattern": "^[0-9]{1,5}\\.[0-9]{1,5}$"
     },
     "geometry": {
       "$ref": "#/$defs/Geometry"

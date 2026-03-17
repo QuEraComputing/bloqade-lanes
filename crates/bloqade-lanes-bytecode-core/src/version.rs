@@ -47,7 +47,7 @@ impl From<Version> for u32 {
 /// Serializes as a `"major.minor"` string (e.g. `"1.0"`).
 impl Serialize for Version {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
+        serializer.collect_str(self)
     }
 }
 
