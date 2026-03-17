@@ -43,7 +43,10 @@ just coverage          # Run Python tests with coverage + generate XML report
 just coverage-run      # Run Python tests only
 just coverage-html     # Generate HTML coverage report
 just demo              # Run all demo scripts
-just doc               # Serve mkdocs locally
+just doc               # Build and open documentation site in browser
+just doc-all           # Build documentation site (book + Rust API)
+just doc-book          # Build mdBook only
+just doc-rust          # Build Rust API docs only
 just test-python       # Run Python tests via pytest
 
 # Rust
