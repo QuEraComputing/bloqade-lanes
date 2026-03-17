@@ -32,13 +32,13 @@ EXAMPLE_JSON = json.dumps(
             "sites_per_word": 10,
             "words": [
                 {
-                    "grid": {
+                    "positions": {
                         "x_start": 1.0,
                         "y_start": 2.5,
                         "x_spacing": [2.0, 2.0, 2.0, 2.0],
                         "y_spacing": [2.5],
                     },
-                    "sites": [
+                    "site_indices": [
                         [0, 0],
                         [1, 0],
                         [2, 0],
@@ -50,7 +50,7 @@ EXAMPLE_JSON = json.dumps(
                         [3, 1],
                         [4, 1],
                     ],
-                    "cz_pairs": [
+                    "has_cz": [
                         [0, 5],
                         [0, 6],
                         [0, 7],
@@ -64,13 +64,13 @@ EXAMPLE_JSON = json.dumps(
                     ],
                 },
                 {
-                    "grid": {
+                    "positions": {
                         "x_start": 1.0,
                         "y_start": 12.5,
                         "x_spacing": [2.0, 2.0, 2.0, 2.0],
                         "y_spacing": [2.5],
                     },
-                    "sites": [
+                    "site_indices": [
                         [0, 0],
                         [1, 0],
                         [2, 0],
@@ -82,7 +82,7 @@ EXAMPLE_JSON = json.dumps(
                         [3, 1],
                         [4, 1],
                     ],
-                    "cz_pairs": [
+                    "has_cz": [
                         [1, 5],
                         [1, 6],
                         [1, 7],
@@ -147,7 +147,7 @@ def _make_word(word_id, y_start):
         (word_id, 3),
         (word_id, 4),
     ]
-    return Word(grid=grid, sites=sites, cz_pairs=cz_pairs)
+    return Word(positions=grid, site_indices=sites, has_cz=cz_pairs)
 
 
 def _build_spec_from_python():
@@ -201,8 +201,8 @@ class TestConstructFromPython:
 
     def test_word_without_cz_pairs(self):
         grid = Grid(x_start=1.0, y_start=2.0, x_spacing=[], y_spacing=[])
-        word = Word(grid=grid, sites=[(0, 0)])
-        assert word.cz_pairs is None
+        word = Word(positions=grid, site_indices=[(0, 0)])
+        assert word.has_cz is None
 
 
 class TestLoadFromJson:
@@ -226,13 +226,13 @@ class TestLoadFromJson:
                     "sites_per_word": 2,
                     "words": [
                         {
-                            "grid": {
+                            "positions": {
                                 "x_start": 1.0,
                                 "y_start": 2.0,
                                 "x_spacing": [],
                                 "y_spacing": [],
                             },
-                            "sites": [[0, 0]],  # wrong count
+                            "site_indices": [[0, 0]],  # wrong count
                         }
                     ],
                 },
@@ -263,13 +263,13 @@ class TestValidation:
                     "sites_per_word": 2,
                     "words": [
                         {
-                            "grid": {
+                            "positions": {
                                 "x_start": 1.0,
                                 "y_start": 2.0,
                                 "x_spacing": [],
                                 "y_spacing": [],
                             },
-                            "sites": [[0, 0]],  # wrong count
+                            "site_indices": [[0, 0]],  # wrong count
                         }
                     ],
                 },
@@ -295,15 +295,15 @@ class TestPropertyAccess:
         assert geom.sites_per_word == 10
 
         word = geom.words[0]
-        assert len(word.sites) == 10
-        assert word.sites[0] == (0, 0)
+        assert len(word.site_indices) == 10
+        assert word.site_indices[0] == (0, 0)
 
-        grid = word.grid
+        grid = word.positions
         assert grid.x_positions == [1.0, 3.0, 5.0, 7.0, 9.0]
         assert grid.y_positions == [2.5, 5.0]
 
-        assert word.cz_pairs is not None
-        assert word.cz_pairs[0] == (0, 5)
+        assert word.has_cz is not None
+        assert word.has_cz[0] == (0, 5)
 
     def test_buses(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
@@ -346,7 +346,7 @@ class TestQueryMethods:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         word = spec.word_by_id(0)
         assert word is not None
-        assert len(word.sites) == 10
+        assert len(word.site_indices) == 10
         assert spec.word_by_id(99) is None
 
     def test_zone_by_id(self):

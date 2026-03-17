@@ -231,17 +231,17 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     let sites_per_word = spec.geometry.sites_per_word;
     for (word_id, word) in spec.geometry.words.iter().enumerate() {
         let word_id = word_id as u32;
-        if let Err(field) = word.grid.check_finite() {
+        if let Err(field) = word.positions.check_finite() {
             errors.push(ArchSpecError::NonFiniteGridValue { word_id, field });
         }
-        if word.sites.len() != sites_per_word as usize {
+        if word.site_indices.len() != sites_per_word as usize {
             errors.push(ArchSpecError::WrongSiteCount {
                 word_id,
                 expected: sites_per_word,
-                got: word.sites.len(),
+                got: word.site_indices.len(),
             });
         }
-        if let Some(cz) = &word.cz_pairs
+        if let Some(cz) = &word.has_cz
             && cz.len() != sites_per_word as usize
         {
             errors.push(ArchSpecError::WrongCzPairsCount {
@@ -250,9 +250,9 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
                 got: cz.len(),
             });
         }
-        let x_len = word.grid.num_x();
-        let y_len = word.grid.num_y();
-        for (site_idx, site) in word.sites.iter().enumerate() {
+        let x_len = word.positions.num_x();
+        let y_len = word.positions.num_y();
+        for (site_idx, site) in word.site_indices.iter().enumerate() {
             let x_idx = site[0];
             let y_idx = site[1];
             if x_idx as usize >= x_len {
@@ -337,11 +337,11 @@ fn check_words_with_site_buses(spec: &ArchSpec, num_words: u32, errors: &mut Vec
 
 fn check_consistent_grid_shape(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     if let Some(first) = spec.geometry.words.first() {
-        let ref_x_len = first.grid.num_x();
-        let ref_y_len = first.grid.num_y();
+        let ref_x_len = first.positions.num_x();
+        let ref_y_len = first.positions.num_y();
         for (idx, word) in spec.geometry.words.iter().enumerate().skip(1) {
-            let x_len = word.grid.num_x();
-            let y_len = word.grid.num_y();
+            let x_len = word.positions.num_x();
+            let y_len = word.positions.num_y();
             if x_len != ref_x_len || y_len != ref_y_len {
                 errors.push(ArchSpecError::InconsistentGridShape {
                     word_id: idx as u32,
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn test_wrong_site_count() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].sites.pop();
+        spec.geometry.words[0].site_indices.pop();
         let errors = spec.validate().unwrap_err();
         assert!(has_error(&errors, |e| matches!(
             e,
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn test_wrong_cz_pairs_count() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].cz_pairs.as_mut().unwrap().pop();
+        spec.geometry.words[0].has_cz.as_mut().unwrap().pop();
         let errors = spec.validate().unwrap_err();
         assert!(has_error(&errors, |e| matches!(
             e,
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn test_site_x_index_out_of_range() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].sites[0] = [99, 0];
+        spec.geometry.words[0].site_indices[0] = [99, 0];
         let errors = spec.validate().unwrap_err();
         assert!(has_error(&errors, |e| matches!(
             e,
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn test_site_y_index_out_of_range() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].sites[0] = [0, 99];
+        spec.geometry.words[0].site_indices[0] = [0, 99];
         let errors = spec.validate().unwrap_err();
         assert!(has_error(&errors, |e| matches!(
             e,
@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn test_inconsistent_grid_shape() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[1].grid.x_spacing = vec![2.0, 2.0];
+        spec.geometry.words[1].positions.x_spacing = vec![2.0, 2.0];
         let errors = spec.validate().unwrap_err();
         assert!(has_error(&errors, |e| matches!(
             e,

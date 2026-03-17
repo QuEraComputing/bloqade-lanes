@@ -98,14 +98,14 @@ pub struct Geometry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Word {
-    pub grid: Grid,
+    pub positions: Grid,
     /// Each entry is `[x_idx, y_idx]` indexing into the grid's x and y
     /// coordinate arrays.
-    pub sites: Vec<[u32; 2]>,
-    /// Optional. `cz_pairs[i]` is `[word_id, site_id]` — the site that
+    pub site_indices: Vec<[u32; 2]>,
+    /// Optional. `has_cz[i]` is `[word_id, site_id]` — the site that
     /// site `i` entangles with during CZ.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cz_pairs: Option<Vec<[u32; 2]>>,
+    pub has_cz: Option<Vec<[u32; 2]>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -261,8 +261,8 @@ mod tests {
                 "sites_per_word": 2,
                 "words": [
                     {
-                        "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                        "sites": [[0, 0], [0, 1]]
+                        "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
+                        "site_indices": [[0, 0], [0, 1]]
                     }
                 ]
             },
@@ -275,7 +275,7 @@ mod tests {
         }"#;
         let spec: ArchSpec = serde_json::from_str(json).unwrap();
         assert!(spec.paths.is_none());
-        assert!(spec.geometry.words[0].cz_pairs.is_none());
+        assert!(spec.geometry.words[0].has_cz.is_none());
     }
 
     #[test]
