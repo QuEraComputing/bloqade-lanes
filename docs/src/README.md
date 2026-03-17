@@ -11,8 +11,8 @@ Bloqade Lanes is a component of QuEra's Neutral Atom SDK. It compiles quantum ci
 
 The Rust API documentation is generated separately via `cargo doc`:
 
-- [`bloqade-lanes-bytecode-core`](https://queracomputing.github.io/bloqade-lanes/api/bloqade_lanes_bytecode_core/) — pure Rust: bytecode format, arch spec, validation
-- [`bloqade-lanes-bytecode-cli`](https://queracomputing.github.io/bloqade-lanes/api/bloqade_lanes_bytecode/) — CLI tool and C FFI library
+- [`bloqade-lanes-bytecode-core`](api/bloqade_lanes_bytecode_core/) — pure Rust: bytecode format, arch spec, validation
+- [`bloqade-lanes-bytecode-cli`](api/bloqade_lanes_bytecode/) — CLI tool and C FFI library
 
 ## Repository
 

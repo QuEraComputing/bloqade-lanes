@@ -19,8 +19,9 @@ fn canonical_f64_bits(v: f64) -> u64 {
 ///
 /// Describes the full hardware topology: geometry (words, sites, grids),
 /// bus connectivity, zones, and operational constraints. Can be loaded
-/// from JSON via [`ArchSpec::from_json`](crate::arch::query) or
-/// constructed programmatically.
+/// from JSON via [`from_json`](ArchSpec::from_json) /
+/// [`from_json_validated`](ArchSpec::from_json_validated),
+/// or constructed programmatically.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArchSpec {
     /// Spec format version.

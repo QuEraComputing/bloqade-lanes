@@ -68,10 +68,10 @@ doc-rust:
 doc-book:
     mdbook build
 
-# Build complete documentation (book + Rust API)
+# Build complete documentation site (book + Rust API at /api/)
 doc-all: doc-book doc-rust
-    @echo "Book: target/book/"
-    @echo "Rust API: target/doc/"
+    cp -r target/doc target/book/api
+    @echo "Site: target/book/ (open target/book/index.html)"
 
 sync:
     uv sync --dev --all-extras --index-strategy=unsafe-best-match
