@@ -60,6 +60,19 @@ doc:
 doc-build:
     mkdocs build
 
+# Build Rust API documentation
+doc-rust:
+    cargo doc --no-deps -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+
+# Build the mdBook documentation site
+doc-book:
+    mdbook build
+
+# Build complete documentation (book + Rust API)
+doc-all: doc-book doc-rust
+    @echo "Book: target/book/"
+    @echo "Rust API: target/doc/"
+
 sync:
     uv sync --dev --all-extras --index-strategy=unsafe-best-match
 
