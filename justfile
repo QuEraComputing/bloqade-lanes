@@ -67,6 +67,10 @@ doc-all: doc-book doc-rust
     cp -r target/doc target/book/api
     @echo "Site: target/book/ (open target/book/index.html)"
 
+# Build and open documentation site in browser
+doc: doc-all
+    open target/book/index.html
+
 sync:
     uv sync --dev --all-extras --index-strategy=unsafe-best-match
 
