@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bloqade-lanes"
-version = "0.5.0-dev"
+version = "0.6.0-dev"
 description = "Components for defining and manipulating lane-based structures in Bloqade for neutral atom quantum computing."
 readme = "README.md"
 authors = [
@@ -21,6 +21,7 @@ dependencies = [
     "scipy>=1.15.3",
 ]
 requires-python = ">= 3.10"
+license-files = ["LICENSE"]
 
 [project.optional-dependencies]
 cudaq = [
@@ -61,6 +62,7 @@ dev = [
     "jupytext>=1.18.1",
     "mypy>=1.13.0",
     "numpy>=1.26.4",
+    "packaging>=26.0",
     "pre-commit>=4.0.1",
     "pycobertura>=4.1.0",
     "pyinstrument>=5.1.2",
