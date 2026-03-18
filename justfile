@@ -71,6 +71,7 @@ doc-book: install-mdbook
 
 # Build complete documentation site (book + Rust API at /api/)
 doc-all: doc-book doc-rust
+    rm -rf target/book/api
     cp -r target/doc target/book/api
     @echo "Site: target/book/ (open target/book/index.html)"
 
