@@ -75,7 +75,9 @@ Direct test run: `uv run coverage run -m pytest python/tests`
 
 ## Linting & Formatting
 
-Pre-commit hooks enforce all checks. The CI lint pipeline runs:
+Pre-commit hooks enforce all checks. When hooks must be bypassed (e.g. committing on orphan branches like `gh-pages` that lack `.pre-commit-config.yaml`), use `git commit -n`.
+
+The CI lint pipeline runs:
 
 ### Python
 - **isort** (profile=black, src_paths=python/bloqade)
