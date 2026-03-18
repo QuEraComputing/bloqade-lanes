@@ -47,6 +47,8 @@ just doc               # Build and open documentation site in browser
 just doc-all           # Build documentation site (book + Rust API)
 just doc-book          # Build mdBook only
 just doc-rust          # Build Rust API docs only
+just doc-deploy <ver>  # Deploy versioned docs (e.g. dev, v0.5.0)
+just install-mdbook    # Install pinned mdBook version
 just test-python       # Run Python tests via pytest
 
 # Rust
@@ -114,7 +116,8 @@ bloqade-lanes/
 ├── Cargo.toml              # Rust workspace root
 ├── Cargo.lock
 ├── pyproject.toml           # Maturin build config + Python project metadata
-├── justfile                 # Task automation
+├── justfile                 # Task automation (pinned tool versions + all recipes)
+├── book.toml                # mdBook configuration
 ├── crates/                  # Rust workspace
 │   ├── bloqade-lanes-bytecode-core/     # Pure Rust: bytecode format, arch spec, validation
 │   ├── bloqade-lanes-bytecode-python/   # PyO3 bindings (cdylib → _native module)
@@ -142,8 +145,12 @@ bloqade-lanes/
 │   ├── bytecode/            # Bytecode-specific tests
 │   └── ...                  # Tests mirror python/bloqade/lanes structure
 ├── tests/                   # Rust integration tests
+├── docs/
+│   ├── src/                 # mdBook source (SUMMARY.md, arch/, bytecode/)
+│   ├── theme/               # Custom mdBook theme assets (version-switcher.js)
+│   └── scripts/             # Documentation deploy scripts (deploy_docs.py)
 ├── examples/                # Architecture specs and sample bytecode programs
-├── scripts/                 # Build/test utility scripts
+├── scripts/                 # Build/test utility scripts (non-docs)
 ├── demo/                    # Python demo scripts
 └── dist-data/               # Staged artifacts for wheel packaging (gitignored)
 ```
