@@ -23,7 +23,9 @@
       var candidate = segments[i];
       // Version segments look like "dev" or "vN.N.N"
       if (candidate === "dev" || /^v\d+/.test(candidate)) {
-        var basePath = "/" + segments.slice(0, i).join("/");
+        // When version is the first segment (i == 0), basePath should be
+        // empty string, not "/" — otherwise URL construction produces "//".
+        var basePath = i > 0 ? "/" + segments.slice(0, i).join("/") : "";
         return {
           basePath: basePath,
           currentVersion: candidate,
