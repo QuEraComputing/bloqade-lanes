@@ -9,9 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 # Serialize the entire workflow (build + deploy) to prevent race conditions.
 # If two runs trigger concurrently (e.g. a push to main and a tag), the second
@@ -24,9 +22,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -43,6 +38,8 @@ jobs:
         with:
           version: "0.5.1"
 
+      # Fetch existing site from gh-pages so previous versions are preserved.
+      # The gh-pages branch is the source of truth for the deployed site.
       - name: Download existing site from gh-pages
         uses: actions/checkout@v6
         with:
@@ -51,8 +48,7 @@ jobs:
         continue-on-error: true
 
       # actions/checkout creates a .git/ directory inside target/site.
-      # Remove it so deploy-pages doesn't upload git metadata — the full
-      # site replacement only needs the built files, not the repo history.
+      # Remove it so the deploy action doesn't push git metadata.
       - name: Remove git metadata from site checkout
         run: rm -rf target/site/.git
 
@@ -68,11 +64,9 @@ jobs:
       - name: Build versioned documentation
         run: just doc-deploy ${{ steps.version.outputs.version }}
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: target/site
-
       - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/site
+          publish_branch: gh-pages
