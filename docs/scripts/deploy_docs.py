@@ -9,9 +9,9 @@ Builds the docs and arranges them into a versioned directory layout:
 The CI workflow calls this, then deploys target/site/ to GitHub Pages.
 
 Examples:
-    python scripts/deploy_docs.py dev               # main branch
-    python scripts/deploy_docs.py v0.5.0            # tagged release
-    python scripts/deploy_docs.py v0.5.0 --base-url /bloqade-lanes
+    uv run python docs/scripts/deploy_docs.py dev               # main branch
+    uv run python docs/scripts/deploy_docs.py v0.5.0            # tagged release
+    uv run python docs/scripts/deploy_docs.py v0.5.0 --base-url /bloqade-lanes
 """
 
 import argparse

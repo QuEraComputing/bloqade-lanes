@@ -13,13 +13,20 @@ permissions:
   pages: write
   id-token: write
 
+# Serialize the entire workflow (build + deploy) to prevent race conditions.
+# If two runs trigger concurrently (e.g. a push to main and a tag), the second
+# queues until the first finishes. This ensures the gh-pages checkout always
+# reflects the latest deployed state.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -28,11 +35,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install mdBook
-        uses: peaceiris/actions-mdbook@v2
-        with:
-          mdbook-version: "0.4.36"
 
       - uses: extractions/setup-just@v3
 
@@ -58,20 +60,13 @@ jobs:
           fi
 
       - name: Build versioned documentation
-        run: python scripts/deploy_docs.py ${{ steps.version.outputs.version }}
+        run: just doc-deploy ${{ steps.version.outputs.version }}
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: target/site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
