@@ -43,18 +43,44 @@ VERSION_SWITCHER_JS = "docs/theme/version-switcher.js"
 
 
 def patch_book_toml() -> str:
-    """Add version-switcher.js to book.toml and return the original content."""
-    original = BOOK_TOML.read_text()
-    patched = original.rstrip("\n") + "\n"
+    """Add version-switcher.js to book.toml and return the original content.
 
-    # Append additional-js if not already present
-    if "additional-js" not in original:
-        patched += f'additional-js = ["{VERSION_SWITCHER_JS}"]\n'
-    else:
+    Inserts the additional-js line under the [output.html] section where
+    mdBook expects it, rather than appending at the file root.
+    """
+    original = BOOK_TOML.read_text()
+
+    if "additional-js" in original:
         log.warning("book.toml already contains additional-js, skipping patch.")
         return original
 
-    BOOK_TOML.write_text(patched)
+    # Insert additional-js under [output.html] by finding that section header
+    # and appending after its last existing key.
+    js_line = f'additional-js = ["{VERSION_SWITCHER_JS}"]'
+    lines = original.splitlines(keepends=True)
+    insert_idx = None
+    in_output_html = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "[output.html]":
+            in_output_html = True
+            insert_idx = i + 1
+            continue
+        if in_output_html:
+            # Stop at the next section header
+            if stripped.startswith("[") and stripped.endswith("]"):
+                break
+            # Track the last non-empty line in this section
+            if stripped:
+                insert_idx = i + 1
+
+    if insert_idx is None:
+        log.error("Could not find [output.html] section in book.toml")
+        sys.exit(1)
+
+    lines.insert(insert_idx, js_line + "\n")
+    BOOK_TOML.write_text("".join(lines))
     log.info("Patched book.toml to include version-switcher.js")
     return original
 
@@ -108,6 +134,18 @@ def update_versions(
                 type(versions).__name__,
             )
             sys.exit(1)
+
+        # Validate that each entry is a dict with a "version" key
+        for i, entry in enumerate(versions):
+            if not isinstance(entry, dict) or "version" not in entry:
+                log.error(
+                    "versions.json entry %d is malformed (expected object with "
+                    '"version" key, got %r). '
+                    "This requires manual inspection of the gh-pages branch.",
+                    i,
+                    entry,
+                )
+                sys.exit(1)
     else:
         log.info("No existing versions.json found, creating new manifest.")
         versions = []
