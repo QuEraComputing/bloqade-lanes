@@ -10,4 +10,5 @@ build-dir = "target/book"
 [output.html]
 git-repository-url = "https://github.com/QuEraComputing/bloqade-lanes"
 edit-url-template = "https://github.com/QuEraComputing/bloqade-lanes/edit/main/{path}"
-additional-js = ["docs/theme/version-switcher.js"]
+# Note: version-switcher.js is injected by deploy_docs.py for deployed builds only.
+# Local builds (just doc / just doc-all) do not include the version switcher.

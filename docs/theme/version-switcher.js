@@ -1,20 +1,52 @@
-// Version switcher for mdBook — reads /versions.json and renders a dropdown.
+// Version switcher for mdBook — reads versions.json and renders a dropdown.
+// Auto-detects the base path from the URL so it works on any deployment
+// (GitHub Pages project sites, custom domains, etc.) without configuration.
 (function () {
   "use strict";
 
-  // Resolve the base URL (handles both local preview and GitHub Pages)
-  var scriptEl = document.currentScript;
-  var baseUrl = scriptEl
-    ? scriptEl.getAttribute("data-base-url") || ""
-    : "";
+  // Detect base path and current version from the URL.
+  // Expected URL structure: /<base>/<version>/<page>
+  // e.g. /bloqade-lanes/dev/arch/archspec.html
+  //      ^^^^^^^^^^^^^^^^ base   ^^^ version
+  function detectPaths() {
+    var path = window.location.pathname;
 
-  var versionsUrl = baseUrl + "/versions.json";
+    // versions.json is in the same directory as the version — fetch it
+    // relative to the current page's version root.
+    // Walk up from the current page to the version root by finding
+    // versions.json at each ancestor level.
+    var segments = path.split("/").filter(Boolean);
 
-  fetch(versionsUrl)
+    // Try each segment as a potential version identifier.
+    // The version segment is followed by page content (index.html, arch/, etc.)
+    for (var i = 0; i < segments.length; i++) {
+      var candidate = segments[i];
+      // Version segments look like "dev" or "vN.N.N"
+      if (candidate === "dev" || /^v\d+/.test(candidate)) {
+        var basePath = "/" + segments.slice(0, i).join("/");
+        return {
+          basePath: basePath,
+          currentVersion: candidate,
+          versionsUrl: basePath + "/" + candidate + "/versions.json"
+        };
+      }
+    }
+
+    // Fallback: assume no base path
+    return {
+      basePath: "",
+      currentVersion: "dev",
+      versionsUrl: "/versions.json"
+    };
+  }
+
+  var paths = detectPaths();
+
+  fetch(paths.versionsUrl)
     .then(function (res) {
       if (!res.ok) {
         console.warn(
-          "[version-switcher] Failed to fetch " + versionsUrl +
+          "[version-switcher] Failed to fetch " + paths.versionsUrl +
           " (HTTP " + res.status + "). Version switcher disabled."
         );
         return null;
@@ -32,16 +64,6 @@
         return;
       }
 
-      // Detect the current version from the URL path
-      var path = window.location.pathname;
-      var currentVersion = "dev";
-      for (var i = 0; i < versions.length; i++) {
-        if (path.indexOf("/" + versions[i].version + "/") !== -1) {
-          currentVersion = versions[i].version;
-          break;
-        }
-      }
-
       // Build the dropdown
       var select = document.createElement("select");
       select.id = "version-switcher";
@@ -51,10 +73,12 @@
         "color: var(--sidebar-fg); font-size: 0.85rem; cursor: pointer;";
 
       for (var j = 0; j < versions.length; j++) {
+        var ver = versions[j].version;
         var opt = document.createElement("option");
-        opt.value = versions[j].url;
-        opt.textContent = versions[j].version;
-        if (versions[j].version === currentVersion) {
+        // Construct URL from detected base path + version label
+        opt.value = paths.basePath + "/" + ver + "/";
+        opt.textContent = ver;
+        if (ver === paths.currentVersion) {
           opt.selected = true;
         }
         select.appendChild(opt);

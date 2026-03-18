@@ -7,6 +7,8 @@ Builds the docs and arranges them into a versioned directory layout:
     target/site/index.html     — redirect to latest version
 
 The CI workflow calls this, then deploys target/site/ to GitHub Pages.
+Local builds (just doc / just doc-all) do not use this script — they
+build plain docs without versioning.
 
 Prerequisites:
     The gh-pages branch must exist with a valid versions.json (empty array
@@ -22,7 +24,6 @@ Prerequisites:
 Examples:
     uv run python docs/scripts/deploy_docs.py dev               # main branch
     uv run python docs/scripts/deploy_docs.py v0.5.0            # tagged release
-    uv run python docs/scripts/deploy_docs.py v0.5.0 --base-url /bloqade-lanes
 """
 
 import argparse
@@ -36,6 +37,32 @@ from pathlib import Path
 from packaging.version import Version
 
 log = logging.getLogger("deploy_docs")
+
+BOOK_TOML = Path("book.toml")
+VERSION_SWITCHER_JS = "docs/theme/version-switcher.js"
+
+
+def patch_book_toml() -> str:
+    """Add version-switcher.js to book.toml and return the original content."""
+    original = BOOK_TOML.read_text()
+    patched = original.rstrip("\n") + "\n"
+
+    # Append additional-js if not already present
+    if "additional-js" not in original:
+        patched += f'additional-js = ["{VERSION_SWITCHER_JS}"]\n'
+    else:
+        log.warning("book.toml already contains additional-js, skipping patch.")
+        return original
+
+    BOOK_TOML.write_text(patched)
+    log.info("Patched book.toml to include version-switcher.js")
+    return original
+
+
+def restore_book_toml(original: str) -> None:
+    """Restore book.toml to its original content."""
+    BOOK_TOML.write_text(original)
+    log.info("Restored book.toml to original state.")
 
 
 def build_docs() -> None:
@@ -55,7 +82,6 @@ def build_docs() -> None:
 def update_versions(
     versions_file: Path,
     version: str,
-    base_url: str,
 ) -> list[dict[str, str]]:
     """Load or create versions.json and add/update the given version.
 
@@ -89,8 +115,8 @@ def update_versions(
     # Remove existing entry for this version
     versions = [v for v in versions if v["version"] != version]
 
-    # Add new entry
-    versions.insert(0, {"version": version, "url": f"{base_url}/{version}/"})
+    # Add new entry (just the version label — the JS constructs URLs)
+    versions.insert(0, {"version": version})
 
     # Sort: releases in descending semver order, then dev last
     releases = sorted(
@@ -132,12 +158,6 @@ def main() -> None:
         'Use "dev" for main branch, tag name for releases.',
     )
     parser.add_argument(
-        "--base-url",
-        default="",
-        help="Base URL prefix for version links (e.g. /bloqade-lanes). "
-        "Defaults to empty string.",
-    )
-    parser.add_argument(
         "--site-dir",
         type=Path,
         default=Path("target/site"),
@@ -169,9 +189,13 @@ def main() -> None:
 
     log.info("Deploying documentation for version: %s", args.version)
 
-    # Build docs
+    # Build docs with version switcher injected
     if not args.skip_build:
-        build_docs()
+        original_toml = patch_book_toml()
+        try:
+            build_docs()
+        finally:
+            restore_book_toml(original_toml)
     else:
         log.info("Skipping build (--skip-build).")
 
@@ -197,7 +221,7 @@ def main() -> None:
 
     # Update versions.json
     versions_file = args.site_dir / "versions.json"
-    versions = update_versions(versions_file, args.version, args.base_url)
+    versions = update_versions(versions_file, args.version)
 
     # Determine redirect target (latest release, or dev if no releases)
     releases = [v for v in versions if v["version"] != "dev"]
