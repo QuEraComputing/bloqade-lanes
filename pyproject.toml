@@ -21,6 +21,7 @@ dependencies = [
     "scipy>=1.15.3",
 ]
 requires-python = ">= 3.10"
+license-files = ["LICENSE"]
 
 [project.optional-dependencies]
 cudaq = [
