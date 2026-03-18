@@ -8,12 +8,20 @@ const MAGIC: &[u8; 4] = b"BLQD";
 const SECTION_TYPE_METADATA: u32 = 0;
 const SECTION_TYPE_CODE: u32 = 1;
 
+/// A bytecode program consisting of a version and instruction sequence.
+///
+/// Programs can be serialized to/from BLQD binary format (via
+/// [`to_binary`](Program::to_binary) / [`from_binary`](Program::from_binary))
+/// or SST text assembly (via [`bytecode::text`](super::text)).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    /// Program version.
     pub version: Version,
+    /// Instructions in execution order.
     pub instructions: Vec<Instruction>,
 }
 
+/// Error type for BLQD binary format parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProgramError {
     BadMagic,

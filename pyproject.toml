@@ -61,6 +61,7 @@ dev = [
     "jupytext>=1.18.1",
     "mypy>=1.13.0",
     "numpy>=1.26.4",
+    "packaging>=26.0",
     "pre-commit>=4.0.1",
     "pycobertura>=4.1.0",
     "pyinstrument>=5.1.2",

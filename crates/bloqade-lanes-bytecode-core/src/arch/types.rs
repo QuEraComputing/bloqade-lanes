@@ -15,16 +15,33 @@ fn canonical_f64_bits(v: f64) -> u64 {
     }
 }
 
+/// Architecture specification for a quantum device.
+///
+/// Describes the full hardware topology: geometry (words, sites, grids),
+/// bus connectivity, zones, and operational constraints. Can be loaded
+/// from JSON via [`from_json`](ArchSpec::from_json) /
+/// [`from_json_validated`](ArchSpec::from_json_validated),
+/// or constructed programmatically.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArchSpec {
+    /// Spec format version.
     pub version: Version,
+    /// Device geometry (words and their site layouts).
     pub geometry: Geometry,
+    /// Transport bus definitions (site buses and word buses).
     pub buses: Buses,
+    /// Word IDs that have site-bus transport capability.
     pub words_with_site_buses: Vec<u32>,
+    /// Site indices that participate in word-bus transport.
     pub sites_with_word_buses: Vec<u32>,
+    /// Logical zones grouping words for execution phases.
     pub zones: Vec<Zone>,
+    /// Zone IDs where entangling (CZ) gates can be performed.
     pub entangling_zones: Vec<u32>,
+    /// Zone IDs that support measurement mode. Must not be empty;
+    /// the first entry must be zone 0.
     pub measurement_mode_zones: Vec<u32>,
+    /// Optional AOD transport paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<TransportPath>>,
 }
@@ -90,14 +107,23 @@ fn deserialize_lane_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u6
     u64::from_str_radix(hex, 16).map_err(serde::de::Error::custom)
 }
 
+/// Device geometry: the set of words and their site layout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Geometry {
+    /// Number of atom sites in each word. Every word must have exactly this many sites.
     pub sites_per_word: u32,
+    /// Word definitions. A word's ID is its index in this list.
     pub words: Vec<Word>,
 }
 
+/// A group of atom sites that share a coordinate grid.
+///
+/// Each word contains a fixed number of sites (determined by
+/// [`Geometry::sites_per_word`]). Sites are positioned on the word's
+/// grid via `[x_idx, y_idx]` index pairs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Word {
+    /// Coordinate grid for this word's sites.
     pub positions: Grid,
     /// Each entry is `[x_idx, y_idx]` indexing into the grid's x and y
     /// coordinate arrays.
@@ -108,11 +134,22 @@ pub struct Word {
     pub has_cz: Option<Vec<[u32; 2]>>,
 }
 
+/// A 2D coordinate grid for positioning atom sites within a word.
+///
+/// Positions are computed as cumulative sums from the start value:
+/// `x[i] = x_start + sum(x_spacing[0..i])`. The number of grid points
+/// along each axis is `len(spacing) + 1`.
+///
+/// All coordinate values must be finite (no NaN or Inf).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Grid {
+    /// X-coordinate of the first grid point.
     pub x_start: f64,
+    /// Y-coordinate of the first grid point.
     pub y_start: f64,
+    /// Spacing between consecutive x-coordinates.
     pub x_spacing: Vec<f64>,
+    /// Spacing between consecutive y-coordinates.
     pub y_spacing: Vec<f64>,
 }
 
@@ -223,20 +260,35 @@ impl Grid {
     }
 }
 
+/// Container for all transport bus definitions in an architecture.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Buses {
+    /// Site buses move atoms between sites within the same word.
     pub site_buses: Vec<Bus>,
+    /// Word buses move atoms between different words.
     pub word_buses: Vec<Bus>,
 }
 
+/// A transport bus that maps source positions to destination positions.
+///
+/// The `src` and `dst` lists are parallel arrays: `src[i]` maps to `dst[i]`.
+/// For site buses, values are site indices within a word. For word buses,
+/// values are word IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Bus {
+    /// Source indices.
     pub src: Vec<u32>,
+    /// Destination indices (same length as `src`).
     pub dst: Vec<u32>,
 }
 
+/// A logical zone grouping words for execution phases.
+///
+/// Zone 0 is special and must contain all word IDs. A zone's ID is its
+/// index in the [`ArchSpec::zones`] list.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Zone {
+    /// Word IDs belonging to this zone.
     pub words: Vec<u32>,
 }
 
