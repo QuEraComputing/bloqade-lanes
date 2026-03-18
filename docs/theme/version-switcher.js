@@ -66,13 +66,9 @@
         return;
       }
 
-      // Build the dropdown
+      // Build the dropdown (styled via version-switcher.css)
       var select = document.createElement("select");
       select.id = "version-switcher";
-      select.style.cssText =
-        "margin-left: 1rem; padding: 0.25rem 0.5rem; border-radius: 4px; " +
-        "border: 1px solid var(--sidebar-fg); background: var(--sidebar-bg); " +
-        "color: var(--sidebar-fg); font-size: 0.85rem; cursor: pointer;";
 
       for (var j = 0; j < versions.length; j++) {
         var ver = versions[j].version;
@@ -101,12 +97,11 @@
       }
 
       var wrapper = document.createElement("div");
-      wrapper.style.cssText = "display: inline-flex; align-items: center;";
+      wrapper.id = "version-switcher-wrapper";
 
       var label = document.createElement("span");
+      label.id = "version-switcher-label";
       label.textContent = "Version: ";
-      label.style.cssText =
-        "font-size: 0.85rem; color: var(--sidebar-fg); margin-right: 0.25rem;";
 
       wrapper.appendChild(label);
       wrapper.appendChild(select);

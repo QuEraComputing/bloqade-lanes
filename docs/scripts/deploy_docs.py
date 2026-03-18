@@ -40,23 +40,25 @@ log = logging.getLogger("deploy_docs")
 
 BOOK_TOML = Path("book.toml")
 VERSION_SWITCHER_JS = "docs/theme/version-switcher.js"
+VERSION_SWITCHER_CSS = "docs/theme/version-switcher.css"
 
 
 def patch_book_toml() -> str:
-    """Add version-switcher.js to book.toml and return the original content.
+    """Add version-switcher JS and CSS to book.toml and return the original content.
 
-    Inserts the additional-js line under the [output.html] section where
-    mdBook expects it, rather than appending at the file root.
+    Inserts additional-js and additional-css lines under the [output.html]
+    section where mdBook expects them, rather than appending at the file root.
     """
     original = BOOK_TOML.read_text()
 
-    if "additional-js" in original:
-        log.warning("book.toml already contains additional-js, skipping patch.")
+    if "additional-js" in original or "additional-css" in original:
+        log.warning("book.toml already contains additional-js/css, skipping patch.")
         return original
 
-    # Insert additional-js under [output.html] by finding that section header
+    # Insert under [output.html] by finding that section header
     # and appending after its last existing key.
     js_line = f'additional-js = ["{VERSION_SWITCHER_JS}"]'
+    css_line = f'additional-css = ["{VERSION_SWITCHER_CSS}"]'
     lines = original.splitlines(keepends=True)
     insert_idx = None
     in_output_html = False
@@ -80,8 +82,9 @@ def patch_book_toml() -> str:
         sys.exit(1)
 
     lines.insert(insert_idx, js_line + "\n")
+    lines.insert(insert_idx + 1, css_line + "\n")
     BOOK_TOML.write_text("".join(lines))
-    log.info("Patched book.toml to include version-switcher.js")
+    log.info("Patched book.toml to include version-switcher JS and CSS")
     return original
 
 
