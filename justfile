@@ -81,7 +81,7 @@ doc: doc-all
 
 # Deploy versioned documentation to target/site/
 doc-deploy version:
-    uv run python docs/scripts/deploy_docs.py {{ version }}
+    uv run --dev python docs/scripts/deploy_docs.py {{ version }}
 
 sync:
     uv sync --dev --all-extras --index-strategy=unsafe-best-match
