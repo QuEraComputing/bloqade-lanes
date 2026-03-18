@@ -3,66 +3,108 @@ use super::opcode::{
     LaneConstInstCode, MeasurementInstCode, QuantumGateInstCode, pack_opcode,
 };
 
+/// CPU/stack instructions (device code `0x00`, FLAIR-aligned).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CpuInstruction {
+    /// Push a 64-bit float constant. Opcode `0x0300`.
     ConstFloat(f64),
+    /// Push a 64-bit signed integer constant. Opcode `0x0200`.
     ConstInt(i64),
+    /// Pop and discard the top stack value. Opcode `0x0500`.
     Pop,
+    /// Duplicate the top stack value. Opcode `0x0400`.
     Dup,
+    /// Swap the top two stack values. Opcode `0x0600`.
     Swap,
+    /// Return from program. Opcode `0x6400`.
     Return,
+    /// Halt execution. Opcode `0xFF00`.
     Halt,
 }
 
+/// Lane-specific constant instructions (device code `0x0F`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneConstInstruction {
+    /// Push a packed [`LocationAddr`](crate::arch::addr::LocationAddr). Opcode `0x000F`.
     ConstLoc(u32),
+    /// Push a packed [`LaneAddr`](crate::arch::addr::LaneAddr) as (data0, data1). Opcode `0x010F`.
     ConstLane(u32, u32),
+    /// Push a packed [`ZoneAddr`](crate::arch::addr::ZoneAddr). Opcode `0x020F`.
     ConstZone(u32),
 }
 
+/// Atom arrangement instructions (device code `0x10`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtomArrangementInstruction {
+    /// Initial atom fill. Must be the first non-constant instruction. Opcode `0x0010`.
     InitialFill { arity: u32 },
+    /// Refill atoms at locations. Opcode `0x0110`.
     Fill { arity: u32 },
+    /// Move atoms along lanes. Opcode `0x0210`.
     Move { arity: u32 },
 }
 
+/// Quantum gate instructions (device code `0x11`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuantumGateInstruction {
+    /// Local R rotation on `arity` locations. Opcode `0x0011`.
     LocalR { arity: u32 },
+    /// Local Rz rotation on `arity` locations. Opcode `0x0111`.
     LocalRz { arity: u32 },
+    /// Global R rotation. Opcode `0x0211`.
     GlobalR,
+    /// Global Rz rotation. Opcode `0x0311`.
     GlobalRz,
+    /// Controlled-Z gate on a zone. Opcode `0x0411`.
     CZ,
 }
 
+/// Measurement instructions (device code `0x12`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasurementInstruction {
+    /// Initiate measurement on `arity` zones. Opcode `0x0012`.
     Measure { arity: u32 },
+    /// Block until measurement completes. Opcode `0x0112`.
     AwaitMeasure,
 }
 
+/// Array construction and indexing instructions (device code `0x13`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrayInstruction {
+    /// Construct an array. Opcode `0x0013`.
     NewArray { type_tag: u8, dim0: u16, dim1: u16 },
+    /// Index into an array. Opcode `0x0113`.
     GetItem { ndims: u16 },
 }
 
+/// Detector and observable setup instructions (device code `0x14`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectorObservableInstruction {
+    /// Build a detector record from an array. Opcode `0x0014`.
     SetDetector,
+    /// Build an observable record from an array. Opcode `0x0114`.
     SetObservable,
 }
 
+/// A single bytecode instruction.
+///
+/// Each variant wraps a device-specific instruction enum. The instruction
+/// can be encoded to a 16-byte binary word or printed as SST text assembly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Instruction {
+    /// CPU/stack operations (device `0x00`).
     Cpu(CpuInstruction),
+    /// Lane address constants (device `0x0F`).
     LaneConst(LaneConstInstruction),
+    /// Atom arrangement operations (device `0x10`).
     AtomArrangement(AtomArrangementInstruction),
+    /// Quantum gate operations (device `0x11`).
     QuantumGate(QuantumGateInstruction),
+    /// Measurement operations (device `0x12`).
     Measurement(MeasurementInstruction),
+    /// Array operations (device `0x13`).
     Array(ArrayInstruction),
+    /// Detector/observable setup (device `0x14`).
     DetectorObservable(DetectorObservableInstruction),
 }
 

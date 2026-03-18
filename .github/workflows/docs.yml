@@ -1,0 +1,78 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize the entire workflow (build + deploy) to prevent race conditions.
+# If two runs trigger concurrently (e.g. a push to main and a tag), the second
+# queues until the first finishes. This ensures the gh-pages checkout always
+# reflects the latest deployed state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.1"
+
+      - name: Download existing site from gh-pages
+        uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+          path: target/site
+        continue-on-error: true
+
+      # actions/checkout creates a .git/ directory inside target/site.
+      # Remove it so deploy-pages doesn't upload git metadata — the full
+      # site replacement only needs the built files, not the repo history.
+      - name: Remove git metadata from site checkout
+        run: rm -rf target/site/.git
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build versioned documentation
+        run: just doc-deploy ${{ steps.version.outputs.version }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

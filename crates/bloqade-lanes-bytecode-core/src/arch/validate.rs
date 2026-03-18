@@ -1,9 +1,18 @@
+//! Structural validation for [`ArchSpec`].
+//!
+//! Validates all structural rules in a single pass, collecting every error
+//! rather than failing fast. See [`ArchSpec::validate`].
+
 use std::collections::HashSet;
 
 use thiserror::Error;
 
 use super::types::ArchSpec;
 
+/// Error variants for arch spec structural validation.
+///
+/// Each variant corresponds to a specific validation rule. Multiple errors
+/// can be collected in a single validation pass.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ArchSpecError {
     #[error("zone 0 must include all words: missing word IDs {missing:?}")]
