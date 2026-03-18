@@ -105,50 +105,56 @@ def build_docs() -> None:
     log.info("Documentation build succeeded.")
 
 
+def load_and_validate_versions(versions_file: Path) -> list[dict[str, str]]:
+    """Load and validate versions.json, returning the list of version entries.
+
+    Raises SystemExit if versions.json exists but is corrupt or malformed.
+    Returns an empty list if the file does not exist (expected on first deploy).
+    """
+    if not versions_file.exists():
+        log.info("No existing versions.json found, creating new manifest.")
+        return []
+
+    try:
+        versions = json.loads(versions_file.read_text())
+    except json.JSONDecodeError as e:
+        log.error(
+            "Corrupt versions.json at %s: %s. "
+            "This requires manual inspection of the gh-pages branch.",
+            versions_file,
+            e,
+        )
+        sys.exit(1)
+
+    if not isinstance(versions, list):
+        log.error(
+            "versions.json at %s is not a JSON array (got %s). "
+            "This requires manual inspection of the gh-pages branch.",
+            versions_file,
+            type(versions).__name__,
+        )
+        sys.exit(1)
+
+    for i, entry in enumerate(versions):
+        if not isinstance(entry, dict) or "version" not in entry:
+            log.error(
+                "versions.json entry %d is malformed (expected object with "
+                '"version" key, got %r). '
+                "This requires manual inspection of the gh-pages branch.",
+                i,
+                entry,
+            )
+            sys.exit(1)
+
+    return versions
+
+
 def update_versions(
     versions_file: Path,
     version: str,
 ) -> list[dict[str, str]]:
-    """Load or create versions.json and add/update the given version.
-
-    Raises SystemExit if versions.json exists but is corrupt or malformed.
-    A missing versions.json is only expected on the very first deploy when
-    the gh-pages branch has been initialized but no versions exist yet.
-    """
-    if versions_file.exists():
-        try:
-            versions = json.loads(versions_file.read_text())
-        except json.JSONDecodeError as e:
-            log.error(
-                "Corrupt versions.json at %s: %s. "
-                "This requires manual inspection of the gh-pages branch.",
-                versions_file,
-                e,
-            )
-            sys.exit(1)
-        if not isinstance(versions, list):
-            log.error(
-                "versions.json at %s is not a JSON array (got %s). "
-                "This requires manual inspection of the gh-pages branch.",
-                versions_file,
-                type(versions).__name__,
-            )
-            sys.exit(1)
-
-        # Validate that each entry is a dict with a "version" key
-        for i, entry in enumerate(versions):
-            if not isinstance(entry, dict) or "version" not in entry:
-                log.error(
-                    "versions.json entry %d is malformed (expected object with "
-                    '"version" key, got %r). '
-                    "This requires manual inspection of the gh-pages branch.",
-                    i,
-                    entry,
-                )
-                sys.exit(1)
-    else:
-        log.info("No existing versions.json found, creating new manifest.")
-        versions = []
+    """Add or update a version entry in versions.json."""
+    versions = load_and_validate_versions(versions_file)
 
     # Remove existing entry for this version
     versions = [v for v in versions if v["version"] != version]
