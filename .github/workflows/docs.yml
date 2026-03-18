@@ -50,6 +50,12 @@ jobs:
           path: target/site
         continue-on-error: true
 
+      # actions/checkout creates a .git/ directory inside target/site.
+      # Remove it so deploy-pages doesn't upload git metadata — the full
+      # site replacement only needs the built files, not the repo history.
+      - name: Remove git metadata from site checkout
+        run: rm -rf target/site/.git
+
       - name: Determine version
         id: version
         run: |
