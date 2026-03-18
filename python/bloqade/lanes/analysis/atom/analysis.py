@@ -63,7 +63,9 @@ class AtomInterpreter(Forward[MoveExecution]):
 
     def __post_init__(self):
         super().__post_init__()
-        self.path_finder = PathFinder(self.arch_spec)
+        from bloqade.lanes.metrics import Metrics
+
+        self.path_finder = PathFinder(self.arch_spec, Metrics(arch_spec=self.arch_spec))
 
     def initialize(self) -> Self:
         self.current_state = AtomState()

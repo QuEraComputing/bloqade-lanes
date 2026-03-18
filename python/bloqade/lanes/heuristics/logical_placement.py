@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from itertools import starmap
+from typing import TYPE_CHECKING
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -15,6 +18,9 @@ from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 from bloqade.lanes.layout.path import PathFinder
+
+if TYPE_CHECKING:
+    from bloqade.lanes.metrics import Metrics
 
 
 @dataclass(frozen=True)
@@ -194,6 +200,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     K_candidates: int = 8
     large_cost: float = 1e9
     lane_move_overhead_cost: float = 0.0
+    _metrics: Metrics = field(init=False, repr=False)
     _path_finder: PathFinder = field(init=False, repr=False)
     _best_path_cache: dict[
         tuple[layout.LocationAddress, layout.LocationAddress],
@@ -203,7 +210,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
-        self._path_finder = PathFinder(self.arch_spec)
+        from bloqade.lanes.metrics import Metrics
+
+        self._metrics = Metrics(arch_spec=self.arch_spec)
+        self._path_finder = PathFinder(self.arch_spec, self._metrics)
 
     def _lane_sig(
         self, lane: layout.LaneAddress
@@ -267,10 +277,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return self._path_cost(self._best_path(addr0, addr1))
 
     def _get_lane_duration(self, lane: layout.LaneAddress) -> float:
-        return self.arch_spec.get_lane_duration_us(lane)
+        return self._metrics.get_lane_duration_us(lane)
 
     def _get_lane_cost(self, lane: layout.LaneAddress) -> float:
-        return self.arch_spec.get_lane_duration_cost(lane)
+        return self._metrics.get_lane_duration_cost(lane)
 
     def _best_path(
         self,

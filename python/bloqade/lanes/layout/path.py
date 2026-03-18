@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from itertools import product, starmap
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import rustworkx as nx
 
@@ -13,10 +15,14 @@ from .encoding import (
     WordLaneAddress,
 )
 
+if TYPE_CHECKING:
+    from bloqade.lanes.metrics import Metrics
+
 
 @dataclass(frozen=True)
 class PathFinder:
     spec: ArchSpec
+    metrics: Metrics
     site_graph: nx.PyDiGraph = field(init=False, default_factory=nx.PyDiGraph)
     """Graph representing all sites and edges as lanes."""
     physical_addresses: list[LocationAddress] = field(init=False, default_factory=list)
@@ -145,7 +151,7 @@ class PathFinder:
             path_heuristic: A tie-breaker over candidate shortest paths, evaluated on
                 the candidate location sequence.
             edge_weight: Optional edge weight function used for shortest-path costs.
-                Defaults to `ArchSpec.get_lane_duration_us` when not provided.
+                Defaults to `Metrics.get_lane_duration_us` when not provided.
 
         Returns:
             A tuple containing:
@@ -173,7 +179,7 @@ class PathFinder:
             return None
 
         if edge_weight is None:
-            resolved_edge_weight = self.spec.get_lane_duration_us
+            resolved_edge_weight = self.metrics.get_lane_duration_us
         else:
             resolved_edge_weight = edge_weight
 
