@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/QuEraComputing/bloqade-lanes/main/docs/arch/archspec-schema.json",
+  "$id": "https://raw.githubusercontent.com/QuEraComputing/bloqade-lanes/main/docs/src/arch/archspec-schema.json",
   "title": "ArchSpec",
   "description": "Architecture specification for the Bloqade quantum device. Defines the physical geometry (words, sites, grids), transport buses (site and word), logical zones, and optional AOD transport paths.",
   "type": "object",

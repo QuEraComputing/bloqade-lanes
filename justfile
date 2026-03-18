@@ -1,3 +1,6 @@
+# Pinned tool versions (single source of truth for CI and local builds)
+mdbook_version := "0.4.36"
+
 # Default recipe
 default:
     @just --list
@@ -54,11 +57,31 @@ simulator-device-demo:
 
 demo: demo-msd demo-pipeline pipeline-details simulator-device-demo
 
-doc:
-    mkdocs serve
+# Install mdBook at the pinned version
+install-mdbook:
+    cargo install mdbook@{{ mdbook_version }}
 
-doc-build:
-    mkdocs build
+# Build Rust API documentation
+doc-rust:
+    cargo doc --no-deps -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli
+
+# Build the mdBook documentation site
+doc-book: install-mdbook
+    mdbook build
+
+# Build complete documentation site (book + Rust API at /api/)
+doc-all: doc-book doc-rust
+    rm -rf target/book/api
+    cp -r target/doc target/book/api
+    @echo "Site: target/book/ (open target/book/index.html)"
+
+# Build and open documentation site in browser
+doc: doc-all
+    open target/book/index.html
+
+# Deploy versioned documentation to target/site/
+doc-deploy version:
+    uv run --dev python docs/scripts/deploy_docs.py {{ version }}
 
 sync:
     uv sync --dev --all-extras --index-strategy=unsafe-best-match

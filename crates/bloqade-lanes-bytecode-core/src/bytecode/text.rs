@@ -1,3 +1,13 @@
+//! SST text assembly format — human-readable parse and print for bytecode programs.
+//!
+//! The text format uses one instruction per line with a `.version` directive:
+//! ```text
+//! .version 1.0
+//! const_loc 0x00010002
+//! initial_fill 1
+//! halt
+//! ```
+
 use std::fmt;
 
 use super::instruction::{
