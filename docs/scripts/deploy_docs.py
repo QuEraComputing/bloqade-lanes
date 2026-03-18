@@ -8,6 +8,17 @@ Builds the docs and arranges them into a versioned directory layout:
 
 The CI workflow calls this, then deploys target/site/ to GitHub Pages.
 
+Prerequisites:
+    The gh-pages branch must exist with a valid versions.json (empty array
+    is fine). To initialize it for the first time:
+
+        git checkout --orphan gh-pages
+        echo '[]' > versions.json
+        git add versions.json
+        git commit -m "chore: initialize gh-pages with empty versions.json"
+        git push origin gh-pages
+        git checkout -
+
 Examples:
     uv run python docs/scripts/deploy_docs.py dev               # main branch
     uv run python docs/scripts/deploy_docs.py v0.5.0            # tagged release
@@ -44,16 +55,31 @@ def update_versions(
     version: str,
     base_url: str,
 ) -> list[dict[str, str]]:
-    """Load or create versions.json and add/update the given version."""
+    """Load or create versions.json and add/update the given version.
+
+    Raises SystemExit if versions.json exists but is corrupt or malformed.
+    A missing versions.json is only expected on the very first deploy when
+    the gh-pages branch has been initialized but no versions exist yet.
+    """
     if versions_file.exists():
         try:
             versions = json.loads(versions_file.read_text())
-            if not isinstance(versions, list):
-                log.warning("versions.json is not a list, resetting: %s", versions_file)
-                versions = []
         except json.JSONDecodeError as e:
-            log.warning("Corrupt versions.json, resetting: %s", e)
-            versions = []
+            log.error(
+                "Corrupt versions.json at %s: %s. "
+                "This requires manual inspection of the gh-pages branch.",
+                versions_file,
+                e,
+            )
+            sys.exit(1)
+        if not isinstance(versions, list):
+            log.error(
+                "versions.json at %s is not a JSON array (got %s). "
+                "This requires manual inspection of the gh-pages branch.",
+                versions_file,
+                type(versions).__name__,
+            )
+            sys.exit(1)
     else:
         log.info("No existing versions.json found, creating new manifest.")
         versions = []
