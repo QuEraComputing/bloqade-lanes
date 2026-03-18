@@ -33,6 +33,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.version import Version
+
 log = logging.getLogger("deploy_docs")
 
 
@@ -90,10 +92,10 @@ def update_versions(
     # Add new entry
     versions.insert(0, {"version": version, "url": f"{base_url}/{version}/"})
 
-    # Sort: releases in reverse order, then dev last
+    # Sort: releases in descending semver order, then dev last
     releases = sorted(
         [v for v in versions if v["version"] != "dev"],
-        key=lambda v: v["version"],
+        key=lambda v: Version(v["version"].lstrip("v")),
         reverse=True,
     )
     dev = [v for v in versions if v["version"] == "dev"]
