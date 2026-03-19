@@ -5,7 +5,6 @@ from kirin.interp import InterpreterError
 
 from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.path import PathFinder
 
 
 @dataclass(frozen=True)
@@ -76,7 +75,7 @@ class AtomStateData:
     def apply_moves(
         self,
         lanes: tuple[LaneAddress, ...],
-        path_finder: PathFinder,
+        arch_spec: ArchSpec,
     ):
         qubit_to_locations = self.qubit_to_locations.copy()
         locations_to_qubit = self.locations_to_qubit.copy()
@@ -85,9 +84,7 @@ class AtomStateData:
         prev_lanes: dict[int, LaneAddress] = {}
 
         for lane in lanes:
-            src, dst = path_finder.get_endpoints(lane)
-            if src is None or dst is None:
-                return None
+            src, dst = arch_spec.get_endpoints(lane)
 
             qubit = locations_to_qubit.pop(src, None)
 
@@ -133,7 +130,6 @@ class AtomStateData:
                 continue
 
             blockaded_location = arch_spec.get_blockaded_location(address)
-            arch_spec.get_blockaded_location(address)
             if blockaded_location is None:
                 unpaired.append(qubit_index)
                 continue

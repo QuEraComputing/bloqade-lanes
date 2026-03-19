@@ -1,7 +1,6 @@
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.atom import atom_state_data
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout.path import PathFinder
 
 
 def test_hash():
@@ -64,10 +63,10 @@ def test_apply_moves():
         move_count={},
     )
 
-    path_finder = PathFinder(logical.get_arch_spec())
+    arch_spec = logical.get_arch_spec()
 
     new_atom_state = atom_state.apply_moves(
-        lanes=(layout.SiteLaneAddress(0, 0, 0),), path_finder=path_finder
+        lanes=(layout.SiteLaneAddress(0, 0, 0),), arch_spec=arch_spec
     )
 
     expected_atom_state = atom_state_data.AtomStateData(
@@ -104,11 +103,11 @@ def test_apply_moves_with_collision():
         move_count={},
     )
 
-    path_finder = PathFinder(logical.get_arch_spec())
+    arch_spec = logical.get_arch_spec()
 
     new_atom_state = atom_state.apply_moves(
         lanes=(lane_address := layout.SiteLaneAddress(0, 0, 0),),
-        path_finder=path_finder,
+        arch_spec=arch_spec,
     )
 
     expected_atom_state = atom_state_data.AtomStateData(
