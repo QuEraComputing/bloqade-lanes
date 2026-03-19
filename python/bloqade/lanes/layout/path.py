@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import product, starmap
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 
 import rustworkx as nx
 
@@ -14,15 +14,13 @@ from .encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
-
-if TYPE_CHECKING:
-    from bloqade.lanes.metrics import Metrics
+from .move_metric import MoveMetricCalculator
 
 
 @dataclass(frozen=True)
 class PathFinder:
     spec: ArchSpec
-    metrics: Metrics
+    metrics: MoveMetricCalculator
     site_graph: nx.PyDiGraph = field(init=False, default_factory=nx.PyDiGraph)
     """Graph representing all sites and edges as lanes."""
     physical_addresses: list[LocationAddress] = field(init=False, default_factory=list)

@@ -20,7 +20,7 @@ from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to
 from bloqade.lanes.layout.path import PathFinder
 
 if TYPE_CHECKING:
-    from bloqade.lanes.metrics import Metrics
+    from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 
 
 @dataclass(frozen=True)
@@ -200,7 +200,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     K_candidates: int = 8
     large_cost: float = 1e9
     lane_move_overhead_cost: float = 0.0
-    _metrics: Metrics = field(init=False, repr=False)
+    _metrics: MoveMetricCalculator = field(init=False, repr=False)
     _path_finder: PathFinder = field(init=False, repr=False)
     _best_path_cache: dict[
         tuple[layout.LocationAddress, layout.LocationAddress],
@@ -210,9 +210,9 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
-        from bloqade.lanes.metrics import Metrics
+        from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 
-        self._metrics = Metrics(arch_spec=self.arch_spec)
+        self._metrics = MoveMetricCalculator(arch_spec=self.arch_spec)
         self._path_finder = PathFinder(self.arch_spec, self._metrics)
 
     def _lane_sig(
