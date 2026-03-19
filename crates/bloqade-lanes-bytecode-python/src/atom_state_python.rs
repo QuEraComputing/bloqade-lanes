@@ -44,18 +44,18 @@ impl PyAtomStateData {
             locations_to_qubit: locations_to_qubit
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(loc, qubit)| (loc.inner.encode(), qubit))
+                .map(|(loc, qubit)| (loc.inner, qubit))
                 .collect(),
             qubit_to_locations: qubit_to_locations
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(qubit, loc)| (qubit, loc.inner.encode()))
+                .map(|(qubit, loc)| (qubit, loc.inner))
                 .collect(),
             collision: collision.unwrap_or_default(),
             prev_lanes: prev_lanes
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(qubit, lane)| (qubit, lane.inner.encode_u64()))
+                .map(|(qubit, lane)| (qubit, lane.inner))
                 .collect(),
             move_count: move_count.unwrap_or_default(),
         };
@@ -91,14 +91,7 @@ impl PyAtomStateData {
         self.inner
             .locations_to_qubit
             .iter()
-            .map(|(&encoded, &qubit)| {
-                (
-                    PyLocationAddr {
-                        inner: LocationAddr::decode(encoded),
-                    },
-                    qubit,
-                )
-            })
+            .map(|(&loc, &qubit)| (PyLocationAddr { inner: loc }, qubit))
             .collect()
     }
 
@@ -108,14 +101,7 @@ impl PyAtomStateData {
         self.inner
             .qubit_to_locations
             .iter()
-            .map(|(&qubit, &encoded)| {
-                (
-                    qubit,
-                    PyLocationAddr {
-                        inner: LocationAddr::decode(encoded),
-                    },
-                )
-            })
+            .map(|(&qubit, &loc)| (qubit, PyLocationAddr { inner: loc }))
             .collect()
     }
 
@@ -131,14 +117,7 @@ impl PyAtomStateData {
         self.inner
             .prev_lanes
             .iter()
-            .map(|(&qubit, &encoded)| {
-                (
-                    qubit,
-                    PyLaneAddr {
-                        inner: LaneAddr::decode_u64(encoded),
-                    },
-                )
-            })
+            .map(|(&qubit, &lane)| (qubit, PyLaneAddr { inner: lane }))
             .collect()
     }
 

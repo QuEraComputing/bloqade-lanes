@@ -232,16 +232,22 @@ impl ArchSpec {
 
     /// Get the CZ pair (blockaded location) for a given location.
     ///
-    /// Returns `Some(LocationAddr)` if the word at `loc.word_id` has CZ data
-    /// and site `loc.site_id` has a partner, otherwise `None`.
+    /// Returns `Some(LocationAddr)` if the word at `loc.word_id` has CZ data,
+    /// site `loc.site_id` has a partner, and the partner is a valid location.
+    /// Returns `None` otherwise.
     pub fn get_blockaded_location(&self, loc: &LocationAddr) -> Option<LocationAddr> {
         let word = self.word_by_id(loc.word_id)?;
         let cz_pairs = word.has_cz.as_ref()?;
         let pair = cz_pairs.get(loc.site_id as usize)?;
-        Some(LocationAddr {
+        let result = LocationAddr {
             word_id: pair[0],
             site_id: pair[1],
-        })
+        };
+        // Validate the CZ pair target is in range
+        if self.check_location(&result).is_some() {
+            return None;
+        }
+        Some(result)
     }
 
     // -- Address validation --
