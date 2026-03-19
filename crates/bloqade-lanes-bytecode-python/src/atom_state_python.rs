@@ -9,6 +9,45 @@ use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
 use bloqade_lanes_bytecode_core::atom_state::AtomStateData;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr, PyZoneAddr};
+use crate::validation::validate_field;
+
+/// Validate a HashMap with i64 keys, converting to u32.
+fn validate_i64_key_map<V>(name: &str, map: HashMap<i64, V>) -> PyResult<HashMap<u32, V>> {
+    map.into_iter()
+        .map(|(k, v)| {
+            let k = validate_field::<u32>(name, k)?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
+/// Validate a HashMap with i64 values, converting to u32.
+fn validate_i64_value_map<K: Eq + std::hash::Hash>(
+    name: &str,
+    map: HashMap<K, i64>,
+) -> PyResult<HashMap<K, u32>> {
+    map.into_iter()
+        .map(|(k, v)| {
+            let v = validate_field::<u32>(name, v)?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
+/// Validate a HashMap with i64 keys and i64 values, converting both to u32.
+fn validate_i64_kv_map(
+    key_name: &str,
+    value_name: &str,
+    map: HashMap<i64, i64>,
+) -> PyResult<HashMap<u32, u32>> {
+    map.into_iter()
+        .map(|(k, v)| {
+            let k = validate_field::<u32>(key_name, k)?;
+            let v = validate_field::<u32>(value_name, v)?;
+            Ok((k, v))
+        })
+        .collect()
+}
 
 /// Tracks qubit-to-location mappings as atoms move through the architecture.
 #[pyclass(name = "AtomStateData", frozen, module = "bloqade.lanes.bytecode")]
@@ -34,43 +73,54 @@ impl PyAtomStateData {
         move_count = None,
     ))]
     fn new(
-        locations_to_qubit: Option<HashMap<PyLocationAddr, u32>>,
-        qubit_to_locations: Option<HashMap<u32, PyLocationAddr>>,
-        collision: Option<HashMap<u32, u32>>,
-        prev_lanes: Option<HashMap<u32, PyLaneAddr>>,
-        move_count: Option<HashMap<u32, u32>>,
-    ) -> Self {
+        locations_to_qubit: Option<HashMap<PyLocationAddr, i64>>,
+        qubit_to_locations: Option<HashMap<i64, PyLocationAddr>>,
+        collision: Option<HashMap<i64, i64>>,
+        prev_lanes: Option<HashMap<i64, PyLaneAddr>>,
+        move_count: Option<HashMap<i64, i64>>,
+    ) -> PyResult<Self> {
+        let locations_to_qubit =
+            validate_i64_value_map("qubit_id", locations_to_qubit.unwrap_or_default())?;
+        let qubit_to_locations =
+            validate_i64_key_map("qubit_id", qubit_to_locations.unwrap_or_default())?;
+        let collision = validate_i64_kv_map(
+            "qubit_id",
+            "collided_qubit_id",
+            collision.unwrap_or_default(),
+        )?;
+        let prev_lanes = validate_i64_key_map("qubit_id", prev_lanes.unwrap_or_default())?;
+        let move_count =
+            validate_i64_kv_map("qubit_id", "move_count", move_count.unwrap_or_default())?;
+
         let inner = AtomStateData {
             locations_to_qubit: locations_to_qubit
-                .unwrap_or_default()
                 .into_iter()
                 .map(|(loc, qubit)| (loc.inner, qubit))
                 .collect(),
             qubit_to_locations: qubit_to_locations
-                .unwrap_or_default()
                 .into_iter()
                 .map(|(qubit, loc)| (qubit, loc.inner))
                 .collect(),
-            collision: collision.unwrap_or_default(),
+            collision,
             prev_lanes: prev_lanes
-                .unwrap_or_default()
                 .into_iter()
                 .map(|(qubit, lane)| (qubit, lane.inner))
                 .collect(),
-            move_count: move_count.unwrap_or_default(),
+            move_count,
         };
-        Self { inner }
+        Ok(Self { inner })
     }
 
     /// Create a new state from a mapping of qubit ids to locations.
     #[staticmethod]
     #[pyo3(signature = (locations))]
-    fn from_qubit_locations(locations: HashMap<u32, PyLocationAddr>) -> Self {
-        let locs: Vec<(u32, LocationAddr)> = locations
+    fn from_qubit_locations(locations: HashMap<i64, PyLocationAddr>) -> PyResult<Self> {
+        let validated = validate_i64_key_map("qubit_id", locations)?;
+        let locs: Vec<(u32, LocationAddr)> = validated
             .into_iter()
             .map(|(qubit, loc)| (qubit, loc.inner))
             .collect();
-        Self::from_rs(AtomStateData::from_locations(&locs))
+        Ok(Self::from_rs(AtomStateData::from_locations(&locs)))
     }
 
     /// Create a new state from a list of locations (qubit ids are 0, 1, 2, ...).
@@ -128,8 +178,9 @@ impl PyAtomStateData {
     }
 
     /// Add atoms at new locations. Returns a new state.
-    fn add_atoms(&self, locations: HashMap<u32, PyLocationAddr>) -> PyResult<Self> {
-        let locs: Vec<(u32, LocationAddr)> = locations
+    fn add_atoms(&self, locations: HashMap<i64, PyLocationAddr>) -> PyResult<Self> {
+        let validated = validate_i64_key_map("qubit_id", locations)?;
+        let locs: Vec<(u32, LocationAddr)> = validated
             .into_iter()
             .map(|(qubit, loc)| (qubit, loc.inner))
             .collect();

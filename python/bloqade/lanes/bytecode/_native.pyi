@@ -764,7 +764,14 @@ class AtomStateData:
         collision: Optional[dict[int, int]] = None,
         prev_lanes: Optional[dict[int, LaneAddress]] = None,
         move_count: Optional[dict[int, int]] = None,
-    ) -> None: ...
+    ) -> None:
+        """All integer arguments are validated to fit in u32 range.
+
+        Raises:
+            ValueError: If any qubit id or move count is negative or exceeds u32 max.
+        """
+        ...
+
     @staticmethod
     def from_qubit_locations(locations: dict[int, LocationAddress]) -> AtomStateData:
         """Create from a mapping of qubit ids to locations."""
@@ -786,7 +793,12 @@ class AtomStateData:
     @property
     def move_count(self) -> dict[int, int]: ...
     def add_atoms(self, locations: dict[int, LocationAddress]) -> AtomStateData:
-        """Add atoms at new locations. Returns a new state."""
+        """Add atoms at new locations. Returns a new state.
+
+        Raises:
+            ValueError: If any qubit id is negative or exceeds u32 max.
+            RuntimeError: If a qubit already exists or a location is occupied.
+        """
         ...
 
     def apply_moves(
