@@ -2,6 +2,8 @@
 //!
 //! [`AtomStateData`] is an immutable state object that tracks where qubits
 //! are located in the architecture as atoms move through transport lanes.
+//! It is the core data structure used by the IR analysis pipeline to simulate
+//! atom movement, detect collisions, and identify CZ gate pairings.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -11,18 +13,28 @@ use crate::arch::types::ArchSpec;
 
 /// Tracks qubit-to-location mappings as atoms move through the architecture.
 ///
-/// This is an immutable value type: mutation methods return a new instance.
+/// This is an immutable value type: all mutation methods (`add_atoms`,
+/// `apply_moves`) return a new instance rather than modifying in place.
+///
+/// The two primary maps (`locations_to_qubit` and `qubit_to_locations`) are
+/// kept in sync as a bidirectional index. When a move causes two atoms to
+/// occupy the same site, both are removed from the location maps and recorded
+/// in `collision`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AtomStateData {
-    /// Mapping from location to qubit id.
+    /// Reverse index: given a physical location, which qubit (if any) is there?
     pub locations_to_qubit: HashMap<LocationAddr, u32>,
-    /// Mapping from qubit id to its current location.
+    /// Forward index: given a qubit id, where is it currently located?
     pub qubit_to_locations: HashMap<u32, LocationAddr>,
-    /// Mapping from qubit id to another qubit id it collided with.
+    /// Qubits that collided during the most recent `apply_moves`.
+    /// Key is the moving qubit, value is the qubit it displaced.
+    /// Collided qubits are removed from both location maps.
     pub collision: HashMap<u32, u32>,
-    /// Mapping from qubit id to the lane it took to reach this state.
+    /// The lane each qubit used in the most recent `apply_moves`.
+    /// Only populated for qubits that moved in the last step.
     pub prev_lanes: HashMap<u32, LaneAddr>,
-    /// Mapping from qubit id to number of moves.
+    /// Cumulative number of moves each qubit has undergone across
+    /// all `apply_moves` calls in the state's history.
     pub move_count: HashMap<u32, u32>,
 }
 
@@ -79,7 +91,7 @@ impl Hash for AtomStateData {
 }
 
 impl AtomStateData {
-    /// Create a new empty state.
+    /// Create an empty state with no qubits or locations.
     pub fn new() -> Self {
         Self {
             locations_to_qubit: HashMap::new(),
@@ -90,7 +102,10 @@ impl AtomStateData {
         }
     }
 
-    /// Create a state from a mapping of qubit ids to locations.
+    /// Create a state from a list of `(qubit_id, location)` pairs.
+    ///
+    /// Builds both the forward (qubit → location) and reverse (location → qubit)
+    /// maps. All other fields (collision, prev_lanes, move_count) are empty.
     pub fn from_locations(locations: &[(u32, LocationAddr)]) -> Self {
         let mut locations_to_qubit = HashMap::new();
         let mut qubit_to_locations = HashMap::new();
@@ -109,8 +124,14 @@ impl AtomStateData {
         }
     }
 
-    /// Add atoms at new locations. Returns `Err` if any qubit already exists
-    /// or any location is already occupied.
+    /// Add atoms at new locations, returning a new state.
+    ///
+    /// Each `(qubit_id, location)` pair is added to the bidirectional maps.
+    /// Returns `Err` if any qubit id already exists in this state or any
+    /// location is already occupied by another qubit.
+    ///
+    /// The returned state inherits no collision, prev_lanes, or move_count
+    /// data — those fields are reset to empty.
     pub fn add_atoms(&self, locations: &[(u32, LocationAddr)]) -> Result<Self, &'static str> {
         let mut qubit_to_locations = self.qubit_to_locations.clone();
         let mut locations_to_qubit = self.locations_to_qubit.clone();
@@ -135,9 +156,17 @@ impl AtomStateData {
         })
     }
 
-    /// Apply lane moves and return a new state.
+    /// Apply a sequence of lane moves and return the resulting state.
     ///
-    /// Returns `None` if a lane cannot be resolved to endpoints.
+    /// For each lane, resolves its source and destination locations via
+    /// [`ArchSpec::lane_endpoints`]. If a qubit exists at the source, it is
+    /// moved to the destination. If the destination is already occupied,
+    /// both qubits are removed from the location maps and recorded in
+    /// `collision`. Lanes whose source has no qubit are skipped.
+    ///
+    /// Returns `None` if any lane cannot be resolved to endpoints (invalid
+    /// bus, word, or site). The `prev_lanes` field is reset to contain only
+    /// the lanes used in this call; `move_count` is accumulated.
     pub fn apply_moves(&self, lanes: &[LaneAddr], arch_spec: &ArchSpec) -> Option<Self> {
         let mut qubit_to_locations = self.qubit_to_locations.clone();
         let mut locations_to_qubit = self.locations_to_qubit.clone();
@@ -175,16 +204,22 @@ impl AtomStateData {
         })
     }
 
-    /// Look up the qubit at a given location.
+    /// Look up which qubit (if any) occupies the given location.
     pub fn get_qubit(&self, location: &LocationAddr) -> Option<u32> {
         self.locations_to_qubit.get(location).copied()
     }
 
-    /// Find CZ control/target pairs in a zone.
+    /// Find CZ gate control/target qubit pairings within a zone.
     ///
-    /// Returns `(controls, targets, unpaired)` where each control qubit
-    /// has a corresponding target qubit at the blockaded location.
-    /// Results are sorted by qubit id for deterministic ordering.
+    /// Iterates over all qubits whose current location is in the given zone
+    /// and checks whether the CZ pair site (via [`ArchSpec::get_blockaded_location`])
+    /// is also occupied. If both sites are occupied, the qubits form a
+    /// control/target pair. If the pair site is empty or doesn't exist, the
+    /// qubit is unpaired.
+    ///
+    /// Returns `(controls, targets, unpaired)` where `controls[i]` and
+    /// `targets[i]` are paired for CZ. Results are sorted by qubit id for
+    /// deterministic ordering. Returns `None` if the zone id is invalid.
     pub fn get_qubit_pairing(
         &self,
         zone: &ZoneAddr,

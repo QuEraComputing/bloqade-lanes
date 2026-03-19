@@ -50,6 +50,10 @@ fn validate_i64_kv_map(
 }
 
 /// Tracks qubit-to-location mappings as atoms move through the architecture.
+///
+/// Immutable value type: mutation methods return new instances. Backed by a
+/// Rust implementation for performance. Used by the IR analysis pipeline to
+/// simulate atom movement, detect collisions, and identify CZ gate pairings.
 #[pyclass(name = "AtomStateData", frozen, module = "bloqade.lanes.bytecode")]
 #[derive(Clone)]
 pub struct PyAtomStateData {
@@ -111,7 +115,10 @@ impl PyAtomStateData {
         Ok(Self { inner })
     }
 
-    /// Create a new state from a mapping of qubit ids to locations.
+    /// Create a state from a mapping of qubit ids to locations.
+    ///
+    /// Collision, prev_lanes, and move_count are initialized to empty.
+    /// Qubit ids are validated to fit in u32 range.
     #[staticmethod]
     #[pyo3(signature = (locations))]
     fn from_qubit_locations(locations: HashMap<i64, PyLocationAddr>) -> PyResult<Self> {
@@ -123,7 +130,10 @@ impl PyAtomStateData {
         Ok(Self::from_rs(AtomStateData::from_locations(&locs)))
     }
 
-    /// Create a new state from a list of locations (qubit ids are 0, 1, 2, ...).
+    /// Create a state from an ordered list of locations.
+    ///
+    /// Qubit ids are assigned sequentially starting from 0 based on
+    /// list position. Collision, prev_lanes, and move_count are empty.
     #[staticmethod]
     #[pyo3(signature = (locations))]
     fn from_location_list(locations: Vec<PyLocationAddr>) -> Self {
@@ -177,7 +187,10 @@ impl PyAtomStateData {
         self.inner.move_count.clone()
     }
 
-    /// Add atoms at new locations. Returns a new state.
+    /// Add atoms at new locations, returning a new state.
+    ///
+    /// Qubit ids are validated to fit in u32 range. Raises RuntimeError
+    /// if any qubit id already exists or any location is already occupied.
     fn add_atoms(&self, locations: HashMap<i64, PyLocationAddr>) -> PyResult<Self> {
         let validated = validate_i64_key_map("qubit_id", locations)?;
         let locs: Vec<(u32, LocationAddr)> = validated
@@ -190,7 +203,12 @@ impl PyAtomStateData {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Apply lane moves and return a new state, or None if a lane is invalid.
+    /// Apply a sequence of lane moves and return the resulting state.
+    ///
+    /// Each lane is resolved to source/destination locations via the arch spec.
+    /// Qubits at source locations are moved to destinations. If a destination
+    /// is already occupied, both qubits are recorded as collided and removed
+    /// from the location maps. Returns None if any lane is invalid.
     fn apply_moves(&self, lanes: Vec<PyLaneAddr>, arch_spec: &PyArchSpec) -> Option<Self> {
         let lane_addrs: Vec<LaneAddr> = lanes.iter().map(|l| l.inner).collect();
         self.inner
@@ -198,12 +216,19 @@ impl PyAtomStateData {
             .map(Self::from_rs)
     }
 
-    /// Look up the qubit at a given location.
+    /// Look up which qubit (if any) occupies the given location.
+    ///
+    /// Returns the qubit id, or None if the location is empty.
     fn get_qubit(&self, location: &PyLocationAddr) -> Option<u32> {
         self.inner.get_qubit(&location.inner)
     }
 
-    /// Find CZ control/target pairs in a zone.
+    /// Find CZ gate control/target qubit pairings within a zone.
+    ///
+    /// Returns (controls, targets, unpaired) where controls[i] and targets[i]
+    /// are paired for a CZ gate. Unpaired qubits are those in the zone whose
+    /// CZ pair site is empty or doesn't exist. Returns None if the zone is
+    /// invalid. Results are sorted by qubit id for deterministic ordering.
     fn get_qubit_pairing(
         &self,
         zone_address: &PyZoneAddr,

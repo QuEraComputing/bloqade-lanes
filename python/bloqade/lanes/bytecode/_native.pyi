@@ -747,14 +747,29 @@ class ArchSpec:
 class AtomStateData:
     """Tracks qubit-to-location mappings as atoms move through the architecture.
 
-    This is an immutable value type backed by a Rust implementation.
+    Immutable value type backed by a Rust implementation. Used by the IR
+    analysis pipeline to simulate atom movement, detect collisions, and
+    identify CZ gate pairings.
+
+    All mutation methods (``add_atoms``, ``apply_moves``) return new instances.
+    The two primary maps are kept as a bidirectional index: given a location
+    you can find the qubit, and given a qubit you can find the location. When
+    a move causes two atoms to occupy the same site, both are removed from the
+    location maps and recorded in ``collision``.
+
+    All integer arguments are validated to fit in u32 range (0 to 2^32 - 1).
 
     Args:
-        locations_to_qubit: Mapping from location to qubit id.
-        qubit_to_locations: Mapping from qubit id to location.
-        collision: Mapping from qubit id to collided qubit id.
-        prev_lanes: Mapping from qubit id to lane used.
-        move_count: Mapping from qubit id to number of moves.
+        locations_to_qubit (Optional[dict[LocationAddress, int]]): Reverse index
+            from location to qubit id, default = None (empty).
+        qubit_to_locations (Optional[dict[int, LocationAddress]]): Forward index
+            from qubit id to location, default = None (empty).
+        collision (Optional[dict[int, int]]): Collided qubits — key is the moving
+            qubit, value is the qubit it displaced, default = None (empty).
+        prev_lanes (Optional[dict[int, LaneAddress]]): Lane each qubit used in
+            the most recent move step, default = None (empty).
+        move_count (Optional[dict[int, int]]): Cumulative move count per qubit,
+            default = None (empty).
     """
 
     def __init__(
@@ -764,60 +779,159 @@ class AtomStateData:
         collision: Optional[dict[int, int]] = None,
         prev_lanes: Optional[dict[int, LaneAddress]] = None,
         move_count: Optional[dict[int, int]] = None,
-    ) -> None:
-        """All integer arguments are validated to fit in u32 range.
+    ) -> None: ...
+    @staticmethod
+    def from_qubit_locations(locations: dict[int, LocationAddress]) -> AtomStateData:
+        """Create a state from a mapping of qubit ids to locations.
+
+        Builds both forward and reverse location maps. Collision, prev_lanes,
+        and move_count are initialized to empty.
+
+        Args:
+            locations (dict[int, LocationAddress]): Mapping from qubit id to
+                its initial location.
+
+        Returns:
+            AtomStateData: A new state with the given qubit placements.
 
         Raises:
-            ValueError: If any qubit id or move count is negative or exceeds u32 max.
+            ValueError: If any qubit id is negative or exceeds u32 max.
         """
         ...
 
     @staticmethod
-    def from_qubit_locations(locations: dict[int, LocationAddress]) -> AtomStateData:
-        """Create from a mapping of qubit ids to locations."""
-        ...
-
-    @staticmethod
     def from_location_list(locations: list[LocationAddress]) -> AtomStateData:
-        """Create from a list of locations (qubit ids are 0, 1, 2, ...)."""
+        """Create a state from an ordered list of locations.
+
+        Qubit ids are assigned sequentially starting from 0 based on list
+        position (i.e. ``locations[0]`` gets qubit 0, ``locations[1]`` gets
+        qubit 1, etc.).
+
+        Args:
+            locations (list[LocationAddress]): Ordered list of initial qubit
+                locations.
+
+        Returns:
+            AtomStateData: A new state with sequential qubit ids.
+        """
         ...
 
     @property
-    def locations_to_qubit(self) -> dict[LocationAddress, int]: ...
+    def locations_to_qubit(self) -> dict[LocationAddress, int]:
+        """Reverse index: location to qubit id occupying that site."""
+        ...
+
     @property
-    def qubit_to_locations(self) -> dict[int, LocationAddress]: ...
+    def qubit_to_locations(self) -> dict[int, LocationAddress]:
+        """Forward index: qubit id to current physical location."""
+        ...
+
     @property
-    def collision(self) -> dict[int, int]: ...
+    def collision(self) -> dict[int, int]:
+        """Qubits that collided in the last ``apply_moves`` call.
+
+        Key is the moving qubit, value is the qubit it displaced. Both
+        qubits are removed from the location maps when a collision occurs.
+        """
+        ...
+
     @property
-    def prev_lanes(self) -> dict[int, LaneAddress]: ...
+    def prev_lanes(self) -> dict[int, LaneAddress]:
+        """Lane used by each qubit in the most recent ``apply_moves`` call.
+
+        Only contains entries for qubits that actually moved in the last step.
+        """
+        ...
+
     @property
-    def move_count(self) -> dict[int, int]: ...
+    def move_count(self) -> dict[int, int]:
+        """Cumulative move count for each qubit across all ``apply_moves`` calls."""
+        ...
+
     def add_atoms(self, locations: dict[int, LocationAddress]) -> AtomStateData:
-        """Add atoms at new locations. Returns a new state.
+        """Add atoms at new locations, returning a new state.
+
+        The new state inherits the current location maps plus the new atoms.
+        Collision, prev_lanes, and move_count are reset to empty.
+
+        Args:
+            locations (dict[int, LocationAddress]): Mapping from qubit id to
+                location for the new atoms.
+
+        Returns:
+            AtomStateData: A new state with the additional atoms placed.
 
         Raises:
             ValueError: If any qubit id is negative or exceeds u32 max.
-            RuntimeError: If a qubit already exists or a location is occupied.
+            RuntimeError: If a qubit id already exists in this state or a
+                location is already occupied.
         """
         ...
 
     def apply_moves(
         self, lanes: list[LaneAddress], arch_spec: ArchSpec
     ) -> Optional[AtomStateData]:
-        """Apply lane moves and return a new state."""
+        """Apply a sequence of lane moves and return the resulting state.
+
+        Each lane is resolved to source/destination locations via the arch
+        spec. Qubits at source locations are moved to their destinations.
+        If a destination is already occupied, both qubits are recorded as
+        collided and removed from the location maps. Lanes whose source
+        location has no qubit are silently skipped.
+
+        Args:
+            lanes (list[LaneAddress]): Sequence of lane addresses to apply.
+            arch_spec (ArchSpec): Architecture specification for resolving
+                lane endpoints.
+
+        Returns:
+            Optional[AtomStateData]: A new state reflecting the moves, or
+                ``None`` if any lane address is invalid.
+        """
         ...
 
     def get_qubit(self, location: LocationAddress) -> Optional[int]:
-        """Look up the qubit at a given location."""
+        """Look up which qubit (if any) occupies the given location.
+
+        Args:
+            location (LocationAddress): The physical location to query.
+
+        Returns:
+            Optional[int]: The qubit id at that location, or ``None`` if empty.
+        """
         ...
 
     def get_qubit_pairing(
         self, zone_address: ZoneAddress, arch_spec: ArchSpec
     ) -> Optional[tuple[list[int], list[int], list[int]]]:
-        """Find CZ control/target pairs in a zone."""
+        """Find CZ gate control/target qubit pairings within a zone.
+
+        For each qubit in the zone, checks whether the CZ pair site (via
+        the arch spec's blockaded location data) is also occupied. If both
+        sites have qubits, they form a control/target pair.
+
+        Args:
+            zone_address (ZoneAddress): The zone to search for pairings.
+            arch_spec (ArchSpec): Architecture specification with CZ pair data.
+
+        Returns:
+            Optional[tuple[list[int], list[int], list[int]]]: A tuple
+                ``(controls, targets, unpaired)`` where ``controls[i]`` and
+                ``targets[i]`` are paired for a CZ gate, and ``unpaired``
+                contains qubits whose pair site is empty or doesn't exist.
+                Results are sorted by qubit id. Returns ``None`` if the zone
+                address is invalid.
+        """
         ...
 
-    def copy(self) -> AtomStateData: ...
+    def copy(self) -> AtomStateData:
+        """Return a shallow copy of this state.
+
+        Returns:
+            AtomStateData: A copy with identical field values.
+        """
+        ...
+
     def __hash__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
     def __repr__(self) -> str: ...
