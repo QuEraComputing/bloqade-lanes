@@ -331,27 +331,26 @@ mod tests {
     }
 
     #[test]
-    fn add_atoms_succeeds() {
+    fn add_atoms_succeeds_and_fields_match() {
         let state = AtomStateData::new();
-        let new_state = state
-            .add_atoms(&[
-                (
-                    0,
-                    LocationAddr {
-                        word_id: 0,
-                        site_id: 0,
-                    },
-                ),
-                (
-                    1,
-                    LocationAddr {
-                        word_id: 1,
-                        site_id: 0,
-                    },
-                ),
-            ])
-            .unwrap();
+        let loc0 = LocationAddr {
+            word_id: 0,
+            site_id: 0,
+        };
+        let loc1 = LocationAddr {
+            word_id: 1,
+            site_id: 0,
+        };
+        let new_state = state.add_atoms(&[(0, loc0), (1, loc1)]).unwrap();
+
         assert_eq!(new_state.qubit_to_locations.len(), 2);
+        assert_eq!(new_state.qubit_to_locations[&0], loc0);
+        assert_eq!(new_state.qubit_to_locations[&1], loc1);
+        assert_eq!(new_state.locations_to_qubit[&loc0], 0);
+        assert_eq!(new_state.locations_to_qubit[&loc1], 1);
+        assert!(new_state.collision.is_empty());
+        assert!(new_state.prev_lanes.is_empty());
+        assert!(new_state.move_count.is_empty());
     }
 
     #[test]
@@ -471,6 +470,346 @@ mod tests {
         assert!(new_state.collision.contains_key(&0));
         assert_eq!(*new_state.collision.get(&0).unwrap(), 1);
         assert!(new_state.qubit_to_locations.is_empty());
+    }
+
+    #[test]
+    fn apply_moves_verifies_all_fields() {
+        let spec = example_arch_spec();
+        let loc_0_0 = LocationAddr {
+            word_id: 0,
+            site_id: 0,
+        };
+        let loc_0_5 = LocationAddr {
+            word_id: 0,
+            site_id: 5,
+        };
+        let loc_1_0 = LocationAddr {
+            word_id: 1,
+            site_id: 0,
+        };
+        let state = AtomStateData::from_locations(&[(0, loc_0_0), (1, loc_1_0)]);
+
+        let lane = LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+
+        let new_state = state.apply_moves(&[lane], &spec).unwrap();
+
+        // Qubit 0 moved from (0,0) to (0,5)
+        assert_eq!(new_state.qubit_to_locations[&0], loc_0_5);
+        assert_eq!(new_state.locations_to_qubit[&loc_0_5], 0);
+        // Qubit 1 didn't move
+        assert_eq!(new_state.qubit_to_locations[&1], loc_1_0);
+        assert_eq!(new_state.locations_to_qubit[&loc_1_0], 1);
+        // Old location is empty
+        assert!(!new_state.locations_to_qubit.contains_key(&loc_0_0));
+        // prev_lanes only has the moved qubit
+        assert_eq!(new_state.prev_lanes.len(), 1);
+        assert_eq!(new_state.prev_lanes[&0], lane);
+        // move_count incremented
+        assert_eq!(new_state.move_count[&0], 1);
+        // No collision
+        assert!(new_state.collision.is_empty());
+    }
+
+    #[test]
+    fn apply_moves_collision_verifies_all_fields() {
+        let spec = example_arch_spec();
+        let state = AtomStateData::from_locations(&[
+            (
+                0,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 0,
+                },
+            ),
+            (
+                1,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 5,
+                },
+            ),
+        ]);
+
+        let lane = LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+
+        let new_state = state.apply_moves(&[lane], &spec).unwrap();
+
+        // Both qubits removed from location maps
+        assert!(new_state.qubit_to_locations.is_empty());
+        assert!(new_state.locations_to_qubit.is_empty());
+        // Collision recorded
+        assert_eq!(new_state.collision[&0], 1);
+        // prev_lanes has the moving qubit's lane
+        assert_eq!(new_state.prev_lanes[&0], lane);
+        // move_count incremented for moving qubit
+        assert_eq!(new_state.move_count[&0], 1);
+    }
+
+    #[test]
+    fn apply_moves_skips_empty_source() {
+        let spec = example_arch_spec();
+        // Only qubit at (1,0), no qubit at (0,0)
+        let state = AtomStateData::from_locations(&[(
+            1,
+            LocationAddr {
+                word_id: 1,
+                site_id: 0,
+            },
+        )]);
+
+        let lane = LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+
+        let new_state = state.apply_moves(&[lane], &spec).unwrap();
+        // Nothing changed — lane source had no qubit
+        assert_eq!(new_state.qubit_to_locations.len(), 1);
+        assert!(new_state.prev_lanes.is_empty());
+        assert!(new_state.move_count.is_empty());
+    }
+
+    #[test]
+    fn apply_moves_invalid_lane_returns_none() {
+        let spec = example_arch_spec();
+        let state = AtomStateData::from_locations(&[(
+            0,
+            LocationAddr {
+                word_id: 0,
+                site_id: 0,
+            },
+        )]);
+
+        let bad_lane = LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 99, // invalid bus
+        };
+
+        assert!(state.apply_moves(&[bad_lane], &spec).is_none());
+    }
+
+    #[test]
+    fn apply_moves_accumulates_move_count() {
+        let spec = example_arch_spec();
+        let state = AtomStateData::from_locations(&[(
+            0,
+            LocationAddr {
+                word_id: 0,
+                site_id: 0,
+            },
+        )]);
+
+        // Move forward: site 0 -> site 5
+        let lane_fwd = LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let state2 = state.apply_moves(&[lane_fwd], &spec).unwrap();
+        assert_eq!(state2.move_count[&0], 1);
+
+        // Move backward: site 5 -> site 0
+        let lane_bwd = LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let state3 = state2.apply_moves(&[lane_bwd], &spec).unwrap();
+        assert_eq!(state3.move_count[&0], 2);
+    }
+
+    #[test]
+    fn get_qubit_empty_location() {
+        let state = AtomStateData::from_locations(&[(
+            0,
+            LocationAddr {
+                word_id: 0,
+                site_id: 0,
+            },
+        )]);
+        assert_eq!(
+            state.get_qubit(&LocationAddr {
+                word_id: 1,
+                site_id: 0
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn get_qubit_pairing_all_unpaired() {
+        let spec = example_arch_spec();
+        // Place qubits at sites 0, 1, 2 — site 0 pairs with 5, site 1 with 6,
+        // site 2 with 7, but none of the pair sites are occupied.
+        let state = AtomStateData::from_locations(&[
+            (
+                0,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 0,
+                },
+            ),
+            (
+                1,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 1,
+                },
+            ),
+            (
+                2,
+                LocationAddr {
+                    word_id: 1,
+                    site_id: 0,
+                },
+            ),
+        ]);
+
+        let zone = ZoneAddr { zone_id: 0 };
+        let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
+
+        assert!(controls.is_empty());
+        assert!(targets.is_empty());
+        assert_eq!(unpaired.len(), 3);
+    }
+
+    #[test]
+    fn get_qubit_pairing_with_pairs() {
+        let spec = example_arch_spec();
+        // Site 0 pairs with site 5 in the same word. Place qubits at both.
+        // Also place unpaired qubit at site 1 (pair site 6 is empty).
+        let state = AtomStateData::from_locations(&[
+            (
+                0,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 0,
+                },
+            ),
+            (
+                1,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 5,
+                },
+            ),
+            (
+                2,
+                LocationAddr {
+                    word_id: 1,
+                    site_id: 0,
+                },
+            ),
+            (
+                3,
+                LocationAddr {
+                    word_id: 1,
+                    site_id: 5,
+                },
+            ),
+            (
+                4,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 1,
+                },
+            ),
+        ]);
+
+        let zone = ZoneAddr { zone_id: 0 };
+        let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
+
+        // Qubits 0+1 and 2+3 should be paired
+        assert_eq!(controls.len(), 2);
+        assert_eq!(targets.len(), 2);
+        use std::collections::HashSet;
+        let control_set: HashSet<u32> = controls.iter().copied().collect();
+        let target_set: HashSet<u32> = targets.iter().copied().collect();
+        assert_eq!(control_set, HashSet::from([0, 2]));
+        assert_eq!(target_set, HashSet::from([1, 3]));
+        // Qubit 4 is unpaired (site 1, pair site 6 is empty)
+        assert_eq!(unpaired, vec![4]);
+    }
+
+    #[test]
+    fn get_qubit_pairing_invalid_zone() {
+        let spec = example_arch_spec();
+        let state = AtomStateData::new();
+        let zone = ZoneAddr { zone_id: 99 };
+        assert!(state.get_qubit_pairing(&zone, &spec).is_none());
+    }
+
+    #[test]
+    fn get_qubit_pairing_skips_qubits_outside_zone() {
+        let spec = example_arch_spec();
+        // Zone 0 contains words [0, 1]. Place a qubit at word 99 (out of zone).
+        // But word 99 doesn't exist in the spec, so this qubit won't match any zone.
+        let state = AtomStateData::from_locations(&[(
+            0,
+            LocationAddr {
+                word_id: 0,
+                site_id: 0,
+            },
+        )]);
+
+        // Use zone 0 — qubit at (0,0) is in zone but has no CZ pair
+        let zone = ZoneAddr { zone_id: 0 };
+        let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
+
+        assert!(controls.is_empty());
+        assert!(targets.is_empty());
+        assert_eq!(unpaired, vec![0]);
+    }
+
+    #[test]
+    fn default_is_empty() {
+        let state = AtomStateData::default();
+        assert!(state.locations_to_qubit.is_empty());
+        assert!(state.qubit_to_locations.is_empty());
+    }
+
+    #[test]
+    fn clone_produces_equal_state() {
+        let state = AtomStateData::from_locations(&[
+            (
+                0,
+                LocationAddr {
+                    word_id: 0,
+                    site_id: 0,
+                },
+            ),
+            (
+                1,
+                LocationAddr {
+                    word_id: 1,
+                    site_id: 0,
+                },
+            ),
+        ]);
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
     }
 
     #[test]

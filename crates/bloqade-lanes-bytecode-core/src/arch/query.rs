@@ -659,4 +659,50 @@ mod tests {
         let result = super::super::ArchSpec::from_json_validated(json);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn get_blockaded_location_valid() {
+        let spec = example_arch_spec();
+        // Site 0 in word 0 pairs with site 5 in word 0
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 0,
+        };
+        let pair = spec.get_blockaded_location(&loc).unwrap();
+        assert_eq!(pair.word_id, 0);
+        assert_eq!(pair.site_id, 5);
+    }
+
+    #[test]
+    fn get_blockaded_location_reverse() {
+        let spec = example_arch_spec();
+        // Site 5 in word 0 pairs back with site 0 in word 0
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 5,
+        };
+        let pair = spec.get_blockaded_location(&loc).unwrap();
+        assert_eq!(pair.word_id, 0);
+        assert_eq!(pair.site_id, 0);
+    }
+
+    #[test]
+    fn get_blockaded_location_invalid_word() {
+        let spec = example_arch_spec();
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 99,
+            site_id: 0,
+        };
+        assert!(spec.get_blockaded_location(&loc).is_none());
+    }
+
+    #[test]
+    fn get_blockaded_location_invalid_site() {
+        let spec = example_arch_spec();
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 99,
+        };
+        assert!(spec.get_blockaded_location(&loc).is_none());
+    }
 }
