@@ -78,24 +78,6 @@ class Metrics:
     def __post_init__(self) -> None:
         self.move_calc = MoveMetricCalculator(arch_spec=self.arch_spec)
 
-    # --- Delegated move-metric accessors ---
-
-    def get_lane_duration_us(
-        self, lane_address: Any, *, amplitude_delta: float = 1.0
-    ) -> float:
-        """Return lane execution duration in microseconds."""
-        return self.move_calc.get_lane_duration_us(
-            lane_address, amplitude_delta=amplitude_delta
-        )
-
-    def get_lane_duration_cost(
-        self, lane_address: Any, *, amplitude_delta: float = 1.0
-    ) -> float:
-        """Return normalized lane duration cost in [0, 1]."""
-        return self.move_calc.get_lane_duration_cost(
-            lane_address, amplitude_delta=amplitude_delta
-        )
-
     # --- Private helpers ---
 
     def _compile_to_noisy_physical_squin(
