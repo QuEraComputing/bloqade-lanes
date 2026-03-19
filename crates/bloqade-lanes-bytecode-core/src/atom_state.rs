@@ -174,12 +174,6 @@ impl AtomStateData {
         for lane in lanes {
             let (src, dst) = arch_spec.lane_endpoints(lane)?;
 
-            // Validate that both endpoints are in-range for this architecture.
-            if arch_spec.check_location(&src).is_some() || arch_spec.check_location(&dst).is_some()
-            {
-                return None;
-            }
-
             let qubit = match locations_to_qubit.remove(&src) {
                 Some(q) => q,
                 None => continue,
