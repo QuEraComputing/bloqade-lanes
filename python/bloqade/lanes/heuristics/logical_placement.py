@@ -16,7 +16,6 @@ from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
-from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.layout.path import PathFinder
 
 
@@ -197,7 +196,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     K_candidates: int = 8
     large_cost: float = 1e9
     lane_move_overhead_cost: float = 0.0
-    _metrics: MoveMetricCalculator = field(init=False, repr=False)
     _path_finder: PathFinder = field(init=False, repr=False)
     _best_path_cache: dict[
         tuple[layout.LocationAddress, layout.LocationAddress],
@@ -207,8 +205,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
-        self._metrics = MoveMetricCalculator(arch_spec=self.arch_spec)
-        self._path_finder = PathFinder(self.arch_spec, self._metrics)
+        self._path_finder = PathFinder(self.arch_spec)
 
     def _lane_sig(
         self, lane: layout.LaneAddress
@@ -272,10 +269,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return self._path_cost(self._best_path(addr0, addr1))
 
     def _get_lane_duration(self, lane: layout.LaneAddress) -> float:
-        return self._metrics.get_lane_duration_us(lane)
+        return self._path_finder.metrics.get_lane_duration_us(lane)
 
     def _get_lane_cost(self, lane: layout.LaneAddress) -> float:
-        return self._metrics.get_lane_duration_cost(lane)
+        return self._path_finder.metrics.get_lane_duration_cost(lane)
 
     def _best_path(
         self,

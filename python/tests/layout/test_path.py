@@ -4,15 +4,13 @@ import pytest
 
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
-from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.layout.path import PathFinder
 
 
 def _build_pathfinder() -> PathFinder:
     # A 2D hypercube (4 words) gives multiple route choices across word buses.
     arch_spec = generate_arch_hypercube(hypercube_dims=2, word_size_y=5)
-    move_calc = MoveMetricCalculator(arch_spec=arch_spec)
-    return PathFinder(arch_spec, move_calc)
+    return PathFinder(arch_spec)
 
 
 def _path_duration(
