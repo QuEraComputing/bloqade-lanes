@@ -41,6 +41,7 @@ from bloqade.lanes.bytecode._clib_path import (
 )
 from bloqade.lanes.bytecode._native import (
     ArchSpec as ArchSpec,
+    AtomStateData as AtomStateData,
     Bus as Bus,
     Buses as Buses,
     Direction as Direction,

@@ -741,6 +741,75 @@ class ArchSpec:
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
+# ── AtomStateData ──
+
+@final
+class AtomStateData:
+    """Tracks qubit-to-location mappings as atoms move through the architecture.
+
+    This is an immutable value type backed by a Rust implementation.
+
+    Args:
+        locations_to_qubit: Mapping from location to qubit id.
+        qubit_to_locations: Mapping from qubit id to location.
+        collision: Mapping from qubit id to collided qubit id.
+        prev_lanes: Mapping from qubit id to lane used.
+        move_count: Mapping from qubit id to number of moves.
+    """
+
+    def __init__(
+        self,
+        locations_to_qubit: Optional[dict[LocationAddress, int]] = None,
+        qubit_to_locations: Optional[dict[int, LocationAddress]] = None,
+        collision: Optional[dict[int, int]] = None,
+        prev_lanes: Optional[dict[int, LaneAddress]] = None,
+        move_count: Optional[dict[int, int]] = None,
+    ) -> None: ...
+    @staticmethod
+    def from_qubit_locations(locations: dict[int, LocationAddress]) -> AtomStateData:
+        """Create from a mapping of qubit ids to locations."""
+        ...
+
+    @staticmethod
+    def from_location_list(locations: list[LocationAddress]) -> AtomStateData:
+        """Create from a list of locations (qubit ids are 0, 1, 2, ...)."""
+        ...
+
+    @property
+    def locations_to_qubit(self) -> dict[LocationAddress, int]: ...
+    @property
+    def qubit_to_locations(self) -> dict[int, LocationAddress]: ...
+    @property
+    def collision(self) -> dict[int, int]: ...
+    @property
+    def prev_lanes(self) -> dict[int, LaneAddress]: ...
+    @property
+    def move_count(self) -> dict[int, int]: ...
+    def add_atoms(self, locations: dict[int, LocationAddress]) -> AtomStateData:
+        """Add atoms at new locations. Returns a new state."""
+        ...
+
+    def apply_moves(
+        self, lanes: list[LaneAddress], arch_spec: ArchSpec
+    ) -> Optional[AtomStateData]:
+        """Apply lane moves and return a new state."""
+        ...
+
+    def get_qubit(self, location: LocationAddress) -> Optional[int]:
+        """Look up the qubit at a given location."""
+        ...
+
+    def get_qubit_pairing(
+        self, zone_address: ZoneAddress, arch_spec: ArchSpec
+    ) -> Optional[tuple[list[int], list[int], list[int]]]:
+        """Find CZ control/target pairs in a zone."""
+        ...
+
+    def copy(self) -> AtomStateData: ...
+    def __hash__(self) -> int: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
+
 # ── Instruction ──
 
 @final

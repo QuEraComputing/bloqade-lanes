@@ -4,7 +4,7 @@
 //! representations used in the 16-byte instruction format.
 
 /// Atom movement direction along a transport bus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Direction {
     /// Movement from source to destination (value 0).
@@ -14,7 +14,7 @@ pub enum Direction {
 }
 
 /// Type of transport bus used for an atom move operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum MoveType {
     /// Moves atoms between sites within a word (value 0).
@@ -28,7 +28,7 @@ pub enum MoveType {
 /// Encodes `word_id` (16 bits) and `site_id` (16 bits) into a 32-bit word.
 ///
 /// Layout: `[word_id:16][site_id:16]`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocationAddr {
     pub word_id: u32,
     pub site_id: u32,
@@ -59,7 +59,7 @@ impl LocationAddr {
 /// Layout:
 /// - data0: `[word_id:16][site_id:16]`
 /// - data1: `[dir:1][mt:1][pad:14][bus_id:16]`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LaneAddr {
     pub direction: Direction,
     pub move_type: MoveType,
@@ -116,7 +116,7 @@ impl LaneAddr {
 /// Encodes a zone identifier (16 bits) into a 32-bit value.
 ///
 /// Layout: `[pad:16][zone_id:16]`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ZoneAddr {
     pub zone_id: u32,
 }

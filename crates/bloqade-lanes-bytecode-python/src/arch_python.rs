@@ -99,7 +99,7 @@ impl PyMoveType {
 // ── LocationAddr ──
 
 #[pyclass(name = "LocationAddress", frozen, module = "bloqade.lanes.bytecode")]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyLocationAddr {
     pub(crate) inner: rs_addr::LocationAddr,
 }
@@ -155,7 +155,7 @@ impl PyLocationAddr {
 // ── LaneAddr ──
 
 #[pyclass(name = "LaneAddress", frozen, module = "bloqade.lanes.bytecode")]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyLaneAddr {
     pub(crate) inner: rs_addr::LaneAddr,
 }

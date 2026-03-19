@@ -26,6 +26,7 @@
 //! - [`bytecode::validate`] — program validation (structural, address, stack simulation)
 
 pub mod arch;
+pub mod atom_state;
 pub mod bytecode;
 pub mod version;
 
