@@ -764,8 +764,8 @@ class AtomStateData:
             from location to qubit id, default = None (empty).
         qubit_to_locations (Optional[dict[int, LocationAddress]]): Forward index
             from qubit id to location, default = None (empty).
-        collision (Optional[dict[int, int]]): Collided qubits — key is the moving
-            qubit, value is the qubit it displaced, default = None (empty).
+        collision (Optional[dict[int, int]]): Cumulative collision record — key is
+            the moving qubit, value is the qubit it displaced, default = None (empty).
         prev_lanes (Optional[dict[int, LaneAddress]]): Lane each qubit used in
             the most recent move step, default = None (empty).
         move_count (Optional[dict[int, int]]): Cumulative move count per qubit,
@@ -828,10 +828,12 @@ class AtomStateData:
 
     @property
     def collision(self) -> dict[int, int]:
-        """Qubits that collided in the last ``apply_moves`` call.
+        """Cumulative record of qubit collisions from ``apply_moves`` calls.
 
-        Key is the moving qubit, value is the qubit it displaced. Both
-        qubits are removed from the location maps when a collision occurs.
+        Entries persist across successive ``apply_moves`` calls and are only
+        cleared by constructors or ``add_atoms``. Key is the moving qubit id,
+        value is the qubit id it displaced. Both qubits are removed from the
+        location maps when a collision occurs.
         """
         ...
 

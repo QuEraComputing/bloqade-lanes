@@ -26,9 +26,11 @@ pub struct AtomStateData {
     pub locations_to_qubit: HashMap<LocationAddr, u32>,
     /// Forward index: given a qubit id, where is it currently located?
     pub qubit_to_locations: HashMap<u32, LocationAddr>,
-    /// Qubits that collided during the most recent `apply_moves`.
-    /// Key is the moving qubit, value is the qubit it displaced.
-    /// Collided qubits are removed from both location maps.
+    /// Cumulative record of qubits that have collided since this state was
+    /// created (via constructors or `add_atoms`). Updated by `apply_moves` —
+    /// new collisions are added to existing entries. Key is the moving qubit,
+    /// value is the qubit it displaced. Collided qubits are removed from
+    /// both location maps.
     pub collision: HashMap<u32, u32>,
     /// The lane each qubit used in the most recent `apply_moves`.
     /// Only populated for qubits that moved in the last step.
@@ -40,53 +42,48 @@ pub struct AtomStateData {
 
 impl Hash for AtomStateData {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Sort entries for deterministic hashing
+        // Hash each field with a discriminant tag and length prefix to prevent
+        // cross-field collisions (e.g. entries from one map aliasing another).
+        fn hash_sorted_map<H: Hasher, K: Ord + Hash, V: Hash>(
+            state: &mut H,
+            tag: u8,
+            entries: &mut [(K, V)],
+        ) {
+            tag.hash(state);
+            entries.len().hash(state);
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            for (k, v) in entries.iter() {
+                k.hash(state);
+                v.hash(state);
+            }
+        }
+
         let mut loc_entries: Vec<_> = self
             .locations_to_qubit
             .iter()
             .map(|(k, v)| (k.encode(), *v))
             .collect();
-        loc_entries.sort();
-        for (k, v) in &loc_entries {
-            k.hash(state);
-            v.hash(state);
-        }
+        hash_sorted_map(state, 0, &mut loc_entries);
 
         let mut qubit_entries: Vec<_> = self
             .qubit_to_locations
             .iter()
             .map(|(k, v)| (*k, v.encode()))
             .collect();
-        qubit_entries.sort();
-        for (k, v) in &qubit_entries {
-            k.hash(state);
-            v.hash(state);
-        }
+        hash_sorted_map(state, 1, &mut qubit_entries);
 
-        let mut collision_entries: Vec<_> = self.collision.iter().collect();
-        collision_entries.sort();
-        for (k, v) in &collision_entries {
-            k.hash(state);
-            v.hash(state);
-        }
+        let mut collision_entries: Vec<_> = self.collision.iter().map(|(k, v)| (*k, *v)).collect();
+        hash_sorted_map(state, 2, &mut collision_entries);
 
         let mut lane_entries: Vec<_> = self
             .prev_lanes
             .iter()
             .map(|(k, v)| (*k, v.encode_u64()))
             .collect();
-        lane_entries.sort();
-        for (k, v) in &lane_entries {
-            k.hash(state);
-            v.hash(state);
-        }
+        hash_sorted_map(state, 3, &mut lane_entries);
 
-        let mut count_entries: Vec<_> = self.move_count.iter().collect();
-        count_entries.sort();
-        for (k, v) in &count_entries {
-            k.hash(state);
-            v.hash(state);
-        }
+        let mut count_entries: Vec<_> = self.move_count.iter().map(|(k, v)| (*k, *v)).collect();
+        hash_sorted_map(state, 4, &mut count_entries);
     }
 }
 
@@ -176,6 +173,12 @@ impl AtomStateData {
 
         for lane in lanes {
             let (src, dst) = arch_spec.lane_endpoints(lane)?;
+
+            // Validate that both endpoints are in-range for this architecture.
+            if arch_spec.check_location(&src).is_some() || arch_spec.check_location(&dst).is_some()
+            {
+                return None;
+            }
 
             let qubit = match locations_to_qubit.remove(&src) {
                 Some(q) => q,
