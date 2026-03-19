@@ -34,9 +34,7 @@ class PathFinder:
     )
 
     def __post_init__(self):
-        object.__setattr__(
-            self, "metrics", MoveMetricCalculator(arch_spec=self.spec)
-        )
+        object.__setattr__(self, "metrics", MoveMetricCalculator(arch_spec=self.spec))
         word_ids = range(len(self.spec.words))
         site_ids = range(len(self.spec.words[0].site_indices))
         self.physical_addresses.extend(
