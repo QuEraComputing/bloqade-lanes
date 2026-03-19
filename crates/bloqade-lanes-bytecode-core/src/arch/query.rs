@@ -187,6 +187,12 @@ impl ArchSpec {
     ) -> Option<(LocationAddr, LocationAddr)> {
         use crate::arch::addr::{Direction, MoveType};
 
+        // Validate the lane address up front so callers always get None
+        // for invalid lanes (e.g. out-of-range word_id or site_id).
+        if !self.check_lane_strict(lane).is_empty() {
+            return None;
+        }
+
         let src = LocationAddr {
             word_id: lane.word_id,
             site_id: lane.site_id,
@@ -290,6 +296,55 @@ impl ArchSpec {
                 }
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
+                }
+            }
+        }
+        errors
+    }
+
+    /// Strict lane validation: checks everything in [`check_lane`] plus
+    /// verifies that the site/word is a valid source or destination for
+    /// the bus in the given direction.
+    ///
+    /// This is used by [`lane_endpoints`](Self::lane_endpoints) to guarantee
+    /// that returned endpoints are fully valid.
+    pub fn check_lane_strict(&self, addr: &LaneAddr) -> Vec<String> {
+        use super::addr::Direction;
+
+        // Start with the basic checks
+        let mut errors = self.check_lane(addr);
+        if !errors.is_empty() {
+            return errors;
+        }
+
+        // Additionally verify bus resolution for the given direction
+        match addr.move_type {
+            MoveType::SiteBus => {
+                if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
+                    let resolvable = match addr.direction {
+                        Direction::Forward => bus.resolve_forward(addr.site_id).is_some(),
+                        Direction::Backward => bus.resolve_backward(addr.site_id).is_some(),
+                    };
+                    if !resolvable {
+                        errors.push(format!(
+                            "site_id {} is not a valid {:?} source for site_bus {}",
+                            addr.site_id, addr.direction, addr.bus_id
+                        ));
+                    }
+                }
+            }
+            MoveType::WordBus => {
+                if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
+                    let resolvable = match addr.direction {
+                        Direction::Forward => bus.resolve_forward(addr.word_id).is_some(),
+                        Direction::Backward => bus.resolve_backward(addr.word_id).is_some(),
+                    };
+                    if !resolvable {
+                        errors.push(format!(
+                            "word_id {} is not a valid {:?} source for word_bus {}",
+                            addr.word_id, addr.direction, addr.bus_id
+                        ));
+                    }
                 }
             }
         }
