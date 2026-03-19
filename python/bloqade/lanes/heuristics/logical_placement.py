@@ -4,7 +4,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from itertools import starmap
-from typing import TYPE_CHECKING
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -17,10 +16,8 @@ from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
+from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.layout.path import PathFinder
-
-if TYPE_CHECKING:
-    from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 
 
 @dataclass(frozen=True)
@@ -210,8 +207,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
-        from bloqade.lanes.layout.move_metric import MoveMetricCalculator
-
         self._metrics = MoveMetricCalculator(arch_spec=self.arch_spec)
         self._path_finder = PathFinder(self.arch_spec, self._metrics)
 

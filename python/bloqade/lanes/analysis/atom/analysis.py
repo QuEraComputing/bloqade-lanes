@@ -8,6 +8,7 @@ from kirin.analysis.forward import ForwardFrame
 from typing_extensions import Self
 
 from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.utils import no_none_elements_tuple
 
@@ -63,8 +64,6 @@ class AtomInterpreter(Forward[MoveExecution]):
 
     def __post_init__(self):
         super().__post_init__()
-        from bloqade.lanes.layout.move_metric import MoveMetricCalculator
-
         self.path_finder = PathFinder(
             self.arch_spec, MoveMetricCalculator(arch_spec=self.arch_spec)
         )
