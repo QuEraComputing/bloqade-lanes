@@ -16,12 +16,16 @@ from bloqade.lanes.visualize.artist import (
 
 def test_plot_parameters_properties():
     params = PlotParameters(scale=1.0)
+    # All properties return read-only MappingProxyType
     assert isinstance(params.atom_plot_args, MappingProxyType)
     assert isinstance(params.atom_label_args, MappingProxyType)
     assert isinstance(params.gate_spot_args, MappingProxyType)
     assert isinstance(params.slm_plot_args, MappingProxyType)
     assert isinstance(params.aod_line_args, MappingProxyType)
     assert isinstance(params.aod_marker_args, MappingProxyType)
+    # Cached: repeated access returns the same object
+    assert params.atom_plot_args is params.atom_plot_args
+    assert params.aod_line_args is params.aod_line_args
 
 
 def test_aod_x_lines():

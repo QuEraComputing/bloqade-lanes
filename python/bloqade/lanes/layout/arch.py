@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from functools import cached_property
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Sequence
 
 from bloqade.lanes.bytecode._native import (
@@ -34,10 +35,7 @@ class ArchSpec:
 
     _inner: _RustArchSpec
     words: tuple[Word, ...]
-    # NOTE: paths is intentionally a mutable dict because it is populated
-    # incrementally after construction (e.g. via paths.update() in
-    # arch/gemini/impls.py).  Do not wrap with MappingProxyType.
-    paths: dict[LaneAddress, tuple[tuple[float, float], ...]]
+    paths: MappingProxyType[LaneAddress, tuple[tuple[float, float], ...]]
 
     def __init__(
         self,
@@ -47,7 +45,7 @@ class ArchSpec:
     ):
         self._inner = inner
         self.words = words
-        self.paths = paths if paths is not None else {}
+        self.paths = MappingProxyType(paths if paths is not None else {})
 
         self._inner.validate()
 
