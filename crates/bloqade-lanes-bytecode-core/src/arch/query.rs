@@ -303,6 +303,9 @@ impl ArchSpec {
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
                 }
+                if addr.site_id >= sites_per_word {
+                    errors.push(format!("site_id {} out of range", addr.site_id));
+                }
                 if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
                     if errors.is_empty() && bus.resolve_forward(addr.word_id).is_none() {
                         errors.push(format!(
