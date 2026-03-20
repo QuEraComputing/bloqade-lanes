@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>//! representations used in the 16-byte instruction format.
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a>/// Atom movement direction along a transport bus.
-<a href=#7 id=7 data-nosnippet>7</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#7 id=7 data-nosnippet>7</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 <a href=#8 id=8 data-nosnippet>8</a>#[repr(u8)]
 <a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">pub enum </span>Direction {
 <a href=#10 id=10 data-nosnippet>10</a>    <span class="doccomment">/// Movement from source to destination (value 0).
@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>}
 <a href=#15 id=15 data-nosnippet>15</a>
 <a href=#16 id=16 data-nosnippet>16</a><span class="doccomment">/// Type of transport bus used for an atom move operation.
-<a href=#17 id=17 data-nosnippet>17</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#17 id=17 data-nosnippet>17</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 <a href=#18 id=18 data-nosnippet>18</a>#[repr(u8)]
 <a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub enum </span>MoveType {
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Moves atoms between sites within a word (value 0).
@@ -28,7 +28,7 @@
 <a href=#28 id=28 data-nosnippet>28</a>/// Encodes `word_id` (16 bits) and `site_id` (16 bits) into a 32-bit word.
 <a href=#29 id=29 data-nosnippet>29</a>///
 <a href=#30 id=30 data-nosnippet>30</a>/// Layout: `[word_id:16][site_id:16]`
-<a href=#31 id=31 data-nosnippet>31</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub struct </span>LocationAddr {
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">pub </span>word_id: u32,
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">pub </span>site_id: u32,
@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>/// Layout:
 <a href=#60 id=60 data-nosnippet>60</a>/// - data0: `[word_id:16][site_id:16]`
 <a href=#61 id=61 data-nosnippet>61</a>/// - data1: `[dir:1][mt:1][pad:14][bus_id:16]`
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#62 id=62 data-nosnippet>62</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 <a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub struct </span>LaneAddr {
 <a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">pub </span>direction: Direction,
 <a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub </span>move_type: MoveType,
@@ -116,7 +116,7 @@
 <a href=#116 id=116 data-nosnippet>116</a>/// Encodes a zone identifier (16 bits) into a 32-bit value.
 <a href=#117 id=117 data-nosnippet>117</a>///
 <a href=#118 id=118 data-nosnippet>118</a>/// Layout: `[pad:16][zone_id:16]`
-<a href=#119 id=119 data-nosnippet>119</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#119 id=119 data-nosnippet>119</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 <a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">pub struct </span>ZoneAddr {
 <a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">pub </span>zone_id: u32,
 <a href=#122 id=122 data-nosnippet>122</a>}
