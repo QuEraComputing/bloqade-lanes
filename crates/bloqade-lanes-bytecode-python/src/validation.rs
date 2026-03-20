@@ -136,6 +136,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     // ── validate_field generic ──
@@ -212,6 +214,92 @@ mod tests {
     fn vec_short_circuits_on_first_error() {
         let err = validate_vec::<u32>("x", vec![-1, -2, -3]).unwrap_err();
         assert!(err.to_string().contains("x[0]=-1"), "got: {err}");
+    }
+
+    // ── validate_i64_key_map ──
+
+    #[test]
+    fn key_map_valid() {
+        let map = HashMap::from([(0i64, "a"), (1, "b")]);
+        let result = validate_i64_key_map::<u32, _>("id", map).unwrap();
+        assert_eq!(result[&0u32], "a");
+        assert_eq!(result[&1u32], "b");
+    }
+
+    #[test]
+    fn key_map_negative_key() {
+        let map = HashMap::from([(-1i64, "a")]);
+        let err = validate_i64_key_map::<u32, _>("qubit_id", map).unwrap_err();
+        assert!(err.to_string().contains("qubit_id=-1"));
+    }
+
+    #[test]
+    fn key_map_overflow_key() {
+        let map = HashMap::from([(u32::MAX as i64 + 1, "a")]);
+        let err = validate_i64_key_map::<u32, _>("qubit_id", map).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Overflow { .. }));
+    }
+
+    #[test]
+    fn key_map_empty() {
+        let map: HashMap<i64, &str> = HashMap::new();
+        let result = validate_i64_key_map::<u32, _>("id", map).unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ── validate_i64_value_map ──
+
+    #[test]
+    fn value_map_valid() {
+        let map = HashMap::from([("a", 0i64), ("b", 255)]);
+        let result = validate_i64_value_map::<_, u8>("val", map).unwrap();
+        assert_eq!(result["a"], 0u8);
+        assert_eq!(result["b"], 255u8);
+    }
+
+    #[test]
+    fn value_map_negative_value() {
+        let map = HashMap::from([("a", -1i64)]);
+        let err = validate_i64_value_map::<_, u32>("count", map).unwrap_err();
+        assert!(err.to_string().contains("count=-1"));
+    }
+
+    #[test]
+    fn value_map_overflow_value() {
+        let map = HashMap::from([("a", 256i64)]);
+        let err = validate_i64_value_map::<_, u8>("val", map).unwrap_err();
+        assert!(matches!(err, FieldRangeError::Overflow { .. }));
+    }
+
+    // ── validate_i64_kv_map ──
+
+    #[test]
+    fn kv_map_valid() {
+        let map = HashMap::from([(0i64, 10i64), (1, 20)]);
+        let result = validate_i64_kv_map::<u32>("k", "v", map).unwrap();
+        assert_eq!(result[&0u32], 10u32);
+        assert_eq!(result[&1u32], 20u32);
+    }
+
+    #[test]
+    fn kv_map_negative_key() {
+        let map = HashMap::from([(-1i64, 0i64)]);
+        let err = validate_i64_kv_map::<u32>("qubit", "count", map).unwrap_err();
+        assert!(err.to_string().contains("qubit=-1"));
+    }
+
+    #[test]
+    fn kv_map_negative_value() {
+        let map = HashMap::from([(0i64, -1i64)]);
+        let err = validate_i64_kv_map::<u32>("qubit", "count", map).unwrap_err();
+        assert!(err.to_string().contains("count=-1"));
+    }
+
+    #[test]
+    fn kv_map_empty() {
+        let map: HashMap<i64, i64> = HashMap::new();
+        let result = validate_i64_kv_map::<u32>("k", "v", map).unwrap();
+        assert!(result.is_empty());
     }
 
     // ── error messages ──
