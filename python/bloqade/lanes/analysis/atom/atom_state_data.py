@@ -30,11 +30,6 @@ def _from_rust_lane(rust_lane: _RustLaneAddress) -> LaneAddress:
     )
 
 
-def _to_rust_state(state: AtomStateData) -> _RustAtomStateData:
-    """Convert a Python AtomStateData to a Rust AtomStateData."""
-    return state._inner
-
-
 def _from_rust_state(rust_state: _RustAtomStateData) -> AtomStateData:
     """Convert a Rust AtomStateData to a Python AtomStateData."""
     return AtomStateData(_inner=rust_state)
@@ -132,14 +127,14 @@ class AtomStateData:
         }
         try:
             result = self._inner.add_atoms(rust_locs)
-        except RuntimeError as e:
+        except (RuntimeError, ValueError) as e:
             raise InterpreterError(str(e)) from e
         return _from_rust_state(result)
 
     def apply_moves(
         self,
         lanes: tuple[LaneAddress, ...],
-        path_finder: PathFinder,
+        path_finder: PathFinder,  # accepts PathFinder to match existing callers; extracts .spec._inner for Rust
     ):
         rust_lanes = [lane._inner for lane in lanes]  # type: ignore[attr-defined]
         result = self._inner.apply_moves(
@@ -157,7 +152,9 @@ class AtomStateData:
             zone_address._inner, arch_spec._inner  # type: ignore[attr-defined]
         )
         if result is None:
-            return [], [], []
+            raise InterpreterError(
+                f"Invalid zone address {zone_address!r} for get_qubit_pairing"
+            )
         return result
 
     def copy(self):
