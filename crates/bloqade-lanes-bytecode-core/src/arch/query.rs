@@ -747,4 +747,181 @@ mod tests {
         };
         assert!(spec.get_blockaded_location(&loc).is_none());
     }
+
+    // ── lane_endpoints tests ──
+
+    #[test]
+    fn lane_endpoints_site_bus_forward() {
+        let spec = example_arch_spec();
+        // Site bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        assert_eq!(src.word_id, 0);
+        assert_eq!(src.site_id, 0);
+        assert_eq!(dst.word_id, 0);
+        assert_eq!(dst.site_id, 5);
+    }
+
+    #[test]
+    fn lane_endpoints_site_bus_backward() {
+        let spec = example_arch_spec();
+        // Backward: same site_id (forward source), but endpoints are swapped
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        // Backward swaps: src is the forward dst, dst is the forward src
+        assert_eq!(src.word_id, 0);
+        assert_eq!(src.site_id, 5);
+        assert_eq!(dst.word_id, 0);
+        assert_eq!(dst.site_id, 0);
+    }
+
+    #[test]
+    fn lane_endpoints_word_bus_forward() {
+        let spec = example_arch_spec();
+        // Word bus 0: src=[0] dst=[1]
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        assert_eq!(src.word_id, 0);
+        assert_eq!(src.site_id, 0);
+        assert_eq!(dst.word_id, 1);
+        assert_eq!(dst.site_id, 0);
+    }
+
+    #[test]
+    fn lane_endpoints_word_bus_backward() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        // Backward swaps endpoints
+        assert_eq!(src.word_id, 1);
+        assert_eq!(src.site_id, 0);
+        assert_eq!(dst.word_id, 0);
+        assert_eq!(dst.site_id, 0);
+    }
+
+    #[test]
+    fn lane_endpoints_invalid_bus_returns_none() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 99,
+        };
+        assert!(spec.lane_endpoints(&lane).is_none());
+    }
+
+    #[test]
+    fn lane_endpoints_invalid_site_not_in_bus_returns_none() {
+        let spec = example_arch_spec();
+        // Site 5 is a destination, not a source for forward resolution
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        assert!(spec.lane_endpoints(&lane).is_none());
+    }
+
+    // ── check_lane_strict tests ──
+
+    #[test]
+    fn check_lane_strict_valid_forward() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        assert!(spec.check_lane_strict(&lane).is_empty());
+    }
+
+    #[test]
+    fn check_lane_strict_valid_backward() {
+        let spec = example_arch_spec();
+        // Backward with forward source site_id=0 should be valid
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        assert!(spec.check_lane_strict(&lane).is_empty());
+    }
+
+    #[test]
+    fn check_lane_strict_destination_site_rejected() {
+        let spec = example_arch_spec();
+        // Site 5 is a destination, not a forward source
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane_strict(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("not a valid source"));
+    }
+
+    #[test]
+    fn check_lane_strict_destination_site_backward_also_rejected() {
+        let spec = example_arch_spec();
+        // Site 5 with backward direction — still not a forward source
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane_strict(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("not a valid source"));
+    }
+
+    #[test]
+    fn check_lane_strict_invalid_bus() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 99,
+        };
+        let errors = spec.check_lane_strict(&lane);
+        assert!(!errors.is_empty());
+    }
 }
