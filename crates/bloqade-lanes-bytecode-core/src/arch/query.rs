@@ -111,14 +111,20 @@ impl Bus {
     /// For site buses, this maps source site → destination site.
     /// For word buses, this maps source word → destination word.
     pub fn resolve_forward(&self, src: u32) -> Option<u32> {
-        self.src.iter().position(|&s| s == src).map(|i| self.dst[i])
+        self.src
+            .iter()
+            .position(|&s| s == src)
+            .and_then(|i| self.dst.get(i).copied())
     }
 
     /// Given a destination value, return the source value (backward move).
     /// For site buses, this maps destination site → source site.
     /// For word buses, this maps destination word → source word.
     pub fn resolve_backward(&self, dst: u32) -> Option<u32> {
-        self.dst.iter().position(|&d| d == dst).map(|i| self.src[i])
+        self.dst
+            .iter()
+            .position(|&d| d == dst)
+            .and_then(|i| self.src.get(i).copied())
     }
 }
 
@@ -189,7 +195,7 @@ impl ArchSpec {
 
         // Validate the lane address up front so callers always get None
         // for invalid lanes (e.g. out-of-range word_id or site_id).
-        if !self.check_lane_strict(lane).is_empty() {
+        if !self.check_lane(lane).is_empty() {
             return None;
         }
 
@@ -262,7 +268,13 @@ impl ArchSpec {
         }
     }
 
-    /// Check whether a lane address is valid (bus exists, word/site in range).
+    /// Check whether a lane address is valid.
+    ///
+    /// Validates that the bus exists, word/site are in range, and the
+    /// site/word is a valid forward source for the bus. In the lane address
+    /// convention, `site_id` and `word_id` always encode the forward-direction
+    /// source — the `direction` field only controls which endpoint is src vs
+    /// dst, not which site/word is encoded.
     pub fn check_lane(&self, addr: &LaneAddr) -> Vec<String> {
         let num_words = self.geometry.words.len() as u32;
         let sites_per_word = self.geometry.sites_per_word;
@@ -270,68 +282,36 @@ impl ArchSpec {
 
         match addr.move_type {
             MoveType::SiteBus => {
-                if self.site_bus_by_id(addr.bus_id).is_none() {
-                    errors.push(format!("unknown site_bus id {}", addr.bus_id));
-                }
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
                 }
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
                 }
+                if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
+                    if errors.is_empty() && bus.resolve_forward(addr.site_id).is_none() {
+                        errors.push(format!(
+                            "site_id {} is not a valid source for site_bus {}",
+                            addr.site_id, addr.bus_id
+                        ));
+                    }
+                } else {
+                    errors.push(format!("unknown site_bus id {}", addr.bus_id));
+                }
             }
             MoveType::WordBus => {
-                if self.word_bus_by_id(addr.bus_id).is_none() {
-                    errors.push(format!("unknown word_bus id {}", addr.bus_id));
-                }
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
                 }
-            }
-        }
-        errors
-    }
-
-    /// Strict lane validation: checks everything in [`check_lane`] plus
-    /// verifies that the site/word can be resolved through the bus.
-    ///
-    /// In the lane address convention, `site_id` and `word_id` always refer
-    /// to the forward-direction source. The `direction` field only controls
-    /// which endpoint is src vs dst in the result — it does not change which
-    /// site/word is encoded. Therefore, validation always checks against the
-    /// bus's forward resolution (`bus.src` list).
-    ///
-    /// This is used by [`lane_endpoints`](Self::lane_endpoints) to guarantee
-    /// that returned endpoints are fully valid.
-    pub fn check_lane_strict(&self, addr: &LaneAddr) -> Vec<String> {
-        // Start with the basic checks
-        let mut errors = self.check_lane(addr);
-        if !errors.is_empty() {
-            return errors;
-        }
-
-        // Verify the site/word is a valid forward source for the bus.
-        // The direction field only flips src/dst — it doesn't change
-        // which site/word is encoded in the lane address.
-        match addr.move_type {
-            MoveType::SiteBus => {
-                if let Some(bus) = self.site_bus_by_id(addr.bus_id)
-                    && bus.resolve_forward(addr.site_id).is_none()
-                {
-                    errors.push(format!(
-                        "site_id {} is not a valid source for site_bus {}",
-                        addr.site_id, addr.bus_id
-                    ));
-                }
-            }
-            MoveType::WordBus => {
-                if let Some(bus) = self.word_bus_by_id(addr.bus_id)
-                    && bus.resolve_forward(addr.word_id).is_none()
-                {
-                    errors.push(format!(
-                        "word_id {} is not a valid source for word_bus {}",
-                        addr.word_id, addr.bus_id
-                    ));
+                if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
+                    if errors.is_empty() && bus.resolve_forward(addr.word_id).is_none() {
+                        errors.push(format!(
+                            "word_id {} is not a valid source for word_bus {}",
+                            addr.word_id, addr.bus_id
+                        ));
+                    }
+                } else {
+                    errors.push(format!("unknown word_bus id {}", addr.bus_id));
                 }
             }
         }
@@ -850,10 +830,10 @@ mod tests {
         assert!(spec.lane_endpoints(&lane).is_none());
     }
 
-    // ── check_lane_strict tests ──
+    // ── check_lane tests ──
 
     #[test]
-    fn check_lane_strict_valid_forward() {
+    fn check_lane_valid_forward() {
         let spec = example_arch_spec();
         let lane = crate::arch::addr::LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
@@ -862,11 +842,11 @@ mod tests {
             site_id: 0,
             bus_id: 0,
         };
-        assert!(spec.check_lane_strict(&lane).is_empty());
+        assert!(spec.check_lane(&lane).is_empty());
     }
 
     #[test]
-    fn check_lane_strict_valid_backward() {
+    fn check_lane_valid_backward() {
         let spec = example_arch_spec();
         // Backward with forward source site_id=0 should be valid
         let lane = crate::arch::addr::LaneAddr {
@@ -876,11 +856,11 @@ mod tests {
             site_id: 0,
             bus_id: 0,
         };
-        assert!(spec.check_lane_strict(&lane).is_empty());
+        assert!(spec.check_lane(&lane).is_empty());
     }
 
     #[test]
-    fn check_lane_strict_destination_site_rejected() {
+    fn check_lane_destination_site_rejected() {
         let spec = example_arch_spec();
         // Site 5 is a destination, not a forward source
         let lane = crate::arch::addr::LaneAddr {
@@ -890,13 +870,13 @@ mod tests {
             site_id: 5,
             bus_id: 0,
         };
-        let errors = spec.check_lane_strict(&lane);
+        let errors = spec.check_lane(&lane);
         assert!(!errors.is_empty());
         assert!(errors[0].contains("not a valid source"));
     }
 
     #[test]
-    fn check_lane_strict_destination_site_backward_also_rejected() {
+    fn check_lane_destination_site_backward_also_rejected() {
         let spec = example_arch_spec();
         // Site 5 with backward direction — still not a forward source
         let lane = crate::arch::addr::LaneAddr {
@@ -906,13 +886,13 @@ mod tests {
             site_id: 5,
             bus_id: 0,
         };
-        let errors = spec.check_lane_strict(&lane);
+        let errors = spec.check_lane(&lane);
         assert!(!errors.is_empty());
         assert!(errors[0].contains("not a valid source"));
     }
 
     #[test]
-    fn check_lane_strict_invalid_bus() {
+    fn check_lane_invalid_bus() {
         let spec = example_arch_spec();
         let lane = crate::arch::addr::LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
@@ -921,7 +901,7 @@ mod tests {
             site_id: 0,
             bus_id: 99,
         };
-        let errors = spec.check_lane_strict(&lane);
+        let errors = spec.check_lane(&lane);
         assert!(!errors.is_empty());
     }
 }

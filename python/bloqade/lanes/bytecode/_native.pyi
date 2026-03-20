@@ -475,7 +475,7 @@ class TransportPath:
         lane (LaneAddress): Lane address identifying the transport lane.
         waypoints (list[tuple[float, float]]): Sequence of ``(x, y)`` coordinate waypoints.
 
-    Note: In JSON, the lane is serialized as a 16-digit hex string (e.g. ``"0xC000000000010000"``).
+    Note: In JSON, the lane is serialized as a 16-digit hex string (e.g. ``"0xC000000000000000"``).
     """
 
     def __init__(
