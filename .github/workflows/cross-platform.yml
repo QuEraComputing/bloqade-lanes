@@ -42,11 +42,16 @@ jobs:
         run: just test-rust
 
       # ── Python setup & tests ─────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install Python dependencies
         run: uv sync --dev --all-extras --index-strategy=unsafe-best-match
 
       - name: Build Python extension
-        run: uv run maturin develop
+        run: uv run --with maturin maturin develop
 
       - name: Run Python tests
         run: just test-python
