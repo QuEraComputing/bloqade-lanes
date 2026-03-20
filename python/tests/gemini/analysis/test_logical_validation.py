@@ -8,6 +8,7 @@ from bloqade.gemini.analysis.measurement_validation.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 from bloqade.types import Qubit
+from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
@@ -111,9 +112,10 @@ def test_clifford_gates():
 
         invalid.print(hint="address")
 
-        frame, _ = _GeminiLogicalValidationAnalysis(invalid.dialects).run_no_raise(
-            invalid
-        )
+        addr_frame, _ = AddressAnalysis(invalid.dialects).run(invalid)
+        frame, _ = _GeminiLogicalValidationAnalysis(
+            invalid.dialects, addr_frame=addr_frame
+        ).run_no_raise(invalid)
 
         invalid.print(analysis=frame.entries)
 
@@ -210,7 +212,7 @@ def test_nocloning():
         @gemini.logical.kernel
         def main():
             q = squin.qalloc(2)
-            squin.broadcast.ry(0.123, [q[0], q[0]])
+            squin.broadcast.ry(0.123, ilist.IList([q[0], q[0]]))
             squin.cx(q[1], q[1])
 
 

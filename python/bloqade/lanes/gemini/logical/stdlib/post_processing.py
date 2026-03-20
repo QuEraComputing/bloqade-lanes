@@ -27,7 +27,7 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 @kernel(aggressive_unroll=True, verify=False)
 def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
-    return squin.set_observable([meas[0], meas[1], meas[5]], index)
+    return squin.set_observable([meas[0], meas[1], meas[5]])
 
 
 @kernel(aggressive_unroll=True, verify=False)
