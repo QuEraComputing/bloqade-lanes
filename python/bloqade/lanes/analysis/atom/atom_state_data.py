@@ -51,18 +51,18 @@ class AtomStateData:
         """Construct from explicit field values."""
         rust_state = _RustAtomStateData(
             locations_to_qubit=(
-                {loc._inner: qid for loc, qid in locations_to_qubit.items()}  # type: ignore[attr-defined]
+                {loc._inner: qid for loc, qid in locations_to_qubit.items()}
                 if locations_to_qubit
                 else None
             ),
             qubit_to_locations=(
-                {qid: loc._inner for qid, loc in qubit_to_locations.items()}  # type: ignore[attr-defined]
+                {qid: loc._inner for qid, loc in qubit_to_locations.items()}
                 if qubit_to_locations
                 else None
             ),
             collision=collision,
             prev_lanes=(
-                {qid: lane._inner for qid, lane in prev_lanes.items()}  # type: ignore[attr-defined]
+                {qid: lane._inner for qid, lane in prev_lanes.items()}
                 if prev_lanes
                 else None
             ),
@@ -76,7 +76,7 @@ class AtomStateData:
             locations = {i: loc for i, loc in enumerate(locations)}
 
         rust_state = _RustAtomStateData.from_qubit_locations(
-            {qid: loc._inner for qid, loc in locations.items()}  # type: ignore[attr-defined]
+            {qid: loc._inner for qid, loc in locations.items()}
         )
         return cls(_inner=rust_state)
 
@@ -122,9 +122,7 @@ class AtomStateData:
         return self._inner == other._inner
 
     def add_atoms(self, locations: dict[int, LocationAddress]):
-        rust_locs = {
-            qid: loc._inner for qid, loc in locations.items()  # type: ignore[attr-defined]
-        }
+        rust_locs = {qid: loc._inner for qid, loc in locations.items()}
         try:
             result = self._inner.add_atoms(rust_locs)
         except (RuntimeError, ValueError) as e:
@@ -134,23 +132,24 @@ class AtomStateData:
     def apply_moves(
         self,
         lanes: tuple[LaneAddress, ...],
-        path_finder: PathFinder,  # accepts PathFinder to match existing callers; extracts .spec._inner for Rust
+        path_finder: PathFinder,
     ):
-        rust_lanes = [lane._inner for lane in lanes]  # type: ignore[attr-defined]
-        result = self._inner.apply_moves(
-            rust_lanes, path_finder.spec._inner  # type: ignore[attr-defined]
-        )
+        """Apply moves using Rust backend.
+
+        Accepts PathFinder to match existing callers; extracts
+        path_finder.spec._inner for the Rust ArchSpec.
+        """
+        rust_lanes = [lane._inner for lane in lanes]
+        result = self._inner.apply_moves(rust_lanes, path_finder.spec._inner)
         if result is None:
             return None
         return _from_rust_state(result)
 
     def get_qubit(self, location: LocationAddress):
-        return self._inner.get_qubit(location._inner)  # type: ignore[attr-defined]
+        return self._inner.get_qubit(location._inner)
 
     def get_qubit_pairing(self, zone_address: ZoneAddress, arch_spec: ArchSpec):
-        result = self._inner.get_qubit_pairing(
-            zone_address._inner, arch_spec._inner  # type: ignore[attr-defined]
-        )
+        result = self._inner.get_qubit_pairing(zone_address._inner, arch_spec._inner)
         if result is None:
             raise InterpreterError(
                 f"Invalid zone address {zone_address!r} for get_qubit_pairing"
