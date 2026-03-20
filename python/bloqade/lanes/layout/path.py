@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from itertools import product, starmap
 from typing import Callable
@@ -12,11 +14,13 @@ from .encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
+from .move_metric import MoveMetricCalculator
 
 
 @dataclass(frozen=True)
 class PathFinder:
     spec: ArchSpec
+    metrics: MoveMetricCalculator = field(init=False)
     site_graph: nx.PyDiGraph = field(init=False, default_factory=nx.PyDiGraph)
     """Graph representing all sites and edges as lanes."""
     physical_addresses: list[LocationAddress] = field(init=False, default_factory=list)
@@ -30,6 +34,7 @@ class PathFinder:
     )
 
     def __post_init__(self):
+        object.__setattr__(self, "metrics", MoveMetricCalculator(arch_spec=self.spec))
         word_ids = range(len(self.spec.words))
         site_ids = range(len(self.spec.words[0].site_indices))
         self.physical_addresses.extend(
@@ -145,7 +150,7 @@ class PathFinder:
             path_heuristic: A tie-breaker over candidate shortest paths, evaluated on
                 the candidate location sequence.
             edge_weight: Optional edge weight function used for shortest-path costs.
-                Defaults to `ArchSpec.get_lane_duration_us` when not provided.
+                Defaults to `Metrics.get_lane_duration_us` when not provided.
 
         Returns:
             A tuple containing:
@@ -173,7 +178,7 @@ class PathFinder:
             return None
 
         if edge_weight is None:
-            resolved_edge_weight = self.spec.get_lane_duration_us
+            resolved_edge_weight = self.metrics.get_lane_duration_us
         else:
             resolved_edge_weight = edge_weight
 

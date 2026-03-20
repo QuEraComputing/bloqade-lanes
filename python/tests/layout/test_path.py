@@ -20,7 +20,7 @@ def _path_duration(
     for src, dst in zip(locations, locations[1:]):
         lane = path_finder.spec.get_lane_address(src, dst)
         assert lane is not None
-        duration += path_finder.spec.get_lane_duration_us(lane)
+        duration += path_finder.metrics.get_lane_duration_us(lane)
     return duration
 
 

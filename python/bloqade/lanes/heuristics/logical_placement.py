@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from functools import cached_property
@@ -267,10 +269,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return self._path_cost(self._best_path(addr0, addr1))
 
     def _get_lane_duration(self, lane: layout.LaneAddress) -> float:
-        return self.arch_spec.get_lane_duration_us(lane)
+        return self._path_finder.metrics.get_lane_duration_us(lane)
 
     def _get_lane_cost(self, lane: layout.LaneAddress) -> float:
-        return self.arch_spec.get_lane_duration_cost(lane)
+        return self._path_finder.metrics.get_lane_duration_cost(lane)
 
     def _best_path(
         self,
