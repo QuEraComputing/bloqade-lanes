@@ -9,45 +9,7 @@ use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr, ZoneAddr};
 use bloqade_lanes_bytecode_core::atom_state::AtomStateData;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr, PyZoneAddr};
-use crate::validation::validate_field;
-
-/// Validate a HashMap with i64 keys, converting to u32.
-fn validate_i64_key_map<V>(name: &str, map: HashMap<i64, V>) -> PyResult<HashMap<u32, V>> {
-    map.into_iter()
-        .map(|(k, v)| {
-            let k = validate_field::<u32>(name, k)?;
-            Ok((k, v))
-        })
-        .collect()
-}
-
-/// Validate a HashMap with i64 values, converting to u32.
-fn validate_i64_value_map<K: Eq + std::hash::Hash>(
-    name: &str,
-    map: HashMap<K, i64>,
-) -> PyResult<HashMap<K, u32>> {
-    map.into_iter()
-        .map(|(k, v)| {
-            let v = validate_field::<u32>(name, v)?;
-            Ok((k, v))
-        })
-        .collect()
-}
-
-/// Validate a HashMap with i64 keys and i64 values, converting both to u32.
-fn validate_i64_kv_map(
-    key_name: &str,
-    value_name: &str,
-    map: HashMap<i64, i64>,
-) -> PyResult<HashMap<u32, u32>> {
-    map.into_iter()
-        .map(|(k, v)| {
-            let k = validate_field::<u32>(key_name, k)?;
-            let v = validate_field::<u32>(value_name, v)?;
-            Ok((k, v))
-        })
-        .collect()
-}
+use crate::validation::{validate_i64_key_map, validate_i64_kv_map, validate_i64_value_map};
 
 /// Tracks qubit-to-location mappings as atoms move through the architecture.
 ///

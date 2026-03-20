@@ -87,6 +87,53 @@ pub fn validate_vec<T: ValidateFromI64>(
         .collect()
 }
 
+/// Validate a HashMap with i64 keys, converting each key to `T`.
+pub fn validate_i64_key_map<T: ValidateFromI64, V>(
+    name: &str,
+    map: std::collections::HashMap<i64, V>,
+) -> Result<std::collections::HashMap<T, V>, FieldRangeError>
+where
+    T: Eq + std::hash::Hash,
+{
+    map.into_iter()
+        .map(|(k, v)| {
+            let k = validate_field::<T>(name, k)?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
+/// Validate a HashMap with i64 values, converting each value to `T`.
+pub fn validate_i64_value_map<K: Eq + std::hash::Hash, T: ValidateFromI64>(
+    name: &str,
+    map: std::collections::HashMap<K, i64>,
+) -> Result<std::collections::HashMap<K, T>, FieldRangeError> {
+    map.into_iter()
+        .map(|(k, v)| {
+            let v = validate_field::<T>(name, v)?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
+/// Validate a HashMap with i64 keys and i64 values, converting both to `T`.
+pub fn validate_i64_kv_map<T: ValidateFromI64>(
+    key_name: &str,
+    value_name: &str,
+    map: std::collections::HashMap<i64, i64>,
+) -> Result<std::collections::HashMap<T, T>, FieldRangeError>
+where
+    T: Eq + std::hash::Hash,
+{
+    map.into_iter()
+        .map(|(k, v)| {
+            let k = validate_field::<T>(key_name, k)?;
+            let v = validate_field::<T>(value_name, v)?;
+            Ok((k, v))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
