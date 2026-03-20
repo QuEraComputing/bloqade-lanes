@@ -4,7 +4,6 @@ from kirin.interp import InterpreterError
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.atom import atom_state_data
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout.path import PathFinder
 
 
 def test_hash():
@@ -53,10 +52,9 @@ def test_apply_moves():
     )
 
     arch_spec = logical.get_arch_spec()
-    path_finder = PathFinder(arch_spec)
 
     new_atom_state = atom_state.apply_moves(
-        lanes=(layout.SiteLaneAddress(0, 0, 0),), path_finder=path_finder
+        lanes=(layout.SiteLaneAddress(0, 0, 0),), arch_spec=arch_spec
     )
 
     expected_atom_state = atom_state_data.AtomStateData.from_fields(
@@ -90,11 +88,10 @@ def test_apply_moves_with_collision():
     )
 
     arch_spec = logical.get_arch_spec()
-    path_finder = PathFinder(arch_spec)
 
     new_atom_state = atom_state.apply_moves(
         lanes=(lane_address := layout.SiteLaneAddress(0, 0, 0),),
-        path_finder=path_finder,
+        arch_spec=arch_spec,
     )
 
     expected_atom_state = atom_state_data.AtomStateData.from_fields(
@@ -166,11 +163,10 @@ def test_add_atoms_occupied_location_raises():
 def test_apply_moves_invalid_lane_returns_none():
     atom_state = atom_state_data.AtomStateData.new([layout.LocationAddress(0, 0)])
     arch_spec = logical.get_arch_spec()
-    path_finder = PathFinder(arch_spec)
 
-    # Use a lane with an invalid bus_id that won't be in PathFinder's cache
+    # Use a lane with an invalid bus_id
     invalid_lane = layout.LaneAddress(layout.MoveType.SITE, 0, 0, 99)
-    result = atom_state.apply_moves(lanes=(invalid_lane,), path_finder=path_finder)
+    result = atom_state.apply_moves(lanes=(invalid_lane,), arch_spec=arch_spec)
     assert result is None
 
 

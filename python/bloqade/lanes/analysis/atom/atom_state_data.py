@@ -13,7 +13,6 @@ from bloqade.lanes.bytecode._native import (
 )
 from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.path import PathFinder
 
 
 def _from_rust_loc(rust_loc: _RustLocationAddress) -> LocationAddress:
@@ -138,15 +137,10 @@ class AtomStateData:
     def apply_moves(
         self,
         lanes: tuple[LaneAddress, ...],
-        path_finder: PathFinder,
+        arch_spec: ArchSpec,
     ):
-        """Apply moves using Rust backend.
-
-        Accepts PathFinder to match existing callers; extracts
-        path_finder.spec._inner for the Rust ArchSpec.
-        """
         rust_lanes = [lane._inner for lane in lanes]
-        result = self._inner.apply_moves(rust_lanes, path_finder.spec._inner)
+        result = self._inner.apply_moves(rust_lanes, arch_spec._inner)
         if result is None:
             return None
         return _from_rust_state(result)

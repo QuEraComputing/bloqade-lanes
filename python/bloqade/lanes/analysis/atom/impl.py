@@ -60,7 +60,7 @@ class Move(interp.MethodTable):
         current_state = frame.get(stmt.current_state)
 
         if isinstance(current_state, AtomState):
-            new_data = current_state.data.apply_moves(stmt.lanes, interp_.path_finder)
+            new_data = current_state.data.apply_moves(stmt.lanes, interp_.arch_spec)
         else:
             new_data = None
 
