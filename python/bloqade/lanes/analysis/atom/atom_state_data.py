@@ -1,158 +1,164 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from functools import cached_property
 
 from kirin.interp import InterpreterError
 
+from bloqade.lanes.bytecode import AtomStateData as _RustAtomStateData
+from bloqade.lanes.bytecode._native import (
+    LaneAddress as _RustLaneAddress,
+    LocationAddress as _RustLocationAddress,
+)
 from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
 
 
+def _from_rust_loc(rust_loc: _RustLocationAddress) -> LocationAddress:
+    """Convert a Rust LocationAddress to a Python LocationAddress."""
+    return LocationAddress(rust_loc.word_id, rust_loc.site_id)
+
+
+def _from_rust_lane(rust_lane: _RustLaneAddress) -> LaneAddress:
+    """Convert a Rust LaneAddress to a Python LaneAddress."""
+    return LaneAddress(
+        rust_lane.move_type,
+        rust_lane.word_id,
+        rust_lane.site_id,
+        rust_lane.bus_id,
+        rust_lane.direction,
+    )
+
+
+def _to_rust_state(state: AtomStateData) -> _RustAtomStateData:
+    """Convert a Python AtomStateData to a Rust AtomStateData."""
+    return state._inner
+
+
+def _from_rust_state(rust_state: _RustAtomStateData) -> AtomStateData:
+    """Convert a Rust AtomStateData to a Python AtomStateData."""
+    return AtomStateData(_inner=rust_state)
+
+
 @dataclass(frozen=True)
 class AtomStateData:
-    locations_to_qubit: dict[LocationAddress, int] = field(default_factory=dict)
-    """Mapping from location to qubit id."""
-    qubit_to_locations: dict[int, LocationAddress] = field(default_factory=dict)
-    """Mapping from qubit id to its current location."""
-    collision: dict[int, int] = field(default_factory=dict)
-    """Mapping from qubit id to another qubit id that it has collided with in this state."""
-    prev_lanes: dict[int, LaneAddress] = field(default_factory=dict)
-    """Mapping from qubit id to the lane it took to reach this state."""
-    move_count: dict[int, int] = field(default_factory=dict)
-    """Mapping from qubit id to number of moves it has had."""
+    _inner: _RustAtomStateData = field(default_factory=_RustAtomStateData, repr=False)
+
+    @classmethod
+    def from_fields(
+        cls,
+        locations_to_qubit: dict[LocationAddress, int] | None = None,
+        qubit_to_locations: dict[int, LocationAddress] | None = None,
+        collision: dict[int, int] | None = None,
+        prev_lanes: dict[int, LaneAddress] | None = None,
+        move_count: dict[int, int] | None = None,
+    ) -> AtomStateData:
+        """Construct from explicit field values."""
+        rust_state = _RustAtomStateData(
+            locations_to_qubit=(
+                {loc._inner: qid for loc, qid in locations_to_qubit.items()}  # type: ignore[attr-defined]
+                if locations_to_qubit
+                else None
+            ),
+            qubit_to_locations=(
+                {qid: loc._inner for qid, loc in qubit_to_locations.items()}  # type: ignore[attr-defined]
+                if qubit_to_locations
+                else None
+            ),
+            collision=collision,
+            prev_lanes=(
+                {qid: lane._inner for qid, lane in prev_lanes.items()}  # type: ignore[attr-defined]
+                if prev_lanes
+                else None
+            ),
+            move_count=move_count,
+        )
+        return cls(_inner=rust_state)
 
     @classmethod
     def new(cls, locations: dict[int, LocationAddress] | list[LocationAddress]):
         if isinstance(locations, list):
             locations = {i: loc for i, loc in enumerate(locations)}
 
-        qubit_to_locations = {}
-        locations_to_qubit = {}
-
-        for qubit, location in locations.items():
-            qubit_to_locations[qubit] = location
-            locations_to_qubit[location] = qubit
-
-        return cls(
-            locations_to_qubit=locations_to_qubit,
-            qubit_to_locations=qubit_to_locations,
+        rust_state = _RustAtomStateData.from_qubit_locations(
+            {qid: loc._inner for qid, loc in locations.items()}  # type: ignore[attr-defined]
         )
+        return cls(_inner=rust_state)
 
-    @cached_property
-    def _hash(self):
-        return hash(
-            (
-                AtomStateData,
-                frozenset(self.locations_to_qubit.items()),
-                frozenset(self.qubit_to_locations.items()),
-                frozenset(self.collision.items()),
-                frozenset(self.prev_lanes.items()),
-                frozenset(self.move_count.items()),
-            )
-        )
+    @property
+    def locations_to_qubit(self) -> dict[LocationAddress, int]:
+        """Mapping from location to qubit id."""
+        return {
+            _from_rust_loc(loc): qid
+            for loc, qid in self._inner.locations_to_qubit.items()
+        }
+
+    @property
+    def qubit_to_locations(self) -> dict[int, LocationAddress]:
+        """Mapping from qubit id to its current location."""
+        return {
+            qid: _from_rust_loc(loc)
+            for qid, loc in self._inner.qubit_to_locations.items()
+        }
+
+    @property
+    def collision(self) -> dict[int, int]:
+        """Mapping from qubit id to another qubit id that it has collided with."""
+        return dict(self._inner.collision)
+
+    @property
+    def prev_lanes(self) -> dict[int, LaneAddress]:
+        """Mapping from qubit id to the lane it took to reach this state."""
+        return {
+            qid: _from_rust_lane(lane) for qid, lane in self._inner.prev_lanes.items()
+        }
+
+    @property
+    def move_count(self) -> dict[int, int]:
+        """Mapping from qubit id to number of moves it has had."""
+        return dict(self._inner.move_count)
 
     def __hash__(self):
-        return self._hash
+        return self._inner.__hash__()
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AtomStateData):
+            return NotImplemented
+        return self._inner == other._inner
 
     def add_atoms(self, locations: dict[int, LocationAddress]):
-        if not self.qubit_to_locations.keys().isdisjoint(locations.keys()):
-            raise InterpreterError("Attempted to add atom that already exists")
-
-        if not self.locations_to_qubit.keys().isdisjoint(locations.values()):
-            raise InterpreterError("Attempted to add atom to occupied location")
-
-        qubit_to_locations = self.qubit_to_locations.copy()
-        locations_to_qubit = self.locations_to_qubit.copy()
-
-        for current_qubit, location in locations.items():
-            qubit_to_locations[current_qubit] = location
-            locations_to_qubit[location] = current_qubit
-
-        return AtomStateData(
-            locations_to_qubit=locations_to_qubit,
-            qubit_to_locations=qubit_to_locations,
-        )
+        rust_locs = {
+            qid: loc._inner for qid, loc in locations.items()  # type: ignore[attr-defined]
+        }
+        try:
+            result = self._inner.add_atoms(rust_locs)
+        except RuntimeError as e:
+            raise InterpreterError(str(e)) from e
+        return _from_rust_state(result)
 
     def apply_moves(
         self,
         lanes: tuple[LaneAddress, ...],
         path_finder: PathFinder,
     ):
-        qubit_to_locations = self.qubit_to_locations.copy()
-        locations_to_qubit = self.locations_to_qubit.copy()
-        collisions = self.collision.copy()
-        moves_count = self.move_count.copy()
-        prev_lanes: dict[int, LaneAddress] = {}
-
-        for lane in lanes:
-            src, dst = path_finder.get_endpoints(lane)
-            if src is None or dst is None:
-                return None
-
-            qubit = locations_to_qubit.pop(src, None)
-
-            if qubit is None:
-                continue
-
-            moves_count[qubit] = moves_count.get(qubit, 0) + 1
-            prev_lanes[qubit] = lane
-
-            if (other_qubit := locations_to_qubit.pop(dst, None)) is None:
-                qubit_to_locations[qubit] = dst
-                locations_to_qubit[dst] = qubit
-            else:
-                del qubit_to_locations[qubit]
-                del qubit_to_locations[other_qubit]
-                collisions[qubit] = other_qubit
-
-        return AtomStateData(
-            locations_to_qubit=locations_to_qubit,
-            qubit_to_locations=qubit_to_locations,
-            prev_lanes=prev_lanes,
-            collision=collisions,
-            move_count=moves_count,
+        rust_lanes = [lane._inner for lane in lanes]  # type: ignore[attr-defined]
+        result = self._inner.apply_moves(
+            rust_lanes, path_finder.spec._inner  # type: ignore[attr-defined]
         )
+        if result is None:
+            return None
+        return _from_rust_state(result)
 
     def get_qubit(self, location: LocationAddress):
-        return self.locations_to_qubit.get(location)
+        return self._inner.get_qubit(location._inner)  # type: ignore[attr-defined]
 
     def get_qubit_pairing(self, zone_address: ZoneAddress, arch_spec: ArchSpec):
-
-        controls: list[int] = []
-        targets: list[int] = []
-        unpaired: list[int] = []
-        visited: set[int] = set()
-        word_ids = arch_spec.zones[zone_address.zone_id]
-
-        for qubit_index, address in self.qubit_to_locations.items():
-            if qubit_index in visited:
-                continue
-
-            visited.add(qubit_index)
-            if (address.word_id) not in word_ids:
-                continue
-
-            blockaded_location = arch_spec.get_blockaded_location(address)
-            if blockaded_location is None:
-                unpaired.append(qubit_index)
-                continue
-
-            target_id = self.get_qubit(blockaded_location)
-            if target_id is None:
-                unpaired.append(qubit_index)
-                continue
-
-            controls.append(qubit_index)
-            targets.append(target_id)
-            visited.add(target_id)
-
-        return controls, targets, unpaired
+        result = self._inner.get_qubit_pairing(
+            zone_address._inner, arch_spec._inner  # type: ignore[attr-defined]
+        )
+        if result is None:
+            return [], [], []
+        return result
 
     def copy(self):
-        return AtomStateData(
-            locations_to_qubit=self.locations_to_qubit.copy(),
-            qubit_to_locations=self.qubit_to_locations.copy(),
-            collision=self.collision.copy(),
-            prev_lanes=self.prev_lanes.copy(),
-            move_count=self.move_count.copy(),
-        )
+        return _from_rust_state(self._inner.copy())

@@ -5,24 +5,15 @@ from bloqade.lanes.layout.path import PathFinder
 
 
 def test_hash():
-    data1 = atom_state_data.AtomStateData(
+    data1 = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={layout.LocationAddress(0, 0): 1},
         qubit_to_locations={1: layout.LocationAddress(0, 0)},
-        collision={},
-        prev_lanes={},
-        move_count={},
     )
-
-    assert hash(data1) == hash(
-        (
-            atom_state_data.AtomStateData,
-            frozenset([(layout.LocationAddress(0, 0), 1)]),
-            frozenset([(1, layout.LocationAddress(0, 0))]),
-            frozenset([]),
-            frozenset([]),
-            frozenset([]),
-        )
+    data2 = atom_state_data.AtomStateData.from_fields(
+        locations_to_qubit={layout.LocationAddress(0, 0): 1},
+        qubit_to_locations={1: layout.LocationAddress(0, 0)},
     )
+    assert hash(data1) == hash(data2)
 
 
 def test_add_atoms():
@@ -32,7 +23,7 @@ def test_add_atoms():
         {0: layout.LocationAddress(0, 0), 1: layout.LocationAddress(1, 0)}
     )
 
-    expected_atom_state = atom_state_data.AtomStateData(
+    expected_atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
             layout.LocationAddress(0, 0): 0,
             layout.LocationAddress(1, 0): 1,
@@ -41,16 +32,13 @@ def test_add_atoms():
             0: layout.LocationAddress(0, 0),
             1: layout.LocationAddress(1, 0),
         },
-        collision={},
-        prev_lanes={},
-        move_count={},
     )
 
     assert new_atom_state == expected_atom_state
 
 
 def test_apply_moves():
-    atom_state = atom_state_data.AtomStateData(
+    atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
             layout.LocationAddress(0, 0): 0,
             layout.LocationAddress(1, 0): 1,
@@ -59,9 +47,6 @@ def test_apply_moves():
             0: layout.LocationAddress(0, 0),
             1: layout.LocationAddress(1, 0),
         },
-        collision={},
-        prev_lanes={},
-        move_count={},
     )
 
     arch_spec = logical.get_arch_spec()
@@ -71,7 +56,7 @@ def test_apply_moves():
         lanes=(layout.SiteLaneAddress(0, 0, 0),), path_finder=path_finder
     )
 
-    expected_atom_state = atom_state_data.AtomStateData(
+    expected_atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
             layout.LocationAddress(0, 5): 0,
             layout.LocationAddress(1, 0): 1,
@@ -80,7 +65,6 @@ def test_apply_moves():
             0: layout.LocationAddress(0, 5),
             1: layout.LocationAddress(1, 0),
         },
-        collision={},
         prev_lanes={
             0: layout.SiteLaneAddress(0, 0, 0),
         },
@@ -91,7 +75,7 @@ def test_apply_moves():
 
 
 def test_apply_moves_with_collision():
-    atom_state = atom_state_data.AtomStateData(
+    atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
             layout.LocationAddress(0, 0): 0,
             layout.LocationAddress(0, 5): 1,
@@ -100,9 +84,6 @@ def test_apply_moves_with_collision():
             0: layout.LocationAddress(0, 0),
             1: layout.LocationAddress(0, 5),
         },
-        collision={},
-        prev_lanes={},
-        move_count={},
     )
 
     arch_spec = logical.get_arch_spec()
@@ -113,9 +94,7 @@ def test_apply_moves_with_collision():
         path_finder=path_finder,
     )
 
-    expected_atom_state = atom_state_data.AtomStateData(
-        locations_to_qubit={},
-        qubit_to_locations={},
+    expected_atom_state = atom_state_data.AtomStateData.from_fields(
         collision={0: 1},
         prev_lanes={
             0: lane_address,
