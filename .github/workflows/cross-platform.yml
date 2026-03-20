@@ -48,10 +48,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python dependencies
-        run: uv sync --dev --all-extras --index-strategy=unsafe-best-match
+        run: just sync
 
       - name: Build Python extension
-        run: uv run --with maturin maturin develop
+        run: just develop-python
 
       - name: Run Python tests
         run: just test-python
