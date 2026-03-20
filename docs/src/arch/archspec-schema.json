@@ -241,7 +241,7 @@
       "additionalProperties": false,
       "properties": {
         "lane": {
-          "description": "Encoded LaneAddr as a 16-digit hex string (e.g. '0xC000000000010000'). Low 32 bits: [word_id:16][site_id:16], high 32 bits: [dir:1][mt:1][pad:14][bus_id:16].",
+          "description": "Encoded LaneAddr as a 16-digit hex string (e.g. '0xC000000000000000'). Low 32 bits: [word_id:16][site_id:16], high 32 bits: [dir:1][mt:1][pad:14][bus_id:16].",
           "type": "string",
           "pattern": "^0[xX][0-9a-fA-F]{16}$"
         },

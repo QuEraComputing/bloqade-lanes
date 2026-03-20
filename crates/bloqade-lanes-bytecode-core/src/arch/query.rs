@@ -111,14 +111,20 @@ impl Bus {
     /// For site buses, this maps source site → destination site.
     /// For word buses, this maps source word → destination word.
     pub fn resolve_forward(&self, src: u32) -> Option<u32> {
-        self.src.iter().position(|&s| s == src).map(|i| self.dst[i])
+        self.src
+            .iter()
+            .position(|&s| s == src)
+            .and_then(|i| self.dst.get(i).copied())
     }
 
     /// Given a destination value, return the source value (backward move).
     /// For site buses, this maps destination site → source site.
     /// For word buses, this maps destination word → source word.
     pub fn resolve_backward(&self, dst: u32) -> Option<u32> {
-        self.dst.iter().position(|&d| d == dst).map(|i| self.src[i])
+        self.dst
+            .iter()
+            .position(|&d| d == dst)
+            .and_then(|i| self.src.get(i).copied())
     }
 }
 
@@ -181,6 +187,16 @@ impl ArchSpec {
     ///
     /// Returns `Some((src, dst))` if the lane can be resolved through the bus,
     /// or `None` if the lane references invalid words, sites, or buses.
+    /// Resolve a `LaneAddr` to its source and destination `LocationAddr` pair.
+    ///
+    /// The lane address always encodes the forward source (site_id for site
+    /// buses, word_id for word buses). For forward lanes the source is at
+    /// the encoded location and the destination is resolved through the bus.
+    /// For backward lanes the roles are swapped: the source is at the
+    /// forward destination and the destination is at the encoded location.
+    ///
+    /// Returns `Some((src, dst))` if the lane can be resolved through the bus,
+    /// or `None` if the lane references invalid words, sites, or buses.
     pub fn lane_endpoints(
         &self,
         lane: &crate::arch::addr::LaneAddr,
@@ -189,17 +205,19 @@ impl ArchSpec {
 
         // Validate the lane address up front so callers always get None
         // for invalid lanes (e.g. out-of-range word_id or site_id).
-        if !self.check_lane_strict(lane).is_empty() {
+        if !self.check_lane(lane).is_empty() {
             return None;
         }
 
-        let src = LocationAddr {
+        // The encoded location is always the forward source.
+        let fwd_src = LocationAddr {
             word_id: lane.word_id,
             site_id: lane.site_id,
         };
 
-        let dst = match (lane.move_type, lane.direction) {
-            (MoveType::SiteBus, Direction::Forward) => {
+        // Resolve the forward destination through the bus.
+        let fwd_dst = match lane.move_type {
+            MoveType::SiteBus => {
                 let bus = self.site_bus_by_id(lane.bus_id)?;
                 let dst_site = bus.resolve_forward(lane.site_id)?;
                 LocationAddr {
@@ -207,15 +225,7 @@ impl ArchSpec {
                     site_id: dst_site,
                 }
             }
-            (MoveType::SiteBus, Direction::Backward) => {
-                let bus = self.site_bus_by_id(lane.bus_id)?;
-                let dst_site = bus.resolve_backward(lane.site_id)?;
-                LocationAddr {
-                    word_id: lane.word_id,
-                    site_id: dst_site,
-                }
-            }
-            (MoveType::WordBus, Direction::Forward) => {
+            MoveType::WordBus => {
                 let bus = self.word_bus_by_id(lane.bus_id)?;
                 let dst_word = bus.resolve_forward(lane.word_id)?;
                 LocationAddr {
@@ -223,17 +233,12 @@ impl ArchSpec {
                     site_id: lane.site_id,
                 }
             }
-            (MoveType::WordBus, Direction::Backward) => {
-                let bus = self.word_bus_by_id(lane.bus_id)?;
-                let dst_word = bus.resolve_backward(lane.word_id)?;
-                LocationAddr {
-                    word_id: dst_word,
-                    site_id: lane.site_id,
-                }
-            }
         };
 
-        Some((src, dst))
+        match lane.direction {
+            Direction::Forward => Some((fwd_src, fwd_dst)),
+            Direction::Backward => Some((fwd_dst, fwd_src)),
+        }
     }
 
     /// Get the CZ pair (blockaded location) for a given location.
@@ -272,7 +277,12 @@ impl ArchSpec {
         }
     }
 
-    /// Check whether a lane address is valid (bus exists, word/site in range).
+    /// Check whether a lane address is valid: verifies structural bounds
+    /// (bus exists, word/site in range) and that the site/word is a valid
+    /// forward source for the bus.
+    ///
+    /// Lane addresses always encode the forward source, so this always
+    /// checks `resolve_forward` regardless of the lane's direction.
     pub fn check_lane(&self, addr: &LaneAddr) -> Vec<String> {
         let num_words = self.geometry.words.len() as u32;
         let sites_per_word = self.geometry.sites_per_word;
@@ -299,52 +309,31 @@ impl ArchSpec {
                 }
             }
         }
-        errors
-    }
 
-    /// Strict lane validation: checks everything in [`check_lane`] plus
-    /// verifies that the site/word is a valid source or destination for
-    /// the bus in the given direction.
-    ///
-    /// This is used by [`lane_endpoints`](Self::lane_endpoints) to guarantee
-    /// that returned endpoints are fully valid.
-    pub fn check_lane_strict(&self, addr: &LaneAddr) -> Vec<String> {
-        use super::addr::Direction;
-
-        // Start with the basic checks
-        let mut errors = self.check_lane(addr);
         if !errors.is_empty() {
             return errors;
         }
 
-        // Additionally verify bus resolution for the given direction
+        // Verify the lane encodes a valid forward source for the bus.
         match addr.move_type {
             MoveType::SiteBus => {
-                if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
-                    let resolvable = match addr.direction {
-                        Direction::Forward => bus.resolve_forward(addr.site_id).is_some(),
-                        Direction::Backward => bus.resolve_backward(addr.site_id).is_some(),
-                    };
-                    if !resolvable {
-                        errors.push(format!(
-                            "site_id {} is not a valid {:?} source for site_bus {}",
-                            addr.site_id, addr.direction, addr.bus_id
-                        ));
-                    }
+                if let Some(bus) = self.site_bus_by_id(addr.bus_id)
+                    && bus.resolve_forward(addr.site_id).is_none()
+                {
+                    errors.push(format!(
+                        "site_id {} is not a valid forward source for site_bus {}",
+                        addr.site_id, addr.bus_id
+                    ));
                 }
             }
             MoveType::WordBus => {
-                if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
-                    let resolvable = match addr.direction {
-                        Direction::Forward => bus.resolve_forward(addr.word_id).is_some(),
-                        Direction::Backward => bus.resolve_backward(addr.word_id).is_some(),
-                    };
-                    if !resolvable {
-                        errors.push(format!(
-                            "word_id {} is not a valid {:?} source for word_bus {}",
-                            addr.word_id, addr.direction, addr.bus_id
-                        ));
-                    }
+                if let Some(bus) = self.word_bus_by_id(addr.bus_id)
+                    && bus.resolve_forward(addr.word_id).is_none()
+                {
+                    errors.push(format!(
+                        "word_id {} is not a valid forward source for word_bus {}",
+                        addr.word_id, addr.bus_id
+                    ));
                 }
             }
         }

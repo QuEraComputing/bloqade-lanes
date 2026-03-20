@@ -108,7 +108,7 @@ EXAMPLE_JSON = json.dumps(
         "measurement_mode_zones": [0],
         "paths": [
             {
-                "lane": "0xC000000000010000",
+                "lane": "0xC000000000000000",
                 "waypoints": [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]],
             }
         ],
@@ -174,7 +174,7 @@ def _build_spec_from_python():
             TransportPath(
                 lane=LaneAddress(
                     MoveType.WORD,
-                    word_id=1,
+                    word_id=0,
                     site_id=0,
                     bus_id=0,
                     direction=Direction.BACKWARD,
@@ -331,11 +331,11 @@ class TestPropertyAccess:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         assert spec.paths is not None
         assert len(spec.paths) == 1
-        assert spec.paths[0].lane_encoded == 0xC000000000010000
+        assert spec.paths[0].lane_encoded == 0xC000000000000000
         lane = spec.paths[0].lane
         assert lane.direction == Direction.BACKWARD
         assert lane.move_type == MoveType.WORD
-        assert lane.word_id == 1
+        assert lane.word_id == 0
         assert lane.site_id == 0
         assert lane.bus_id == 0
         assert len(spec.paths[0].waypoints) == 3
@@ -522,20 +522,30 @@ class TestCheckLanes:
 
     def test_aod_constraint_rectangle_pass(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        # 2x2 rectangle: sites 0,1,5,6
+        # 2x2 rectangle using valid forward source sites on two words:
+        #   word 0, site 0 -> (1.0, 2.5)
+        #   word 0, site 1 -> (3.0, 2.5)
+        #   word 1, site 0 -> (1.0, 12.5)
+        #   word 1, site 1 -> (3.0, 12.5)
         lanes = [
-            LaneAddress(MoveType.SITE, word_id=0, site_id=s, bus_id=0)
-            for s in [0, 1, 5, 6]
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=1, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=1, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=1, site_id=1, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert errors == []
 
     def test_aod_constraint_not_rectangle(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        # L-shape: sites 0,1,5
+        # L-shape using valid forward source sites on two words:
+        #   word 0, site 0 -> (1.0, 2.5)
+        #   word 0, site 1 -> (3.0, 2.5)
+        #   word 1, site 0 -> (1.0, 12.5)
         lanes = [
-            LaneAddress(MoveType.SITE, word_id=0, site_id=s, bus_id=0)
-            for s in [0, 1, 5]
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=1, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=1, site_id=0, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert len(errors) > 0

@@ -151,7 +151,7 @@ The lane is identified by its encoded `LaneAddr`, serialized as a hex string. Se
 ```jsonc
 "paths": [
   {
-    "lane": "0xC000000000010000",                        // encoded LaneAddr (hex, 16-digit)
+    "lane": "0xC000000000000000",                        // encoded LaneAddr (hex, 16-digit)
     "waypoints": [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]]  // physical trajectory
   }
 ]
@@ -164,7 +164,7 @@ Each `TransportPath` entry has:
 | `lane` | string | Encoded `LaneAddr` as a `"0x..."` hex string. |
 | `waypoints` | [x, y][] | Sequence of physical coordinate waypoints. |
 
-To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain `[word_id:16][site_id:16]` and the high 32 bits (data1) contain `[dir:1][mt:1][pad:14][bus_id:16]`. For example, `"0xC000000000010000"` decodes to direction=Backward, move_type=WordBus, word=1, site=0, bus=0.
+To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain `[word_id:16][site_id:16]` and the high 32 bits (data1) contain `[dir:1][mt:1][pad:14][bus_id:16]`. For example, `"0xC000000000000000"` decodes to direction=Backward, move_type=WordBus, word=0, site=0, bus=0.
 
 This field is omitted from the JSON when not needed.
 

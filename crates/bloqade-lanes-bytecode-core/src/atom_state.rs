@@ -625,12 +625,12 @@ mod tests {
         let state2 = state.apply_moves(&[lane_fwd], &spec).unwrap();
         assert_eq!(state2.move_count[&0], 1);
 
-        // Move backward: site 5 -> site 0
+        // Move backward: site 5 -> site 0 (site_id encodes forward source)
         let lane_bwd = LaneAddr {
             direction: crate::arch::addr::Direction::Backward,
             move_type: crate::arch::addr::MoveType::SiteBus,
             word_id: 0,
-            site_id: 5,
+            site_id: 0,
             bus_id: 0,
         };
         let state3 = state2.apply_moves(&[lane_bwd], &spec).unwrap();

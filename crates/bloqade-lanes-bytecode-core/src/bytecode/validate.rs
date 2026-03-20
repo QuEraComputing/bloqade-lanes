@@ -1073,10 +1073,18 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_rectangle_passes() {
         let arch = lane_group_arch_spec();
-        let lanes: Vec<(u32, u32)> = [0, 1, 5, 6]
-            .iter()
-            .map(|&s| make_lane(Direction::Forward, MoveType::SiteBus, 0, s, 0))
-            .collect();
+        // Use valid forward source sites (0, 1) on two different words (0, 1)
+        // to form a rectangle with 2 unique X and 2 unique Y positions:
+        //   word 0, site 0 → (1.0, 2.5)
+        //   word 0, site 1 → (3.0, 2.5)
+        //   word 1, site 0 → (1.0, 12.5)
+        //   word 1, site 1 → (3.0, 12.5)
+        let lanes: Vec<(u32, u32)> = vec![
+            make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0),
+            make_lane(Direction::Forward, MoveType::SiteBus, 0, 1, 0),
+            make_lane(Direction::Forward, MoveType::SiteBus, 1, 0, 0),
+            make_lane(Direction::Forward, MoveType::SiteBus, 1, 1, 0),
+        ];
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
@@ -1094,10 +1102,13 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_not_rectangle() {
         let arch = lane_group_arch_spec();
-        let lanes: Vec<(u32, u32)> = [0, 1, 5]
-            .iter()
-            .map(|&s| make_lane(Direction::Forward, MoveType::SiteBus, 0, s, 0))
-            .collect();
+        // Use valid forward source sites on two words forming an L-shape
+        // (not a rectangle): (1.0, 2.5), (3.0, 2.5), (1.0, 12.5)
+        let lanes: Vec<(u32, u32)> = vec![
+            make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0),
+            make_lane(Direction::Forward, MoveType::SiteBus, 0, 1, 0),
+            make_lane(Direction::Forward, MoveType::SiteBus, 1, 0, 0),
+        ];
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
