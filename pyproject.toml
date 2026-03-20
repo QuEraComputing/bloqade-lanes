@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bloqade-lanes"
-version = "0.6.0-dev"
+version = "0.5.0-dev"
 description = "Components for defining and manipulating lane-based structures in Bloqade for neutral atom quantum computing."
 readme = "README.md"
 authors = [
@@ -16,12 +16,11 @@ dependencies = [
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",
     "numpy>=2.2.6",
-    "pymetis>=2025.2.1",
+    "kahip>=3.25",
     "rustworkx>=0.17.1",
     "scipy>=1.15.3",
 ]
 requires-python = ">= 3.10"
-license-files = ["LICENSE"]
 
 [project.optional-dependencies]
 cudaq = [
@@ -60,17 +59,14 @@ dev = [
     "ipython>=8.29.0",
     "isort>=5.13.2",
     "jupytext>=1.18.1",
-    "maturin>=1.12.6",
     "mypy>=1.13.0",
     "numpy>=1.26.4",
-    "packaging>=26.0",
     "pre-commit>=4.0.1",
     "pycobertura>=4.1.0",
     "pyinstrument>=5.1.2",
     "pyright[nodejs]>=1.1.408",
     "pyspy>=0.1.1",
     "pytest>=8.3.3",
-    "pytest-xdist>=3.5.0",
     "ruff>=0.7.3",
     "rust-just>=1.36.0",
 ]
@@ -123,6 +119,3 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 testpaths = "python/tests/"
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
