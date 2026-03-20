@@ -245,7 +245,9 @@ def test_append_annotations_to_kernel_with_terminal_measure(
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
 
 
-def test_cudaq_kernel_requires_annotation_matrices():
+def test_cudaq_kernel_defaults_to_steane_annotations():
+    """CUDA-Q kernels now default to Steane [[7,1,3]] annotations when
+    m2dets and m2obs are not provided."""
     cudaq = pytest.importorskip("cudaq")
 
     @cudaq.kernel
@@ -254,11 +256,11 @@ def test_cudaq_kernel_requires_annotation_matrices():
         h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
         cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
 
-    with pytest.raises(
-        ValueError,
-        match="At least one of m2dets or m2obs must be provided for CUDA-Q kernels",
-    ):
-        GeminiLogicalSimulator().task(bell_pair)
+    # Should not raise — defaults to Steane annotations
+    task = GeminiLogicalSimulator().task(bell_pair)
+    result = task.run(10, with_noise=False)
+    assert len(result.detectors) == 10
+    assert len(result.observables) == 10
 
 
 @pytest.mark.parametrize(
