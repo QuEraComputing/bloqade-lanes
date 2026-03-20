@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
+from types import MappingProxyType
 
 from kirin.interp import InterpreterError
 
@@ -80,38 +82,42 @@ class AtomStateData:
         )
         return cls(_inner=rust_state)
 
-    @property
-    def locations_to_qubit(self) -> dict[LocationAddress, int]:
-        """Mapping from location to qubit id."""
-        return {
-            _from_rust_loc(loc): qid
-            for loc, qid in self._inner.locations_to_qubit.items()
-        }
+    @cached_property
+    def locations_to_qubit(self) -> MappingProxyType[LocationAddress, int]:
+        """Mapping from location to qubit id (read-only)."""
+        return MappingProxyType(
+            {
+                _from_rust_loc(loc): qid
+                for loc, qid in self._inner.locations_to_qubit.items()
+            }
+        )
 
-    @property
-    def qubit_to_locations(self) -> dict[int, LocationAddress]:
-        """Mapping from qubit id to its current location."""
-        return {
-            qid: _from_rust_loc(loc)
-            for qid, loc in self._inner.qubit_to_locations.items()
-        }
+    @cached_property
+    def qubit_to_locations(self) -> MappingProxyType[int, LocationAddress]:
+        """Mapping from qubit id to its current location (read-only)."""
+        return MappingProxyType(
+            {
+                qid: _from_rust_loc(loc)
+                for qid, loc in self._inner.qubit_to_locations.items()
+            }
+        )
 
-    @property
-    def collision(self) -> dict[int, int]:
-        """Mapping from qubit id to another qubit id that it has collided with."""
-        return dict(self._inner.collision)
+    @cached_property
+    def collision(self) -> MappingProxyType[int, int]:
+        """Mapping from qubit id to another qubit id that it has collided with (read-only)."""
+        return MappingProxyType(dict(self._inner.collision))
 
-    @property
-    def prev_lanes(self) -> dict[int, LaneAddress]:
-        """Mapping from qubit id to the lane it took to reach this state."""
-        return {
-            qid: _from_rust_lane(lane) for qid, lane in self._inner.prev_lanes.items()
-        }
+    @cached_property
+    def prev_lanes(self) -> MappingProxyType[int, LaneAddress]:
+        """Mapping from qubit id to the lane it took to reach this state (read-only)."""
+        return MappingProxyType(
+            {qid: _from_rust_lane(lane) for qid, lane in self._inner.prev_lanes.items()}
+        )
 
-    @property
-    def move_count(self) -> dict[int, int]:
-        """Mapping from qubit id to number of moves it has had."""
-        return dict(self._inner.move_count)
+    @cached_property
+    def move_count(self) -> MappingProxyType[int, int]:
+        """Mapping from qubit id to number of moves it has had (read-only)."""
+        return MappingProxyType(dict(self._inner.move_count))
 
     def __hash__(self):
         return self._inner.__hash__()
