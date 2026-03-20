@@ -62,24 +62,24 @@ class DetectorResult:
         return self._detector_error_model
 
     @property
-    def detectors(self) -> list[list[bool]]:
+    def detectors(self) -> tuple[list[bool], ...]:
         """The detector outcomes from the simulation.
 
         Returns:
-            list[list[bool]]: The detector outcomes, one list per shot.
+            tuple[list[bool], ...]: The detector outcomes, one list per shot.
 
         """
-        return self._detectors
+        return tuple(self._detectors)
 
     @property
-    def observables(self) -> list[list[bool]]:
+    def observables(self) -> tuple[list[bool], ...]:
         """The observable outcomes from the simulation.
 
         Returns:
-            list[list[bool]]: The observable outcomes, one list per shot.
+            tuple[list[bool], ...]: The observable outcomes, one list per shot.
 
         """
-        return self._observables
+        return tuple(self._observables)
 
 
 @dataclass(frozen=True)

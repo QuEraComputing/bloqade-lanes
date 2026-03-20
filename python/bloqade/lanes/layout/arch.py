@@ -34,6 +34,9 @@ class ArchSpec:
 
     _inner: _RustArchSpec
     words: tuple[Word, ...]
+    # NOTE: paths is intentionally a mutable dict because it is populated
+    # incrementally after construction (e.g. via paths.update() in
+    # arch/gemini/impls.py).  Do not wrap with MappingProxyType.
     paths: dict[LaneAddress, tuple[tuple[float, float], ...]]
 
     def __init__(

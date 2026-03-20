@@ -1,7 +1,9 @@
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Sequence
+from functools import cached_property
+from types import MappingProxyType
+from typing import Any, Callable, Sequence
 
 import numpy as np
 from kirin import ir
@@ -38,64 +40,76 @@ class PlotParameters:
     atom_color: str = QuEraColorCode.Purple
     aod_line_style: str = "dashed"
 
-    @property
-    def atom_plot_args(self) -> dict:
-        return {
-            "color": self.atom_color,
-            "marker": self.atom_marker,
-            "linestyle": "",
-            "s": self.scale * 65,
-        }
+    @cached_property
+    def atom_plot_args(self) -> MappingProxyType[str, Any]:
+        return MappingProxyType(
+            {
+                "color": self.atom_color,
+                "marker": self.atom_marker,
+                "linestyle": "",
+                "s": self.scale * 65,
+            }
+        )
 
-    @property
-    def gate_spot_args(self) -> dict:
-        return {
-            "marker": self.atom_marker,
-            "s": self.scale * 160,
-            "alpha": 0.3,
-        }
+    @cached_property
+    def gate_spot_args(self) -> MappingProxyType[str, Any]:
+        return MappingProxyType(
+            {
+                "marker": self.atom_marker,
+                "s": self.scale * 160,
+                "alpha": 0.3,
+            }
+        )
 
-    @property
-    def slm_plot_args(self) -> dict:
-        return {
-            "facecolors": "none",
-            "edgecolors": "k",
-            "linestyle": "-",
-            "s": self.scale * 80,
-            "alpha": 1.0,
-            "linewidth": 0.5 * np.sqrt(self.scale),
-            "marker": self.atom_marker,
-        }
+    @cached_property
+    def slm_plot_args(self) -> MappingProxyType[str, Any]:
+        return MappingProxyType(
+            {
+                "facecolors": "none",
+                "edgecolors": "k",
+                "linestyle": "-",
+                "s": self.scale * 80,
+                "alpha": 1.0,
+                "linewidth": 0.5 * np.sqrt(self.scale),
+                "marker": self.atom_marker,
+            }
+        )
 
-    @property
-    def aod_line_args(self) -> dict:
-        return {
-            "alpha": 1.0,
-            "colors": self.aod_line_color,
-            "linestyles": self.aod_line_style,
-            "zorder": -101,
-        }
+    @cached_property
+    def aod_line_args(self) -> MappingProxyType[str, Any]:
+        return MappingProxyType(
+            {
+                "alpha": 1.0,
+                "colors": self.aod_line_color,
+                "linestyles": self.aod_line_style,
+                "zorder": -101,
+            }
+        )
 
-    @property
-    def aod_marker_args(self) -> dict:
-        return {
-            "color": QuEraColorCode.Red,
-            "marker": self.aod_marker,
-            "s": self.scale * 260,
-            "linewidth": np.sqrt(self.scale),
-            "alpha": 0.7,
-            "zorder": -100,
-        }
+    @cached_property
+    def aod_marker_args(self) -> MappingProxyType[str, Any]:
+        return MappingProxyType(
+            {
+                "color": QuEraColorCode.Red,
+                "marker": self.aod_marker,
+                "s": self.scale * 260,
+                "linewidth": np.sqrt(self.scale),
+                "alpha": 0.7,
+                "zorder": -100,
+            }
+        )
 
-    @property
-    def atom_label_args(self) -> dict:
-        return {
-            "color": "white",
-            "fontsize": max(4.0, self.scale * 6.0),
-            "ha": "center",
-            "va": "center",
-            "zorder": 200,
-        }
+    @cached_property
+    def atom_label_args(self) -> MappingProxyType[str, Any]:
+        return MappingProxyType(
+            {
+                "color": "white",
+                "fontsize": max(4.0, self.scale * 6.0),
+                "ha": "center",
+                "va": "center",
+                "zorder": 200,
+            }
+        )
 
 
 def init_aod_x_lines(ax: Axes, aod_x: Sequence[float], plot_params: PlotParameters):

@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 from matplotlib import pyplot as plt
 from scipy.interpolate import interp1d
 
@@ -14,12 +16,12 @@ from bloqade.lanes.visualize.artist import (
 
 def test_plot_parameters_properties():
     params = PlotParameters(scale=1.0)
-    assert isinstance(params.atom_plot_args, dict)
-    assert isinstance(params.atom_label_args, dict)
-    assert isinstance(params.gate_spot_args, dict)
-    assert isinstance(params.slm_plot_args, dict)
-    assert isinstance(params.aod_line_args, dict)
-    assert isinstance(params.aod_marker_args, dict)
+    assert isinstance(params.atom_plot_args, MappingProxyType)
+    assert isinstance(params.atom_label_args, MappingProxyType)
+    assert isinstance(params.gate_spot_args, MappingProxyType)
+    assert isinstance(params.slm_plot_args, MappingProxyType)
+    assert isinstance(params.aod_line_args, MappingProxyType)
+    assert isinstance(params.aod_marker_args, MappingProxyType)
 
 
 def test_aod_x_lines():
