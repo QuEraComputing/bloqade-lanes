@@ -285,7 +285,7 @@
 <p>The lane is identified by its encoded <code>LaneAddr</code>, serialized as a hex string. See <a href="#address-encoding">Address Encoding</a> for the <code>LaneAddr</code> bit layout.</p>
 <pre><code class="language-jsonc">&quot;paths&quot;: [
   {
-    &quot;lane&quot;: &quot;0xC000000000010000&quot;,                        // encoded LaneAddr (hex, 16-digit)
+    &quot;lane&quot;: &quot;0xC000000000000000&quot;,                        // encoded LaneAddr (hex, 16-digit)
     &quot;waypoints&quot;: [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]]  // physical trajectory
   }
 ]
@@ -296,7 +296,7 @@
 <tr><td><code>waypoints</code></td><td>[x, y][]</td><td>Sequence of physical coordinate waypoints.</td></tr>
 </tbody></table>
 </div>
-<p>To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain <code>[word_id:16][site_id:16]</code> and the high 32 bits (data1) contain <code>[dir:1][mt:1][pad:14][bus_id:16]</code>. For example, <code>&quot;0xC000000000010000&quot;</code> decodes to direction=Backward, move_type=WordBus, word=1, site=0, bus=0.</p>
+<p>To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain <code>[word_id:16][site_id:16]</code> and the high 32 bits (data1) contain <code>[dir:1][mt:1][pad:14][bus_id:16]</code>. For example, <code>&quot;0xC000000000000000&quot;</code> decodes to direction=Backward, move_type=WordBus, word=0, site=0, bus=0. In the lane address convention, <code>word_id</code> always encodes the forward-direction source word for that lane; in this specific example the bus mapping is src=[0], dst=[1], so <code>direction=Backward</code> means the move goes from word 1 back to word 0.</p>
 <p>This field is omitted from the JSON when not needed.</p>
 <hr />
 <h2 id="validation-rules"><a class="header" href="#validation-rules">Validation Rules</a></h2>
