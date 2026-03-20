@@ -26,7 +26,7 @@ def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
 
 
 @kernel(aggressive_unroll=True, verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any], index: int):
+def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
     return squin.set_observable([meas[0], meas[1], meas[5]])
 
 
@@ -35,9 +35,9 @@ def default_post_processing(register: ilist.IList[types.Qubit, Any]):
     measurements = operations.terminal_measure(register)
 
     detectors = set_detector(measurements[0])
-    observables = ilist.IList([set_observable(measurements[0], 0)])
+    observables = ilist.IList([set_observable(measurements[0])])
     for i in range(1, len(register)):
         detectors = detectors + set_detector(measurements[i])
-        observables = observables + [set_observable(measurements[i], i)]
+        observables = observables + [set_observable(measurements[i])]
 
     return detectors, observables
