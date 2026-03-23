@@ -23,10 +23,8 @@ repos:
     hooks:
       - id: pyright-check
         name: pyright-check
-        entry: pyright python
-        language: python
-        additional_dependencies:
-          - pyright
+        entry: uv run --locked pyright python
+        language: system
         pass_filenames: false
         always_run: true
       - id: cargo-fmt

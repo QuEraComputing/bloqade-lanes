@@ -9,10 +9,9 @@
 # to start we create a simple squin kernel that uses the gemini logical dialect to define a
 # terminal measurement on the circuit.
 
-from bloqade.gemini import logical as gemini_logical
-
 # %%
 from bloqade import squin
+from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
 
 

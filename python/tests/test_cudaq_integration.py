@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
-from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
 from kirin.dialects import func
 
 from bloqade import qubit, squin
+from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes.logical_mvp import (
     _find_qubit_ssas,
     _find_return_stmt,

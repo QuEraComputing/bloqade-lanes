@@ -4,10 +4,6 @@ from typing import TypeVar
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
-from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
-from bloqade.gemini.analysis.measurement_validation import (
-    GeminiTerminalMeasurementValidation,
-)
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
@@ -18,6 +14,10 @@ from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
+from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
+from bloqade.gemini.analysis.measurement_validation import (
+    GeminiTerminalMeasurementValidation,
+)
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical
