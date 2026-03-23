@@ -230,7 +230,7 @@ def generate_arch_hypercube(hypercube_dims: int = 4, word_size_y: int = 5) -> Ar
     num_words_x = 2**hypercube_dims
     base_arch = _generate_base_arch(num_words_x, word_size_y)
     word_buses = _hypercube_busses(hypercube_dims)
-    base_arch.paths.update(_calc_hypercube_word_path_dict(base_arch.words))
+    paths = {**base_arch.paths, **_calc_hypercube_word_path_dict(base_arch.words)}
     return ArchSpec.from_components(
         words=base_arch.words,
         zones=base_arch.zones,
@@ -240,14 +240,14 @@ def generate_arch_hypercube(hypercube_dims: int = 4, word_size_y: int = 5) -> Ar
         has_word_buses=base_arch.has_word_buses,
         site_buses=base_arch.site_buses,
         word_buses=word_buses,
-        paths=base_arch.paths,
+        paths=paths,
     )
 
 
 def generate_arch_linear(num_words: int = 16, word_size_y: int = 5) -> ArchSpec:
     base_arch = _generate_base_arch(num_words, word_size_y)
     word_buses = _generate_linear_busses(num_words)
-    base_arch.paths.update(_calc_linear_word_path_dict(base_arch.words))
+    paths = {**base_arch.paths, **_calc_linear_word_path_dict(base_arch.words)}
     return ArchSpec.from_components(
         words=base_arch.words,
         zones=base_arch.zones,
@@ -257,7 +257,7 @@ def generate_arch_linear(num_words: int = 16, word_size_y: int = 5) -> ArchSpec:
         has_word_buses=base_arch.has_word_buses,
         site_buses=base_arch.site_buses,
         word_buses=word_buses,
-        paths=base_arch.paths,
+        paths=paths,
     )
 
 

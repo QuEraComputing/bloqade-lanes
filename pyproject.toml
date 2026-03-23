@@ -60,6 +60,7 @@ dev = [
     "ipython>=8.29.0",
     "isort>=5.13.2",
     "jupytext>=1.18.1",
+    "maturin>=1.12.6",
     "mypy>=1.13.0",
     "numpy>=1.26.4",
     "packaging>=26.0",
