@@ -4,13 +4,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-try:
-    import kahip as _kahip  # type: ignore[reportMissingImports]
-except (
-    ModuleNotFoundError
-):  # pragma: no cover - exercised in packaging/runtime environments
-    _kahip = None
-
+import kahip
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
@@ -35,7 +29,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
     u_factor: int = 1
     partitioner_seed: int = 0
 
-    _KAHIP_MODE_ECO = 1
+    KAHIP_MODE_ECO = 1
 
     @property
     def left_site_count(self) -> int:
@@ -117,16 +111,10 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             adjcwgt.extend(adjacency_w[node])
             xadj.append(len(adjncy))
 
-        if _kahip is None:
-            raise RuntimeError(
-                "KaHIP backend is required for physical graph partitioning. "
-                "Install the 'kahip' Python package."
-            )
-
         # KaHIP exposes a global imbalance tolerance (epsilon). We keep it strict.
         imbalance = max(float(self.u_factor) / 1000.0, 1e-6)
         vwgt = [1] * n
-        _edge_cut, blocks = _kahip.kaffpa(
+        _edge_cut, blocks = kahip.kaffpa(
             vwgt,
             xadj,
             adjcwgt,
@@ -135,7 +123,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             imbalance,
             0,
             self.partitioner_seed,
-            self._KAHIP_MODE_ECO,
+            self.KAHIP_MODE_ECO,
         )
         assert len(blocks) == n, "KaHIP returned unexpected partition size."
         q_to_word = {qid: int(blocks[q_to_node[qid]]) for qid in qids}
