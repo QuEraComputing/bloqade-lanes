@@ -25,7 +25,12 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class MoveGenerator(Protocol):
-    """Interface for generating candidate move sets from a configuration."""
+    """Interface for generating candidate move sets from a configuration.
+
+    Implementations must provide `generate` which yields candidate move
+    sets. The `expand` method is provided and handles validation via
+    the tree's `apply_move_set`.
+    """
 
     def generate(
         self,
@@ -34,16 +39,35 @@ class MoveGenerator(Protocol):
     ) -> Iterator[frozenset[LaneAddress]]:
         """Yield candidate move sets from the given configuration.
 
-        Candidates do not need to be valid — ConfigurationTree._apply_move_set
-        handles validation. However, generators should pre-filter when possible
-        to avoid wasting time on obviously invalid candidates.
-
         Args:
             node: The configuration to generate moves from.
             tree: The configuration tree (provides arch_spec, path_finder).
 
         Yields:
             frozenset[LaneAddress] — each candidate parallel move set.
+        """
+        ...
+
+    def expand(
+        self,
+        node: ConfigurationNode,
+        tree: ConfigurationTree,
+        strict: bool = True,
+    ) -> list[ConfigurationNode]:
+        """Expand a node by generating and validating candidate move sets.
+
+        Calls `generate` to produce candidates, then validates each via
+        `tree.apply_move_set`. In strict mode (default), raises
+        InvalidMoveError if any candidate causes a collision. In
+        non-strict mode, silently skips invalid candidates.
+
+        Args:
+            node: The node to expand.
+            tree: The configuration tree.
+            strict: If True, raises on invalid moves. If False, skips them.
+
+        Returns:
+            List of newly created child nodes.
         """
         ...
 
@@ -69,6 +93,19 @@ class ExhaustiveMoveGenerator:
 
     max_y_capacity: int | None = None
     """Maximum number of unique Y positions the AOD can address."""
+
+    def expand(
+        self,
+        node: ConfigurationNode,
+        tree: ConfigurationTree,
+        strict: bool = True,
+    ) -> list[ConfigurationNode]:
+        children: list[ConfigurationNode] = []
+        for move_set in self.generate(node, tree):
+            child = tree.apply_move_set(node, move_set, strict=strict)
+            if child is not None:
+                children.append(child)
+        return children
 
     def generate(
         self,

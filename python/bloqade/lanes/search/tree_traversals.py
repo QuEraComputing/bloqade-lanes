@@ -1,4 +1,4 @@
-"""Search strategies for the configuration tree."""
+"""Tree traversal strategies for the configuration search."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def greedy_best_first(
         nodes_expanded += 1
         max_depth = max(max_depth, node.depth)
 
-        for child in tree.expand_node(node, generator):
+        for child in generator.expand(node, tree, strict=False):
             if goal(child):
                 return SearchResult(
                     goal_node=child,

@@ -1,10 +1,10 @@
-"""Tests for search strategies."""
+"""Tests for tree traversal strategies."""
 
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.search.generators import ExhaustiveMoveGenerator
-from bloqade.lanes.search.strategies import greedy_best_first
 from bloqade.lanes.search.tree import ConfigurationTree
+from bloqade.lanes.search.tree_traversals import greedy_best_first
 
 
 def _make_tree() -> ConfigurationTree:

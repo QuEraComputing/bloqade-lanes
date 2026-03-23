@@ -5,7 +5,7 @@ from __future__ import annotations
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.search.configuration import ConfigurationNode
-from bloqade.lanes.search.strategies import GoalPredicate
+from bloqade.lanes.search.tree_traversals import GoalPredicate
 
 
 def placement_goal(target: dict[int, LocationAddress]) -> GoalPredicate:

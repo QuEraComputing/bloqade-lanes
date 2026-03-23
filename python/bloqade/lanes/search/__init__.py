@@ -7,13 +7,14 @@ from bloqade.lanes.search.goals import (
     placement_goal,
     zone_goal,
 )
-from bloqade.lanes.search.strategies import SearchResult, greedy_best_first
-from bloqade.lanes.search.tree import ConfigurationTree
+from bloqade.lanes.search.tree import ConfigurationTree, InvalidMoveError
+from bloqade.lanes.search.tree_traversals import SearchResult, greedy_best_first
 
 __all__ = [
     "ConfigurationNode",
     "ConfigurationTree",
     "ExhaustiveMoveGenerator",
+    "InvalidMoveError",
     "MoveGenerator",
     "SearchResult",
     "greedy_best_first",
