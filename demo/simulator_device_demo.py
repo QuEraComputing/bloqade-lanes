@@ -3,11 +3,11 @@ from collections import Counter
 
 import numpy as np
 from bloqade.decoders import BpLsdDecoder
-from bloqade.gemini import logical
-from bloqade.gemini.logical.stdlib import default_post_processing
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
+from bloqade.gemini import logical
+from bloqade.gemini.logical.stdlib import default_post_processing
 from bloqade.lanes import GeminiLogicalSimulator
 
 
