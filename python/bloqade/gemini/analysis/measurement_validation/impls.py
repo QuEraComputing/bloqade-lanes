@@ -1,10 +1,11 @@
+import bloqade.qubit as qubit
 from bloqade.analysis.address.impls import Func as AddressFuncMethodTable
 from bloqade.analysis.measure_id.lattice import MeasureIdTuple
 from kirin import interp as _interp, ir
 from kirin.analysis import ForwardFrame
 from kirin.dialects import func
 
-from bloqade import gemini, qubit
+import bloqade.gemini as gemini
 
 from .analysis import _GeminiTerminalMeasurementValidationAnalysis
 

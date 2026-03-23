@@ -1,3 +1,4 @@
+import bloqade.squin as squin
 import pytest
 from bloqade.analysis.address import AddressAnalysis
 from bloqade.types import Qubit
@@ -5,7 +6,7 @@ from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
-from bloqade import gemini, squin
+import bloqade.gemini as gemini
 from bloqade.gemini.analysis.logical_validation.analysis import (
     GeminiLogicalValidation,
     _GeminiLogicalValidationAnalysis,

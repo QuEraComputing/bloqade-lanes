@@ -1,8 +1,10 @@
+import bloqade.squin as squin
+import bloqade.types as types
 from kirin import types as kirin_types
 from kirin.analysis.typeinfer import TypeInference
 from kirin.dialects import ilist
 
-from bloqade import gemini, squin, types
+import bloqade.gemini as gemini
 
 
 def test_type_inference():

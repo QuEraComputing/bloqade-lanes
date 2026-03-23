@@ -1,7 +1,8 @@
+import bloqade.squin as squin
 import numpy as np
 from kirin.dialects import ilist
 
-from bloqade import gemini, squin
+import bloqade.gemini as gemini
 from bloqade.gemini.logical import kernel
 from bloqade.gemini.post_processing import generate_post_processing
 
