@@ -21,6 +21,13 @@ class ConfigurationTree:
     Starting from an initial placement, the tree manages the transposition
     table and validates move sets. Move generation and node expansion are
     delegated to MoveGenerator implementations.
+
+    NOTE: If deadlock density is high, consider refactoring to a DAG
+    (directed acyclic graph) where nodes can have multiple parents.
+    This enables backward propagation of deadlock information — when a
+    subtree is exhausted, all parents are notified and can prune early.
+    Currently the transposition table prevents re-expanding seen
+    configurations, but does not propagate deadlock status upstream.
     """
 
     arch_spec: ArchSpec
@@ -73,7 +80,8 @@ class ConfigurationTree:
         Returns:
             A new ConfigurationNode, or None if:
             - The move is invalid and strict=False
-            - The configuration was already seen at equal-or-lesser depth
+            - The configuration was already reached via a different
+              branch at equal-or-lesser depth (transposition table)
 
         Raises:
             InvalidMoveError: If strict=True and the move set causes a
