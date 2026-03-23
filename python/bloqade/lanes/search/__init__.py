@@ -2,6 +2,7 @@
 
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.generators import ExhaustiveMoveGenerator, MoveGenerator
+from bloqade.lanes.search.strategies import SearchResult, greedy_best_first
 from bloqade.lanes.search.tree import ConfigurationTree
 
 __all__ = [
@@ -9,4 +10,6 @@ __all__ = [
     "ConfigurationTree",
     "ExhaustiveMoveGenerator",
     "MoveGenerator",
+    "SearchResult",
+    "greedy_best_first",
 ]
