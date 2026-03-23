@@ -3,7 +3,6 @@ from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
-from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.native.dialects import gate as native_gate
 from bloqade.native.upstream.squin2native import SquinToNative
 from bloqade.rewrite.passes import AggressiveUnroll
@@ -13,6 +12,7 @@ from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.method import Method
 
+from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress
