@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import product
 from typing import Iterator
 
-from bloqade.lanes.layout import LaneAddress, LocationAddress
+from bloqade.lanes.layout import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.search.configuration import Configuration, ConfigurationNode
@@ -86,28 +94,199 @@ class ConfigurationTree:
         return result
 
     def _enumerate_compatible_move_sets(
-        self, node: ConfigurationNode
+        self,
+        node: ConfigurationNode,
+        max_x_capacity: int | None = None,
+        max_y_capacity: int | None = None,
     ) -> Iterator[frozenset[LaneAddress]]:
         """Yield valid move sets (compatible lane groups) from a configuration.
 
-        A move set is a group of lanes that:
-        1. Share the same move_type, bus_id, and direction
-        2. Have occupied sources and unoccupied destinations
-        3. Pass ArchSpec.check_lanes validation (including AOD constraints)
-        4. Have no destination collisions after all moves resolve
+        For each (move_type, bus_id, direction) group, enumerates all valid
+        rectangles of source positions on the bus. A valid rectangle is a
+        Cartesian product of X and Y positions where no position in the
+        rectangle is occupied by a stationary atom. The full rectangle of
+        lanes is yielded if at least one source has an atom.
 
-        NOTE: This method is a placeholder. The enumeration logic for
-        compatible move sets has non-trivial grouping constraints
-        (AOD geometry, bus membership) that require careful design.
-        See issue #298 for discussion.
+        The AOD moves the entire rectangle — lanes are generated for every
+        source in the rectangle, not just occupied ones. Empty source
+        positions produce no-op lanes (no atom to transport).
+
+        Args:
+            node: The configuration to expand from.
+            max_x_capacity: Maximum number of unique X positions the AOD
+                can address. None means unlimited.
+            max_y_capacity: Maximum number of unique Y positions the AOD
+                can address. None means unlimited.
 
         Yields:
             frozenset[LaneAddress] — each valid parallel move set.
         """
-        raise NotImplementedError(
-            "_enumerate_compatible_move_sets requires design discussion. "
-            "See issue #298."
-        )
+        occupied = node.occupied_locations
+
+        # Enumerate site buses
+        for bus_id, bus in enumerate(self.arch_spec.site_buses):
+            for direction in (Direction.FORWARD, Direction.BACKWARD):
+                # Source positions: every (word_id, src_site) for words with site buses
+                src_locs = [
+                    LocationAddress(w, s)
+                    for w in self.arch_spec.has_site_buses
+                    for s in bus.src
+                ]
+                yield from self._rectangles_to_move_sets(
+                    src_locs,
+                    occupied,
+                    MoveType.SITE,
+                    bus_id,
+                    direction,
+                    max_x_capacity,
+                    max_y_capacity,
+                )
+
+        # Enumerate word buses
+        for bus_id, bus in enumerate(self.arch_spec.word_buses):
+            for direction in (Direction.FORWARD, Direction.BACKWARD):
+                # Source positions: every (src_word, site_id) for sites with word buses
+                src_locs = [
+                    LocationAddress(w, s)
+                    for w in bus.src
+                    for s in self.arch_spec.has_word_buses
+                ]
+                yield from self._rectangles_to_move_sets(
+                    src_locs,
+                    occupied,
+                    MoveType.WORD,
+                    bus_id,
+                    direction,
+                    max_x_capacity,
+                    max_y_capacity,
+                )
+
+    def _rectangles_to_move_sets(
+        self,
+        src_locs: list[LocationAddress],
+        occupied: frozenset[LocationAddress],
+        move_type: MoveType,
+        bus_id: int,
+        direction: Direction,
+        max_x_capacity: int | None,
+        max_y_capacity: int | None,
+    ) -> Iterator[frozenset[LaneAddress]]:
+        """Enumerate valid rectangles from source locations and yield move sets.
+
+        A valid rectangle is a Cartesian product of X and Y positions from
+        the source locations. At least one position in the rectangle must
+        be occupied by an atom. No position in the rectangle may be occupied
+        by a stationary atom (one not in the rectangle's source set).
+
+        Args:
+            src_locs: All source locations for this bus.
+            occupied: Currently occupied locations.
+            move_type: SITE or WORD.
+            bus_id: Bus identifier.
+            direction: FORWARD or BACKWARD.
+            max_x_capacity: AOD X capacity limit (None = unlimited).
+            max_y_capacity: AOD Y capacity limit (None = unlimited).
+
+        Yields:
+            frozenset[LaneAddress] for each valid rectangle.
+        """
+        # Get physical positions for each source location
+        loc_to_pos: dict[LocationAddress, tuple[float, float]] = {}
+        for loc in src_locs:
+            loc_to_pos[loc] = self.arch_spec.get_position(loc)
+
+        if not loc_to_pos:
+            return
+
+        # Group locations by their X and Y coordinates
+        x_to_locs: dict[float, list[LocationAddress]] = {}
+        y_to_locs: dict[float, list[LocationAddress]] = {}
+        for loc, (x, y) in loc_to_pos.items():
+            x_to_locs.setdefault(x, []).append(loc)
+            y_to_locs.setdefault(y, []).append(loc)
+
+        unique_xs = sorted(x_to_locs.keys())
+        unique_ys = sorted(y_to_locs.keys())
+
+        # Enumerate all subsets of X values and Y values within capacity
+        max_nx = max_x_capacity if max_x_capacity is not None else len(unique_xs)
+        max_ny = max_y_capacity if max_y_capacity is not None else len(unique_ys)
+
+        for nx in range(1, min(max_nx, len(unique_xs)) + 1):
+            for ny in range(1, min(max_ny, len(unique_ys)) + 1):
+                yield from self._enumerate_xy_rectangles(
+                    unique_xs,
+                    unique_ys,
+                    nx,
+                    ny,
+                    loc_to_pos,
+                    occupied,
+                    move_type,
+                    bus_id,
+                    direction,
+                )
+
+    def _enumerate_xy_rectangles(
+        self,
+        unique_xs: list[float],
+        unique_ys: list[float],
+        nx: int,
+        ny: int,
+        loc_to_pos: dict[LocationAddress, tuple[float, float]],
+        occupied: frozenset[LocationAddress],
+        move_type: MoveType,
+        bus_id: int,
+        direction: Direction,
+    ) -> Iterator[frozenset[LaneAddress]]:
+        """Enumerate all nx × ny rectangles and yield valid move sets.
+
+        For each combination of nx X-values and ny Y-values, checks that
+        every position in the Cartesian product is a valid source (not
+        occupied by a stationary atom), and that at least one source has
+        an atom.
+        """
+        from itertools import combinations
+
+        # Build reverse map: (x, y) -> LocationAddress
+        pos_to_loc: dict[tuple[float, float], LocationAddress] = {
+            pos: loc for loc, pos in loc_to_pos.items()
+        }
+
+        for x_subset in combinations(unique_xs, nx):
+            for y_subset in combinations(unique_ys, ny):
+                # Build the rectangle
+                rect_locs: list[LocationAddress] = []
+                valid = True
+                has_atom = False
+
+                for x, y in product(x_subset, y_subset):
+                    loc = pos_to_loc.get((x, y))
+                    if loc is None:
+                        # No source at this grid position — rectangle incomplete
+                        valid = False
+                        break
+                    rect_locs.append(loc)
+                    if loc in occupied:
+                        has_atom = True
+
+                if not valid:
+                    continue
+                if not has_atom:
+                    continue
+
+                # Build lane addresses for the full rectangle
+                lanes: list[LaneAddress] = []
+                for loc in rect_locs:
+                    if move_type == MoveType.SITE:
+                        lanes.append(
+                            SiteLaneAddress(loc.word_id, loc.site_id, bus_id, direction)
+                        )
+                    else:
+                        lanes.append(
+                            WordLaneAddress(loc.word_id, loc.site_id, bus_id, direction)
+                        )
+
+                yield frozenset(lanes)
 
     def _apply_move_set(
         self,
@@ -172,17 +351,29 @@ class ConfigurationTree:
         node.children[move_set] = new_node
         return new_node
 
-    def expand_node(self, node: ConfigurationNode) -> list[ConfigurationNode]:
+    def expand_node(
+        self,
+        node: ConfigurationNode,
+        max_x_capacity: int | None = None,
+        max_y_capacity: int | None = None,
+    ) -> list[ConfigurationNode]:
         """Expand a node by generating all valid children.
 
         Enumerates all valid move sets from the node's configuration,
         applies each, and returns the list of new child nodes.
 
+        Args:
+            node: The node to expand.
+            max_x_capacity: AOD X capacity limit (None = unlimited).
+            max_y_capacity: AOD Y capacity limit (None = unlimited).
+
         Returns:
             List of newly created child nodes (may be empty if deadlocked).
         """
         children: list[ConfigurationNode] = []
-        for move_set in self._enumerate_compatible_move_sets(node):
+        for move_set in self._enumerate_compatible_move_sets(
+            node, max_x_capacity, max_y_capacity
+        ):
             child = self._apply_move_set(node, move_set)
             if child is not None:
                 children.append(child)

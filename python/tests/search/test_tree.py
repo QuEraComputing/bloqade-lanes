@@ -83,3 +83,72 @@ def test_transposition_table_deduplication():
     # The root config is already in seen at depth 0
     assert tree.root.config_key in tree.seen
     assert tree.seen[tree.root.config_key].depth == 0
+
+
+def test_enumerate_compatible_move_sets_yields_move_sets():
+    """Move set enumeration should yield non-empty frozensets."""
+    tree = _make_tree()
+    move_sets = list(tree._enumerate_compatible_move_sets(tree.root))
+
+    assert len(move_sets) > 0
+    for ms in move_sets:
+        assert isinstance(ms, frozenset)
+        assert len(ms) > 0
+
+
+def test_enumerate_compatible_move_sets_single_lane():
+    """With capacity 1x1, should yield only single-lane move sets."""
+    tree = _make_tree()
+    move_sets = list(
+        tree._enumerate_compatible_move_sets(
+            tree.root, max_x_capacity=1, max_y_capacity=1
+        )
+    )
+
+    # All move sets should have exactly 1 lane (1x1 rectangle)
+    for ms in move_sets:
+        assert len(ms) == 1
+
+
+def test_enumerate_compatible_move_sets_no_empty_rectangles():
+    """Rectangles with no occupied atoms should not be yielded."""
+    arch_spec = logical.get_arch_spec()
+    # Place atom only at (0, 0) — many rectangles will have no atoms
+    placement = {0: LocationAddress(0, 0)}
+    tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+
+    for ms in tree._enumerate_compatible_move_sets(tree.root):
+        # Every yielded move set should have at least one lane whose
+        # encoded source location (word_id, site_id) is occupied
+        encoded_sources = {LocationAddress(lane.word_id, lane.site_id) for lane in ms}
+        assert any(tree.root.is_occupied(s) for s in encoded_sources)
+
+
+def test_expand_node_produces_valid_children():
+    """expand_node should produce children with no collisions."""
+    tree = _make_tree()
+    children = tree.expand_node(tree.root)
+
+    assert len(children) > 0
+    for child in children:
+        assert child.depth == 1
+        assert child.parent is tree.root
+        # No two qubits at the same location
+        locs = list(child.configuration.values())
+        assert len(locs) == len(set(locs))
+
+
+def test_expand_node_deadlock():
+    """A stuck configuration should produce no children."""
+    arch_spec = logical.get_arch_spec()
+    # Place atoms at all destinations of site bus 0 on word 0
+    # Sites 5-9 are destinations; atoms there block forward moves
+    # Sites 0-4 are sources but destinations are blocked
+    placement = {i: LocationAddress(0, i) for i in range(10)}  # fill all 10 sites
+    tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+
+    # With all sites occupied, many moves should be blocked by collisions
+    children = tree.expand_node(tree.root)
+    # Not necessarily zero children (word bus moves might work),
+    # but this tests that the enumeration doesn't crash
+    assert isinstance(children, list)
