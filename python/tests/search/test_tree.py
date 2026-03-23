@@ -54,22 +54,26 @@ def test_apply_move_set_valid():
     assert child.configuration[1] == LocationAddress(1, 0)
 
 
-def test_apply_move_set_collision_rejected():
-    """Two atoms moving to the same destination should be rejected."""
+def test_collision_rejected_during_enumeration():
+    """Move sets that would cause collisions are not enumerated."""
     arch_spec = logical.get_arch_spec()
-    # Place two atoms whose forward moves would collide at the same destination
+    # Place atom at (0,0) and (0,5). Site bus 0 fwd maps 0→5.
+    # A rectangle containing site 0 should be rejected because
+    # its destination (site 5) is occupied.
     placement = {
-        0: LocationAddress(0, 0),  # site bus 0 fwd → (0, 5)
-        1: LocationAddress(0, 5),  # already at destination
+        0: LocationAddress(0, 0),
+        1: LocationAddress(0, 5),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
-    # Moving qubit 0 to (0,5) where qubit 1 already sits
-    lane = SiteLaneAddress(0, 0, 0)
-    move_set = frozenset({lane})
-
-    child = tree._apply_move_set(tree.root, move_set)
-    assert child is None  # Rejected due to collision
+    # No enumerated move set should move qubit 0 to (0,5) via site bus fwd
+    for ms in tree._enumerate_compatible_move_sets(tree.root):
+        for lane in ms:
+            if lane.word_id == 0 and lane.site_id == 0 and lane.bus_id == 0:
+                src, dst = arch_spec.get_endpoints(lane)
+                # If this lane moves from (0,0), its dst should not be occupied
+                if tree.root.is_occupied(src):
+                    assert not tree.root.is_occupied(dst)
 
 
 def test_transposition_table_deduplication():

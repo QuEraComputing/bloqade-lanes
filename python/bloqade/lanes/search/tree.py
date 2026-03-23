@@ -240,10 +240,13 @@ class ConfigurationTree:
     ) -> Iterator[frozenset[LaneAddress]]:
         """Enumerate all nx × ny rectangles and yield valid move sets.
 
-        For each combination of nx X-values and ny Y-values, checks that
-        every position in the Cartesian product is a valid source (not
-        occupied by a stationary atom), and that at least one source has
-        an atom.
+        For each combination of nx X-values and ny Y-values, checks that:
+        1. Every position in the Cartesian product has a valid source
+        2. At least one source has an atom
+        3. No occupied source has an occupied destination (collision)
+
+        Since bus src and dst are disjoint, simultaneous moves within
+        the same bus cannot cause swap-through conflicts.
         """
         from itertools import combinations
 
@@ -254,8 +257,9 @@ class ConfigurationTree:
 
         for x_subset in combinations(unique_xs, nx):
             for y_subset in combinations(unique_ys, ny):
-                # Build the rectangle
+                # Build the rectangle and check validity
                 rect_locs: list[LocationAddress] = []
+                lanes: list[LaneAddress] = []
                 valid = True
                 has_atom = False
 
@@ -265,26 +269,33 @@ class ConfigurationTree:
                         # No source at this grid position — rectangle incomplete
                         valid = False
                         break
+
                     rect_locs.append(loc)
+
+                    # Build the lane address
+                    if move_type == MoveType.SITE:
+                        lane = SiteLaneAddress(
+                            loc.word_id, loc.site_id, bus_id, direction
+                        )
+                    else:
+                        lane = WordLaneAddress(
+                            loc.word_id, loc.site_id, bus_id, direction
+                        )
+                    lanes.append(lane)
+
+                    # If this source has an atom, check destination
                     if loc in occupied:
                         has_atom = True
+                        _, dst = self.arch_spec.get_endpoints(lane)
+                        if dst in occupied:
+                            # Destination is occupied — collision, skip rectangle
+                            valid = False
+                            break
 
                 if not valid:
                     continue
                 if not has_atom:
                     continue
-
-                # Build lane addresses for the full rectangle
-                lanes: list[LaneAddress] = []
-                for loc in rect_locs:
-                    if move_type == MoveType.SITE:
-                        lanes.append(
-                            SiteLaneAddress(loc.word_id, loc.site_id, bus_id, direction)
-                        )
-                    else:
-                        lanes.append(
-                            WordLaneAddress(loc.word_id, loc.site_id, bus_id, direction)
-                        )
 
                 yield frozenset(lanes)
 
@@ -295,41 +306,25 @@ class ConfigurationTree:
     ) -> ConfigurationNode | None:
         """Apply a move set to a node, returning a new child or None.
 
-        Resolves all lane endpoints, checks for collisions, and creates
-        a child node if the resulting configuration is valid and not
-        previously seen at equal-or-lesser depth.
+        Resolves lane endpoints and moves atoms. Collision checking is
+        handled during move set enumeration (bus src/dst are disjoint,
+        so no swap-through conflicts within the same bus group).
 
         Returns:
-            A new ConfigurationNode, or None if:
-            - Any lane endpoint cannot be resolved
-            - Two atoms would occupy the same location after moves
-            - The configuration was already seen at equal-or-lesser depth
+            A new ConfigurationNode, or None if the configuration was
+            already seen at equal-or-lesser depth.
         """
         # Build the new configuration by applying moves
         new_config = dict(node.configuration)
-        moved_qubits: set[int] = set()
-        destinations: dict[LocationAddress, int] = {}
 
         for lane in move_set:
-            endpoints = self.arch_spec.get_endpoints(lane)
-            src, dst = endpoints
+            src, dst = self.arch_spec.get_endpoints(lane)
 
             qid = node.get_qubit_at(src)
             if qid is None:
-                # No atom at source — skip this lane
+                # No atom at source — no-op lane
                 continue
 
-            # Check destination collision with another moving atom
-            if dst in destinations:
-                return None  # Two atoms moving to same destination
-
-            # Check destination collision with a stationary atom
-            stationary_qid = node.get_qubit_at(dst)
-            if stationary_qid is not None and stationary_qid not in moved_qubits:
-                return None  # Would collide with stationary atom
-
-            moved_qubits.add(qid)
-            destinations[dst] = qid
             new_config[qid] = dst
 
         # Check transposition table
