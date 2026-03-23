@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import product
+from itertools import combinations, product
 from typing import Iterator
 
 from bloqade.lanes.layout import (
@@ -11,8 +11,6 @@ from bloqade.lanes.layout import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    SiteLaneAddress,
-    WordLaneAddress,
 )
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
@@ -190,113 +188,82 @@ class ConfigurationTree:
         Yields:
             frozenset[LaneAddress] for each valid rectangle.
         """
-        # Get physical positions for each source location
-        loc_to_pos: dict[LocationAddress, tuple[float, float]] = {}
-        for loc in src_locs:
-            loc_to_pos[loc] = self.arch_spec.get_position(loc)
 
-        if not loc_to_pos:
+        if not src_locs:
             return
 
-        # Group locations by their X and Y coordinates
-        x_to_locs: dict[float, list[LocationAddress]] = {}
-        y_to_locs: dict[float, list[LocationAddress]] = {}
-        for loc, (x, y) in loc_to_pos.items():
-            x_to_locs.setdefault(x, []).append(loc)
-            y_to_locs.setdefault(y, []).append(loc)
+        # Build position lookups
+        pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
+        unique_xs: set[float] = set()
+        unique_ys: set[float] = set()
+        for loc in src_locs:
+            x, y = self.arch_spec.get_position(loc)
+            pos_to_loc[(x, y)] = loc
+            unique_xs.add(x)
+            unique_ys.add(y)
 
-        unique_xs = sorted(x_to_locs.keys())
-        unique_ys = sorted(y_to_locs.keys())
+        sorted_xs = sorted(unique_xs)
+        sorted_ys = sorted(unique_ys)
 
-        # Enumerate all subsets of X values and Y values within capacity
-        max_nx = max_x_capacity if max_x_capacity is not None else len(unique_xs)
-        max_ny = max_y_capacity if max_y_capacity is not None else len(unique_ys)
+        # Pre-build lane addresses and cache which are invalid (destination occupied)
+        loc_to_lane: dict[LocationAddress, LaneAddress] = {}
+        invalid_locs: set[LocationAddress] = set()
+        for loc in src_locs:
+            lane = LaneAddress(move_type, loc.word_id, loc.site_id, bus_id, direction)
+            loc_to_lane[loc] = lane
 
-        for nx in range(1, min(max_nx, len(unique_xs)) + 1):
-            for ny in range(1, min(max_ny, len(unique_ys)) + 1):
-                yield from self._enumerate_xy_rectangles(
-                    unique_xs,
-                    unique_ys,
-                    nx,
-                    ny,
-                    loc_to_pos,
+            # If source is occupied, check if destination is also occupied
+            if loc in occupied:
+                _, dst = self.arch_spec.get_endpoints(lane)
+                if dst in occupied:
+                    invalid_locs.add(loc)
+
+        # Enumerate all X × Y subset combinations within capacity
+        max_nx = max_x_capacity if max_x_capacity is not None else len(sorted_xs)
+        max_ny = max_y_capacity if max_y_capacity is not None else len(sorted_ys)
+
+        for nx, ny in product(range(1, max_nx + 1), range(1, max_ny + 1)):
+            for ny in range(1, min(max_ny, len(sorted_ys)) + 1):
+                yield from self._enumerate_xy_combinations(
+                    combinations(sorted_xs, nx),
+                    combinations(sorted_ys, ny),
+                    pos_to_loc,
+                    loc_to_lane,
+                    invalid_locs,
                     occupied,
-                    move_type,
-                    bus_id,
-                    direction,
                 )
 
-    def _enumerate_xy_rectangles(
+    def _enumerate_xy_combinations(
         self,
-        unique_xs: list[float],
-        unique_ys: list[float],
-        nx: int,
-        ny: int,
-        loc_to_pos: dict[LocationAddress, tuple[float, float]],
+        x_subsets: Iterator[tuple[float, ...]],
+        y_subsets: Iterator[tuple[float, ...]],
+        pos_to_loc: dict[tuple[float, float], LocationAddress],
+        loc_to_lane: dict[LocationAddress, LaneAddress],
+        invalid_locs: set[LocationAddress],
         occupied: frozenset[LocationAddress],
-        move_type: MoveType,
-        bus_id: int,
-        direction: Direction,
     ) -> Iterator[frozenset[LaneAddress]]:
-        """Enumerate all nx × ny rectangles and yield valid move sets.
+        """Yield valid move sets for all nx × ny rectangles.
 
-        For each combination of nx X-values and ny Y-values, checks that:
-        1. Every position in the Cartesian product has a valid source
-        2. At least one source has an atom
-        3. No occupied source has an occupied destination (collision)
-
-        Since bus src and dst are disjoint, simultaneous moves within
-        the same bus cannot cause swap-through conflicts.
+        NOTE for Rust port: replace itertools.combinations with Gosper's
+        hack for bitmask enumeration of exactly-k-set-bits subsets. This
+        avoids iterating all 2^n masks when capacity is small. See #298.
         """
-        from itertools import combinations
 
-        # Build reverse map: (x, y) -> LocationAddress
-        pos_to_loc: dict[tuple[float, float], LocationAddress] = {
-            pos: loc for loc, pos in loc_to_pos.items()
-        }
+        for x_subset, y_subset in product(x_subsets, y_subsets):
+            # Build the rectangle and check validity
+            lanes: list[LaneAddress] = []
+            valid = True
+            has_atom = False
 
-        for x_subset in combinations(unique_xs, nx):
-            for y_subset in combinations(unique_ys, ny):
-                # Build the rectangle and check validity
-                rect_locs: list[LocationAddress] = []
-                lanes: list[LaneAddress] = []
-                valid = True
-                has_atom = False
+            for loc in map(pos_to_loc.get, product(x_subset, y_subset)):
+                if loc is not None and loc not in invalid_locs:
+                    # is valid
+                    lanes.append(loc_to_lane[loc])
+                    has_atom = has_atom or loc in occupied
+                else:
+                    valid = False
 
-                for x, y in product(x_subset, y_subset):
-                    loc = pos_to_loc.get((x, y))
-                    if loc is None:
-                        # No source at this grid position — rectangle incomplete
-                        valid = False
-                        break
-
-                    rect_locs.append(loc)
-
-                    # Build the lane address
-                    if move_type == MoveType.SITE:
-                        lane = SiteLaneAddress(
-                            loc.word_id, loc.site_id, bus_id, direction
-                        )
-                    else:
-                        lane = WordLaneAddress(
-                            loc.word_id, loc.site_id, bus_id, direction
-                        )
-                    lanes.append(lane)
-
-                    # If this source has an atom, check destination
-                    if loc in occupied:
-                        has_atom = True
-                        _, dst = self.arch_spec.get_endpoints(lane)
-                        if dst in occupied:
-                            # Destination is occupied — collision, skip rectangle
-                            valid = False
-                            break
-
-                if not valid:
-                    continue
-                if not has_atom:
-                    continue
-
+            if valid and has_atom:
                 yield frozenset(lanes)
 
     def _apply_move_set(
