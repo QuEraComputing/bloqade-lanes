@@ -17,6 +17,7 @@ import numpy as np
 from bloqade.decoders import BpLsdDecoder
 from kirin.dialects import ilist
 from kirin.ir.method import Method
+from matplotlib.axes import Axes
 
 from bloqade import qubit, squin
 
@@ -27,13 +28,13 @@ from bloqade.gemini import GeminiLogicalSimulator, logical
 
 
 def render_steane_code_qubit(
-    ax: plt.Axes | None = None, center: tuple[float, float] = (0, 0)
-) -> plt.Axes:
+    ax: Axes | None = None, center: tuple[float, float] = (0, 0)
+) -> Axes:
     if ax is None:
         fig, ax = plt.subplots()
         ax.set_aspect("equal")
-        ax.set_xlim([-2 + center[0], 2 + center[0]])
-        ax.set_ylim([-2 + center[1], 2 + center[1]])
+        ax.set_xlim((-2 + center[0], 2 + center[0]))
+        ax.set_ylim((-2 + center[1], 2 + center[1]))
         ax.axis("off")
     RED = "#EF2F55"
     PURPLE = "#670EFF"
@@ -86,13 +87,13 @@ def render_steane_code_qubit(
 # A minimal kernel that prepares a single qubit in an arbitrary state,
 # so that it can be shown by the tsim renderer.
 @logical.kernel(aggressive_unroll=True, verify=True)
-def main():
+def minimal_kernel():
     reg = qubit.qalloc(1)
     squin.u3(0.1, 0.2, 0.3, reg[0])
     return logical.terminal_measure(reg)
 
 
-task = GeminiLogicalSimulator().task(main)
+task = GeminiLogicalSimulator().task(minimal_kernel)
 
 # %% [markdown]
 # ### Some prototype stdutils functions: detectors and observables
@@ -382,7 +383,7 @@ def parallelized_main() -> ilist.IList[qubit.Qubit, Any]:
     An equivalent kernel to the above, but with parallelism annotated via broadcast operations.
     """
     reg = qubit.qalloc(4)
-    squin.broadcast.cx([reg[0], reg[2]], [reg[1], reg[3]])
+    squin.broadcast.cx(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
     return reg
 
 
@@ -392,7 +393,7 @@ def conflicted_parallelized_main() -> ilist.IList[qubit.Qubit, Any]:
     A kernel where parallelism is annotated, but the moves cannot be done all at once due to AOD constraints.
     """
     reg = qubit.qalloc(4)
-    squin.broadcast.cx([reg[0], reg[1]], [reg[3], reg[2]])
+    squin.broadcast.cx(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[3], reg[2]]))
     return reg
 
 
