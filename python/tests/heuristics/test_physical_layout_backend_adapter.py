@@ -58,7 +58,7 @@ def test_partition_words_uses_kahip_backend(monkeypatch):
             return 0, [0, 0, 0, 1, 1, 1]
 
     fake = FakeKaHIP()
-    monkeypatch.setattr(physical_layout_module, "_kahip", fake, raising=False)
+    monkeypatch.setattr(physical_layout_module, "kahip", fake, raising=False)
 
     q_to_word = strategy._partition_words(
         qubits=qubits,
