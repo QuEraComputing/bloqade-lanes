@@ -25,28 +25,12 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class MoveGenerator(Protocol):
-    """Interface for generating candidate move sets from a configuration.
+    """Interface for expanding a configuration node into children.
 
-    Implementations must provide `generate` which yields candidate move
-    sets. The `expand` method is provided and handles validation via
-    the tree's `apply_move_set`.
+    Implementations produce candidate move sets internally and validate
+    them via `tree.apply_move_set`. Only `expand` is part of the public
+    interface — how candidates are generated is an implementation detail.
     """
-
-    def generate(
-        self,
-        node: ConfigurationNode,
-        tree: ConfigurationTree,
-    ) -> Iterator[frozenset[LaneAddress]]:
-        """Yield candidate move sets from the given configuration.
-
-        Args:
-            node: The configuration to generate moves from.
-            tree: The configuration tree (provides arch_spec, path_finder).
-
-        Yields:
-            frozenset[LaneAddress] — each candidate parallel move set.
-        """
-        ...
 
     def expand(
         self,
@@ -55,11 +39,6 @@ class MoveGenerator(Protocol):
         strict: bool = True,
     ) -> list[ConfigurationNode]:
         """Expand a node by generating and validating candidate move sets.
-
-        Calls `generate` to produce candidates, then validates each via
-        `tree.apply_move_set`. In strict mode (default), raises
-        InvalidMoveError if any candidate causes a collision. In
-        non-strict mode, silently skips invalid candidates.
 
         Args:
             node: The node to expand.
@@ -101,13 +80,13 @@ class ExhaustiveMoveGenerator:
         strict: bool = True,
     ) -> list[ConfigurationNode]:
         children: list[ConfigurationNode] = []
-        for move_set in self.generate(node, tree):
+        for move_set in self._generate(node, tree):
             child = tree.apply_move_set(node, move_set, strict=strict)
             if child is not None:
                 children.append(child)
         return children
 
-    def generate(
+    def _generate(
         self,
         node: ConfigurationNode,
         tree: ConfigurationTree,

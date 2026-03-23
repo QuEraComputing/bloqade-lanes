@@ -83,7 +83,7 @@ def test_collision_filtered_by_generator():
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
 
-    for ms in gen.generate(tree.root, tree):
+    for ms in gen._generate(tree.root, tree):
         for lane in ms:
             if lane.word_id == 0 and lane.site_id == 0 and lane.bus_id == 0:
                 src, dst = arch_spec.get_endpoints(lane)
@@ -105,7 +105,7 @@ def test_transposition_table_deduplication():
 def test_exhaustive_generator_yields_move_sets():
     tree = _make_tree()
     gen = ExhaustiveMoveGenerator()
-    move_sets = list(gen.generate(tree.root, tree))
+    move_sets = list(gen._generate(tree.root, tree))
 
     assert len(move_sets) > 0
     for ms in move_sets:
@@ -116,7 +116,7 @@ def test_exhaustive_generator_yields_move_sets():
 def test_exhaustive_generator_single_lane_capacity():
     tree = _make_tree()
     gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
-    move_sets = list(gen.generate(tree.root, tree))
+    move_sets = list(gen._generate(tree.root, tree))
 
     for ms in move_sets:
         assert len(ms) == 1
@@ -128,7 +128,7 @@ def test_exhaustive_generator_no_empty_rectangles():
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
 
-    for ms in gen.generate(tree.root, tree):
+    for ms in gen._generate(tree.root, tree):
         encoded_sources = {LocationAddress(lane.word_id, lane.site_id) for lane in ms}
         assert any(tree.root.is_occupied(s) for s in encoded_sources)
 
