@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from bloqade.lanes.layout import LaneAddress, LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.search.configuration import Configuration, ConfigurationNode
+
+if TYPE_CHECKING:
+    from bloqade.lanes.search.generators import MoveGenerator
 
 
 class InvalidMoveError(Exception):
@@ -128,3 +132,30 @@ class ConfigurationTree:
         self.seen[key] = new_node
         node.children[move_set] = new_node
         return new_node
+
+    def expand_node(
+        self,
+        node: ConfigurationNode,
+        generator: MoveGenerator,
+        strict: bool = True,
+    ) -> list[ConfigurationNode]:
+        """Expand a node using the given generator.
+
+        Generates candidate move sets, validates each (collision checks,
+        transposition table), and creates child nodes. Nodes already
+        seen at equal-or-lesser depth are skipped.
+
+        Args:
+            node: The node to expand.
+            generator: Produces candidate move sets.
+            strict: If True, raises on invalid moves. If False, skips them.
+
+        Returns:
+            List of newly created child nodes (may be empty).
+        """
+        children: list[ConfigurationNode] = []
+        for move_set in generator.generate(node, self):
+            child = self.apply_move_set(node, move_set, strict=strict)
+            if child is not None:
+                children.append(child)
+        return children
