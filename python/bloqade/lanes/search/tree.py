@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import combinations, product
-from typing import Iterator
+from typing import TYPE_CHECKING
 
-from bloqade.lanes.layout import (
-    Direction,
-    LaneAddress,
-    LocationAddress,
-    MoveType,
-)
+from bloqade.lanes.layout import LaneAddress, LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.search.configuration import Configuration, ConfigurationNode
+
+if TYPE_CHECKING:
+    from bloqade.lanes.search.generators import MoveGenerator
 
 
 @dataclass
@@ -25,6 +22,10 @@ class ConfigurationTree:
     valid move sets to generate child configurations. A transposition
     table prevents re-expanding configurations already seen at
     equal-or-lesser depth.
+
+    Move generation is delegated to a MoveGenerator, which produces
+    candidate move sets. Validation (lane validity, collision checks,
+    transposition table) is handled by _apply_move_set.
     """
 
     arch_spec: ArchSpec
@@ -70,12 +71,11 @@ class ConfigurationTree:
         occupied = node.occupied_locations
         result: list[tuple[LaneAddress, LocationAddress, LocationAddress]] = []
 
-        for qid, src_loc in node.configuration.items():
+        for _qid, src_loc in node.configuration.items():
             src_node_idx = self.path_finder.physical_address_map.get(src_loc)
             if src_node_idx is None:
                 continue
 
-            # Iterate outgoing edges from this node in the site graph
             for dst_node_idx in self.path_finder.site_graph.successor_indices(
                 src_node_idx
             ):
@@ -91,181 +91,6 @@ class ConfigurationTree:
 
         return result
 
-    def _enumerate_compatible_move_sets(
-        self,
-        node: ConfigurationNode,
-        max_x_capacity: int | None = None,
-        max_y_capacity: int | None = None,
-    ) -> Iterator[frozenset[LaneAddress]]:
-        """Yield valid move sets (compatible lane groups) from a configuration.
-
-        For each (move_type, bus_id, direction) group, enumerates all valid
-        rectangles of source positions on the bus. A valid rectangle is a
-        Cartesian product of X and Y positions where no position in the
-        rectangle is occupied by a stationary atom. The full rectangle of
-        lanes is yielded if at least one source has an atom.
-
-        The AOD moves the entire rectangle — lanes are generated for every
-        source in the rectangle, not just occupied ones. Empty source
-        positions produce no-op lanes (no atom to transport).
-
-        Args:
-            node: The configuration to expand from.
-            max_x_capacity: Maximum number of unique X positions the AOD
-                can address. None means unlimited.
-            max_y_capacity: Maximum number of unique Y positions the AOD
-                can address. None means unlimited.
-
-        Yields:
-            frozenset[LaneAddress] — each valid parallel move set.
-        """
-        occupied = node.occupied_locations
-
-        # Enumerate site buses
-        for bus_id, bus in enumerate(self.arch_spec.site_buses):
-            for direction in (Direction.FORWARD, Direction.BACKWARD):
-                # Source positions: every (word_id, src_site) for words with site buses
-                src_locs = [
-                    LocationAddress(w, s)
-                    for w in self.arch_spec.has_site_buses
-                    for s in bus.src
-                ]
-                yield from self._rectangles_to_move_sets(
-                    src_locs,
-                    occupied,
-                    MoveType.SITE,
-                    bus_id,
-                    direction,
-                    max_x_capacity,
-                    max_y_capacity,
-                )
-
-        # Enumerate word buses
-        for bus_id, bus in enumerate(self.arch_spec.word_buses):
-            for direction in (Direction.FORWARD, Direction.BACKWARD):
-                # Source positions: every (src_word, site_id) for sites with word buses
-                src_locs = [
-                    LocationAddress(w, s)
-                    for w in bus.src
-                    for s in self.arch_spec.has_word_buses
-                ]
-                yield from self._rectangles_to_move_sets(
-                    src_locs,
-                    occupied,
-                    MoveType.WORD,
-                    bus_id,
-                    direction,
-                    max_x_capacity,
-                    max_y_capacity,
-                )
-
-    def _rectangles_to_move_sets(
-        self,
-        src_locs: list[LocationAddress],
-        occupied: frozenset[LocationAddress],
-        move_type: MoveType,
-        bus_id: int,
-        direction: Direction,
-        max_x_capacity: int | None,
-        max_y_capacity: int | None,
-    ) -> Iterator[frozenset[LaneAddress]]:
-        """Enumerate valid rectangles from source locations and yield move sets.
-
-        A valid rectangle is a Cartesian product of X and Y positions from
-        the source locations. At least one position in the rectangle must
-        be occupied by an atom. No position in the rectangle may be occupied
-        by a stationary atom (one not in the rectangle's source set).
-
-        Args:
-            src_locs: All source locations for this bus.
-            occupied: Currently occupied locations.
-            move_type: SITE or WORD.
-            bus_id: Bus identifier.
-            direction: FORWARD or BACKWARD.
-            max_x_capacity: AOD X capacity limit (None = unlimited).
-            max_y_capacity: AOD Y capacity limit (None = unlimited).
-
-        Yields:
-            frozenset[LaneAddress] for each valid rectangle.
-        """
-
-        if not src_locs:
-            return
-
-        # Build position lookups
-        pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
-        unique_xs: set[float] = set()
-        unique_ys: set[float] = set()
-        for loc in src_locs:
-            x, y = self.arch_spec.get_position(loc)
-            pos_to_loc[(x, y)] = loc
-            unique_xs.add(x)
-            unique_ys.add(y)
-
-        sorted_xs = sorted(unique_xs)
-        sorted_ys = sorted(unique_ys)
-
-        # Pre-build lane addresses and cache which are invalid (destination occupied)
-        loc_to_lane: dict[LocationAddress, LaneAddress] = {}
-        invalid_locs: set[LocationAddress] = set()
-        for loc in src_locs:
-            lane = LaneAddress(move_type, loc.word_id, loc.site_id, bus_id, direction)
-            loc_to_lane[loc] = lane
-
-            # If source is occupied, check if destination is also occupied
-            if loc in occupied:
-                _, dst = self.arch_spec.get_endpoints(lane)
-                if dst in occupied:
-                    invalid_locs.add(loc)
-
-        # Enumerate all X × Y subset combinations within capacity
-        max_nx = max_x_capacity if max_x_capacity is not None else len(sorted_xs)
-        max_ny = max_y_capacity if max_y_capacity is not None else len(sorted_ys)
-
-        for nx, ny in product(range(1, max_nx + 1), range(1, max_ny + 1)):
-            for ny in range(1, min(max_ny, len(sorted_ys)) + 1):
-                yield from self._enumerate_xy_combinations(
-                    combinations(sorted_xs, nx),
-                    combinations(sorted_ys, ny),
-                    pos_to_loc,
-                    loc_to_lane,
-                    invalid_locs,
-                    occupied,
-                )
-
-    def _enumerate_xy_combinations(
-        self,
-        x_subsets: Iterator[tuple[float, ...]],
-        y_subsets: Iterator[tuple[float, ...]],
-        pos_to_loc: dict[tuple[float, float], LocationAddress],
-        loc_to_lane: dict[LocationAddress, LaneAddress],
-        invalid_locs: set[LocationAddress],
-        occupied: frozenset[LocationAddress],
-    ) -> Iterator[frozenset[LaneAddress]]:
-        """Yield valid move sets for all nx × ny rectangles.
-
-        NOTE for Rust port: replace itertools.combinations with Gosper's
-        hack for bitmask enumeration of exactly-k-set-bits subsets. This
-        avoids iterating all 2^n masks when capacity is small. See #298.
-        """
-
-        for x_subset, y_subset in product(x_subsets, y_subsets):
-            # Build the rectangle and check validity
-            lanes: list[LaneAddress] = []
-            valid = True
-            has_atom = False
-
-            for loc in map(pos_to_loc.get, product(x_subset, y_subset)):
-                if loc is not None and loc not in invalid_locs:
-                    # is valid
-                    lanes.append(loc_to_lane[loc])
-                    has_atom = has_atom or loc in occupied
-                else:
-                    valid = False
-
-            if valid and has_atom:
-                yield frozenset(lanes)
-
     def _apply_move_set(
         self,
         node: ConfigurationNode,
@@ -273,16 +98,19 @@ class ConfigurationTree:
     ) -> ConfigurationNode | None:
         """Apply a move set to a node, returning a new child or None.
 
-        Resolves lane endpoints and moves atoms. Collision checking is
-        handled during move set enumeration (bus src/dst are disjoint,
-        so no swap-through conflicts within the same bus group).
+        Resolves lane endpoints, checks for collisions, and creates
+        a child node if valid. This is the single validation point —
+        MoveGenerators may yield invalid candidates that are filtered here.
 
         Returns:
-            A new ConfigurationNode, or None if the configuration was
-            already seen at equal-or-lesser depth.
+            A new ConfigurationNode, or None if:
+            - An occupied source has an occupied destination (collision)
+            - Two atoms would move to the same destination
+            - The configuration was already seen at equal-or-lesser depth
         """
-        # Build the new configuration by applying moves
         new_config = dict(node.configuration)
+        destinations: set[LocationAddress] = set()
+        occupied = node.occupied_locations
 
         for lane in move_set:
             src, dst = self.arch_spec.get_endpoints(lane)
@@ -292,6 +120,12 @@ class ConfigurationTree:
                 # No atom at source — no-op lane
                 continue
 
+            # Check collision: destination already occupied by non-moving atom
+            # or two atoms moving to the same destination
+            if dst in occupied or dst in destinations:
+                return None
+
+            destinations.add(dst)
             new_config[qid] = dst
 
         # Check transposition table
@@ -306,7 +140,7 @@ class ConfigurationTree:
         if key in self.seen:
             existing = self.seen[key]
             if existing.depth <= new_node.depth:
-                return None  # Already seen at equal-or-lesser depth
+                return None
 
         # Register in transposition table and add as child
         self.seen[key] = new_node
@@ -316,26 +150,22 @@ class ConfigurationTree:
     def expand_node(
         self,
         node: ConfigurationNode,
-        max_x_capacity: int | None = None,
-        max_y_capacity: int | None = None,
+        generator: MoveGenerator,
     ) -> list[ConfigurationNode]:
-        """Expand a node by generating all valid children.
+        """Expand a node by generating and validating candidate move sets.
 
-        Enumerates all valid move sets from the node's configuration,
-        applies each, and returns the list of new child nodes.
+        The generator produces candidates; _apply_move_set validates each
+        (collision checks, transposition table) and creates child nodes.
 
         Args:
             node: The node to expand.
-            max_x_capacity: AOD X capacity limit (None = unlimited).
-            max_y_capacity: AOD Y capacity limit (None = unlimited).
+            generator: The move generator to use for candidate enumeration.
 
         Returns:
             List of newly created child nodes (may be empty if deadlocked).
         """
         children: list[ConfigurationNode] = []
-        for move_set in self._enumerate_compatible_move_sets(
-            node, max_x_capacity, max_y_capacity
-        ):
+        for move_set in generator.generate(node, self):
             child = self._apply_move_set(node, move_set)
             if child is not None:
                 children.append(child)

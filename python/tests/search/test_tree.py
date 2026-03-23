@@ -1,7 +1,8 @@
-"""Tests for ConfigurationTree."""
+"""Tests for ConfigurationTree and ExhaustiveMoveGenerator."""
 
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress, SiteLaneAddress
+from bloqade.lanes.search.generators import ExhaustiveMoveGenerator
 from bloqade.lanes.search.tree import ConfigurationTree
 
 
@@ -54,24 +55,37 @@ def test_apply_move_set_valid():
     assert child.configuration[1] == LocationAddress(1, 0)
 
 
-def test_collision_rejected_during_enumeration():
-    """Move sets that would cause collisions are not enumerated."""
+def test_apply_move_set_collision_rejected():
+    """Collision in _apply_move_set should return None."""
     arch_spec = logical.get_arch_spec()
-    # Place atom at (0,0) and (0,5). Site bus 0 fwd maps 0→5.
-    # A rectangle containing site 0 should be rejected because
-    # its destination (site 5) is occupied.
     placement = {
         0: LocationAddress(0, 0),
         1: LocationAddress(0, 5),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
-    # No enumerated move set should move qubit 0 to (0,5) via site bus fwd
-    for ms in tree._enumerate_compatible_move_sets(tree.root):
+    # Moving qubit 0 to (0,5) where qubit 1 already sits
+    lane = SiteLaneAddress(0, 0, 0)
+    move_set = frozenset({lane})
+
+    child = tree._apply_move_set(tree.root, move_set)
+    assert child is None
+
+
+def test_collision_filtered_by_generator():
+    """ExhaustiveMoveGenerator pre-filters collision-causing rectangles."""
+    arch_spec = logical.get_arch_spec()
+    placement = {
+        0: LocationAddress(0, 0),
+        1: LocationAddress(0, 5),
+    }
+    tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+    gen = ExhaustiveMoveGenerator()
+
+    for ms in gen.generate(tree.root, tree):
         for lane in ms:
             if lane.word_id == 0 and lane.site_id == 0 and lane.bus_id == 0:
                 src, dst = arch_spec.get_endpoints(lane)
-                # If this lane moves from (0,0), its dst should not be occupied
                 if tree.root.is_occupied(src):
                     assert not tree.root.is_occupied(dst)
 
@@ -79,20 +93,19 @@ def test_collision_rejected_during_enumeration():
 def test_transposition_table_deduplication():
     tree = _make_tree()
 
-    # Apply a move, then reverse it — should return to root config
     lane_fwd = SiteLaneAddress(0, 0, 0)
     child = tree._apply_move_set(tree.root, frozenset({lane_fwd}))
     assert child is not None
 
-    # The root config is already in seen at depth 0
     assert tree.root.config_key in tree.seen
     assert tree.seen[tree.root.config_key].depth == 0
 
 
-def test_enumerate_compatible_move_sets_yields_move_sets():
-    """Move set enumeration should yield non-empty frozensets."""
+def test_exhaustive_generator_yields_move_sets():
+    """ExhaustiveMoveGenerator should yield non-empty frozensets."""
     tree = _make_tree()
-    move_sets = list(tree._enumerate_compatible_move_sets(tree.root))
+    gen = ExhaustiveMoveGenerator()
+    move_sets = list(gen.generate(tree.root, tree))
 
     assert len(move_sets) > 0
     for ms in move_sets:
@@ -100,30 +113,24 @@ def test_enumerate_compatible_move_sets_yields_move_sets():
         assert len(ms) > 0
 
 
-def test_enumerate_compatible_move_sets_single_lane():
+def test_exhaustive_generator_single_lane_capacity():
     """With capacity 1x1, should yield only single-lane move sets."""
     tree = _make_tree()
-    move_sets = list(
-        tree._enumerate_compatible_move_sets(
-            tree.root, max_x_capacity=1, max_y_capacity=1
-        )
-    )
+    gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
+    move_sets = list(gen.generate(tree.root, tree))
 
-    # All move sets should have exactly 1 lane (1x1 rectangle)
     for ms in move_sets:
         assert len(ms) == 1
 
 
-def test_enumerate_compatible_move_sets_no_empty_rectangles():
+def test_exhaustive_generator_no_empty_rectangles():
     """Rectangles with no occupied atoms should not be yielded."""
     arch_spec = logical.get_arch_spec()
-    # Place atom only at (0, 0) — many rectangles will have no atoms
     placement = {0: LocationAddress(0, 0)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+    gen = ExhaustiveMoveGenerator()
 
-    for ms in tree._enumerate_compatible_move_sets(tree.root):
-        # Every yielded move set should have at least one lane whose
-        # encoded source location (word_id, site_id) is occupied
+    for ms in gen.generate(tree.root, tree):
         encoded_sources = {LocationAddress(lane.word_id, lane.site_id) for lane in ms}
         assert any(tree.root.is_occupied(s) for s in encoded_sources)
 
@@ -131,7 +138,8 @@ def test_enumerate_compatible_move_sets_no_empty_rectangles():
 def test_expand_node_produces_valid_children():
     """expand_node should produce children with no collisions."""
     tree = _make_tree()
-    children = tree.expand_node(tree.root)
+    gen = ExhaustiveMoveGenerator()
+    children = tree.expand_node(tree.root, gen)
 
     assert len(children) > 0
     for child in children:
@@ -143,16 +151,11 @@ def test_expand_node_produces_valid_children():
 
 
 def test_expand_node_deadlock():
-    """A stuck configuration should produce no children."""
+    """A stuck configuration should not crash."""
     arch_spec = logical.get_arch_spec()
-    # Place atoms at all destinations of site bus 0 on word 0
-    # Sites 5-9 are destinations; atoms there block forward moves
-    # Sites 0-4 are sources but destinations are blocked
-    placement = {i: LocationAddress(0, i) for i in range(10)}  # fill all 10 sites
+    placement = {i: LocationAddress(0, i) for i in range(10)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+    gen = ExhaustiveMoveGenerator()
 
-    # With all sites occupied, many moves should be blocked by collisions
-    children = tree.expand_node(tree.root)
-    # Not necessarily zero children (word bus moves might work),
-    # but this tests that the enumeration doesn't crash
+    children = tree.expand_node(tree.root, gen)
     assert isinstance(children, list)
