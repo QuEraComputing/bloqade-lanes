@@ -6,13 +6,13 @@ from kirin.dialects import func
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.gemini.logical.dialects.operations.stmts import (
-    TerminalLogicalMeasurement,
-)
-from bloqade.lanes.logical_mvp import (
+from bloqade.gemini.compile import (
     _find_qubit_ssas,
     _find_return_stmt,
     append_measurements_and_annotations,
+)
+from bloqade.gemini.logical.dialects.operations.stmts import (
+    TerminalLogicalMeasurement,
 )
 
 DETS = [[1, 0], [0, 1]]  # 2 measurements, 2 detectors

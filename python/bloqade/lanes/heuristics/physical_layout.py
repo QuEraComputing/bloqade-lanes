@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import kahip
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 
 
 def _to_cz_layers(
@@ -24,7 +23,7 @@ def _to_cz_layers(
 
 @dataclass
 class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
+    arch_spec: layout.ArchSpec
     max_words: int | None = None
     u_factor: int = 1
     partitioner_seed: int = 0

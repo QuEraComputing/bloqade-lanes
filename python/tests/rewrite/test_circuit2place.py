@@ -4,6 +4,7 @@ from kirin import ir, rewrite
 from kirin.dialects import ilist, py
 
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
+from bloqade.gemini.rewrite.circuit2place import GeminiRewritePlaceOperations
 from bloqade.lanes import types
 from bloqade.lanes.dialects import place
 from bloqade.lanes.rewrite.circuit2place import (
@@ -145,7 +146,7 @@ def test_measurement():
     expected_block.stmts.append(
         place.ConvertToPhysicalMeasurements(tuple(circ.results))
     )
-    rule = rewrite.Walk(RewritePlaceOperations())
+    rule = rewrite.Walk(GeminiRewritePlaceOperations())
 
     rule.rewrite(test_block)
     assert_nodes(test_block, expected_block)
@@ -192,7 +193,7 @@ def test_initialize():
     expected_block.stmts.append(
         place.StaticPlacement(qubits=(q0, q1, q2), body=ir.Region(block))
     )
-    rule = rewrite.Walk(RewritePlaceOperations())
+    rule = rewrite.Walk(GeminiRewritePlaceOperations())
 
     rule.rewrite(test_block)
     assert_nodes(test_block, expected_block)

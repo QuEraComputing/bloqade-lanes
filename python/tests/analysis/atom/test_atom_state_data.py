@@ -1,9 +1,9 @@
 import pytest
 from kirin.interp import InterpreterError
 
+from bloqade.gemini.arch import logical
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.atom import atom_state_data
-from bloqade.lanes.arch.gemini import logical
 
 
 def test_hash():

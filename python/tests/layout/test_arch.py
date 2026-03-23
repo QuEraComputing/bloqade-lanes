@@ -1,7 +1,7 @@
 from bloqade.geometry.dialects import grid
 
+from bloqade.gemini.arch import logical
 from bloqade.lanes import layout
-from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout.encoding import (
     Direction,
     MoveType,

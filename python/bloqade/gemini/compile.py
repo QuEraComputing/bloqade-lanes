@@ -4,6 +4,7 @@ from typing import TypeVar
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
+from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, rewrite
@@ -15,16 +16,23 @@ from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
 from bloqade.gemini.analysis.measurement_validation import (
     GeminiTerminalMeasurementValidation,
 )
+from bloqade.gemini.arch import logical
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
 )
+from bloqade.gemini.logical.rewrite.initialize import (
+    __RewriteU3ToInitialize as _RewriteU3ToInitialize,
+)
+from bloqade.gemini.noise_model import generate_simple_noise_model
+from bloqade.gemini.rewrite.circuit2place import (
+    GeminiRewritePlaceOperations,
+    RewriteInitializeToLogicalInitialize,
+)
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
@@ -117,14 +125,24 @@ def compile_squin_to_move(
     """
 
     if layout_heuristic is None:
-        layout_heuristic = logical_layout.LogicalLayoutHeuristic()
+        layout_heuristic = logical_layout.LogicalLayoutHeuristic(
+            arch_spec=logical.get_arch_spec()
+        )
 
     mt = squin_to_move(
         mt,
         layout_heuristic=layout_heuristic,
-        placement_strategy=LogicalPlacementStrategyNoHome(),
+        placement_strategy=LogicalPlacementStrategyNoHome(
+            arch_spec=logical.get_arch_spec()
+        ),
         insert_return_moves=insert_return_moves,
         no_raise=no_raise,
+        pre_rewrites=(
+            rewrite.Walk(RewriteNonCliffordToU3()),
+            rewrite.Walk(_RewriteU3ToInitialize()),
+        ),
+        pre_place_rewrites=(RewriteInitializeToLogicalInitialize(),),
+        place_rewrite=GeminiRewritePlaceOperations(),
     )
     if transversal_rewrite:
         mt = transversal_rewrites(mt)

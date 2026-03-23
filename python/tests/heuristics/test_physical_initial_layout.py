@@ -1,6 +1,6 @@
 import pytest
 
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics.physical_layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )

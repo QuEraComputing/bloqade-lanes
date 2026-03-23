@@ -2,7 +2,7 @@ from typing import Callable
 
 import pytest
 
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.layout.path import PathFinder
 

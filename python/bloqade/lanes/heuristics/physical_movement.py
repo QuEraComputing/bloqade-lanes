@@ -1,11 +1,10 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
     ConcreteState,
     SingleZonePlacementStrategyABC,
 )
-from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 
 
 @dataclass
@@ -16,7 +15,7 @@ class PhysicalGreedyPlacementStrategy(SingleZonePlacementStrategyABC):
     synthesis is split into a follow-up PR.
     """
 
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
+    arch_spec: layout.ArchSpec
 
     def validate_initial_layout(
         self,

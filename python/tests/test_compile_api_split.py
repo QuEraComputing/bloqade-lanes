@@ -3,7 +3,7 @@ from typing import cast
 
 from kirin import ir
 
-from bloqade.lanes import compile as compile_api, logical_mvp
+from bloqade.gemini import compile as logical_mvp, physical_compile as compile_api
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.heuristics import logical_layout
@@ -23,6 +23,7 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
         placement_strategy=None,
         insert_return_moves=True,
         no_raise=True,
+        **kwargs,
     ):
         captured["mt"] = mt
         captured["layout_heuristic"] = layout_heuristic

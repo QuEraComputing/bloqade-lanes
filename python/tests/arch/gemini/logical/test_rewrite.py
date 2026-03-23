@@ -2,12 +2,12 @@ from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite, types
 from kirin.dialects import ilist, py
 
-from bloqade.lanes.arch.gemini.logical.rewrite import (
+from bloqade.gemini.arch.logical.rewrite import (
     RewriteFill,
     RewriteInitialize,
     RewriteMoves,
 )
-from bloqade.lanes.arch.gemini.logical.stmts import Fill, LogicalInitialize, SiteBusMove
+from bloqade.gemini.arch.logical.stmts import Fill, LogicalInitialize, SiteBusMove
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import (
     Direction,

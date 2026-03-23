@@ -3,8 +3,8 @@ from kirin import ir
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
+from bloqade.gemini.arch.logical import validation
 from bloqade.lanes._prelude import kernel as lanes_kernel
-from bloqade.lanes.arch.gemini.logical import validation
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import (
     Direction,

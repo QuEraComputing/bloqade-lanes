@@ -1,13 +1,12 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 
 
 @dataclass
 class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
+    arch_spec: layout.ArchSpec
 
     @property
     def left_site_count(self) -> int:

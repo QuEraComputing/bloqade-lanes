@@ -2,6 +2,7 @@ import pytest
 from kirin import ir
 from kirin.interp.exceptions import InterpreterError
 
+from bloqade.gemini.arch.logical import get_arch_spec
 from bloqade.lanes.analysis.placement import PlacementAnalysis
 from bloqade.lanes.dialects import place
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
@@ -12,7 +13,7 @@ def _build_analysis() -> PlacementAnalysis:
     analysis = object.__new__(PlacementAnalysis)
     analysis.cz_lookahead_buffers = {}
     analysis.cz_lookahead_stmt_positions = {}
-    analysis.placement_strategy = LogicalPlacementStrategy()
+    analysis.placement_strategy = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     analysis.initial_layout = (LocationAddress(0, 0), LocationAddress(0, 1))
     analysis.address_analysis = {}
     return analysis

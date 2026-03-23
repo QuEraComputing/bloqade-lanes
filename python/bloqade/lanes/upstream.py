@@ -11,8 +11,8 @@ from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.method import Method
+from kirin.rewrite import abc as rewrite_abc
 
-from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress
@@ -34,6 +34,8 @@ def always_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
 @dataclass
 class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
+    pre_place_rewrites: tuple[rewrite_abc.RewriteRule, ...] = ()
+    place_rewrite: rewrite_abc.RewriteRule | None = None
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -42,9 +44,8 @@ class NativeToPlace:
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
-        rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
-            out.code
-        )
+        for rw in self.pre_place_rewrites:
+            rewrite.Walk(rw).rewrite(out.code)
 
         rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
             out.code
@@ -54,7 +55,11 @@ class NativeToPlace:
         rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
 
         rewrite.Walk(
-            circuit2place.RewritePlaceOperations(),
+            (
+                self.place_rewrite
+                if self.place_rewrite is not None
+                else circuit2place.RewritePlaceOperations()
+            ),
         ).rewrite(out.code)
 
         rewrite.Walk(
@@ -182,6 +187,9 @@ def squin_to_move(
     ] = place2move.palindrome_move_layers,
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
     no_raise: bool = True,
+    pre_rewrites: tuple[rewrite_abc.RewriteRule, ...] | None = None,
+    pre_place_rewrites: tuple[rewrite_abc.RewriteRule, ...] = (),
+    place_rewrite: rewrite_abc.RewriteRule | None = None,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
@@ -196,21 +204,23 @@ def squin_to_move(
             Defaults to palindrome_move_layers.
         merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
+        pre_rewrites (tuple[rewrite_abc.RewriteRule, ...] | None, optional): Rewrites to apply before squin-to-native conversion. Defaults to (rewrite.Walk(RewriteNonCliffordToU3()),).
+        pre_place_rewrites (tuple[rewrite_abc.RewriteRule, ...], optional): Rewrites to apply before place operations rewrite. Defaults to ().
+        place_rewrite (rewrite_abc.RewriteRule | None, optional): Custom place operations rewrite rule. Defaults to None (uses RewritePlaceOperations).
 
     Returns:
         ir.Method: The compiled move dialect method.
     """
-    rule = rewrite.Chain(
-        rewrite.Walk(
-            RewriteNonCliffordToU3(),
-        ),
-        rewrite.Walk(
-            __RewriteU3ToInitialize(),
-        ),
-    )
+    if pre_rewrites is None:
+        pre_rewrites = (rewrite.Walk(RewriteNonCliffordToU3()),)
+    rule = rewrite.Chain(*pre_rewrites)
     CallGraphPass(mt.dialects, rule)(out := mt.similar())
     out = SquinToNative().emit(out, no_raise=no_raise)
-    out = NativeToPlace(merge_heuristic).emit(out, no_raise=no_raise)
+    out = NativeToPlace(
+        merge_heuristic,
+        pre_place_rewrites=pre_place_rewrites,
+        place_rewrite=place_rewrite,
+    ).emit(out, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,

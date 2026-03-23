@@ -14,7 +14,6 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 from bloqade.lanes.layout.path import PathFinder
 
@@ -179,7 +178,7 @@ class LogicalPlacementMethods:
 
 @dataclass
 class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrategyABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: layout.ArchSpec
 
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
@@ -189,7 +188,7 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 
 @dataclass
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: layout.ArchSpec
     H_lookahead: int = 4
     gamma: float = 0.85
     lambda_lookahead: float = 0.5

@@ -1,7 +1,7 @@
 import pytest
 
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.gemini.arch import logical
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     LocationAddress,

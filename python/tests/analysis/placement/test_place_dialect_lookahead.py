@@ -4,12 +4,12 @@ from typing import cast
 from kirin import ir
 from kirin.analysis.forward import ForwardFrame
 
+from bloqade.gemini.arch.logical import get_arch_spec
 from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
     PlacementStrategyABC,
 )
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import place
 from bloqade.lanes.layout import ArchSpec, LocationAddress
 

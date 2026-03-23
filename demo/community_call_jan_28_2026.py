@@ -1,6 +1,6 @@
 # %%
 # %matplotlib inline
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 from bloqade.lanes.layout import ArchSpec
 
 
@@ -88,7 +88,7 @@ show_lanes(physical_arch)
 # ```
 
 # %%
-from bloqade.lanes.logical_mvp import transversal_rewrites  # noqa F402
+from bloqade.gemini.compile import transversal_rewrites  # noqa F402
 
 # rewrites to transversal moves on steane code
 main.print()
@@ -101,7 +101,7 @@ transversal_main.print()
 debugger(transversal_main, arch_spec=physical_arch)
 
 # %%
-from bloqade.lanes import generate_simple_noise_model  # noqa F402
+from bloqade.gemini import generate_simple_noise_model  # noqa F402
 from bloqade.lanes.transform import MoveToSquin  # noqa F402
 
 squin_kernel = MoveToSquin(

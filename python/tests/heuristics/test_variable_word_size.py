@@ -2,10 +2,10 @@
 
 import pytest
 
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.heuristics.logical_placement import (
     LogicalPlacementMethods,
     LogicalPlacementStrategyNoHome,

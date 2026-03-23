@@ -12,21 +12,21 @@ from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
 from bloqade import tsim
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
-from bloqade.lanes.arch.gemini.logical import steane7_initialize
-from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.logical_mvp import (
+from bloqade.gemini.arch.impls import generate_arch_hypercube
+from bloqade.gemini.arch.logical import steane7_initialize
+from bloqade.gemini.compile import (
     _find_qubit_ssas,
     append_measurements_and_annotations,
     compile_squin_to_move,
     run_squin_kernel_validation,
 )
-from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.gemini.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
+from bloqade.gemini.noise_model import generate_simple_noise_model
+from bloqade.gemini.steane_defaults import steane7_m2dets, steane7_m2obs
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
 
 RetType = TypeVar("RetType")

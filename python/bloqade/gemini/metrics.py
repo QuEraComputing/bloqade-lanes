@@ -4,13 +4,13 @@ from typing import Any
 from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
+from bloqade.gemini.arch import logical
+from bloqade.gemini.compile import transversal_rewrites
+from bloqade.gemini.noise_model import generate_simple_noise_model
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
-from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.layout.move_metric import MoveMetricCalculator
-from bloqade.lanes.logical_mvp import transversal_rewrites
-from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import (
@@ -94,7 +94,9 @@ class Metrics:
 
         move_mt = squin_to_move(
             mt,
-            layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
+            layout_heuristic=logical_layout.LogicalLayoutHeuristic(
+                arch_spec=logical.get_arch_spec()
+            ),
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
             merge_heuristic=merge_heuristic,
@@ -142,7 +144,9 @@ class Metrics:
     ) -> KernelMoveMetrics:
         move_mt = squin_to_move(
             mt,
-            layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
+            layout_heuristic=logical_layout.LogicalLayoutHeuristic(
+                arch_spec=logical.get_arch_spec()
+            ),
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
             merge_heuristic=merge_heuristic,
@@ -166,7 +170,9 @@ class Metrics:
     ) -> KernelMoveTimeMetrics:
         move_mt = squin_to_move(
             mt,
-            layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
+            layout_heuristic=logical_layout.LogicalLayoutHeuristic(
+                arch_spec=logical.get_arch_spec()
+            ),
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
             merge_heuristic=merge_heuristic,

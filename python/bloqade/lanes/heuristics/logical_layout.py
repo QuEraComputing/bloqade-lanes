@@ -1,16 +1,15 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from itertools import chain, combinations
 
 from kirin import interp
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 
 
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: layout.ArchSpec
 
     def score_parallelism(
         self,

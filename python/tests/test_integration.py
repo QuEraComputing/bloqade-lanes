@@ -5,22 +5,31 @@ from typing import Any
 
 import pytest
 from bloqade.decoders.dialects import annotate
+from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
+from kirin import rewrite
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.logical_mvp import (
+from bloqade.gemini.arch import logical
+from bloqade.gemini.arch.impls import generate_arch_hypercube
+from bloqade.gemini.arch.logical import get_arch_spec
+from bloqade.gemini.compile import (
     compile_squin_to_move,
     transversal_rewrites,
 )
-from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.gemini.logical.rewrite.initialize import (
+    __RewriteU3ToInitialize as _RewriteU3ToInitialize,
+)
+from bloqade.gemini.noise_model import generate_simple_noise_model
+from bloqade.gemini.rewrite.circuit2place import (
+    GeminiRewritePlaceOperations,
+    RewriteInitializeToLogicalInitialize,
+)
+from bloqade.lanes.heuristics import logical_layout
+from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import (
     always_merge_heuristic,
@@ -67,10 +76,18 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
     noise_model = generate_simple_noise_model()
     move_mt = squin_to_move(
         mt,
-        layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
-        placement_strategy=LogicalPlacementStrategyNoHome(),
+        layout_heuristic=logical_layout.LogicalLayoutHeuristic(
+            arch_spec=get_arch_spec()
+        ),
+        placement_strategy=LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec()),
         insert_return_moves=True,
         merge_heuristic=merge_heuristic,
+        pre_rewrites=(
+            rewrite.Walk(RewriteNonCliffordToU3()),
+            rewrite.Walk(_RewriteU3ToInitialize()),
+        ),
+        pre_place_rewrites=(RewriteInitializeToLogicalInitialize(),),
+        place_rewrite=GeminiRewritePlaceOperations(),
     )
     move_mt = transversal_rewrites(move_mt)
     transformer = MoveToSquin(

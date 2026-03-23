@@ -7,30 +7,8 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
-from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
-
-
-class RewriteInitializeToLogicalInitialize(abc.RewriteRule):
-    """Rewrite gemini.logical.Initialize statements to place.LogicalInitialize statement."""
-
-    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
-        if not (
-            isinstance(node, gemini_stmts.Initialize)
-            and isinstance(qubit_list := node.qubits.owner, ilist.New)
-        ):
-            return abc.RewriteResult()
-
-        node.replace_by(
-            place.LogicalInitialize(
-                phi=node.phi,
-                theta=node.theta,
-                lam=node.lam,
-                qubits=qubit_list.values,
-            )
-        )
-        return abc.RewriteResult(has_done_something=True)
 
 
 class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
@@ -97,8 +75,6 @@ class RewritePlaceOperations(abc.RewriteRule):
         if not isinstance(
             node,
             (
-                gemini_stmts.TerminalLogicalMeasurement,
-                gemini_stmts.Initialize,
                 gate.CZ,
                 gate.R,
                 gate.Rz,
@@ -128,49 +104,6 @@ class RewritePlaceOperations(abc.RewriteRule):
         )
 
         return place.StaticPlacement(qubits=qubits, body=body)
-
-    def rewrite_Initialize(self, node: gemini_stmts.Initialize) -> abc.RewriteResult:
-        if not isinstance(args_list := node.qubits.owner, ilist.New):
-            return abc.RewriteResult()
-
-        inputs = args_list.values
-        body, block, entry_state = self.prep_region()
-        gate_stmt = place.Initialize(
-            entry_state,
-            phi=node.phi,
-            theta=node.theta,
-            lam=node.lam,
-            qubits=tuple(range(len(inputs))),
-        )
-        node.replace_by(
-            self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
-        )
-
-        return abc.RewriteResult(has_done_something=True)
-
-    def rewrite_TerminalLogicalMeasurement(
-        self, node: gemini_stmts.TerminalLogicalMeasurement
-    ) -> abc.RewriteResult:
-        if not isinstance(args_list := node.qubits.owner, ilist.New):
-            return abc.RewriteResult()
-
-        inputs = args_list.values
-        body, block, entry_state = self.prep_region()
-        gate_stmt = place.EndMeasure(
-            entry_state,
-            qubits=tuple(range(len(inputs))),
-        )
-        new_node = self.construct_execute(
-            gate_stmt, qubits=inputs, body=body, block=block
-        )
-        new_node.insert_before(node)
-        node.replace_by(
-            place.ConvertToPhysicalMeasurements(
-                tuple(new_node.results),
-            )
-        )
-
-        return abc.RewriteResult(has_done_something=True)
 
     def rewrite_CZ(self, node: gate.CZ) -> abc.RewriteResult:
         if not isinstance(

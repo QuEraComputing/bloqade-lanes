@@ -1,9 +1,9 @@
 import pytest
 
+from bloqade.gemini.arch.logical import get_arch_spec
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import (
     LogicalPlacementStrategy,
@@ -298,7 +298,7 @@ def test_fixed_cz_placement(
     controls: tuple[int, ...],
     state_after: AtomState,
 ):
-    placement_strategy = LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     state_result = placement_strategy.cz_placements(state_before, controls, targets)
     if not isinstance(state_before, ConcreteState) or not isinstance(
         state_after, ExecuteCZ
@@ -314,7 +314,7 @@ def test_fixed_cz_placement(
 
 
 def test_fixed_sq_placement():
-    placement_strategy = LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     assert AtomState.top() == placement_strategy.sq_placements(
         AtomState.top(), (0, 1, 2)
     )
@@ -335,7 +335,7 @@ def test_fixed_sq_placement():
 
 
 def test_fixed_invalid_initial_layout_1():
-    placement_strategy = LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     layout = (
         LocationAddress(0, 0),
         LocationAddress(0, 1),
@@ -347,7 +347,7 @@ def test_fixed_invalid_initial_layout_1():
 
 
 def test_fixed_invalid_initial_layout_2():
-    placement_strategy = LogicalPlacementStrategy()
+    placement_strategy = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     layout = (
         LocationAddress(0, 0),
         LocationAddress(1, 0),
@@ -359,7 +359,7 @@ def test_fixed_invalid_initial_layout_2():
 
 
 def test_initial_layout():
-    layout_heuristic = logical_layout.LogicalLayoutHeuristic()
+    layout_heuristic = logical_layout.LogicalLayoutHeuristic(arch_spec=get_arch_spec())
     edges = {(i, j): 1 for i in range(10) for j in range(i + 1, 10, 1)}
 
     edges[(0, 1)] = 10
@@ -394,7 +394,7 @@ def test_move_scheduler_cz():
         tuple(0 for _ in range(10)),
     )
 
-    placement = LogicalPlacementStrategy()
+    placement = LogicalPlacementStrategy(arch_spec=get_arch_spec())
     controls = (0, 1, 4)
     targets = (5, 6, 7)
 
@@ -429,7 +429,7 @@ def test_move_scheduler_cz():
 
 
 def test_nohome_choose_return_layout():
-    placement = LogicalPlacementStrategyNoHome()
+    placement = LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec())
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
@@ -455,7 +455,7 @@ def test_nohome_choose_return_layout():
 
 
 def test_nohome_choose_return_layout_duplicate_collision():
-    placement = LogicalPlacementStrategyNoHome()
+    placement = LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec())
     state_before = ConcreteState(
         occupied=frozenset(
             {
@@ -481,7 +481,7 @@ def test_nohome_choose_return_layout_duplicate_collision():
 
 
 def test_nohome_choose_return_layout_sequential_no_conflicts():
-    placement = LogicalPlacementStrategyNoHome()
+    placement = LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec())
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
@@ -504,7 +504,7 @@ def test_nohome_choose_return_layout_sequential_no_conflicts():
 
 
 def test_nohome_cz_placements_combines_return_and_entangle_layers():
-    placement = LogicalPlacementStrategyNoHome()
+    placement = LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec())
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
@@ -532,7 +532,7 @@ def test_nohome_cz_placements_combines_return_and_entangle_layers():
 
 def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyPatch):
     """Tests best_path uses pathfinder instead of old Dijkstra implementation; verifes memoized path; verifies returned lane"""
-    placement = LogicalPlacementStrategyNoHome()
+    placement = LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec())
     src = LocationAddress(0, 0)
     dst = LocationAddress(0, 5)
     lane = placement.arch_spec.get_lane_address(src, dst)
@@ -566,7 +566,7 @@ def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyP
 
 def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatch):
     """Tests if no path is found"""
-    placement = LogicalPlacementStrategyNoHome()
+    placement = LogicalPlacementStrategyNoHome(arch_spec=get_arch_spec())
     src = LocationAddress(0, 0)
     dst = LocationAddress(0, 5)
 
@@ -580,11 +580,10 @@ def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize("word_size_y", [3, 5, 7])
 def test_initial_layout_variable_word_size(word_size_y):
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.gemini.arch.impls import generate_arch_hypercube
 
     arch_spec = generate_arch_hypercube(hypercube_dims=1, word_size_y=word_size_y)
-    layout_heuristic = logical_layout.LogicalLayoutHeuristic()
-    layout_heuristic.arch_spec = arch_spec
+    layout_heuristic = logical_layout.LogicalLayoutHeuristic(arch_spec=arch_spec)
 
     num_qubits = word_size_y
     edges = {(i, j): 1 for i in range(num_qubits) for j in range(i + 1, num_qubits)}
@@ -614,6 +613,7 @@ def test_nohome_lookahead_can_change_return_word_choice():
     lookahead = (((0,), (1,)),)
 
     placement_no_lookahead = LogicalPlacementStrategyNoHome(
+        arch_spec=get_arch_spec(),
         lambda_lookahead=0.0,
         H_lookahead=1,
     )
@@ -625,6 +625,7 @@ def test_nohome_lookahead_can_change_return_word_choice():
     )
 
     placement_with_lookahead = LogicalPlacementStrategyNoHome(
+        arch_spec=get_arch_spec(),
         lambda_lookahead=20.0,
         H_lookahead=1,
     )

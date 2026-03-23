@@ -4,10 +4,10 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.gemini.logical.stdlib import default_post_processing
-from bloqade.lanes.logical_mvp import (
+from bloqade.gemini.compile import (
     compile_to_stim_program,
 )
+from bloqade.gemini.logical.stdlib import default_post_processing
 
 
 @gemini_logical.kernel(aggressive_unroll=True)

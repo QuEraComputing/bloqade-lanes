@@ -1,7 +1,7 @@
 """Tests for the shared two-word move synthesis (compute_move_layers)."""
 
+from bloqade.gemini.arch.logical import get_arch_spec
 from bloqade.lanes.analysis.placement import ConcreteState
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import (
     compute_move_layers,
     move_to_entangle,

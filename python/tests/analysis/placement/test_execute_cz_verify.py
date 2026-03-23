@@ -2,9 +2,9 @@
 
 from bloqade.geometry.dialects import grid
 
+from bloqade.gemini.arch import logical
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
-from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.word import Word
 

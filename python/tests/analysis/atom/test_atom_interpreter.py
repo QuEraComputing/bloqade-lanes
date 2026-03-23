@@ -1,9 +1,9 @@
 from bloqade.decoders.dialects import annotate
 
 from bloqade import squin
+from bloqade.gemini.arch.logical import get_arch_spec
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis import atom
-from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import SiteLaneAddress
 

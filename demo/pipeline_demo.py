@@ -2,7 +2,7 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.logical_mvp import (
+from bloqade.gemini.compile import (
     compile_to_stim_program,
 )
 

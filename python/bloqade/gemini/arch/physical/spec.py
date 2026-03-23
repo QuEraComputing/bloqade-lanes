@@ -1,4 +1,4 @@
-from ..impls import generate_arch_hypercube
+from bloqade.gemini.arch.impls import generate_arch_hypercube
 
 
 def get_arch_spec():
