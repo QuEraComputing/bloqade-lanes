@@ -1,9 +1,9 @@
 import numpy as np
-from bloqade.gemini.logical import kernel
-from bloqade.gemini.post_processing import generate_post_processing
 from kirin.dialects import ilist
 
 from bloqade import gemini, squin
+from bloqade.gemini.logical import kernel
+from bloqade.gemini.post_processing import generate_post_processing
 
 
 def test_none():

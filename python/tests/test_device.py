@@ -3,10 +3,10 @@ from typing import Any
 
 import pytest
 from bloqade.decoders.dialects import annotate
-from bloqade.gemini import logical as gemini_logical
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
+from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes.device import (
     DetectorResult,
     GeminiLogicalSimulator,

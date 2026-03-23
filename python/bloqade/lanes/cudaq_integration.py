@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from bloqade.gemini import logical
 from kirin import ir
+
+from bloqade.gemini import logical
 
 
 def is_cudaq_kernel(obj: Any) -> bool:

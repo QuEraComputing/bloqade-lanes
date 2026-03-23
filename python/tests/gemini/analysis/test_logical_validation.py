@@ -1,5 +1,11 @@
 import pytest
 from bloqade.analysis.address import AddressAnalysis
+from bloqade.types import Qubit
+from kirin.dialects import ilist
+from kirin.ir.exception import ValidationErrorGroup
+from kirin.validation import ValidationSuite
+
+from bloqade import gemini, squin
 from bloqade.gemini.analysis.logical_validation.analysis import (
     GeminiLogicalValidation,
     _GeminiLogicalValidationAnalysis,
@@ -7,12 +13,6 @@ from bloqade.gemini.analysis.logical_validation.analysis import (
 from bloqade.gemini.analysis.measurement_validation.analysis import (
     GeminiTerminalMeasurementValidation,
 )
-from bloqade.types import Qubit
-from kirin.dialects import ilist
-from kirin.ir.exception import ValidationErrorGroup
-from kirin.validation import ValidationSuite
-
-from bloqade import gemini, squin
 
 
 def test_if_stmt_invalid():

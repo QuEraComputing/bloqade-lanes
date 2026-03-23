@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 from bloqade.decoders.dialects import annotate
-from bloqade.gemini import logical as gemini_logical
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
+from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
