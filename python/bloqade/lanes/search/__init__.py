@@ -8,7 +8,12 @@ from bloqade.lanes.search.goals import (
     zone_goal,
 )
 from bloqade.lanes.search.tree import ConfigurationTree, InvalidMoveError
-from bloqade.lanes.search.tree_traversals import SearchResult, greedy_best_first
+from bloqade.lanes.search.tree_traversals import (
+    SearchResult,
+    astar,
+    bfs,
+    greedy_best_first,
+)
 
 __all__ = [
     "ConfigurationNode",
@@ -17,6 +22,8 @@ __all__ = [
     "InvalidMoveError",
     "MoveGenerator",
     "SearchResult",
+    "astar",
+    "bfs",
     "greedy_best_first",
     "partial_placement_goal",
     "placement_goal",

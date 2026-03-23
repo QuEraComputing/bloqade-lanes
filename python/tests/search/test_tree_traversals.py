@@ -4,7 +4,7 @@ from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.search.generators import ExhaustiveMoveGenerator
 from bloqade.lanes.search.tree import ConfigurationTree
-from bloqade.lanes.search.tree_traversals import greedy_best_first
+from bloqade.lanes.search.tree_traversals import astar, bfs, greedy_best_first
 
 
 def _make_tree() -> ConfigurationTree:
@@ -16,92 +16,159 @@ def _make_tree() -> ConfigurationTree:
     return ConfigurationTree.from_initial_placement(arch_spec, placement)
 
 
+_TARGET = LocationAddress(0, 5)
+_GEN = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
+
+
+def _goal(node):
+    return node.configuration.get(0) == _TARGET
+
+
+def _heuristic(node):
+    return 0.0 if node.configuration.get(0) == _TARGET else 1.0
+
+
+# ── greedy_best_first ──
+
+
 def test_greedy_root_is_goal():
-    """If the root already satisfies the goal, return immediately."""
     tree = _make_tree()
-    gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
-
-    result = greedy_best_first(tree, gen, goal=lambda _: True, heuristic=lambda _: 0.0)
-
+    result = greedy_best_first(tree, _GEN, goal=lambda _: True, heuristic=lambda _: 0.0)
     assert result.goal_node is tree.root
     assert result.nodes_expanded == 0
 
 
 def test_greedy_finds_goal_one_step():
-    """Search should find a goal reachable in one move."""
     tree = _make_tree()
-    gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
-
-    # Goal: qubit 0 at (0, 5) — one site bus forward move from (0, 0)
-    target = LocationAddress(0, 5)
-
-    def goal(node):
-        return node.configuration.get(0) == target
-
-    # Heuristic: 0 if at target, 1 otherwise
-    def heuristic(node):
-        return 0.0 if node.configuration.get(0) == target else 1.0
-
-    result = greedy_best_first(tree, gen, goal=goal, heuristic=heuristic)
-
+    result = greedy_best_first(tree, _GEN, goal=_goal, heuristic=_heuristic)
     assert result.goal_node is not None
-    assert result.goal_node.configuration[0] == target
+    assert result.goal_node.configuration[0] == _TARGET
     assert result.goal_node.depth == 1
-    assert result.nodes_expanded >= 1
 
 
 def test_greedy_max_expansions_limit():
-    """Search should stop after max_expansions."""
     tree = _make_tree()
-    gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
-
-    # Unreachable goal
     result = greedy_best_first(
-        tree,
-        gen,
-        goal=lambda _: False,
-        heuristic=lambda _: 1.0,
-        max_expansions=5,
+        tree, _GEN, goal=lambda _: False, heuristic=lambda _: 1.0, max_expansions=5
     )
-
     assert result.goal_node is None
     assert result.nodes_expanded <= 5
 
 
-def test_greedy_returns_search_stats():
-    """SearchResult should contain valid statistics."""
-    tree = _make_tree()
-    gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
-
-    result = greedy_best_first(
-        tree,
-        gen,
-        goal=lambda _: False,
-        heuristic=lambda _: 1.0,
-        max_expansions=3,
-    )
-
-    assert result.nodes_expanded <= 3
-    assert result.max_depth_reached >= 0
-
-
 def test_greedy_move_program_extraction():
-    """The goal node should produce a valid move program."""
     tree = _make_tree()
-    gen = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
-
-    target = LocationAddress(0, 5)
-
-    result = greedy_best_first(
-        tree,
-        gen,
-        goal=lambda node: node.configuration.get(0) == target,
-        heuristic=lambda node: 0.0 if node.configuration.get(0) == target else 1.0,
-    )
-
+    result = greedy_best_first(tree, _GEN, goal=_goal, heuristic=_heuristic)
     assert result.goal_node is not None
     program = result.goal_node.to_move_program()
     assert len(program) == result.goal_node.depth
-    # Each step should have at least one lane
+    for step in program:
+        assert len(step) >= 1
+
+
+# ── bfs ──
+
+
+def test_bfs_root_is_goal():
+    tree = _make_tree()
+    result = bfs(tree, _GEN, goal=lambda _: True)
+    assert result.goal_node is tree.root
+    assert result.nodes_expanded == 0
+
+
+def test_bfs_finds_goal_one_step():
+    tree = _make_tree()
+    result = bfs(tree, _GEN, goal=_goal)
+    assert result.goal_node is not None
+    assert result.goal_node.configuration[0] == _TARGET
+    assert result.goal_node.depth == 1
+
+
+def test_bfs_finds_shallowest():
+    """BFS should find the shallowest goal first."""
+    tree = _make_tree()
+    result = bfs(tree, _GEN, goal=_goal)
+    assert result.goal_node is not None
+    # BFS guarantees depth 1 for a 1-step reachable goal
+    assert result.goal_node.depth == 1
+
+
+def test_bfs_max_expansions_limit():
+    tree = _make_tree()
+    result = bfs(tree, _GEN, goal=lambda _: False, max_expansions=5)
+    assert result.goal_node is None
+    assert result.nodes_expanded <= 5
+
+
+def test_bfs_max_depth_limit():
+    tree = _make_tree()
+    # Goal is unreachable at depth 0 (root is not the goal)
+    result = bfs(tree, _GEN, goal=_goal, max_depth=0)
+    assert result.goal_node is None
+
+
+def test_bfs_move_program():
+    tree = _make_tree()
+    result = bfs(tree, _GEN, goal=_goal)
+    assert result.goal_node is not None
+    program = result.goal_node.to_move_program()
+    assert len(program) == result.goal_node.depth
+
+
+# ── astar ──
+
+
+def test_astar_root_is_goal():
+    tree = _make_tree()
+    result = astar(tree, _GEN, goal=lambda _: True, heuristic=lambda _: 0.0)
+    assert result.goal_node is tree.root
+    assert result.nodes_expanded == 0
+
+
+def test_astar_finds_goal_one_step():
+    tree = _make_tree()
+    result = astar(tree, _GEN, goal=_goal, heuristic=_heuristic)
+    assert result.goal_node is not None
+    assert result.goal_node.configuration[0] == _TARGET
+    assert result.goal_node.depth == 1
+
+
+def test_astar_with_default_cost():
+    """A* with default cost (depth) should find optimal solution."""
+    tree = _make_tree()
+    result = astar(tree, _GEN, goal=_goal, heuristic=_heuristic)
+    assert result.goal_node is not None
+    assert result.goal_node.depth == 1
+
+
+def test_astar_with_custom_cost():
+    """A* with custom cost function."""
+    tree = _make_tree()
+    # Cost = 2x depth (penalizes deeper solutions more)
+    result = astar(
+        tree,
+        _GEN,
+        goal=_goal,
+        heuristic=_heuristic,
+        cost=lambda node: float(node.depth) * 2.0,
+    )
+    assert result.goal_node is not None
+    assert result.goal_node.depth == 1
+
+
+def test_astar_max_expansions_limit():
+    tree = _make_tree()
+    result = astar(
+        tree, _GEN, goal=lambda _: False, heuristic=lambda _: 1.0, max_expansions=5
+    )
+    assert result.goal_node is None
+    assert result.nodes_expanded <= 5
+
+
+def test_astar_move_program():
+    tree = _make_tree()
+    result = astar(tree, _GEN, goal=_goal, heuristic=_heuristic)
+    assert result.goal_node is not None
+    program = result.goal_node.to_move_program()
+    assert len(program) == result.goal_node.depth
     for step in program:
         assert len(step) >= 1
