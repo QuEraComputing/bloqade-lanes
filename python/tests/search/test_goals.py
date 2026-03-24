@@ -3,7 +3,7 @@
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.search.configuration import ConfigurationNode
-from bloqade.lanes.search.goals import (
+from bloqade.lanes.search.traversal import (
     partial_placement_goal,
     placement_goal,
     zone_goal,

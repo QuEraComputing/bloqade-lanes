@@ -2,18 +2,16 @@
 
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.generators import ExhaustiveMoveGenerator, MoveGenerator
-from bloqade.lanes.search.goals import (
+from bloqade.lanes.search.traversal import (
+    SearchResult,
+    astar,
+    bfs,
+    greedy_best_first,
     partial_placement_goal,
     placement_goal,
     zone_goal,
 )
 from bloqade.lanes.search.tree import ConfigurationTree, InvalidMoveError
-from bloqade.lanes.search.tree_traversals import (
-    SearchResult,
-    astar,
-    bfs,
-    greedy_best_first,
-)
 
 __all__ = [
     "ConfigurationNode",

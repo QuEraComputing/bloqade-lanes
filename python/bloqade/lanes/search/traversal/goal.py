@@ -1,11 +1,55 @@
-"""Common goal predicates for configuration search."""
+"""Goal predicates, type aliases, and shared infrastructure for traversals."""
 
 from __future__ import annotations
+
+__all__ = [
+    "CostFunction",
+    "GoalPredicate",
+    "HeuristicFunction",
+    "PriorityEntry",
+    "SearchResult",
+    "partial_placement_goal",
+    "placement_goal",
+    "zone_goal",
+]
+
+from dataclasses import dataclass, field
+from typing import Callable
 
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.search.configuration import ConfigurationNode
-from bloqade.lanes.search.tree_traversals import GoalPredicate
+
+GoalPredicate = Callable[[ConfigurationNode], bool]
+"""Returns True if the node satisfies the search goal."""
+
+CostFunction = Callable[[ConfigurationNode], float]
+"""Computes the accumulated cost of reaching a node. Lower is better."""
+
+HeuristicFunction = Callable[[ConfigurationNode], float]
+"""Estimates the cost from a node to the goal. Lower is better."""
+
+
+@dataclass
+class SearchResult:
+    """Result of a search strategy."""
+
+    goal_node: ConfigurationNode | None
+    """The node that satisfied the goal, or None if not found."""
+
+    nodes_expanded: int
+    """Total number of nodes expanded during search."""
+
+    max_depth_reached: int
+    """Maximum depth reached during search."""
+
+
+@dataclass(order=True)
+class PriorityEntry:
+    """Heap entry for priority-based search."""
+
+    priority: float
+    node: ConfigurationNode = field(compare=False)
 
 
 def placement_goal(target: dict[int, LocationAddress]) -> GoalPredicate:
