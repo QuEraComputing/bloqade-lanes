@@ -295,7 +295,26 @@ Pops `n` location addresses and refills atoms at those sites.
 | data2 | unused |
 | Stack | `(lane₁ lane₂ … laneₙ -- )` |
 
-Pops `n` lane addresses and performs atom moves along those lanes.
+Pops `n` lane addresses and performs atom moves along those lanes. All lanes in a single `move` instruction are executed simultaneously as one AOD transport operation.
+
+##### Lane group validation
+
+When an `ArchSpec` is provided, the validator checks the group of lanes as a whole — not just each lane individually. These constraints reflect the physical limitations of AOD (Acousto-Optic Deflector) transport:
+
+**Consistency** — all lanes in the group must share the same `move_type`, `bus_id`, and `direction`. A single AOD operation cannot mix site-bus and word-bus moves, use different buses, or move atoms in different directions simultaneously.
+
+**Bus membership** — for site-bus moves, every lane's `word_id` must be in `words_with_site_buses`. For word-bus moves, every lane's `site_id` must be in `sites_with_word_buses`.
+
+**Rectangle constraint** — the physical positions of the lane sources must form a complete rectangle (Cartesian product of unique X and Y coordinates). An AOD addresses rows and columns independently, so it cannot select an arbitrary subset of positions — it must address every intersection of the selected rows and columns.
+
+For example, if a move group contains lanes at positions `(0,0)`, `(0,1)`, `(1,0)`, and `(1,1)`, this is a valid 2x2 rectangle. But `(0,0)`, `(0,1)`, `(1,0)` alone is invalid — the AOD would also address `(1,1)`, so the group must include it.
+
+| Check | Error |
+|-------|-------|
+| All lanes share `move_type`, `bus_id`, `direction` | `Inconsistent` |
+| Site-bus lane `word_id` in `words_with_site_buses` | `WordNotInSiteBusList` |
+| Word-bus lane `site_id` in `sites_with_word_buses` | `SiteNotInWordBusList` |
+| Lane positions form a complete rectangle | `AODConstraintViolation` |
 
 ### QuantumGate (`0x11`)
 
