@@ -284,6 +284,11 @@ impl ArchSpec {
             MoveType::SiteBus => {
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
+                } else if !self.words_with_site_buses.contains(&addr.word_id) {
+                    errors.push(format!(
+                        "word_id {} not in words_with_site_buses",
+                        addr.word_id
+                    ));
                 }
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
@@ -305,6 +310,11 @@ impl ArchSpec {
                 }
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
+                } else if !self.sites_with_word_buses.contains(&addr.site_id) {
+                    errors.push(format!(
+                        "site_id {} not in sites_with_word_buses",
+                        addr.site_id
+                    ));
                 }
                 if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
                     if errors.is_empty() && bus.resolve_forward(addr.word_id).is_none() {
@@ -773,37 +783,38 @@ mod tests {
     #[test]
     fn lane_endpoints_word_bus_forward() {
         let spec = example_arch_spec();
-        // Word bus 0: src=[0] dst=[1]
+        // Word bus 0: src=[0] dst=[1]; site_id must be in sites_with_word_buses
         let lane = crate::arch::addr::LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::WordBus,
             word_id: 0,
-            site_id: 0,
+            site_id: 5,
             bus_id: 0,
         };
         let (src, dst) = spec.lane_endpoints(&lane).unwrap();
         assert_eq!(src.word_id, 0);
-        assert_eq!(src.site_id, 0);
+        assert_eq!(src.site_id, 5);
         assert_eq!(dst.word_id, 1);
-        assert_eq!(dst.site_id, 0);
+        assert_eq!(dst.site_id, 5);
     }
 
     #[test]
     fn lane_endpoints_word_bus_backward() {
         let spec = example_arch_spec();
+        // site_id must be in sites_with_word_buses
         let lane = crate::arch::addr::LaneAddr {
             direction: crate::arch::addr::Direction::Backward,
             move_type: crate::arch::addr::MoveType::WordBus,
             word_id: 0,
-            site_id: 0,
+            site_id: 5,
             bus_id: 0,
         };
         let (src, dst) = spec.lane_endpoints(&lane).unwrap();
         // Backward swaps endpoints
         assert_eq!(src.word_id, 1);
-        assert_eq!(src.site_id, 0);
+        assert_eq!(src.site_id, 5);
         assert_eq!(dst.word_id, 0);
-        assert_eq!(dst.site_id, 0);
+        assert_eq!(dst.site_id, 5);
     }
 
     #[test]
@@ -906,5 +917,38 @@ mod tests {
         };
         let errors = spec.check_lane(&lane);
         assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn check_lane_word_not_in_site_bus_list() {
+        let mut spec = example_arch_spec();
+        // Remove word 0 from words_with_site_buses
+        spec.words_with_site_buses.retain(|&w| w != 0);
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("words_with_site_buses"));
+    }
+
+    #[test]
+    fn check_lane_site_not_in_word_bus_list() {
+        let spec = example_arch_spec();
+        // sites_with_word_buses is [5,6,7,8,9]; site 0 is not in the list
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("sites_with_word_buses"));
     }
 }
