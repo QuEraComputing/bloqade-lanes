@@ -8,6 +8,6 @@
 
 # Bytecode
 
-- [Instruction Set](bytecode/inst-spec.md)
 - [Instruction Quick Reference](bytecode/inst-quick-ref.md)
+- [Instruction Set](bytecode/inst-spec.md)
 - [CLI Reference](bytecode/cli.md)

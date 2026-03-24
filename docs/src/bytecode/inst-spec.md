@@ -116,7 +116,7 @@ The validator (`check_lane`) checks the following for each `LaneAddr`:
 | Bus must exist | `bus_id` out of range for the given `move_type` |
 | `word_id` in range | `word_id >= num_words` |
 | `site_id` in range | `site_id >= sites_per_word` |
-| Valid forward source | For site buses: `site_id` must be in `bus.src` and `word_id` must be in `words_with_site_buses`. For word buses: `word_id` must be in `bus.src` and `site_id` must be in `sites_with_word_buses`. |
+| Valid forward source | For site buses: `bus.resolve_forward(site_id)` must succeed (i.e. `site_id` is in `bus.src`). For word buses: `bus.resolve_forward(word_id)` must succeed (i.e. `word_id` is in `bus.src`). |
 
 Validation is always performed against the forward-direction source, regardless of the `direction` field. If any check fails, `lane_endpoints` returns `None`.
 

@@ -5,8 +5,8 @@ Bloqade Lanes is a component of QuEra's Neutral Atom SDK. It compiles quantum ci
 ## What's in this book
 
 - **[Architecture Specification](arch/archspec.md)** — the `ArchSpec` JSON format that defines device topology, transport buses, zones, and AOD paths
-- **[Bytecode Instruction Set](bytecode/inst-spec.md)** — the fixed-width instruction encoding, opcode layout, and per-instruction reference
 - **[Instruction Quick Reference](bytecode/inst-quick-ref.md)** — compact summary of all 24 instructions with opcodes and stack effects
+- **[Bytecode Instruction Set](bytecode/inst-spec.md)** — the fixed-width instruction encoding, opcode layout, and per-instruction reference
 - **[CLI Reference](bytecode/cli.md)** — the `bloqade-bytecode` CLI tool and C FFI library
 
 ## Crate documentation
