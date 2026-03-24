@@ -89,20 +89,27 @@ class ConfigurationTree:
 
         Raises:
             InvalidMoveError: If strict=True and the move set causes a
-                collision (occupied destination or duplicate destination).
+                collision or contains an invalid lane address.
         """
         new_config = dict(node.configuration)
-        destinations: set[LocationAddress] = set()
         occupied = node.occupied_locations
 
         for lane in move_set:
-            src, dst = self.arch_spec.get_endpoints(lane)
+            try:
+                src, dst = self.arch_spec.get_endpoints(lane)
+            except Exception as e:
+                if strict:
+                    raise InvalidMoveError(f"Invalid lane address {lane!r}: {e}") from e
+                return None
 
             qid = node.get_qubit_at(src)
             if qid is None:
                 continue
 
-            if dst in occupied or dst in destinations:
+            # Bus src and dst are disjoint sets, so within a single-bus
+            # move set, two sources cannot map to the same destination.
+            # We only need to check against stationary atoms.
+            if dst in occupied:
                 if strict:
                     blocker = node.get_qubit_at(dst)
                     raise InvalidMoveError(
@@ -111,7 +118,6 @@ class ConfigurationTree:
                     )
                 return None
 
-            destinations.add(dst)
             new_config[qid] = dst
 
         # Check transposition table

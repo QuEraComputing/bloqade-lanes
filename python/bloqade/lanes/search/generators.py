@@ -5,9 +5,11 @@ Different implementations enable different search strategies — exhaustive
 enumeration, goal-directed search, greedy rectangle growing, etc.
 
 All generators yield candidate frozenset[LaneAddress]. Validation
-(lane validity, collision checks, transposition table) is handled
-by ConfigurationTree._apply_move_set, so generators are free to
-over-generate — invalid candidates are filtered out downstream.
+(lane validity, collision checks, transposition table lookups) is
+performed by ConfigurationTree.apply_move_set and higher-level helpers
+such as ConfigurationTree.expand_node, so generators are free to
+over-generate — invalid candidates are filtered out when moves are
+applied to the tree.
 """
 
 from __future__ import annotations
@@ -16,7 +18,12 @@ from dataclasses import dataclass
 from itertools import combinations, product
 from typing import TYPE_CHECKING, Iterator, Protocol, runtime_checkable
 
-from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
+from bloqade.lanes.layout import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+)
 
 if TYPE_CHECKING:
     from bloqade.lanes.search.configuration import ConfigurationNode
@@ -126,7 +133,10 @@ class ExhaustiveMoveGenerator:
         sorted_xs = sorted(unique_xs)
         sorted_ys = sorted(unique_ys)
 
-        # Pre-build lane addresses and cache invalid sources (destination occupied)
+        # Pre-build lane addresses and cache invalid sources (destination occupied).
+        # This pre-filter is safe because bus src and dst are disjoint sets —
+        # a destination cannot also be a source within the same bus, so "follow"
+        # moves (atom A moves into location vacated by atom B) cannot occur.
         loc_to_lane: dict[LocationAddress, LaneAddress] = {}
         invalid_locs: set[LocationAddress] = set()
         for loc in src_locs:
@@ -148,8 +158,10 @@ class ExhaustiveMoveGenerator:
 
         for nx, ny in product(range(1, max_nx + 1), range(1, max_ny + 1)):
             yield from self._enumerate_xy_combinations(
-                combinations(sorted_xs, nx),
-                combinations(sorted_ys, ny),
+                sorted_xs,
+                nx,
+                sorted_ys,
+                ny,
                 pos_to_loc,
                 loc_to_lane,
                 invalid_locs,
@@ -158,25 +170,36 @@ class ExhaustiveMoveGenerator:
 
     def _enumerate_xy_combinations(
         self,
-        x_subsets: Iterator[tuple[float, ...]],
-        y_subsets: Iterator[tuple[float, ...]],
+        sorted_xs: list[float],
+        max_xs: int,
+        sorted_ys: list[float],
+        max_ys: int,
         pos_to_loc: dict[tuple[float, float], LocationAddress],
         loc_to_lane: dict[LocationAddress, LaneAddress],
         invalid_locs: set[LocationAddress],
         occupied: frozenset[LocationAddress],
     ) -> Iterator[frozenset[LaneAddress]]:
-        """Yield valid move sets for all nx × ny rectangles."""
-        for x_subset, y_subset in product(x_subsets, y_subsets):
-            lanes: list[LaneAddress] = []
-            valid = True
-            has_atom = False
+        """Yield valid move sets for all nx × ny rectangles.
 
-            for loc in map(pos_to_loc.get, product(x_subset, y_subset)):
-                if loc is not None and loc not in invalid_locs:
-                    lanes.append(loc_to_lane[loc])
-                    has_atom = has_atom or loc in occupied
-                else:
-                    valid = False
+        NOTE for Rust port: replace itertools.combinations with Gosper's
+        hack for bitmask enumeration of exactly-k-set-bits subsets. This
+        avoids iterating all 2^n masks when capacity is small. See #298.
+        """
+        # Materialize only y combinations to avoid product() caching both
+        # potentially large combination iterators.
+        y_combos = list(combinations(sorted_ys, max_ys))
+        for x_subset in combinations(sorted_xs, max_xs):
+            for y_subset in y_combos:
+                lanes: list[LaneAddress] = []
+                valid = True
+                has_atom = False
 
-            if valid and has_atom:
-                yield frozenset(lanes)
+                for loc in map(pos_to_loc.get, product(x_subset, y_subset)):
+                    if loc is not None and loc not in invalid_locs:
+                        lanes.append(loc_to_lane[loc])
+                        has_atom = has_atom or loc in occupied
+                    else:
+                        valid = False
+
+                if valid and has_atom:
+                    yield frozenset(lanes)

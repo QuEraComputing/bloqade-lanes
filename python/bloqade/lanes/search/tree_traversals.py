@@ -144,16 +144,19 @@ def astar(
         entry = heapq.heappop(frontier)
         node = entry.node
 
+        # A* guarantees optimality when the goal is popped from the
+        # frontier (confirmed lowest f-score), not when first generated.
+        if goal(node):
+            return SearchResult(
+                goal_node=node,
+                nodes_expanded=nodes_expanded,
+                max_depth_reached=max(max_depth, node.depth),
+            )
+
         nodes_expanded += 1
         max_depth = max(max_depth, node.depth)
 
         for child in tree.expand_node(node, generator, strict=False):
-            if goal(child):
-                return SearchResult(
-                    goal_node=child,
-                    nodes_expanded=nodes_expanded,
-                    max_depth_reached=child.depth,
-                )
             f_score = cost_fn(child) + heuristic(child)
             heapq.heappush(frontier, _PriorityEntry(f_score, child))
 
@@ -212,7 +215,7 @@ def greedy_best_first(
                 return SearchResult(
                     goal_node=child,
                     nodes_expanded=nodes_expanded,
-                    max_depth_reached=child.depth,
+                    max_depth_reached=max(max_depth, child.depth),
                 )
             heapq.heappush(frontier, _PriorityEntry(heuristic(child), child))
 

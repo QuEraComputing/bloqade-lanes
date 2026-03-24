@@ -172,3 +172,21 @@ def test_astar_move_program():
     assert len(program) == result.goal_node.depth
     for step in program:
         assert len(step) >= 1
+
+
+def test_astar_multiple_goals_matches_bfs():
+    """A* should find the same shallowest goal as BFS when multiple goals exist."""
+    tree = _make_tree()
+
+    def multi_goal(node):
+        return node.depth in (1, 2)
+
+    bfs_result = bfs(tree, _GEN, goal=multi_goal, max_depth=3)
+
+    # Fresh tree for A* (transposition table is shared)
+    tree2 = _make_tree()
+    astar_result = astar(tree2, _GEN, goal=multi_goal, heuristic=lambda _: 0.0)
+
+    assert bfs_result.goal_node is not None
+    assert astar_result.goal_node is not None
+    assert astar_result.goal_node.depth == bfs_result.goal_node.depth
