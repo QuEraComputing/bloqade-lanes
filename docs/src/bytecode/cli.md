@@ -1,0 +1,369 @@
+# CLI Reference
+
+The `bloqade-bytecode` CLI assembles, disassembles, and validates lane-move bytecode programs.
+
+```
+bloqade-bytecode <COMMAND>
+```
+
+## Commands
+
+### `assemble`
+
+Assemble a text program (`.sst`) into binary format (`.bin`).
+
+```
+bloqade-bytecode assemble <INPUT> -o <OUTPUT>
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<INPUT>` | Input text file (`.sst`) |
+| `-o, --output <OUTPUT>` | Output binary file (required) |
+
+**Example:**
+
+```bash
+bloqade-bytecode assemble prog.sst -o prog.bin
+# assembled 12 instructions -> prog.bin
+```
+
+---
+
+### `disassemble`
+
+Disassemble a binary program (`.bin`) into human-readable text format.
+
+```
+bloqade-bytecode disassemble <INPUT> [-o <OUTPUT>]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<INPUT>` | Input binary file (`.bin`) |
+| `-o, --output <OUTPUT>` | Output text file (omit to print to stdout) |
+
+**Examples:**
+
+```bash
+# Print to stdout
+bloqade-bytecode disassemble prog.bin
+
+# Write to file
+bloqade-bytecode disassemble prog.bin -o prog.sst
+# disassembled 12 instructions -> prog.sst
+```
+
+The text format round-trips perfectly: `text → binary → text` produces identical output.
+
+---
+
+### `validate`
+
+Validate a program for correctness. Accepts both text (`.sst`) and binary formats — the format is auto-detected from the file extension.
+
+```
+bloqade-bytecode validate <INPUT> [--arch <ARCH>] [--simulate-stack]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<INPUT>` | Input file (`.sst` = text, otherwise binary) |
+| `--arch <ARCH>` | ArchSpec JSON file for address validation |
+| `--simulate-stack` | Run stack type simulation |
+
+**Validation levels:**
+
+| Level | When | What it checks |
+|-------|------|----------------|
+| Structural | Always | Arity bounds, `initial_fill` ordering |
+| Address | `--arch` provided | Location, lane, zone, and bus validity against the architecture |
+| Stack simulation | `--simulate-stack` | Type safety, stack balance |
+
+**Examples:**
+
+```bash
+# Structural validation only
+bloqade-bytecode validate prog.sst
+# valid (12 instructions)
+
+# Full validation with architecture and stack simulation
+bloqade-bytecode validate prog.sst --arch gemini-logical.json --simulate-stack
+# valid (12 instructions)
+
+# Validation failure
+bloqade-bytecode validate bad.sst --arch gemini-logical.json
+#   [0] initial_fill: invalid location address ...
+# error: 1 validation error(s)
+```
+
+---
+
+### `arch`
+
+Pretty-print an architecture specification.
+
+```
+bloqade-bytecode arch <INPUT>
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<INPUT>` | ArchSpec JSON file |
+
+**Example output:**
+
+```
+ArchSpec v1.0
+
+Geometry: 2 word(s), 10 sites/word
+  Word 0: 2x10 grid, 10 sites
+    x: start=0, spacing=[5.0]
+    y: start=0, spacing=[1.0, 1.0, ...]
+    site_indices: (0,0) (0,1) (0,2) ...
+    has_cz: (1,0) (1,1) (1,2) ...
+
+Buses: 1 site bus(es), 1 word bus(es)
+  Site bus 0: src=[0, 1, 2, 3, 4] dst=[5, 6, 7, 8, 9]
+  Word bus 0: src=[0] dst=[1]
+  words_with_site_buses: [0, 1]
+  sites_with_word_buses: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+Zones: 1 zone(s)
+  Zone 0: words=[0, 1]
+  entangling_zones: [0]
+  measurement_mode_zones: [0]
+```
+
+### `arch validate`
+
+Validate an ArchSpec JSON file for internal consistency.
+
+```
+bloqade-bytecode arch validate <INPUT>
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<INPUT>` | ArchSpec JSON file |
+
+**Example:**
+
+```bash
+bloqade-bytecode arch validate gemini-logical.json
+# arch spec is valid: gemini-logical.json
+```
+
+---
+
+## File Formats
+
+| Extension | Format | Description |
+|-----------|--------|-------------|
+| `.sst` | Text | Human-readable bytecode (one instruction per line, `#` comments) |
+| `.bin` | Binary | Compact binary encoding (`BLQD` magic header, 16 bytes per instruction) |
+| `.json` | JSON | Architecture specification |
+
+## C Library
+
+The CLI crate also builds a C shared library (`libbloqade_lanes_bytecode`) exposing the same functionality through a C-compatible FFI. The generated header is `bloqade_lanes_bytecode.h`.
+
+### Status codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| 0 | `BLQD_STATUS_OK` | Success |
+| 1 | `BLQD_STATUS_ERR_PARSE` | Text parsing error |
+| 2 | `BLQD_STATUS_ERR_DECODE` | Binary decoding error |
+| 3 | `BLQD_STATUS_ERR_VALIDATION` | Validation failed |
+| 4 | `BLQD_STATUS_ERR_IO` | File I/O error |
+| 5 | `BLQD_STATUS_ERR_NULL_PTR` | Null pointer argument |
+| 6 | `BLQD_STATUS_ERR_JSON` | JSON parsing error |
+
+### Opaque handles
+
+| Handle | Description |
+|--------|-------------|
+| `BLQDProgram` | A loaded bytecode program |
+| `BLQDArchSpec` | A loaded architecture spec |
+| `BLQDValidationErrors` | A list of validation errors |
+
+### Program functions
+
+```c
+BlqdStatus blqd_program_from_binary(const uint8_t *data, size_t len, BLQDProgram **out);
+BlqdStatus blqd_program_from_text(const char *text, BLQDProgram **out);
+BlqdStatus blqd_program_to_binary(const BLQDProgram *prog, uint8_t **out_data, size_t *out_len);
+BlqdStatus blqd_program_to_text(const BLQDProgram *prog, char **out_text);
+size_t     blqd_program_instruction_count(const BLQDProgram *prog);
+BlqdStatus blqd_program_version(const BLQDProgram *prog, uint16_t *major, uint16_t *minor);
+void       blqd_program_free(BLQDProgram *prog);
+```
+
+### Architecture functions
+
+```c
+BlqdStatus blqd_arch_from_json(const char *json, BLQDArchSpec **out);
+void       blqd_arch_free(BLQDArchSpec *arch);
+```
+
+### Validation functions
+
+```c
+BlqdStatus   blqd_validate_structure(const BLQDProgram *prog, BLQDValidationErrors **out);
+BlqdStatus   blqd_validate_addresses(const BLQDProgram *prog, const BLQDArchSpec *arch, BLQDValidationErrors **out);
+BlqdStatus   blqd_simulate_stack(const BLQDProgram *prog, BLQDValidationErrors **out);
+size_t       blqd_validation_errors_count(const BLQDValidationErrors *errs);
+const char  *blqd_validation_error_message(const BLQDValidationErrors *errs, size_t index);
+void         blqd_validation_errors_free(BLQDValidationErrors *errs);
+```
+
+### Memory management
+
+```c
+const char *blqd_last_error(void);        // Thread-local, valid until next FFI call
+void        blqd_free_string(char *ptr);   // Free strings from blqd_program_to_text
+void        blqd_free_bytes(uint8_t *ptr, size_t len);  // Free buffers from blqd_program_to_binary
+```
+
+All `_free` functions are safe to call with `NULL`.
+
+## Instruction Quick Reference
+
+See the [Instruction Set](inst-spec.md) for full encoding details.
+
+### Cpu (`0x00`)
+
+Stack manipulation, constants, and control flow (FLAIR-aligned).
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `const_int` | `0x0200` | `( -- int)` | Push 64-bit integer constant |
+| `const_float` | `0x0300` | `( -- float)` | Push 64-bit float constant |
+| `dup` | `0x0400` | `(a -- a a)` | Duplicate top of stack |
+| `pop` | `0x0500` | `(a -- )` | Discard top of stack |
+| `swap` | `0x0600` | `(a b -- b a)` | Swap top two elements |
+| `return` | `0x6400` | `( -- )` | Return from program |
+| `halt` | `0xFF00` | `( -- )` | Halt execution |
+
+### LaneConstants (`0x0F`)
+
+Address constant instructions.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `const_loc` | `0x000F` | `( -- loc)` | Push location address |
+| `const_lane` | `0x010F` | `( -- lane)` | Push lane address |
+| `const_zone` | `0x020F` | `( -- zone)` | Push zone address |
+
+### AtomArrangement (`0x10`)
+
+Atom filling and transport.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `initial_fill` | `0x0010` | `(loc₁..locₙ -- )` | Initial atom loading |
+| `fill` | `0x0110` | `(loc₁..locₙ -- )` | Atom refill |
+| `move` | `0x0210` | `(lane₁..laneₙ -- )` | Atom transport along lanes |
+
+### QuantumGate (`0x11`)
+
+Single- and multi-qubit gate operations.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `local_r` | `0x0011` | `(θ φ loc₁..locₙ -- )` | Local R rotation |
+| `local_rz` | `0x0111` | `(θ loc₁..locₙ -- )` | Local Rz rotation |
+| `global_r` | `0x0211` | `(θ φ -- )` | Global R rotation |
+| `global_rz` | `0x0311` | `(θ -- )` | Global Rz rotation |
+| `cz` | `0x0411` | `(zone -- )` | Controlled-Z gate on zone |
+
+### Measurement (`0x12`)
+
+Qubit measurement.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `measure` | `0x0012` | `(zone₁..zoneₙ -- future₁..futureₙ)` | Initiate measurement |
+| `await_measure` | `0x0112` | `(future -- array_ref)` | Wait for measurement result |
+
+### Array (`0x13`)
+
+Array construction and indexing.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `new_array` | `0x0013` | `(elem₁..elemₙ -- array_ref)` | Construct array from stack |
+| `get_item` | `0x0113` | `(array_ref idx₁..idxₙ -- value)` | Index into array |
+
+### DetectorObservable (`0x14`)
+
+Detector and observable setup.
+
+| Instruction | Opcode | Stack Effect | Description |
+|-------------|--------|--------------|-------------|
+| `set_detector` | `0x0014` | `(array_ref -- detector_ref)` | Set detector |
+| `set_observable` | `0x0114` | `(array_ref -- observable_ref)` | Set observable |
+
+## Building
+
+### CLI binary
+
+```bash
+just build-cli       # Build CLI in release mode (output: target/release/bloqade-bytecode)
+```
+
+### C library
+
+The C shared library and header are built as part of the CLI crate. The library name is `bloqade_lanes_bytecode` (e.g. `libbloqade_lanes_bytecode.so` on Linux, `.dylib` on macOS, `.dll` on Windows).
+
+```bash
+# Build the shared library
+cargo build -p bloqade-lanes-bytecode-cli --release
+
+# The header is generated by cbindgen during build:
+#   crates/bloqade-lanes-bytecode-cli/bloqade_lanes_bytecode.h
+
+# Verify the header is up to date with the source
+just check-header
+
+# Stage the CLI binary + C library for Python wheel packaging
+just stage-clib
+```
+
+To link against the C library, include the generated header and link with `-lbloqade_lanes_bytecode`:
+
+```c
+#include "bloqade_lanes_bytecode.h"
+
+int main(void) {
+    BLQDProgram *prog = NULL;
+    BlqdStatus status = blqd_program_from_text("halt\n", &prog);
+    if (status != BLQD_STATUS_OK) {
+        fprintf(stderr, "error: %s\n", blqd_last_error());
+        return 1;
+    }
+    printf("instructions: %zu\n", blqd_program_instruction_count(prog));
+    blqd_program_free(prog);
+    return 0;
+}
+```
+
+```bash
+gcc -o example example.c -L target/release -lbloqade_lanes_bytecode
+```
+
+### Testing
+
+```bash
+just test-rust       # Run Rust tests (core + CLI crates)
+just test-c-ffi      # Build and run C FFI smoke test
+just cli-smoke-test  # CLI bytecode validation tests
+```
+
+### Python wheel with bundled CLI + C library
+
+```bash
+just develop         # Dev install with bundled CLI + C library
+just build-wheel     # Build distributable wheel
+```

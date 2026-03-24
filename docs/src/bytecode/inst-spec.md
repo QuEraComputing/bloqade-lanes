@@ -85,6 +85,41 @@ data1: [dir:1][mt:1][pad:14][bus_id:16]
 
 Total: 64 bits across two u32 words. Note that data0 shares the same layout as `LocationAddr`.
 
+#### Lane address convention
+
+The `word_id` and `site_id` fields in a `LaneAddr` always encode the **forward-direction source** — the position where the atom starts in a forward move. The `direction` field does **not** change which position is encoded; it only controls which endpoint is treated as source vs destination when the lane is resolved.
+
+**Endpoint resolution** always starts by resolving the forward direction:
+
+1. Look up the bus (site bus or word bus, selected by `move_type` and `bus_id`)
+2. Find the index `i` where `bus.src[i]` matches the encoded `site_id` (for site buses) or `word_id` (for word buses)
+3. The forward source is `(word_id, site_id)` as encoded; the forward destination is `(word_id, bus.dst[i])` for site buses or `(bus.dst[i], site_id)` for word buses
+4. If `direction = Forward`: return `(fwd_source, fwd_destination)`
+5. If `direction = Backward`: return `(fwd_destination, fwd_source)` — the endpoints are swapped
+
+**Example:** Given a site bus with `src=[0,1,2,3,4] dst=[5,6,7,8,9]`:
+
+| Lane | Encoded | Resolved src → dst |
+|------|---------|-------------------|
+| `site_id=0, dir=Forward` | Forward source is site 0 | Site 0 → Site 5 |
+| `site_id=0, dir=Backward` | Forward source is still site 0 | Site 5 → Site 0 |
+| `site_id=2, dir=Backward` | Forward source is site 2 | Site 7 → Site 2 |
+
+Note that a backward lane with `site_id=0` means the atom moves **from** site 5 **to** site 0 — not that site 0 is the destination of a forward move.
+
+#### Lane validation rules
+
+The validator (`check_lane`) checks the following for each `LaneAddr`:
+
+| Rule | Error condition |
+|------|----------------|
+| Bus must exist | `bus_id` out of range for the given `move_type` |
+| `word_id` in range | `word_id >= num_words` |
+| `site_id` in range | `site_id >= sites_per_word` |
+| Valid forward source | For site buses: `site_id` must be in `bus.src` and `word_id` must be in `words_with_site_buses`. For word buses: `word_id` must be in `bus.src` and `site_id` must be in `sites_with_word_buses`. |
+
+Validation is always performed against the forward-direction source, regardless of the `direction` field. If any check fails, `lane_endpoints` returns `None`.
+
 ### `ZoneAddr`
 
 Packed in a single data word (data0):
