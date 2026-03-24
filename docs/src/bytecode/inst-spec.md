@@ -299,7 +299,7 @@ Pops `n` lane addresses and performs atom moves along those lanes. All lanes in 
 
 ##### Lane group validation
 
-When an `ArchSpec` is provided, the validator checks the group of lanes as a whole — not just each lane individually. These constraints reflect the physical limitations of AOD (Acousto-Optic Deflector) transport:
+When an `ArchSpec` is provided, the validator checks the group of lanes as a whole — not just each lane individually. These constraints reflect the physical limitations of a single AOD (Acousto-Optic Deflector). Each `move` instruction corresponds to one AOD operation:
 
 **Consistency** — all lanes in the group must share the same `move_type`, `bus_id`, and `direction`. A single AOD operation cannot mix site-bus and word-bus moves, use different buses, or move atoms in different directions simultaneously.
 
