@@ -187,9 +187,8 @@ class ExhaustiveMoveGenerator:
         """
         # Materialize only y combinations to avoid product() caching both
         # potentially large combination iterators.
-        y_combos = list(combinations(sorted_ys, max_ys))
         for x_subset in combinations(sorted_xs, max_xs):
-            for y_subset in y_combos:
+            for y_subset in combinations(sorted_ys, max_ys):
                 lanes: list[LaneAddress] = []
                 valid = True
                 has_atom = False
