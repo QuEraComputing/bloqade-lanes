@@ -72,7 +72,7 @@ pub enum LaneGroupError {
     WordNotInSiteBusList { word_id: u32 },
     /// Lane site_id not in sites_with_word_buses.
     SiteNotInWordBusList { site_id: u32 },
-    /// Lane group violates AOD constraint (e.g. not a complete rectangle).
+    /// Lane group violates AOD grid constraint (e.g. not a complete grid).
     AODConstraintViolation { message: String },
 }
 
@@ -470,7 +470,7 @@ impl ArchSpec {
         errors
     }
 
-    /// Check AOD constraint: lane positions must form a complete rectangle
+    /// Check AOD grid constraint: lane positions must form a complete grid
     /// (Cartesian product of unique X and Y values).
     pub fn check_lane_group_geometry(&self, lanes: &[LaneAddr]) -> Vec<String> {
         use std::collections::BTreeSet;
@@ -505,7 +505,7 @@ impl ArchSpec {
 
         if actual != expected {
             vec![format!(
-                "lanes do not form a complete rectangle: expected {} positions ({}x × {}y), got {} unique positions",
+                "lanes do not form a complete grid: expected {} positions ({}x × {}y), got {} unique positions",
                 expected.len(),
                 unique_x.len(),
                 unique_y.len(),

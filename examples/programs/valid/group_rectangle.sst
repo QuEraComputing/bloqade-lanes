@@ -1,5 +1,5 @@
 .version 1
-; Move 4 lanes forming a 2x2 rectangle on the grid.
+; Move 4 lanes forming a 2x2 grid.
 ; site_bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
 ; Word 0: y_start=2.5, Word 1: y_start=12.5
 ; Site 0: x=1.0, Site 1: x=3.0
@@ -7,7 +7,7 @@
 ; (word 0, site 1) = (3.0, 2.5)
 ; (word 1, site 0) = (1.0, 12.5)
 ; (word 1, site 1) = (3.0, 12.5)
-; = 2x2 rectangle using valid forward sources
+; = 2x2 grid using valid forward sources
 
 const_lane 0x0000000000000000   ; fwd, site_bus, word 0, site 0, bus 0
 const_lane 0x0000000000000001   ; fwd, site_bus, word 0, site 1, bus 0

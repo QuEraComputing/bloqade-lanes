@@ -1073,7 +1073,7 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_rectangle_passes() {
         let arch = lane_group_arch_spec();
-        // Use valid forward sources on two words to form a 2x2 rectangle:
+        // Use valid forward sources on two words to form a 2x2 grid:
         // Word 0, Site 0: (1.0, 2.5)
         // Word 0, Site 1: (3.0, 2.5)
         // Word 1, Site 0: (1.0, 12.5)
@@ -1101,7 +1101,7 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_not_rectangle() {
         let arch = lane_group_arch_spec();
-        // 3 corners of a rectangle (missing word 1, site 1) — not a complete rectangle
+        // 3 corners of a grid (missing word 1, site 1) — not a complete grid
         // Word 0, Site 0: (1.0, 2.5)
         // Word 0, Site 1: (3.0, 2.5)
         // Word 1, Site 0: (1.0, 12.5)
