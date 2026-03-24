@@ -418,7 +418,7 @@ impl<'a> StackSimulator<'a> {
         }
     }
 
-    /// Simulate `local_r`: pop 2 float parameters (rotation_angle, axis_angle) then validate locations.
+    /// Simulate `local_r`: pop 2 float parameters (axis_angle, then rotation_angle) then validate locations.
     fn sim_local_r(&mut self, arity: u32) {
         self.pop_typed_n(TAG_FLOAT, 2);
         self.pop_and_validate_locations(arity);
@@ -430,7 +430,7 @@ impl<'a> StackSimulator<'a> {
         self.pop_and_validate_locations(arity);
     }
 
-    /// Simulate `global_r`: pop 2 float parameters (rotation_angle, axis_angle) for a global rotation.
+    /// Simulate `global_r`: pop 2 float parameters (axis_angle, then rotation_angle) for a global rotation.
     fn sim_global_r(&mut self) {
         self.pop_typed_n(TAG_FLOAT, 2);
     }
@@ -755,8 +755,8 @@ mod tests {
             version: Version::new(1, 0),
             instructions: vec![
                 Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
-                Instruction::Cpu(CpuInstruction::ConstFloat(0.5)),
-                Instruction::Cpu(CpuInstruction::ConstFloat(1.0)),
+                Instruction::Cpu(CpuInstruction::ConstFloat(1.0)), // rotation_angle (pushed first)
+                Instruction::Cpu(CpuInstruction::ConstFloat(0.5)), // axis_angle (pushed last, popped first)
                 Instruction::QuantumGate(QuantumGateInstruction::LocalR { arity: 1 }),
             ],
         };

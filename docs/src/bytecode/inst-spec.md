@@ -1,5 +1,11 @@
 # Bloqade Lanes Bytecode Instruction Specification
 
+This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.
+
+The instruction set is organized around the physical structure of the hardware. Atoms occupy **sites** within **words** (rows of trapping positions in the lattice). **Buses** define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A **lane** is a single atom trajectory along a bus — one source site to one destination site. A **zone** groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define a locations where atoms are measured. These concepts map directly to the address types used in the bytecode: `LocationAddr` (word, site), `LaneAddr` (word, site, bus, direction), and `ZoneAddr` (zone).
+
+Programs execute on a stack machine. Address constants and numeric parameters are pushed onto the stack, then consumed by operation instructions (fills, moves, gates, measurements). The bytecode is designed to be validated offline against an architecture specification (`ArchSpec`) that captures the geometry, bus topology, and zone layout of a specific device.
+
 ## Instruction Format
 
 Every instruction is a fixed **16 bytes**: a 32-bit opcode word followed by three 32-bit data words, all little-endian.
@@ -147,7 +153,7 @@ These instruction codes are shared with the FLAIR VM/IR spec and use identical v
 | data0 | `i64` LE low 32 bits |
 | data1 | `i64` LE high 32 bits |
 | data2 | unused |
-| Stack | `( -- value)` |
+| Stack | `( -- int)` |
 
 Pushes a signed 64-bit integer onto the stack. The value is stored as a little-endian i64 across data0 (low) and data1 (high).
 
@@ -161,7 +167,7 @@ Pushes a signed 64-bit integer onto the stack. The value is stored as a little-e
 | data0 | `f64` LE low 32 bits |
 | data1 | `f64` LE high 32 bits |
 | data2 | unused |
-| Stack | `( -- value)` |
+| Stack | `( -- float)` |
 
 Pushes a 64-bit float onto the stack. The value is stored as a little-endian f64 across data0 (low) and data1 (high).
 
@@ -328,9 +334,9 @@ For example, if a move group contains lanes at positions `(0,0)`, `(0,1)`, `(1,0
 | data0 | `u32` LE arity |
 | data1 | unused |
 | data2 | unused |
-| Stack | `(rotation_angle axis_angle loc₁ loc₂ … locₙ -- )` |
+| Stack | `(loc₁ loc₂ … locₙ θ φ -- )` |
 
-Pops `n` location addresses and 2 float parameters (rotation_angle, axis_angle), applies a local R rotation.
+Pops 2 float parameters (φ = axis angle, θ = rotation angle) then `n` location addresses, and applies a local R rotation. The call convention matches the SSA IR: `local_r(%φ, %θ, %loc₁, …)` — first argument (φ) is pushed last and popped first.
 
 #### `local_rz` — Local Rz rotation
 
@@ -342,9 +348,9 @@ Pops `n` location addresses and 2 float parameters (rotation_angle, axis_angle),
 | data0 | `u32` LE arity |
 | data1 | unused |
 | data2 | unused |
-| Stack | `(rotation_angle loc₁ loc₂ … locₙ -- )` |
+| Stack | `(loc₁ loc₂ … locₙ θ -- )` |
 
-Pops `n` location addresses and 1 float parameter (rotation_angle), applies a local Rz rotation.
+Pops 1 float parameter (θ = rotation angle) then `n` location addresses, and applies a local Rz rotation. The call convention matches the SSA IR: `local_rz(%θ, %loc₁, …)`.
 
 #### `global_r` — Global R rotation
 
@@ -354,9 +360,9 @@ Pops `n` location addresses and 1 float parameter (rotation_angle), applies a lo
 | Instruction Code | `0x02` |
 | Full Opcode | `0x0211` |
 | data0–2 | unused |
-| Stack | `(rotation_angle axis_angle -- )` |
+| Stack | `(θ φ -- )` |
 
-Pops 2 float parameters (rotation_angle, axis_angle), applies a global R rotation.
+Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global R rotation. The call convention matches the SSA IR: `global_r(%φ, %θ)`.
 
 #### `global_rz` — Global Rz rotation
 
@@ -366,9 +372,9 @@ Pops 2 float parameters (rotation_angle, axis_angle), applies a global R rotatio
 | Instruction Code | `0x03` |
 | Full Opcode | `0x0311` |
 | data0–2 | unused |
-| Stack | `(rotation_angle -- )` |
+| Stack | `(θ -- )` |
 
-Pops 1 float parameter (rotation_angle), applies a global Rz rotation.
+Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Since there is only one parameter, it is both pushed last and popped first.
 
 #### `cz` — Controlled-Z gate
 
@@ -406,7 +412,7 @@ Pops `n` zone addresses and pushes `n` measure futures.
 | Instruction Code | `0x01` |
 | Full Opcode | `0x0112` |
 | data0–2 | unused |
-| Stack | `(measure_future -- array_ref)` |
+| Stack | `(future -- array_ref)` |
 
 Pops a measure future and pushes an array reference containing the measurement results.
 

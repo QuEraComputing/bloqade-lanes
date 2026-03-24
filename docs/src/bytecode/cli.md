@@ -155,7 +155,18 @@ Zones: 1 zone(s)
   Zone 0: words=[0, 1]
   entangling_zones: [0]
   measurement_mode_zones: [0]
+
+Paths: 2 path(s)
+  0x0100000F: 3 waypoint(s)
+    [0.0, 0.0]
+    [1.0, 0.0]
+    [2.0, 0.0]
+  0x0100010F: 2 waypoint(s)
+    [0.0, 1.0]
+    [1.0, 1.0]
 ```
+
+The Paths section is only shown when the ArchSpec includes path data. Each path is identified by its encoded lane address and lists the AOD waypoints (physical coordinates) that define the transport trajectory.
 
 ### `arch validate`
 

@@ -42,8 +42,8 @@ Single- and multi-qubit gate operations.
 
 | Instruction | Opcode | Stack Effect | Description |
 |-------------|--------|--------------|-------------|
-| `local_r` | `0x0011` | `(θ φ loc₁..locₙ -- )` | Local R rotation |
-| `local_rz` | `0x0111` | `(θ loc₁..locₙ -- )` | Local Rz rotation |
+| `local_r` | `0x0011` | `(loc₁..locₙ θ φ -- )` | Local R rotation |
+| `local_rz` | `0x0111` | `(loc₁..locₙ θ -- )` | Local Rz rotation |
 | `global_r` | `0x0211` | `(θ φ -- )` | Global R rotation |
 | `global_rz` | `0x0311` | `(θ -- )` | Global Rz rotation |
 | `cz` | `0x0411` | `(zone -- )` | Controlled-Z gate on zone |
