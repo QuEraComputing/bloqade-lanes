@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bloqade.lanes.layout import LaneAddress, LocationAddress
+from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.search.configuration import Configuration, ConfigurationNode
@@ -62,6 +62,57 @@ class ConfigurationTree:
         """
         root = ConfigurationNode(configuration=dict(placement))
         return cls(arch_spec=arch_spec, root=root)
+
+    def valid_lanes(
+        self,
+        node: ConfigurationNode,
+        move_type: MoveType | None = None,
+        bus_id: int | None = None,
+        direction: Direction | None = None,
+    ) -> frozenset[LaneAddress]:
+        """Return all valid individual lane addresses from a configuration.
+
+        A lane is valid if its source is occupied and its destination
+        is not occupied. Optionally filter by move_type, bus_id, and
+        direction — None means include all.
+
+        Args:
+            node: The configuration to query.
+            move_type: Filter to this move type, or None for all.
+            bus_id: Filter to this bus ID, or None for all.
+            direction: Filter to this direction, or None for all.
+
+        Returns:
+            frozenset of valid LaneAddress values.
+        """
+        occupied = node.occupied_locations
+        result: set[LaneAddress] = set()
+
+        for _qid, src_loc in node.configuration.items():
+            src_idx = self.path_finder.physical_address_map.get(src_loc)
+            if src_idx is None:
+                continue
+
+            for dst_idx in self.path_finder.site_graph.successor_indices(src_idx):
+                dst_loc = self.path_finder.physical_addresses[dst_idx]
+                if dst_loc in occupied:
+                    continue
+
+                lane = self.path_finder.site_graph.get_edge_data(src_idx, dst_idx)
+                if lane is None:
+                    continue
+
+                # Apply filters
+                if move_type is not None and lane.move_type != move_type:
+                    continue
+                if bus_id is not None and lane.bus_id != bus_id:
+                    continue
+                if direction is not None and lane.direction != direction:
+                    continue
+
+                result.add(lane)
+
+        return frozenset(result)
 
     def apply_move_set(
         self,

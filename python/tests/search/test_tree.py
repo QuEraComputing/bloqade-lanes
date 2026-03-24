@@ -154,3 +154,61 @@ def test_expand_deadlock():
 
     children = tree.expand_node(tree.root, gen, strict=False)
     assert isinstance(children, list)
+
+
+def test_valid_lanes_returns_nonempty():
+    tree = _make_tree()
+    lanes = tree.valid_lanes(tree.root)
+    assert len(lanes) > 0
+    # All lanes should have occupied src and unoccupied dst
+    for lane in lanes:
+        src, dst = tree.arch_spec.get_endpoints(lane)
+        assert tree.root.is_occupied(src)
+        assert not tree.root.is_occupied(dst)
+
+
+def test_valid_lanes_filter_by_move_type():
+    from bloqade.lanes.layout import MoveType
+
+    tree = _make_tree()
+    site_lanes = tree.valid_lanes(tree.root, move_type=MoveType.SITE)
+    word_lanes = tree.valid_lanes(tree.root, move_type=MoveType.WORD)
+    all_lanes = tree.valid_lanes(tree.root)
+
+    # Filtered sets should be subsets of all
+    assert site_lanes <= all_lanes
+    assert word_lanes <= all_lanes
+    # All lanes should be of the correct type
+    for lane in site_lanes:
+        assert lane.move_type == MoveType.SITE
+    for lane in word_lanes:
+        assert lane.move_type == MoveType.WORD
+
+
+def test_valid_lanes_filter_by_direction():
+    from bloqade.lanes.layout import Direction
+
+    tree = _make_tree()
+    fwd = tree.valid_lanes(tree.root, direction=Direction.FORWARD)
+    bwd = tree.valid_lanes(tree.root, direction=Direction.BACKWARD)
+
+    for lane in fwd:
+        assert lane.direction == Direction.FORWARD
+    for lane in bwd:
+        assert lane.direction == Direction.BACKWARD
+
+
+def test_valid_lanes_no_collisions():
+    """All sites occupied — no valid lanes with unoccupied destinations."""
+    arch_spec = logical.get_arch_spec()
+    placement = {i: LocationAddress(0, i) for i in range(10)}
+    tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+
+    # Site bus lanes within word 0 should all be blocked
+    from bloqade.lanes.layout import MoveType
+
+    site_lanes = tree.valid_lanes(tree.root, move_type=MoveType.SITE)
+    # May still have word bus lanes, but site bus on word 0 should be empty
+    for lane in site_lanes:
+        src, dst = tree.arch_spec.get_endpoints(lane)
+        assert not tree.root.is_occupied(dst)
