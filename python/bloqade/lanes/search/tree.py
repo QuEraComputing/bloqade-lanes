@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -63,14 +64,41 @@ class ConfigurationTree:
         root = ConfigurationNode(configuration=dict(placement))
         return cls(arch_spec=arch_spec, root=root)
 
+    def lanes_for(
+        self,
+        move_type: MoveType,
+        bus_id: int,
+        direction: Direction,
+    ) -> Iterator[LaneAddress]:
+        """Yield all lane addresses for a specific (move_type, bus_id, direction).
+
+        Args:
+            move_type: The move type (SITE or WORD).
+            bus_id: The bus index.
+            direction: The direction (FORWARD or BACKWARD).
+
+        Yields:
+            LaneAddress values.
+        """
+        if move_type == MoveType.SITE:
+            bus = self.arch_spec.site_buses[bus_id]
+            for w in self.arch_spec.has_site_buses:
+                for s in bus.src:
+                    yield LaneAddress(move_type, w, s, bus_id, direction)
+        else:
+            bus = self.arch_spec.word_buses[bus_id]
+            for w in bus.src:
+                for s in self.arch_spec.has_word_buses:
+                    yield LaneAddress(move_type, w, s, bus_id, direction)
+
     def valid_lanes(
         self,
         node: ConfigurationNode,
         move_type: MoveType | None = None,
         bus_id: int | None = None,
         direction: Direction | None = None,
-    ) -> frozenset[LaneAddress]:
-        """Return all valid individual lane addresses from a configuration.
+    ) -> Iterator[LaneAddress]:
+        """Yield valid individual lane addresses from a configuration.
 
         A lane is valid if its source is occupied and its destination
         is not occupied. Optionally filter by move_type, bus_id, and
@@ -82,37 +110,34 @@ class ConfigurationTree:
             bus_id: Filter to this bus ID, or None for all.
             direction: Filter to this direction, or None for all.
 
-        Returns:
-            frozenset of valid LaneAddress values.
+        Yields:
+            Valid LaneAddress values.
         """
         occupied = node.occupied_locations
-        result: set[LaneAddress] = set()
 
-        for _qid, src_loc in node.configuration.items():
-            src_idx = self.path_finder.physical_address_map.get(src_loc)
-            if src_idx is None:
-                continue
+        move_types = (
+            [move_type] if move_type is not None else [MoveType.SITE, MoveType.WORD]
+        )
+        directions = (
+            [direction]
+            if direction is not None
+            else [Direction.FORWARD, Direction.BACKWARD]
+        )
 
-            for dst_idx in self.path_finder.site_graph.successor_indices(src_idx):
-                dst_loc = self.path_finder.physical_addresses[dst_idx]
-                if dst_loc in occupied:
-                    continue
+        for mt in move_types:
+            buses = (
+                self.arch_spec.site_buses
+                if mt == MoveType.SITE
+                else self.arch_spec.word_buses
+            )
+            bus_ids = [bus_id] if bus_id is not None else list(range(len(buses)))
 
-                lane = self.path_finder.site_graph.get_edge_data(src_idx, dst_idx)
-                if lane is None:
-                    continue
-
-                # Apply filters
-                if move_type is not None and lane.move_type != move_type:
-                    continue
-                if bus_id is not None and lane.bus_id != bus_id:
-                    continue
-                if direction is not None and lane.direction != direction:
-                    continue
-
-                result.add(lane)
-
-        return frozenset(result)
+            for bid in bus_ids:
+                for d in directions:
+                    for lane in self.lanes_for(mt, bid, d):
+                        src, dst = self.arch_spec.get_endpoints(lane)
+                        if src in occupied and dst not in occupied:
+                            yield lane
 
     def apply_move_set(
         self,

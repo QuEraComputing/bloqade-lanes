@@ -158,7 +158,7 @@ def test_expand_deadlock():
 
 def test_valid_lanes_returns_nonempty():
     tree = _make_tree()
-    lanes = tree.valid_lanes(tree.root)
+    lanes = frozenset(tree.valid_lanes(tree.root))
     assert len(lanes) > 0
     # All lanes should have occupied src and unoccupied dst
     for lane in lanes:
@@ -171,9 +171,9 @@ def test_valid_lanes_filter_by_move_type():
     from bloqade.lanes.layout import MoveType
 
     tree = _make_tree()
-    site_lanes = tree.valid_lanes(tree.root, move_type=MoveType.SITE)
-    word_lanes = tree.valid_lanes(tree.root, move_type=MoveType.WORD)
-    all_lanes = tree.valid_lanes(tree.root)
+    site_lanes = frozenset(tree.valid_lanes(tree.root, move_type=MoveType.SITE))
+    word_lanes = frozenset(tree.valid_lanes(tree.root, move_type=MoveType.WORD))
+    all_lanes = frozenset(tree.valid_lanes(tree.root))
 
     # Filtered sets should be subsets of all
     assert site_lanes <= all_lanes
@@ -189,8 +189,8 @@ def test_valid_lanes_filter_by_direction():
     from bloqade.lanes.layout import Direction
 
     tree = _make_tree()
-    fwd = tree.valid_lanes(tree.root, direction=Direction.FORWARD)
-    bwd = tree.valid_lanes(tree.root, direction=Direction.BACKWARD)
+    fwd = list(tree.valid_lanes(tree.root, direction=Direction.FORWARD))
+    bwd = list(tree.valid_lanes(tree.root, direction=Direction.BACKWARD))
 
     for lane in fwd:
         assert lane.direction == Direction.FORWARD
