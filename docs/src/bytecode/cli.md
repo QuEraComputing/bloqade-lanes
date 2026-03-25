@@ -76,7 +76,7 @@ bloqade-bytecode disassemble prog.bin -o prog.sst
 # disassembled 12 instructions -> prog.sst
 ```
 
-The text format round-trips perfectly: `text → binary → text` produces identical output.
+The conversion is semantically lossless: assembling and then disassembling a program preserves its instructions, and the disassembler's canonical text output round-trips through `text → binary → text`.
 
 ---
 
@@ -193,7 +193,7 @@ bloqade-bytecode arch validate gemini-logical.json
 
 | Extension | Format | Description |
 |-----------|--------|-------------|
-| `.sst` | Text | Human-readable bytecode (one instruction per line, `#` comments) |
+| `.sst` | Text | Human-readable bytecode (one instruction per line, `;` comments) |
 | `.bin` | Binary | Compact binary encoding (`BLQD` magic header, 16 bytes per instruction) |
 | `.json` | JSON | Architecture specification |
 

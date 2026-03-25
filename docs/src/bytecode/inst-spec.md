@@ -2,7 +2,7 @@
 
 This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.
 
-The instruction set is organized around the physical structure of the hardware. Atoms occupy **sites** within **words** (rows of trapping positions in the lattice). **Buses** define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A **lane** is a single atom trajectory along a bus — one source site to one destination site. A **zone** groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define a locations where atoms are measured. These concepts map directly to the address types used in the bytecode: `LocationAddr` (word, site), `LaneAddr` (word, site, bus, direction), and `ZoneAddr` (zone).
+The instruction set is organized around the physical structure of the hardware. Atoms occupy **sites** within **words** (rows of trapping positions in the lattice). **Buses** define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A **lane** is a single atom trajectory along a bus — one source site to one destination site. A **zone** groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define locations where atoms are measured. These concepts map directly to the address types used in the bytecode: `LocationAddr` (word, site), `LaneAddr` (word, site, bus, direction), and `ZoneAddr` (zone).
 
 Programs execute on a stack machine. Address constants and numeric parameters are pushed onto the stack, then consumed by operation instructions (fills, moves, gates, measurements). The bytecode is designed to be validated offline against an architecture specification (`ArchSpec`) that captures the geometry, bus topology, and zone layout of a specific device.
 
@@ -125,7 +125,7 @@ The validator (`check_lane`) checks the following for each `LaneAddr`:
 | Bus membership | For site buses: `word_id` must be in `words_with_site_buses`. For word buses: `site_id` must be in `sites_with_word_buses`. |
 | Valid forward source | For site buses: `bus.resolve_forward(site_id)` must succeed (i.e. `site_id` is in `bus.src`). For word buses: `bus.resolve_forward(word_id)` must succeed (i.e. `word_id` is in `bus.src`). |
 
-Validation is always performed against the forward-direction source, regardless of the `direction` field. If any check fails, `lane_endpoints` returns `None`.
+Validation is always performed against the forward-direction source, regardless of the `direction` field.
 
 ### `ZoneAddr`
 
