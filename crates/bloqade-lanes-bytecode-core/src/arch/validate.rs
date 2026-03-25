@@ -16,19 +16,19 @@ use super::types::ArchSpec;
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ArchSpecError {
     /// Zone configuration error (zone 0 coverage, measurement/entangling zone IDs).
-    #[error("zone: {message}")]
+    #[error("{message}")]
     Zone { message: String },
 
     /// Word geometry error (site counts, grid indices, grid shape, non-finite values).
-    #[error("geometry: {message}")]
+    #[error("{message}")]
     Geometry { message: String },
 
     /// Bus topology error (site/word bus structure, membership lists).
-    #[error("bus: {message}")]
+    #[error("{message}")]
     Bus { message: String },
 
     /// Transport path error (invalid lanes, waypoint counts, endpoint mismatches).
-    #[error("path: {message}")]
+    #[error("{message}")]
     Path { message: String },
 }
 
@@ -91,7 +91,8 @@ fn check_zone0_includes_all_words(
     if let Some(zone0) = spec.zones.first() {
         let zone0_words: HashSet<u32> = zone0.words.iter().copied().collect();
         let all_word_ids: HashSet<u32> = (0..num_words).collect();
-        let missing: Vec<u32> = all_word_ids.difference(&zone0_words).copied().collect();
+        let mut missing: Vec<u32> = all_word_ids.difference(&zone0_words).copied().collect();
+        missing.sort_unstable();
         if !missing.is_empty() {
             errors.push(ArchSpecError::Zone {
                 message: format!(

@@ -1,7 +1,9 @@
 """Structured exception classes for bloqade-lanes-bytecode.
 
-Each Rust error enum maps to a base exception class. Each variant maps
-to a subclass with the variant's fields as attributes.
+Each Rust error enum maps to a base exception class. Category-based enums
+(like ArchSpecError) map to subclasses that carry a descriptive message
+string. Fine-grained enums (like LaneGroupError, ValidationError) map to
+subclasses with the variant's fields as attributes.
 """
 
 # ── ArchSpec validation errors ──
