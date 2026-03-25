@@ -11,8 +11,9 @@ from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
 from kirin.ir.method import Method
+from kirin.rewrite.abc import RewriteRule
 
-from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
+from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress
@@ -34,24 +35,38 @@ def always_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
 @dataclass
 class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
+    logical_initialize: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
+        if self.logical_initialize:
+            rule = rewrite.Chain(
+                rewrite.Walk(
+                    RewriteNonCliffordToU3(),
+                ),
+                rewrite.Walk(
+                    _RewriteU3ToInitialize(),
+                ),
+            )
+            CallGraphPass(mt.dialects, rule)(out)
+
+        out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
-        rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
-            out.code
-        )
+        #
+        if self.logical_initialize:
+            rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
+                out.code
+            )
 
-        rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
-            out.code
-        )
-
-        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
-        rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+            rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
+                out.code
+            )
+            rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
+            rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
 
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
@@ -94,6 +109,7 @@ class PlaceToMove:
         [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
         tuple[tuple[LaneAddress, ...], ...] | None,
     ] = place2move.palindrome_move_layers
+    logical_initialize: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(move))
@@ -125,13 +141,21 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run(out)
 
-        rule = rewrite.Chain(
-            place2move.InsertFill(initial_layout),
-            place2move.InsertInitialize(address_frame.entries, initial_layout),
-            place2move.InsertMoves(placement_frame.entries),
-            place2move.RewriteGates(placement_frame.entries),
-            place2move.InsertMeasure(placement_frame.entries),
+        rules: list[RewriteRule] = [place2move.InsertFill(initial_layout)]
+        if self.logical_initialize:
+            # do not insert an LogicalIniitialize here.
+            rules.append(
+                place2move.InsertInitialize(address_frame.entries, initial_layout)
+            )
+
+        rules.extend(
+            (
+                place2move.InsertMoves(placement_frame.entries),
+                place2move.RewriteGates(placement_frame.entries),
+                place2move.InsertMeasure(placement_frame.entries),
+            )
         )
+        rule = rewrite.Chain(*rules)
         rewrite.Walk(rule).rewrite(out.code)
 
         if self.insert_return_moves:
@@ -182,6 +206,7 @@ def squin_to_move(
     ] = place2move.palindrome_move_layers,
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
     no_raise: bool = True,
+    logical_initialize: bool = True,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
@@ -196,26 +221,18 @@ def squin_to_move(
             Defaults to palindrome_move_layers.
         merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
-
+        logical_initialize (bool, optional): Whether or not to do rewrites that insert logical qubit initialization in the compiler.
     Returns:
         ir.Method: The compiled move dialect method.
     """
-    rule = rewrite.Chain(
-        rewrite.Walk(
-            RewriteNonCliffordToU3(),
-        ),
-        rewrite.Walk(
-            __RewriteU3ToInitialize(),
-        ),
-    )
-    CallGraphPass(mt.dialects, rule)(out := mt.similar())
-    out = SquinToNative().emit(out, no_raise=no_raise)
-    out = NativeToPlace(merge_heuristic).emit(out, no_raise=no_raise)
+
+    out = NativeToPlace(merge_heuristic, logical_initialize).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
         insert_return_moves=insert_return_moves,
         revert_initial_position=revert_initial_position,
+        logical_initialize=logical_initialize,
     ).emit(out, no_raise=no_raise)
 
     passes.TypeInfer(mt.dialects)(out)
