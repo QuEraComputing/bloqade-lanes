@@ -56,7 +56,6 @@ class NativeToPlace:
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
-        #
         if self.logical_initialize:
             rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
                 out.code
@@ -143,7 +142,7 @@ class PlaceToMove:
 
         rules: list[RewriteRule] = [place2move.InsertFill(initial_layout)]
         if self.logical_initialize:
-            # do not insert an LogicalIniitialize here.
+            # Insert logical initialize operations based on the address frame and initial layout.
             rules.append(
                 place2move.InsertInitialize(address_frame.entries, initial_layout)
             )
@@ -221,12 +220,16 @@ def squin_to_move(
             Defaults to palindrome_move_layers.
         merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
-        logical_initialize (bool, optional): Whether or not to do rewrites that insert logical qubit initialization in the compiler.
+        logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
+
     Returns:
         ir.Method: The compiled move dialect method.
     """
 
-    out = NativeToPlace(merge_heuristic, logical_initialize).emit(mt, no_raise=no_raise)
+    out = NativeToPlace(
+        merge_heuristic=merge_heuristic,
+        logical_initialize=logical_initialize,
+    ).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
