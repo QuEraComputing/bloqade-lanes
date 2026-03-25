@@ -6,26 +6,51 @@ The `bloqade-bytecode` CLI assembles, disassembles, and validates lane-move byte
 bloqade-bytecode <COMMAND>
 ```
 
-## Building
+## Installation
 
-### CLI binary
+### Via the Python package (recommended)
+
+The CLI is bundled in the `bloqade-lanes` Python wheel and placed on your PATH automatically:
 
 ```bash
-just build-cli       # Build CLI in release mode (output: target/release/bloqade-bytecode)
+pip install bloqade-lanes
 ```
 
-### Testing
+After installation, `bloqade-bytecode` is available as a command.
+
+> **Note:** The CLI is only included in pre-built platform wheels, not in the source distribution (sdist). If no wheel is available for your platform, use the [cargo install](#from-source-cargo) method instead.
+
+### From source (cargo)
+
+Install the CLI directly from the repository using cargo:
+
+```bash
+cargo install --path crates/bloqade-lanes-bytecode-cli
+```
+
+This compiles the binary and places it in `~/.cargo/bin/`, which is typically on your PATH. No Python installation is required.
+
+Alternatively, build without installing:
+
+```bash
+just build-cli       # Output: target/release/bloqade-bytecode
+```
+
+The binary can be run in place (`./target/release/bloqade-bytecode`) or copied to a directory on your PATH.
+
+### Development install
+
+For local development, this builds the CLI, stages it into the Python package, and installs everything:
+
+```bash
+just develop
+```
+
+## Testing
 
 ```bash
 just test-rust       # Run Rust tests (core + CLI crates)
 just cli-smoke-test  # CLI bytecode validation tests
-```
-
-### Python wheel with bundled CLI
-
-```bash
-just develop         # Dev install with bundled CLI
-just build-wheel     # Build distributable wheel
 ```
 
 ## Commands
@@ -156,17 +181,14 @@ Zones: 1 zone(s)
   entangling_zones: [0]
   measurement_mode_zones: [0]
 
-Paths: 2 path(s)
-  0x0100000F: 3 waypoint(s)
-    [0.0, 0.0]
-    [1.0, 0.0]
-    [2.0, 0.0]
-  0x0100010F: 2 waypoint(s)
-    [0.0, 1.0]
-    [1.0, 1.0]
+Paths: 1 path(s)
+  0xC000000000000005: 3 waypoint(s)
+    [1.0, 15.0]
+    [1.0, 10.0]
+    [1.0, 5.0]
 ```
 
-The Paths section is only shown when the ArchSpec includes path data. Each path is identified by its encoded lane address and lists the AOD waypoints (physical coordinates) that define the transport trajectory.
+The Paths section is only shown when the ArchSpec includes path data. Each path is identified by its 64-bit encoded lane address (in hex) and lists the AOD waypoints (physical coordinates) that define the transport trajectory.
 
 ### `arch validate`
 
