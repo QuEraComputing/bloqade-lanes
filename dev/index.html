@@ -89,7 +89,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html" class="active">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">2.</strong> Instruction Set</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html" class="active">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">2.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">3.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">4.</strong> CLI Reference</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -185,13 +185,15 @@
 <h2 id="whats-in-this-book"><a class="header" href="#whats-in-this-book">What's in this book</a></h2>
 <ul>
 <li><strong><a href="arch/archspec.html">Architecture Specification</a></strong> — the <code>ArchSpec</code> JSON format that defines device topology, transport buses, zones, and AOD paths</li>
-<li><strong><a href="bytecode/inst-spec.html">Bytecode Instruction Set</a></strong> — the fixed-width instruction encoding, opcode layout, and per-instruction reference</li>
+<li><strong><a href="bytecode/inst-quick-ref.html">Instruction Quick Reference</a></strong> — compact summary of all 24 instructions with opcodes and stack effects</li>
+<li><strong><a href="bytecode/inst-spec.html">Instruction Set</a></strong> — the fixed-width instruction encoding, opcode layout, and per-instruction reference</li>
+<li><strong><a href="bytecode/cli.html">CLI Reference</a></strong> — the <code>bloqade-bytecode</code> CLI tool for assembling, disassembling, and validating bytecode programs</li>
 </ul>
 <h2 id="crate-documentation"><a class="header" href="#crate-documentation">Crate documentation</a></h2>
 <p>The Rust API documentation is generated separately via <code>cargo doc</code>:</p>
 <ul>
-<li><a href="api/bloqade_lanes_bytecode_core/"><code>bloqade-lanes-bytecode-core</code></a> — pure Rust: bytecode format, arch spec, validation</li>
-<li><a href="api/bloqade_lanes_bytecode/"><code>bloqade-lanes-bytecode-cli</code></a> — CLI tool and C FFI library</li>
+<li><a href="api/bloqade_lanes_bytecode_core/index.html"><code>bloqade-lanes-bytecode-core</code></a> — pure Rust: bytecode format, arch spec, validation</li>
+<li><a href="api/bloqade_lanes_bytecode/index.html"><code>bloqade-lanes-bytecode-cli</code></a> — CLI tool and C library</li>
 </ul>
 <h2 id="repository"><a class="header" href="#repository">Repository</a></h2>
 <p>Source code: <a href="https://github.com/QuEraComputing/bloqade-lanes">github.com/QuEraComputing/bloqade-lanes</a></p>
