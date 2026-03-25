@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ArchSpec","Bus","Buses","Geometry","Grid","TransportPath","Word","Zone"]};
