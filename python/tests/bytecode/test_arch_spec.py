@@ -108,8 +108,8 @@ EXAMPLE_JSON = json.dumps(
         "measurement_mode_zones": [0],
         "paths": [
             {
-                "lane": "0xC000000000000000",
-                "waypoints": [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]],
+                "lane": "0xC000000000000005",
+                "waypoints": [[1.0, 15.0], [1.0, 10.0], [1.0, 5.0]],
             }
         ],
     }
@@ -175,11 +175,11 @@ def _build_spec_from_python():
                 lane=LaneAddress(
                     MoveType.WORD,
                     word_id=0,
-                    site_id=0,
+                    site_id=5,
                     bus_id=0,
                     direction=Direction.BACKWARD,
                 ),
-                waypoints=[(1.0, 12.5), (1.0, 7.5), (1.0, 2.5)],
+                waypoints=[(1.0, 15.0), (1.0, 10.0), (1.0, 5.0)],
             )
         ],
     )
@@ -331,12 +331,12 @@ class TestPropertyAccess:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         assert spec.paths is not None
         assert len(spec.paths) == 1
-        assert spec.paths[0].lane_encoded == 0xC000000000000000
+        assert spec.paths[0].lane_encoded == 0xC000000000000005
         lane = spec.paths[0].lane
         assert lane.direction == Direction.BACKWARD
         assert lane.move_type == MoveType.WORD
         assert lane.word_id == 0
-        assert lane.site_id == 0
+        assert lane.site_id == 5
         assert lane.bus_id == 0
         assert len(spec.paths[0].waypoints) == 3
 
