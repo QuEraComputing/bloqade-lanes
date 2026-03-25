@@ -6,9 +6,8 @@ from bloqade.decoders import BpLsdDecoder
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-from bloqade.gemini import logical
+from bloqade.gemini import GeminiLogicalSimulator, logical
 from bloqade.gemini.logical.stdlib import default_post_processing
-from bloqade.lanes import GeminiLogicalSimulator
 
 
 # helper functions to analyze statistical distribution of logical measurements

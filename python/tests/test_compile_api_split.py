@@ -3,6 +3,7 @@ from typing import cast
 
 from kirin import ir
 
+from bloqade.gemini import compile as gemini_compile
 from bloqade.lanes import compile as compile_api, logical_mvp
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
@@ -34,7 +35,7 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
     monkeypatch.setattr(logical_mvp, "squin_to_move", fake_squin_to_move)
 
     marker = cast(ir.Method, object())
-    out = logical_mvp.compile_squin_to_move(marker)
+    out = gemini_compile.compile_squin_to_move(marker)
 
     assert out == "move_ir"
     assert captured["mt"] is marker

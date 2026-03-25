@@ -7,13 +7,14 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.device import (
+from bloqade.gemini.simulator import (
     DetectorResult,
     GeminiLogicalSimulator,
     Result,
+    generate_simple_noise_model,
+    steane7_m2dets,
+    steane7_m2obs,
 )
-from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 
 @gemini_logical.kernel(verify=False)

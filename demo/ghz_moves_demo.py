@@ -1,7 +1,7 @@
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.logical_mvp import compile_squin_to_move_and_visualize
+from bloqade.gemini import compile_squin_to_move_and_visualize
 
 
 @squin.kernel(typeinfer=True, fold=True)

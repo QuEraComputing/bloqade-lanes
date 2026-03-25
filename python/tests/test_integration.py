@@ -11,16 +11,16 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
+from bloqade.gemini.compile import (
+    compile_squin_to_move,
+    transversal_rewrites,
+)
+from bloqade.gemini.simulator import generate_simple_noise_model
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.logical_mvp import (
-    compile_squin_to_move,
-    transversal_rewrites,
-)
-from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import (
     always_merge_heuristic,
