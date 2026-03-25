@@ -2,7 +2,7 @@
 
 A MoveGenerator produces candidate move sets from a configuration node.
 Different implementations enable different search strategies — exhaustive
-enumeration, goal-directed search, greedy rectangle growing, etc.
+enumeration, goal-directed search, greedy grid growing, etc.
 
 All generators yield candidate frozenset[LaneAddress]. Validation
 (lane validity, collision checks, transposition table lookups) is
@@ -57,13 +57,13 @@ class MoveGenerator(Protocol):
 
 @dataclass(frozen=True)
 class ExhaustiveMoveGenerator:
-    """Enumerates all valid AOD rectangles from the configuration.
+    """Enumerates all valid AOD grids from the configuration.
 
     For each (move_type, bus_id, direction) group, finds all source
-    positions, enumerates rectangular subsets within AOD capacity,
-    and yields the full rectangle of lane addresses.
+    positions, enumerates grid subsets within AOD capacity,
+    and yields the full grid of lane addresses.
 
-    Pre-filters rectangles where an occupied source has an occupied
+    Pre-filters grids where an occupied source has an occupied
     destination (collision) as an optimization.
 
     NOTE for Rust port: replace itertools.combinations with Gosper's
@@ -179,7 +179,7 @@ class ExhaustiveMoveGenerator:
         invalid_locs: set[LocationAddress],
         occupied: frozenset[LocationAddress],
     ) -> Iterator[frozenset[LaneAddress]]:
-        """Yield valid move sets for all nx × ny rectangles.
+        """Yield valid move sets for all nx × ny grids.
 
         NOTE for Rust port: replace itertools.combinations with Gosper's
         hack for bitmask enumeration of exactly-k-set-bits subsets. This

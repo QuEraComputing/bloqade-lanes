@@ -418,7 +418,7 @@ impl<'a> StackSimulator<'a> {
         }
     }
 
-    /// Simulate `local_r`: pop 2 float parameters (rotation_angle, axis_angle) then validate locations.
+    /// Simulate `local_r`: pop 2 float parameters (axis_angle, then rotation_angle) then validate locations.
     fn sim_local_r(&mut self, arity: u32) {
         self.pop_typed_n(TAG_FLOAT, 2);
         self.pop_and_validate_locations(arity);
@@ -430,7 +430,7 @@ impl<'a> StackSimulator<'a> {
         self.pop_and_validate_locations(arity);
     }
 
-    /// Simulate `global_r`: pop 2 float parameters (rotation_angle, axis_angle) for a global rotation.
+    /// Simulate `global_r`: pop 2 float parameters (axis_angle, then rotation_angle) for a global rotation.
     fn sim_global_r(&mut self) {
         self.pop_typed_n(TAG_FLOAT, 2);
     }
@@ -755,8 +755,8 @@ mod tests {
             version: Version::new(1, 0),
             instructions: vec![
                 Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
-                Instruction::Cpu(CpuInstruction::ConstFloat(0.5)),
-                Instruction::Cpu(CpuInstruction::ConstFloat(1.0)),
+                Instruction::Cpu(CpuInstruction::ConstFloat(1.0)), // rotation_angle (pushed first)
+                Instruction::Cpu(CpuInstruction::ConstFloat(0.5)), // axis_angle (pushed last, popped first)
                 Instruction::QuantumGate(QuantumGateInstruction::LocalR { arity: 1 }),
             ],
         };
@@ -1073,7 +1073,7 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_rectangle_passes() {
         let arch = lane_group_arch_spec();
-        // Use valid forward sources on two words to form a 2x2 rectangle:
+        // Use valid forward sources on two words to form a 2x2 grid:
         // Word 0, Site 0: (1.0, 2.5)
         // Word 0, Site 1: (3.0, 2.5)
         // Word 1, Site 0: (1.0, 12.5)
@@ -1101,7 +1101,7 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_not_rectangle() {
         let arch = lane_group_arch_spec();
-        // 3 corners of a rectangle (missing word 1, site 1) — not a complete rectangle
+        // 3 corners of a grid (missing word 1, site 1) — not a complete grid
         // Word 0, Site 0: (1.0, 2.5)
         // Word 0, Site 1: (3.0, 2.5)
         // Word 1, Site 0: (1.0, 12.5)
