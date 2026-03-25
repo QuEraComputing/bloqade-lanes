@@ -1,7 +1,9 @@
 """Structured exception classes for bloqade-lanes-bytecode.
 
-Each Rust error enum maps to a base exception class. Each variant maps
-to a subclass with the variant's fields as attributes.
+Each Rust error enum maps to a base exception class. Category-based enums
+(like ArchSpecError) map to subclasses that carry a descriptive message
+string. Fine-grained enums (like LaneGroupError, ValidationError) map to
+subclasses with the variant's fields as attributes.
 """
 
 # ── ArchSpec validation errors ──
@@ -19,216 +21,32 @@ class ArchSpecError(Exception):
         self.errors: list[ArchSpecError] = errors or []
 
 
-class Zone0MissingWordsError(ArchSpecError):
-    def __init__(self, missing: list[int]):
-        self.missing = missing
-        super().__init__(f"zone 0 must include all words: missing word IDs {missing}")
+class ArchSpecZoneError(ArchSpecError):
+    """Zone configuration error (zone 0 coverage, measurement/entangling zone IDs)."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
-class MeasurementModeZonesEmptyError(ArchSpecError):
-    def __init__(self):
-        super().__init__("measurement_mode_zones must not be empty")
+class ArchSpecGeometryError(ArchSpecError):
+    """Word geometry error (site counts, grid indices, grid shape, non-finite values)."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
-class MeasurementModeFirstNotZone0Error(ArchSpecError):
-    def __init__(self, got: int):
-        self.got = got
-        super().__init__(f"measurement_mode_zones[0] must be zone 0, got {got}")
+class ArchSpecBusError(ArchSpecError):
+    """Bus topology error (site/word bus structure, membership lists)."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
-class InvalidEntanglingZoneError(ArchSpecError):
-    def __init__(self, id: int):
-        self.id = id
-        super().__init__(f"entangling_zones contains invalid zone ID {id}")
+class ArchSpecPathError(ArchSpecError):
+    """Transport path error (invalid lanes, waypoint counts, endpoint mismatches)."""
 
-
-class InvalidMeasurementModeZoneError(ArchSpecError):
-    def __init__(self, id: int):
-        self.id = id
-        super().__init__(f"measurement_mode_zones contains invalid zone ID {id}")
-
-
-class WrongSiteCountError(ArchSpecError):
-    def __init__(self, word_id: int, expected: int, got: int):
-        self.word_id = word_id
-        self.expected = expected
-        self.got = got
-        super().__init__(
-            f"word {word_id} has {got} sites, expected {expected} (sites_per_word)"
-        )
-
-
-class WrongCzPairsCountError(ArchSpecError):
-    def __init__(self, word_id: int, expected: int, got: int):
-        self.word_id = word_id
-        self.expected = expected
-        self.got = got
-        super().__init__(
-            f"word {word_id} has {got} cz_pairs, expected {expected} (sites_per_word)"
-        )
-
-
-class NonFiniteGridValueError(ArchSpecError):
-    def __init__(self, word_id: int, field: str):
-        self.word_id = word_id
-        self.field = field
-        super().__init__(f"word {word_id} grid contains non-finite value in {field}")
-
-
-class NonFiniteWaypointError(ArchSpecError):
-    def __init__(self, index: int):
-        self.index = index
-        super().__init__(f"paths[{index}]: waypoint contains non-finite coordinate")
-
-
-class SiteXIndexOutOfRangeError(ArchSpecError):
-    def __init__(self, word_id: int, site_idx: int, x_idx: int, x_len: int):
-        self.word_id = word_id
-        self.site_idx = site_idx
-        self.x_idx = x_idx
-        self.x_len = x_len
-        super().__init__(
-            f"word {word_id}, site {site_idx}: x_idx {x_idx} out of range "
-            f"(grid has {x_len} x_positions)"
-        )
-
-
-class SiteYIndexOutOfRangeError(ArchSpecError):
-    def __init__(self, word_id: int, site_idx: int, y_idx: int, y_len: int):
-        self.word_id = word_id
-        self.site_idx = site_idx
-        self.y_idx = y_idx
-        self.y_len = y_len
-        super().__init__(
-            f"word {word_id}, site {site_idx}: y_idx {y_idx} out of range "
-            f"(grid has {y_len} y_positions)"
-        )
-
-
-class SiteBusLengthMismatchError(ArchSpecError):
-    def __init__(self, bus_id: int, src_len: int, dst_len: int):
-        self.bus_id = bus_id
-        self.src_len = src_len
-        self.dst_len = dst_len
-        super().__init__(
-            f"site_bus {bus_id}: src length ({src_len}) != dst length ({dst_len})"
-        )
-
-
-class SiteBusSrcDstOverlapError(ArchSpecError):
-    def __init__(self, bus_id: int, site_idx: int):
-        self.bus_id = bus_id
-        self.site_idx = site_idx
-        super().__init__(
-            f"site_bus {bus_id}: src and dst overlap at site index {site_idx}"
-        )
-
-
-class SiteBusIndexOutOfRangeError(ArchSpecError):
-    def __init__(self, bus_id: int, site_idx: int, sites_per_word: int):
-        self.bus_id = bus_id
-        self.site_idx = site_idx
-        self.sites_per_word = sites_per_word
-        super().__init__(
-            f"site_bus {bus_id}: site index {site_idx} >= "
-            f"sites_per_word ({sites_per_word})"
-        )
-
-
-class WordBusLengthMismatchError(ArchSpecError):
-    def __init__(self, bus_id: int, src_len: int, dst_len: int):
-        self.bus_id = bus_id
-        self.src_len = src_len
-        self.dst_len = dst_len
-        super().__init__(
-            f"word_bus {bus_id}: src length ({src_len}) != dst length ({dst_len})"
-        )
-
-
-class WordBusInvalidWordIdError(ArchSpecError):
-    def __init__(self, bus_id: int, word_id: int):
-        self.bus_id = bus_id
-        self.word_id = word_id
-        super().__init__(f"word_bus {bus_id}: invalid word ID {word_id}")
-
-
-class InvalidWordWithSiteBusError(ArchSpecError):
-    def __init__(self, word_id: int):
-        self.word_id = word_id
-        super().__init__(f"words_with_site_buses: invalid word ID {word_id}")
-
-
-class InvalidSiteWithWordBusError(ArchSpecError):
-    def __init__(self, site_idx: int, sites_per_word: int):
-        self.site_idx = site_idx
-        self.sites_per_word = sites_per_word
-        super().__init__(
-            f"sites_with_word_buses: site index {site_idx} >= "
-            f"sites_per_word ({sites_per_word})"
-        )
-
-
-class InvalidPathLaneError(ArchSpecError):
-    def __init__(self, index: int, lane: int, message: str):
-        self.index = index
-        self.lane = lane
-        self.message = message
-        super().__init__(f"paths[{index}]: lane 0x{lane:08X} is invalid: {message}")
-
-
-class PathTooFewWaypointsError(ArchSpecError):
-    def __init__(self, index: int, lane: int, count: int):
-        self.index = index
-        self.lane = lane
-        self.count = count
-        super().__init__(
-            f"paths[{index}]: lane 0x{lane:08X} has {count} waypoint(s), minimum is 2"
-        )
-
-
-class PathEndpointMismatchError(ArchSpecError):
-    def __init__(
-        self,
-        index: int,
-        lane: int,
-        endpoint: str,
-        expected_x: float,
-        expected_y: float,
-        got_x: float,
-        got_y: float,
-    ):
-        self.index = index
-        self.lane = lane
-        self.endpoint = endpoint
-        self.expected_x = expected_x
-        self.expected_y = expected_y
-        self.got_x = got_x
-        self.got_y = got_y
-        super().__init__(
-            f"paths[{index}]: lane 0x{lane:08X} {endpoint} waypoint "
-            f"({got_x}, {got_y}) does not match expected position "
-            f"({expected_x}, {expected_y})"
-        )
-
-
-class InconsistentGridShapeError(ArchSpecError):
-    def __init__(
-        self,
-        word_id: int,
-        x_len: int,
-        y_len: int,
-        ref_x_len: int,
-        ref_y_len: int,
-    ):
-        self.word_id = word_id
-        self.x_len = x_len
-        self.y_len = y_len
-        self.ref_x_len = ref_x_len
-        self.ref_y_len = ref_y_len
-        super().__init__(
-            f"word {word_id} grid shape ({x_len}x{y_len}) differs from "
-            f"word 0 ({ref_x_len}x{ref_y_len})"
-        )
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
 # ── Bytecode validation errors ──

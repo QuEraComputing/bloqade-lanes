@@ -20,9 +20,9 @@ from bloqade.lanes.bytecode.arch import (
     Zone,
 )
 from bloqade.lanes.bytecode.exceptions import (
+    ArchSpecGeometryError,
     LaneGroupError,
     LocationGroupError,
-    WrongSiteCountError,
 )
 
 EXAMPLE_JSON = json.dumps(
@@ -247,7 +247,7 @@ class TestLoadFromJson:
         with pytest.raises(ArchSpecError) as exc_info:
             ArchSpec.from_json_validated(bad)
         assert len(exc_info.value.errors) > 0
-        assert any(isinstance(e, WrongSiteCountError) for e in exc_info.value.errors)
+        assert any(isinstance(e, ArchSpecGeometryError) for e in exc_info.value.errors)
 
 
 class TestValidation:
