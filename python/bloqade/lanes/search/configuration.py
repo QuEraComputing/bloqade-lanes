@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 
 from bloqade.lanes.layout import LaneAddress, LocationAddress
 
@@ -50,7 +51,7 @@ class ConfigurationNode:
         self._occupied_locations = frozenset(self.configuration.values())
         self._qubit_at_location = {loc: qid for qid, loc in self.configuration.items()}
 
-    @property
+    @cached_property
     def config_key(self) -> Configuration:
         """Canonical hashable key for this configuration.
 
@@ -59,7 +60,7 @@ class ConfigurationNode:
         """
         return self._config_key
 
-    @property
+    @cached_property
     def occupied_locations(self) -> frozenset[LocationAddress]:
         """The set of physical locations currently occupied by atoms."""
         return self._occupied_locations
