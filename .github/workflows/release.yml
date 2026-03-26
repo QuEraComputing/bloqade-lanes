@@ -37,6 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
@@ -52,6 +56,7 @@ jobs:
       # runs, so they get included in the wheel via data = "dist-data".
       - name: Build CLI + C library
         if: ${{ !startsWith(matrix.target, 'aarch64-unknown-linux') }}
+        shell: bash
         run: just build-cli stage-clib
 
       # For Linux aarch64 cross-compilation, the CLI crate must be
