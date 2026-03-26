@@ -58,7 +58,7 @@ pub(crate) fn example_arch_spec() -> ArchSpec {
         "entangling_zones": [0],
         "measurement_mode_zones": [0],
         "paths": [
-            {"lane": "0xC000000000000000", "waypoints": [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]]}
+            {"lane": "0xC000000000000005", "waypoints": [[1.0, 15.0], [1.0, 10.0], [1.0, 5.0]]}
         ]
     }"#;
     serde_json::from_str(json).unwrap()
