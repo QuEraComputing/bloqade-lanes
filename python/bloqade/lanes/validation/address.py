@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Any, Callable, Iterable, TypeVar
+from typing import Any
 
 from kirin import interp, ir
 from kirin.analysis.forward import Forward, ForwardFrame
@@ -9,7 +9,7 @@ from kirin.validation import ValidationPass
 
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import Encoder, LaneAddress
+from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
 
 @dataclass
@@ -25,29 +25,29 @@ class _ValidationAnalysis(Forward[EmptyLattice]):
     def eval_fallback(self, frame: ForwardFrame[EmptyLattice], node: ir.Statement):
         return tuple(EmptyLattice.bottom() for _ in node.results)
 
-    AddressType = TypeVar("AddressType", bound=Encoder)
-
-    def filter_by_error(
-        self,
-        addresses: Iterable[AddressType],
-        checker: Callable[[AddressType], set[str]],
+    def report_location_errors(
+        self, node: ir.Statement, locations: tuple[LocationAddress, ...]
     ):
-        """Apply a checker function to a sequence of addresses, yielding those with errors
-        along with their error messages.
+        """Validate a group of locations via Rust and report errors."""
+        for error in self.arch_spec.check_location_group(locations):
+            self.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"Invalid location address: {error}",
+                ),
+            )
 
-        Args:
-            addresses: A tuple of address objects to be checked.
-            checker: A function that takes an address and returns a set of error messages.
-                if the set is empty, the address is considered valid.
-        Yields:
-            Tuples of (address, error message) for each address that has an error.
-        """
-
-        def has_error(tup: tuple[Any, set[str]]) -> bool:
-            return len(tup[1]) > 0
-
-        error_checks = zip(addresses, map(checker, addresses))
-        yield from filter(has_error, error_checks)
+    def report_lane_errors(self, node: ir.Statement, lanes: tuple[LaneAddress, ...]):
+        """Validate a group of lanes via Rust and report errors."""
+        for error in self.arch_spec.check_lane_group(lanes):
+            self.add_validation_error(
+                node,
+                ir.ValidationError(
+                    node,
+                    f"Invalid lane group (count={len(lanes)}): {error}",
+                ),
+            )
 
 
 @move.dialect.register(key="move.address.validation")
@@ -59,46 +59,8 @@ class _MoveMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: move.Move,
     ):
-        if len(node.lanes) == 0:
-            return ()
-
-        invalid_lanes = []
-        for lane, error_msgs in _interp.filter_by_error(
-            node.lanes, _interp.arch_spec.validate_lane
-        ):
-            invalid_lanes.append(lane)
-            for error_msg in error_msgs:
-                _interp.add_validation_error(
-                    node,
-                    ir.ValidationError(
-                        node,
-                        f"Invalid lane address {lane!r}: {error_msg}",
-                    ),
-                )
-
-        valid_lanes = set(node.lanes) - set(invalid_lanes)
-        if len(valid_lanes) == 0:
-            return
-
-        first_lane = valid_lanes.pop()
-        incompatible_lanes = []
-
-        def validate_compatible_lane(lane: LaneAddress):
-            return _interp.arch_spec.compatible_lane_error(first_lane, lane)
-
-        for lane, error_msgs in _interp.filter_by_error(
-            valid_lanes, validate_compatible_lane
-        ):
-            incompatible_lanes.append(lane)
-            for error_msg in error_msgs:
-                _interp.add_validation_error(
-                    node,
-                    ir.ValidationError(
-                        node,
-                        f"Incompatible lane address {first_lane!r} with lane {lane!r}: {error_msg}",
-                    ),
-                )
-
+        if len(node.lanes) > 0:
+            _interp.report_lane_errors(node, node.lanes)
         return (EmptyLattice.bottom(),)
 
     @interp.impl(move.LogicalInitialize)
@@ -111,23 +73,7 @@ class _MoveMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: move.LogicalInitialize | move.LocalR | move.LocalRz | move.Fill,
     ):
-        invalid_locations = list(
-            _interp.filter_by_error(
-                node.location_addresses,
-                _interp.arch_spec.validate_location,
-            )
-        )
-
-        for lane_address, error_msgs in invalid_locations:
-            for error_msg in error_msgs:
-                _interp.add_validation_error(
-                    node,
-                    ir.ValidationError(
-                        node,
-                        f"Invalid location address {lane_address!r}: {error_msg}",
-                    ),
-                )
-
+        _interp.report_location_errors(node, node.location_addresses)
         return (EmptyLattice.bottom(),)
 
     @interp.impl(move.GetFutureResult)
@@ -137,17 +83,7 @@ class _MoveMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: move.GetFutureResult,
     ):
-        location_address = node.location_address
-        error_msgs = _interp.arch_spec.validate_location(location_address)
-
-        for error_msg in error_msgs:
-            _interp.add_validation_error(
-                node,
-                ir.ValidationError(
-                    node,
-                    f"Invalid location address {location_address!r}: {error_msg}",
-                ),
-            )
+        _interp.report_location_errors(node, (node.location_address,))
 
     @interp.impl(move.PhysicalInitialize)
     def location_checker_physical(
@@ -156,22 +92,8 @@ class _MoveMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: move.PhysicalInitialize,
     ):
-        invalid_locations = list(
-            _interp.filter_by_error(
-                chain.from_iterable(node.location_addresses),
-                _interp.arch_spec.validate_location,
-            )
-        )
-
-        for lane_address, error_msgs in invalid_locations:
-            for error_msg in error_msgs:
-                _interp.add_validation_error(
-                    node,
-                    ir.ValidationError(
-                        node,
-                        f"Invalid location address {lane_address!r}: {error_msg}",
-                    ),
-                )
+        all_locations = tuple(chain.from_iterable(node.location_addresses))
+        _interp.report_location_errors(node, all_locations)
 
 
 @dataclass

@@ -2,6 +2,11 @@
 
 from typing import Optional, final
 
+from bloqade.lanes.bytecode.exceptions import (
+    LaneGroupError,
+    LocationGroupError,
+)
+
 # ── Enums ──
 
 @final
@@ -724,7 +729,9 @@ class ArchSpec:
         """
         ...
 
-    def check_locations(self, locations: list[LocationAddress]) -> list[Exception]:
+    def check_locations(
+        self, locations: list[LocationAddress]
+    ) -> list[LocationGroupError]:
         """Validate a group of location addresses against this architecture.
 
         Checks for duplicate addresses and invalid word/site combinations.
@@ -733,11 +740,11 @@ class ArchSpec:
             locations (list[LocationAddress]): Location addresses to validate.
 
         Returns:
-            list[Exception]: ``LocationGroupError`` subclass instances (empty if all valid).
+            list[LocationGroupError]: Error instances (empty if all valid).
         """
         ...
 
-    def check_lanes(self, lanes: list[LaneAddress]) -> list[Exception]:
+    def check_lanes(self, lanes: list[LaneAddress]) -> list[LaneGroupError]:
         """Validate a group of lane addresses against this architecture.
 
         Checks for duplicates, invalid addresses, bus consistency, and
@@ -747,7 +754,7 @@ class ArchSpec:
             lanes (list[LaneAddress]): Lane addresses to validate.
 
         Returns:
-            list[Exception]: ``LaneGroupError`` subclass instances (empty if all valid).
+            list[LaneGroupError]: Error instances (empty if all valid).
         """
         ...
 
