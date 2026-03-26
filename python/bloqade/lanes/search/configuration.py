@@ -37,6 +37,19 @@ class ConfigurationNode:
     depth: int = 0
     """Distance from the root node."""
 
+    _config_key: Configuration = field(init=False, repr=False, compare=False)
+    _occupied_locations: frozenset[LocationAddress] = field(
+        init=False, repr=False, compare=False
+    )
+    _qubit_at_location: dict[LocationAddress, int] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        self._config_key = frozenset(self.configuration.items())
+        self._occupied_locations = frozenset(self.configuration.values())
+        self._qubit_at_location = {loc: qid for qid, loc in self.configuration.items()}
+
     @property
     def config_key(self) -> Configuration:
         """Canonical hashable key for this configuration.
@@ -44,23 +57,20 @@ class ConfigurationNode:
         Two nodes with the same atom placement (regardless of history)
         produce the same config_key.
         """
-        return frozenset(self.configuration.items())
+        return self._config_key
 
     @property
     def occupied_locations(self) -> frozenset[LocationAddress]:
         """The set of physical locations currently occupied by atoms."""
-        return frozenset(self.configuration.values())
+        return self._occupied_locations
 
     def is_occupied(self, location: LocationAddress) -> bool:
         """Check whether a physical location has an atom."""
-        return location in self.configuration.values()
+        return location in self._occupied_locations
 
     def get_qubit_at(self, location: LocationAddress) -> int | None:
         """Return the qubit ID at a location, or None if empty."""
-        for qid, loc in self.configuration.items():
-            if loc == location:
-                return qid
-        return None
+        return self._qubit_at_location.get(location)
 
     def path_to_root(self) -> list[frozenset[LaneAddress]]:
         """Walk from this node to the root, returning move sets in root-to-leaf order.
