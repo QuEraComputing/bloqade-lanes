@@ -7,7 +7,7 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.device import (
+from bloqade.gemini.device import (
     DetectorResult,
     GeminiLogicalSimulator,
     Result,
