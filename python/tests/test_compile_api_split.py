@@ -23,6 +23,7 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
         placement_strategy=None,
         insert_return_moves=True,
         no_raise=True,
+        logical_initialize=True,
     ):
         captured["mt"] = mt
         captured["layout_heuristic"] = layout_heuristic
