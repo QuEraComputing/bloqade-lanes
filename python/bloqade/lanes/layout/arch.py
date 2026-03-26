@@ -98,29 +98,43 @@ class ArchSpec:
     def zones(self) -> tuple[tuple[int, ...], ...]:
         return tuple(tuple(z.words) for z in self._inner.zones)
 
-    @property
+    @cached_property
     def measurement_mode_zones(self) -> tuple[int, ...]:
         return tuple(self._inner.measurement_mode_zones)
 
-    @property
+    @cached_property
     def entangling_zones(self) -> frozenset[int]:
         return frozenset(self._inner.entangling_zones)
 
-    @property
+    @cached_property
     def has_site_buses(self) -> frozenset[int]:
         return frozenset(self._inner.words_with_site_buses)
 
-    @property
+    @cached_property
     def has_word_buses(self) -> frozenset[int]:
         return frozenset(self._inner.sites_with_word_buses)
 
-    @property
+    @cached_property
     def site_buses(self) -> tuple[Bus, ...]:
         return tuple(self._inner.buses.site_buses)
 
-    @property
+    @cached_property
     def word_buses(self) -> tuple[Bus, ...]:
         return tuple(self._inner.buses.word_buses)
+
+    @cached_property
+    def _site_bus_dst_by_src(self) -> tuple[dict[int, int], ...]:
+        return tuple(
+            {src: dst for src, dst in zip(bus.src, bus.dst, strict=True)}
+            for bus in self.site_buses
+        )
+
+    @cached_property
+    def _word_bus_dst_by_src(self) -> tuple[dict[int, int], ...]:
+        return tuple(
+            {src: dst for src, dst in zip(bus.src, bus.dst, strict=True)}
+            for bus in self.word_buses
+        )
 
     # ── Constructor classmethod ──
 
@@ -453,12 +467,10 @@ class ArchSpec:
     ) -> tuple[LocationAddress, LocationAddress]:
         src = lane_address.src_site()
         if lane_address.move_type == MoveType.WORD:
-            bus = self.word_buses[lane_address.bus_id]
-            dst_word = bus.dst[bus.src.index(src.word_id)]
+            dst_word = self._word_bus_dst_by_src[lane_address.bus_id][src.word_id]
             dst = LocationAddress(dst_word, src.site_id)
         elif lane_address.move_type == MoveType.SITE:
-            bus = self.site_buses[lane_address.bus_id]
-            dst_site = bus.dst[bus.src.index(src.site_id)]
+            dst_site = self._site_bus_dst_by_src[lane_address.bus_id][src.site_id]
             dst = LocationAddress(src.word_id, dst_site)
         else:
             raise ValueError("Unsupported lane address type")
