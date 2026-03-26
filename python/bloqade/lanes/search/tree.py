@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -41,10 +42,70 @@ class ConfigurationTree:
     seen: dict[Configuration, ConfigurationNode] = field(
         default_factory=dict, init=False, repr=False
     )
+    _lanes_by_triplet: dict[
+        tuple[MoveType, int, Direction], tuple[LaneAddress, ...]
+    ] = field(default_factory=dict, init=False, repr=False)
+    _lane_by_src: dict[
+        tuple[MoveType, int, Direction], dict[LocationAddress, LaneAddress]
+    ] = field(default_factory=dict, init=False, repr=False)
+    _outgoing_lanes_by_src: dict[LocationAddress, tuple[LaneAddress, ...]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self.path_finder = PathFinder(self.arch_spec)
         self.seen[self.root.config_key] = self.root
+        self._build_lane_indexes()
+
+    def _build_lane_indexes(self) -> None:
+        """Precomputes all lane mappings once (meant to be called at tree construction time)."""
+        lanes_by_triplet: dict[tuple[MoveType, int, Direction], list[LaneAddress]] = {}
+        lane_by_src: dict[
+            tuple[MoveType, int, Direction], dict[LocationAddress, LaneAddress]
+        ] = {}
+        outgoing: dict[LocationAddress, list[LaneAddress]] = defaultdict(list)
+
+        for mt in (MoveType.SITE, MoveType.WORD):
+            buses = (
+                self.arch_spec.site_buses
+                if mt == MoveType.SITE
+                else self.arch_spec.word_buses
+            )
+            for bus_id, bus in enumerate(buses):
+                for direction in (Direction.FORWARD, Direction.BACKWARD):
+                    key = (mt, bus_id, direction)
+                    lanes_for_key: list[LaneAddress] = []
+                    src_map: dict[LocationAddress, LaneAddress] = {}
+                    if mt == MoveType.SITE:
+                        for word_id in self.arch_spec.has_site_buses:
+                            for site_id in bus.src:
+                                lane = LaneAddress(
+                                    mt, word_id, site_id, bus_id, direction
+                                )
+                                src, _ = self.arch_spec.get_endpoints(lane)
+                                lanes_for_key.append(lane)
+                                src_map[src] = lane
+                                outgoing[src].append(lane)
+                    else:
+                        for word_id in bus.src:
+                            for site_id in self.arch_spec.has_word_buses:
+                                lane = LaneAddress(
+                                    mt, word_id, site_id, bus_id, direction
+                                )
+                                src, _ = self.arch_spec.get_endpoints(lane)
+                                lanes_for_key.append(lane)
+                                src_map[src] = lane
+                                outgoing[src].append(lane)
+                    lanes_by_triplet[key] = lanes_for_key
+                    lane_by_src[key] = src_map
+
+        self._lanes_by_triplet = {
+            key: tuple(values) for key, values in lanes_by_triplet.items()
+        }
+        self._lane_by_src = lane_by_src
+        self._outgoing_lanes_by_src = {
+            src: tuple(values) for src, values in outgoing.items()
+        }
 
     @classmethod
     def from_initial_placement(
@@ -80,16 +141,21 @@ class ConfigurationTree:
         Yields:
             LaneAddress values.
         """
-        if move_type == MoveType.SITE:
-            bus = self.arch_spec.site_buses[bus_id]
-            for w in self.arch_spec.has_site_buses:
-                for s in bus.src:
-                    yield LaneAddress(move_type, w, s, bus_id, direction)
-        else:
-            bus = self.arch_spec.word_buses[bus_id]
-            for w in bus.src:
-                for s in self.arch_spec.has_word_buses:
-                    yield LaneAddress(move_type, w, s, bus_id, direction)
+        yield from self._lanes_by_triplet[(move_type, bus_id, direction)]
+
+    def lane_for_source(
+        self,
+        move_type: MoveType,
+        bus_id: int,
+        direction: Direction,
+        source: LocationAddress,
+    ) -> LaneAddress | None:
+        """Resolve one lane by source for a specific triplet."""
+        return self._lane_by_src[(move_type, bus_id, direction)].get(source)
+
+    def outgoing_lanes(self, source: LocationAddress) -> tuple[LaneAddress, ...]:
+        """Return all precomputed outgoing lanes from source."""
+        return self._outgoing_lanes_by_src.get(source, ())
 
     def valid_lanes(
         self,
