@@ -5,7 +5,7 @@ from kirin.rewrite import abc as rewrite_abc
 from ..dialects.operations.stmts import Initialize
 
 
-class __RewriteU3ToInitialize(rewrite_abc.RewriteRule):
+class _RewriteU3ToInitialize(rewrite_abc.RewriteRule):
     """Rewrite U3 gates to Initialize statements.
 
     Note:
