@@ -3,18 +3,16 @@ import json
 import pytest
 
 from bloqade.lanes.bytecode import (
+    ArchSpec,
     ArchSpecError,
+    Bus,
+    Buses,
     Direction,
+    Geometry,
+    Grid,
     LaneAddress,
     LocationAddress,
     MoveType,
-)
-from bloqade.lanes.bytecode.arch import (
-    ArchSpec,
-    Bus,
-    Buses,
-    Geometry,
-    Grid,
     TransportPath,
     Word,
     Zone,
