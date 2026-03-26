@@ -4,7 +4,7 @@ from kirin import ir, rewrite
 from kirin.dialects import py
 
 from bloqade.gemini.logical.dialects.operations.stmts import Initialize
-from bloqade.gemini.logical.rewrite.initialize import __RewriteU3ToInitialize
+from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 
 
 def test_rewrite_u3_to_initialize():
@@ -25,6 +25,6 @@ def test_rewrite_u3_to_initialize():
         ]
     )
 
-    rewrite.Walk(__RewriteU3ToInitialize()).rewrite(test_block)
+    rewrite.Walk(_RewriteU3ToInitialize()).rewrite(test_block)
 
     assert_nodes(test_block, expected_block)

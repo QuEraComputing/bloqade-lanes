@@ -125,6 +125,7 @@ def compile_squin_to_move(
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_return_moves=insert_return_moves,
         no_raise=no_raise,
+        logical_initialize=True,
     )
     if transversal_rewrite:
         mt = transversal_rewrites(mt)

@@ -474,7 +474,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         locked_word_sig: tuple[layout.MoveType, int, layout.Direction] | None,
         edge_sigset: frozenset[tuple[layout.MoveType, int, layout.Direction]],
     ) -> tuple[bool, tuple[layout.MoveType, int, layout.Direction] | None]:
-        word_sigs = tuple(sig for sig in edge_sigset if sig[0] is layout.MoveType.WORD)
+        word_sigs = tuple(sig for sig in edge_sigset if sig[0] == layout.MoveType.WORD)
         if not word_sigs:
             return True, locked_word_sig
         unique_word_sigs = set(word_sigs)
