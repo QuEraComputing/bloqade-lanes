@@ -374,7 +374,7 @@ class ArchSpec:
         Returns a list of LocationGroupError exceptions (empty if all valid).
         """
         rust_addrs = [loc._inner for loc in locations]
-        return self._inner.check_locations(rust_addrs)  # type: ignore[return-value]
+        return self._inner.check_locations(rust_addrs)
 
     def check_lane_group(
         self, lanes: Sequence[LaneAddress]
@@ -386,7 +386,7 @@ class ArchSpec:
         Returns a list of LaneGroupError exceptions (empty if all valid).
         """
         rust_addrs = [lane._inner for lane in lanes]
-        return self._inner.check_lanes(rust_addrs)  # type: ignore[return-value]
+        return self._inner.check_lanes(rust_addrs)
 
     def compatible_lane_error(self, lane1: LaneAddress, lane2: LaneAddress) -> set[str]:
         """Get error messages if two lanes are not compatible.
