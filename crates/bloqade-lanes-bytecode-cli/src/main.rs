@@ -144,8 +144,7 @@ fn cmd_validate(
     all_errors.extend(validate::validate_structure(&program));
 
     if let Some(arch) = &arch {
-        all_errors.extend(validate::validate_addresses(&program, arch));
-        all_errors.extend(validate::validate_capabilities(&program, arch));
+        all_errors.extend(validate::validate_arch_constraints(&program, arch));
     }
 
     if simulate_stack {

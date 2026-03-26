@@ -65,8 +65,7 @@ impl PyProgram {
 
         // Address and capability validation if arch provided
         if let Some(arch) = arch {
-            all_errors.extend(rs_val::validate_addresses(&self.inner, &arch.inner));
-            all_errors.extend(rs_val::validate_capabilities(&self.inner, &arch.inner));
+            all_errors.extend(rs_val::validate_arch_constraints(&self.inner, &arch.inner));
         }
 
         // Stack simulation if requested

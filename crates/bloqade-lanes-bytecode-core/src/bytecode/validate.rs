@@ -232,6 +232,17 @@ pub fn validate_capabilities(program: &Program, arch: &ArchSpec) -> Vec<Validati
     errors
 }
 
+/// Validate all architecture-dependent constraints (addresses + capabilities).
+///
+/// Convenience helper that runs both [`validate_addresses`] and
+/// [`validate_capabilities`] so callers get consistent architecture
+/// validation in a single call.
+pub fn validate_arch_constraints(program: &Program, arch: &ArchSpec) -> Vec<ValidationError> {
+    let mut errors = validate_addresses(program, arch);
+    errors.extend(validate_capabilities(program, arch));
+    errors
+}
+
 /// Stack simulation entry — tracks type tag and optionally the concrete value.
 #[derive(Debug, Clone)]
 struct SimEntry {
