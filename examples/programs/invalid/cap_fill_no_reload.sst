@@ -1,0 +1,14 @@
+.version 1
+; Fill instruction — requires atom_reloading capability.
+; Should fail when arch spec has atom_reloading = false (default).
+
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+
+; Fill (not initial_fill) requires atom_reloading
+const_loc 0x00000002
+const_loc 0x00000003
+fill 2
+
+halt

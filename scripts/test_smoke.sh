@@ -126,6 +126,17 @@ expect_fail "group_site_not_in_bus_list" "sites_with_word_buses" \
     validate examples/programs/invalid/group_site_not_in_bus_list.sst --simulate-stack --arch "$ARCH"
 
 echo ""
+echo "=== Category E: Capability validation (--arch) ==="
+
+ARCH_SIMPLE="examples/arch/simple.json"
+
+expect_fail "cap_multiple_measure (feed_forward=false)" "feed_forward" \
+    validate examples/programs/invalid/cap_multiple_measure.sst --arch "$ARCH_SIMPLE"
+
+expect_fail "cap_fill_no_reload (atom_reloading=false)" "atom_reloading" \
+    validate examples/programs/invalid/cap_fill_no_reload.sst --arch "$ARCH_SIMPLE"
+
+echo ""
 echo "=== Category D: Multi-error collection ==="
 
 expect_fail "kitchen_sink (multiple errors)" "validation error" \

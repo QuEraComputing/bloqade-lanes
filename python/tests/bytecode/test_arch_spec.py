@@ -205,6 +205,49 @@ class TestConstructFromPython:
         assert word.has_cz is None
 
 
+class TestCapabilityFlags:
+    def test_defaults_to_false(self):
+        spec = ArchSpec.from_json(EXAMPLE_JSON)
+        assert spec.feed_forward is False
+        assert spec.atom_reloading is False
+
+    def test_explicit_true(self):
+        data = json.loads(EXAMPLE_JSON)
+        data["feed_forward"] = True
+        data["atom_reloading"] = True
+        spec = ArchSpec.from_json(json.dumps(data))
+        assert spec.feed_forward is True
+        assert spec.atom_reloading is True
+
+    def test_construct_from_python_defaults(self):
+        spec = _build_spec_from_python()
+        assert spec.feed_forward is False
+        assert spec.atom_reloading is False
+
+    def test_construct_from_python_explicit(self):
+        word0 = _make_word(0, 2.5)
+        word1 = _make_word(1, 12.5)
+        geometry = Geometry(sites_per_word=10, words=[word0, word1])
+        site_bus = Bus(src=[0, 1, 2, 3, 4], dst=[5, 6, 7, 8, 9])
+        word_bus = Bus(src=[0], dst=[1])
+        buses = Buses(site_buses=[site_bus], word_buses=[word_bus])
+        zone = Zone(words=[0, 1])
+        spec = ArchSpec(
+            version=(1, 0),
+            geometry=geometry,
+            buses=buses,
+            words_with_site_buses=[0, 1],
+            sites_with_word_buses=[5, 6, 7, 8, 9],
+            zones=[zone],
+            entangling_zones=[0],
+            measurement_mode_zones=[0],
+            feed_forward=True,
+            atom_reloading=True,
+        )
+        assert spec.feed_forward is True
+        assert spec.atom_reloading is True
+
+
 class TestLoadFromJson:
     def test_from_json(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)

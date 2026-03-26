@@ -520,6 +520,8 @@ class ArchSpec:
         entangling_zones (list[int]): Zone IDs where entangling gates are allowed.
         measurement_mode_zones (list[int]): Zone IDs for measurement (first must be zone 0).
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
+        feed_forward (bool): Whether the device supports mid-circuit measurement with classical feedback. Default = False.
+        atom_reloading (bool): Whether the device supports reloading atoms after initial fill. Default = False.
     """
 
     def __init__(
@@ -533,6 +535,8 @@ class ArchSpec:
         entangling_zones: list[int],
         measurement_mode_zones: list[int],
         paths: Optional[list[TransportPath]] = None,
+        feed_forward: bool = False,
+        atom_reloading: bool = False,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -618,6 +622,16 @@ class ArchSpec:
     @property
     def measurement_mode_zones(self) -> list[int]:
         """Zone IDs for measurement mode."""
+        ...
+
+    @property
+    def feed_forward(self) -> bool:
+        """Whether the device supports mid-circuit measurement with classical feedback."""
+        ...
+
+    @property
+    def atom_reloading(self) -> bool:
+        """Whether the device supports reloading atoms after initial fill."""
         ...
 
     @property

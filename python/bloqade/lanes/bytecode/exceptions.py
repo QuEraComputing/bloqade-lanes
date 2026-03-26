@@ -126,6 +126,26 @@ class LaneValidationError(ValidationError):
         super().__init__(f"pc {pc}: {error}")
 
 
+class FeedForwardNotSupportedError(ValidationError):
+    """Multiple measure instructions require feed_forward capability."""
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(
+            f"pc {pc}: multiple measure instructions require feed_forward capability"
+        )
+
+
+class AtomReloadingNotSupportedError(ValidationError):
+    """Fill instruction requires atom_reloading capability."""
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(
+            f"pc {pc}: fill instruction requires atom_reloading capability"
+        )
+
+
 # ── Location group errors (from ArchSpec.check_locations) ──
 
 
