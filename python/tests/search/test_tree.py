@@ -198,6 +198,25 @@ def test_valid_lanes_filter_by_direction():
         assert lane.direction == Direction.BACKWARD
 
 
+def test_apply_move_set_rejects_incomplete_grid():
+    """An incomplete AOD grid (not a full Cartesian product) raises AssertionError."""
+    tree = _make_tree()
+
+    # Three lanes spanning 2 words × 2 sites = 4 expected, but only 3 provided.
+    # This violates the AOD grid constraint.
+    incomplete_grid = frozenset(
+        {
+            SiteLaneAddress(0, 0, 0),
+            SiteLaneAddress(1, 0, 0),
+            SiteLaneAddress(0, 1, 0),
+            # Missing: SiteLaneAddress(1, 1, 0)
+        }
+    )
+
+    with pytest.raises(AssertionError, match="lane-group validation"):
+        tree.apply_move_set(tree.root, incomplete_grid)
+
+
 def test_valid_lanes_no_collisions():
     """All sites occupied — no valid lanes with unoccupied destinations."""
     arch_spec = logical.get_arch_spec()
