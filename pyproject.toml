@@ -56,6 +56,7 @@ doc = [
 ]
 dev = [
     "black>=26.0.0",
+    "maturin>=1.4,<2.0",
     "coverage>=7.6.4",
     "ipython>=8.29.0",
     "isort>=5.13.2",
