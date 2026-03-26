@@ -74,7 +74,7 @@ def test_apply_move_set_collision_nonstrict_returns_none():
 
 
 def test_collision_filtered_by_generator():
-    """ExhaustiveMoveGenerator pre-filters collision-causing rectangles."""
+    """ExhaustiveMoveGenerator pre-filters collision-causing grids."""
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
@@ -122,7 +122,7 @@ def test_exhaustive_generator_single_lane_capacity():
         assert len(ms) == 1
 
 
-def test_exhaustive_generator_no_empty_rectangles():
+def test_exhaustive_generator_no_empty_grids():
     arch_spec = logical.get_arch_spec()
     placement = {0: LocationAddress(0, 0)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)

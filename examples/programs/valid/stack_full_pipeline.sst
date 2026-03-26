@@ -17,21 +17,21 @@ const_loc 0x00000005    ; word 0, site 5
 const_loc 0x00000006    ; word 0, site 6
 fill 2
 
-; --- Local R rotation: push locations, then axis_angle, then rotation_angle ---
+; --- Local R rotation: push locations, then rotation_angle, then axis_angle ---
 const_loc 0x00000000    ; word 0, site 0
-const_float 1.5708        ; axis_angle
 const_float 3.14159       ; rotation_angle
-local_r 1               ; pops rotation_angle, axis_angle (2 floats), then 1 location
+const_float 1.5708        ; axis_angle
+local_r 1               ; pops axis_angle, rotation_angle (2 floats), then 1 location
 
 ; --- Local Rz rotation: push locations, then rotation_angle ---
 const_loc 0x00000001    ; word 0, site 1
 const_float 0.7854        ; rotation_angle
 local_rz 1              ; pops rotation_angle (1 float), then 1 location
 
-; --- Global R rotation: push axis_angle, then rotation_angle ---
-const_float 1.5708        ; axis_angle
+; --- Global R rotation: push rotation_angle, then axis_angle ---
 const_float 3.14159       ; rotation_angle
-global_r                ; pops rotation_angle, axis_angle (2 floats)
+const_float 1.5708        ; axis_angle
+global_r                ; pops axis_angle, rotation_angle (2 floats)
 
 ; --- Global Rz rotation: push rotation_angle ---
 const_float 0.7854        ; rotation_angle

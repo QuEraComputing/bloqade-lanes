@@ -1110,7 +1110,7 @@ class Instruction:
     def local_r(arity: int) -> Instruction:
         """Local R rotation gate on ``arity`` locations.
 
-        Pops ``arity`` locations, then theta and phi angles from the stack.
+        Pops phi (axis angle) and theta (rotation angle), then ``arity`` locations from the stack.
 
         Args:
             arity (int): Number of locations to apply the gate to.
@@ -1124,7 +1124,7 @@ class Instruction:
     def local_rz(arity: int) -> Instruction:
         """Local Rz rotation gate on ``arity`` locations.
 
-        Pops ``arity`` locations, then a phi angle from the stack.
+        Pops theta (rotation angle), then ``arity`` locations from the stack.
 
         Args:
             arity (int): Number of locations to apply the gate to.
@@ -1138,7 +1138,7 @@ class Instruction:
     def global_r() -> Instruction:
         """Global R rotation gate.
 
-        Pops theta and phi angles from the stack.
+        Pops phi (axis angle) and theta (rotation angle) from the stack.
 
         Returns:
             Instruction: The global_r instruction.
@@ -1149,7 +1149,7 @@ class Instruction:
     def global_rz() -> Instruction:
         """Global Rz rotation gate.
 
-        Pops a phi angle from the stack.
+        Pops theta (rotation angle) from the stack.
 
         Returns:
             Instruction: The global_rz instruction.
