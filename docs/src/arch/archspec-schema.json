@@ -74,6 +74,16 @@
       "items": {
         "$ref": "#/$defs/TransportPath"
       }
+    },
+    "feed_forward": {
+      "description": "Whether the device supports mid-circuit measurement with classical feedback. When false (default), at most one measure instruction is allowed per program.",
+      "type": "boolean",
+      "default": false
+    },
+    "atom_reloading": {
+      "description": "Whether the device supports reloading atoms after initial fill. When false (default), no fill instruction is allowed (only initial_fill).",
+      "type": "boolean",
+      "default": false
     }
   },
   "$defs": {

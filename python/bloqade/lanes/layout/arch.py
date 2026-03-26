@@ -106,6 +106,16 @@ class ArchSpec:
     def entangling_zones(self) -> frozenset[int]:
         return frozenset(self._inner.entangling_zones)
 
+    @property
+    def feed_forward(self) -> bool:
+        """Whether the device supports mid-circuit measurement with classical feedback."""
+        return self._inner.feed_forward
+
+    @property
+    def atom_reloading(self) -> bool:
+        """Whether the device supports reloading atoms after initial fill."""
+        return self._inner.atom_reloading
+
     @cached_property
     def has_site_buses(self) -> frozenset[int]:
         return frozenset(self._inner.words_with_site_buses)
@@ -150,6 +160,8 @@ class ArchSpec:
         site_buses: tuple[Bus, ...],
         word_buses: tuple[Bus, ...],
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
+        feed_forward: bool = False,
+        atom_reloading: bool = False,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
         sites_per_word = len(words[0].site_indices) if words else 0
@@ -189,6 +201,8 @@ class ArchSpec:
             entangling_zones=sorted(entangling_zones),
             measurement_mode_zones=list(measurement_mode_zones),
             paths=rust_paths,
+            feed_forward=feed_forward,
+            atom_reloading=atom_reloading,
         )
         return cls(inner, words, paths)
 
