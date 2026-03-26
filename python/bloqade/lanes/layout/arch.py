@@ -160,6 +160,8 @@ class ArchSpec:
         site_buses: tuple[Bus, ...],
         word_buses: tuple[Bus, ...],
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
+        feed_forward: bool = False,
+        atom_reloading: bool = False,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
         sites_per_word = len(words[0].site_indices) if words else 0
@@ -199,6 +201,8 @@ class ArchSpec:
             entangling_zones=sorted(entangling_zones),
             measurement_mode_zones=list(measurement_mode_zones),
             paths=rust_paths,
+            feed_forward=feed_forward,
+            atom_reloading=atom_reloading,
         )
         return cls(inner, words, paths)
 
