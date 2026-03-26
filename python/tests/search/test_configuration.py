@@ -77,6 +77,29 @@ def test_occupied_locations():
     assert node.occupied_locations == frozenset({loc0, loc1})
 
 
+def test_cached_derived_views_and_lookup_methods_are_stable():
+    loc0 = LocationAddress(0, 0)
+    loc1 = LocationAddress(1, 0)
+    empty_loc = LocationAddress(0, 5)
+    node = ConfigurationNode(configuration={0: loc0, 1: loc1})
+
+    first_key = node.config_key
+    first_occupied = node.occupied_locations
+
+    # Repeated access should return stable cached objects.
+    assert node.config_key is first_key
+    assert node.occupied_locations is first_occupied
+
+    # Lookup helpers should remain stable across repeated calls.
+    for _ in range(3):
+        assert node.get_qubit_at(loc0) == 0
+        assert node.get_qubit_at(loc1) == 1
+        assert node.get_qubit_at(empty_loc) is None
+        assert node.is_occupied(loc0) is True
+        assert node.is_occupied(loc1) is True
+        assert node.is_occupied(empty_loc) is False
+
+
 def test_path_to_root_at_root():
     node = ConfigurationNode(configuration={0: LocationAddress(0, 0)})
     assert node.path_to_root() == []
