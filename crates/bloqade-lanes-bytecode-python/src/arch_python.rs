@@ -713,7 +713,7 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, geometry, buses, words_with_site_buses, sites_with_word_buses, zones, entangling_zones, measurement_mode_zones, paths=None))]
+    #[pyo3(signature = (version, geometry, buses, words_with_site_buses, sites_with_word_buses, zones, entangling_zones, measurement_mode_zones, paths=None, feed_forward=false, atom_reloading=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
@@ -725,6 +725,8 @@ impl PyArchSpec {
         entangling_zones: Vec<i64>,
         measurement_mode_zones: Vec<i64>,
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
+        feed_forward: bool,
+        atom_reloading: bool,
     ) -> PyResult<Self> {
         let words_with_site_buses =
             validate_vec::<u32>("words_with_site_buses", words_with_site_buses)?;
@@ -744,6 +746,8 @@ impl PyArchSpec {
                 entangling_zones,
                 measurement_mode_zones,
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
+                feed_forward,
+                atom_reloading,
             },
         })
     }
@@ -814,6 +818,16 @@ impl PyArchSpec {
     #[getter]
     fn measurement_mode_zones(&self) -> Vec<u32> {
         self.inner.measurement_mode_zones.clone()
+    }
+
+    #[getter]
+    fn feed_forward(&self) -> bool {
+        self.inner.feed_forward
+    }
+
+    #[getter]
+    fn atom_reloading(&self) -> bool {
+        self.inner.atom_reloading
     }
 
     #[getter]

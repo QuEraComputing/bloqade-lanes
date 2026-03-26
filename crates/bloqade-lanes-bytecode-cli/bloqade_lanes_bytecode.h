@@ -113,7 +113,7 @@ enum BlqdStatus blqd_validate_structure(const struct BLQDProgram *prog,
                                         struct BLQDValidationErrors **out);
 
 /**
- * Address validation against an architecture spec.
+ * Architecture-dependent validation (addresses + capability constraints).
  */
 enum BlqdStatus blqd_validate_addresses(const struct BLQDProgram *prog,
                                         const struct BLQDArchSpec *arch,

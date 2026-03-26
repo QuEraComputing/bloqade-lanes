@@ -168,6 +168,14 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("LaneValidationError")?;
             cls.call1((*pc, inner))?
         }
+        ValidationError::FeedForwardNotSupported { pc } => {
+            let cls = module.getattr("FeedForwardNotSupportedError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::AtomReloadingNotSupported { pc } => {
+            let cls = module.getattr("AtomReloadingNotSupportedError")?;
+            cls.call1((*pc,))?
+        }
     };
 
     Ok(obj.into())

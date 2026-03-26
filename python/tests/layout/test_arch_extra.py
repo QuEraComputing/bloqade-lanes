@@ -154,3 +154,25 @@ def test_get_endpoints_word_and_site():
 def test_get_blockaded_location_none():
     loc = LocationAddress(0, 0)
     assert arch_spec.get_blockaded_location(loc) is None
+
+
+def test_capability_flags_default():
+    assert arch_spec.feed_forward is False
+    assert arch_spec.atom_reloading is False
+
+
+def test_capability_flags_from_components():
+    spec = ArchSpec.from_components(
+        words=(word, word),
+        zones=((0, 1),),
+        measurement_mode_zones=(0,),
+        entangling_zones=frozenset([0]),
+        has_site_buses=frozenset([0]),
+        has_word_buses=frozenset([0]),
+        site_buses=(Bus(src=[0], dst=[1]),),
+        word_buses=(Bus(src=[0], dst=[1]),),
+        feed_forward=True,
+        atom_reloading=True,
+    )
+    assert spec.feed_forward is True
+    assert spec.atom_reloading is True

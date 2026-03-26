@@ -16,7 +16,9 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
   "zones": [...],
   "entangling_zones": [...],
   "measurement_mode_zones": [...],
-  "paths": [...]                  // optional
+  "paths": [...],                 // optional
+  "feed_forward": false,          // optional, default false
+  "atom_reloading": false          // optional, default false
 }
 ```
 
@@ -31,6 +33,8 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 | `entangling_zones` | integer[] | Zone IDs where CZ gates can be performed. |
 | `measurement_mode_zones` | integer[] | Zone IDs that support measurement. |
 | `paths` | TransportPath[] | *(optional)* AOD transport paths between locations. |
+| `feed_forward` | bool | *(optional, default `false`)* Whether the device supports mid-circuit measurement with classical feedback. |
+| `atom_reloading` | bool | *(optional, default `false`)* Whether the device supports reloading atoms after initial fill. |
 
 ---
 
@@ -170,6 +174,26 @@ This field is omitted from the JSON when not needed.
 
 ---
 
+## Capability Flags (Optional)
+
+Two boolean flags describe device capabilities that affect bytecode validation:
+
+| Field | Default | Description |
+|---|---|---|
+| `feed_forward` | `false` | Mid-circuit measurement with classical feedback. When `false`, at most one `measure` instruction is allowed per program. |
+| `atom_reloading` | `false` | Atom reloading after initial fill. When `false`, no `fill` instruction is allowed (only `initial_fill`). |
+
+Both fields are optional in the JSON — existing arch spec files that omit them default to `false`, which is the most restrictive setting.
+
+```jsonc
+{
+  "feed_forward": true,
+  "atom_reloading": false
+}
+```
+
+---
+
 ## Validation Rules
 
 The `ArchSpec::validate()` method checks all structural rules in a single pass, collecting every error rather than failing fast. The following rules are enforced:
@@ -225,6 +249,15 @@ The `ArchSpec::validate()` method checks all structural rules in a single pass, 
 | Every path must have at least 2 waypoints | `PathTooFewWaypoints` |
 | The first waypoint must match the source position of the lane, and the last waypoint must match the destination position | `PathEndpointMismatch` |
 | Waypoint coordinates must be finite (no NaN or Inf) | `NonFiniteWaypoint` |
+
+### Capability Rules (Bytecode Validation)
+
+These rules are checked during bytecode validation when an `ArchSpec` is provided:
+
+| Rule | Error |
+|---|---|
+| If `feed_forward = false`, at most one `measure` instruction is allowed | `FeedForwardNotSupported` |
+| If `atom_reloading = false`, no `fill` instruction is allowed | `AtomReloadingNotSupported` |
 
 ---
 

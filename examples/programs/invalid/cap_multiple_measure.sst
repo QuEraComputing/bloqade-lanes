@@ -1,0 +1,19 @@
+.version 1
+; Two measure instructions — requires feed_forward capability.
+; Should fail when arch spec has feed_forward = false (default).
+
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+
+const_zone 0x00000000
+measure 1
+await_measure
+
+; Second measure is not allowed without feed_forward
+const_zone 0x00000000
+measure 1
+await_measure
+
+return
+halt
