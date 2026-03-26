@@ -45,7 +45,7 @@ class _ValidationAnalysis(Forward[EmptyLattice]):
                 node,
                 ir.ValidationError(
                     node,
-                    f"Invalid lane group: {error}",
+                    f"Invalid lane group (count={len(lanes)}): {error}",
                 ),
             )
 

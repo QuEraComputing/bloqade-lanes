@@ -29,6 +29,8 @@ from .word import Word
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from bloqade.lanes.bytecode.exceptions import LaneGroupError, LocationGroupError
+
 
 class ArchSpec:
     """Architecture specification for a quantum device."""
@@ -366,15 +368,17 @@ class ArchSpec:
 
     def check_location_group(
         self, locations: Sequence[LocationAddress]
-    ) -> list[Exception]:
+    ) -> Sequence[LocationGroupError]:
         """Validate a group of location addresses via Rust.
 
         Returns a list of LocationGroupError exceptions (empty if all valid).
         """
         rust_addrs = [loc._inner for loc in locations]
-        return list(self._inner.check_locations(rust_addrs))
+        return self._inner.check_locations(rust_addrs)  # type: ignore[return-value]
 
-    def check_lane_group(self, lanes: Sequence[LaneAddress]) -> list[Exception]:
+    def check_lane_group(
+        self, lanes: Sequence[LaneAddress]
+    ) -> Sequence[LaneGroupError]:
         """Validate a group of lane addresses via Rust.
 
         Checks individual lane validity, group consistency (direction, bus_id,
@@ -382,7 +386,7 @@ class ArchSpec:
         Returns a list of LaneGroupError exceptions (empty if all valid).
         """
         rust_addrs = [lane._inner for lane in lanes]
-        return list(self._inner.check_lanes(rust_addrs))
+        return self._inner.check_lanes(rust_addrs)  # type: ignore[return-value]
 
     def compatible_lane_error(self, lane1: LaneAddress, lane2: LaneAddress) -> set[str]:
         """Get error messages if two lanes are not compatible.
