@@ -46,6 +46,10 @@ pub enum ValidationError {
     },
     /// Lane group validation error (invalid address, duplicate, inconsistent, AOD constraint, etc.).
     LaneGroupValidation { pc: usize, error: LaneGroupError },
+    /// Multiple measure instructions when feed_forward is disabled.
+    FeedForwardNotSupported { pc: usize },
+    /// Fill instruction when atom_reloading is disabled.
+    AtomReloadingNotSupported { pc: usize },
 }
 
 impl fmt::Display for ValidationError {
@@ -82,6 +86,20 @@ impl fmt::Display for ValidationError {
             }
             ValidationError::LaneGroupValidation { pc, error } => {
                 write!(f, "pc {}: {}", pc, error)
+            }
+            ValidationError::FeedForwardNotSupported { pc } => {
+                write!(
+                    f,
+                    "pc {}: multiple measure instructions require feed_forward capability",
+                    pc
+                )
+            }
+            ValidationError::AtomReloadingNotSupported { pc } => {
+                write!(
+                    f,
+                    "pc {}: fill instruction requires atom_reloading capability",
+                    pc
+                )
             }
         }
     }
@@ -176,6 +194,35 @@ pub fn validate_addresses(program: &Program, arch: &ArchSpec) -> Vec<ValidationE
                         pc,
                         zone_id: addr.zone_id,
                     });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    errors
+}
+
+/// Validate device capability constraints against the program.
+///
+/// Checks:
+/// - If `feed_forward` is false, at most one `measure` instruction is allowed.
+/// - If `atom_reloading` is false, no `fill` instruction is allowed.
+pub fn validate_capabilities(program: &Program, arch: &ArchSpec) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let mut measure_count = 0u32;
+
+    for (pc, instr) in program.instructions.iter().enumerate() {
+        match instr {
+            Instruction::Measurement(MeasurementInstruction::Measure { .. }) => {
+                measure_count += 1;
+                if !arch.feed_forward && measure_count > 1 {
+                    errors.push(ValidationError::FeedForwardNotSupported { pc });
+                }
+            }
+            Instruction::AtomArrangement(AtomArrangementInstruction::Fill { .. }) => {
+                if !arch.atom_reloading {
+                    errors.push(ValidationError::AtomReloadingNotSupported { pc });
                 }
             }
             _ => {}
@@ -1376,6 +1423,107 @@ mod tests {
         };
         let errors = simulate_stack(&program, None);
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    // --- Capability validation tests ---
+
+    fn test_arch_with_caps(feed_forward: bool, atom_reloading: bool) -> ArchSpec {
+        let mut arch = test_arch_spec();
+        arch.feed_forward = feed_forward;
+        arch.atom_reloading = atom_reloading;
+        arch
+    }
+
+    #[test]
+    fn test_cap_single_measure_allowed() {
+        let arch = test_arch_with_caps(false, false);
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::LaneConst(LaneConstInstruction::ConstZone(0)),
+                Instruction::Measurement(MeasurementInstruction::Measure { arity: 1 }),
+            ],
+        };
+        assert!(validate_capabilities(&program, &arch).is_empty());
+    }
+
+    #[test]
+    fn test_cap_multiple_measure_rejected() {
+        let arch = test_arch_with_caps(false, false);
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::LaneConst(LaneConstInstruction::ConstZone(0)),
+                Instruction::Measurement(MeasurementInstruction::Measure { arity: 1 }),
+                Instruction::LaneConst(LaneConstInstruction::ConstZone(0)),
+                Instruction::Measurement(MeasurementInstruction::Measure { arity: 1 }),
+            ],
+        };
+        let errors = validate_capabilities(&program, &arch);
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            ValidationError::FeedForwardNotSupported { pc: 3 }
+        ));
+    }
+
+    #[test]
+    fn test_cap_multiple_measure_with_feed_forward() {
+        let arch = test_arch_with_caps(true, false);
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::LaneConst(LaneConstInstruction::ConstZone(0)),
+                Instruction::Measurement(MeasurementInstruction::Measure { arity: 1 }),
+                Instruction::LaneConst(LaneConstInstruction::ConstZone(0)),
+                Instruction::Measurement(MeasurementInstruction::Measure { arity: 1 }),
+            ],
+        };
+        assert!(validate_capabilities(&program, &arch).is_empty());
+    }
+
+    #[test]
+    fn test_cap_fill_rejected() {
+        let arch = test_arch_with_caps(false, false);
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
+                Instruction::AtomArrangement(AtomArrangementInstruction::Fill { arity: 1 }),
+            ],
+        };
+        let errors = validate_capabilities(&program, &arch);
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            ValidationError::AtomReloadingNotSupported { pc: 1 }
+        ));
+    }
+
+    #[test]
+    fn test_cap_fill_with_atom_reloading() {
+        let arch = test_arch_with_caps(false, true);
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
+                Instruction::AtomArrangement(AtomArrangementInstruction::Fill { arity: 1 }),
+            ],
+        };
+        assert!(validate_capabilities(&program, &arch).is_empty());
+    }
+
+    #[test]
+    fn test_cap_initial_fill_always_allowed() {
+        let arch = test_arch_with_caps(false, false);
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
+                Instruction::AtomArrangement(AtomArrangementInstruction::InitialFill { arity: 1 }),
+            ],
+        };
+        assert!(validate_capabilities(&program, &arch).is_empty());
     }
 
     #[test]

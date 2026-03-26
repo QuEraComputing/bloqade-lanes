@@ -106,6 +106,16 @@ class ArchSpec:
     def entangling_zones(self) -> frozenset[int]:
         return frozenset(self._inner.entangling_zones)
 
+    @property
+    def feed_forward(self) -> bool:
+        """Whether the device supports mid-circuit measurement with classical feedback."""
+        return self._inner.feed_forward
+
+    @property
+    def atom_reloading(self) -> bool:
+        """Whether the device supports reloading atoms after initial fill."""
+        return self._inner.atom_reloading
+
     @cached_property
     def has_site_buses(self) -> frozenset[int]:
         return frozenset(self._inner.words_with_site_buses)

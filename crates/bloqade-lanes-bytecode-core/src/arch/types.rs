@@ -44,6 +44,14 @@ pub struct ArchSpec {
     /// Optional AOD transport paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<TransportPath>>,
+    /// Whether the device supports mid-circuit measurement with classical feedback.
+    /// Defaults to `false` when absent in JSON.
+    #[serde(default)]
+    pub feed_forward: bool,
+    /// Whether the device supports reloading atoms after initial fill.
+    /// Defaults to `false` when absent in JSON.
+    #[serde(default)]
+    pub atom_reloading: bool,
 }
 
 /// A transport path for a lane, defined as a sequence of (x, y) waypoints.
@@ -328,6 +336,8 @@ mod tests {
         let spec: ArchSpec = serde_json::from_str(json).unwrap();
         assert!(spec.paths.is_none());
         assert!(spec.geometry.words[0].has_cz.is_none());
+        assert!(!spec.feed_forward);
+        assert!(!spec.atom_reloading);
     }
 
     #[test]
