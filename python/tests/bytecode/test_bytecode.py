@@ -1,6 +1,7 @@
 import pytest
 
 from bloqade.lanes.bytecode import (
+    ArchSpec,
     Direction,
     Instruction,
     LaneAddress,
@@ -10,7 +11,6 @@ from bloqade.lanes.bytecode import (
     ValidationError,
     ZoneAddress,
 )
-from bloqade.lanes.bytecode.arch import ArchSpec
 from bloqade.lanes.bytecode.exceptions import (
     AtomReloadingNotSupportedError,
     BadMagicError,
