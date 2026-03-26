@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import io
+from dataclasses import dataclass
 from functools import cache
-from typing import TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
@@ -31,7 +34,13 @@ from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import squin_to_move
 
+if TYPE_CHECKING:
+    from bloqade.lanes.analysis.atom import PostProcessing
+    from bloqade.lanes.layout.arch import ArchSpec
+
 __all__ = [
+    "CompiledTask",
+    "compile_task",
     "run_squin_kernel_validation",
     "compile_squin_to_move",
     "compile_squin_to_move_and_visualize",
@@ -249,6 +258,15 @@ def compile_to_stim_program(
 
 
 _S = TypeVar("_S", bound=ir.Statement)
+RetType = TypeVar("RetType")
+
+
+@dataclass(frozen=True)
+class CompiledTask(Generic[RetType]):
+    logical_squin_kernel: ir.Method[[], RetType]
+    physical_arch_spec: ArchSpec
+    physical_move_kernel: ir.Method[[], RetType]
+    post_processing: PostProcessing[RetType]
 
 
 def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
@@ -258,6 +276,51 @@ def _find_qubit_ssas(mt: ir.Method) -> list[ir.SSAValue]:
         for stmt in mt.callable_region.walk()
         if isinstance(stmt, qubit.stmts.New)
     ]
+
+
+def compile_task(
+    logical_kernel: ir.Method[[], RetType] | Callable[..., Any],
+    m2dets: list[list[int]] | None = None,
+    m2obs: list[list[int]] | None = None,
+) -> CompiledTask[RetType]:
+    """Compile a logical or CUDA-Q kernel into Gemini simulation artifacts."""
+    from bloqade.lanes.analysis.atom import AtomInterpreter
+    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
+    from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
+
+    if is_cudaq_kernel(logical_kernel):
+        logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+
+        if m2dets is None and m2obs is None:
+            num_qubits = len(_find_qubit_ssas(logical_squin_kernel))
+            m2dets = steane7_m2dets(num_qubits)
+            m2obs = steane7_m2obs(num_qubits)
+
+        append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
+    elif isinstance(logical_kernel, ir.Method):
+        logical_squin_kernel = logical_kernel
+        if m2dets is not None or m2obs is not None:
+            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
+    else:
+        raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
+
+    run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
+
+    physical_arch_spec = generate_arch_hypercube(4)
+    physical_move_kernel = compile_squin_to_move(
+        logical_squin_kernel, transversal_rewrite=True
+    )
+    post_processing = AtomInterpreter(
+        physical_move_kernel.dialects, arch_spec=physical_arch_spec
+    ).get_post_processing(physical_move_kernel)
+
+    return CompiledTask(
+        logical_squin_kernel=logical_squin_kernel,
+        physical_arch_spec=physical_arch_spec,
+        physical_move_kernel=physical_move_kernel,
+        post_processing=post_processing,
+    )
 
 
 def _find_return_stmt(mt: ir.Method) -> func.Return:
