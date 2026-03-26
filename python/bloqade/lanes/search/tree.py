@@ -233,6 +233,17 @@ class ConfigurationTree:
             InvalidMoveError: If strict=True and the move set causes a
                 collision or contains an invalid lane address.
         """
+        # Validate the full move set against the arch spec (AOD geometry,
+        # consistency, bus membership, etc.).  This should never fail when
+        # moves are produced by the standard generators — a failure here
+        # signals a bug in a generator or manual move-set construction.
+        lane_errors = self.arch_spec.check_lane_group(list(move_set))
+        if lane_errors:
+            msgs = "; ".join(str(e) for e in lane_errors)
+            raise AssertionError(
+                f"Internal error: move set failed lane-group validation: {msgs}"
+            )
+
         new_config = dict(node.configuration)
         occupied = node.occupied_locations
 
