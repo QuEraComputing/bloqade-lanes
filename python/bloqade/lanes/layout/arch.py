@@ -364,103 +364,59 @@ class ArchSpec:
         )
         plt.show()
 
+    def check_location_group(
+        self, locations: Sequence[LocationAddress]
+    ) -> list[Exception]:
+        """Validate a group of location addresses via Rust.
+
+        Returns a list of LocationGroupError exceptions (empty if all valid).
+        """
+        rust_addrs = [loc._inner for loc in locations]
+        return list(self._inner.check_locations(rust_addrs))
+
+    def check_lane_group(self, lanes: Sequence[LaneAddress]) -> list[Exception]:
+        """Validate a group of lane addresses via Rust.
+
+        Checks individual lane validity, group consistency (direction, bus_id,
+        move_type), bus membership, and AOD geometry constraints.
+        Returns a list of LaneGroupError exceptions (empty if all valid).
+        """
+        rust_addrs = [lane._inner for lane in lanes]
+        return list(self._inner.check_lanes(rust_addrs))
+
     def compatible_lane_error(self, lane1: LaneAddress, lane2: LaneAddress) -> set[str]:
         """Get error messages if two lanes are not compatible.
 
-        NOTE: this function assumes that both lanes are valid.
+        Delegates to Rust group validation.
         """
-        errors: set[str] = set()
-        if lane1.direction != lane2.direction:
-            errors.add("Lanes have different directions")
-
-        if lane1.move_type == MoveType.SITE and lane2.move_type == MoveType.SITE:
-            if lane1.bus_id != lane2.bus_id:
-                errors.add("Lanes are on different site-buses")
-            if lane1.word_id == lane2.word_id and lane1.site_id == lane2.site_id:
-                errors.add("Lanes are the same")
-        elif lane1.move_type == MoveType.WORD and lane2.move_type == MoveType.WORD:
-            if lane2.bus_id != lane1.bus_id:
-                errors.add("Lanes are on different word-buses")
-            if lane1.word_id == lane2.word_id and lane1.site_id == lane2.site_id:
-                errors.add("Lanes are the same")
-        else:
-            errors.add("Lanes have different move types")
-
-        return errors
+        errors = self.check_lane_group([lane1, lane2])
+        return {str(e) for e in errors}
 
     def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
         """Check if two lanes are compatible (can be executed in parallel)."""
-        return len(self.compatible_lane_error(lane1, lane2)) == 0
+        return len(self.check_lane_group([lane1, lane2])) == 0
 
     def validate_location(self, location_address: LocationAddress) -> set[str]:
-        """Check if a location address is valid in this architecture."""
-        errors: set[str] = set()
+        """Check if a location address is valid in this architecture.
 
-        num_words = len(self.words)
-        if location_address.word_id >= num_words:
-            errors.add(
-                f"Word id {location_address.word_id} out of range of {num_words}"
-            )
-            return errors
+        Delegates to Rust validation.
+        """
+        errors = self.check_location_group([location_address])
+        return {str(e) for e in errors}
 
-        word = self.words[location_address.word_id]
+    def validate_lane(self, lane_address: LaneAddress) -> set[str]:
+        """Check if a lane address is valid in this architecture.
 
-        num_sites = len(word.site_indices)
-        if location_address.site_id >= num_sites:
-            errors.add(
-                f"Site id {location_address.site_id} out of range of {num_sites}"
-            )
-
-        return errors
+        Delegates to Rust validation.
+        """
+        errors = self.check_lane_group([lane_address])
+        return {str(e) for e in errors}
 
     def get_lane_address(
         self, src: LocationAddress, dst: LocationAddress
     ) -> LaneAddress | None:
         """Given an input tuple of locations, gets the lane (w/direction)."""
         return self._lane_map.get((src, dst))
-
-    def validate_lane(self, lane_address: LaneAddress) -> set[str]:
-        """Check if a lane address is valid in this architecture."""
-        errors = self.validate_location(lane_address.src_site())
-
-        if lane_address.move_type == MoveType.WORD:
-            if lane_address.site_id not in self.has_word_buses:
-                errors.add(
-                    f"Site {lane_address.site_id} does not support word-bus moves"
-                )
-            num_word_buses = len(self.word_buses)
-            if lane_address.bus_id >= num_word_buses:
-                errors.add(
-                    f"Bus id {lane_address.bus_id} out of range of {num_word_buses}"
-                )
-                return errors
-
-            bus = self.word_buses[lane_address.bus_id]
-            if lane_address.word_id not in bus.src:
-                errors.add(f"Word {lane_address.word_id} not in bus source {bus.src}")
-
-        elif lane_address.move_type == MoveType.SITE:
-            if lane_address.word_id not in self.has_site_buses:
-                errors.add(
-                    f"Word {lane_address.word_id} does not support site-bus moves"
-                )
-
-            num_site_buses = len(self.site_buses)
-            if lane_address.bus_id >= num_site_buses:
-                errors.add(
-                    f"Bus id {lane_address.bus_id} out of range of {num_site_buses}"
-                )
-                return errors
-
-            bus = self.site_buses[lane_address.bus_id]
-            if lane_address.site_id not in bus.src:
-                errors.add(f"Site {lane_address.site_id} not in bus source {bus.src}")
-        else:
-            errors.add(
-                f"Unsupported move type {lane_address.move_type} for lane address"
-            )
-
-        return errors
 
     def get_endpoints(
         self, lane_address: LaneAddress
