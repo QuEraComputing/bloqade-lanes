@@ -208,7 +208,9 @@
   &quot;zones&quot;: [...],
   &quot;entangling_zones&quot;: [...],
   &quot;measurement_mode_zones&quot;: [...],
-  &quot;paths&quot;: [...]                  // optional
+  &quot;paths&quot;: [...],                 // optional
+  &quot;feed_forward&quot;: false,          // optional, default false
+  &quot;atom_reloading&quot;: false          // optional, default false
 }
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
@@ -221,6 +223,8 @@
 <tr><td><code>entangling_zones</code></td><td>integer[]</td><td>Zone IDs where CZ gates can be performed.</td></tr>
 <tr><td><code>measurement_mode_zones</code></td><td>integer[]</td><td>Zone IDs that support measurement.</td></tr>
 <tr><td><code>paths</code></td><td>TransportPath[]</td><td><em>(optional)</em> AOD transport paths between locations.</td></tr>
+<tr><td><code>feed_forward</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports mid-circuit measurement with classical feedback.</td></tr>
+<tr><td><code>atom_reloading</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports reloading atoms after initial fill.</td></tr>
 </tbody></table>
 </div>
 <hr />
@@ -314,6 +318,20 @@
 <p>To decode the lane hex string, parse it as a 64-bit unsigned integer. The low 32 bits (data0) contain <code>[word_id:16][site_id:16]</code> and the high 32 bits (data1) contain <code>[dir:1][mt:1][pad:14][bus_id:16]</code>. For example, <code>&quot;0xC000000000000000&quot;</code> decodes to direction=Backward, move_type=WordBus, word=0, site=0, bus=0. In the lane address convention, <code>word_id</code> always encodes the forward-direction source word for that lane; in this specific example the bus mapping is src=[0], dst=[1], so <code>direction=Backward</code> means the move goes from word 1 back to word 0.</p>
 <p>This field is omitted from the JSON when not needed.</p>
 <hr />
+<h2 id="capability-flags-optional"><a class="header" href="#capability-flags-optional">Capability Flags (Optional)</a></h2>
+<p>Two boolean flags describe device capabilities that affect bytecode validation:</p>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>feed_forward</code></td><td><code>false</code></td><td>Mid-circuit measurement with classical feedback. When <code>false</code>, at most one <code>measure</code> instruction is allowed per program.</td></tr>
+<tr><td><code>atom_reloading</code></td><td><code>false</code></td><td>Atom reloading after initial fill. When <code>false</code>, no <code>fill</code> instruction is allowed (only <code>initial_fill</code>).</td></tr>
+</tbody></table>
+</div>
+<p>Both fields are optional in the JSON — existing arch spec files that omit them default to <code>false</code>, which is the most restrictive setting.</p>
+<pre><code class="language-jsonc">{
+  &quot;feed_forward&quot;: true,
+  &quot;atom_reloading&quot;: false
+}
+</code></pre>
+<hr />
 <h2 id="validation-rules"><a class="header" href="#validation-rules">Validation Rules</a></h2>
 <p>The <code>ArchSpec::validate()</code> method checks all structural rules in a single pass, collecting every error rather than failing fast. The following rules are enforced:</p>
 <h3 id="zone-rules"><a class="header" href="#zone-rules">Zone Rules</a></h3>
@@ -360,6 +378,13 @@
 <tr><td>Every path must have at least 2 waypoints</td><td><code>PathTooFewWaypoints</code></td></tr>
 <tr><td>The first waypoint must match the source position of the lane, and the last waypoint must match the destination position</td><td><code>PathEndpointMismatch</code></td></tr>
 <tr><td>Waypoint coordinates must be finite (no NaN or Inf)</td><td><code>NonFiniteWaypoint</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="capability-rules-bytecode-validation"><a class="header" href="#capability-rules-bytecode-validation">Capability Rules (Bytecode Validation)</a></h3>
+<p>These rules are checked during bytecode validation when an <code>ArchSpec</code> is provided:</p>
+<div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
+<tr><td>If <code>feed_forward = false</code>, at most one <code>measure</code> instruction is allowed</td><td><code>FeedForwardNotSupported</code></td></tr>
+<tr><td>If <code>atom_reloading = false</code>, no <code>fill</code> instruction is allowed</td><td><code>AtomReloadingNotSupported</code></td></tr>
 </tbody></table>
 </div>
 <hr />

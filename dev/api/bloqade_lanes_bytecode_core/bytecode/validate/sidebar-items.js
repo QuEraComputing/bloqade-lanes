@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ValidationError"],"fn":["simulate_stack","validate_addresses","validate_structure"]};
+window.SIDEBAR_ITEMS = {"enum":["ValidationError"],"fn":["simulate_stack","validate_addresses","validate_arch_constraints","validate_capabilities","validate_structure"]};
