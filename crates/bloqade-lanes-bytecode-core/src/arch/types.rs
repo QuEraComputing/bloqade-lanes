@@ -341,6 +341,45 @@ mod tests {
     }
 
     #[test]
+    fn capability_fields_present() {
+        let json = r#"{
+            "version": "1.0",
+            "geometry": {
+                "sites_per_word": 2,
+                "words": [
+                    {
+                        "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
+                        "site_indices": [[0, 0], [0, 1]]
+                    }
+                ]
+            },
+            "buses": { "site_buses": [], "word_buses": [] },
+            "words_with_site_buses": [],
+            "sites_with_word_buses": [],
+            "zones": [{ "words": [0] }],
+            "entangling_zones": [],
+            "measurement_mode_zones": [0],
+            "feed_forward": true,
+            "atom_reloading": true
+        }"#;
+        let spec: ArchSpec = serde_json::from_str(json).unwrap();
+        assert!(spec.feed_forward);
+        assert!(spec.atom_reloading);
+    }
+
+    #[test]
+    fn capability_fields_round_trip() {
+        let mut spec = example_arch_spec();
+        spec.feed_forward = true;
+        spec.atom_reloading = true;
+        let json = serde_json::to_string(&spec).unwrap();
+        let deserialized: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.feed_forward);
+        assert!(deserialized.atom_reloading);
+        assert_eq!(spec, deserialized);
+    }
+
+    #[test]
     fn lane_hex_canonical_accepted() {
         let json = r#"{"lane": "0x0000000000000001", "waypoints": [[1.0, 2.0]]}"#;
         let path: TransportPath = serde_json::from_str(json).unwrap();

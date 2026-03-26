@@ -154,3 +154,8 @@ def test_get_endpoints_word_and_site():
 def test_get_blockaded_location_none():
     loc = LocationAddress(0, 0)
     assert arch_spec.get_blockaded_location(loc) is None
+
+
+def test_capability_flags_default():
+    assert arch_spec.feed_forward is False
+    assert arch_spec.atom_reloading is False
