@@ -237,12 +237,9 @@ class ConfigurationTree:
         # consistency, bus membership, etc.).  This should never fail when
         # moves are produced by the standard generators — a failure here
         # signals a bug in a generator or manual move-set construction.
-        lane_errors = self.arch_spec.check_lane_group(list(move_set))
-        if lane_errors:
-            msgs = "; ".join(str(e) for e in lane_errors)
-            raise AssertionError(
-                f"Internal error: move set failed lane-group validation: {msgs}"
-            )
+        assert not (
+            lane_errors := self.arch_spec.check_lane_group(list(move_set))
+        ), f"Internal error: move set failed lane-group validation: {'; '.join(str(e) for e in lane_errors)}"
 
         new_config = dict(node.configuration)
         occupied = node.occupied_locations
