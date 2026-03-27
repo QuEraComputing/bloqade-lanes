@@ -17,7 +17,16 @@ from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.generators import EntropyNode, HeuristicMoveGenerator
 from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
-from bloqade.lanes.search.traversal.goal import SearchResult, placement_goal
+from bloqade.lanes.search.traversal.goal import GoalPredicate, SearchResult
+from bloqade.lanes.search.traversal.step_info import (
+    DescendStepInfo,
+    EntropyBumpStepInfo,
+    FallbackStartStepInfo,
+    FallbackStepInfo,
+    GoalStepInfo,
+    RevertStepInfo,
+    StepInfo,
+)
 from bloqade.lanes.search.tree import ConfigurationTree, ExpansionStatus
 
 
@@ -166,11 +175,12 @@ def _sequential_fallback(
     tree: ConfigurationTree,
     current_node: ConfigurationNode,
     target: dict[int, LocationAddress],
+    goal: GoalPredicate,
     nodes_expanded: int,
     max_depth_reached: int,
     # NOTE: on_step callback is for debugging/visualization only.
     # Can be safely removed along with all on_step callsites in this function.
-    on_step: Callable[[str, ConfigurationNode, dict], None] | None = None,
+    on_step: Callable[[str, ConfigurationNode, StepInfo], None] | None = None,
 ) -> SearchResult:
     """Move each unresolved qubit one at a time along its shortest path.
 
@@ -189,11 +199,11 @@ def _sequential_fallback(
         on_step(
             "fallback_start",
             node,
-            {
-                "entropy": 0,
-                "unresolved_count": _unresolved_count(node, target),
-                "unresolved_qubits": unresolved,
-            },
+            FallbackStartStepInfo(
+                entropy=0,
+                unresolved_count=_unresolved_count(node, target),
+                unresolved_qubits=unresolved,
+            ),
         )
 
     for qid in unresolved:
@@ -239,15 +249,14 @@ def _sequential_fallback(
                 on_step(
                     "fallback_step",
                     node,
-                    {
-                        "entropy": 0,
-                        "unresolved_count": _unresolved_count(node, target),
-                        "qubit_id": qid,
-                        "moveset": moveset,
-                    },
+                    FallbackStepInfo(
+                        entropy=0,
+                        unresolved_count=_unresolved_count(node, target),
+                        qubit_id=qid,
+                        moveset=moveset,
+                    ),
                 )
 
-    goal = placement_goal(target)
     if goal(node):
         return SearchResult(
             goal_node=node,
@@ -265,32 +274,32 @@ def _sequential_fallback(
 def entropy_guided_search(
     tree: ConfigurationTree,
     target: dict[int, LocationAddress],
+    goal: GoalPredicate,
     params: SearchParams = SearchParams(),
     max_depth: int | None = None,
     max_expansions: int | None = None,
     # NOTE: on_step callback is for debugging/visualization only.
     # Can be safely removed along with all on_step callsites in this function.
-    on_step: Callable[[str, ConfigurationNode, dict], None] | None = None,
+    on_step: Callable[[str, ConfigurationNode, StepInfo], None] | None = None,
 ) -> SearchResult:
     """Entropy-guided depth-first search with reversion and sequential fallback.
 
-    Unlike BFS/A*/Greedy, takes target directly (not GoalPredicate) because
-    scoring needs the raw target mapping.
+    Also takes target directly (in addition to goal) because scoring needs
+    the raw target mapping.
 
     Does not use tree.expand_node() -- calls tree.apply_move_set() directly.
     """
-    goal = placement_goal(target)
 
     if goal(tree.root):
         if on_step is not None:
             on_step(
                 "goal",
                 tree.root,
-                {
-                    "entropy": 0,
-                    "unresolved_count": 0,
-                    "total_depth": 0,
-                },
+                GoalStepInfo(
+                    entropy=0,
+                    unresolved_count=0,
+                    total_depth=0,
+                ),
             )
         return SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
 
@@ -341,6 +350,7 @@ def entropy_guided_search(
                         tree,
                         tree.root,
                         target,
+                        goal,
                         nodes_expanded,
                         max_depth_reached,
                         on_step=on_step,
@@ -355,15 +365,15 @@ def entropy_guided_search(
                 on_step(
                     "revert",
                     ancestor,
-                    {
-                        "entropy": ancestor_sn.entropy,
-                        "unresolved_count": _unresolved_count(ancestor, target),
-                        "reversion_steps": params.reversion_steps,
-                        "ancestor_depth": ancestor.depth,
-                        "reason": revert_reason,
-                        "state_seen_node_id": seen_node_id,
-                        "no_valid_moves_qubit": no_valid_qid,
-                    },
+                    RevertStepInfo(
+                        entropy=ancestor_sn.entropy,
+                        unresolved_count=_unresolved_count(ancestor, target),
+                        reversion_steps=params.reversion_steps,
+                        ancestor_depth=ancestor.depth,
+                        reason=revert_reason,
+                        state_seen_node_id=seen_node_id,
+                        no_valid_moves_qubit=no_valid_qid,
+                    ),
                 )
             current_node = ancestor
             _print_node_transition(
@@ -391,13 +401,13 @@ def entropy_guided_search(
                 on_step(
                     "entropy_bump",
                     current_node,
-                    {
-                        "entropy": sn.entropy,
-                        "unresolved_count": _unresolved_count(current_node, target),
-                        "new_entropy": sn.entropy,
-                        "reason": "no-valid-moves",
-                        "no_valid_moves_qubit": no_valid_qid,
-                    },
+                    EntropyBumpStepInfo(
+                        entropy=sn.entropy,
+                        unresolved_count=_unresolved_count(current_node, target),
+                        new_entropy=sn.entropy,
+                        reason="no-valid-moves",
+                        no_valid_moves_qubit=no_valid_qid,
+                    ),
                 )
             continue
 
@@ -429,14 +439,14 @@ def entropy_guided_search(
                 on_step(
                     "entropy_bump",
                     current_node,
-                    {
-                        "entropy": sn.entropy,
-                        "unresolved_count": _unresolved_count(current_node, target),
-                        "new_entropy": sn.entropy,
-                        "reason": reason,
-                        "state_seen_node_id": seen_node_id,
-                        "no_valid_moves_qubit": no_valid_qid,
-                    },
+                    EntropyBumpStepInfo(
+                        entropy=sn.entropy,
+                        unresolved_count=_unresolved_count(current_node, target),
+                        new_entropy=sn.entropy,
+                        reason=reason,
+                        state_seen_node_id=seen_node_id,
+                        no_valid_moves_qubit=no_valid_qid,
+                    ),
                 )
             continue
         assert outcome.child is not None
@@ -450,13 +460,12 @@ def entropy_guided_search(
             on_step(
                 "descend",
                 child,
-                {
-                    "entropy": sn.entropy,
-                    "unresolved_count": _unresolved_count(child, target),
-                    "moveset": candidate,
-                    "moveset_score": moveset_score,
-                    "score_breakdown": {},
-                },
+                DescendStepInfo(
+                    entropy=sn.entropy,
+                    unresolved_count=_unresolved_count(child, target),
+                    moveset=candidate,
+                    moveset_score=moveset_score,
+                ),
             )
 
         if goal(child):
@@ -464,11 +473,11 @@ def entropy_guided_search(
                 on_step(
                     "goal",
                     child,
-                    {
-                        "entropy": sn.entropy,
-                        "unresolved_count": 0,
-                        "total_depth": child.depth,
-                    },
+                    GoalStepInfo(
+                        entropy=sn.entropy,
+                        unresolved_count=0,
+                        total_depth=child.depth,
+                    ),
                 )
             return SearchResult(
                 goal_node=child,
