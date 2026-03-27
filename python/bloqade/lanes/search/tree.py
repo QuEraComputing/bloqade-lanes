@@ -216,6 +216,12 @@ class ConfigurationTree:
         Resolves lane endpoints, checks for collisions, and creates
         a child node if valid.
 
+        The move set is first validated against the arch spec (AOD
+        geometry, consistency, bus membership).  This check runs as an
+        ``assert`` and is independent of *strict* — it signals an
+        internal bug, not a recoverable runtime condition.  It can be
+        disabled with ``python -O``.
+
         Args:
             node: The node to apply moves to.
             move_set: The set of lane addresses to apply.
@@ -230,9 +236,19 @@ class ConfigurationTree:
               branch at equal-or-lesser depth (transposition table)
 
         Raises:
+            AssertionError: If the move set fails lane-group validation
+                (regardless of *strict*; disabled with ``python -O``).
             InvalidMoveError: If strict=True and the move set causes a
                 collision or contains an invalid lane address.
         """
+        # Validate the full move set against the arch spec (AOD geometry,
+        # consistency, bus membership, etc.).  This should never fail when
+        # moves are produced by the standard generators — a failure here
+        # signals a bug in a generator or manual move-set construction.
+        assert not (
+            lane_errors := self.arch_spec.check_lane_group(list(move_set))
+        ), f"Internal error: move set failed lane-group validation: {'; '.join(str(e) for e in lane_errors)}"
+
         new_config = dict(node.configuration)
         occupied = node.occupied_locations
 

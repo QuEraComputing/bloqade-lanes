@@ -3,7 +3,16 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Callable, Generic, Literal, TypeVar, Union, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Generic,
+    Literal,
+    TypeVar,
+    Union,
+    overload,
+)
 
 import numpy as np
 import tsim as tsim_backend
@@ -12,24 +21,19 @@ from kirin import ir, rewrite
 from stim import DetectorErrorModel
 
 from bloqade import tsim
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
-from bloqade.lanes.arch.gemini.logical import steane7_initialize
-from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.logical_mvp import (
-    _find_qubit_ssas,
-    append_measurements_and_annotations,
-    compile_squin_to_move,
-    run_squin_kernel_validation,
-)
-from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
-from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.transform import MoveToSquin
+
+if TYPE_CHECKING:
+    from bloqade.lanes.analysis import atom
+    from bloqade.lanes.layout.arch import ArchSpec
+    from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 
 RetType = TypeVar("RetType")
+
+
+def _default_noise_model() -> NoiseModelABC:
+    from bloqade.lanes.noise_model import generate_simple_noise_model
+
+    return generate_simple_noise_model()
 
 
 @dataclass(frozen=True)
@@ -182,6 +186,9 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical squin kernel corresponding to the physical move kernel, including noise."""
+        from bloqade.lanes.arch.gemini.logical import steane7_initialize
+        from bloqade.lanes.transform import MoveToSquin
+
         return MoveToSquin(
             self.physical_arch_spec,
             steane7_initialize,
@@ -191,6 +198,8 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     @cached_property
     def tsim_circuit(self) -> tsim_backend.Circuit:
         """The tsim circuit corresponding to the physical squin kernel."""
+        from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+
         physical_squin_kernel = self.physical_squin_kernel.similar()
         rewrite.Walk(RemoveReturn()).rewrite(physical_squin_kernel.code)
         return tsim.Circuit(physical_squin_kernel)
@@ -423,7 +432,7 @@ class GeminiLogicalSimulator:
     compile-and-execute convenience.
     """
 
-    noise_model: NoiseModelABC = field(default_factory=generate_simple_noise_model)
+    noise_model: NoiseModelABC = field(default_factory=_default_noise_model)
     """The noise model used for simulation. Defaults to :func:`generate_simple_noise_model`."""
 
     def task(
@@ -450,32 +459,14 @@ class GeminiLogicalSimulator:
             GeminiLogicalSimulatorTask[RetType]: The compiled simulation task.
 
         """
-        if is_cudaq_kernel(logical_kernel):
-            logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+        from bloqade.lanes.logical_mvp import compile_task
 
-            # Default to Steane [[7,1,3]] annotation matrices when not provided
-            if m2dets is None and m2obs is None:
-                num_qubits = len(_find_qubit_ssas(logical_squin_kernel))
-                m2dets = steane7_m2dets(num_qubits)
-                m2obs = steane7_m2obs(num_qubits)
-
-            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
-        elif isinstance(logical_kernel, ir.Method):
-            logical_squin_kernel = logical_kernel
-            if m2dets is not None or m2obs is not None:
-                append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
-        else:
-            raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
-
-        run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
-
-        physical_arch_spec = generate_arch_hypercube(4)
-        physical_move_kernel = compile_squin_to_move(
-            logical_squin_kernel, transversal_rewrite=True
-        )
-        post_processing = atom.AtomInterpreter(
-            physical_move_kernel.dialects, arch_spec=physical_arch_spec
-        ).get_post_processing(physical_move_kernel)
+        (
+            logical_squin_kernel,
+            physical_arch_spec,
+            physical_move_kernel,
+            post_processing,
+        ) = compile_task(logical_kernel, m2dets, m2obs)
 
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
