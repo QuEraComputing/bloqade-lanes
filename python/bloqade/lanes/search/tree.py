@@ -280,13 +280,16 @@ class ConfigurationTree:
         (matching apply_move_set behavior). In non-strict mode, they are
         returned as INVALID_LANE/COLLISION outcomes.
         """
-        # Validate the full move set against the arch spec (AOD geometry,
-        # consistency, bus membership, etc.).  This should never fail when
-        # moves are produced by the standard generators — a failure here
-        # signals a bug in a generator or manual move-set construction.
-        assert not (
-            lane_errors := self.arch_spec.check_lane_group(list(move_set))
-        ), f"Internal error: move set failed lane-group validation: {'; '.join(str(e) for e in lane_errors)}"
+        lane_errors = self.arch_spec.check_lane_group(list(move_set))
+        if lane_errors:
+            msg = f"Move set failed lane-group validation: {'; '.join(str(e) for e in lane_errors)}"
+            if strict:
+                raise InvalidMoveError(msg)
+            return ExpansionOutcome(
+                move_set=move_set,
+                status=ExpansionStatus.INVALID_LANE,
+                error_message=msg,
+            )
 
         existing_child = node.children.get(move_set)
         if existing_child is not None:

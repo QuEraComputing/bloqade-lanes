@@ -289,7 +289,7 @@ def test_valid_lanes_filter_by_direction():
 
 
 def test_apply_move_set_rejects_incomplete_grid():
-    """An incomplete AOD grid (not a full Cartesian product) raises AssertionError."""
+    """An incomplete AOD grid (not a full Cartesian product) raises InvalidMoveError."""
     tree = _make_tree()
 
     # Three lanes spanning 2 words × 2 sites = 4 expected, but only 3 provided.
@@ -303,7 +303,7 @@ def test_apply_move_set_rejects_incomplete_grid():
         }
     )
 
-    with pytest.raises(AssertionError, match="lane-group validation"):
+    with pytest.raises(InvalidMoveError, match="lane-group validation"):
         tree.apply_move_set(tree.root, incomplete_grid)
 
 
