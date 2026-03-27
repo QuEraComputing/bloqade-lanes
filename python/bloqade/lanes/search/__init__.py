@@ -2,6 +2,7 @@
 
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.generators import ExhaustiveMoveGenerator, MoveGenerator
+from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal import (
     SearchResult,
@@ -15,6 +16,7 @@ from bloqade.lanes.search.traversal import (
 from bloqade.lanes.search.tree import ConfigurationTree, InvalidMoveError
 
 __all__ = [
+    "CandidateScorer",
     "ConfigurationNode",
     "ConfigurationTree",
     "ExhaustiveMoveGenerator",
