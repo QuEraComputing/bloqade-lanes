@@ -9,6 +9,7 @@ from bloqade.lanes.search.generators import (
 from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal import (
+    EntropyGuidedSearch,
     SearchResult,
     astar,
     bfs,
@@ -24,6 +25,7 @@ __all__ = [
     "CandidateScorer",
     "ConfigurationNode",
     "ConfigurationTree",
+    "EntropyGuidedSearch",
     "ExhaustiveMoveGenerator",
     "HeuristicMoveGenerator",
     "InvalidMoveError",

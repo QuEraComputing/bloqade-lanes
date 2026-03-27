@@ -3,7 +3,10 @@
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress, SiteLaneAddress
 from bloqade.lanes.search.search_params import SearchParams
-from bloqade.lanes.search.traversal.entropy_guided import entropy_guided_search
+from bloqade.lanes.search.traversal.entropy_guided import (
+    EntropyGuidedSearch,
+    entropy_guided_search,
+)
 from bloqade.lanes.search.traversal.goal import placement_goal
 from bloqade.lanes.search.traversal.step_info import (
     EntropyBumpStepInfo,
@@ -124,11 +127,10 @@ def test_sequential_fallback_triggered():
 
 
 def test_sequential_fallback_direct():
-    from bloqade.lanes.search.traversal.entropy_guided import _sequential_fallback
-
     tree = _make_tree()
     target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 0)}
-    result = _sequential_fallback(tree, tree.root, target, placement_goal(target), 0, 0)
+    search = EntropyGuidedSearch(tree, target, placement_goal(target))
+    result = search._sequential_fallback(tree.root)
     assert result.goal_node is not None
     assert result.goal_node.configuration[0] == LocationAddress(0, 5)
     assert result.goal_node.configuration[1] == LocationAddress(1, 0)
@@ -216,7 +218,7 @@ def test_outcome_transposition_maps_to_state_seen(monkeypatch):
     records, record = _make_on_step_recorder()
     candidate = frozenset({SiteLaneAddress(0, 0, 0)})
 
-    def fake_next_candidate(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_next_candidate(_self, _sn, _node):  # type: ignore[no-untyped-def]
         return candidate
 
     def fake_try_move_set(_node, move_set, strict=True):  # type: ignore[no-untyped-def]
@@ -226,10 +228,7 @@ def test_outcome_transposition_maps_to_state_seen(monkeypatch):
             existing_node=tree.root,
         )
 
-    monkeypatch.setattr(
-        "bloqade.lanes.search.traversal.entropy_guided._get_next_candidate",
-        fake_next_candidate,
-    )
+    monkeypatch.setattr(EntropyGuidedSearch, "_get_next_candidate", fake_next_candidate)
     monkeypatch.setattr(tree, "try_move_set", fake_try_move_set)
 
     entropy_guided_search(
@@ -251,7 +250,7 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
     records, record = _make_on_step_recorder()
     candidate = frozenset({SiteLaneAddress(0, 0, 0)})
 
-    def fake_next_candidate(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_next_candidate(_self, _sn, _node):  # type: ignore[no-untyped-def]
         return candidate
 
     def fake_try_move_set(_node, move_set, strict=True):  # type: ignore[no-untyped-def]
@@ -261,13 +260,11 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
             error_message="collision",
         )
 
+    monkeypatch.setattr(EntropyGuidedSearch, "_get_next_candidate", fake_next_candidate)
     monkeypatch.setattr(
-        "bloqade.lanes.search.traversal.entropy_guided._get_next_candidate",
-        fake_next_candidate,
-    )
-    monkeypatch.setattr(
-        "bloqade.lanes.search.traversal.entropy_guided._first_unresolved_qubit_without_valid_move",
-        lambda *_args, **_kwargs: 42,
+        EntropyGuidedSearch,
+        "_first_unresolved_qubit_without_valid_move",
+        lambda _self, _node: 42,
     )
     monkeypatch.setattr(tree, "try_move_set", fake_try_move_set)
 

@@ -2,7 +2,10 @@
 
 from bloqade.lanes.search.traversal.astar import astar
 from bloqade.lanes.search.traversal.bfs import bfs
-from bloqade.lanes.search.traversal.entropy_guided import entropy_guided_search
+from bloqade.lanes.search.traversal.entropy_guided import (
+    EntropyGuidedSearch,
+    entropy_guided_search,
+)
 from bloqade.lanes.search.traversal.goal import (
     CostFunction,
     GoalPredicate,
@@ -27,6 +30,7 @@ __all__ = [
     "CostFunction",
     "DescendStepInfo",
     "EntropyBumpStepInfo",
+    "EntropyGuidedSearch",
     "FallbackStartStepInfo",
     "FallbackStepInfo",
     "GoalPredicate",
