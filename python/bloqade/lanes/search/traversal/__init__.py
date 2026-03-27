@@ -2,6 +2,7 @@
 
 from bloqade.lanes.search.traversal.astar import astar
 from bloqade.lanes.search.traversal.bfs import bfs
+from bloqade.lanes.search.traversal.entropy_guided import entropy_guided_search
 from bloqade.lanes.search.traversal.goal import (
     CostFunction,
     GoalPredicate,
@@ -20,6 +21,7 @@ __all__ = [
     "SearchResult",
     "astar",
     "bfs",
+    "entropy_guided_search",
     "greedy_best_first",
     "partial_placement_goal",
     "placement_goal",

@@ -3,9 +3,19 @@
 import pytest
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import LocationAddress, SiteLaneAddress
-from bloqade.lanes.search.generators import ExhaustiveMoveGenerator
-from bloqade.lanes.search.tree import ConfigurationTree, InvalidMoveError
+from bloqade.lanes.layout import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    SiteLaneAddress,
+)
+from bloqade.lanes.search.generators import ExhaustiveMoveGenerator, MoveGenerator
+from bloqade.lanes.search.tree import (
+    ConfigurationTree,
+    ExpansionStatus,
+    InvalidMoveError,
+)
 
 
 def _make_tree() -> ConfigurationTree:
@@ -154,6 +164,86 @@ def test_expand_deadlock():
 
     children = tree.expand_node(tree.root, gen, strict=False)
     assert isinstance(children, list)
+
+
+class _FixedMoveGenerator:
+    def __init__(self, move_sets: list[frozenset[LaneAddress]]):
+        self._move_sets = move_sets
+
+    def generate(self, _node, _tree):  # type: ignore[no-untyped-def]
+        yield from self._move_sets
+
+
+def test_try_move_set_reports_created_child():
+    tree = _make_tree()
+    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    outcome = tree.try_move_set(tree.root, move_set, strict=False)
+    assert outcome.status == ExpansionStatus.CREATED_CHILD
+    assert outcome.child is not None
+    assert outcome.child.parent is tree.root
+    assert outcome.existing_node is None
+
+
+def test_try_move_set_reports_already_child():
+    tree = _make_tree()
+    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    first = tree.try_move_set(tree.root, move_set, strict=False)
+    assert first.status == ExpansionStatus.CREATED_CHILD
+    second = tree.try_move_set(tree.root, move_set, strict=False)
+    assert second.status == ExpansionStatus.ALREADY_CHILD
+    assert second.child is first.child
+
+
+def test_try_move_set_reports_transposition_seen():
+    tree = _make_tree()
+    outcome = tree.try_move_set(tree.root, frozenset(), strict=False)
+    assert outcome.status == ExpansionStatus.TRANSPOSITION_SEEN
+    assert outcome.child is None
+    assert outcome.existing_node is tree.root
+
+
+def test_try_move_set_reports_collision():
+    arch_spec = logical.get_arch_spec()
+    placement = {
+        0: LocationAddress(0, 0),
+        1: LocationAddress(0, 5),
+    }
+    tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    outcome = tree.try_move_set(tree.root, move_set, strict=False)
+    assert outcome.status == ExpansionStatus.COLLISION
+    assert outcome.child is None
+
+
+def test_try_move_set_reports_invalid_lane():
+    tree = _make_tree()
+    invalid = LaneAddress(MoveType.SITE, 999, 999, 999, Direction.FORWARD)
+    outcome = tree.try_move_set(tree.root, frozenset({invalid}), strict=False)
+    assert outcome.status == ExpansionStatus.INVALID_LANE
+    assert outcome.child is None
+
+
+def test_expand_node_detailed_reports_all_attempts():
+    tree = _make_tree()
+    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    invalid = frozenset({LaneAddress(MoveType.SITE, 999, 999, 999, Direction.FORWARD)})
+    gen: MoveGenerator = _FixedMoveGenerator([move_set, move_set, invalid])  # type: ignore[assignment]
+    outcomes = list(tree.expand_node_detailed(tree.root, gen, strict=False))
+    statuses = [outcome.status for outcome in outcomes]
+    assert statuses == [
+        ExpansionStatus.CREATED_CHILD,
+        ExpansionStatus.ALREADY_CHILD,
+        ExpansionStatus.INVALID_LANE,
+    ]
+
+
+def test_expand_node_compat_filters_to_created_children_only():
+    tree = _make_tree()
+    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    invalid = frozenset({LaneAddress(MoveType.SITE, 999, 999, 999, Direction.FORWARD)})
+    gen: MoveGenerator = _FixedMoveGenerator([move_set, move_set, invalid])  # type: ignore[assignment]
+    children = tree.expand_node(tree.root, gen, strict=False)
+    assert len(children) == 1
 
 
 def test_valid_lanes_returns_nonempty():
