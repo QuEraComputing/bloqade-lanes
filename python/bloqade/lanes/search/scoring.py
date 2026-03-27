@@ -23,6 +23,7 @@ class CandidateScorer:
     """Scores qubit-bus pairs and movesets for entropy-guided search."""
 
     params: SearchParams
+    target: dict[int, LocationAddress]
 
     def _distance_to_target(
         self,
@@ -68,7 +69,6 @@ class CandidateScorer:
     def score_all_qubit_bus_pairs(
         self,
         node: ConfigurationNode,
-        target: dict[int, LocationAddress],
         entropy: int,
         tree: ConfigurationTree,
     ) -> dict[tuple[int, MoveType, int, Direction], float]:
@@ -85,7 +85,7 @@ class CandidateScorer:
         unresolved = {
             qid: loc
             for qid, loc in node.configuration.items()
-            if qid in target and loc != target[qid]
+            if qid in self.target and loc != self.target[qid]
         }
         if not unresolved:
             return {}
@@ -94,7 +94,7 @@ class CandidateScorer:
         d_now: dict[int, float] = {}
         m_now: dict[int, int] = {}
         for qid, loc in unresolved.items():
-            d_now[qid] = self._distance_to_target(loc, target[qid], tree)
+            d_now[qid] = self._distance_to_target(loc, self.target[qid], tree)
             m_now[qid] = self._mobility_at(loc, occupied, tree)
 
         # Compute raw deltas for all legal (qubit, move_type, bus_id, direction)
@@ -119,7 +119,9 @@ class CandidateScorer:
                         d_key = (qid, dst)
                         d_after = d_after_cache.get(d_key)
                         if d_after is None:
-                            d_after = self._distance_to_target(dst, target[qid], tree)
+                            d_after = self._distance_to_target(
+                                dst, self.target[qid], tree
+                            )
                             d_after_cache[d_key] = d_after
                         m_after = m_after_cache.get(dst)
                         if m_after is None:
@@ -150,7 +152,6 @@ class CandidateScorer:
         self,
         moveset: frozenset[LaneAddress],
         node: ConfigurationNode,
-        target: dict[int, LocationAddress],
         tree: ConfigurationTree,
     ) -> float:
         """Score a candidate moveset.
@@ -178,12 +179,12 @@ class CandidateScorer:
         new_occupied = frozenset(new_config.values())
 
         for qid, src, dst in moved_qubits:
-            if qid not in target:
+            if qid not in self.target:
                 continue
-            d_before = self._distance_to_target(src, target[qid], tree)
-            d_after = self._distance_to_target(dst, target[qid], tree)
+            d_before = self._distance_to_target(src, self.target[qid], tree)
+            d_after = self._distance_to_target(dst, self.target[qid], tree)
             distance_moved += max(0.0, d_before - d_after)
-            if dst == target[qid]:
+            if dst == self.target[qid]:
                 arrived_gain += 1
             mobility_before += self._mobility_at(src, occupied, tree)
             mobility_after += self._mobility_at(dst, new_occupied, tree)

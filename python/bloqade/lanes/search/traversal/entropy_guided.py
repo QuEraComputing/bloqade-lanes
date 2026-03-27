@@ -42,6 +42,26 @@ class _SearchNode:
     last_no_valid_moves_qubit: int | None = None
     last_state_seen_node_id: int | None = None
 
+    def force_entropy(self, value: int) -> None:
+        """Set entropy to an absolute value and clear bump metadata."""
+        self.entropy = value
+        self.last_entropy_bump_reason = "entropy"
+        self.last_no_valid_moves_qubit = None
+        self.last_state_seen_node_id = None
+
+    def bump_entropy(
+        self,
+        delta_e: int,
+        reason: str = "entropy",
+        no_valid_moves_qubit: int | None = None,
+        state_seen_node_id: int | None = None,
+    ) -> None:
+        """Increment entropy and record the reason for the bump."""
+        self.entropy += delta_e
+        self.last_entropy_bump_reason = reason
+        self.last_no_valid_moves_qubit = no_valid_moves_qubit
+        self.last_state_seen_node_id = state_seen_node_id
+
 
 def _print_node_transition(
     prefix: str,
@@ -65,6 +85,141 @@ def _print_node_transition(
         f"parent_id={parent_id} child_ids={child_ids}"
         f"{reason_part}{seen_part}{qubit_part}"
     )
+
+
+class _DebugEmitter:
+    """Emits debug/visualization events for entropy-guided search.
+
+    Consolidates all ``on_step`` callback emissions and
+    ``_print_node_transition`` calls so the main search class stays
+    focused on algorithm logic.
+    """
+
+    def __init__(
+        self,
+        scorer: CandidateScorer,
+        tree: ConfigurationTree,
+        on_step: Callable[[str, ConfigurationNode, StepInfo], None] | None = None,
+    ) -> None:
+        self.scorer = scorer
+        self.tree = tree
+        self.on_step = on_step
+
+    def _emit_step(self, event: str, node: ConfigurationNode, info: StepInfo) -> None:
+        if self.on_step is not None:
+            self.on_step(event, node, info)
+
+    def _unresolved_count(self, node: ConfigurationNode) -> int:
+        return sum(
+            1
+            for qid, loc in self.scorer.target.items()
+            if node.configuration.get(qid) != loc
+        )
+
+    def goal(self, node: ConfigurationNode, entropy: int) -> None:
+        self._emit_step(
+            "goal",
+            node,
+            GoalStepInfo(entropy=entropy, unresolved_count=0, total_depth=node.depth),
+        )
+
+    def revert(
+        self,
+        ancestor: ConfigurationNode,
+        ancestor_sn: _SearchNode,
+        trigger_sn: _SearchNode,
+    ) -> None:
+        reason = trigger_sn.last_entropy_bump_reason
+        seen_node_id = trigger_sn.last_state_seen_node_id
+        no_valid_qid = trigger_sn.last_no_valid_moves_qubit
+        self._emit_step(
+            "revert",
+            ancestor,
+            RevertStepInfo(
+                entropy=ancestor_sn.entropy,
+                unresolved_count=self._unresolved_count(ancestor),
+                reversion_steps=self.scorer.params.reversion_steps,
+                ancestor_depth=ancestor.depth,
+                reason=reason,
+                state_seen_node_id=seen_node_id,
+                no_valid_moves_qubit=no_valid_qid,
+            ),
+        )
+        _print_node_transition(
+            "revert",
+            ancestor,
+            reason=reason,
+            seen_node_id=seen_node_id,
+            no_valid_moves_qubit=no_valid_qid,
+        )
+
+    def entropy_bump(
+        self,
+        node: ConfigurationNode,
+        sn: _SearchNode,
+    ) -> None:
+        self._emit_step(
+            "entropy_bump",
+            node,
+            EntropyBumpStepInfo(
+                entropy=sn.entropy,
+                unresolved_count=self._unresolved_count(node),
+                new_entropy=sn.entropy,
+                reason=sn.last_entropy_bump_reason,
+                state_seen_node_id=sn.last_state_seen_node_id,
+                no_valid_moves_qubit=sn.last_no_valid_moves_qubit,
+            ),
+        )
+
+    def descend(
+        self,
+        child: ConfigurationNode,
+        sn: _SearchNode,
+        candidate: frozenset[LaneAddress],
+        parent: ConfigurationNode,
+    ) -> None:
+        if self.on_step is not None:
+            moveset_score = self.scorer.score_moveset(candidate, parent, self.tree)
+            self._emit_step(
+                "descend",
+                child,
+                DescendStepInfo(
+                    entropy=sn.entropy,
+                    unresolved_count=self._unresolved_count(child),
+                    moveset=candidate,
+                    moveset_score=moveset_score,
+                ),
+            )
+        _print_node_transition("descend", child)
+
+    def fallback_start(self, node: ConfigurationNode, unresolved: list[int]) -> None:
+        self._emit_step(
+            "fallback_start",
+            node,
+            FallbackStartStepInfo(
+                entropy=0,
+                unresolved_count=self._unresolved_count(node),
+                unresolved_qubits=unresolved,
+            ),
+        )
+
+    def fallback_step(
+        self,
+        node: ConfigurationNode,
+        qid: int,
+        moveset: frozenset[LaneAddress],
+    ) -> None:
+        _print_node_transition("fallback_step", node)
+        self._emit_step(
+            "fallback_step",
+            node,
+            FallbackStepInfo(
+                entropy=0,
+                unresolved_count=self._unresolved_count(node),
+                qubit_id=qid,
+                moveset=moveset,
+            ),
+        )
 
 
 class EntropyGuidedSearch:
@@ -91,29 +246,19 @@ class EntropyGuidedSearch:
         self.params = params
         self.max_depth = max_depth
         self.max_expansions = max_expansions
-        self.on_step = on_step
 
-        self.scorer = CandidateScorer(params=params)
+        self.scorer = CandidateScorer(params=params, target=target)
         self.search_nodes: dict[int, _SearchNode] = {}
         # _SearchNode satisfies EntropyNode protocol; cast for dict invariance.
         entropy_view: dict[int, EntropyNode] = self.search_nodes  # type: ignore[assignment]
         self.generator = HeuristicMoveGenerator(
             scorer=self.scorer,
             params=params,
-            target=target,
             search_nodes=entropy_view,
         )
+        self.debug = _DebugEmitter(scorer=self.scorer, tree=tree, on_step=on_step)
         self.nodes_expanded = 0
         self.max_depth_reached = 0
-
-    def _emit_step(self, event: str, node: ConfigurationNode, info: StepInfo) -> None:
-        if self.on_step is not None:
-            self.on_step(event, node, info)
-
-    def _unresolved_count(self, node: ConfigurationNode) -> int:
-        return sum(
-            1 for qid, loc in self.target.items() if node.configuration.get(qid) != loc
-        )
 
     def _get_or_create_search_node(self, config_node: ConfigurationNode) -> _SearchNode:
         node_id = id(config_node)
@@ -219,15 +364,7 @@ class EntropyGuidedSearch:
             if qid in self.target and loc != self.target[qid]
         ]
 
-        self._emit_step(
-            "fallback_start",
-            node,
-            FallbackStartStepInfo(
-                entropy=0,
-                unresolved_count=self._unresolved_count(node),
-                unresolved_qubits=unresolved,
-            ),
-        )
+        self.debug.fallback_start(node, unresolved)
 
         for qid in unresolved:
             current_loc = node.configuration[qid]
@@ -260,18 +397,7 @@ class EntropyGuidedSearch:
                 self.nodes_expanded += 1
                 self.max_depth_reached = max(self.max_depth_reached, child.depth)
                 node = child
-                _print_node_transition("fallback_step", node)
-
-                self._emit_step(
-                    "fallback_step",
-                    node,
-                    FallbackStepInfo(
-                        entropy=0,
-                        unresolved_count=self._unresolved_count(node),
-                        qubit_id=qid,
-                        moveset=moveset,
-                    ),
-                )
+                self.debug.fallback_step(node, qid, moveset)
 
         if self.goal(node):
             return self._make_result(goal_node=node)
@@ -281,11 +407,7 @@ class EntropyGuidedSearch:
     def run(self) -> SearchResult:
         """Execute the entropy-guided search and return the result."""
         if self.goal(self.tree.root):
-            self._emit_step(
-                "goal",
-                self.tree.root,
-                GoalStepInfo(entropy=0, unresolved_count=0, total_depth=0),
-            )
+            self.debug.goal(self.tree.root, entropy=0)
             return SearchResult(
                 goal_node=self.tree.root, nodes_expanded=0, max_depth_reached=0
             )
@@ -293,62 +415,25 @@ class EntropyGuidedSearch:
         current_node = self.tree.root
         _print_node_transition("start", current_node)
 
-        while True:
-            if (
-                self.max_expansions is not None
-                and self.nodes_expanded >= self.max_expansions
-            ):
-                break
-            if self.max_depth is not None and current_node.depth >= self.max_depth:
-                sn = self._get_or_create_search_node(current_node)
-                sn.entropy = self.params.e_max
-                sn.last_entropy_bump_reason = "entropy"
-                sn.last_no_valid_moves_qubit = None
-                sn.last_state_seen_node_id = None
-
+        while self.max_expansions is None or self.nodes_expanded < self.max_expansions:
             sn = self._get_or_create_search_node(current_node)
+            if self.max_depth is not None and current_node.depth >= self.max_depth:
+                sn.force_entropy(self.params.e_max)
 
             if sn.entropy >= self.params.e_max:
-                revert_reason = sn.last_entropy_bump_reason
-                seen_node_id = sn.last_state_seen_node_id
-                no_valid_qid = sn.last_no_valid_moves_qubit
                 ancestor = current_node
                 for _ in range(self.params.reversion_steps):
                     if ancestor.parent is None:
                         break
                     ancestor = ancestor.parent
 
-                if ancestor.parent is None:
-                    root_sn = self._get_or_create_search_node(ancestor)
-                    if root_sn.entropy >= self.params.e_max:
-                        return self._sequential_fallback(self.tree.root)
-
                 ancestor_sn = self._get_or_create_search_node(ancestor)
-                ancestor_sn.entropy += self.params.delta_e
-                ancestor_sn.last_entropy_bump_reason = "entropy"
-                ancestor_sn.last_no_valid_moves_qubit = None
-                ancestor_sn.last_state_seen_node_id = None
-                self._emit_step(
-                    "revert",
-                    ancestor,
-                    RevertStepInfo(
-                        entropy=ancestor_sn.entropy,
-                        unresolved_count=self._unresolved_count(ancestor),
-                        reversion_steps=self.params.reversion_steps,
-                        ancestor_depth=ancestor.depth,
-                        reason=revert_reason,
-                        state_seen_node_id=seen_node_id,
-                        no_valid_moves_qubit=no_valid_qid,
-                    ),
-                )
+                if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
+                    return self._sequential_fallback(self.tree.root)
+
+                ancestor_sn.bump_entropy(self.params.delta_e)
+                self.debug.revert(ancestor, ancestor_sn, sn)
                 current_node = ancestor
-                _print_node_transition(
-                    "revert",
-                    current_node,
-                    reason=revert_reason,
-                    seen_node_id=seen_node_id,
-                    no_valid_moves_qubit=no_valid_qid,
-                )
                 continue
 
             candidate = self._get_next_candidate(sn, current_node)
@@ -357,21 +442,12 @@ class EntropyGuidedSearch:
                 no_valid_qid = self._first_unresolved_qubit_without_valid_move(
                     current_node
                 )
-                sn.entropy += self.params.delta_e
-                sn.last_entropy_bump_reason = "no-valid-moves"
-                sn.last_no_valid_moves_qubit = no_valid_qid
-                sn.last_state_seen_node_id = None
-                self._emit_step(
-                    "entropy_bump",
-                    current_node,
-                    EntropyBumpStepInfo(
-                        entropy=sn.entropy,
-                        unresolved_count=self._unresolved_count(current_node),
-                        new_entropy=sn.entropy,
-                        reason="no-valid-moves",
-                        no_valid_moves_qubit=no_valid_qid,
-                    ),
+                sn.bump_entropy(
+                    self.params.delta_e,
+                    "no-valid-moves",
+                    no_valid_moves_qubit=no_valid_qid,
                 )
+                self.debug.entropy_bump(current_node, sn)
                 continue
 
             outcome = self.tree.try_move_set(current_node, candidate, strict=False)
@@ -393,58 +469,26 @@ class EntropyGuidedSearch:
                         current_node
                     )
 
-                sn.entropy += self.params.delta_e
-                sn.last_entropy_bump_reason = reason
-                sn.last_no_valid_moves_qubit = no_valid_qid
-                sn.last_state_seen_node_id = seen_node_id
-                self._emit_step(
-                    "entropy_bump",
-                    current_node,
-                    EntropyBumpStepInfo(
-                        entropy=sn.entropy,
-                        unresolved_count=self._unresolved_count(current_node),
-                        new_entropy=sn.entropy,
-                        reason=reason,
-                        state_seen_node_id=seen_node_id,
-                        no_valid_moves_qubit=no_valid_qid,
-                    ),
+                sn.bump_entropy(
+                    self.params.delta_e,
+                    reason,
+                    no_valid_moves_qubit=no_valid_qid,
+                    state_seen_node_id=seen_node_id,
                 )
+                self.debug.entropy_bump(current_node, sn)
                 continue
             assert outcome.child is not None
             child = outcome.child
 
             self.nodes_expanded += 1
             self.max_depth_reached = max(self.max_depth_reached, child.depth)
-
-            if self.on_step is not None:
-                moveset_score = self.scorer.score_moveset(
-                    candidate, current_node, self.target, self.tree
-                )
-                self._emit_step(
-                    "descend",
-                    child,
-                    DescendStepInfo(
-                        entropy=sn.entropy,
-                        unresolved_count=self._unresolved_count(child),
-                        moveset=candidate,
-                        moveset_score=moveset_score,
-                    ),
-                )
+            self.debug.descend(child, sn, candidate, current_node)
 
             if self.goal(child):
-                self._emit_step(
-                    "goal",
-                    child,
-                    GoalStepInfo(
-                        entropy=sn.entropy,
-                        unresolved_count=0,
-                        total_depth=child.depth,
-                    ),
-                )
+                self.debug.goal(child, entropy=sn.entropy)
                 return self._make_result(goal_node=child)
 
             current_node = child
-            _print_node_transition("descend", current_node)
 
         return self._make_result()
 

@@ -23,13 +23,12 @@ def _make_setup():
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     params = SearchParams()
-    scorer = CandidateScorer(params=params)
     target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    scorer = CandidateScorer(params=params, target=target)
     search_nodes: dict[int, EntropyNode] = {}
     gen = HeuristicMoveGenerator(
         scorer=scorer,
         params=params,
-        target=target,
         search_nodes=search_nodes,
     )
     return gen, tree, search_nodes
@@ -58,8 +57,7 @@ def test_generate_ranked_by_moveset_score():
     moves = list(gen.generate(tree.root, tree))
     if len(moves) >= 2:
         scorer = gen.scorer
-        target = gen.target
-        scores = [scorer.score_moveset(ms, tree.root, target, tree) for ms in moves]
+        scores = [scorer.score_moveset(ms, tree.root, tree) for ms in moves]
         assert scores == sorted(scores, reverse=True)
 
 
@@ -81,11 +79,11 @@ def test_generate_negative_fallback():
     placement = {0: LocationAddress(0, 5)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     params = SearchParams()
-    scorer = CandidateScorer(params=params)
     target = {0: LocationAddress(0, 0)}
+    scorer = CandidateScorer(params=params, target=target)
     search_nodes: dict[int, EntropyNode] = {id(tree.root): _EntropyNode()}
     gen = HeuristicMoveGenerator(
-        scorer=scorer, params=params, target=target, search_nodes=search_nodes
+        scorer=scorer, params=params, search_nodes=search_nodes
     )
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1

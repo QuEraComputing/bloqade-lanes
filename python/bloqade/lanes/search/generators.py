@@ -223,7 +223,6 @@ class HeuristicMoveGenerator:
 
     scorer: CandidateScorer
     params: SearchParams
-    target: dict[int, LocationAddress]
     search_nodes: dict[int, EntropyNode]
     """Mapping of id(ConfigurationNode) -> entropy metadata node."""
 
@@ -245,7 +244,7 @@ class HeuristicMoveGenerator:
         search_node = self.search_nodes.get(id(node))
         entropy = search_node.entropy if search_node is not None else 1
 
-        scores = self.scorer.score_all_qubit_bus_pairs(node, self.target, entropy, tree)
+        scores = self.scorer.score_all_qubit_bus_pairs(node, entropy, tree)
         if not scores:
             return
 
@@ -309,7 +308,7 @@ class HeuristicMoveGenerator:
                 continue
 
             moveset = frozenset(lanes)
-            ms_score = self.scorer.score_moveset(moveset, node, self.target, tree)
+            ms_score = self.scorer.score_moveset(moveset, node, tree)
             candidates.append((ms_score, moveset))
 
         # Sort by moveset score descending
