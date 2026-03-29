@@ -3,6 +3,7 @@ import math
 from collections import Counter
 from typing import Any
 
+import pytest
 from bloqade.decoders.dialects import annotate
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
@@ -108,6 +109,7 @@ def _normalized_gate_ops(stim_program: str) -> Counter[str]:
     return Counter(ops)
 
 
+@pytest.mark.slow
 def test_default_and_always_merge_have_same_operations():
     default_program = _compile_to_stim_with_merge_heuristic(
         main, default_merge_heuristic
@@ -123,6 +125,7 @@ def test_default_and_always_merge_have_same_operations():
     assert default_ops == always_ops
 
 
+@pytest.mark.slow
 def test_logical_compilation():
     from bloqade.rewrite.passes import AggressiveUnroll
 

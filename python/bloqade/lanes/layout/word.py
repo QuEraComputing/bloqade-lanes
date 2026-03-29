@@ -40,18 +40,18 @@ class Word:
         )
 
         self._inner = _RustWord(
-            grid=grid_to_rust(positions),
-            sites=list(site_indices),
-            cz_pairs=rust_cz,
+            positions=grid_to_rust(positions),
+            site_indices=list(site_indices),
+            has_cz=rust_cz,
         )
 
     @property
     def site_indices(self) -> tuple[tuple[int, int], ...]:
-        return tuple(self._inner.sites)
+        return tuple(self._inner.site_indices)
 
     @property
     def has_cz(self) -> tuple[LocationAddress, ...] | None:
-        cz = self._inner.cz_pairs
+        cz = self._inner.has_cz
         if cz is None:
             return None
         return tuple(LocationAddress(word_id, site_id) for word_id, site_id in cz)
@@ -89,14 +89,14 @@ class Word:
         return (
             self.site_indices == other.site_indices
             and self.has_cz == other.has_cz
-            and self._inner.grid == other._inner.grid
+            and self._inner.positions == other._inner.positions
         )
 
     def __hash__(self) -> int:
-        return hash((self._inner.grid, self.site_indices, self.has_cz))
+        return hash((self._inner.positions, self.site_indices, self.has_cz))
 
     def __repr__(self) -> str:
-        return f"Word(sites={len(self.site_indices)})"
+        return f"Word(n_sites={len(self.site_indices)})"
 
 
 @dataclass(frozen=True)

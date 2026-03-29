@@ -182,31 +182,31 @@ fn print_arch_spec(spec: &ArchSpec) {
         geom.sites_per_word
     );
     for (word_idx, word) in geom.words.iter().enumerate() {
-        let grid = &word.positions;
+        let positions = &word.positions;
         println!(
             "  Word {}: {}x{} grid, {} sites",
             word_idx,
-            grid.num_x(),
-            grid.num_y(),
-            word.sites.len()
+            positions.num_x(),
+            positions.num_y(),
+            word.site_indices.len()
         );
         println!(
             "    x: start={}, spacing={:?}",
-            grid.x_start, grid.x_spacing
+            positions.x_start, positions.x_spacing
         );
         println!(
             "    y: start={}, spacing={:?}",
-            grid.y_start, grid.y_spacing
+            positions.y_start, positions.y_spacing
         );
-        let sites_str: Vec<String> = word
-            .sites
+        let site_indices_str: Vec<String> = word
+            .site_indices
             .iter()
             .map(|s| format!("({},{})", s[0], s[1]))
             .collect();
-        println!("    sites: {}", sites_str.join(" "));
-        if let Some(cz) = &word.cz_pairs {
+        println!("    site_indices: {}", site_indices_str.join(" "));
+        if let Some(cz) = &word.has_cz {
             let cz_str: Vec<String> = cz.iter().map(|p| format!("({},{})", p[0], p[1])).collect();
-            println!("    cz_pairs: {}", cz_str.join(" "));
+            println!("    has_cz: {}", cz_str.join(" "));
         }
     }
     println!();

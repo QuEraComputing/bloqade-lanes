@@ -1,16 +1,16 @@
 {
-  "version": 1,
+  "version": "1.0",
   "geometry": {
     "sites_per_word": 10,
     "words": [
       {
-        "grid": {
+        "positions": {
           "x_start": 1.0,
           "y_start": 2.5,
           "x_spacing": [2.0, 2.0, 2.0, 2.0],
           "y_spacing": [2.5]
         },
-        "sites": [
+        "site_indices": [
           [0, 0],
           [1, 0],
           [2, 0],
@@ -22,7 +22,7 @@
           [3, 1],
           [4, 1]
         ],
-        "cz_pairs": [
+        "has_cz": [
           [0, 5],
           [0, 6],
           [0, 7],
@@ -36,13 +36,13 @@
         ]
       },
       {
-        "grid": {
+        "positions": {
           "x_start": 1.0,
           "y_start": 12.5,
           "x_spacing": [2.0, 2.0, 2.0, 2.0],
           "y_spacing": [2.5]
         },
-        "sites": [
+        "site_indices": [
           [0, 0],
           [1, 0],
           [2, 0],
@@ -54,7 +54,7 @@
           [3, 1],
           [4, 1]
         ],
-        "cz_pairs": [
+        "has_cz": [
           [1, 5],
           [1, 6],
           [1, 7],
@@ -68,13 +68,13 @@
         ]
       },
       {
-        "grid": {
+        "positions": {
           "x_start": 1.0,
           "y_start": 22.5,
           "x_spacing": [2.0, 2.0, 2.0, 2.0],
           "y_spacing": [2.5]
         },
-        "sites": [
+        "site_indices": [
           [0, 0],
           [1, 0],
           [2, 0],

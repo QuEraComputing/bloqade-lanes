@@ -309,33 +309,33 @@ class Word:
     grid via ``(x_idx, y_idx)`` index pairs.
 
     Args:
-        grid (Grid): Coordinate grid for this word's sites.
-        sites (list[tuple[int, int]]): Site positions as ``(x_idx, y_idx)`` grid index pairs.
-        cz_pairs (Optional[list[tuple[int, int]]]): Pairs of site indices that can
-            perform CZ gates, default = None.
+        positions (Grid): Coordinate grid for this word's sites.
+        site_indices (list[tuple[int, int]]): Site positions as ``(x_idx, y_idx)`` grid index pairs.
+        has_cz (Optional[list[tuple[int, int]]]): Per-site CZ pair locations
+            as ``(word_id, site_id)`` tuples, default = None.
 
     Note: A word's identity is determined by its position in the ``Geometry.words`` list.
     """
 
     def __init__(
         self,
-        grid: Grid,
-        sites: list[tuple[int, int]],
-        cz_pairs: Optional[list[tuple[int, int]]] = None,
+        positions: Grid,
+        site_indices: list[tuple[int, int]],
+        has_cz: Optional[list[tuple[int, int]]] = None,
     ) -> None: ...
     @property
-    def grid(self) -> Grid:
+    def positions(self) -> Grid:
         """Coordinate grid for this word's sites."""
         ...
 
     @property
-    def sites(self) -> list[tuple[int, int]]:
+    def site_indices(self) -> list[tuple[int, int]]:
         """Site positions as ``(x_idx, y_idx)`` grid index pairs."""
         ...
 
     @property
-    def cz_pairs(self) -> Optional[list[tuple[int, int]]]:
-        """Pairs of site indices that can perform CZ gates, or None."""
+    def has_cz(self) -> Optional[list[tuple[int, int]]]:
+        """Per-site CZ pair locations as ``(word_id, site_id)`` tuples, or None."""
         ...
 
     def site_position(self, site_idx: int) -> Optional[tuple[float, float]]:

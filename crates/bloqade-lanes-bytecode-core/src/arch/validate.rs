@@ -157,17 +157,17 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
                 ),
             });
         }
-        if word.sites.len() != sites_per_word as usize {
+        if word.site_indices.len() != sites_per_word as usize {
             errors.push(ArchSpecError::Geometry {
                 message: format!(
                     "word {} has {} sites, expected {} (sites_per_word)",
                     word_id,
-                    word.sites.len(),
+                    word.site_indices.len(),
                     sites_per_word
                 ),
             });
         }
-        if let Some(cz) = &word.cz_pairs
+        if let Some(cz) = &word.has_cz
             && cz.len() != sites_per_word as usize
         {
             errors.push(ArchSpecError::Geometry {
@@ -181,7 +181,7 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
         }
         let x_len = word.positions.num_x();
         let y_len = word.positions.num_y();
-        for (site_idx, site) in word.sites.iter().enumerate() {
+        for (site_idx, site) in word.site_indices.iter().enumerate() {
             let x_idx = site[0];
             let y_idx = site[1];
             if x_idx as usize >= x_len {
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn test_wrong_site_count() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].sites.pop();
+        spec.geometry.words[0].site_indices.pop();
         let errors = spec.validate().unwrap_err();
         assert!(has_error(
             &errors,
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn test_wrong_cz_pairs_count() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].cz_pairs.as_mut().unwrap().pop();
+        spec.geometry.words[0].has_cz.as_mut().unwrap().pop();
         let errors = spec.validate().unwrap_err();
         assert!(has_error(
             &errors,
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn test_site_x_index_out_of_range() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].sites[0] = [99, 0];
+        spec.geometry.words[0].site_indices[0] = [99, 0];
         let errors = spec.validate().unwrap_err();
         assert!(has_error(
             &errors,
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn test_site_y_index_out_of_range() {
         let mut spec = example_arch_spec();
-        spec.geometry.words[0].sites[0] = [0, 99];
+        spec.geometry.words[0].site_indices[0] = [0, 99];
         let errors = spec.validate().unwrap_err();
         assert!(has_error(
             &errors,

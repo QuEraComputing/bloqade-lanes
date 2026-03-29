@@ -888,27 +888,26 @@ mod tests {
 
     fn test_arch_spec() -> ArchSpec {
         let json = r#"{
-            "version": 1,
+            "version": "1.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
                     {
-                        "id": 0,
-                        "grid": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
-                        "sites": [[0, 0], [1, 0]]
+                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
+                        "site_indices": [[0, 0], [1, 0]]
                     }
                 ]
             },
             "buses": {
                 "site_buses": [
-                    { "id": 0, "src": [0], "dst": [1] }
+                    { "src": [0], "dst": [1] }
                 ],
                 "word_buses": []
             },
             "words_with_site_buses": [0],
             "sites_with_word_buses": [],
             "zones": [
-                { "id": 0, "words": [0] }
+                { "words": [0] }
             ],
             "entangling_zones": [0],
             "measurement_mode_zones": [0]
@@ -1083,29 +1082,27 @@ mod tests {
     #[test]
     fn test_lane_group_word_not_in_site_bus_list() {
         let json = r#"{
-            "version": 1,
+            "version": "1.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
                     {
-                        "id": 0,
-                        "grid": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
-                        "sites": [[0, 0], [1, 0]]
+                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
+                        "site_indices": [[0, 0], [1, 0]]
                     },
                     {
-                        "id": 1,
-                        "grid": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
-                        "sites": [[0, 0], [1, 0]]
+                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
+                        "site_indices": [[0, 0], [1, 0]]
                     }
                 ]
             },
             "buses": {
-                "site_buses": [{ "id": 0, "src": [0], "dst": [1] }],
+                "site_buses": [{ "src": [0], "dst": [1] }],
                 "word_buses": []
             },
             "words_with_site_buses": [0],
             "sites_with_word_buses": [],
-            "zones": [{ "id": 0, "words": [0, 1] }],
+            "zones": [{ "words": [0, 1] }],
             "entangling_zones": [0],
             "measurement_mode_zones": [0]
         }"#;
