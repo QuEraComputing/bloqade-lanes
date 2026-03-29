@@ -1,4 +1,3 @@
-import pytest
 from bloqade.geometry.dialects import grid
 
 from bloqade.lanes import layout
@@ -185,46 +184,3 @@ def test_get_lane_address_roundtrip():
                     looked_up = arch_spec.get_lane_address(src, dst)
                     assert looked_up is not None
                     assert looked_up == lane
-
-
-def test_get_lane_duration_cost_bounds_and_anchor():
-    arch_spec = logical.get_arch_spec()
-    lanes = tuple(arch_spec._lane_map.values())
-    assert lanes
-
-    costs = [arch_spec.get_lane_duration_cost(lane) for lane in lanes]
-    assert all(0.0 <= cost <= 1.0 for cost in costs)
-    assert max(costs) == pytest.approx(1.0)
-
-
-def test_get_lane_duration_cost_monotonic_with_duration():
-    arch_spec = logical.get_arch_spec()
-    lanes = tuple(arch_spec._lane_map.values())
-    assert lanes
-
-    pairs = sorted(
-        (arch_spec.get_lane_duration_us(lane), arch_spec.get_lane_duration_cost(lane))
-        for lane in lanes
-    )
-    for (_, left_cost), (_, right_cost) in zip(pairs, pairs[1:]):
-        assert left_cost <= right_cost + 1e-12
-
-
-def test_get_lane_duration_cost_identical_durations_match():
-    arch_spec = logical.get_arch_spec()
-    lanes = tuple(arch_spec._lane_map.values())
-    assert lanes
-
-    duration_groups: dict[float, list[layout.LaneAddress]] = {}
-    for lane in lanes:
-        duration = arch_spec.get_lane_duration_us(lane)
-        duration_groups.setdefault(round(duration, 10), []).append(lane)
-
-    same_duration_group = next(
-        (group for group in duration_groups.values() if len(group) >= 2), None
-    )
-    assert same_duration_group is not None
-
-    baseline = arch_spec.get_lane_duration_cost(same_duration_group[0])
-    for lane in same_duration_group[1:]:
-        assert arch_spec.get_lane_duration_cost(lane) == pytest.approx(baseline)

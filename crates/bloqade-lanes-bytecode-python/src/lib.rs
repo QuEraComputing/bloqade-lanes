@@ -1,6 +1,14 @@
+//! PyO3 bindings for the Bloqade lanes bytecode library.
+//!
+//! This crate exposes the core bytecode types to Python as the
+//! `bloqade.lanes.bytecode._native` extension module. It wraps
+//! types from [`bloqade_lanes_bytecode_core`] with Python-friendly
+//! constructors, input validation, and error conversion.
+
 use pyo3::prelude::*;
 
 mod arch_python;
+mod atom_state_python;
 pub(crate) mod errors;
 mod instruction_python;
 mod program_python;
@@ -25,6 +33,9 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<arch_python::PyLocationAddr>()?;
     m.add_class::<arch_python::PyLaneAddr>()?;
     m.add_class::<arch_python::PyZoneAddr>()?;
+
+    // Atom state
+    m.add_class::<atom_state_python::PyAtomStateData>()?;
 
     // Instruction and Program
     m.add_class::<instruction_python::PyInstruction>()?;

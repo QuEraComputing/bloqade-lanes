@@ -4,7 +4,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-import pymetis
+import kahip
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
@@ -27,7 +27,9 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
     max_words: int | None = None
     u_factor: int = 1
-    metis_seed: int = 0
+    partitioner_seed: int = 0
+
+    KAHIP_MODE_ECO = 1
 
     @property
     def left_site_count(self) -> int:
@@ -89,12 +91,11 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         qids = tuple(sorted(set(qubits)))
         n = len(qids)
 
-        # if only 1 word, no metis needed
+        # if only 1 word, no partitioner needed
         if k_words == 1:
             return {qid: 0 for qid in qids}
 
-        # target sizes for each word and adjacency list/weights
-        tpwgts = [size / float(n) for size in target_sizes]
+        # Build a weighted undirected CSR graph expected by KaHIP.
         adjacency: list[list[int]] = [[] for _ in range(n)]
         adjacency_w: list[list[int]] = [[] for _ in range(n)]
         for (u, v), w in sorted(edge_weights.items()):
@@ -104,29 +105,28 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             adjacency_w[v].append(w)
         xadj = [0]
         adjncy: list[int] = []
-        eweights: list[int] = []
-        # METIS wants CSR arrays/lists rather than dicts for contiguous memory
+        adjcwgt: list[int] = []
         for node in range(n):
             adjncy.extend(adjacency[node])
-            eweights.extend(adjacency_w[node])
+            adjcwgt.extend(adjacency_w[node])
             xadj.append(len(adjncy))
 
-        # METIS ufactor is imbalance tolerance; 1 -> up to .1% more elements per partition
-        # (effectively very strict partition target sizes to ensure words match hardware sizes)
-        options = pymetis.Options(ufactor=self.u_factor, seed=self.metis_seed)
-        # represents the adjacency list in CSR format
-        csr_adjacency = pymetis.CSRAdjacency(xadj, adjncy)
-        # Partition into k_words; metis_recursive is a boolean flag for recursive algo which is
-        graph_partition = pymetis.part_graph(
-            nparts=k_words,
-            adjacency=csr_adjacency,
-            eweights=eweights,
-            tpwgts=tpwgts,
-            options=options,
+        # KaHIP exposes a global imbalance tolerance (epsilon). We keep it strict.
+        imbalance = max(float(self.u_factor) / 1000.0, 1e-6)
+        vwgt = [1] * n
+        _edge_cut, blocks = kahip.kaffpa(
+            vwgt,
+            xadj,
+            adjcwgt,
+            adjncy,
+            k_words,
+            imbalance,
+            0,
+            self.partitioner_seed,
+            self.KAHIP_MODE_ECO,
         )
-        parts = graph_partition.vertex_part
-        assert len(parts) == n, "METIS returned unexpected partition size."
-        q_to_word = {qid: int(parts[q_to_node[qid]]) for qid in qids}
+        assert len(blocks) == n, "KaHIP returned unexpected partition size."
+        q_to_word = {qid: int(blocks[q_to_node[qid]]) for qid in qids}
         return q_to_word
 
     def _left_to_right_relabel_words(
@@ -242,7 +242,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         for qid in sorted(qubits):
             members_by_word[q_to_word[qid]].append(qid)
 
-        # Enforce exact left-to-right capacities after METIS assignment.
+        # Enforce exact left-to-right capacities after partition assignment.
         # This guarantees full words first (and at most one partial trailing word).
         capacities = {word_id: target_sizes[word_id] for word_id in range(k_words)}
         for word_id in range(k_words):

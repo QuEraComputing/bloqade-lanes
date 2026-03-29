@@ -23,12 +23,14 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
         placement_strategy=None,
         insert_return_moves=True,
         no_raise=True,
+        logical_initialize=True,
     ):
         captured["mt"] = mt
         captured["layout_heuristic"] = layout_heuristic
         captured["placement_strategy"] = placement_strategy
         captured["insert_return_moves"] = insert_return_moves
         captured["no_raise"] = no_raise
+        captured["logical_initialize"] = logical_initialize
         return "move_ir"
 
     monkeypatch.setattr(logical_mvp, "squin_to_move", fake_squin_to_move)
@@ -43,6 +45,7 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
     )
     assert isinstance(captured["placement_strategy"], LogicalPlacementStrategyNoHome)
     assert captured["insert_return_moves"] is True
+    assert captured["logical_initialize"] is True
 
 
 def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):

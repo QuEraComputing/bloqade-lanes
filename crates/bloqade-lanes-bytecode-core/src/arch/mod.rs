@@ -1,3 +1,17 @@
+//! Architecture specification types, address encoding, and validation.
+//!
+//! This module defines the physical topology of a Bloqade quantum device:
+//! words, grids, transport buses, zones, and the `ArchSpec` that ties them
+//! together. It also provides bit-packed address types used by bytecode
+//! instructions and comprehensive structural validation.
+//!
+//! # Key types
+//!
+//! - [`ArchSpec`] — top-level device specification (loadable from JSON)
+//! - [`Word`], [`Grid`], [`Bus`], [`Zone`] — building blocks
+//! - [`LocationAddr`], [`LaneAddr`], [`ZoneAddr`] — bit-packed addresses
+//! - [`Direction`], [`MoveType`] — transport enums
+
 pub mod addr;
 pub mod query;
 pub mod types;
@@ -44,7 +58,7 @@ pub(crate) fn example_arch_spec() -> ArchSpec {
         "entangling_zones": [0],
         "measurement_mode_zones": [0],
         "paths": [
-            {"lane": "0xC000000000010000", "waypoints": [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]]}
+            {"lane": "0xC000000000000005", "waypoints": [[1.0, 15.0], [1.0, 10.0], [1.0, 5.0]]}
         ]
     }"#;
     serde_json::from_str(json).unwrap()

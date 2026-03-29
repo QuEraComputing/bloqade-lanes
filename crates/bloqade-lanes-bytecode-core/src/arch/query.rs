@@ -1,3 +1,6 @@
+//! Arch spec queries: JSON loading, position lookup, lane resolution,
+//! and group-level address validation.
+
 use std::collections::HashSet;
 use std::fmt;
 
@@ -7,6 +10,7 @@ use super::addr::{LaneAddr, LocationAddr, MoveType};
 use super::types::{ArchSpec, Bus, Word};
 use super::validate::ArchSpecError;
 
+/// Error returned when loading an arch spec from JSON fails.
 #[derive(Debug, Error)]
 pub enum ArchSpecLoadError {
     #[error("JSON parse error: {0}")]
@@ -68,7 +72,7 @@ pub enum LaneGroupError {
     WordNotInSiteBusList { word_id: u32 },
     /// Lane site_id not in sites_with_word_buses.
     SiteNotInWordBusList { site_id: u32 },
-    /// Lane group violates AOD constraint (e.g. not a complete rectangle).
+    /// Lane group violates AOD grid constraint (e.g. not a complete grid).
     AODConstraintViolation { message: String },
 }
 
@@ -107,14 +111,20 @@ impl Bus {
     /// For site buses, this maps source site → destination site.
     /// For word buses, this maps source word → destination word.
     pub fn resolve_forward(&self, src: u32) -> Option<u32> {
-        self.src.iter().position(|&s| s == src).map(|i| self.dst[i])
+        self.src
+            .iter()
+            .position(|&s| s == src)
+            .and_then(|i| self.dst.get(i).copied())
     }
 
     /// Given a destination value, return the source value (backward move).
     /// For site buses, this maps destination site → source site.
     /// For word buses, this maps destination word → source word.
     pub fn resolve_backward(&self, dst: u32) -> Option<u32> {
-        self.dst.iter().position(|&d| d == dst).map(|i| self.src[i])
+        self.dst
+            .iter()
+            .position(|&d| d == dst)
+            .and_then(|i| self.src.get(i).copied())
     }
 }
 
@@ -124,8 +134,8 @@ impl Word {
     /// Resolve a site's grid indices to physical (x, y) coordinates.
     pub fn site_position(&self, site_idx: usize) -> Option<(f64, f64)> {
         let pair = self.sites.get(site_idx)?;
-        let x = self.grid.x_position(pair[0] as usize)?;
-        let y = self.grid.y_position(pair[1] as usize)?;
+        let x = self.positions.x_position(pair[0] as usize)?;
+        let y = self.positions.y_position(pair[1] as usize)?;
         Some((x, y))
     }
 }
@@ -183,13 +193,22 @@ impl ArchSpec {
     ) -> Option<(LocationAddr, LocationAddr)> {
         use crate::arch::addr::{Direction, MoveType};
 
-        let src = LocationAddr {
+        // Validate the lane address up front so callers always get None
+        // for invalid lanes (e.g. out-of-range word_id or site_id).
+        if !self.check_lane(lane).is_empty() {
+            return None;
+        }
+
+        // In the lane address convention, site_id and word_id always encode
+        // the forward-direction source. The direction field only controls
+        // which endpoint is returned as src vs dst.
+        let fwd_src = LocationAddr {
             word_id: lane.word_id,
             site_id: lane.site_id,
         };
 
-        let dst = match (lane.move_type, lane.direction) {
-            (MoveType::SiteBus, Direction::Forward) => {
+        let fwd_dst = match lane.move_type {
+            MoveType::SiteBus => {
                 let bus = self.site_bus_by_id(lane.bus_id)?;
                 let dst_site = bus.resolve_forward(lane.site_id)?;
                 LocationAddr {
@@ -197,15 +216,7 @@ impl ArchSpec {
                     site_id: dst_site,
                 }
             }
-            (MoveType::SiteBus, Direction::Backward) => {
-                let bus = self.site_bus_by_id(lane.bus_id)?;
-                let dst_site = bus.resolve_backward(lane.site_id)?;
-                LocationAddr {
-                    word_id: lane.word_id,
-                    site_id: dst_site,
-                }
-            }
-            (MoveType::WordBus, Direction::Forward) => {
+            MoveType::WordBus => {
                 let bus = self.word_bus_by_id(lane.bus_id)?;
                 let dst_word = bus.resolve_forward(lane.word_id)?;
                 LocationAddr {
@@ -213,17 +224,32 @@ impl ArchSpec {
                     site_id: lane.site_id,
                 }
             }
-            (MoveType::WordBus, Direction::Backward) => {
-                let bus = self.word_bus_by_id(lane.bus_id)?;
-                let dst_word = bus.resolve_backward(lane.word_id)?;
-                LocationAddr {
-                    word_id: dst_word,
-                    site_id: lane.site_id,
-                }
-            }
         };
 
-        Some((src, dst))
+        match lane.direction {
+            Direction::Forward => Some((fwd_src, fwd_dst)),
+            Direction::Backward => Some((fwd_dst, fwd_src)),
+        }
+    }
+
+    /// Get the CZ pair (blockaded location) for a given location.
+    ///
+    /// Returns `Some(LocationAddr)` if the word at `loc.word_id` has CZ data,
+    /// site `loc.site_id` has a partner, and the partner is a valid location.
+    /// Returns `None` otherwise.
+    pub fn get_blockaded_location(&self, loc: &LocationAddr) -> Option<LocationAddr> {
+        let word = self.word_by_id(loc.word_id)?;
+        let cz_pairs = word.cz_pairs.as_ref()?;
+        let pair = cz_pairs.get(loc.site_id as usize)?;
+        let result = LocationAddr {
+            word_id: pair[0],
+            site_id: pair[1],
+        };
+        // Validate the CZ pair target is in range
+        if self.check_location(&result).is_some() {
+            return None;
+        }
+        Some(result)
     }
 
     // -- Address validation --
@@ -242,7 +268,13 @@ impl ArchSpec {
         }
     }
 
-    /// Check whether a lane address is valid (bus exists, word/site in range).
+    /// Check whether a lane address is valid.
+    ///
+    /// Validates that the bus exists, word/site are in range, and the
+    /// site/word is a valid forward source for the bus. In the lane address
+    /// convention, `site_id` and `word_id` always encode the forward-direction
+    /// source — the `direction` field only controls which endpoint is src vs
+    /// dst, not which site/word is encoded.
     pub fn check_lane(&self, addr: &LaneAddr) -> Vec<String> {
         let num_words = self.geometry.words.len() as u32;
         let sites_per_word = self.geometry.sites_per_word;
@@ -250,22 +282,49 @@ impl ArchSpec {
 
         match addr.move_type {
             MoveType::SiteBus => {
-                if self.site_bus_by_id(addr.bus_id).is_none() {
+                if addr.word_id >= num_words {
+                    errors.push(format!("word_id {} out of range", addr.word_id));
+                } else if !self.words_with_site_buses.contains(&addr.word_id) {
+                    errors.push(format!(
+                        "word_id {} not in words_with_site_buses",
+                        addr.word_id
+                    ));
+                }
+                if addr.site_id >= sites_per_word {
+                    errors.push(format!("site_id {} out of range", addr.site_id));
+                }
+                if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
+                    if errors.is_empty() && bus.resolve_forward(addr.site_id).is_none() {
+                        errors.push(format!(
+                            "site_id {} is not a valid source for site_bus {}",
+                            addr.site_id, addr.bus_id
+                        ));
+                    }
+                } else {
                     errors.push(format!("unknown site_bus id {}", addr.bus_id));
                 }
+            }
+            MoveType::WordBus => {
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
                 }
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
+                } else if !self.sites_with_word_buses.contains(&addr.site_id) {
+                    errors.push(format!(
+                        "site_id {} not in sites_with_word_buses",
+                        addr.site_id
+                    ));
                 }
-            }
-            MoveType::WordBus => {
-                if self.word_bus_by_id(addr.bus_id).is_none() {
+                if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
+                    if errors.is_empty() && bus.resolve_forward(addr.word_id).is_none() {
+                        errors.push(format!(
+                            "word_id {} is not a valid source for word_bus {}",
+                            addr.word_id, addr.bus_id
+                        ));
+                    }
+                } else {
                     errors.push(format!("unknown word_bus id {}", addr.bus_id));
-                }
-                if addr.word_id >= num_words {
-                    errors.push(format!("word_id {} out of range", addr.word_id));
                 }
             }
         }
@@ -421,7 +480,7 @@ impl ArchSpec {
         errors
     }
 
-    /// Check AOD constraint: lane positions must form a complete rectangle
+    /// Check AOD grid constraint: lane positions must form a complete grid
     /// (Cartesian product of unique X and Y values).
     pub fn check_lane_group_geometry(&self, lanes: &[LaneAddr]) -> Vec<String> {
         use std::collections::BTreeSet;
@@ -456,7 +515,7 @@ impl ArchSpec {
 
         if actual != expected {
             vec![format!(
-                "lanes do not form a complete rectangle: expected {} positions ({}x × {}y), got {} unique positions",
+                "lanes do not form a complete grid: expected {} positions ({}x × {}y), got {} unique positions",
                 expected.len(),
                 unique_x.len(),
                 unique_y.len(),
@@ -634,5 +693,262 @@ mod tests {
         let json = r#"{"version": 1}"#;
         let result = super::super::ArchSpec::from_json_validated(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_blockaded_location_valid() {
+        let spec = example_arch_spec();
+        // Site 0 in word 0 pairs with site 5 in word 0
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 0,
+        };
+        let pair = spec.get_blockaded_location(&loc).unwrap();
+        assert_eq!(pair.word_id, 0);
+        assert_eq!(pair.site_id, 5);
+    }
+
+    #[test]
+    fn get_blockaded_location_reverse() {
+        let spec = example_arch_spec();
+        // Site 5 in word 0 pairs back with site 0 in word 0
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 5,
+        };
+        let pair = spec.get_blockaded_location(&loc).unwrap();
+        assert_eq!(pair.word_id, 0);
+        assert_eq!(pair.site_id, 0);
+    }
+
+    #[test]
+    fn get_blockaded_location_invalid_word() {
+        let spec = example_arch_spec();
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 99,
+            site_id: 0,
+        };
+        assert!(spec.get_blockaded_location(&loc).is_none());
+    }
+
+    #[test]
+    fn get_blockaded_location_invalid_site() {
+        let spec = example_arch_spec();
+        let loc = crate::arch::addr::LocationAddr {
+            word_id: 0,
+            site_id: 99,
+        };
+        assert!(spec.get_blockaded_location(&loc).is_none());
+    }
+
+    // ── lane_endpoints tests ──
+
+    #[test]
+    fn lane_endpoints_site_bus_forward() {
+        let spec = example_arch_spec();
+        // Site bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        assert_eq!(src.word_id, 0);
+        assert_eq!(src.site_id, 0);
+        assert_eq!(dst.word_id, 0);
+        assert_eq!(dst.site_id, 5);
+    }
+
+    #[test]
+    fn lane_endpoints_site_bus_backward() {
+        let spec = example_arch_spec();
+        // Backward: same site_id (forward source), but endpoints are swapped
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        // Backward swaps: src is the forward dst, dst is the forward src
+        assert_eq!(src.word_id, 0);
+        assert_eq!(src.site_id, 5);
+        assert_eq!(dst.word_id, 0);
+        assert_eq!(dst.site_id, 0);
+    }
+
+    #[test]
+    fn lane_endpoints_word_bus_forward() {
+        let spec = example_arch_spec();
+        // Word bus 0: src=[0] dst=[1]; site_id must be in sites_with_word_buses
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        assert_eq!(src.word_id, 0);
+        assert_eq!(src.site_id, 5);
+        assert_eq!(dst.word_id, 1);
+        assert_eq!(dst.site_id, 5);
+    }
+
+    #[test]
+    fn lane_endpoints_word_bus_backward() {
+        let spec = example_arch_spec();
+        // site_id must be in sites_with_word_buses
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let (src, dst) = spec.lane_endpoints(&lane).unwrap();
+        // Backward swaps endpoints
+        assert_eq!(src.word_id, 1);
+        assert_eq!(src.site_id, 5);
+        assert_eq!(dst.word_id, 0);
+        assert_eq!(dst.site_id, 5);
+    }
+
+    #[test]
+    fn lane_endpoints_invalid_bus_returns_none() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 99,
+        };
+        assert!(spec.lane_endpoints(&lane).is_none());
+    }
+
+    #[test]
+    fn lane_endpoints_invalid_site_not_in_bus_returns_none() {
+        let spec = example_arch_spec();
+        // Site 5 is a destination, not a source for forward resolution
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        assert!(spec.lane_endpoints(&lane).is_none());
+    }
+
+    // ── check_lane tests ──
+
+    #[test]
+    fn check_lane_valid_forward() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        assert!(spec.check_lane(&lane).is_empty());
+    }
+
+    #[test]
+    fn check_lane_valid_backward() {
+        let spec = example_arch_spec();
+        // Backward with forward source site_id=0 should be valid
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        assert!(spec.check_lane(&lane).is_empty());
+    }
+
+    #[test]
+    fn check_lane_destination_site_rejected() {
+        let spec = example_arch_spec();
+        // Site 5 is a destination, not a forward source
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("not a valid source"));
+    }
+
+    #[test]
+    fn check_lane_destination_site_backward_also_rejected() {
+        let spec = example_arch_spec();
+        // Site 5 with backward direction — still not a forward source
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Backward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 5,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("not a valid source"));
+    }
+
+    #[test]
+    fn check_lane_invalid_bus() {
+        let spec = example_arch_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 99,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn check_lane_word_not_in_site_bus_list() {
+        let mut spec = example_arch_spec();
+        // Remove word 0 from words_with_site_buses
+        spec.words_with_site_buses.retain(|&w| w != 0);
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("words_with_site_buses"));
+    }
+
+    #[test]
+    fn check_lane_site_not_in_word_bus_list() {
+        let spec = example_arch_spec();
+        // sites_with_word_buses is [5,6,7,8,9]; site 0 is not in the list
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::WordBus,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let errors = spec.check_lane(&lane);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("sites_with_word_buses"));
     }
 }

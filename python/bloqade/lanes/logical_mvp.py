@@ -1,12 +1,9 @@
 import io
 from functools import cache
-from typing import TypeVar
+from typing import Any, Callable, TypeVar
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
-from bloqade.gemini.logical.dialects.operations.stmts import (
-    TerminalLogicalMeasurement,
-)
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, rewrite
@@ -18,16 +15,22 @@ from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
 from bloqade.gemini.analysis.measurement_validation import (
     GeminiTerminalMeasurementValidation,
 )
+from bloqade.gemini.logical.dialects.operations.stmts import (
+    TerminalLogicalMeasurement,
+)
 from bloqade.lanes import visualize
+from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import squin_to_move
 
@@ -37,6 +40,7 @@ __all__ = [
     "compile_squin_to_move_and_visualize",
     "compile_to_physical_squin_noise_model",
     "compile_to_stim_program",
+    "compile_task",
     "transversal_rewrites",
     "append_measurements_and_annotations",
 ]
@@ -125,6 +129,7 @@ def compile_squin_to_move(
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_return_moves=insert_return_moves,
         no_raise=no_raise,
+        logical_initialize=True,
     )
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
@@ -367,3 +372,60 @@ def append_measurements_and_annotations(
             ]
             meas_list = _insert_before(ilist.New(meas_ssas), return_stmt)
             _insert_before(SetObservable(meas_list.result), return_stmt)
+
+
+def compile_task(
+    logical_kernel: ir.Method | Callable[..., Any],
+    m2dets: list[list[int]] | None = None,
+    m2obs: list[list[int]] | None = None,
+):
+    """Compile a logical kernel into physical move artifacts.
+
+    Handles CUDAQ kernel detection/conversion, squin kernel validation,
+    squin-to-move compilation, architecture spec generation, and
+    post-processing extraction.
+
+    Args:
+        logical_kernel: A squin ``ir.Method`` or a CUDA-Q kernel to compile.
+        m2dets: Binary measurement-to-detector matrix. For CUDA-Q kernels,
+            defaults to Steane [[7,1,3]] detectors if ``None``.
+        m2obs: Binary measurement-to-observable matrix. For CUDA-Q kernels,
+            defaults to Steane [[7,1,3]] observables if ``None``.
+
+    Returns:
+        A tuple of ``(logical_squin_kernel, physical_arch_spec,
+        physical_move_kernel, post_processing)``.
+
+    """
+    if is_cudaq_kernel(logical_kernel):
+        logical_squin_kernel: ir.Method = cudaq_to_squin(logical_kernel)
+
+        if m2dets is None and m2obs is None:
+            num_qubits = len(_find_qubit_ssas(logical_squin_kernel))
+            m2dets = steane7_m2dets(num_qubits)
+            m2obs = steane7_m2obs(num_qubits)
+
+        append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
+    elif isinstance(logical_kernel, ir.Method):
+        logical_squin_kernel = logical_kernel
+        if m2dets is not None or m2obs is not None:
+            append_measurements_and_annotations(logical_squin_kernel, m2dets, m2obs)
+    else:
+        raise ValueError(f"Unknown kernel type {type(logical_kernel)}")
+
+    run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
+
+    physical_arch_spec = generate_arch_hypercube(4)
+    physical_move_kernel = compile_squin_to_move(
+        logical_squin_kernel, transversal_rewrite=True
+    )
+    post_processing = atom.AtomInterpreter(
+        physical_move_kernel.dialects, arch_spec=physical_arch_spec
+    ).get_post_processing(physical_move_kernel)
+
+    return (
+        logical_squin_kernel,
+        physical_arch_spec,
+        physical_move_kernel,
+        post_processing,
+    )

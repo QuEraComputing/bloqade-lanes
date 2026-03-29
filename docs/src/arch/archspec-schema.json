@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/QuEraComputing/bloqade-lanes/main/docs/src/arch/archspec-schema.json",
+  "title": "ArchSpec",
+  "description": "Architecture specification for the Bloqade quantum device. Defines the physical geometry (words, sites, grids), transport buses (site and word), logical zones, and optional AOD transport paths.",
+  "type": "object",
+  "required": [
+    "version",
+    "geometry",
+    "buses",
+    "words_with_site_buses",
+    "sites_with_word_buses",
+    "zones",
+    "entangling_zones",
+    "measurement_mode_zones"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Arch spec format version as a \"major.minor\" string (e.g. \"1.0\"). Both major and minor components must fit in a u16 (0..65535).",
+      "type": "string",
+      "pattern": "^[0-9]{1,5}\\.[0-9]{1,5}$"
+    },
+    "geometry": {
+      "$ref": "#/$defs/Geometry"
+    },
+    "buses": {
+      "$ref": "#/$defs/Buses"
+    },
+    "words_with_site_buses": {
+      "description": "Word IDs that have site bus transport capability. Only these words can execute intra-word site moves. Every entry must be a valid word ID defined in geometry.words.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "sites_with_word_buses": {
+      "description": "Site indices that participate in inter-word (word bus) transport. These are the 'landing pad' positions within each word where atoms arrive/depart during word-bus moves. Every entry must be less than geometry.sites_per_word.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "zones": {
+      "description": "Logical zones that group words for execution phases. Zone 0 is special and must contain all word IDs.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Zone"
+      },
+      "minItems": 1
+    },
+    "entangling_zones": {
+      "description": "Zone IDs where entangling (CZ) gates can be performed. Every entry must reference a valid zone ID defined in zones.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "measurement_mode_zones": {
+      "description": "Zone IDs that support measurement mode. Must not be empty. The first entry must be zone 0. Every entry must reference a valid zone ID defined in zones.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "paths": {
+      "description": "Optional list of AOD (Acousto-Optic Deflector) transport paths. Each path connects a source location to a destination location via a sequence of [x, y] waypoints.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TransportPath"
+      }
+    },
+    "feed_forward": {
+      "description": "Whether the device supports mid-circuit measurement with classical feedback. When false (default), at most one measure instruction is allowed per program.",
+      "type": "boolean",
+      "default": false
+    },
+    "atom_reloading": {
+      "description": "Whether the device supports reloading atoms after initial fill. When false (default), no fill instruction is allowed (only initial_fill).",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "$defs": {
+    "Geometry": {
+      "title": "Geometry",
+      "description": "Physical geometry of the device. Defines words, their 2D grids, and site positions within each word.",
+      "type": "object",
+      "required": ["sites_per_word", "words"],
+      "additionalProperties": false,
+      "properties": {
+        "sites_per_word": {
+          "description": "Number of atom sites per word. Every word must have exactly this many sites.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "words": {
+          "description": "List of words (atom registers). Each word is an independent array of sites laid out on a 2D grid.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Word"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "Word": {
+      "title": "Word",
+      "description": "A word (atom register) consisting of sites arranged on a 2D grid. Words are the fundamental unit of the device topology. A word's ID is its index in the geometry.words array.",
+      "type": "object",
+      "required": ["positions", "site_indices"],
+      "additionalProperties": false,
+      "properties": {
+        "positions": {
+          "$ref": "#/$defs/Grid"
+        },
+        "site_indices": {
+          "description": "Site positions as [x_idx, y_idx] pairs. Each pair indexes into the grid's computed x and y coordinate arrays respectively. Length must equal geometry.sites_per_word.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "has_cz": {
+          "description": "Optional CZ entanglement partners for each site. has_cz[i] = [word_id, site_id] specifies the site that site i entangles with during a CZ gate. Length must equal site_indices.length if present.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    "Grid": {
+      "title": "Grid",
+      "description": "A 2D coordinate grid for a word, defined by start positions and spacing values. Coordinates are computed as cumulative sums: x[i] = x_start + sum(x_spacing[0..i]). The number of grid points along each axis is len(spacing) + 1. Physical positions are typically in micrometers (µm).",
+      "type": "object",
+      "required": ["x_start", "y_start", "x_spacing", "y_spacing"],
+      "additionalProperties": false,
+      "properties": {
+        "x_start": {
+          "description": "X-coordinate of the first grid point.",
+          "type": "number"
+        },
+        "y_start": {
+          "description": "Y-coordinate of the first grid point.",
+          "type": "number"
+        },
+        "x_spacing": {
+          "description": "Spacing between consecutive x-coordinates. The number of x grid points is len(x_spacing) + 1.",
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "y_spacing": {
+          "description": "Spacing between consecutive y-coordinates. The number of y grid points is len(y_spacing) + 1.",
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "Buses": {
+      "title": "Buses",
+      "description": "Transport bus definitions. Buses are the channels that move atoms between sites (intra-word) or between words (inter-word).",
+      "type": "object",
+      "required": ["site_buses", "word_buses"],
+      "additionalProperties": false,
+      "properties": {
+        "site_buses": {
+          "description": "Site buses move atoms between sites within the same word. A bus's ID is its index in this array.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bus"
+          }
+        },
+        "word_buses": {
+          "description": "Word buses move atoms between different words. A bus's ID is its index in this array.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bus"
+          }
+        }
+      }
+    },
+    "Bus": {
+      "title": "Bus",
+      "description": "A transport bus that maps source positions to destination positions. For site buses, src and dst are site indices within a word. For word buses, they are word IDs. The bus's identity is determined by its position in the parent array.",
+      "type": "object",
+      "required": ["src", "dst"],
+      "additionalProperties": false,
+      "properties": {
+        "src": {
+          "description": "Source indices (site indices for site buses, word IDs for word buses).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "dst": {
+          "description": "Destination indices. Must be the same length as src.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "Zone": {
+      "title": "Zone",
+      "description": "A logical zone that groups words for execution phases (e.g. entangling, measurement). A zone's ID is its index in the zones array.",
+      "type": "object",
+      "required": ["words"],
+      "additionalProperties": false,
+      "properties": {
+        "words": {
+          "description": "Word IDs belonging to this zone.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "TransportPath": {
+      "title": "TransportPath",
+      "description": "A transport path for a lane, defined as a sequence of (x, y) waypoints. The lane is identified by its encoded LaneAddr as a hex string.",
+      "type": "object",
+      "required": ["lane", "waypoints"],
+      "additionalProperties": false,
+      "properties": {
+        "lane": {
+          "description": "Encoded LaneAddr as a 16-digit hex string (e.g. '0xC000000000010000'). Low 32 bits: [word_id:16][site_id:16], high 32 bits: [dir:1][mt:1][pad:14][bus_id:16].",
+          "type": "string",
+          "pattern": "^0[xX][0-9a-fA-F]{16}$"
+        },
+        "waypoints": {
+          "description": "Sequence of [x, y] waypoints defining the physical trajectory atoms follow during transport. Must have at least 2 entries; the first and last must match the lane's source and destination positions.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    }
+  }
+}

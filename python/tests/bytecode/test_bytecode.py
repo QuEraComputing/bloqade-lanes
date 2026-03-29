@@ -1,6 +1,7 @@
 import pytest
 
 from bloqade.lanes.bytecode import (
+    ArchSpec,
     Direction,
     Instruction,
     LaneAddress,
@@ -11,7 +12,9 @@ from bloqade.lanes.bytecode import (
     ZoneAddress,
 )
 from bloqade.lanes.bytecode.exceptions import (
+    AtomReloadingNotSupportedError,
     BadMagicError,
+    FeedForwardNotSupportedError,
     InitialFillNotFirstError,
     MissingVersionError,
     StackUnderflowError,
@@ -404,6 +407,138 @@ initial_fill 1
         with pytest.raises(ValidationError) as exc_info:
             program.validate(stack=True)
         assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
+
+
+MINIMAL_ARCH_JSON = """{
+    "version": "1.0",
+    "geometry": {
+        "sites_per_word": 2,
+        "words": [{
+            "positions": {"x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0], "y_spacing": []},
+            "site_indices": [[0, 0], [1, 0]]
+        }]
+    },
+    "buses": {"site_buses": [], "word_buses": []},
+    "words_with_site_buses": [],
+    "sites_with_word_buses": [],
+    "zones": [{"words": [0]}],
+    "entangling_zones": [],
+    "measurement_mode_zones": [0]
+}"""
+
+
+class TestCapabilityValidation:
+    def test_single_measure_allowed(self):
+        arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
+        program = Program.from_text("""\
+.version 1.0
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+const_zone 0x00000000
+measure 1
+await_measure
+return
+halt
+""")
+        program.validate(arch=arch)  # should not raise
+
+    def test_multiple_measure_rejected_without_feed_forward(self):
+        arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
+        program = Program.from_text("""\
+.version 1.0
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+const_zone 0x00000000
+measure 1
+await_measure
+const_zone 0x00000000
+measure 1
+await_measure
+return
+halt
+""")
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(arch=arch)
+        assert any(
+            isinstance(e, FeedForwardNotSupportedError) for e in exc_info.value.errors
+        )
+
+    def test_multiple_measure_allowed_with_feed_forward(self):
+        import json
+
+        data = json.loads(MINIMAL_ARCH_JSON)
+        data["feed_forward"] = True
+        arch = ArchSpec.from_json(json.dumps(data))
+        program = Program.from_text("""\
+.version 1.0
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+const_zone 0x00000000
+measure 1
+await_measure
+const_zone 0x00000000
+measure 1
+await_measure
+return
+halt
+""")
+        program.validate(arch=arch)  # should not raise
+
+    def test_fill_rejected_without_atom_reloading(self):
+        arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
+        program = Program.from_text("""\
+.version 1.0
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+const_loc 0x00000000
+fill 1
+halt
+""")
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate(arch=arch)
+        assert any(
+            isinstance(e, AtomReloadingNotSupportedError) for e in exc_info.value.errors
+        )
+
+    def test_fill_allowed_with_atom_reloading(self):
+        import json
+
+        data = json.loads(MINIMAL_ARCH_JSON)
+        data["atom_reloading"] = True
+        arch = ArchSpec.from_json(json.dumps(data))
+        program = Program.from_text("""\
+.version 1.0
+const_loc 0x00000000
+const_loc 0x00000001
+initial_fill 2
+const_loc 0x00000000
+fill 1
+halt
+""")
+        program.validate(arch=arch)  # should not raise
+
+    def test_initial_fill_always_allowed(self):
+        arch = ArchSpec.from_json(MINIMAL_ARCH_JSON)
+        program = Program.from_text("""\
+.version 1.0
+const_loc 0x00000000
+initial_fill 1
+halt
+""")
+        program.validate(arch=arch)  # should not raise
+
+    def test_error_attributes(self):
+        err = FeedForwardNotSupportedError(pc=5)
+        assert err.pc == 5
+        assert "feed_forward" in str(err)
+
+        err2 = AtomReloadingNotSupportedError(pc=10)
+        assert err2.pc == 10
+        assert "atom_reloading" in str(err2)
 
 
 class TestProgramRepr:

@@ -14,7 +14,9 @@ from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.heuristics.logical_placement import (
+    LogicalPlacementStrategyNoHome,
+)
 from bloqade.lanes.logical_mvp import (
     compile_squin_to_move,
     transversal_rewrites,

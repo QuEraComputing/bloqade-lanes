@@ -8,3 +8,4 @@ from .encoding import (
     WordLaneAddress as WordLaneAddress,
     ZoneAddress as ZoneAddress,
 )
+from .move_metric import MoveMetricCalculator as MoveMetricCalculator

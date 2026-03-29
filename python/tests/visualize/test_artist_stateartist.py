@@ -36,7 +36,7 @@ def make_atom_state():
     # Use SiteLaneAddress for LaneAddress
     lane_addr = SiteLaneAddress(word_id=0, site_id=0, bus_id=0)
     loc_addr = LocationAddress(0, 0)
-    data = AtomStateData(
+    data = AtomStateData.from_fields(
         prev_lanes={0: lane_addr},
         qubit_to_locations={0: loc_addr},
         locations_to_qubit={loc_addr: 0},
@@ -48,7 +48,7 @@ def make_atom_state_with_stationary():
     lane_addr = SiteLaneAddress(word_id=0, site_id=0, bus_id=0)
     moving_loc = LocationAddress(0, 0)
     stationary_loc = LocationAddress(0, 1)
-    data = AtomStateData(
+    data = AtomStateData.from_fields(
         prev_lanes={0: lane_addr},
         qubit_to_locations={0: moving_loc, 1: stationary_loc},
         locations_to_qubit={moving_loc: 0, stationary_loc: 1},

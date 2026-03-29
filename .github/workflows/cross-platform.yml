@@ -1,0 +1,65 @@
+name: Cross-Platform
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # ── Rust tests ───────────────────────────────────────────────
+      - name: Run Rust tests
+        run: just test-rust
+
+      # ── Python setup & tests ─────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: just sync
+
+      - name: Build Python extension
+        run: just develop-python
+
+      - name: Run Python tests
+        run: just test-python
+
+      # ── Shell-based tests (macOS only) ───────────────────────────
+      - name: Run CLI smoke tests
+        if: runner.os != 'Windows'
+        run: just cli-smoke-test
+
+      - name: Run C-FFI tests
+        if: runner.os != 'Windows'
+        run: just test-c-ffi

@@ -8,7 +8,6 @@ from kirin.analysis.forward import ForwardFrame
 from typing_extensions import Self
 
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.utils import no_none_elements_tuple
 
 from ._post_processing import constructor_function
@@ -52,7 +51,6 @@ class AtomInterpreter(Forward[MoveExecution]):
     lattice = MoveExecution
 
     arch_spec: ArchSpec = field(kw_only=True)
-    path_finder: PathFinder = field(init=False)
     current_state: MoveExecution = field(init=False)
     best_state_cost: Callable[[AtomState], float] = field(
         kw_only=True, default=_default_best_state_cost
@@ -63,7 +61,6 @@ class AtomInterpreter(Forward[MoveExecution]):
 
     def __post_init__(self):
         super().__post_init__()
-        self.path_finder = PathFinder(self.arch_spec)
 
     def initialize(self) -> Self:
         self.current_state = AtomState()

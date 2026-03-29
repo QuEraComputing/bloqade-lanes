@@ -30,7 +30,7 @@ pub unsafe extern "C" fn blqd_validate_structure(
     status
 }
 
-/// Address validation against an architecture spec.
+/// Architecture-dependent validation (addresses + capability constraints).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blqd_validate_addresses(
     prog: *const BLQDProgram,
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn blqd_validate_addresses(
 
     let prog = unsafe { &*prog };
     let arch = unsafe { &*arch };
-    let errors = validate::validate_addresses(&prog.inner, &arch.inner);
+    let errors = validate::validate_arch_constraints(&prog.inner, &arch.inner);
     let status = if errors.is_empty() {
         BlqdStatus::Ok
     } else {

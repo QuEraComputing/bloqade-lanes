@@ -7,7 +7,7 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.device import (
+from bloqade.gemini.device import (
     DetectorResult,
     GeminiLogicalSimulator,
     Result,
@@ -234,22 +234,6 @@ def test_append_annotations_to_kernel_with_terminal_measure(
         assert len(result.observables) == 10
         assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
-
-
-def test_cudaq_kernel_requires_annotation_matrices():
-    cudaq = pytest.importorskip("cudaq")
-
-    @cudaq.kernel
-    def bell_pair():
-        q = cudaq.qvector(2)
-        h(q[0])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-        cx(q[0], q[1])  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-
-    with pytest.raises(
-        ValueError,
-        match="At least one of m2dets or m2obs must be provided for CUDA-Q kernels",
-    ):
-        GeminiLogicalSimulator().task(bell_pair)
 
 
 @pytest.mark.parametrize(

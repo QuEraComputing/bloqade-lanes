@@ -2,6 +2,11 @@
 
 from typing import Optional, final
 
+from bloqade.lanes.bytecode.exceptions import (
+    LaneGroupError,
+    LocationGroupError,
+)
+
 # ── Enums ──
 
 @final
@@ -475,7 +480,7 @@ class TransportPath:
         lane (LaneAddress): Lane address identifying the transport lane.
         waypoints (list[tuple[float, float]]): Sequence of ``(x, y)`` coordinate waypoints.
 
-    Note: In JSON, the lane is serialized as a 16-digit hex string (e.g. ``"0xC000000000010000"``).
+    Note: In JSON, the lane is serialized as a 16-digit hex string (e.g. ``"0xC000000000000000"``).
     """
 
     def __init__(
@@ -520,6 +525,8 @@ class ArchSpec:
         entangling_zones (list[int]): Zone IDs where entangling gates are allowed.
         measurement_mode_zones (list[int]): Zone IDs for measurement (first must be zone 0).
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
+        feed_forward (bool): Whether the device supports mid-circuit measurement with classical feedback. Default = False.
+        atom_reloading (bool): Whether the device supports reloading atoms after initial fill. Default = False.
     """
 
     def __init__(
@@ -533,6 +540,8 @@ class ArchSpec:
         entangling_zones: list[int],
         measurement_mode_zones: list[int],
         paths: Optional[list[TransportPath]] = None,
+        feed_forward: bool = False,
+        atom_reloading: bool = False,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -618,6 +627,16 @@ class ArchSpec:
     @property
     def measurement_mode_zones(self) -> list[int]:
         """Zone IDs for measurement mode."""
+        ...
+
+    @property
+    def feed_forward(self) -> bool:
+        """Whether the device supports mid-circuit measurement with classical feedback."""
+        ...
+
+    @property
+    def atom_reloading(self) -> bool:
+        """Whether the device supports reloading atoms after initial fill."""
         ...
 
     @property
@@ -710,7 +729,9 @@ class ArchSpec:
         """
         ...
 
-    def check_locations(self, locations: list[LocationAddress]) -> list[Exception]:
+    def check_locations(
+        self, locations: list[LocationAddress]
+    ) -> list[LocationGroupError]:
         """Validate a group of location addresses against this architecture.
 
         Checks for duplicate addresses and invalid word/site combinations.
@@ -719,11 +740,11 @@ class ArchSpec:
             locations (list[LocationAddress]): Location addresses to validate.
 
         Returns:
-            list[Exception]: ``LocationGroupError`` subclass instances (empty if all valid).
+            list[LocationGroupError]: Error instances (empty if all valid).
         """
         ...
 
-    def check_lanes(self, lanes: list[LaneAddress]) -> list[Exception]:
+    def check_lanes(self, lanes: list[LaneAddress]) -> list[LaneGroupError]:
         """Validate a group of lane addresses against this architecture.
 
         Checks for duplicates, invalid addresses, bus consistency, and
@@ -733,13 +754,210 @@ class ArchSpec:
             lanes (list[LaneAddress]): Lane addresses to validate.
 
         Returns:
-            list[Exception]: ``LaneGroupError`` subclass instances (empty if all valid).
+            list[LaneGroupError]: Error instances (empty if all valid).
         """
         ...
 
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
+
+# ── AtomStateData ──
+
+@final
+class AtomStateData:
+    """Tracks qubit-to-location mappings as atoms move through the architecture.
+
+    Immutable value type backed by a Rust implementation. Used by the IR
+    analysis pipeline to simulate atom movement, detect collisions, and
+    identify CZ gate pairings.
+
+    All mutation methods (``add_atoms``, ``apply_moves``) return new instances.
+    The two primary maps are kept as a bidirectional index: given a location
+    you can find the qubit, and given a qubit you can find the location. When
+    a move causes two atoms to occupy the same site, both are removed from the
+    location maps and recorded in ``collision``.
+
+    All integer arguments are validated to fit in u32 range (0 to 2^32 - 1).
+
+    Args:
+        locations_to_qubit (Optional[dict[LocationAddress, int]]): Reverse index
+            from location to qubit id, default = None (empty).
+        qubit_to_locations (Optional[dict[int, LocationAddress]]): Forward index
+            from qubit id to location, default = None (empty).
+        collision (Optional[dict[int, int]]): Cumulative collision record — key is
+            the moving qubit, value is the qubit it displaced, default = None (empty).
+        prev_lanes (Optional[dict[int, LaneAddress]]): Lane each qubit used in
+            the most recent move step, default = None (empty).
+        move_count (Optional[dict[int, int]]): Cumulative move count per qubit,
+            default = None (empty).
+    """
+
+    def __init__(
+        self,
+        locations_to_qubit: Optional[dict[LocationAddress, int]] = None,
+        qubit_to_locations: Optional[dict[int, LocationAddress]] = None,
+        collision: Optional[dict[int, int]] = None,
+        prev_lanes: Optional[dict[int, LaneAddress]] = None,
+        move_count: Optional[dict[int, int]] = None,
+    ) -> None: ...
+    @staticmethod
+    def from_qubit_locations(locations: dict[int, LocationAddress]) -> AtomStateData:
+        """Create a state from a mapping of qubit ids to locations.
+
+        Builds both forward and reverse location maps. Collision, prev_lanes,
+        and move_count are initialized to empty.
+
+        Args:
+            locations (dict[int, LocationAddress]): Mapping from qubit id to
+                its initial location.
+
+        Returns:
+            AtomStateData: A new state with the given qubit placements.
+
+        Raises:
+            ValueError: If any qubit id is negative or exceeds u32 max.
+        """
+        ...
+
+    @staticmethod
+    def from_location_list(locations: list[LocationAddress]) -> AtomStateData:
+        """Create a state from an ordered list of locations.
+
+        Qubit ids are assigned sequentially starting from 0 based on list
+        position (i.e. ``locations[0]`` gets qubit 0, ``locations[1]`` gets
+        qubit 1, etc.).
+
+        Args:
+            locations (list[LocationAddress]): Ordered list of initial qubit
+                locations.
+
+        Returns:
+            AtomStateData: A new state with sequential qubit ids.
+        """
+        ...
+
+    @property
+    def locations_to_qubit(self) -> dict[LocationAddress, int]:
+        """Reverse index: location to qubit id occupying that site."""
+        ...
+
+    @property
+    def qubit_to_locations(self) -> dict[int, LocationAddress]:
+        """Forward index: qubit id to current physical location."""
+        ...
+
+    @property
+    def collision(self) -> dict[int, int]:
+        """Cumulative record of qubit collisions from ``apply_moves`` calls.
+
+        Entries persist across successive ``apply_moves`` calls and are only
+        cleared by constructors or ``add_atoms``. Key is the moving qubit id,
+        value is the qubit id it displaced. Both qubits are removed from the
+        location maps when a collision occurs.
+        """
+        ...
+
+    @property
+    def prev_lanes(self) -> dict[int, LaneAddress]:
+        """Lane used by each qubit in the most recent ``apply_moves`` call.
+
+        Only contains entries for qubits that actually moved in the last step.
+        """
+        ...
+
+    @property
+    def move_count(self) -> dict[int, int]:
+        """Cumulative move count for each qubit across all ``apply_moves`` calls."""
+        ...
+
+    def add_atoms(self, locations: dict[int, LocationAddress]) -> AtomStateData:
+        """Add atoms at new locations, returning a new state.
+
+        The new state inherits the current location maps plus the new atoms.
+        Collision, prev_lanes, and move_count are reset to empty.
+
+        Args:
+            locations (dict[int, LocationAddress]): Mapping from qubit id to
+                location for the new atoms.
+
+        Returns:
+            AtomStateData: A new state with the additional atoms placed.
+
+        Raises:
+            ValueError: If any qubit id is negative or exceeds u32 max.
+            RuntimeError: If a qubit id already exists in this state or a
+                location is already occupied.
+        """
+        ...
+
+    def apply_moves(
+        self, lanes: list[LaneAddress], arch_spec: ArchSpec
+    ) -> Optional[AtomStateData]:
+        """Apply a sequence of lane moves and return the resulting state.
+
+        Each lane is resolved to source/destination locations via the arch
+        spec. Qubits at source locations are moved to their destinations.
+        If a destination is already occupied, both qubits are recorded as
+        collided and removed from the location maps. Lanes whose source
+        location has no qubit are silently skipped.
+
+        Args:
+            lanes (list[LaneAddress]): Sequence of lane addresses to apply.
+            arch_spec (ArchSpec): Architecture specification for resolving
+                lane endpoints.
+
+        Returns:
+            Optional[AtomStateData]: A new state reflecting the moves, or
+                ``None`` if any lane address is invalid.
+        """
+        ...
+
+    def get_qubit(self, location: LocationAddress) -> Optional[int]:
+        """Look up which qubit (if any) occupies the given location.
+
+        Args:
+            location (LocationAddress): The physical location to query.
+
+        Returns:
+            Optional[int]: The qubit id at that location, or ``None`` if empty.
+        """
+        ...
+
+    def get_qubit_pairing(
+        self, zone_address: ZoneAddress, arch_spec: ArchSpec
+    ) -> Optional[tuple[list[int], list[int], list[int]]]:
+        """Find CZ gate control/target qubit pairings within a zone.
+
+        For each qubit in the zone, checks whether the CZ pair site (via
+        the arch spec's blockaded location data) is also occupied. If both
+        sites have qubits, they form a control/target pair.
+
+        Args:
+            zone_address (ZoneAddress): The zone to search for pairings.
+            arch_spec (ArchSpec): Architecture specification with CZ pair data.
+
+        Returns:
+            Optional[tuple[list[int], list[int], list[int]]]: A tuple
+                ``(controls, targets, unpaired)`` where ``controls[i]`` and
+                ``targets[i]`` are paired for a CZ gate, and ``unpaired``
+                contains qubits whose pair site is empty or doesn't exist.
+                Results are sorted by qubit id. Returns ``None`` if the zone
+                address is invalid.
+        """
+        ...
+
+    def copy(self) -> AtomStateData:
+        """Return a shallow copy of this state.
+
+        Returns:
+            AtomStateData: A copy with identical field values.
+        """
+        ...
+
+    def __hash__(self) -> int: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
 
 # ── Instruction ──
 
@@ -913,7 +1131,7 @@ class Instruction:
     def local_r(arity: int) -> Instruction:
         """Local R rotation gate on ``arity`` locations.
 
-        Pops ``arity`` locations, then theta and phi angles from the stack.
+        Pops phi (axis angle) and theta (rotation angle), then ``arity`` locations from the stack.
 
         Args:
             arity (int): Number of locations to apply the gate to.
@@ -927,7 +1145,7 @@ class Instruction:
     def local_rz(arity: int) -> Instruction:
         """Local Rz rotation gate on ``arity`` locations.
 
-        Pops ``arity`` locations, then a phi angle from the stack.
+        Pops theta (rotation angle), then ``arity`` locations from the stack.
 
         Args:
             arity (int): Number of locations to apply the gate to.
@@ -941,7 +1159,7 @@ class Instruction:
     def global_r() -> Instruction:
         """Global R rotation gate.
 
-        Pops theta and phi angles from the stack.
+        Pops phi (axis angle) and theta (rotation angle) from the stack.
 
         Returns:
             Instruction: The global_r instruction.
@@ -952,7 +1170,7 @@ class Instruction:
     def global_rz() -> Instruction:
         """Global Rz rotation gate.
 
-        Pops a phi angle from the stack.
+        Pops theta (rotation angle) from the stack.
 
         Returns:
             Instruction: The global_rz instruction.

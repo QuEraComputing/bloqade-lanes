@@ -3,26 +3,24 @@ import json
 import pytest
 
 from bloqade.lanes.bytecode import (
+    ArchSpec,
     ArchSpecError,
+    Bus,
+    Buses,
     Direction,
+    Geometry,
+    Grid,
     LaneAddress,
     LocationAddress,
     MoveType,
-)
-from bloqade.lanes.bytecode.arch import (
-    ArchSpec,
-    Bus,
-    Buses,
-    Geometry,
-    Grid,
     TransportPath,
     Word,
     Zone,
 )
 from bloqade.lanes.bytecode.exceptions import (
+    ArchSpecGeometryError,
     LaneGroupError,
     LocationGroupError,
-    WrongSiteCountError,
 )
 
 EXAMPLE_JSON = json.dumps(
@@ -108,8 +106,8 @@ EXAMPLE_JSON = json.dumps(
         "measurement_mode_zones": [0],
         "paths": [
             {
-                "lane": "0xC000000000010000",
-                "waypoints": [[1.0, 12.5], [1.0, 7.5], [1.0, 2.5]],
+                "lane": "0xC000000000000005",
+                "waypoints": [[1.0, 15.0], [1.0, 10.0], [1.0, 5.0]],
             }
         ],
     }
@@ -174,12 +172,12 @@ def _build_spec_from_python():
             TransportPath(
                 lane=LaneAddress(
                     MoveType.WORD,
-                    word_id=1,
-                    site_id=0,
+                    word_id=0,
+                    site_id=5,
                     bus_id=0,
                     direction=Direction.BACKWARD,
                 ),
-                waypoints=[(1.0, 12.5), (1.0, 7.5), (1.0, 2.5)],
+                waypoints=[(1.0, 15.0), (1.0, 10.0), (1.0, 5.0)],
             )
         ],
     )
@@ -203,6 +201,49 @@ class TestConstructFromPython:
         grid = Grid(x_start=1.0, y_start=2.0, x_spacing=[], y_spacing=[])
         word = Word(grid=grid, sites=[(0, 0)])
         assert word.cz_pairs is None
+
+
+class TestCapabilityFlags:
+    def test_defaults_to_false(self):
+        spec = ArchSpec.from_json(EXAMPLE_JSON)
+        assert spec.feed_forward is False
+        assert spec.atom_reloading is False
+
+    def test_explicit_true(self):
+        data = json.loads(EXAMPLE_JSON)
+        data["feed_forward"] = True
+        data["atom_reloading"] = True
+        spec = ArchSpec.from_json(json.dumps(data))
+        assert spec.feed_forward is True
+        assert spec.atom_reloading is True
+
+    def test_construct_from_python_defaults(self):
+        spec = _build_spec_from_python()
+        assert spec.feed_forward is False
+        assert spec.atom_reloading is False
+
+    def test_construct_from_python_explicit(self):
+        word0 = _make_word(0, 2.5)
+        word1 = _make_word(1, 12.5)
+        geometry = Geometry(sites_per_word=10, words=[word0, word1])
+        site_bus = Bus(src=[0, 1, 2, 3, 4], dst=[5, 6, 7, 8, 9])
+        word_bus = Bus(src=[0], dst=[1])
+        buses = Buses(site_buses=[site_bus], word_buses=[word_bus])
+        zone = Zone(words=[0, 1])
+        spec = ArchSpec(
+            version=(1, 0),
+            geometry=geometry,
+            buses=buses,
+            words_with_site_buses=[0, 1],
+            sites_with_word_buses=[5, 6, 7, 8, 9],
+            zones=[zone],
+            entangling_zones=[0],
+            measurement_mode_zones=[0],
+            feed_forward=True,
+            atom_reloading=True,
+        )
+        assert spec.feed_forward is True
+        assert spec.atom_reloading is True
 
 
 class TestLoadFromJson:
@@ -247,7 +288,7 @@ class TestLoadFromJson:
         with pytest.raises(ArchSpecError) as exc_info:
             ArchSpec.from_json_validated(bad)
         assert len(exc_info.value.errors) > 0
-        assert any(isinstance(e, WrongSiteCountError) for e in exc_info.value.errors)
+        assert any(isinstance(e, ArchSpecGeometryError) for e in exc_info.value.errors)
 
 
 class TestValidation:
@@ -331,12 +372,12 @@ class TestPropertyAccess:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         assert spec.paths is not None
         assert len(spec.paths) == 1
-        assert spec.paths[0].lane_encoded == 0xC000000000010000
+        assert spec.paths[0].lane_encoded == 0xC000000000000005
         lane = spec.paths[0].lane
         assert lane.direction == Direction.BACKWARD
         assert lane.move_type == MoveType.WORD
-        assert lane.word_id == 1
-        assert lane.site_id == 0
+        assert lane.word_id == 0
+        assert lane.site_id == 5
         assert lane.bus_id == 0
         assert len(spec.paths[0].waypoints) == 3
 
@@ -522,20 +563,25 @@ class TestCheckLanes:
 
     def test_aod_constraint_rectangle_pass(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        # 2x2 rectangle: sites 0,1,5,6
+        # 2x2 grid using valid forward sources on 2 words:
+        # Word 0, Site 0: (1.0, 2.5)   Word 0, Site 1: (3.0, 2.5)
+        # Word 1, Site 0: (1.0, 12.5)  Word 1, Site 1: (3.0, 12.5)
         lanes = [
-            LaneAddress(MoveType.SITE, word_id=0, site_id=s, bus_id=0)
-            for s in [0, 1, 5, 6]
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=1, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=1, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=1, site_id=1, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert errors == []
 
     def test_aod_constraint_not_rectangle(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
-        # L-shape: sites 0,1,5
+        # 3 corners of a grid (missing word 1, site 1)
         lanes = [
-            LaneAddress(MoveType.SITE, word_id=0, site_id=s, bus_id=0)
-            for s in [0, 1, 5]
+            LaneAddress(MoveType.SITE, word_id=0, site_id=0, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=0, site_id=1, bus_id=0),
+            LaneAddress(MoveType.SITE, word_id=1, site_id=0, bus_id=0),
         ]
         errors = spec.check_lanes(lanes)
         assert len(errors) > 0

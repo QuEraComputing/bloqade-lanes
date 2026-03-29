@@ -14,153 +14,21 @@ fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyOb
     let module = py.import(EXCEPTIONS_MODULE)?;
 
     let obj = match error {
-        ArchSpecError::Zone0MissingWords { missing } => {
-            let cls = module.getattr("Zone0MissingWordsError")?;
-            let missing_list = PyList::new(py, missing)?;
-            cls.call1((missing_list,))?
+        ArchSpecError::Zone { message } => {
+            let cls = module.getattr("ArchSpecZoneError")?;
+            cls.call1((message.as_str(),))?
         }
-        ArchSpecError::MeasurementModeZonesEmpty => {
-            let cls = module.getattr("MeasurementModeZonesEmptyError")?;
-            cls.call0()?
+        ArchSpecError::Geometry { message } => {
+            let cls = module.getattr("ArchSpecGeometryError")?;
+            cls.call1((message.as_str(),))?
         }
-        ArchSpecError::MeasurementModeFirstNotZone0 { got } => {
-            let cls = module.getattr("MeasurementModeFirstNotZone0Error")?;
-            cls.call1((*got,))?
+        ArchSpecError::Bus { message } => {
+            let cls = module.getattr("ArchSpecBusError")?;
+            cls.call1((message.as_str(),))?
         }
-        ArchSpecError::InvalidEntanglingZone { id } => {
-            let cls = module.getattr("InvalidEntanglingZoneError")?;
-            cls.call1((*id,))?
-        }
-        ArchSpecError::InvalidMeasurementModeZone { id } => {
-            let cls = module.getattr("InvalidMeasurementModeZoneError")?;
-            cls.call1((*id,))?
-        }
-        ArchSpecError::WrongSiteCount {
-            word_id,
-            expected,
-            got,
-        } => {
-            let cls = module.getattr("WrongSiteCountError")?;
-            cls.call1((*word_id, *expected, *got))?
-        }
-        ArchSpecError::WrongCzPairsCount {
-            word_id,
-            expected,
-            got,
-        } => {
-            let cls = module.getattr("WrongCzPairsCountError")?;
-            cls.call1((*word_id, *expected, *got))?
-        }
-        ArchSpecError::SiteXIndexOutOfRange {
-            word_id,
-            site_idx,
-            x_idx,
-            x_len,
-        } => {
-            let cls = module.getattr("SiteXIndexOutOfRangeError")?;
-            cls.call1((*word_id, *site_idx, *x_idx, *x_len))?
-        }
-        ArchSpecError::SiteYIndexOutOfRange {
-            word_id,
-            site_idx,
-            y_idx,
-            y_len,
-        } => {
-            let cls = module.getattr("SiteYIndexOutOfRangeError")?;
-            cls.call1((*word_id, *site_idx, *y_idx, *y_len))?
-        }
-        ArchSpecError::SiteBusLengthMismatch {
-            bus_id,
-            src_len,
-            dst_len,
-        } => {
-            let cls = module.getattr("SiteBusLengthMismatchError")?;
-            cls.call1((*bus_id, *src_len, *dst_len))?
-        }
-        ArchSpecError::SiteBusSrcDstOverlap { bus_id, site_idx } => {
-            let cls = module.getattr("SiteBusSrcDstOverlapError")?;
-            cls.call1((*bus_id, *site_idx))?
-        }
-        ArchSpecError::SiteBusIndexOutOfRange {
-            bus_id,
-            site_idx,
-            sites_per_word,
-        } => {
-            let cls = module.getattr("SiteBusIndexOutOfRangeError")?;
-            cls.call1((*bus_id, *site_idx, *sites_per_word))?
-        }
-        ArchSpecError::WordBusLengthMismatch {
-            bus_id,
-            src_len,
-            dst_len,
-        } => {
-            let cls = module.getattr("WordBusLengthMismatchError")?;
-            cls.call1((*bus_id, *src_len, *dst_len))?
-        }
-        ArchSpecError::WordBusInvalidWordId { bus_id, word_id } => {
-            let cls = module.getattr("WordBusInvalidWordIdError")?;
-            cls.call1((*bus_id, *word_id))?
-        }
-        ArchSpecError::InvalidWordWithSiteBus { word_id } => {
-            let cls = module.getattr("InvalidWordWithSiteBusError")?;
-            cls.call1((*word_id,))?
-        }
-        ArchSpecError::InvalidSiteWithWordBus {
-            site_idx,
-            sites_per_word,
-        } => {
-            let cls = module.getattr("InvalidSiteWithWordBusError")?;
-            cls.call1((*site_idx, *sites_per_word))?
-        }
-        ArchSpecError::NonFiniteGridValue { word_id, field } => {
-            let cls = module.getattr("NonFiniteGridValueError")?;
-            cls.call1((*word_id, *field))?
-        }
-        ArchSpecError::NonFiniteWaypoint { index } => {
-            let cls = module.getattr("NonFiniteWaypointError")?;
-            cls.call1((*index,))?
-        }
-        ArchSpecError::InvalidPathLane {
-            index,
-            lane,
-            message,
-        } => {
-            let cls = module.getattr("InvalidPathLaneError")?;
-            cls.call1((*index, *lane, message.as_str()))?
-        }
-        ArchSpecError::PathTooFewWaypoints { index, lane, count } => {
-            let cls = module.getattr("PathTooFewWaypointsError")?;
-            cls.call1((*index, *lane, *count))?
-        }
-        ArchSpecError::PathEndpointMismatch {
-            index,
-            lane,
-            endpoint,
-            expected_x,
-            expected_y,
-            got_x,
-            got_y,
-        } => {
-            let cls = module.getattr("PathEndpointMismatchError")?;
-            cls.call1((
-                *index,
-                *lane,
-                *endpoint,
-                *expected_x,
-                *expected_y,
-                *got_x,
-                *got_y,
-            ))?
-        }
-        ArchSpecError::InconsistentGridShape {
-            word_id,
-            x_len,
-            y_len,
-            ref_x_len,
-            ref_y_len,
-        } => {
-            let cls = module.getattr("InconsistentGridShapeError")?;
-            cls.call1((*word_id, *x_len, *y_len, *ref_x_len, *ref_y_len))?
+        ArchSpecError::Path { message } => {
+            let cls = module.getattr("ArchSpecPathError")?;
+            cls.call1((message.as_str(),))?
         }
     };
 
@@ -299,6 +167,14 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let inner = lane_group_error_to_py(py, error)?;
             let cls = module.getattr("LaneValidationError")?;
             cls.call1((*pc, inner))?
+        }
+        ValidationError::FeedForwardNotSupported { pc } => {
+            let cls = module.getattr("FeedForwardNotSupportedError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::AtomReloadingNotSupported { pc } => {
+            let cls = module.getattr("AtomReloadingNotSupportedError")?;
+            cls.call1((*pc,))?
         }
     };
 

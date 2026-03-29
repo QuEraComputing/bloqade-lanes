@@ -144,7 +144,7 @@ fn cmd_validate(
     all_errors.extend(validate::validate_structure(&program));
 
     if let Some(arch) = &arch {
-        all_errors.extend(validate::validate_addresses(&program, arch));
+        all_errors.extend(validate::validate_arch_constraints(&program, arch));
     }
 
     if simulate_stack {
@@ -182,7 +182,7 @@ fn print_arch_spec(spec: &ArchSpec) {
         geom.sites_per_word
     );
     for (word_idx, word) in geom.words.iter().enumerate() {
-        let grid = &word.grid;
+        let grid = &word.positions;
         println!(
             "  Word {}: {}x{} grid, {} sites",
             word_idx,
@@ -247,6 +247,12 @@ fn print_arch_spec(spec: &ArchSpec) {
         "  measurement_mode_zones: {:?}",
         spec.measurement_mode_zones
     );
+
+    // Capabilities
+    println!();
+    println!("Capabilities:");
+    println!("  feed_forward: {}", spec.feed_forward);
+    println!("  atom_reloading: {}", spec.atom_reloading);
 
     // Paths
     if let Some(paths) = &spec.paths

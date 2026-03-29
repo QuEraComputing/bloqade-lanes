@@ -30,10 +30,16 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-14
             target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -50,6 +56,7 @@ jobs:
       # runs, so they get included in the wheel via data = "dist-data".
       - name: Build CLI + C library
         if: ${{ !startsWith(matrix.target, 'aarch64-unknown-linux') }}
+        shell: bash
         run: just build-cli stage-clib
 
       # For Linux aarch64 cross-compilation, the CLI crate must be
@@ -74,6 +81,7 @@ jobs:
         run: uv run python scripts/patch_pyproject_data.py patch
 
       # manylinux_2_28 targets glibc 2.28+ (AlmaLinux 8 / Ubuntu 20.04+).
+      # Ignored on non-Linux platforms.
       - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -129,6 +137,8 @@ jobs:
 
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
 
   github-release:
     name: Sign and create GitHub Release

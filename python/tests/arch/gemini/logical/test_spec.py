@@ -70,8 +70,8 @@ def plot():
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(16, 0), set(["Word id 16 out of range of 2"])
-    yield arch_spec, LocationAddress(0, 32), set(["Site id 32 out of range of 10"])
+    yield arch_spec, LocationAddress(16, 0), {"invalid location word_id=16, site_id=0"}
+    yield arch_spec, LocationAddress(0, 32), {"invalid location word_id=0, site_id=32"}
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())
