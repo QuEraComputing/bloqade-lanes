@@ -1,11 +1,12 @@
 import abc
+import math
 from dataclasses import dataclass
 from functools import singledispatchmethod
 from typing import Any, Sequence, TypeGuard, TypeVar
 
 from kirin import ir
 from kirin.analysis.forward import ForwardFrame
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade import qubit
@@ -13,6 +14,7 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import LaneAddress, LocationAddress, MoveType, ZoneAddress
 
+from ... import utils
 from .base import AtomStateRewriter
 
 Len = TypeVar("Len")
@@ -59,6 +61,23 @@ class NoiseModelABC(abc.ABC):
         """Return the noise kernel for local R rotations, or ``None``."""
         return None
 
+    def get_logical_initialize(
+        self,
+    ) -> tuple[
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+    ]:
+        """Return (clean_kernel, noisy_kernel) for logical initialization.
+
+        The clean kernel is used by InsertGates for the noiseless initialization.
+        The noisy kernel, if not None, is invoked by InsertNoise after initialization
+        to apply initialization noise.
+
+        Returns ``(None, None)`` by default, meaning no initialization is provided
+        by the noise model.
+        """
+        return None, None
+
     @abc.abstractmethod
     def get_lane_noise(self, lane: LaneAddress) -> ir.Method[[qubit.Qubit], None]:
         """Return the noise kernel applied to a qubit after a lane move."""
@@ -98,6 +117,15 @@ class SimpleNoiseModel(NoiseModelABC):
     local_rz_noise: ir.Method[[ilist.IList[qubit.Qubit, Any], float], None]
     global_r_noise: ir.Method[[ilist.IList[qubit.Qubit, Any], float, float], None]
     local_r_noise: ir.Method[[ilist.IList[qubit.Qubit, Any], float, float], None]
+    logical_initialize_clean: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+    ) = None
+    logical_initialize_noisy: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+    ) = None
+
+    def get_logical_initialize(self):
+        return self.logical_initialize_clean, self.logical_initialize_noisy
 
     def get_lane_noise(self, lane: LaneAddress):
         return self.lane_noise
@@ -128,6 +156,9 @@ class SimpleNoiseModel(NoiseModelABC):
 class InsertNoise(AtomStateRewriter):
     atom_state_map: ForwardFrame[atom.MoveExecution]
     noise_model: NoiseModelABC
+    initialize_noise_kernel: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+    ) = None
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if (trait := node.get_trait(move.EmitsState)) is None:
@@ -231,6 +262,40 @@ class InsertNoise(AtomStateRewriter):
             has_done_something = True
 
         return rewrite_abc.RewriteResult(has_done_something=has_done_something)
+
+    @rewriter.register(move.PhysicalInitialize)
+    def _(
+        self, node: move.PhysicalInitialize, atom_state: atom.AtomState
+    ) -> rewrite_abc.RewriteResult:
+        if self.initialize_noise_kernel is None:
+            return rewrite_abc.RewriteResult()
+
+        nodes_to_insert: list[ir.Statement] = [tau := py.Constant(math.tau)]
+        for theta, phi, lam, locations in zip(
+            node.thetas, node.phis, node.lams, node.location_addresses
+        ):
+            qubit_ssa = self.get_qubit_ssa_from_locations(atom_state, locations)
+            if not utils.no_none_elements_tuple(qubit_ssa):
+                return rewrite_abc.RewriteResult()
+
+            nodes_to_insert.append(theta_rad := py.Mult(tau.result, theta))
+            nodes_to_insert.append(phi_rad := py.Mult(tau.result, phi))
+            nodes_to_insert.append(lam_rad := py.Mult(tau.result, lam))
+            nodes_to_insert.append(reg_stmt := ilist.New(qubit_ssa))
+            inputs = (
+                theta_rad.result,
+                phi_rad.result,
+                lam_rad.result,
+                reg_stmt.result,
+            )
+            nodes_to_insert.append(
+                func.Invoke(inputs, callee=self.initialize_noise_kernel)
+            )
+
+        for n in reversed(nodes_to_insert):
+            n.insert_after(node)
+
+        return rewrite_abc.RewriteResult(has_done_something=True)
 
     def insert_gate_noise(
         self,
