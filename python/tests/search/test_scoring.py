@@ -7,7 +7,9 @@ from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.tree import ConfigurationTree
 
 
-def _make_scorer_and_tree():
+def _make_scorer_and_tree(
+    target: dict[int, LocationAddress] | None = None,
+):
     """Create a scorer and tree with the logical Gemini arch spec."""
     arch_spec = logical.get_arch_spec()
     placement = {
@@ -15,8 +17,10 @@ def _make_scorer_and_tree():
         1: LocationAddress(1, 0),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
+    if target is None:
+        target = {}
     params = SearchParams()
-    scorer = CandidateScorer(params=params)
+    scorer = CandidateScorer(params=params, target=target)
     return scorer, tree
 
 
@@ -45,9 +49,9 @@ def test_mobility_at_position():
 
 
 def test_score_all_qubit_bus_pairs_returns_dict():
-    scorer, tree = _make_scorer_and_tree()
     target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
-    scores = scorer.score_all_qubit_bus_pairs(tree.root, target, entropy=1, tree=tree)
+    scorer, tree = _make_scorer_and_tree(target=target)
+    scores = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
     assert isinstance(scores, dict)
     assert len(scores) > 0
     for key, val in scores.items():
@@ -56,46 +60,44 @@ def test_score_all_qubit_bus_pairs_returns_dict():
 
 
 def test_score_all_qubit_bus_pairs_skips_resolved_qubits():
-    scorer, tree = _make_scorer_and_tree()
     target = {0: LocationAddress(0, 0), 1: LocationAddress(1, 5)}
-    scores = scorer.score_all_qubit_bus_pairs(tree.root, target, entropy=1, tree=tree)
+    scorer, tree = _make_scorer_and_tree(target=target)
+    scores = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
     qubit_ids_in_scores = {k[0] for k in scores}
     assert 0 not in qubit_ids_in_scores
 
 
 def test_score_all_entropy_shifts_weights():
-    scorer, tree = _make_scorer_and_tree()
     target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
-    scores_e1 = scorer.score_all_qubit_bus_pairs(
-        tree.root, target, entropy=1, tree=tree
-    )
-    scores_e3 = scorer.score_all_qubit_bus_pairs(
-        tree.root, target, entropy=3, tree=tree
-    )
+    scorer, tree = _make_scorer_and_tree(target=target)
+    scores_e1 = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
+    scores_e3 = scorer.score_all_qubit_bus_pairs(tree.root, entropy=3, tree=tree)
     common_keys = set(scores_e1) & set(scores_e3)
     assert len(common_keys) > 0
     assert any(scores_e1[k] != scores_e3[k] for k in common_keys)
 
 
 def test_score_moveset_positive_for_good_move():
-    scorer, tree = _make_scorer_and_tree()
     target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 0)}
+    scorer, tree = _make_scorer_and_tree(target=target)
     from bloqade.lanes.layout import SiteLaneAddress
 
     lane = SiteLaneAddress(0, 0, 0)
     moveset = frozenset({lane})
-    score = scorer.score_moveset(moveset, tree.root, target, tree)
+    score = scorer.score_moveset(moveset, tree.root, tree)
     assert score > 0.0
 
 
 def test_score_moveset_arrived_gain():
-    scorer, tree = _make_scorer_and_tree()
     target = {0: LocationAddress(0, 5)}
+    scorer, tree = _make_scorer_and_tree(target=target)
     from bloqade.lanes.layout import SiteLaneAddress
 
     lane = SiteLaneAddress(0, 0, 0)
     moveset = frozenset({lane})
-    score_with_arrival = scorer.score_moveset(moveset, tree.root, target, tree)
-    target2 = {0: LocationAddress(0, 9)}
-    score_no_arrival = scorer.score_moveset(moveset, tree.root, target2, tree)
+    score_with_arrival = scorer.score_moveset(moveset, tree.root, tree)
+    scorer_no_arrival = CandidateScorer(
+        params=SearchParams(), target={0: LocationAddress(0, 9)}
+    )
+    score_no_arrival = scorer_no_arrival.score_moveset(moveset, tree.root, tree)
     assert score_with_arrival > score_no_arrival
