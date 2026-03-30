@@ -1,13 +1,19 @@
 """Configuration tree search for valid atom move programs."""
 
 from bloqade.lanes.search.configuration import ConfigurationNode
-from bloqade.lanes.search.generators import ExhaustiveMoveGenerator, MoveGenerator
+from bloqade.lanes.search.generators import (
+    ExhaustiveMoveGenerator,
+    HeuristicMoveGenerator,
+    MoveGenerator,
+)
 from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal import (
+    EntropyGuidedSearch,
     SearchResult,
     astar,
     bfs,
+    entropy_guided_search,
     greedy_best_first,
     partial_placement_goal,
     placement_goal,
@@ -19,13 +25,16 @@ __all__ = [
     "CandidateScorer",
     "ConfigurationNode",
     "ConfigurationTree",
+    "EntropyGuidedSearch",
     "ExhaustiveMoveGenerator",
+    "HeuristicMoveGenerator",
     "InvalidMoveError",
     "MoveGenerator",
     "SearchParams",
     "SearchResult",
     "astar",
     "bfs",
+    "entropy_guided_search",
     "greedy_best_first",
     "partial_placement_goal",
     "placement_goal",

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
@@ -18,6 +19,27 @@ if TYPE_CHECKING:
 
 class InvalidMoveError(Exception):
     """Raised when a generator produces an invalid move set in strict mode."""
+
+
+class ExpansionStatus(str, Enum):
+    """Outcome status for one move-set expansion attempt."""
+
+    CREATED_CHILD = "created_child"
+    ALREADY_CHILD = "already_child"
+    TRANSPOSITION_SEEN = "transposition_seen"
+    INVALID_LANE = "invalid_lane"
+    COLLISION = "collision"
+
+
+@dataclass(frozen=True)
+class ExpansionOutcome:
+    """Detailed result for one attempted move-set expansion."""
+
+    move_set: frozenset[LaneAddress]
+    status: ExpansionStatus
+    child: ConfigurationNode | None = None
+    existing_node: ConfigurationNode | None = None
+    error_message: str | None = None
 
 
 @dataclass
@@ -241,13 +263,41 @@ class ConfigurationTree:
             InvalidMoveError: If strict=True and the move set causes a
                 collision or contains an invalid lane address.
         """
-        # Validate the full move set against the arch spec (AOD geometry,
-        # consistency, bus membership, etc.).  This should never fail when
-        # moves are produced by the standard generators — a failure here
-        # signals a bug in a generator or manual move-set construction.
-        assert not (
-            lane_errors := self.arch_spec.check_lane_group(list(move_set))
-        ), f"Internal error: move set failed lane-group validation: {'; '.join(str(e) for e in lane_errors)}"
+        outcome = self.try_move_set(node, move_set, strict=strict)
+        return (
+            outcome.child if outcome.status == ExpansionStatus.CREATED_CHILD else None
+        )
+
+    def try_move_set(
+        self,
+        node: ConfigurationNode,
+        move_set: frozenset[LaneAddress],
+        strict: bool = True,
+    ) -> ExpansionOutcome:
+        """Attempt one move set and return a detailed outcome.
+
+        In strict mode, invalid lanes and collisions raise InvalidMoveError
+        (matching apply_move_set behavior). In non-strict mode, they are
+        returned as INVALID_LANE/COLLISION outcomes.
+        """
+        lane_errors = self.arch_spec.check_lane_group(list(move_set))
+        if lane_errors:
+            msg = f"Move set failed lane-group validation: {'; '.join(str(e) for e in lane_errors)}"
+            if strict:
+                raise InvalidMoveError(msg)
+            return ExpansionOutcome(
+                move_set=move_set,
+                status=ExpansionStatus.INVALID_LANE,
+                error_message=msg,
+            )
+
+        existing_child = node.children.get(move_set)
+        if existing_child is not None:
+            return ExpansionOutcome(
+                move_set=move_set,
+                status=ExpansionStatus.ALREADY_CHILD,
+                child=existing_child,
+            )
 
         new_config = dict(node.configuration)
         occupied = node.occupied_locations
@@ -256,9 +306,14 @@ class ConfigurationTree:
             try:
                 src, dst = self.arch_spec.get_endpoints(lane)
             except Exception as e:
+                msg = f"Invalid lane address {lane!r}: {e}"
                 if strict:
-                    raise InvalidMoveError(f"Invalid lane address {lane!r}: {e}") from e
-                return None
+                    raise InvalidMoveError(msg) from e
+                return ExpansionOutcome(
+                    move_set=move_set,
+                    status=ExpansionStatus.INVALID_LANE,
+                    error_message=msg,
+                )
 
             qid = node.get_qubit_at(src)
             if qid is None:
@@ -268,13 +323,18 @@ class ConfigurationTree:
             # move set, two sources cannot map to the same destination.
             # We only need to check against stationary atoms.
             if dst in occupied:
+                blocker = node.get_qubit_at(dst)
+                msg = (
+                    f"Collision: qubit {qid} moving to {dst!r} "
+                    f"which is occupied by qubit {blocker}"
+                )
                 if strict:
-                    blocker = node.get_qubit_at(dst)
-                    raise InvalidMoveError(
-                        f"Collision: qubit {qid} moving to {dst!r} "
-                        f"which is occupied by qubit {blocker}"
-                    )
-                return None
+                    raise InvalidMoveError(msg)
+                return ExpansionOutcome(
+                    move_set=move_set,
+                    status=ExpansionStatus.COLLISION,
+                    error_message=msg,
+                )
 
             new_config[qid] = dst
 
@@ -290,12 +350,30 @@ class ConfigurationTree:
         if key in self.seen:
             existing = self.seen[key]
             if existing.depth <= new_node.depth:
-                return None
+                return ExpansionOutcome(
+                    move_set=move_set,
+                    status=ExpansionStatus.TRANSPOSITION_SEEN,
+                    existing_node=existing,
+                )
 
         # Register in transposition table and add as child
         self.seen[key] = new_node
         node.children[move_set] = new_node
-        return new_node
+        return ExpansionOutcome(
+            move_set=move_set,
+            status=ExpansionStatus.CREATED_CHILD,
+            child=new_node,
+        )
+
+    def expand_node_detailed(
+        self,
+        node: ConfigurationNode,
+        generator: MoveGenerator,
+        strict: bool = True,
+    ) -> Iterator[ExpansionOutcome]:
+        """Expand a node and yield one outcome per generated candidate."""
+        for move_set in generator.generate(node, self):
+            yield self.try_move_set(node, move_set, strict=strict)
 
     def expand_node(
         self,
@@ -318,8 +396,8 @@ class ConfigurationTree:
             List of newly created child nodes (may be empty).
         """
         children: list[ConfigurationNode] = []
-        for move_set in generator.generate(node, self):
-            child = self.apply_move_set(node, move_set, strict=strict)
-            if child is not None:
-                children.append(child)
+        for outcome in self.expand_node_detailed(node, generator, strict=strict):
+            if outcome.status == ExpansionStatus.CREATED_CHILD:
+                assert outcome.child is not None
+                children.append(outcome.child)
         return children
