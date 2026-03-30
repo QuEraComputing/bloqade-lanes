@@ -1,3 +1,3 @@
-from bloqade.lanes.heuristics.physical_movement import PhysicalGreedyPlacementStrategy
+from bloqade.lanes.heuristics.physical_movement import PhysicalPlacementStrategy
 
-__all__ = ["PhysicalGreedyPlacementStrategy"]
+__all__ = ["PhysicalPlacementStrategy"]

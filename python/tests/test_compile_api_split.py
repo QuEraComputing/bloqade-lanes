@@ -11,7 +11,7 @@ from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyN
 from bloqade.lanes.heuristics.physical_layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalGreedyPlacementStrategy
+from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
 
 
 def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
@@ -106,7 +106,7 @@ def test_physical_compile_to_move_defaults_are_physical(monkeypatch):
     assert isinstance(
         captured["layout_heuristic"], PhysicalLayoutHeuristicGraphPartitionCenterOut
     )
-    assert isinstance(captured["placement_strategy"], PhysicalGreedyPlacementStrategy)
+    assert isinstance(captured["placement_strategy"], PhysicalPlacementStrategy)
 
 
 def test_physical_compile_has_no_transversal_or_placement_mode():
