@@ -77,11 +77,11 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
         merge_heuristic=merge_heuristic,
     )
     move_mt = transversal_rewrites(move_mt)
+    noise_model.logical_initialize_clean = logical.steane7_initialize
     transformer = MoveToSquin(
         arch_spec=generate_arch_hypercube(4),
-        logical_initialization=logical.steane7_initialize,
         noise_model=noise_model,
-        aggressive_unroll=False,
+        add_noise=True,
     )
     physical_squin = transformer.emit(move_mt)
     stim_kernel = squin_to_stim(physical_squin)
@@ -146,7 +146,9 @@ def test_logical_compilation():
 
     logical_move = compile_squin_to_move(main, no_raise=False)
 
-    decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
+    decompiled_squin = MoveToSquin(get_arch_spec(), generate_simple_noise_model()).emit(
+        logical_move
+    )
 
     AggressiveUnroll(main.dialects).fixpoint(main)
 

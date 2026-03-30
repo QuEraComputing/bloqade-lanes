@@ -1,13 +1,12 @@
 from dataclasses import dataclass
-from typing import Literal
 
 from bloqade.rewrite.passes import aggressive_unroll as agg
 from bloqade.squin.rewrite import SquinU3ToClifford
 from kirin import ir, rewrite
-from kirin.dialects import ilist, scf
+from kirin.dialects import scf
 from kirin.passes import TypeInfer
 
-from bloqade import qubit, squin
+from bloqade import squin
 from bloqade.lanes import layout
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.dialects import move
@@ -21,31 +20,24 @@ from bloqade.lanes.rewrite.move2squin import (
 @dataclass
 class MoveToSquin:
     arch_spec: layout.ArchSpec
-    logical_initialization: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None]
-        | None
-    ) = None
-    noise_model: NoiseModelABC | None = None
+    noise_model: NoiseModelABC
+    add_noise: bool = False
     aggressive_unroll: bool = False
 
     def _resolve_initialize_kernel(self):
-        """Resolve the initialization kernel.
-
-        Priority: explicit logical_initialization param > noise model > None.
-        """
-        if self.logical_initialization is not None:
-            return self.logical_initialization
-        if self.noise_model is not None:
-            clean, _ = self.noise_model.get_logical_initialize()
-            return clean
-        return None
+        """Resolve the clean initialization kernel for InsertGates."""
+        clean, _ = self.noise_model.get_logical_initialize()
+        return clean
 
     def _resolve_initialize_noise_kernel(self):
-        """Resolve the noisy initialization kernel from the noise model."""
-        if self.noise_model is not None:
-            _, noisy = self.noise_model.get_logical_initialize()
-            return noisy
-        return None
+        """Resolve the noisy initialization kernel for InsertNoise.
+
+        Only returns the noisy kernel when ``add_noise`` is True.
+        """
+        if not self.add_noise:
+            return None
+        _, noisy = self.noise_model.get_logical_initialize()
+        return noisy
 
     def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
         main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
@@ -65,7 +57,7 @@ class MoveToSquin:
             ),
             move2squin.InsertMeasurements(qubit_rule.physical_ssa_values, frame),
         ]
-        if self.noise_model is not None:
+        if self.add_noise:
             rules.append(
                 move2squin.InsertNoise(
                     self.arch_spec,

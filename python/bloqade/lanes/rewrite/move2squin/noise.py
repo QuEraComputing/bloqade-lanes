@@ -61,6 +61,7 @@ class NoiseModelABC(abc.ABC):
         """Return the noise kernel for local R rotations, or ``None``."""
         return None
 
+    @abc.abstractmethod
     def get_logical_initialize(
         self,
     ) -> tuple[
@@ -73,10 +74,9 @@ class NoiseModelABC(abc.ABC):
         The noisy kernel, if not None, is invoked by InsertNoise after initialization
         to apply initialization noise.
 
-        Returns ``(None, None)`` by default, meaning no initialization is provided
-        by the noise model.
+        Return ``(None, None)`` if no initialization is needed.
         """
-        return None, None
+        ...
 
     @abc.abstractmethod
     def get_lane_noise(self, lane: LaneAddress) -> ir.Method[[qubit.Qubit], None]:

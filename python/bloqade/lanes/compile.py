@@ -103,9 +103,8 @@ def compile_to_physical_squin_noise_model(
     )
     transformer = MoveToSquin(
         arch_spec=arch_spec,
-        logical_initialization=None,
         noise_model=noise_model,
-        aggressive_unroll=False,
+        add_noise=True,
     )
 
     return transformer.emit(move_mt, no_raise=no_raise)

@@ -31,7 +31,7 @@ from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.transform import MoveToSquin, SimpleNoiseModel
 from bloqade.lanes.upstream import squin_to_move
 
 __all__ = [
@@ -202,6 +202,9 @@ def compile_to_physical_squin_noise_model(
     if noise_model is None:
         noise_model = generate_simple_noise_model()
 
+    if isinstance(noise_model, SimpleNoiseModel):
+        noise_model.logical_initialize_clean = logical.steane7_initialize
+
     move_mt = compile_squin_to_move(
         mt,
         transversal_rewrite=True,
@@ -210,9 +213,8 @@ def compile_to_physical_squin_noise_model(
     )
     transformer = MoveToSquin(
         arch_spec=generate_arch_hypercube(4),
-        logical_initialization=logical.steane7_initialize,
         noise_model=noise_model,
-        aggressive_unroll=False,
+        add_noise=True,
     )
     return transformer.emit(move_mt, no_raise=no_raise)
 
