@@ -12,7 +12,7 @@ from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
-from bloqade.lanes.transform import MoveToSquin, SimpleNoiseModel
+from bloqade.lanes.transform import MoveToSquin
 from bloqade.lanes.upstream import (
     default_merge_heuristic,
     squin_to_move,
@@ -100,12 +100,11 @@ class Metrics:
             merge_heuristic=merge_heuristic,
         )
         move_mt = transversal_rewrites(move_mt)
-        if isinstance(noise_model, SimpleNoiseModel):
-            noise_model.logical_initialize_clean = logical.steane7_initialize
         transformer = MoveToSquin(
             arch_spec=self.arch_spec,
+            logical_initialization=logical.steane7_initialize,
             noise_model=noise_model,
-            add_noise=True,
+            aggressive_unroll=False,
         )
         return transformer.emit(move_mt)
 

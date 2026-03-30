@@ -187,14 +187,12 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical squin kernel corresponding to the physical move kernel, including noise."""
         from bloqade.lanes.arch.gemini.logical import steane7_initialize
-        from bloqade.lanes.transform import MoveToSquin, SimpleNoiseModel
+        from bloqade.lanes.transform import MoveToSquin
 
-        if isinstance(self.noise_model, SimpleNoiseModel):
-            self.noise_model.logical_initialize_clean = steane7_initialize
         return MoveToSquin(
             self.physical_arch_spec,
+            steane7_initialize,
             self.noise_model,
-            add_noise=True,
         ).emit(self.physical_move_kernel)
 
     @cached_property
