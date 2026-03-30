@@ -11,9 +11,11 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
+from bloqade.lanes import compile
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import (
     LogicalPlacementStrategyNoHome,
@@ -149,3 +151,20 @@ def test_logical_compilation():
     AggressiveUnroll(main.dialects).fixpoint(main)
 
     assert check_circuit(main, decompiled_squin)
+
+
+@pytest.mark.slow
+def test_ghz_move_to_squin_roundtrip_state_vector():
+    @squin.kernel(typeinfer=True, fold=True)
+    def ghz():
+        reg = squin.qalloc(7)
+        squin.h(reg[0])
+        for i in range(1, len(reg)):
+            squin.cx(reg[0], reg[i])
+
+    physical_move = compile.compile_squin_to_move(ghz, no_raise=False)
+    roundtrip_squin = MoveToSquin(get_physical_arch_spec()).emit(
+        physical_move, no_raise=False
+    )
+
+    assert check_circuit(ghz, roundtrip_squin)
