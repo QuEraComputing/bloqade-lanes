@@ -11,7 +11,7 @@ from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arc
 from bloqade.lanes.heuristics.physical_layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalGreedyPlacementStrategy
+from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
@@ -40,7 +40,7 @@ def compile_squin_to_move(
             arch_spec=arch_spec
         )
     if placement_strategy is None:
-        placement_strategy = PhysicalGreedyPlacementStrategy(arch_spec=arch_spec)
+        placement_strategy = PhysicalPlacementStrategy(arch_spec=arch_spec)
 
     return squin_to_move(
         mt,

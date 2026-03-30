@@ -8,7 +8,7 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.physical_layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalGreedyPlacementStrategy
+from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
 
 
 def test_physical_compile():
@@ -28,7 +28,7 @@ def test_physical_compile():
     move_main = squin_to_move(
         main,
         PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PhysicalGreedyPlacementStrategy(),
+        PhysicalPlacementStrategy(),
         logical_initialize=False,
     )
     # with no logical_initialization=False we never insert LogicalInitialize
