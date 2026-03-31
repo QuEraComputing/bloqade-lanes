@@ -53,12 +53,12 @@ def test_move_to_squin_logical_resolves_init():
     arch = generate_arch_hypercube(4)
 
     t = MoveToSquinLogical(arch_spec=arch, noise_model=model, add_noise=False)
-    assert t._resolve_initialize_kernel() is not None
-    assert t._resolve_initialize_noise_kernel() is None
+    assert t._get_initialize_kernel() is not None
+    assert t._get_initialize_noise_kernel() is None
 
     t = MoveToSquinLogical(arch_spec=arch, noise_model=model, add_noise=True)
-    assert t._resolve_initialize_kernel() is not None
-    assert t._resolve_initialize_noise_kernel() is not None
+    assert t._get_initialize_kernel() is not None
+    assert t._get_initialize_noise_kernel() is not None
 
 
 def test_move_to_squin_backwards_compat():
@@ -71,8 +71,8 @@ def test_move_to_squin_backwards_compat():
 
     # No noise model: returns None
     t = MoveToSquin(arch_spec=arch)
-    assert t._resolve_initialize_kernel() is None
+    assert t._get_initialize_kernel() is None
 
     # Explicit param used directly
     t = MoveToSquin(arch_spec=arch, logical_initialization=steane7_initialize)
-    assert t._resolve_initialize_kernel() is steane7_initialize
+    assert t._get_initialize_kernel() is steane7_initialize

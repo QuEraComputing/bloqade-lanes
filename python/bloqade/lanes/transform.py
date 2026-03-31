@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from bloqade.rewrite.passes import aggressive_unroll as agg
 from bloqade.squin.rewrite import SquinU3ToClifford
@@ -19,189 +19,149 @@ from bloqade.lanes.rewrite.move2squin import (
     SimpleNoiseModel as SimpleNoiseModel,
 )
 
-
-def _emit_common(
-    main: ir.Method,
-    arch_spec: layout.ArchSpec,
-    initialize_kernel: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None]
-        | None
-    ),
-    noise_model: NoiseModelABC | None,
-    aggressive_unroll: bool,
-    no_raise: bool,
-    initialize_noise_kernel: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None]
-        | None
-    ) = None,
-) -> ir.Method:
-    """Shared implementation for all MoveToSquin variants."""
-    main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
-
-    vqpu = atom.AtomInterpreter(main.dialects, arch_spec=arch_spec)
-    run_method = vqpu.run_no_raise if no_raise else vqpu.run
-
-    frame, _ = run_method(main)
-    qubit_rule = move2squin.InsertQubits(frame)
-    rewrite.Walk(qubit_rule).rewrite(main.code)
-    rules = [
-        move2squin.InsertGates(
-            arch_spec,
-            qubit_rule.physical_ssa_values,
-            frame,
-            initialize_kernel,
-        ),
-        move2squin.InsertMeasurements(qubit_rule.physical_ssa_values, frame),
-    ]
-    if noise_model is not None:
-        rules.append(
-            move2squin.InsertNoise(
-                arch_spec,
-                qubit_rule.physical_ssa_values,
-                frame,
-                noise_model,
-                initialize_noise_kernel=initialize_noise_kernel,
-            ),
-        )
-
-    rewrite.Walk(rewrite.Chain(*rules)).rewrite(main.code)
-
-    # we need to fold before writing U3 to Clifford
-    if aggressive_unroll:
-        agg.AggressiveUnroll(main.dialects).fixpoint(main)
-    else:
-        agg.Fold(main.dialects)(main)
-
-    rewrite.Walk(
-        SquinU3ToClifford(),
-    ).rewrite(main.code)
-
-    rewrite.Fixpoint(
-        rewrite.Walk(
-            rewrite.Chain(
-                move2squin.CleanUpMoveDialect(),
-                rewrite.DeadCodeElimination(),
-                rewrite.CommonSubexpressionElimination(),
-            )
-        )
-    ).rewrite(main.code)
-
-    out = main.similar(main.dialects.discard(move.dialect))
-
-    TypeInfer(out.dialects)(out)
-    out.verify()
-    out.verify_type()
-
-    return out
+InitKernel = (
+    ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+)
 
 
 @dataclass
-class MoveToSquinLogical:
+class MoveToSquinBase:
+    """Base class for all MoveToSquin variants.
+
+    Subclasses override ``_get_initialize_kernel``, ``_get_noise_model``,
+    and ``_get_initialize_noise_kernel`` to control which kernels are
+    passed to the rewrite rules.
+    """
+
+    arch_spec: layout.ArchSpec
+    aggressive_unroll: bool = False
+
+    def _get_initialize_kernel(self) -> InitKernel:
+        """Return the initialization kernel for InsertGates, or None."""
+        return None
+
+    def _get_noise_model(self) -> NoiseModelABC | None:
+        """Return the noise model for InsertNoise, or None to skip noise."""
+        return None
+
+    def _get_initialize_noise_kernel(self) -> InitKernel:
+        """Return the noisy initialization kernel for InsertNoise, or None."""
+        return None
+
+    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
+        main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
+
+        vqpu = atom.AtomInterpreter(main.dialects, arch_spec=self.arch_spec)
+        run_method = vqpu.run_no_raise if no_raise else vqpu.run
+
+        frame, _ = run_method(main)
+        qubit_rule = move2squin.InsertQubits(frame)
+        rewrite.Walk(qubit_rule).rewrite(main.code)
+
+        noise_model = self._get_noise_model()
+        rules = [
+            move2squin.InsertGates(
+                self.arch_spec,
+                qubit_rule.physical_ssa_values,
+                frame,
+                self._get_initialize_kernel(),
+            ),
+            move2squin.InsertMeasurements(qubit_rule.physical_ssa_values, frame),
+        ]
+        if noise_model is not None:
+            rules.append(
+                move2squin.InsertNoise(
+                    self.arch_spec,
+                    qubit_rule.physical_ssa_values,
+                    frame,
+                    noise_model,
+                    initialize_noise_kernel=self._get_initialize_noise_kernel(),
+                ),
+            )
+
+        rewrite.Walk(rewrite.Chain(*rules)).rewrite(main.code)
+
+        if self.aggressive_unroll:
+            agg.AggressiveUnroll(main.dialects).fixpoint(main)
+        else:
+            agg.Fold(main.dialects)(main)
+
+        rewrite.Walk(SquinU3ToClifford()).rewrite(main.code)
+
+        rewrite.Fixpoint(
+            rewrite.Walk(
+                rewrite.Chain(
+                    move2squin.CleanUpMoveDialect(),
+                    rewrite.DeadCodeElimination(),
+                    rewrite.CommonSubexpressionElimination(),
+                )
+            )
+        ).rewrite(main.code)
+
+        out = main.similar(main.dialects.discard(move.dialect))
+
+        TypeInfer(out.dialects)(out)
+        out.verify()
+        out.verify_type()
+
+        return out
+
+
+@dataclass
+class MoveToSquinLogical(MoveToSquinBase):
     """Rewrite pass for **logical** compilation.
 
     Handles ``PhysicalInitialize`` rewrites using clean/noisy initialization
     kernels from the noise model and optionally inserts gate/move noise.
-
-    Parameters
-    ----------
-    arch_spec:
-        The architecture specification.
-    noise_model:
-        A logical noise model that provides initialization kernels.
-    add_noise:
-        When ``True``, insert noise gates **and** use the noisy init kernel
-        (if available).  When ``False``, use the clean init kernel and skip
-        noise insertion.
-    aggressive_unroll:
-        Use aggressive unrolling instead of simple folding.
     """
 
-    arch_spec: layout.ArchSpec
-    noise_model: LogicalNoiseModelABC
+    noise_model: LogicalNoiseModelABC = None  # type: ignore[assignment]
     add_noise: bool = False
-    aggressive_unroll: bool = False
 
-    def _resolve_initialize_kernel(self):
-        """Resolve the clean initialization kernel for InsertGates."""
+    def _get_initialize_kernel(self) -> InitKernel:
         clean, _ = self.noise_model.get_logical_initialize()
         return clean
 
-    def _resolve_initialize_noise_kernel(self):
-        """Resolve the noisy initialization kernel for InsertNoise."""
+    def _get_noise_model(self) -> NoiseModelABC | None:
+        return self.noise_model if self.add_noise else None
+
+    def _get_initialize_noise_kernel(self) -> InitKernel:
         if not self.add_noise:
             return None
         _, noisy = self.noise_model.get_logical_initialize()
         return noisy
 
-    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
-        init_kernel = self._resolve_initialize_kernel()
-        noise = self.noise_model if self.add_noise else None
-        return _emit_common(
-            main,
-            self.arch_spec,
-            init_kernel,
-            noise,
-            self.aggressive_unroll,
-            no_raise,
-            initialize_noise_kernel=self._resolve_initialize_noise_kernel(),
-        )
-
 
 @dataclass
-class MoveToSquinPhysical:
+class MoveToSquinPhysical(MoveToSquinBase):
     """Rewrite pass for **physical** compilation.
 
-    No initialization kernel handling — passes ``None`` to ``InsertGates`` for
-    the init kernel.  Noise is inserted only when a noise model is provided.
-
-    Parameters
-    ----------
-    arch_spec:
-        The architecture specification.
-    noise_model:
-        An optional physical noise model for gate/move noise insertion.
-    aggressive_unroll:
-        Use aggressive unrolling instead of simple folding.
+    No initialization kernel handling. Noise is inserted only when a noise
+    model is provided.
     """
 
-    arch_spec: layout.ArchSpec
     noise_model: NoiseModelABC | None = None
-    aggressive_unroll: bool = False
 
-    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
-        return _emit_common(
-            main,
-            self.arch_spec,
-            None,
-            self.noise_model,
-            self.aggressive_unroll,
-            no_raise,
-        )
+    def _get_noise_model(self) -> NoiseModelABC | None:
+        return self.noise_model
 
 
 @dataclass
-class MoveToSquin:
+class MoveToSquin(MoveToSquinBase):
     """Backwards-compatible rewrite pass.
 
-    Works exactly as the original ``MoveToSquin``: when
-    ``logical_initialization`` is provided it is used directly; otherwise falls
-    through to the noise model (if any) for initialization.  ``InsertNoise`` is
-    added whenever ``noise_model is not None``.
+    When ``logical_initialization`` is provided it is used directly;
+    otherwise falls through to the noise model (if any) for initialization.
+    ``InsertNoise`` is added whenever ``noise_model is not None``.
     """
 
-    arch_spec: layout.ArchSpec
     logical_initialization: (
         ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None]
         | None
     ) = None
     noise_model: NoiseModelABC | None = None
-    aggressive_unroll: bool = False
 
-    def _resolve_initialize_kernel(self):
-        """Resolve the initialization kernel.
-
-        Priority: explicit logical_initialization param > noise model > None.
-        """
+    def _get_initialize_kernel(self) -> InitKernel:
         if self.logical_initialization is not None:
             return self.logical_initialization
         if self.noise_model is not None:
@@ -209,20 +169,11 @@ class MoveToSquin:
             return clean
         return None
 
-    def _resolve_initialize_noise_kernel(self):
-        """Resolve the noisy initialization kernel from the noise model."""
+    def _get_noise_model(self) -> NoiseModelABC | None:
+        return self.noise_model
+
+    def _get_initialize_noise_kernel(self) -> InitKernel:
         if self.noise_model is not None:
             _, noisy = self.noise_model.get_logical_initialize()
             return noisy
         return None
-
-    def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
-        return _emit_common(
-            main,
-            self.arch_spec,
-            self._resolve_initialize_kernel(),
-            self.noise_model,
-            self.aggressive_unroll,
-            no_raise,
-            initialize_noise_kernel=self._resolve_initialize_noise_kernel(),
-        )
