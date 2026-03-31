@@ -202,6 +202,18 @@ def test_result_property_caching():
     assert return_values_first is return_values_second
 
 
+def test_noiseless_tsim_circuit_has_zero_noise_sentinel():
+    sim = GeminiLogicalSimulator()
+    task = sim.task(main)
+
+    noiseless = task.noiseless_tsim_circuit
+    noiseless_text = str(noiseless)
+
+    assert "DEPOLARIZE1(0)" in noiseless_text
+    assert noiseless.compile_sampler() is not None
+    assert noiseless.compile_detector_sampler() is not None
+
+
 def _steane_matrices(num_qubits: int):
     return steane7_m2dets(num_qubits), steane7_m2obs(num_qubits)
 
