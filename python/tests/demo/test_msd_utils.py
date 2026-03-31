@@ -34,6 +34,25 @@ def test_fidelity_from_counts_returns_ordered_interval():
     assert len(summary["bloch"]) == 3
 
 
+def test_fidelity_from_counts_realistic_interval_is_finite_and_noncollapsed():
+    x_bits = np.array([0] * 3060 + [1] * 940, dtype=np.uint8)
+    y_bits = np.array([0] * 3040 + [1] * 960, dtype=np.uint8)
+    z_bits = np.array([0] * 3090 + [1] * 910, dtype=np.uint8)
+
+    summary = fidelity_from_counts(
+        x_bits,
+        y_bits,
+        z_bits,
+        posterior_samples=20_000,
+    )
+
+    assert np.isfinite(summary["point"])
+    assert np.isfinite(summary["median"])
+    assert np.isfinite(summary["low"])
+    assert np.isfinite(summary["high"])
+    assert summary["high"] - summary["low"] > 1e-3
+
+
 def test_split_factory_bits_and_pack_boolean_array():
     det = np.array([[1, 0, 1, 1, 0], [0, 1, 0, 0, 1]], dtype=np.uint8)
     obs = np.array([[1, 0, 1], [0, 1, 0]], dtype=np.uint8)

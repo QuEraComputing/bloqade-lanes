@@ -246,20 +246,21 @@ def build_decoder_kernel_bundle(
     def injected_x():
         reg = qubit.qalloc(1)
         squin.u3(theta, phi, lam, reg[0])
+        tomography_x(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_y():
         reg = qubit.qalloc(1)
         squin.u3(theta, phi, lam, reg[0])
-        squin.sqrt_z_adj(reg[0])
+        tomography_y(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_z():
         reg = qubit.qalloc(1)
         squin.u3(theta, phi, lam, reg[0])
-        squin.h(reg[0])
+        tomography_z(reg)
         return default_post_processing(reg)
 
     return DecoderKernelBundle(

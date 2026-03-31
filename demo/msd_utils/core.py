@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -52,18 +53,93 @@ def weighted_quantile(
     return np.interp(np.asarray(quantiles, dtype=np.float64), cdf, values)
 
 
-def sample_bloch_ball(num_samples: int, seed: int = 1234) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    directions = rng.normal(size=(num_samples, 3))
-    norms = np.linalg.norm(directions, axis=1, keepdims=True)
-    zero_mask = norms[:, 0] == 0.0
-    while np.any(zero_mask):
-        directions[zero_mask] = rng.normal(size=(int(np.sum(zero_mask)), 3))
-        norms = np.linalg.norm(directions, axis=1, keepdims=True)
-        zero_mask = norms[:, 0] == 0.0
-    directions /= norms
-    radii = rng.random(num_samples) ** (1.0 / 3.0)
-    return directions * radii[:, None]
+def _bures_measure(points: np.ndarray) -> np.ndarray:
+    radii_sq = np.sum(points * points, axis=1)
+    weights = np.zeros(len(points), dtype=np.float64)
+    mask = radii_sq < 1.0
+    weights[mask] = 1.0 / (np.pi**2 * np.sqrt(np.maximum(1.0 - radii_sq[mask], 1e-12)))
+    return weights
+
+
+def _grid_axis_points(posterior_samples: int) -> int:
+    axis_points = max(9, int(round(float(max(posterior_samples, 1)) ** (1.0 / 3.0))))
+    if axis_points % 2 == 0:
+        axis_points += 1
+    return axis_points
+
+
+@lru_cache(maxsize=None)
+def _bloch_ball_grid(axis_points: int) -> np.ndarray:
+    # Use cell centers instead of endpoints so the Bures prior stays finite.
+    edges = np.linspace(-1.0, 1.0, axis_points + 1, dtype=np.float64)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    x, y, z = np.meshgrid(centers, centers, centers, indexing="ij")
+    points = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
+    return points[np.sum(points * points, axis=1) <= 1.0]
+
+
+def _histogram_quantiles(
+    edges: np.ndarray,
+    probabilities: np.ndarray,
+    quantiles: Sequence[float],
+) -> np.ndarray:
+    cdf = np.cumsum(probabilities)
+    values = []
+    for quantile in quantiles:
+        idx = int(np.searchsorted(cdf, quantile, side="left"))
+        idx = min(max(idx, 0), len(probabilities) - 1)
+        low = cdf[idx - 1] if idx > 0 else 0.0
+        high = cdf[idx]
+        frac = 0.0 if high <= low else (quantile - low) / (high - low)
+        values.append(edges[idx] + (edges[idx + 1] - edges[idx]) * frac)
+    return np.asarray(values, dtype=np.float64)
+
+
+def _posterior_fidelity_quantiles(
+    n: np.ndarray,
+    k: np.ndarray,
+    *,
+    sign: np.ndarray,
+    target_bloch: np.ndarray,
+    posterior_samples: int,
+) -> np.ndarray:
+    axis_points = _grid_axis_points(posterior_samples)
+    points = _bloch_ball_grid(axis_points)
+
+    probs = np.clip((1.0 + points) / 2.0, 1e-12, 1.0 - 1e-12)
+    log_likelihood = (k * np.log(probs) + (n - k) * np.log1p(-probs)).sum(axis=1)
+
+    prior = _bures_measure(points)
+    log_prior = np.full(len(points), -np.inf, dtype=np.float64)
+    positive_prior = prior > 0.0
+    log_prior[positive_prior] = np.log(prior[positive_prior])
+
+    log_weights = log_likelihood + log_prior
+    finite = np.isfinite(log_weights)
+    if not np.any(finite):
+        point = 0.5
+        return np.array([point, point, point], dtype=np.float64)
+
+    weights = np.exp(log_weights[finite] - logsumexp(log_weights[finite]))
+    corrected_points = points[finite] * sign
+    fidelities = np.clip(
+        0.5 + np.sum(corrected_points * target_bloch.reshape(1, 3), axis=1) / 2.0,
+        0.0,
+        1.0,
+    )
+
+    bins = max(50, axis_points)
+    fidelity_prob, fidelity_edges = np.histogram(
+        fidelities,
+        bins=bins,
+        range=(0.0, 1.0),
+        weights=weights,
+    )
+    if fidelity_prob.sum() <= 0.0:
+        point = 0.5
+        return np.array([point, point, point], dtype=np.float64)
+    fidelity_prob = fidelity_prob / fidelity_prob.sum()
+    return _histogram_quantiles(fidelity_edges, fidelity_prob, [0.16, 0.5, 0.84])
 
 
 def fidelity_from_counts(
@@ -93,14 +169,13 @@ def fidelity_from_counts(
         dtype=np.int64,
     )
 
-    points = sample_bloch_ball(posterior_samples)
-    probs = np.clip((1.0 + points) / 2.0, 1e-12, 1.0 - 1e-12)
-    log_weights = (k * np.log(probs) + (n - k) * np.log1p(-probs)).sum(axis=1)
-    weights = np.exp(log_weights - logsumexp(log_weights))
-
-    corrected_points = points * sign
-    fidelities = 0.5 + (corrected_points @ target_bloch) / 2.0
-    q16, q50, q84 = weighted_quantile(fidelities, [0.16, 0.5, 0.84], weights)
+    q16, q50, q84 = _posterior_fidelity_quantiles(
+        n,
+        k,
+        sign=sign,
+        target_bloch=np.asarray(target_bloch, dtype=np.float64),
+        posterior_samples=posterior_samples,
+    )
     return {
         "point": float(point),
         "median": float(q50),
