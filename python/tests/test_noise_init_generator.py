@@ -61,18 +61,15 @@ def test_move_to_squin_logical_resolves_init():
     assert t._get_initialize_noise_kernel() is not None
 
 
-def test_move_to_squin_backwards_compat():
-    """MoveToSquin backwards compat: explicit param takes priority."""
+def test_move_to_squin_physical_no_init():
+    """MoveToSquinPhysical never provides init kernels."""
     from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
-    from bloqade.lanes.arch.gemini.logical import steane7_initialize
-    from bloqade.lanes.transform import MoveToSquin
+    from bloqade.lanes.noise_model import generate_simple_noise_model
+    from bloqade.lanes.transform import MoveToSquinPhysical
 
     arch = generate_arch_hypercube(4)
+    model = generate_simple_noise_model()
 
-    # No noise model: returns None
-    t = MoveToSquin(arch_spec=arch)
+    t = MoveToSquinPhysical(arch_spec=arch, noise_model=model)
     assert t._get_initialize_kernel() is None
-
-    # Explicit param used directly
-    t = MoveToSquin(arch_spec=arch, logical_initialization=steane7_initialize)
-    assert t._get_initialize_kernel() is steane7_initialize
+    assert t._get_initialize_noise_kernel() is None

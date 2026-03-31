@@ -160,8 +160,10 @@ class LogicalNoiseModelABC(NoiseModelABC):
     """Noise model for **logical** compilation.
 
     Extends :class:`NoiseModelABC` with an abstract
-    :meth:`get_logical_initialize` that returns the clean and noisy
-    initialization kernels used to rewrite ``PhysicalInitialize`` nodes.
+    :meth:`get_logical_initialize` that returns the clean initialization
+    kernel used to rewrite ``PhysicalInitialize`` nodes and the noisy
+    initialization kernel that is applied after initialization (for example,
+    via a noise-insertion pass).
     """
 
     @abc.abstractmethod
@@ -181,18 +183,15 @@ class LogicalNoiseModelABC(NoiseModelABC):
 
 @dataclass
 class SimpleLogicalNoiseModel(LogicalNoiseModelABC, SimpleNoiseModel):
-    """A concrete logical noise model that adds initialization kernels.
+    """Logical noise model based on :class:`SimpleNoiseModel`.
 
-    Extends :class:`SimpleNoiseModel` with ``logical_initialize_clean`` and
-    ``logical_initialize_noisy`` fields.
+    This class does not add new fields beyond :class:`SimpleNoiseModel`;
+    it serves as a marker subclass that also satisfies
+    :class:`LogicalNoiseModelABC` for logical compilation passes.
+
+    The ``logical_initialize_clean`` and ``logical_initialize_noisy`` fields
+    are inherited from :class:`SimpleNoiseModel` and must both be set.
     """
-
-    logical_initialize_clean: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-    ) = None
-    logical_initialize_noisy: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-    ) = None
 
     def get_logical_initialize(
         self,

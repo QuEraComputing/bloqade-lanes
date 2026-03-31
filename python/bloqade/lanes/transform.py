@@ -1,5 +1,6 @@
+import abc
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from bloqade.rewrite.passes import aggressive_unroll as agg
 from bloqade.squin.rewrite import SquinU3ToClifford
@@ -25,28 +26,31 @@ InitKernel = (
 
 
 @dataclass
-class MoveToSquinBase:
+class MoveToSquinBase(abc.ABC):
     """Base class for all MoveToSquin variants.
 
-    Subclasses override ``_get_initialize_kernel``, ``_get_noise_model``,
-    and ``_get_initialize_noise_kernel`` to control which kernels are
-    passed to the rewrite rules.
+    Subclasses must implement ``_get_initialize_kernel``,
+    ``_get_noise_model``, and ``_get_initialize_noise_kernel`` to control
+    which kernels are passed to the rewrite rules.
     """
 
     arch_spec: layout.ArchSpec
     aggressive_unroll: bool = False
 
+    @abc.abstractmethod
     def _get_initialize_kernel(self) -> InitKernel:
         """Return the initialization kernel for InsertGates, or None."""
-        return None
+        ...
 
+    @abc.abstractmethod
     def _get_noise_model(self) -> NoiseModelABC | None:
         """Return the noise model for InsertNoise, or None to skip noise."""
-        return None
+        ...
 
+    @abc.abstractmethod
     def _get_initialize_noise_kernel(self) -> InitKernel:
         """Return the noisy initialization kernel for InsertNoise, or None."""
-        return None
+        ...
 
     def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
         main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
@@ -111,8 +115,11 @@ class MoveToSquinBase:
 class MoveToSquinLogical(MoveToSquinBase):
     """Rewrite pass for **logical** compilation.
 
-    Handles ``PhysicalInitialize`` rewrites using clean/noisy initialization
-    kernels from the noise model and optionally inserts gate/move noise.
+    Uses the clean initialization kernel from the noise model for
+    ``InsertGates`` to rewrite ``PhysicalInitialize`` nodes. When
+    ``add_noise`` is ``True``, also inserts gate/move noise via
+    ``InsertNoise`` and applies the noisy initialization kernel after
+    initialization.
     """
 
     noise_model: LogicalNoiseModelABC = None  # type: ignore[assignment]
@@ -140,40 +147,13 @@ class MoveToSquinPhysical(MoveToSquinBase):
     model is provided.
     """
 
-    noise_model: NoiseModelABC | None = None
-
-    def _get_noise_model(self) -> NoiseModelABC | None:
-        return self.noise_model
-
-
-@dataclass
-class MoveToSquin(MoveToSquinBase):
-    """Backwards-compatible rewrite pass.
-
-    When ``logical_initialization`` is provided it is used directly;
-    otherwise falls through to the noise model (if any) for initialization.
-    ``InsertNoise`` is added whenever ``noise_model is not None``.
-    """
-
-    logical_initialization: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None]
-        | None
-    ) = None
-    noise_model: NoiseModelABC | None = None
+    noise_model: NoiseModelABC = None  # type: ignore[assignment]
 
     def _get_initialize_kernel(self) -> InitKernel:
-        if self.logical_initialization is not None:
-            return self.logical_initialization
-        if self.noise_model is not None:
-            clean, _ = self.noise_model.get_logical_initialize()
-            return clean
         return None
 
     def _get_noise_model(self) -> NoiseModelABC | None:
         return self.noise_model
 
     def _get_initialize_noise_kernel(self) -> InitKernel:
-        if self.noise_model is not None:
-            _, noisy = self.noise_model.get_logical_initialize()
-            return noisy
         return None
