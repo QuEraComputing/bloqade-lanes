@@ -9,7 +9,7 @@ from scipy.special import logsumexp
 
 DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
 DEFAULT_IDEAL_FACTORY_ACCEPTANCE = 1.0 / 6.0
-DEFAULT_TARGET_BLOCH = np.array([1.0, -1.0, 1.0], dtype=np.float64) / np.sqrt(3.0)
+DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 
 @dataclass(frozen=True)
