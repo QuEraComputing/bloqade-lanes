@@ -23,27 +23,27 @@ def test_noise_model_abc_get_logical_initialize_default():
 
 
 def test_simple_noise_model_get_logical_initialize_default():
-    """generate_simple_noise_model returns clean init kernel, no noisy kernel."""
+    """generate_simple_noise_model returns both clean and noisy init kernels."""
     from bloqade.lanes.noise_model import generate_simple_noise_model
 
     model = generate_simple_noise_model()
     clean, noisy = model.get_logical_initialize()
     assert clean is not None
-    assert noisy is None
+    assert noisy is not None
 
 
 def test_simple_noise_model_get_logical_initialize_with_kernels():
-    """SimpleNoiseModel returns provided init kernels."""
+    """SimpleLogicalNoiseModel returns provided init kernels."""
     from bloqade.lanes.arch.gemini.logical import steane7_initialize
     from bloqade.lanes.noise_model import generate_simple_noise_model
 
     model = generate_simple_noise_model()
+    # Override the clean kernel to verify it's returned
     model.logical_initialize_clean = steane7_initialize
-    model.logical_initialize_noisy = None
 
     clean, noisy = model.get_logical_initialize()
     assert clean is steane7_initialize
-    assert noisy is None
+    assert noisy is not None
 
 
 def test_move_to_squin_resolves_init_from_noise_model():
@@ -60,7 +60,7 @@ def test_move_to_squin_resolves_init_from_noise_model():
     t = MoveToSquin(arch_spec=arch, noise_model=model)
 
     assert t._resolve_initialize_kernel() is steane7_initialize
-    assert t._resolve_initialize_noise_kernel() is None
+    assert t._resolve_initialize_noise_kernel() is not None
 
 
 def test_move_to_squin_explicit_param_takes_priority():
@@ -71,8 +71,6 @@ def test_move_to_squin_explicit_param_takes_priority():
     from bloqade.lanes.transform import MoveToSquin
 
     model = generate_simple_noise_model()
-    # Set something different on the noise model
-    model.logical_initialize_clean = None
 
     arch = generate_arch_hypercube(4)
     t = MoveToSquin(
@@ -81,6 +79,7 @@ def test_move_to_squin_explicit_param_takes_priority():
         noise_model=model,
     )
 
+    # Explicit param takes priority over noise model's clean kernel
     assert t._resolve_initialize_kernel() is steane7_initialize
 
 

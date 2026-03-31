@@ -188,5 +188,5 @@ def generate_simple_noise_model(
         global_r_noise=global_r_noise,
         local_r_noise=local_r_noise,
         logical_initialize_clean=clean_init,
-        logical_initialize_noisy=None,
+        logical_initialize_noisy=noisy_init,
     )

@@ -25,7 +25,10 @@ from bloqade import tsim
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.layout.arch import ArchSpec
-    from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
+    from bloqade.lanes.rewrite.move2squin.noise import (
+        LogicalNoiseModelABC,
+        NoiseModelABC,
+    )
 
 RetType = TypeVar("RetType")
 
@@ -34,6 +37,31 @@ def _default_noise_model() -> NoiseModelABC:
     from bloqade.lanes.noise_model import generate_simple_noise_model
 
     return generate_simple_noise_model()
+
+
+def _to_logical_noise_model(noise_model: NoiseModelABC) -> LogicalNoiseModelABC:
+    from bloqade.lanes.rewrite.move2squin.noise import (
+        LogicalNoiseModelABC,
+        SimpleLogicalNoiseModel,
+        SimpleNoiseModel,
+    )
+
+    if isinstance(noise_model, LogicalNoiseModelABC):
+        return noise_model
+    if isinstance(noise_model, SimpleNoiseModel):
+        from bloqade.lanes.arch.gemini.logical.upstream import (
+            steane7_initialize_with_noise,
+        )
+
+        clean, noisy = steane7_initialize_with_noise()
+        return SimpleLogicalNoiseModel.from_simple(
+            noise_model,
+            logical_initialize_clean=clean,
+            logical_initialize_noisy=noisy,
+        )
+    raise TypeError(
+        f"Cannot convert {type(noise_model).__name__} to a logical noise model."
+    )
 
 
 @dataclass(frozen=True)
@@ -183,34 +211,29 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         default_factory=ThreadPoolExecutor, init=False
     )
 
+    def _logical_noise_model(self) -> "LogicalNoiseModelABC":
+        return _to_logical_noise_model(self.noise_model)
+
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
-        """The physical squin kernel corresponding to the physical move kernel, including noise."""
-        from bloqade.lanes.arch.gemini.logical import steane7_initialize
-        from bloqade.lanes.rewrite.move2squin.noise import (
-            LogicalNoiseModelABC,
-            SimpleLogicalNoiseModel,
-            SimpleNoiseModel,
-        )
+        """The physical squin kernel with noise channels."""
         from bloqade.lanes.transform import MoveToSquinLogical
-
-        noise_model = self.noise_model
-        if isinstance(noise_model, LogicalNoiseModelABC):
-            logical_noise = noise_model
-        elif isinstance(noise_model, SimpleNoiseModel):
-            logical_noise = SimpleLogicalNoiseModel.from_simple(
-                noise_model,
-                logical_initialize_clean=steane7_initialize,
-            )
-        else:
-            raise TypeError(
-                f"Cannot convert {type(noise_model).__name__} to a logical noise model."
-            )
 
         return MoveToSquinLogical(
             arch_spec=self.physical_arch_spec,
-            noise_model=logical_noise,
+            noise_model=self._logical_noise_model(),
             add_noise=True,
+        ).emit(self.physical_move_kernel)
+
+    @cached_property
+    def noiseless_physical_squin_kernel(self) -> ir.Method[[], RetType]:
+        """The physical squin kernel without noise channels."""
+        from bloqade.lanes.transform import MoveToSquinLogical
+
+        return MoveToSquinLogical(
+            arch_spec=self.physical_arch_spec,
+            noise_model=self._logical_noise_model(),
+            add_noise=False,
         ).emit(self.physical_move_kernel)
 
     @cached_property
@@ -224,8 +247,12 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     @cached_property
     def noiseless_tsim_circuit(self) -> tsim_backend.Circuit:
-        """The noiseless tsim circuit."""
-        return self.tsim_circuit.without_noise()
+        """The noiseless tsim circuit compiled without noise channels."""
+        from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+
+        noiseless_kernel = self.noiseless_physical_squin_kernel.similar()
+        rewrite.Walk(RemoveReturn()).rewrite(noiseless_kernel.code)
+        return tsim.Circuit(noiseless_kernel)
 
     @cached_property
     def measurement_sampler(self):

@@ -12,7 +12,6 @@ from kirin.dialects import ilist
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes import compile
-from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
@@ -25,7 +24,6 @@ from bloqade.lanes.logical_mvp import (
     transversal_rewrites,
 )
 from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.rewrite.move2squin.noise import SimpleLogicalNoiseModel
 from bloqade.lanes.transform import MoveToSquinLogical, MoveToSquinPhysical
 from bloqade.lanes.upstream import (
     always_merge_heuristic,
@@ -69,11 +67,7 @@ def main():
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
-    noise_model = generate_simple_noise_model()
-    logical_noise = SimpleLogicalNoiseModel.from_simple(
-        noise_model,
-        logical_initialize_clean=logical.steane7_initialize,
-    )
+    logical_noise = generate_simple_noise_model()
     move_mt = squin_to_move(
         mt,
         layout_heuristic=logical_layout.LogicalLayoutHeuristic(),

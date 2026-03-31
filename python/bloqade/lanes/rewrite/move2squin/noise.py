@@ -168,10 +168,14 @@ class LogicalNoiseModelABC(NoiseModelABC):
     def get_logical_initialize(
         self,
     ) -> tuple[
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
     ]:
-        """Return ``(clean_kernel, noisy_kernel)`` for logical initialization."""
+        """Return ``(clean_kernel, noisy_kernel)`` for logical initialization.
+
+        Both kernels must be provided. The clean kernel is used by InsertGates.
+        The noisy kernel is used by InsertNoise when ``add_noise=True``.
+        """
         ...
 
 
@@ -193,21 +197,27 @@ class SimpleLogicalNoiseModel(LogicalNoiseModelABC, SimpleNoiseModel):
     def get_logical_initialize(
         self,
     ) -> tuple[
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
     ]:
+        assert (
+            self.logical_initialize_clean is not None
+        ), "logical_initialize_clean must be set"
+        assert (
+            self.logical_initialize_noisy is not None
+        ), "logical_initialize_noisy must be set"
         return self.logical_initialize_clean, self.logical_initialize_noisy
 
     @classmethod
     def from_simple(
         cls,
         noise_model: SimpleNoiseModel,
-        logical_initialize_clean: (
-            ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-        ) = None,
-        logical_initialize_noisy: (
-            ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-        ) = None,
+        logical_initialize_clean: ir.Method[
+            [float, float, float, ilist.IList[qubit.Qubit, Any]], None
+        ],
+        logical_initialize_noisy: ir.Method[
+            [float, float, float, ilist.IList[qubit.Qubit, Any]], None
+        ],
     ) -> "SimpleLogicalNoiseModel":
         """Create from an existing :class:`SimpleNoiseModel` plus init kernels."""
         return cls(

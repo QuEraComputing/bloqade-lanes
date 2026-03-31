@@ -187,13 +187,19 @@ def compile_squin_to_move_and_visualize(
 def _to_logical_noise_model(
     noise_model: NoiseModelABC,
 ) -> LogicalNoiseModelABC:
-    """Wrap a physical noise model with the Steane-7 init kernel if needed."""
+    """Wrap a physical noise model with the Steane-7 init kernels if needed."""
     if isinstance(noise_model, LogicalNoiseModelABC):
         return noise_model
     if isinstance(noise_model, SimpleNoiseModel):
+        from bloqade.lanes.arch.gemini.logical.upstream import (
+            steane7_initialize_with_noise,
+        )
+
+        clean, noisy = steane7_initialize_with_noise()
         return SimpleLogicalNoiseModel.from_simple(
             noise_model,
-            logical_initialize_clean=logical.steane7_initialize,
+            logical_initialize_clean=clean,
+            logical_initialize_noisy=noisy,
         )
     raise TypeError(
         f"Cannot convert {type(noise_model).__name__} to a logical noise model. "
