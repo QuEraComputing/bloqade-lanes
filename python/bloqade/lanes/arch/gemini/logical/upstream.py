@@ -63,10 +63,14 @@ def steane7_initialize_with_noise(
     local_py: float = 0.0,
     local_pz: float = 0.0,
     local_loss_prob: float = 0.0,
-    cz_paired_gate_px: float = 0.0,
-    cz_paired_gate_py: float = 0.0,
-    cz_paired_gate_pz: float = 0.0,
-    cz_gate_loss_prob: float = 0.0,
+    mover_px: float = 0.0,
+    mover_py: float = 0.0,
+    mover_pz: float = 0.0,
+    move_loss_prob: float = 0.0,
+    sitter_px: float = 0.0,
+    sitter_py: float = 0.0,
+    sitter_pz: float = 0.0,
+    sit_loss_prob: float = 0.0,
     loss: bool = True,
 ) -> tuple[
     ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None],
@@ -76,18 +80,29 @@ def steane7_initialize_with_noise(
 
     The clean kernel is the ideal initialization circuit. The noisy kernel is
     the same circuit with single-qubit Pauli channels after each gate layer
-    and two-qubit Pauli channels after each CZ layer, parameterized by the
-    provided error probabilities.
+    and move/sitter noise after each CZ layer, parameterized by the provided
+    error probabilities.
+
+    For CZ layers, one side physically moves to the other. The mover/sitter
+    assignment alternates across layers:
+
+    - Layer 1 (odds x evens[1:]): targets move, controls sit
+    - Layer 2 (evens[:-1] x [3,5,6]): controls move, targets sit
+    - Layer 3 (evens[:-1] x odds): targets move, controls sit
 
     Args:
         local_px: X-error probability for single-qubit gates.
         local_py: Y-error probability for single-qubit gates.
         local_pz: Z-error probability for single-qubit gates.
         local_loss_prob: Loss probability for single-qubit gates.
-        cz_paired_gate_px: X-error probability for CZ paired qubits.
-        cz_paired_gate_py: Y-error probability for CZ paired qubits.
-        cz_paired_gate_pz: Z-error probability for CZ paired qubits.
-        cz_gate_loss_prob: Loss probability for CZ paired qubits.
+        mover_px: X-error probability for qubits that move during CZ.
+        mover_py: Y-error probability for qubits that move during CZ.
+        mover_pz: Z-error probability for qubits that move during CZ.
+        move_loss_prob: Loss probability for moving qubits during CZ.
+        sitter_px: X-error probability for stationary qubits during CZ.
+        sitter_py: Y-error probability for stationary qubits during CZ.
+        sitter_pz: Z-error probability for stationary qubits during CZ.
+        sit_loss_prob: Loss probability for stationary qubits during CZ.
         loss: Whether to include loss channels.
 
     Returns:
@@ -120,17 +135,17 @@ def steane7_initialize_with_noise(
         evens = qubits[::2]  # [0, 2, 4, 6]
         odds = qubits[1::2]  # [1, 3, 5]
 
-        # CZ layer 1: odds x evens[1:]
+        # CZ layer 1: controls=odds (sitters), targets=evens[1:] (movers)
         squin.broadcast.cz(odds, evens[1:])
         squin.broadcast.single_qubit_pauli_channel(
-            cz_paired_gate_px, cz_paired_gate_py, cz_paired_gate_pz, odds
+            sitter_px, sitter_py, sitter_pz, odds
         )
         squin.broadcast.single_qubit_pauli_channel(
-            cz_paired_gate_px, cz_paired_gate_py, cz_paired_gate_pz, evens[1:]
+            mover_px, mover_py, mover_pz, evens[1:]
         )
         if loss:
-            squin.broadcast.qubit_loss(cz_gate_loss_prob, odds)
-            squin.broadcast.qubit_loss(cz_gate_loss_prob, evens[1:])
+            squin.broadcast.qubit_loss(sit_loss_prob, odds)
+            squin.broadcast.qubit_loss(move_loss_prob, evens[1:])
 
         # sqrt_y on qubit 6
         squin.sqrt_y(qubits[6])
@@ -138,18 +153,18 @@ def steane7_initialize_with_noise(
         if loss:
             squin.qubit_loss(local_loss_prob, qubits[6])
 
-        # CZ layer 2: evens[:-1] x [3, 5, 6]
+        # CZ layer 2: controls=evens[:-1] (movers), targets=[3,5,6] (sitters)
         cz_targets = ilist.IList([qubits[3], qubits[5], qubits[6]])
         squin.broadcast.cz(evens[:-1], cz_targets)
         squin.broadcast.single_qubit_pauli_channel(
-            cz_paired_gate_px, cz_paired_gate_py, cz_paired_gate_pz, evens[:-1]
+            mover_px, mover_py, mover_pz, evens[:-1]
         )
         squin.broadcast.single_qubit_pauli_channel(
-            cz_paired_gate_px, cz_paired_gate_py, cz_paired_gate_pz, cz_targets
+            sitter_px, sitter_py, sitter_pz, cz_targets
         )
         if loss:
-            squin.broadcast.qubit_loss(cz_gate_loss_prob, evens[:-1])
-            squin.broadcast.qubit_loss(cz_gate_loss_prob, cz_targets)
+            squin.broadcast.qubit_loss(move_loss_prob, evens[:-1])
+            squin.broadcast.qubit_loss(sit_loss_prob, cz_targets)
 
         # sqrt_y on qubits 2-6
         squin.broadcast.sqrt_y(qubits[2:])
@@ -159,17 +174,15 @@ def steane7_initialize_with_noise(
         if loss:
             squin.broadcast.qubit_loss(local_loss_prob, qubits[2:])
 
-        # CZ layer 3: evens[:-1] x odds
+        # CZ layer 3: controls=evens[:-1] (sitters), targets=odds (movers)
         squin.broadcast.cz(evens[:-1], odds)
         squin.broadcast.single_qubit_pauli_channel(
-            cz_paired_gate_px, cz_paired_gate_py, cz_paired_gate_pz, evens[:-1]
+            sitter_px, sitter_py, sitter_pz, evens[:-1]
         )
-        squin.broadcast.single_qubit_pauli_channel(
-            cz_paired_gate_px, cz_paired_gate_py, cz_paired_gate_pz, odds
-        )
+        squin.broadcast.single_qubit_pauli_channel(mover_px, mover_py, mover_pz, odds)
         if loss:
-            squin.broadcast.qubit_loss(cz_gate_loss_prob, evens[:-1])
-            squin.broadcast.qubit_loss(cz_gate_loss_prob, odds)
+            squin.broadcast.qubit_loss(sit_loss_prob, evens[:-1])
+            squin.broadcast.qubit_loss(move_loss_prob, odds)
 
         # sqrt_y on [1, 2, 4]
         correction_qubits = ilist.IList([qubits[1], qubits[2], qubits[4]])
