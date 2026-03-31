@@ -1,5 +1,5 @@
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from bloqade.rewrite.passes import aggressive_unroll as agg
@@ -35,7 +35,7 @@ class MoveToSquinBase(abc.ABC):
     """
 
     arch_spec: layout.ArchSpec
-    aggressive_unroll: bool = False
+    aggressive_unroll: bool = field(default=False, kw_only=True)
 
     @abc.abstractmethod
     def _get_initialize_kernel(self) -> InitKernel:
@@ -122,7 +122,7 @@ class MoveToSquinLogical(MoveToSquinBase):
     initialization.
     """
 
-    noise_model: LogicalNoiseModelABC = None  # type: ignore[assignment]
+    noise_model: LogicalNoiseModelABC
     add_noise: bool = False
 
     def _get_initialize_kernel(self) -> InitKernel:
