@@ -28,7 +28,10 @@ class TestBuildGeminiArch:
         result = build_gemini_arch(hypercube_dims=2, word_size_y=4)
         arch = result.arch
         assert len(arch.words) == 8  # 2 * 2^2
-        assert arch.entangling_zones == frozenset({1})
+        # entangling_zones is now a tuple of zones, each with word pairs
+        assert len(arch.entangling_zones) == 1
+        # The gate zone has 4 CZ pairs for 8 words
+        assert len(arch.entangling_zones[0]) == 4
 
     def test_word_buses_include_hypercube_dims(self) -> None:
         result = build_gemini_arch(hypercube_dims=2, word_size_y=4)
@@ -50,10 +53,6 @@ class TestBuildGeminiArch:
         pairs = list(grid.cz_pairs())
         # 4 CZ pairs: (0,1), (2,3), (4,5), (6,7)
         assert pairs == [(0, 1), (2, 3), (4, 5), (6, 7)]
-        # Verify CZ is set on words
-        w0 = grid.words[0]
-        assert w0.has_cz is not None
-        assert w0.has_cz[0] == LocationAddress(1, 0)
 
 
 class TestGeminiConnectivityEquivalence:

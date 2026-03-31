@@ -12,18 +12,22 @@ from bloqade.lanes.layout.word import Word
 
 
 def test_get_blockaded_location_with_pair():
-    """Test get_blockaded_location returns the correct paired location."""
+    """Test get_blockaded_location returns the correct paired location.
+
+    In the new model, CZ pairs are between words (word 0 <-> word 1),
+    mapping site i in one word to site i in the partner word.
+    """
     arch_spec = logical.get_arch_spec()
 
-    # location (0, 0) should pair with (0, 5)
+    # location (0, 0) should pair with (1, 0) (word 0 <-> word 1, same site)
     location = layout.LocationAddress(0, 0)
     blockaded = arch_spec.get_blockaded_location(location)
 
     assert blockaded is not None
-    assert blockaded == layout.LocationAddress(0, 5)
+    assert blockaded == layout.LocationAddress(1, 0)
 
     # test reverse
-    location2 = layout.LocationAddress(0, 5)
+    location2 = layout.LocationAddress(1, 0)
     blockaded2 = arch_spec.get_blockaded_location(location2)
 
     assert blockaded2 is not None
@@ -37,14 +41,13 @@ def test_get_blockaded_location_without_pair():
     word = Word(
         grid.Grid.from_positions([0.0, 5.0, 10.0, 15.0], [0.0]),
         ((0, 0), (1, 0), (2, 0), (3, 0)),
-        has_cz=None,  # No CZ pairs defined
     )
 
     arch_spec = layout.ArchSpec.from_components(
         (word,),
         ((0,),),
         (0,),
-        frozenset([0]),
+        [],
         frozenset(),
         frozenset(),
         (),
@@ -59,13 +62,12 @@ def test_get_blockaded_location_without_pair():
 def test_get_blockaded_location_multiple_words():
     """Test get_blockaded_location works across different words."""
 
-    cz_sites = (1, 0, 3, 2)
-    # Create ArchSpec with 4 words, each word having 4 sites: site 0 <-> site 2, site 1 <-> site 3
+    # Create ArchSpec with 4 words, each word having 4 sites
+    # Entangling pairs: word 0 <-> word 1, word 2 <-> word 3
     words = tuple(
         Word(
             grid.Grid.from_positions([0.0, 2.0, 10.0, 12.0], [0.0]),
             ((0, 0), (1, 0), (2, 0), (3, 0)),
-            tuple(layout.LocationAddress(ix, cz_site) for cz_site in cz_sites),
         )
         for ix in range(4)
     )
@@ -74,28 +76,28 @@ def test_get_blockaded_location_multiple_words():
         words,
         (tuple(range(4)),),  # All 4 words in zone 0
         (0,),
-        frozenset([0]),
+        [[(0, 1), (2, 3)]],
         frozenset(),
         frozenset(),
         (),
         (),
     )
 
-    # Test word 0: site 0 should pair with site 2
+    # Test word 0, site 0 should pair with word 1, site 0
     blockaded = arch_spec.get_blockaded_location(layout.LocationAddress(0, 0))
-    assert blockaded == layout.LocationAddress(0, 1)
+    assert blockaded == layout.LocationAddress(1, 0)
 
-    # Test word 0: site 2 should pair with site 0
-    blockaded2 = arch_spec.get_blockaded_location(layout.LocationAddress(0, 1))
+    # Test word 1, site 0 should pair with word 0, site 0
+    blockaded2 = arch_spec.get_blockaded_location(layout.LocationAddress(1, 0))
     assert blockaded2 == layout.LocationAddress(0, 0)
 
-    # Test word 1: site 1 should pair with site 3
-    blockaded3 = arch_spec.get_blockaded_location(layout.LocationAddress(0, 3))
-    assert blockaded3 == layout.LocationAddress(0, 2)
+    # Test word 2, site 3 should pair with word 3, site 3
+    blockaded3 = arch_spec.get_blockaded_location(layout.LocationAddress(2, 3))
+    assert blockaded3 == layout.LocationAddress(3, 3)
 
-    # Test word 2: site 0 should pair with site 2
-    blockaded4 = arch_spec.get_blockaded_location(layout.LocationAddress(0, 2))
-    assert blockaded4 == layout.LocationAddress(0, 3)
+    # Test word 3, site 2 should pair with word 2, site 2
+    blockaded4 = arch_spec.get_blockaded_location(layout.LocationAddress(3, 2))
+    assert blockaded4 == layout.LocationAddress(2, 2)
 
 
 def test_get_lane_address_site_move_forward():

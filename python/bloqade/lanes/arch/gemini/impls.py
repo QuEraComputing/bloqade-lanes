@@ -190,16 +190,10 @@ def _generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
 
     grid = Grid.from_positions(x_positions, y_positions)
 
-    def get_cz_pair(word_id: int):
-        return tuple(
-            layout.LocationAddress(word_id, (i + word_size_y) % (2 * word_size_y))
-            for i in range(2 * word_size_y)
-        )
-
     site_indices = tuple(product(range(word_size_x), range(word_size_y)))
 
     words = tuple(
-        Word(grid.shift(10.0 * ix, 0.0), site_indices, get_cz_pair(ix))
+        Word(grid.shift(10.0 * ix, 0.0), site_indices)
         for ix in range(num_words_x)
     )
 
@@ -210,14 +204,15 @@ def _generate_base_arch(num_words_x: int, word_size_y: int) -> ArchSpec:
     )
 
     gate_zone = tuple(range(len(words)))
-    cz_gate_zones = frozenset([0])
+    # CZ pairs: consecutive word pairs (0,1), (2,3), ...
+    cz_pairs = [(i, i + 1) for i in range(0, num_words_x, 2)]
     measurement_zones = (0,)
 
     return ArchSpec.from_components(
         words=words,
         zones=(gate_zone,),
         measurement_mode_zones=measurement_zones,
-        entangling_zones=cz_gate_zones,
+        entangling_zones=[cz_pairs] if cz_pairs else [],
         has_site_buses=frozenset(range(num_words_x)),
         has_word_buses=frozenset(as_flat_list_int(site_ids[:, 1])),
         site_buses=_site_buses(site_ids),

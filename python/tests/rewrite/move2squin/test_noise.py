@@ -183,13 +183,15 @@ def test_insert_cz_noise():
         2: (two := ir.TestValue()),
         3: (three := ir.TestValue()),
     }
+    # Place atoms so qubit 1 at (0,1) pairs with qubit 2 at (1,1) (word 0 <-> word 1)
+    # Qubits 0 and 3 are unpaired (no partner in the other word)
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 6),
                 1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                2: layout.LocationAddress(1, 1),
+                3: layout.LocationAddress(1, 3),
             }
         )
     )

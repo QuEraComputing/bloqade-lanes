@@ -106,8 +106,15 @@ class ArchSpec:
         return tuple(self._inner.measurement_mode_zones)
 
     @cached_property
-    def entangling_zones(self) -> frozenset[int]:
-        return frozenset(self._inner.entangling_zones)
+    def entangling_zones(self) -> tuple[tuple[tuple[int, int], ...], ...]:
+        return tuple(
+            tuple(tuple(pair) for pair in zone)
+            for zone in self._inner.entangling_zones
+        )
+
+    @property
+    def blockade_radius(self) -> float:
+        return self._inner.blockade_radius
 
     @property
     def feed_forward(self) -> bool:
@@ -157,7 +164,7 @@ class ArchSpec:
         words: tuple[Word, ...],
         zones: tuple[tuple[int, ...], ...],
         measurement_mode_zones: tuple[int, ...],
-        entangling_zones: frozenset[int],
+        entangling_zones: Sequence[Sequence[tuple[int, int]]],
         has_site_buses: frozenset[int],
         has_word_buses: frozenset[int],
         site_buses: tuple[Bus, ...],
@@ -165,6 +172,7 @@ class ArchSpec:
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
+        blockade_radius: float = 2.0,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
         sites_per_word = len(words[0].site_indices) if words else 0
@@ -195,14 +203,15 @@ class ArchSpec:
             ]
 
         inner = _RustArchSpec(
-            version=(1, 0),
+            version=(2, 0),
             geometry=rust_geometry,
             buses=rust_buses,
             words_with_site_buses=sorted(has_site_buses),
             sites_with_word_buses=sorted(has_word_buses),
             zones=rust_zones,
-            entangling_zones=sorted(entangling_zones),
+            entangling_zones=[list(zone) for zone in entangling_zones],
             measurement_mode_zones=list(measurement_mode_zones),
+            blockade_radius=blockade_radius,
             paths=rust_paths,
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
@@ -455,8 +464,25 @@ class ArchSpec:
         else:
             return dst, src
 
+    @cached_property
+    def _word_partner_map(self) -> dict[int, int]:
+        """Map word_id → partner_word_id from entangling_zones pairs."""
+        partner_map: dict[int, int] = {}
+        for zone in self.entangling_zones:
+            for w_a, w_b in zone:
+                partner_map[w_a] = w_b
+                partner_map[w_b] = w_a
+        return partner_map
+
     def get_blockaded_location(
         self, location: LocationAddress
     ) -> LocationAddress | None:
-        """Get the blockaded location (CZ pair) for a given location."""
-        return self.words[location.word_id][location.site_id].cz_pair
+        """Get the blockaded location (CZ pair) for a given location.
+
+        Derives from entangling_zones word pairs: site i in word_a maps
+        to site i in the partner word. Returns None for unpaired words.
+        """
+        partner = self._word_partner_map.get(location.word_id)
+        if partner is None:
+            return None
+        return LocationAddress(partner, location.site_id)

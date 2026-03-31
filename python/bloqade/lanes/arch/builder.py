@@ -110,12 +110,12 @@ def build_arch(
         arch_zones.append(tuple(grid.all_word_ids))
         zone_indices[zone_name] = i + 1
 
-    # 5. Entangling and measurement zones
-    entangling_zones = frozenset(
-        zone_indices[name]
+    # 5. Entangling zones as word pairs + measurement zones
+    entangling_zones: list[list[tuple[int, int]]] = [
+        list(zone_grids[name].cz_pairs())
         for name, spec in blueprint.zones.items()
         if spec.entangling
-    )
+    ]
 
     measurement_mode_zones = (0,) + tuple(
         zone_indices[name]
@@ -133,6 +133,7 @@ def build_arch(
         has_word_buses=frozenset(range(layout.sites_per_word)),
         site_buses=site_buses,
         word_buses=tuple(all_word_buses),
+        blockade_radius=layout.site_spacing,
     )
 
     return ArchResult(

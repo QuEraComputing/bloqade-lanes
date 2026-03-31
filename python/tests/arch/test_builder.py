@@ -101,8 +101,9 @@ class TestBuildArchTwoZones:
     def test_entangling_zones(self) -> None:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
-        # Only proc (zone index 1) is entangling
-        assert result.arch.entangling_zones == frozenset({1})
+        # Proc zone (2x2 grid) has 2 CZ pairs: (0,1) and (2,3)
+        assert len(result.arch.entangling_zones) == 1
+        assert result.arch.entangling_zones[0] == ((0, 1), (2, 3))
 
     def test_measurement_zones(self) -> None:
         bp = _two_zone_blueprint()

@@ -2,7 +2,6 @@
 
 from bloqade.lanes.arch.word_factory import WordGrid, create_zone_words
 from bloqade.lanes.arch.zone import DeviceLayout, ZoneSpec
-from bloqade.lanes.layout.encoding import LocationAddress
 
 
 class TestWordGrid:
@@ -46,18 +45,17 @@ class TestCreateZoneWords:
         grid = create_zone_words(spec, layout, word_id_offset=0)
 
         assert len(grid.words) == 2
-        assert grid.words[0].has_cz is not None
-        assert grid.words[0].has_cz[0] == LocationAddress(1, 0)
-        assert grid.words[1].has_cz is not None
-        assert grid.words[1].has_cz[0] == LocationAddress(0, 0)
+        # CZ pairing is now at the architecture level via cz_pairs()
+        pairs = list(grid.cz_pairs())
+        assert pairs == [(0, 1)]
 
-    def test_non_entangling_zone_no_cz(self) -> None:
+    def test_non_entangling_zone_words_created(self) -> None:
         spec = ZoneSpec(num_rows=1, num_cols=2, entangling=False)
         layout = DeviceLayout(sites_per_word=3)
         grid = create_zone_words(spec, layout)
 
-        for word in grid.words:
-            assert word.has_cz is None
+        # Words are created; CZ pairing is decided at the architecture level
+        assert len(grid.words) == 2
 
     def test_word_grid_shape(self) -> None:
         """Words are rows: N x-positions, 1 y-position → shape (N, 1)."""
@@ -114,10 +112,9 @@ class TestCreateZoneWords:
         layout = DeviceLayout(sites_per_word=3)
         grid = create_zone_words(spec, layout, word_id_offset=10)
 
-        assert grid.words[0].has_cz is not None
-        assert grid.words[0].has_cz[0] == LocationAddress(11, 0)
-        assert grid.words[1].has_cz is not None
-        assert grid.words[1].has_cz[0] == LocationAddress(10, 0)
+        # CZ pairing uses word IDs with offset
+        pairs = list(grid.cz_pairs())
+        assert pairs == [(10, 11)]
 
     def test_xy_offset(self) -> None:
         spec = ZoneSpec(num_rows=1, num_cols=2, entangling=False)

@@ -1,7 +1,8 @@
 """Word creation helpers for zone-based architectures.
 
-Creates row-words arranged in a 2D grid, with interleaved CZ pairing
-between horizontally adjacent words in entangling zones.
+Creates row-words arranged in a 2D grid. CZ pairing between horizontally
+adjacent words is defined at the architecture level via entangling_zones,
+not per-word.
 
 Physical layout (2 words × 5 sites, interleaved):
 
@@ -18,7 +19,6 @@ from typing import TYPE_CHECKING
 
 from bloqade.geometry.dialects.grid import Grid
 
-from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.layout.word import Word
 
 from .zone import DeviceLayout, ZoneSpec
@@ -70,8 +70,7 @@ def create_zone_words(
     and odd word at x = s, 3s, 5s, ... (where s = site_spacing).
 
     Words are assigned IDs in row-major order starting from word_id_offset.
-    In entangling zones, horizontally adjacent pairs (col 0-1, 2-3, ...)
-    get CZ pairing. Non-entangling zones have has_cz=None on all words.
+    CZ pairing is defined at the architecture level, not per-word.
     """
     n = layout.sites_per_word
     s = layout.site_spacing
@@ -100,18 +99,7 @@ def create_zone_words(
             base = odd_base if is_odd else even_base
             grid = base.shift(pair_x, row_y)
 
-            partner_id: int | None = None
-            if zone_spec.entangling:
-                word_id = word_id_offset + row * zone_spec.num_cols + col
-                partner_id = word_id + 1 if not is_odd else word_id - 1
-
-            has_cz: tuple[LocationAddress, ...] | None = None
-            if partner_id is not None:
-                has_cz = tuple(
-                    LocationAddress(partner_id, i) for i in range(n)
-                )
-
-            words.append(Word(grid, site_indices, has_cz))
+            words.append(Word(grid, site_indices))
 
     return WordGrid(
         words=tuple(words),

@@ -311,8 +311,6 @@ class Word:
     Args:
         positions (Grid): Coordinate grid for this word's sites.
         site_indices (list[tuple[int, int]]): Site positions as ``(x_idx, y_idx)`` grid index pairs.
-        has_cz (Optional[list[tuple[int, int]]]): Per-site CZ pair locations
-            as ``(word_id, site_id)`` tuples, default = None.
 
     Note: A word's identity is determined by its position in the ``Geometry.words`` list.
     """
@@ -321,7 +319,6 @@ class Word:
         self,
         positions: Grid,
         site_indices: list[tuple[int, int]],
-        has_cz: Optional[list[tuple[int, int]]] = None,
     ) -> None: ...
     @property
     def positions(self) -> Grid:
@@ -331,11 +328,6 @@ class Word:
     @property
     def site_indices(self) -> list[tuple[int, int]]:
         """Site positions as ``(x_idx, y_idx)`` grid index pairs."""
-        ...
-
-    @property
-    def has_cz(self) -> Optional[list[tuple[int, int]]]:
-        """Per-site CZ pair locations as ``(word_id, site_id)`` tuples, or None."""
         ...
 
     def site_position(self, site_idx: int) -> Optional[tuple[float, float]]:
@@ -532,11 +524,12 @@ class ArchSpec:
         words_with_site_buses (list[int]): Word IDs that participate in site-bus moves.
         sites_with_word_buses (list[int]): Site indices that participate in word-bus moves.
         zones (list[Zone]): Zone definitions partitioning words.
-        entangling_zones (list[int]): Zone IDs where entangling gates are allowed.
+        entangling_zones (list[list[tuple[int, int]]]): Entangling zones as lists of word-ID pairs.
         measurement_mode_zones (list[int]): Zone IDs for measurement (first must be zone 0).
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
         feed_forward (bool): Whether the device supports mid-circuit measurement with classical feedback. Default = False.
         atom_reloading (bool): Whether the device supports reloading atoms after initial fill. Default = False.
+        blockade_radius (float): Rydberg blockade radius in micrometers. Default = 2.0.
     """
 
     def __init__(
@@ -547,11 +540,12 @@ class ArchSpec:
         words_with_site_buses: list[int],
         sites_with_word_buses: list[int],
         zones: list[Zone],
-        entangling_zones: list[int],
+        entangling_zones: list[list[tuple[int, int]]],
         measurement_mode_zones: list[int],
         paths: Optional[list[TransportPath]] = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
+        blockade_radius: float = 2.0,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -630,8 +624,13 @@ class ArchSpec:
         ...
 
     @property
-    def entangling_zones(self) -> list[int]:
-        """Zone IDs where entangling gates are allowed."""
+    def entangling_zones(self) -> list[list[tuple[int, int]]]:
+        """Entangling zones as lists of word-ID pairs."""
+        ...
+
+    @property
+    def blockade_radius(self) -> float:
+        """Rydberg blockade radius in micrometers."""
         ...
 
     @property
