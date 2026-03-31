@@ -48,8 +48,8 @@ impl ArchSpec {
         // Rule 2: measurement_mode_zones[0] must be zone 0
         check_measurement_mode_first_is_zone0(self, &mut errors);
 
-        // Rule 3a: All entangling_zones IDs must be valid zone indices
-        check_entangling_zones_valid(self, num_zones, &mut errors);
+        // Rule 3a: Entangling zones word pairs are valid
+        check_entangling_zones_pairs(self, num_words, &mut errors);
 
         // Rule 3b: All measurement_mode_zones IDs must be valid zone indices
         check_measurement_mode_zones_valid(self, num_zones, &mut errors);
@@ -121,12 +121,47 @@ fn check_measurement_mode_first_is_zone0(spec: &ArchSpec, errors: &mut Vec<ArchS
     }
 }
 
-fn check_entangling_zones_valid(spec: &ArchSpec, num_zones: u32, errors: &mut Vec<ArchSpecError>) {
-    for &id in &spec.entangling_zones {
-        if id >= num_zones {
-            errors.push(ArchSpecError::Zone {
-                message: format!("entangling_zones contains invalid zone ID {}", id),
-            });
+fn check_entangling_zones_pairs(
+    spec: &ArchSpec,
+    num_words: u32,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    let mut seen_words: HashSet<u32> = HashSet::new();
+    for (zone_idx, zone_pairs) in spec.entangling_zones.iter().enumerate() {
+        for pair in zone_pairs {
+            let [w_a, w_b] = *pair;
+            if w_a >= num_words {
+                errors.push(ArchSpecError::Zone {
+                    message: format!(
+                        "entangling_zones[{}]: invalid word ID {}",
+                        zone_idx, w_a
+                    ),
+                });
+            }
+            if w_b >= num_words {
+                errors.push(ArchSpecError::Zone {
+                    message: format!(
+                        "entangling_zones[{}]: invalid word ID {}",
+                        zone_idx, w_b
+                    ),
+                });
+            }
+            if !seen_words.insert(w_a) {
+                errors.push(ArchSpecError::Zone {
+                    message: format!(
+                        "entangling_zones[{}]: word {} appears in multiple pairs",
+                        zone_idx, w_a
+                    ),
+                });
+            }
+            if !seen_words.insert(w_b) {
+                errors.push(ArchSpecError::Zone {
+                    message: format!(
+                        "entangling_zones[{}]: word {} appears in multiple pairs",
+                        zone_idx, w_b
+                    ),
+                });
+            }
         }
     }
 }
@@ -163,18 +198,6 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
                     "word {} has {} sites, expected {} (sites_per_word)",
                     word_id,
                     word.site_indices.len(),
-                    sites_per_word
-                ),
-            });
-        }
-        if let Some(cz) = &word.has_cz
-            && cz.len() != sites_per_word as usize
-        {
-            errors.push(ArchSpecError::Geometry {
-                message: format!(
-                    "word {} has {} cz_pairs, expected {} (sites_per_word)",
-                    word_id,
-                    cz.len(),
                     sites_per_word
                 ),
             });
@@ -427,13 +450,25 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_entangling_zone() {
+    fn test_invalid_entangling_zone_word_id() {
         let mut spec = example_arch_spec();
-        spec.entangling_zones.push(99);
+        spec.entangling_zones.push(vec![[99, 100]]);
         let errors = spec.validate().unwrap_err();
         assert!(has_error(
             &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("invalid zone ID 99"))
+            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("invalid word ID 99"))
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_word_in_entangling_pairs() {
+        let mut spec = example_arch_spec();
+        // Word 0 is already in the first zone's pair, add it again
+        spec.entangling_zones.push(vec![[0, 1]]);
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("appears in multiple pairs"))
         ));
     }
 
@@ -456,17 +491,6 @@ mod tests {
         assert!(has_error(
             &errors,
             |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("9 sites, expected 10"))
-        ));
-    }
-
-    #[test]
-    fn test_wrong_cz_pairs_count() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[0].has_cz.as_mut().unwrap().pop();
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("9 cz_pairs, expected 10"))
         ));
     }
 

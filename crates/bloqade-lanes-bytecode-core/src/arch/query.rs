@@ -234,22 +234,24 @@ impl ArchSpec {
 
     /// Get the CZ pair (blockaded location) for a given location.
     ///
-    /// Returns `Some(LocationAddr)` if the word at `loc.word_id` has CZ data,
-    /// site `loc.site_id` has a partner, and the partner is a valid location.
-    /// Returns `None` otherwise.
+    /// Derives the partner from `entangling_zones` word pairs: if word `w_a`
+    /// is paired with `w_b`, then site `i` in `w_a` maps to site `i` in `w_b`.
+    /// Returns `None` for words not in any entangling pair.
     pub fn get_blockaded_location(&self, loc: &LocationAddr) -> Option<LocationAddr> {
-        let word = self.word_by_id(loc.word_id)?;
-        let cz_pairs = word.has_cz.as_ref()?;
-        let pair = cz_pairs.get(loc.site_id as usize)?;
-        let result = LocationAddr {
-            word_id: pair[0],
-            site_id: pair[1],
-        };
-        // Validate the CZ pair target is in range
-        if self.check_location(&result).is_some() {
-            return None;
-        }
-        Some(result)
+        // Find partner word from entangling_zones pairs
+        let partner_word = self.entangling_zones.iter().flatten().find_map(|pair| {
+            if pair[0] == loc.word_id {
+                Some(pair[1])
+            } else if pair[1] == loc.word_id {
+                Some(pair[0])
+            } else {
+                None
+            }
+        })?;
+        Some(LocationAddr {
+            word_id: partner_word,
+            site_id: loc.site_id,
+        })
     }
 
     // -- Address validation --
@@ -689,14 +691,14 @@ mod tests {
     fn from_json_valid() {
         let json = serde_json::to_string(&example_arch_spec()).unwrap();
         let spec = super::super::ArchSpec::from_json(&json).unwrap();
-        assert_eq!(spec.version, crate::version::Version::new(1, 0));
+        assert_eq!(spec.version, crate::version::Version::new(2, 0));
     }
 
     #[test]
     fn from_json_validated_valid() {
         let json = serde_json::to_string(&example_arch_spec()).unwrap();
         let spec = super::super::ArchSpec::from_json_validated(&json).unwrap();
-        assert_eq!(spec.version, crate::version::Version::new(1, 0));
+        assert_eq!(spec.version, crate::version::Version::new(2, 0));
     }
 
     #[test]
@@ -716,45 +718,40 @@ mod tests {
     #[test]
     fn get_blockaded_location_valid() {
         let spec = example_arch_spec();
-        // Site 0 in word 0 pairs with site 5 in word 0
+        // Word 0 is paired with word 1 (from entangling_zones)
+        // Site i in word 0 maps to site i in word 1
         let loc = crate::arch::addr::LocationAddr {
             word_id: 0,
             site_id: 0,
         };
         let pair = spec.get_blockaded_location(&loc).unwrap();
-        assert_eq!(pair.word_id, 0);
-        assert_eq!(pair.site_id, 5);
+        assert_eq!(pair.word_id, 1);
+        assert_eq!(pair.site_id, 0);
     }
 
     #[test]
     fn get_blockaded_location_reverse() {
         let spec = example_arch_spec();
-        // Site 5 in word 0 pairs back with site 0 in word 0
+        // Word 1 paired with word 0 (reverse direction)
         let loc = crate::arch::addr::LocationAddr {
-            word_id: 0,
-            site_id: 5,
+            word_id: 1,
+            site_id: 3,
         };
         let pair = spec.get_blockaded_location(&loc).unwrap();
         assert_eq!(pair.word_id, 0);
-        assert_eq!(pair.site_id, 0);
+        assert_eq!(pair.site_id, 3);
     }
 
     #[test]
-    fn get_blockaded_location_invalid_word() {
-        let spec = example_arch_spec();
-        let loc = crate::arch::addr::LocationAddr {
-            word_id: 99,
-            site_id: 0,
-        };
-        assert!(spec.get_blockaded_location(&loc).is_none());
-    }
-
-    #[test]
-    fn get_blockaded_location_invalid_site() {
-        let spec = example_arch_spec();
+    fn get_blockaded_location_unpaired_word() {
+        // Build a spec with word 0 paired but add an unpaired word
+        let mut spec = example_arch_spec();
+        // The example has 2 words, both paired. There's no unpaired word to test.
+        // Instead, create a spec where entangling_zones is empty
+        spec.entangling_zones = vec![];
         let loc = crate::arch::addr::LocationAddr {
             word_id: 0,
-            site_id: 99,
+            site_id: 0,
         };
         assert!(spec.get_blockaded_location(&loc).is_none());
     }
