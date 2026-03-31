@@ -3,6 +3,7 @@
 .tmp*
 debug/
 Thumbs.db
+.claude/worktrees
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
