@@ -1,3 +1,4 @@
+from bloqade.lanes.arch.builder import ArchResult, build_arch
 from bloqade.lanes.arch.topology import (
     AllToAllSiteTopology,
     HypercubeSiteTopology,
@@ -13,6 +14,7 @@ from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 __all__ = [
     "AllToAllSiteTopology",
     "ArchBlueprint",
+    "ArchResult",
     "DeviceLayout",
     "HypercubeSiteTopology",
     "HypercubeWordTopology",
@@ -22,5 +24,6 @@ __all__ = [
     "WordGrid",
     "WordTopology",
     "ZoneSpec",
+    "build_arch",
     "create_zone_words",
 ]
