@@ -8,6 +8,10 @@ a complete architecture definition.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .topology import SiteTopology, WordTopology
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,8 @@ class ZoneSpec:
     num_cols: int
     entangling: bool = False
     measurement: bool = True
+    word_topology: WordTopology | None = None
+    site_topology: SiteTopology | None = None
 
     def __post_init__(self) -> None:
         if self.num_rows < 1:
