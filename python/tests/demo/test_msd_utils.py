@@ -19,7 +19,12 @@ from demo.msd_utils.core import (
     pack_boolean_array,
     split_factory_bits,
 )
-from demo.msd_utils.decoders import DecoderAdapter, build_mle_decoders, evaluate_curve
+from demo.msd_utils.decoders import (
+    DecoderAdapter,
+    build_mle_decoders,
+    evaluate_curve,
+    evaluate_mld_curve,
+)
 
 
 def test_fidelity_from_counts_returns_ordered_interval():
@@ -194,6 +199,66 @@ def test_evaluate_curve_returns_monotone_acceptance():
     accepted = curves["accepted_fraction"]
     assert accepted.ndim == 1
     assert np.all(np.diff(accepted) >= -1e-12)
+
+
+def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
+    dataset = BasisDataset(
+        detectors=np.array(
+            [
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 1],
+                [0, 0, 0, 1],
+            ],
+            dtype=np.uint8,
+        ),
+        observables=np.array(
+            [
+                [0, 0],
+                [0, 0],
+                [1, 0],
+                [1, 0],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+
+    def make_adapter():
+        def decode_factory(key: str):
+            a_det = np.array([int(x) for x in key], dtype=np.uint8)
+            # Deliberately misleading score: the lower-fidelity pattern gets the
+            # higher decoder score. The evaluator should ignore this and rank by
+            # the fidelity induced by the corrected output bits instead.
+            return (0,), 0.5 if int(a_det[-1]) == 0 else 1.0
+
+        def decode_full(key: str):
+            return (0, 0)
+
+        return DecoderAdapter(
+            full_decoder=None,
+            factory_decoder=None,
+            decode_factory=decode_factory,
+            decode_full=decode_full,
+            factory_score_mode="mld_output_fidelity",
+        )
+
+    curves = evaluate_mld_curve(
+        {"X": dataset, "Y": dataset, "Z": dataset},
+        {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
+        posterior_samples=64,
+        factory_target=np.array([0], dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        min_accepted_per_basis=1,
+    )
+
+    accepted = curves["accepted_fraction"]
+    fidelity = curves["fidelity"]
+    assert accepted.ndim == 1
+    assert np.all(np.diff(accepted) >= -1e-12)
+    assert accepted[0] == pytest.approx(0.5)
+    assert accepted[-1] == pytest.approx(1.0)
+    assert fidelity[0] >= fidelity[-1]
+    assert fidelity[0] > 0.8
 
 
 def test_notebooks_import_shared_msd_utils():

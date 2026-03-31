@@ -410,6 +410,116 @@ def evaluate_curve(
     }
 
 
+def evaluate_mld_curve(
+    actual_data: Mapping[str, BasisDataset],
+    decoder_map: Mapping[str, DecoderAdapter],
+    *,
+    posterior_samples: int,
+    factory_target: np.ndarray,
+    sign_vector: Sequence[float],
+    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    min_accepted_per_basis: int = 50,
+) -> dict[str, np.ndarray]:
+    pattern_counts_by_basis: dict[str, dict[int, int]] = {}
+    corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
+    total_shots = 0
+
+    for basis in basis_labels:
+        dataset = actual_data[basis]
+        total_shots += len(dataset.observables)
+        anc_det, anc_obs = split_factory_bits(dataset.detectors, dataset.observables)
+        decode_factory = decoder_map[basis].decode_factory
+        decode_full = decoder_map[basis].decode_full
+
+        pattern_counts = defaultdict(int)
+        corrected_bits = defaultdict(list)
+
+        for det, obs, a_det, a_obs in zip(
+            dataset.detectors,
+            dataset.observables,
+            anc_det,
+            anc_obs,
+            strict=True,
+        ):
+            packed = int(pack_boolean_array(a_det)[0])
+            pattern_counts[packed] += 1
+
+            anc_flip, _score = decode_factory(bits_to_key(a_det))
+            anc_flip = np.asarray(anc_flip, dtype=np.uint8)
+            if not np.array_equal(a_obs ^ anc_flip, factory_target):
+                continue
+
+            full_flip = np.asarray(decode_full(bits_to_key(det)), dtype=np.uint8)
+            corrected_bits[packed].append(int(obs[0] ^ full_flip[0]))
+
+        pattern_counts_by_basis[basis] = dict(pattern_counts)
+        corrected_bits_by_basis[basis] = corrected_bits
+
+    all_patterns = sorted(
+        set().union(*(pattern_counts_by_basis[basis].keys() for basis in basis_labels))
+    )
+    ranked_patterns = []
+    for pattern in all_patterns:
+        basis_counts = {
+            basis: np.asarray(
+                corrected_bits_by_basis[basis].get(pattern, ()), dtype=np.uint8
+            )
+            for basis in basis_labels
+        }
+        if min(len(basis_counts[basis]) for basis in basis_labels) == 0:
+            continue
+        mean_score = magic_state_fidelity_point_from_counts(
+            basis_counts["X"],
+            basis_counts["Y"],
+            basis_counts["Z"],
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+        )
+        total_count = sum(
+            pattern_counts_by_basis[basis].get(pattern, 0) for basis in basis_labels
+        )
+        ranked_patterns.append((pattern, mean_score, total_count))
+
+    ranked_patterns.sort(key=lambda row: (row[1], row[2]), reverse=True)
+
+    cumulative_bits = {basis: [] for basis in basis_labels}
+    accepted_fractions = []
+    fidelities = []
+    credibility = []
+
+    for pattern, _score, _count in ranked_patterns:
+        for basis in basis_labels:
+            cumulative_bits[basis].extend(
+                corrected_bits_by_basis[basis].get(pattern, ())
+            )
+
+        if (
+            min(len(cumulative_bits[basis]) for basis in basis_labels)
+            < min_accepted_per_basis
+        ):
+            continue
+
+        summary = fidelity_from_counts(
+            np.asarray(cumulative_bits["X"], dtype=np.uint8),
+            np.asarray(cumulative_bits["Y"], dtype=np.uint8),
+            np.asarray(cumulative_bits["Z"], dtype=np.uint8),
+            posterior_samples,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+        )
+        total_kept = sum(len(cumulative_bits[basis]) for basis in basis_labels)
+        accepted_fractions.append(total_kept / total_shots)
+        fidelities.append(summary["median"])
+        credibility.append((summary["low"], summary["high"]))
+
+    return {
+        "accepted_fraction": np.asarray(accepted_fractions, dtype=np.float64),
+        "fidelity": np.asarray(fidelities, dtype=np.float64),
+        "credible": np.asarray(credibility, dtype=np.float64),
+    }
+
+
 def injected_baseline(
     task_map: Mapping[str, Any],
     *,
