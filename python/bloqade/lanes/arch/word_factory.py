@@ -1,7 +1,14 @@
 """Word creation helpers for zone-based architectures.
 
-Creates single-column words arranged in a 2D grid, with CZ pairing
+Creates row-words arranged in a 2D grid, with interleaved CZ pairing
 between horizontally adjacent words in entangling zones.
+
+Physical layout (2 words × 5 sites, interleaved):
+
+  w0.s0  w1.s0  w0.s1  w1.s1  w0.s2  w1.s2  w0.s3  w1.s3  w0.s4  w1.s4
+    o      o      o      o      o      o      o      o      o      o
+
+CZ partners (w0.si and w1.si) are separated by site_spacing (blockade radius).
 """
 
 from __future__ import annotations
@@ -53,36 +60,50 @@ def create_zone_words(
 ) -> WordGrid:
     """Create all words for a zone in a 2D grid layout.
 
+    Words are horizontal rows with sites along the x-axis. Within a CZ pair,
+    the two words' sites are interleaved: even word at x = 0, 2s, 4s, ...
+    and odd word at x = s, 3s, 5s, ... (where s = site_spacing).
+
     Words are assigned IDs in row-major order starting from word_id_offset.
     In entangling zones, horizontally adjacent pairs (col 0-1, 2-3, ...)
     get CZ pairing. Non-entangling zones have has_cz=None on all words.
     """
-    base_grid = Grid.from_positions(
-        [0.0], [layout.site_spacing * i for i in range(layout.sites_per_word)]
-    )
-    site_indices = tuple((0, i) for i in range(layout.sites_per_word))
+    n = layout.sites_per_word
+    s = layout.site_spacing
+    site_indices = tuple((i, 0) for i in range(n))
+
+    # Even word sites at x = 0, 2s, 4s, ...
+    even_x = [2.0 * s * i for i in range(n)]
+    even_base = Grid.from_positions(even_x, [0.0])
+
+    # Odd word sites at x = s, 3s, 5s, ...
+    odd_x = [s + 2.0 * s * i for i in range(n)]
+    odd_base = Grid.from_positions(odd_x, [0.0])
+
+    # Width of one interleaved pair
+    pair_width = (2 * n - 1) * s
 
     words: list[Word] = []
-    pair_width = layout.word_spacing + layout.pair_spacing
-    word_height = (layout.sites_per_word - 1) * layout.site_spacing
-    row_step = word_height + layout.row_spacing
 
     for row in range(zone_spec.num_rows):
-        row_y = y_offset + row * row_step
+        row_y = y_offset + row * layout.row_spacing
         for col in range(zone_spec.num_cols):
-            word_x = x_offset + (col // 2) * pair_width + (col % 2) * layout.word_spacing
-            grid = base_grid.shift(word_x, row_y)
+            pair_idx = col // 2
+            is_odd = col % 2
+            pair_x = x_offset + pair_idx * (pair_width + layout.pair_spacing)
+
+            base = odd_base if is_odd else even_base
+            grid = base.shift(pair_x, row_y)
 
             partner_id: int | None = None
             if zone_spec.entangling:
                 word_id = word_id_offset + row * zone_spec.num_cols + col
-                partner_id = word_id + 1 if col % 2 == 0 else word_id - 1
+                partner_id = word_id + 1 if not is_odd else word_id - 1
 
             has_cz: tuple[LocationAddress, ...] | None = None
             if partner_id is not None:
                 has_cz = tuple(
-                    LocationAddress(partner_id, i)
-                    for i in range(layout.sites_per_word)
+                    LocationAddress(partner_id, i) for i in range(n)
                 )
 
             words.append(Word(grid, site_indices, has_cz))

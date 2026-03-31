@@ -53,7 +53,6 @@ class TestDeviceLayout:
         layout = DeviceLayout()
         assert layout.sites_per_word == 5
         assert layout.site_spacing == 10.0
-        assert layout.word_spacing == 2.0
         assert layout.pair_spacing == 10.0
         assert layout.row_spacing == 20.0
         assert layout.zone_gap == 20.0

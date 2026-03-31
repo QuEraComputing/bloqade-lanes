@@ -50,9 +50,6 @@ def build_arch(
     zone_grids: dict[str, WordGrid] = {}
     word_id_offset = 0
     zone_y = 0.0
-    word_height = (layout.sites_per_word - 1) * layout.site_spacing
-    row_step = word_height + layout.row_spacing
-
     for zone_name, zone_spec in blueprint.zones.items():
         grid = create_zone_words(
             zone_spec, layout,
@@ -61,7 +58,7 @@ def build_arch(
         )
         zone_grids[zone_name] = grid
         word_id_offset += zone_spec.num_words
-        zone_height = zone_spec.num_rows * row_step - layout.row_spacing
+        zone_height = (zone_spec.num_rows - 1) * layout.row_spacing
         zone_y += zone_height + layout.zone_gap
 
     all_words = tuple(

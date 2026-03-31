@@ -30,7 +30,8 @@ class TestWordGrid:
         grid = self._make_grid()
         word = grid.word_at(0, 0)
         assert len(word.site_indices) == 3
-        assert word.site_indices == ((0, 0), (0, 1), (0, 2))
+        # Row word: sites along x-axis → (i, 0)
+        assert word.site_indices == ((0, 0), (1, 0), (2, 0))
 
     def test_cz_pairs(self) -> None:
         grid = self._make_grid()
@@ -45,10 +46,8 @@ class TestCreateZoneWords:
         grid = create_zone_words(spec, layout, word_id_offset=0)
 
         assert len(grid.words) == 2
-        # Word 0 → partner word 1
         assert grid.words[0].has_cz is not None
         assert grid.words[0].has_cz[0] == LocationAddress(1, 0)
-        # Word 1 → partner word 0
         assert grid.words[1].has_cz is not None
         assert grid.words[1].has_cz[0] == LocationAddress(0, 0)
 
@@ -61,39 +60,54 @@ class TestCreateZoneWords:
             assert word.has_cz is None
 
     def test_word_grid_shape(self) -> None:
+        """Words are rows: N x-positions, 1 y-position → shape (N, 1)."""
         spec = ZoneSpec(num_rows=1, num_cols=2, entangling=False)
         layout = DeviceLayout(sites_per_word=5)
         grid = create_zone_words(spec, layout)
 
         for word in grid.words:
-            assert word.positions.shape == (1, 5)
+            assert word.positions.shape == (5, 1)
 
-    def test_pair_spacing(self) -> None:
-        spec = ZoneSpec(num_rows=1, num_cols=4, entangling=True)
-        layout = DeviceLayout(
-            sites_per_word=2, site_spacing=10.0,
-            word_spacing=2.0, pair_spacing=10.0,
-        )
+    def test_interleaved_positions(self) -> None:
+        """Even/odd words have interleaved x-positions."""
+        spec = ZoneSpec(num_rows=1, num_cols=2, entangling=True)
+        layout = DeviceLayout(sites_per_word=3, site_spacing=10.0)
         grid = create_zone_words(spec, layout)
 
-        # Pair 0: col 0 at x=0, col 1 at x=2
+        # Even word (col 0): sites at x = 0, 20, 40
+        w0 = grid.words[0]
+        assert w0.site_position(0) == (0.0, 0.0)
+        assert w0.site_position(1) == (20.0, 0.0)
+        assert w0.site_position(2) == (40.0, 0.0)
+
+        # Odd word (col 1): sites at x = 10, 30, 50
+        w1 = grid.words[1]
+        assert w1.site_position(0) == (10.0, 0.0)
+        assert w1.site_position(1) == (30.0, 0.0)
+        assert w1.site_position(2) == (50.0, 0.0)
+
+    def test_pair_spacing(self) -> None:
+        """Gap between CZ pairs."""
+        spec = ZoneSpec(num_rows=1, num_cols=4, entangling=True)
+        layout = DeviceLayout(sites_per_word=2, site_spacing=10.0, pair_spacing=20.0)
+        grid = create_zone_words(spec, layout)
+
+        # Pair 0: even at x=0,20; odd at x=10,30. Pair width = (2*2-1)*10 = 30
         assert grid.words[0].site_position(0)[0] == 0.0
-        assert grid.words[1].site_position(0)[0] == 2.0
-        # Pair 1: col 2 at x=12, col 3 at x=14
-        assert grid.words[2].site_position(0)[0] == 12.0
-        assert grid.words[3].site_position(0)[0] == 14.0
+        assert grid.words[1].site_position(0)[0] == 10.0
+        # Pair 1 starts at x = 30 + 20 (pair_spacing) = 50
+        assert grid.words[2].site_position(0)[0] == 50.0
+        assert grid.words[3].site_position(0)[0] == 60.0
 
     def test_row_spacing(self) -> None:
         spec = ZoneSpec(num_rows=2, num_cols=2, entangling=True)
-        layout = DeviceLayout(
-            sites_per_word=3, site_spacing=10.0, row_spacing=20.0,
-        )
+        layout = DeviceLayout(sites_per_word=3, site_spacing=10.0, row_spacing=50.0)
         grid = create_zone_words(spec, layout)
 
         # Row 0 at y=0
         assert grid.words[0].site_position(0)[1] == 0.0
-        # Row 1 at y = (3-1)*10 + 20 = 40
-        assert grid.words[2].site_position(0)[1] == 40.0
+        # Row 1 at y=50
+        assert grid.words[2].site_position(0)[1] == 50.0
 
     def test_word_id_offset_in_cz(self) -> None:
         spec = ZoneSpec(num_rows=1, num_cols=2, entangling=True)
@@ -107,8 +121,9 @@ class TestCreateZoneWords:
 
     def test_xy_offset(self) -> None:
         spec = ZoneSpec(num_rows=1, num_cols=2, entangling=False)
-        layout = DeviceLayout(sites_per_word=2, site_spacing=10.0, word_spacing=2.0)
+        layout = DeviceLayout(sites_per_word=2, site_spacing=10.0)
         grid = create_zone_words(spec, layout, x_offset=100.0, y_offset=200.0)
 
         assert grid.words[0].site_position(0) == (100.0, 200.0)
-        assert grid.words[1].site_position(0) == (102.0, 200.0)
+        # Odd word site 0 at x = 100 + 10 (site_spacing)
+        assert grid.words[1].site_position(0) == (110.0, 200.0)

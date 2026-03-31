@@ -53,18 +53,21 @@ class ZoneSpec:
 class DeviceLayout:
     """Physical layout parameters for word and site placement.
 
+    Words are horizontal rows with interleaved CZ pairs. Within a pair,
+    sites alternate: even word at x=0, 2s, 4s, ... and odd word at
+    x=s, 3s, 5s, ... where s = site_spacing (blockade radius).
+
     Args:
-        sites_per_word: Number of sites per word (column height).
-        site_spacing: Vertical distance between adjacent sites (micrometers).
-        word_spacing: Horizontal distance within a CZ pair (micrometers).
-        pair_spacing: Horizontal distance between adjacent CZ pairs (micrometers).
+        sites_per_word: Number of sites per word.
+        site_spacing: Distance between adjacent atoms (micrometers).
+            Also determines the CZ blockade distance between paired sites.
+        pair_spacing: Horizontal gap between adjacent CZ pairs (micrometers).
         row_spacing: Vertical distance between word grid rows (micrometers).
         zone_gap: Additional vertical gap between zones (micrometers).
     """
 
     sites_per_word: int = 5
     site_spacing: float = 10.0
-    word_spacing: float = 2.0
     pair_spacing: float = 10.0
     row_spacing: float = 20.0
     zone_gap: float = 20.0
