@@ -28,6 +28,25 @@ class MoveToSquin:
     noise_model: NoiseModelABC | None = None
     aggressive_unroll: bool = False
 
+    def _resolve_initialize_kernel(self):
+        """Resolve the initialization kernel.
+
+        Priority: explicit logical_initialization param > noise model > None.
+        """
+        if self.logical_initialization is not None:
+            return self.logical_initialization
+        if self.noise_model is not None:
+            clean, _ = self.noise_model.get_logical_initialize()
+            return clean
+        return None
+
+    def _resolve_initialize_noise_kernel(self):
+        """Resolve the noisy initialization kernel from the noise model."""
+        if self.noise_model is not None:
+            _, noisy = self.noise_model.get_logical_initialize()
+            return noisy
+        return None
+
     def emit(self, main: ir.Method, no_raise: bool = True) -> ir.Method:
         main = main.similar(main.dialects.union(squin.kernel.discard(scf.lowering)))
 
@@ -42,7 +61,7 @@ class MoveToSquin:
                 self.arch_spec,
                 qubit_rule.physical_ssa_values,
                 frame,
-                self.logical_initialization,
+                self._resolve_initialize_kernel(),
             ),
             move2squin.InsertMeasurements(qubit_rule.physical_ssa_values, frame),
         ]
@@ -53,6 +72,7 @@ class MoveToSquin:
                     qubit_rule.physical_ssa_values,
                     frame,
                     self.noise_model,
+                    initialize_noise_kernel=self._resolve_initialize_noise_kernel(),
                 ),
             )
 
