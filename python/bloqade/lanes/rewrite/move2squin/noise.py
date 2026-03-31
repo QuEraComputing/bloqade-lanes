@@ -23,9 +23,13 @@ Len = TypeVar("Len")
 class NoiseModelABC(abc.ABC):
     """Abstract base class for noise models used during move-to-squin compilation.
 
-    Subclass this to define custom noise kernels for each physical operation
-    (lane moves, CZ gates, idle periods, local/global rotations). Methods that
-    return ``None`` indicate no noise is inserted for that operation.
+    This is the **physical** noise model interface. It defines noise kernels for
+    physical operations (lane moves, CZ gates, idle periods, local/global
+    rotations). Methods that return ``None`` indicate no noise is inserted for
+    that operation.
+
+    For logical compilation that also needs initialization kernels, see
+    :class:`LogicalNoiseModelABC`.
     """
 
     def get_cz_paired_noise(
@@ -150,6 +154,74 @@ class SimpleNoiseModel(NoiseModelABC):
 
     def get_local_rz_noise(self, locations: Sequence[LocationAddress]):
         return self.local_rz_noise
+
+
+class LogicalNoiseModelABC(NoiseModelABC):
+    """Noise model for **logical** compilation.
+
+    Extends :class:`NoiseModelABC` with an abstract
+    :meth:`get_logical_initialize` that returns the clean and noisy
+    initialization kernels used to rewrite ``PhysicalInitialize`` nodes.
+    """
+
+    @abc.abstractmethod
+    def get_logical_initialize(
+        self,
+    ) -> tuple[
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+    ]:
+        """Return ``(clean_kernel, noisy_kernel)`` for logical initialization."""
+        ...
+
+
+@dataclass
+class SimpleLogicalNoiseModel(LogicalNoiseModelABC, SimpleNoiseModel):
+    """A concrete logical noise model that adds initialization kernels.
+
+    Extends :class:`SimpleNoiseModel` with ``logical_initialize_clean`` and
+    ``logical_initialize_noisy`` fields.
+    """
+
+    logical_initialize_clean: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+    ) = None
+    logical_initialize_noisy: (
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+    ) = None
+
+    def get_logical_initialize(
+        self,
+    ) -> tuple[
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
+    ]:
+        return self.logical_initialize_clean, self.logical_initialize_noisy
+
+    @classmethod
+    def from_simple(
+        cls,
+        noise_model: SimpleNoiseModel,
+        logical_initialize_clean: (
+            ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+        ) = None,
+        logical_initialize_noisy: (
+            ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
+        ) = None,
+    ) -> "SimpleLogicalNoiseModel":
+        """Create from an existing :class:`SimpleNoiseModel` plus init kernels."""
+        return cls(
+            lane_noise=noise_model.lane_noise,
+            idle_noise=noise_model.idle_noise,
+            cz_unpaired_noise=noise_model.cz_unpaired_noise,
+            cz_paired_noise=noise_model.cz_paired_noise,
+            global_rz_noise=noise_model.global_rz_noise,
+            local_rz_noise=noise_model.local_rz_noise,
+            global_r_noise=noise_model.global_r_noise,
+            local_r_noise=noise_model.local_r_noise,
+            logical_initialize_clean=logical_initialize_clean,
+            logical_initialize_noisy=logical_initialize_noisy,
+        )
 
 
 @dataclass

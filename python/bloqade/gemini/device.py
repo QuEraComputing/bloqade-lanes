@@ -187,12 +187,30 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical squin kernel corresponding to the physical move kernel, including noise."""
         from bloqade.lanes.arch.gemini.logical import steane7_initialize
-        from bloqade.lanes.transform import MoveToSquin
+        from bloqade.lanes.rewrite.move2squin.noise import (
+            LogicalNoiseModelABC,
+            SimpleLogicalNoiseModel,
+            SimpleNoiseModel,
+        )
+        from bloqade.lanes.transform import MoveToSquinLogical
 
-        return MoveToSquin(
-            self.physical_arch_spec,
-            steane7_initialize,
-            self.noise_model,
+        noise_model = self.noise_model
+        if isinstance(noise_model, LogicalNoiseModelABC):
+            logical_noise = noise_model
+        elif isinstance(noise_model, SimpleNoiseModel):
+            logical_noise = SimpleLogicalNoiseModel.from_simple(
+                noise_model,
+                logical_initialize_clean=steane7_initialize,
+            )
+        else:
+            raise TypeError(
+                f"Cannot convert {type(noise_model).__name__} to a logical noise model."
+            )
+
+        return MoveToSquinLogical(
+            arch_spec=self.physical_arch_spec,
+            noise_model=logical_noise,
+            add_noise=True,
         ).emit(self.physical_move_kernel)
 
     @cached_property
