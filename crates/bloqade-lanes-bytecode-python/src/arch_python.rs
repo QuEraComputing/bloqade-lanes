@@ -518,11 +518,13 @@ pub struct PyBus {
 #[pymethods]
 impl PyBus {
     #[new]
-    fn new(src: Vec<i64>, dst: Vec<i64>) -> PyResult<Self> {
+    #[pyo3(signature = (src, dst, words=None))]
+    fn new(src: Vec<i64>, dst: Vec<i64>, words: Option<Vec<i64>>) -> PyResult<Self> {
         let src = validate_vec::<u32>("src", src)?;
         let dst = validate_vec::<u32>("dst", dst)?;
+        let words = words.map(|w| validate_vec::<u32>("words", w)).transpose()?;
         Ok(Self {
-            inner: rs::Bus { src, dst },
+            inner: rs::Bus { src, dst, words },
         })
     }
 
@@ -534,6 +536,11 @@ impl PyBus {
     #[getter]
     fn dst(&self) -> Vec<u32> {
         self.inner.dst.clone()
+    }
+
+    #[getter]
+    fn words(&self) -> Option<Vec<u32>> {
+        self.inner.words.clone()
     }
 
     /// Map a source value to its destination (forward move).

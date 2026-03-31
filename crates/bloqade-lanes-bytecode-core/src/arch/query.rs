@@ -284,16 +284,27 @@ impl ArchSpec {
             MoveType::SiteBus => {
                 if addr.word_id >= num_words {
                     errors.push(format!("word_id {} out of range", addr.word_id));
-                } else if !self.words_with_site_buses.contains(&addr.word_id) {
-                    errors.push(format!(
-                        "word_id {} not in words_with_site_buses",
-                        addr.word_id
-                    ));
                 }
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
                 }
                 if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
+                    // Per-bus words take precedence over global words_with_site_buses
+                    if addr.word_id < num_words {
+                        if let Some(ref bus_words) = bus.words {
+                            if !bus_words.contains(&addr.word_id) {
+                                errors.push(format!(
+                                    "word_id {} not in site_bus {} words list",
+                                    addr.word_id, addr.bus_id
+                                ));
+                            }
+                        } else if !self.words_with_site_buses.contains(&addr.word_id) {
+                            errors.push(format!(
+                                "word_id {} not in words_with_site_buses",
+                                addr.word_id
+                            ));
+                        }
+                    }
                     if errors.is_empty() && bus.resolve_forward(addr.site_id).is_none() {
                         errors.push(format!(
                             "site_id {} is not a valid source for site_bus {}",
@@ -385,7 +396,14 @@ impl ArchSpec {
         for lane in lanes {
             match lane.move_type {
                 MoveType::SiteBus => {
-                    if !self.words_with_site_buses.contains(&lane.word_id) {
+                    let allowed = self
+                        .site_bus_by_id(lane.bus_id)
+                        .and_then(|bus| bus.words.as_ref())
+                        .map(|words| words.contains(&lane.word_id))
+                        .unwrap_or_else(|| {
+                            self.words_with_site_buses.contains(&lane.word_id)
+                        });
+                    if !allowed {
                         bad_words.insert(lane.word_id);
                     }
                 }

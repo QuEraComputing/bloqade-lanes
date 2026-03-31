@@ -163,3 +163,74 @@ class TestBuildArchValidation:
         })
         # from_components calls _inner.validate() — no exception = pass
         assert result.arch is not None
+
+
+class TestBuildArchPerBusWords:
+    def test_mixed_site_topologies(self) -> None:
+        """Two zones with different site topologies get separate buses."""
+        from bloqade.lanes.arch.topology import AllToAllSiteTopology
+
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(
+                    num_rows=1, num_cols=2, entangling=True,
+                    site_topology=HypercubeSiteTopology(),
+                ),
+                "mem": ZoneSpec(
+                    num_rows=1, num_cols=2,
+                    site_topology=AllToAllSiteTopology(),
+                ),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        result = build_arch(bp)
+        arch = result.arch
+
+        # Hypercube(4 sites) = 2 buses, AllToAll(4 sites) = 6 buses → 8 total
+        assert len(arch.site_buses) == 8
+
+        # First 2 buses (proc) have words=[0, 1]
+        for i in range(2):
+            assert arch.site_buses[i].words == [0, 1]
+
+        # Last 6 buses (mem) have words=[2, 3]
+        for i in range(2, 8):
+            assert arch.site_buses[i].words == [2, 3]
+
+        # has_site_buses = union of all
+        assert arch.has_site_buses == frozenset({0, 1, 2, 3})
+
+    def test_single_zone_site_buses_have_words(self) -> None:
+        """Even single-zone site buses get words set."""
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(
+                    num_rows=1, num_cols=2, entangling=True,
+                    site_topology=HypercubeSiteTopology(),
+                ),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        result = build_arch(bp)
+        for bus in result.arch.site_buses:
+            assert bus.words == [0, 1]
+
+    def test_zone_without_site_topology_excluded(self) -> None:
+        """Zones without site_topology don't contribute to site buses."""
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(
+                    num_rows=1, num_cols=2, entangling=True,
+                    site_topology=HypercubeSiteTopology(),
+                ),
+                "mem": ZoneSpec(num_rows=1, num_cols=2),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        result = build_arch(bp)
+        # Only proc buses, mem has no site topology
+        assert len(result.arch.site_buses) == 2
+        for bus in result.arch.site_buses:
+            assert bus.words == [0, 1]
+        # has_site_buses = only proc words
+        assert result.arch.has_site_buses == frozenset({0, 1})

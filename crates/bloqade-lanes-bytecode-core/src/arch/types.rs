@@ -288,6 +288,11 @@ pub struct Bus {
     pub src: Vec<u32>,
     /// Destination indices (same length as `src`).
     pub dst: Vec<u32>,
+    /// Optional list of word IDs this bus applies to (site buses only).
+    /// When `Some`, only these words can use this bus. When `None`,
+    /// falls back to the global `words_with_site_buses` list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<u32>>,
 }
 
 /// A logical zone grouping words for execution phases.

@@ -367,7 +367,12 @@ class Bus:
     Note: A bus's identity is determined by its position in the parent list.
     """
 
-    def __init__(self, src: list[int], dst: list[int]) -> None: ...
+    def __init__(
+        self,
+        src: list[int],
+        dst: list[int],
+        words: list[int] | None = None,
+    ) -> None: ...
     @property
     def src(self) -> list[int]:
         """Source indices."""
@@ -376,6 +381,11 @@ class Bus:
     @property
     def dst(self) -> list[int]:
         """Destination indices."""
+        ...
+
+    @property
+    def words(self) -> list[int] | None:
+        """Word IDs this bus applies to (site buses only). None = global fallback."""
         ...
 
     def resolve_forward(self, src: int) -> Optional[int]:

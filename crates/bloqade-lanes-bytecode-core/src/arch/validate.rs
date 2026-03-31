@@ -58,7 +58,7 @@ impl ArchSpec {
         check_word_sites(self, &mut errors);
 
         // Rules 6, 7, 8: Site bus validation
-        check_site_buses(self, sites_per_word, &mut errors);
+        check_site_buses(self, sites_per_word, num_words, &mut errors);
 
         // Rules 9, 10: Word bus validation
         check_word_buses(self, num_words, &mut errors);
@@ -204,7 +204,12 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     }
 }
 
-fn check_site_buses(spec: &ArchSpec, sites_per_word: u32, errors: &mut Vec<ArchSpecError>) {
+fn check_site_buses(
+    spec: &ArchSpec,
+    sites_per_word: u32,
+    num_words: u32,
+    errors: &mut Vec<ArchSpecError>,
+) {
     for (bus_id, bus) in spec.buses.site_buses.iter().enumerate() {
         let bus_id = bus_id as u32;
         if bus.src.len() != bus.dst.len() {
@@ -236,6 +241,18 @@ fn check_site_buses(spec: &ArchSpec, sites_per_word: u32, errors: &mut Vec<ArchS
                         bus_id, idx
                     ),
                 });
+            }
+        }
+        if let Some(ref words) = bus.words {
+            for &wid in words {
+                if wid >= num_words {
+                    errors.push(ArchSpecError::Bus {
+                        message: format!(
+                            "site_bus {}: invalid word ID {} in bus.words",
+                            bus_id, wid
+                        ),
+                    });
+                }
             }
         }
     }

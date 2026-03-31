@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bloqade.lanes.bytecode._native import Bus as _NativeBus
 from bloqade.lanes.layout.arch import ArchSpec
 
 if TYPE_CHECKING:
@@ -68,24 +69,26 @@ def build_arch(
     )
     total_words = len(all_words)
 
-    # 2. Generate site buses (union approach: first non-None topology)
-    site_buses: tuple[Bus, ...] = ()
+    # 2. Generate per-zone site buses with bus.words set
+    all_site_buses: list[_NativeBus] = []
     site_bus_word_ids: set[int] = set()
-    first_site_topology = None
 
     for zone_name, zone_spec in blueprint.zones.items():
         if zone_spec.site_topology is not None:
-            if first_site_topology is None:
-                first_site_topology = zone_spec.site_topology
             grid = zone_grids[zone_name]
-            site_bus_word_ids.update(
+            zone_word_ids = [
                 grid.word_id_at(r, c)
                 for r in range(grid.num_rows)
                 for c in range(grid.num_cols)
-            )
+            ]
+            site_bus_word_ids.update(zone_word_ids)
+            buses = zone_spec.site_topology.generate_site_buses(layout.sites_per_word)
+            for bus in buses:
+                all_site_buses.append(
+                    _NativeBus(src=bus.src, dst=bus.dst, words=zone_word_ids)
+                )
 
-    if first_site_topology is not None:
-        site_buses = first_site_topology.generate_site_buses(layout.sites_per_word)
+    site_buses = tuple(all_site_buses)
 
     # 3. Generate word buses
     all_word_buses: list[Bus] = []

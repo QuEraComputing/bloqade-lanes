@@ -68,8 +68,9 @@ class ArchSpec:
     @cached_property
     def _lane_map(self) -> dict[tuple[LocationAddress, LocationAddress], LaneAddress]:
         lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
-        for word_id in self.has_site_buses:
-            for bus_id, bus in enumerate(self.site_buses):
+        for bus_id, bus in enumerate(self.site_buses):
+            bus_word_ids = bus.words if bus.words is not None else self.has_site_buses
+            for word_id in bus_word_ids:
                 for i in range(len(bus.src)):
                     for direction in (Direction.FORWARD, Direction.BACKWARD):
                         lane_addr = SiteLaneAddress(
