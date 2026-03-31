@@ -44,6 +44,11 @@ class WordGrid:
         """Get the global word ID at a given grid position."""
         return self.word_id_offset + row * self.num_cols + col
 
+    @property
+    def all_word_ids(self) -> range:
+        """All word IDs in this grid (contiguous range)."""
+        return range(self.word_id_offset, self.word_id_offset + len(self.words))
+
     def cz_pairs(self) -> Iterator[tuple[int, int]]:
         """Yield (word_id_a, word_id_b) for all CZ entangling pairs."""
         for row in range(self.num_rows):

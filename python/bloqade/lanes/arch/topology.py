@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class SiteTopology(Protocol):
-    """Generates site buses for movement within a single-column word."""
+    """Generates site buses for movement within a single word (row of sites)."""
 
     def generate_site_buses(self, num_sites: int) -> tuple[Bus, ...]: ...
 
@@ -56,7 +56,7 @@ def _check_power_of_two(n: int, name: str) -> int:
 
 @dataclass(frozen=True)
 class HypercubeSiteTopology:
-    """Hypercube site connectivity within a single-column word.
+    """Hypercube site connectivity within a single word.
 
     For N = 2^k sites, produces k buses. Bus for dimension d connects
     sites that differ in bit d: src = [sites with bit d=0],

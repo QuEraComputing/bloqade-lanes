@@ -7,13 +7,9 @@ generates all words, buses, and zones, and produces a validated ArchSpec.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from bloqade.lanes.bytecode._native import Bus as _NativeBus
 from bloqade.lanes.layout.arch import ArchSpec
-
-if TYPE_CHECKING:
-    from bloqade.lanes.layout.arch import Bus
 
 from .topology import InterZoneTopology
 from .word_factory import WordGrid, create_zone_words
@@ -73,11 +69,7 @@ def build_arch(
     for zone_name, zone_spec in blueprint.zones.items():
         if zone_spec.site_topology is not None:
             grid = zone_grids[zone_name]
-            zone_word_ids = [
-                grid.word_id_at(r, c)
-                for r in range(grid.num_rows)
-                for c in range(grid.num_cols)
-            ]
+            zone_word_ids = list(grid.all_word_ids)
             site_bus_word_ids.update(zone_word_ids)
             buses = zone_spec.site_topology.generate_site_buses(layout.sites_per_word)
             for bus in buses:
@@ -88,7 +80,7 @@ def build_arch(
     site_buses = tuple(all_site_buses)
 
     # 3. Generate word buses
-    all_word_buses: list[Bus] = []
+    all_word_buses: list[_NativeBus] = []
 
     for zone_name, zone_spec in blueprint.zones.items():
         if zone_spec.word_topology is not None:
@@ -115,12 +107,7 @@ def build_arch(
 
     for i, zone_name in enumerate(blueprint.zones):
         grid = zone_grids[zone_name]
-        zone_word_ids = tuple(
-            grid.word_id_at(r, c)
-            for r in range(grid.num_rows)
-            for c in range(grid.num_cols)
-        )
-        arch_zones.append(zone_word_ids)
+        arch_zones.append(tuple(grid.all_word_ids))
         zone_indices[zone_name] = i + 1
 
     # 5. Entangling and measurement zones
