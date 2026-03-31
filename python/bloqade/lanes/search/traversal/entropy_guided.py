@@ -145,13 +145,6 @@ class _DebugEmitter:
                 no_valid_moves_qubit=no_valid_qid,
             ),
         )
-        _print_node_transition(
-            "revert",
-            ancestor,
-            reason=reason,
-            seen_node_id=seen_node_id,
-            no_valid_moves_qubit=no_valid_qid,
-        )
 
     def entropy_bump(
         self,
@@ -190,7 +183,6 @@ class _DebugEmitter:
                     moveset_score=moveset_score,
                 ),
             )
-        _print_node_transition("descend", child)
 
     def fallback_start(self, node: ConfigurationNode, unresolved: list[int]) -> None:
         self._emit_step(
@@ -209,7 +201,6 @@ class _DebugEmitter:
         qid: int,
         moveset: frozenset[LaneAddress],
     ) -> None:
-        _print_node_transition("fallback_step", node)
         self._emit_step(
             "fallback_step",
             node,
@@ -413,7 +404,6 @@ class EntropyGuidedSearch:
             )
 
         current_node = self.tree.root
-        _print_node_transition("start", current_node)
 
         while self.max_expansions is None or self.nodes_expanded < self.max_expansions:
             sn = self._get_or_create_search_node(current_node)
