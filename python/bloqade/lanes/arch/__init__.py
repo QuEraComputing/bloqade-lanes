@@ -1,4 +1,5 @@
 from bloqade.lanes.arch.builder import ArchResult, build_arch
+from bloqade.lanes.arch.gemini_adapter import build_gemini_arch, gemini_blueprint
 from bloqade.lanes.arch.topology import (
     AllToAllSiteTopology,
     HypercubeSiteTopology,
@@ -25,5 +26,7 @@ __all__ = [
     "WordTopology",
     "ZoneSpec",
     "build_arch",
+    "build_gemini_arch",
     "create_zone_words",
+    "gemini_blueprint",
 ]
