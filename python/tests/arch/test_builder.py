@@ -164,6 +164,37 @@ class TestBuildArchValidation:
         # from_components calls _inner.validate() — no exception = pass
         assert result.arch is not None
 
+    def test_self_connection_raises(self) -> None:
+        bp = _two_zone_blueprint()
+        with pytest.raises(ValueError, match="Self-connection not allowed"):
+            build_arch(bp, connections={("proc", "proc"): MatchingTopology()})
+
+    def test_no_site_topology_anywhere(self) -> None:
+        """All zones without site_topology → zero site buses, still valid."""
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(num_rows=1, num_cols=2, entangling=True),
+                "mem": ZoneSpec(num_rows=1, num_cols=2),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        result = build_arch(bp)
+        assert len(result.arch.site_buses) == 0
+        assert result.arch.has_site_buses == frozenset()
+
+    def test_non_measurement_zone(self) -> None:
+        """Zone with measurement=False is excluded from measurement_mode_zones."""
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(num_rows=1, num_cols=2, entangling=True),
+                "buffer": ZoneSpec(num_rows=1, num_cols=2, measurement=False),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        result = build_arch(bp)
+        # Zone 0 (all) + proc (1), buffer excluded
+        assert result.arch.measurement_mode_zones == (0, 1)
+
 
 class TestBuildArchPerBusWords:
     def test_mixed_site_topologies(self) -> None:
@@ -234,3 +265,53 @@ class TestBuildArchPerBusWords:
             assert bus.words == [0, 1]
         # has_site_buses = only proc words
         assert result.arch.has_site_buses == frozenset({0, 1})
+
+
+class TestPathFinderIntegration:
+    def test_per_zone_site_bus_scoping(self) -> None:
+        """PathFinder graph only connects site bus edges for the bus's words."""
+        from bloqade.lanes.layout.encoding import LocationAddress
+        from bloqade.lanes.layout.path import PathFinder
+
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(
+                    num_rows=1, num_cols=2, entangling=True,
+                    site_topology=HypercubeSiteTopology(),
+                ),
+                "mem": ZoneSpec(num_rows=1, num_cols=2),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        # No connections — zones are isolated
+        result = build_arch(bp)
+        pf = PathFinder(result.arch)
+
+        # proc word 0, site 0 → site 1: reachable (proc has site buses)
+        assert pf.find_path(LocationAddress(0, 0), LocationAddress(0, 1)) is not None
+
+        # mem word 2, site 0 → site 1: NOT reachable (no site buses, no connections)
+        assert pf.find_path(LocationAddress(2, 0), LocationAddress(2, 1)) is None
+
+    def test_cross_zone_reachable_via_word_bus(self) -> None:
+        """PathFinder can route across zones via inter-zone word buses."""
+        from bloqade.lanes.layout.encoding import LocationAddress
+        from bloqade.lanes.layout.path import PathFinder
+
+        bp = ArchBlueprint(
+            zones={
+                "proc": ZoneSpec(
+                    num_rows=1, num_cols=2, entangling=True,
+                    site_topology=HypercubeSiteTopology(),
+                ),
+                "mem": ZoneSpec(num_rows=1, num_cols=2),
+            },
+            layout=DeviceLayout(sites_per_word=4),
+        )
+        result = build_arch(bp, connections={
+            ("proc", "mem"): MatchingTopology(),
+        })
+        pf = PathFinder(result.arch)
+
+        # proc word 0 → mem word 2 (same site): reachable via matching word bus
+        assert pf.find_path(LocationAddress(0, 0), LocationAddress(2, 0)) is not None

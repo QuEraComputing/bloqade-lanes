@@ -99,6 +99,11 @@ def build_arch(
             all_word_buses.extend(buses)
 
     for (zone_a, zone_b), topology in connections.items():
+        if zone_a == zone_b:
+            raise ValueError(
+                f"Self-connection not allowed: '{zone_a}'. "
+                "Use word_topology on ZoneSpec for intra-zone connectivity."
+            )
         if zone_a not in zone_grids:
             raise ValueError(f"Unknown zone '{zone_a}' in connection")
         if zone_b not in zone_grids:

@@ -95,9 +95,14 @@ class ExhaustiveMoveGenerator:
         # Enumerate site buses
         for bus_id, bus in enumerate(tree.arch_spec.site_buses):
             for direction in (Direction.FORWARD, Direction.BACKWARD):
+                bus_word_ids = (
+                    bus.words
+                    if bus.words is not None
+                    else tree.arch_spec.has_site_buses
+                )
                 src_locs = [
                     LocationAddress(w, s)
-                    for w in tree.arch_spec.has_site_buses
+                    for w in bus_word_ids
                     for s in bus.src
                 ]
                 yield from self._rectangles_to_move_sets(
