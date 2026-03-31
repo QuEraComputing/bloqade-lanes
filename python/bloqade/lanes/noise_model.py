@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 from kirin.dialects import debug, ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.transform import SimpleNoiseModel
+from bloqade.lanes.transform import SimpleLogicalNoiseModel
 
 if TYPE_CHECKING:
     from bloqade.cirq_utils.noise.model import (
@@ -32,7 +32,7 @@ PAIRED_KEYS = [
 def generate_simple_noise_model(
     noise_model: "GeminiNoiseModelABC | None" = None,
     loss: bool = True,
-) -> SimpleNoiseModel:
+) -> SimpleLogicalNoiseModel:
     """
     Generate a simple noise model from a bloqade-circuit noise model.
 
@@ -160,7 +160,25 @@ def generate_simple_noise_model(
         if loss:
             squin.broadcast.qubit_loss(global_loss_prob, qubits)
 
-    return SimpleNoiseModel(
+    from bloqade.lanes.arch.gemini.logical.upstream import steane7_initialize_with_noise
+
+    clean_init, noisy_init = steane7_initialize_with_noise(
+        local_px=local_px,
+        local_py=local_py,
+        local_pz=local_pz,
+        local_loss_prob=local_loss_prob,
+        mover_px=mover_px,
+        mover_py=mover_py,
+        mover_pz=mover_pz,
+        move_loss_prob=move_lost_prob,
+        sitter_px=sitter_px,
+        sitter_py=sitter_py,
+        sitter_pz=sitter_pz,
+        sit_loss_prob=sit_loss_prob,
+        loss=loss,
+    )
+
+    return SimpleLogicalNoiseModel(
         lane_noise=lane_noise,
         idle_noise=idle_noise,
         cz_unpaired_noise=cz_unpaired_noise,
@@ -169,4 +187,6 @@ def generate_simple_noise_model(
         local_rz_noise=local_rz_noise,
         global_r_noise=global_r_noise,
         local_r_noise=local_r_noise,
+        logical_initialize_clean=clean_init,
+        logical_initialize_noisy=None,
     )

@@ -23,12 +23,12 @@ def test_noise_model_abc_get_logical_initialize_default():
 
 
 def test_simple_noise_model_get_logical_initialize_default():
-    """SimpleNoiseModel returns (None, None) when no init kernels are set."""
+    """generate_simple_noise_model returns clean init kernel, no noisy kernel."""
     from bloqade.lanes.noise_model import generate_simple_noise_model
 
     model = generate_simple_noise_model()
     clean, noisy = model.get_logical_initialize()
-    assert clean is None
+    assert clean is not None
     assert noisy is None
 
 
