@@ -9,13 +9,8 @@ from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.logical_mvp import transversal_rewrites
-from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.rewrite.move2squin.noise import (
-    LogicalNoiseModelABC,
-    NoiseModelABC,
-    SimpleLogicalNoiseModel,
-    SimpleNoiseModel,
-)
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.transform import MoveToSquinLogical
 from bloqade.lanes.upstream import (
     default_merge_heuristic,
@@ -76,36 +71,13 @@ class Metrics:
     """
 
     arch_spec: Any  # ArchSpec — use Any to avoid circular import
-    noise_model: NoiseModelABC | None = None
+    noise_model: LogicalNoiseModelABC | None = None
     move_calc: MoveMetricCalculator = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.move_calc = MoveMetricCalculator(arch_spec=self.arch_spec)
 
     # --- Private helpers ---
-
-    @staticmethod
-    def _to_logical_noise_model(
-        noise_model: NoiseModelABC,
-    ) -> LogicalNoiseModelABC:
-        """Wrap a physical noise model with the Steane-7 init kernels if needed."""
-        if isinstance(noise_model, LogicalNoiseModelABC):
-            return noise_model
-        if isinstance(noise_model, SimpleNoiseModel):
-            from bloqade.lanes.arch.gemini.logical.upstream import (
-                steane7_initialize_with_noise,
-            )
-
-            clean, noisy = steane7_initialize_with_noise()
-            return SimpleLogicalNoiseModel.from_simple(
-                noise_model,
-                logical_initialize_clean=clean,
-                logical_initialize_noisy=noisy,
-            )
-        raise TypeError(
-            f"Cannot convert {type(noise_model).__name__} to a logical noise model. "
-            "Pass a LogicalNoiseModelABC or SimpleNoiseModel instance."
-        )
 
     def _compile_to_noisy_physical_squin(
         self,
@@ -115,11 +87,13 @@ class Metrics:
         insert_return_moves: bool,
         merge_heuristic=default_merge_heuristic,
     ) -> ir.Method:
-        noise_model = self.noise_model
-        if noise_model is None:
-            noise_model = generate_simple_noise_model()
-
-        logical_noise = self._to_logical_noise_model(noise_model)
+        noise_model: LogicalNoiseModelABC
+        if self.noise_model is None:
+            noise_model = generate_logical_noise_model()
+        elif isinstance(self.noise_model, LogicalNoiseModelABC):
+            noise_model = self.noise_model
+        else:
+            noise_model = generate_logical_noise_model()
 
         move_mt = squin_to_move(
             mt,
@@ -131,7 +105,7 @@ class Metrics:
         move_mt = transversal_rewrites(move_mt)
         transformer = MoveToSquinLogical(
             arch_spec=self.arch_spec,
-            noise_model=logical_noise,
+            noise_model=noise_model,
             add_noise=True,
             aggressive_unroll=False,
         )

@@ -25,43 +25,15 @@ from bloqade import tsim
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.layout.arch import ArchSpec
-    from bloqade.lanes.rewrite.move2squin.noise import (
-        LogicalNoiseModelABC,
-        NoiseModelABC,
-    )
+    from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
 RetType = TypeVar("RetType")
 
 
-def _default_noise_model() -> NoiseModelABC:
-    from bloqade.lanes.noise_model import generate_simple_noise_model
+def _default_noise_model() -> "LogicalNoiseModelABC":
+    from bloqade.lanes.noise_model import generate_logical_noise_model
 
-    return generate_simple_noise_model()
-
-
-def _to_logical_noise_model(noise_model: NoiseModelABC) -> LogicalNoiseModelABC:
-    from bloqade.lanes.rewrite.move2squin.noise import (
-        LogicalNoiseModelABC,
-        SimpleLogicalNoiseModel,
-        SimpleNoiseModel,
-    )
-
-    if isinstance(noise_model, LogicalNoiseModelABC):
-        return noise_model
-    if isinstance(noise_model, SimpleNoiseModel):
-        from bloqade.lanes.arch.gemini.logical.upstream import (
-            steane7_initialize_with_noise,
-        )
-
-        clean, noisy = steane7_initialize_with_noise()
-        return SimpleLogicalNoiseModel.from_simple(
-            noise_model,
-            logical_initialize_clean=clean,
-            logical_initialize_noisy=noisy,
-        )
-    raise TypeError(
-        f"Cannot convert {type(noise_model).__name__} to a logical noise model."
-    )
+    return generate_logical_noise_model()
 
 
 @dataclass(frozen=True)
@@ -199,7 +171,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     logical_squin_kernel: ir.Method[[], RetType]
     """The input logical squin kernel to be executed on the Gemini architecture."""
-    noise_model: NoiseModelABC
+    noise_model: LogicalNoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
     physical_arch_spec: ArchSpec = field(repr=False)
     """The physical architecture specification."""
@@ -211,9 +183,6 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         default_factory=ThreadPoolExecutor, init=False
     )
 
-    def _logical_noise_model(self) -> "LogicalNoiseModelABC":
-        return _to_logical_noise_model(self.noise_model)
-
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
         """The physical squin kernel with noise channels."""
@@ -221,7 +190,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
         return MoveToSquinLogical(
             arch_spec=self.physical_arch_spec,
-            noise_model=self._logical_noise_model(),
+            noise_model=self.noise_model,
             add_noise=True,
         ).emit(self.physical_move_kernel)
 
@@ -232,7 +201,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
         return MoveToSquinLogical(
             arch_spec=self.physical_arch_spec,
-            noise_model=self._logical_noise_model(),
+            noise_model=self.noise_model,
             add_noise=False,
         ).emit(self.physical_move_kernel)
 
@@ -477,8 +446,8 @@ class GeminiLogicalSimulator:
     compile-and-execute convenience.
     """
 
-    noise_model: NoiseModelABC = field(default_factory=_default_noise_model)
-    """The noise model used for simulation. Defaults to :func:`generate_simple_noise_model`."""
+    noise_model: LogicalNoiseModelABC = field(default_factory=_default_noise_model)
+    """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
 
     def task(
         self,

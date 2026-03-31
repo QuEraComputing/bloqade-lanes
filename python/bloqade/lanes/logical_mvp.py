@@ -26,14 +26,9 @@ from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.rewrite import transversal
-from bloqade.lanes.rewrite.move2squin.noise import (
-    LogicalNoiseModelABC,
-    NoiseModelABC,
-    SimpleLogicalNoiseModel,
-    SimpleNoiseModel,
-)
+from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquinLogical
@@ -184,32 +179,9 @@ def compile_squin_to_move_and_visualize(
         visualize.debugger(mt, arch_spec, interactive=interactive, atom_marker=marker)
 
 
-def _to_logical_noise_model(
-    noise_model: NoiseModelABC,
-) -> LogicalNoiseModelABC:
-    """Wrap a physical noise model with the Steane-7 init kernels if needed."""
-    if isinstance(noise_model, LogicalNoiseModelABC):
-        return noise_model
-    if isinstance(noise_model, SimpleNoiseModel):
-        from bloqade.lanes.arch.gemini.logical.upstream import (
-            steane7_initialize_with_noise,
-        )
-
-        clean, noisy = steane7_initialize_with_noise()
-        return SimpleLogicalNoiseModel.from_simple(
-            noise_model,
-            logical_initialize_clean=clean,
-            logical_initialize_noisy=noisy,
-        )
-    raise TypeError(
-        f"Cannot convert {type(noise_model).__name__} to a logical noise model. "
-        "Pass a LogicalNoiseModelABC or SimpleNoiseModel instance."
-    )
-
-
 def compile_to_physical_squin_noise_model(
     mt: ir.Method,
-    noise_model: NoiseModelABC | None = None,
+    noise_model: LogicalNoiseModelABC | None = None,
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> ir.Method:
@@ -217,8 +189,8 @@ def compile_to_physical_squin_noise_model(
 
     Args:
         mt (ir.Method): The logical squin method to compile.
-        noise_model (NoiseModelABC | None, optional): The noise model to insert during
-            compilation. Defaults to ``None`` (uses :func:`generate_simple_noise_model`).
+        noise_model (LogicalNoiseModelABC | None, optional): The logical noise model to insert
+            during compilation. Defaults to ``None`` (uses :func:`generate_logical_noise_model`).
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
             placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
@@ -228,9 +200,7 @@ def compile_to_physical_squin_noise_model(
 
     """
     if noise_model is None:
-        noise_model = generate_simple_noise_model()
-
-    logical_noise = _to_logical_noise_model(noise_model)
+        noise_model = generate_logical_noise_model()
 
     move_mt = compile_squin_to_move(
         mt,
@@ -240,7 +210,7 @@ def compile_to_physical_squin_noise_model(
     )
     transformer = MoveToSquinLogical(
         arch_spec=generate_arch_hypercube(4),
-        noise_model=logical_noise,
+        noise_model=noise_model,
         add_noise=True,
         aggressive_unroll=False,
     )
@@ -249,7 +219,7 @@ def compile_to_physical_squin_noise_model(
 
 def compile_to_stim_program(
     mt: ir.Method,
-    noise_model: NoiseModelABC | None = None,
+    noise_model: LogicalNoiseModelABC | None = None,
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> str:

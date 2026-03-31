@@ -23,7 +23,7 @@ from bloqade.lanes.logical_mvp import (
     compile_squin_to_move,
     transversal_rewrites,
 )
-from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.transform import MoveToSquinLogical, MoveToSquinPhysical
 from bloqade.lanes.upstream import (
     always_merge_heuristic,
@@ -67,7 +67,7 @@ def main():
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
-    logical_noise = generate_simple_noise_model()
+    logical_noise = generate_logical_noise_model()
     move_mt = squin_to_move(
         mt,
         layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
