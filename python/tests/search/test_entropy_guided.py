@@ -136,6 +136,21 @@ def test_sequential_fallback_direct():
     assert result.goal_node.configuration[1] == LocationAddress(1, 0)
 
 
+def test_sequential_fallback_reuses_already_seen_child():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    search = EntropyGuidedSearch(tree, target, placement_goal(target))
+
+    # Pre-create the first fallback step so replaying it hits ALREADY_CHILD.
+    first_step = frozenset({SiteLaneAddress(0, 0, 0)})
+    first_child = tree.apply_move_set(tree.root, first_step, strict=False)
+    assert first_child is not None
+
+    result = search._sequential_fallback(tree.root)
+    assert result.goal_node is not None
+    assert result.goal_node.configuration[0] == LocationAddress(0, 5)
+
+
 def test_max_candidates_enforced():
     tree = _make_tree()
     target = {0: LocationAddress(0, 5)}
