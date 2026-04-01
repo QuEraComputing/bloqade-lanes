@@ -162,8 +162,9 @@ cython_debug/
 *.swo
 *~
 
-# Local Claude settings (not skills)
+# Local Claude settings and agents
 .claude/settings.local.json
+.claude/agents/
 
 # Managed by ion
 .agents/skills/ion-cli
