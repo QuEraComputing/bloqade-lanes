@@ -24,8 +24,11 @@ def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | Non
 
         Logical site s → Physical sites s*7, s*7+1, ..., s*7+6
 
-    Word ID is preserved. Works universally for any word.
+    Word ID is preserved. Only expands logical site IDs (0 and 1).
+    Returns None for site IDs >= 2 (already physical / not a logical site).
     """
+    if address.site_id >= 2:
+        return None
     base = address.site_id * 7
     return (address.replace(site_id=base + i) for i in range(7))
 
