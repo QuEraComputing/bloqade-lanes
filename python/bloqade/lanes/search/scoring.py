@@ -78,7 +78,7 @@ class CandidateScorer:
         Only includes legal tuples where the qubit is on the bus source and
         the destination is unoccupied.
         """
-        occupied = node.occupied_locations
+        occupied = node.occupied_locations | tree.blocked_locations
         e_eff = min(entropy, self.params.e_max)
 
         # Identify unresolved qubits
@@ -158,7 +158,7 @@ class CandidateScorer:
 
         Returns alpha*distance_moved + beta*arrived_gain + gamma*mobility_gain.
         """
-        occupied = node.occupied_locations
+        occupied = node.occupied_locations | tree.blocked_locations
         distance_moved = 0.0
         arrived_gain = 0
         mobility_before = 0
@@ -176,7 +176,7 @@ class CandidateScorer:
             moved_qubits.append((qid, src, dst))
             new_config[qid] = dst
 
-        new_occupied = frozenset(new_config.values())
+        new_occupied = frozenset(new_config.values()) | tree.blocked_locations
 
         for qid, src, dst in moved_qubits:
             if qid not in self.target:
