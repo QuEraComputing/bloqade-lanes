@@ -2,12 +2,13 @@
 
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import LocationAddress, SiteLaneAddress
+from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal.entropy_guided import (
     EntropyGuidedSearch,
     entropy_guided_search,
 )
-from bloqade.lanes.search.traversal.goal import placement_goal
+from bloqade.lanes.search.traversal.goal import SearchResult, placement_goal
 from bloqade.lanes.search.traversal.step_info import (
     EntropyBumpStepInfo,
     RevertStepInfo,
@@ -47,6 +48,7 @@ def test_root_is_goal():
     target = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
     result = entropy_guided_search(tree, target, placement_goal(target))
     assert result.goal_node is tree.root
+    assert result.goal_nodes == (tree.root,)
     assert result.nodes_expanded == 0
 
 
@@ -64,8 +66,16 @@ def test_returns_search_result():
     target = {0: LocationAddress(0, 5)}
     result = entropy_guided_search(tree, target, placement_goal(target))
     assert hasattr(result, "goal_node")
+    assert hasattr(result, "goal_nodes")
     assert hasattr(result, "nodes_expanded")
     assert hasattr(result, "max_depth_reached")
+
+
+def test_search_result_single_goal_populates_goal_nodes():
+    tree = _make_tree()
+    result = SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
+    assert result.goal_node is tree.root
+    assert result.goal_nodes == (tree.root,)
 
 
 def test_max_expansions_limit():
@@ -294,3 +304,93 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
         and b["metadata"].state_seen_node_id is None
         for b in bumps
     )
+
+
+def test_collects_multiple_goal_nodes(monkeypatch):
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    goal = placement_goal(target)
+    c1 = frozenset({SiteLaneAddress(0, 0, 0)})
+    c2 = frozenset({SiteLaneAddress(0, 0, 1)})
+    candidate_sequence = iter([c1, c2])
+
+    def fake_next_candidate(_self, _sn, _node):  # type: ignore[no-untyped-def]
+        return next(candidate_sequence, None)
+
+    def fake_try_move_set(node, move_set, strict=True):  # type: ignore[no-untyped-def]
+        goal_node = ConfigurationNode(
+            configuration={0: LocationAddress(0, 5), 1: node.configuration[1]},
+            parent=node,
+            parent_moves=move_set,
+            depth=node.depth + 1,
+        )
+        return ExpansionOutcome(
+            move_set=move_set,
+            status=ExpansionStatus.CREATED_CHILD,
+            child=goal_node,
+        )
+
+    monkeypatch.setattr(EntropyGuidedSearch, "_get_next_candidate", fake_next_candidate)
+    monkeypatch.setattr(tree, "try_move_set", fake_try_move_set)
+
+    result = entropy_guided_search(
+        tree,
+        target,
+        goal,
+        params=SearchParams(max_goal_candidates=2),
+        max_expansions=10,
+    )
+    assert len(result.goal_nodes) == 2
+    assert result.goal_node is result.goal_nodes[0]
+    assert all(goal(n) for n in result.goal_nodes)
+
+
+def test_solution_branch_cutoff_ancestor_returns_first_ancestor_below_branch():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    search = EntropyGuidedSearch(
+        tree,
+        target,
+        placement_goal(target),
+    )
+    branch_child = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
+    )
+    sibling = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
+    )
+    tree.root.children = {
+        frozenset(): branch_child,
+        frozenset({SiteLaneAddress(0, 0, 0)}): sibling,
+    }
+
+    deep = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=branch_child, depth=2
+    )
+    goal = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=deep, depth=3
+    )
+
+    assert search._cutoff_ancestor(goal) is branch_child
+
+
+def test_solution_branch_cutoff_ancestor_returns_root_for_linear_branch():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    search = EntropyGuidedSearch(tree, target, placement_goal(target))
+
+    n1 = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
+    )
+    n2 = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=n1, depth=2
+    )
+    goal = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=n2, depth=3
+    )
+
+    tree.root.children = {frozenset(): n1}
+    n1.children = {frozenset(): n2}
+    n2.children = {frozenset(): goal}
+
+    assert search._cutoff_ancestor(goal) is tree.root
