@@ -58,8 +58,18 @@ def _compute_move_layers(
         multi_hop: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
 
         for src, dst in cross_word:
-            # Try direct word bus at matching site
-            for wb_site in sorted(arch_spec.has_word_buses):
+            # Try direct word bus — prefer source site (no adjustment needed),
+            # then destination site, then any available site
+            candidate_sites = [src.site_id]
+            if dst.site_id != src.site_id:
+                candidate_sites.append(dst.site_id)
+            candidate_sites.extend(
+                s for s in sorted(arch_spec.has_word_buses)
+                if s not in candidate_sites
+            )
+            for wb_site in candidate_sites:
+                if wb_site not in arch_spec.has_word_buses:
+                    continue
                 wb_src = layout.LocationAddress(src.word_id, wb_site)
                 wb_dst = layout.LocationAddress(dst.word_id, wb_site)
                 lane = arch_spec.get_lane_address(wb_src, wb_dst)
