@@ -91,3 +91,27 @@ def test_cz_placements_populates_move_layers_from_goal_node(monkeypatch):
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
     assert len(out.move_layers) >= 1
+
+
+def test_cz_placements_passes_idle_occupied_as_blockers(monkeypatch):
+    strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
+    state = ConcreteState(
+        occupied=frozenset({layout.LocationAddress(0, 5)}),
+        layout=(
+            layout.LocationAddress(0, 0),
+            layout.LocationAddress(1, 0),
+        ),
+        move_count=(0, 0),
+    )
+    seen_blocked_locations: list[frozenset[layout.LocationAddress]] = []
+
+    def fake_run_search(self, tree, target, callback):
+        _ = self, target, callback
+        seen_blocked_locations.append(tree.blocked_locations)
+        return SearchResult(
+            goal_node=tree.root, nodes_expanded=0, max_depth_reached=tree.root.depth
+        )
+
+    monkeypatch.setattr(PhysicalPlacementStrategy, "_run_search", fake_run_search)
+    _ = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert seen_blocked_locations == [state.occupied]

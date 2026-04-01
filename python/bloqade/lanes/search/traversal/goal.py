@@ -30,18 +30,46 @@ HeuristicFunction = Callable[[ConfigurationNode], float]
 """Estimates the cost from a node to the goal. Lower is better."""
 
 
-@dataclass
+@dataclass(init=False)
 class SearchResult:
     """Result of a search strategy."""
-
-    goal_node: ConfigurationNode | None
-    """The node that satisfied the goal, or None if not found."""
 
     nodes_expanded: int
     """Total number of nodes expanded during search."""
 
     max_depth_reached: int
     """Maximum depth reached during search."""
+
+    goal_nodes: tuple[ConfigurationNode, ...]
+    """Goal nodes found during search, ordered best to worst."""
+
+    def __init__(
+        self,
+        *,
+        nodes_expanded: int,
+        max_depth_reached: int,
+        goal_nodes: tuple[ConfigurationNode, ...] = (),
+        goal_node: ConfigurationNode | None = None,
+    ) -> None:
+        # Canonicalize all results into goal_nodes so single/multi-solution
+        # handling uses one representation everywhere.
+        if goal_node is not None:
+            if goal_nodes and goal_nodes[0] is not goal_node:
+                raise ValueError(
+                    "goal_node must match first item in goal_nodes when both are set"
+                )
+            goal_nodes = (goal_node, *goal_nodes[1:]) if goal_nodes else (goal_node,)
+
+        self.nodes_expanded = nodes_expanded
+        self.max_depth_reached = max_depth_reached
+        self.goal_nodes = goal_nodes
+
+    @property
+    def goal_node(self) -> ConfigurationNode | None:
+        """Best goal node, or None if no goal was found."""
+        if not self.goal_nodes:
+            return None
+        return self.goal_nodes[0]
 
 
 @dataclass(order=True)

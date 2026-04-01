@@ -101,3 +101,21 @@ def test_score_moveset_arrived_gain():
     )
     score_no_arrival = scorer_no_arrival.score_moveset(moveset, tree.root, tree)
     assert score_with_arrival > score_no_arrival
+
+
+def test_score_all_qubit_bus_pairs_excludes_blocked_destinations():
+    target = {0: LocationAddress(0, 5)}
+    scorer, base_tree = _make_scorer_and_tree(target=target)
+    blocked = frozenset({LocationAddress(0, 5)})
+    tree = ConfigurationTree(
+        arch_spec=base_tree.arch_spec,
+        root=base_tree.root,
+        blocked_locations=blocked,
+    )
+    scores = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
+    for qid, mt, bus_id, direction in scores:
+        loc = tree.root.configuration[qid]
+        lane = tree.lane_for_source(mt, bus_id, direction, loc)
+        assert lane is not None
+        _, dst = tree.arch_spec.get_endpoints(lane)
+        assert dst not in blocked
