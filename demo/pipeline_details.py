@@ -192,22 +192,20 @@ example_kernel.print(analysis=frame.entries)
 
 # %% [markdown]
 # from here we can rewrite the physical move program to physical squin with noise models inserted.
-# This is done using the `MoveToSquin` transformer inside the `bloqade.lanes.transform` module.
-# this transformation requires the physical architecture spec, a logical initialization function
-# to prepare logical qubit from the physical qubits, and a noise model to insert noise channels during
-# the compilation.
+# This is done using the `MoveToSquinLogical` transformer inside the `bloqade.lanes.transform` module.
+# This transformation requires the physical architecture spec and a logical noise model that provides
+# both initialization kernels and noise channels for the compilation.
 
 # %%
 
-from bloqade.lanes import generate_simple_noise_model  # noqa: E402
-from bloqade.lanes.arch.gemini.logical import steane7_initialize  # noqa: E402
-from bloqade.lanes.transform import MoveToSquin  # noqa: E402
+from bloqade.lanes.noise_model import generate_logical_noise_model  # noqa: E402
+from bloqade.lanes.transform import MoveToSquinLogical  # noqa: E402
 
-noise_model = generate_simple_noise_model()
-example_kernel = MoveToSquin(
+noise_model = generate_logical_noise_model()
+example_kernel = MoveToSquinLogical(
     arch_spec=physical_arch,
-    logical_initialization=steane7_initialize,
     noise_model=noise_model,
+    add_noise=True,
 ).emit(example_kernel)
 
 example_kernel.print()

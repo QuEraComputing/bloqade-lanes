@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 from kirin.dialects import debug, ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.transform import SimpleNoiseModel
+from bloqade.lanes.transform import SimpleLogicalNoiseModel, SimpleNoiseModel
 
 if TYPE_CHECKING:
     from bloqade.cirq_utils.noise.model import (
@@ -33,15 +33,14 @@ def generate_simple_noise_model(
     noise_model: "GeminiNoiseModelABC | None" = None,
     loss: bool = True,
 ) -> SimpleNoiseModel:
-    """
-    Generate a simple noise model from a bloqade-circuit noise model.
+    """Generate a physical noise model from a bloqade-circuit noise model.
 
     Args:
-        noise_model (GeminiNoiseModelABC | None, optional): The bloqade-circuit noise model to use. Defaults to None.
-        loss (bool, optional): Whether to include loss in the noise model. Defaults to True.
+        noise_model: The bloqade-circuit noise model to use. Defaults to None.
+        loss: Whether to include loss in the noise model. Defaults to True.
 
     Returns:
-        SimpleNoiseModel: A simple noise model compatible with bloqade-lanes. You can use this to add noise when rewriting from the move dialect kernel to a squin kernel.
+        A simple noise model for physical gate/move noise insertion.
     """
     from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
 
@@ -169,4 +168,52 @@ def generate_simple_noise_model(
         local_rz_noise=local_rz_noise,
         global_r_noise=global_r_noise,
         local_r_noise=local_r_noise,
+    )
+
+
+def generate_logical_noise_model(
+    noise_model: "GeminiNoiseModelABC | None" = None,
+    loss: bool = True,
+) -> SimpleLogicalNoiseModel:
+    """Generate a logical noise model with initialization kernels.
+
+    Creates a physical noise model and adds Steane [[7,1,3]] clean and noisy
+    initialization kernels, all derived from the same source parameters.
+
+    Args:
+        noise_model: The bloqade-circuit noise model to use. Defaults to None.
+        loss: Whether to include loss channels. Defaults to True.
+
+    Returns:
+        A logical noise model with gate/move noise and both initialization kernels.
+    """
+    from bloqade.cirq_utils.noise.model import GeminiOneZoneNoiseModel
+
+    if noise_model is None:
+        noise_model = GeminiOneZoneNoiseModel()
+
+    physical = generate_simple_noise_model(noise_model, loss=loss)
+
+    from bloqade.lanes.arch.gemini.logical.upstream import steane7_initialize_with_noise
+
+    clean_init, noisy_init = steane7_initialize_with_noise(
+        local_px=noise_model.local_px,
+        local_py=noise_model.local_py,
+        local_pz=noise_model.local_pz,
+        local_loss_prob=noise_model.local_loss_prob,
+        mover_px=noise_model.mover_px,
+        mover_py=noise_model.mover_py,
+        mover_pz=noise_model.mover_pz,
+        move_loss_prob=noise_model.move_loss_prob,
+        sitter_px=noise_model.sitter_px,
+        sitter_py=noise_model.sitter_py,
+        sitter_pz=noise_model.sitter_pz,
+        sit_loss_prob=noise_model.sit_loss_prob,
+        loss=loss,
+    )
+
+    return SimpleLogicalNoiseModel.from_simple(
+        physical,
+        logical_initialize_clean=clean_init,
+        logical_initialize_noisy=noisy_init,
     )

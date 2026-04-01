@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     steps:
       - name: Checkout main
         uses: actions/checkout@v6
@@ -24,6 +25,7 @@ jobs:
         with:
           script: |
             const commitSha = process.env.GITHUB_SHA;
+            core.info(`Looking up PRs for commit ${commitSha}`);
             const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -31,11 +33,11 @@ jobs:
             });
             if (!prs.data.length) {
               core.info(`No PR found for commit ${commitSha}. Ending workflow with success.`);
-              // Set a special output to indicate early exit
               core.setOutput('pr_num', '');
               return;
             }
             const prNum = prs.data[0].number;
+            core.info(`Found PR #${prNum} for commit ${commitSha}`);
             core.setOutput('pr_num', prNum);
         env:
           GITHUB_SHA: ${{ github.sha }}
@@ -58,6 +60,7 @@ jobs:
               pull_number: prNum
             });
             const labels = pr.data.labels.map(l => l.name);
+            core.info(`PR #${prNum} labels: ${labels.join(', ')}`);
             const versionPattern = /^backport v(\d+\.\d+)$/;
             const versions = labels
               .map(l => {
@@ -65,6 +68,11 @@ jobs:
                 return m ? m[1] : null;
               })
               .filter(Boolean);
+            if (versions.length === 0) {
+              core.info(`PR #${prNum} has no "backport v<version>" labels. Skipping backport.`);
+            } else {
+              core.info(`PR #${prNum} matched backport versions: ${versions.join(', ')}`);
+            }
             core.setOutput('versions', versions.join('\n'));
         env:
           PR_NUM: ${{ steps.prnum.outputs.pr_num }}
@@ -73,41 +81,117 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const execSync = require('child_process').execSync;
+            const { execSync } = require('child_process');
             const versions = process.env.VERSIONS.split('\n').filter(Boolean);
             const commit = process.env.GITHUB_SHA;
             const prNum = process.env.PR_NUM;
-            // Set git user config for the runner
+
             execSync('git config user.name "github-actions[bot]"');
             execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+
             let errors = [];
+            let successes = [];
+            let skipped = [];
+
             for (const version of versions) {
               const branch = `release-${version.replace('.', '-')}`;
               const backportBranch = `${branch}-backport-pr${prNum}`;
               try {
-                // Checkout the release branch and create a new branch from it
+                core.info(`Backporting PR #${prNum} (${commit}) to ${branch}`);
                 execSync(`git fetch origin ${branch}:${branch}`);
                 execSync(`git checkout -B ${backportBranch} origin/${branch}`);
-                execSync(`git cherry-pick ${commit}`);
+
+                // Attempt cherry-pick with --no-commit to detect conflicts/empty
+                try {
+                  execSync(`git cherry-pick --no-commit ${commit}`);
+                } catch (cpErr) {
+                  // Check if this is an empty cherry-pick (already applied)
+                  const diffStatus = execSync('git diff --cached --quiet || echo has-changes', { encoding: 'utf8' }).trim();
+                  if (diffStatus !== 'has-changes') {
+                    // Empty cherry-pick: commit is already on the release branch
+                    core.info(`Commit ${commit} is already present on ${branch}. Skipping.`);
+                    execSync('git cherry-pick --abort || true');
+                    skipped.push({ version, branch, reason: 'already present on release branch' });
+                    continue;
+                  }
+                  // Real conflict: abort and report
+                  const conflictFiles = execSync('git diff --name-only --diff-filter=U', { encoding: 'utf8' }).trim();
+                  execSync('git cherry-pick --abort || true');
+                  const reason = `cherry-pick conflict in: ${conflictFiles || 'unknown files'}`;
+                  core.warning(`${branch}: ${reason}`);
+                  errors.push({ version, branch, reason });
+                  continue;
+                }
+
+                // Check if cherry-pick produced no changes (already applied, clean case)
+                const diffCheck = execSync('git diff --cached --quiet || echo has-changes', { encoding: 'utf8' }).trim();
+                if (diffCheck !== 'has-changes') {
+                  core.info(`Commit ${commit} produces no changes on ${branch}. Skipping.`);
+                  execSync('git reset --hard');
+                  skipped.push({ version, branch, reason: 'already present on release branch' });
+                  continue;
+                }
+
+                // Commit, push, and create PR
+                execSync(`git commit -m "Backport PR #${prNum} (${commit}) to ${branch}"`);
                 execSync(`git push origin ${backportBranch}`);
-                github.rest.pulls.create({
+                const pr = await github.rest.pulls.create({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  title: `Backport PR #${prNum} (${commit}) to ${branch}`,
+                  title: `Backport PR #${prNum} to ${branch}`,
                   head: backportBranch,
                   base: branch,
-                  body: `Automated backport of PR #${prNum} (${commit}) to ${branch}`
+                  body: `Automated backport of PR #${prNum} (${commit}) to \`${branch}\`.`
                 });
+                core.info(`Created backport PR #${pr.data.number} for ${branch}`);
+                successes.push({ version, branch, backportPrNum: pr.data.number });
+
               } catch (e) {
-                errors.push(`release branch ${branch}: ${e.message}`);
+                core.warning(`${branch}: ${e.message}`);
+                errors.push({ version, branch, reason: e.message });
                 continue;
               }
             }
-            if (errors.length) {
-              for (const err of errors) {
-                core.warning(err);
+
+            // Comment on the original PR with results
+            let body = `## Backport results for ${commit}\n\n`;
+            if (successes.length) {
+              body += '**Succeeded:**\n';
+              for (const s of successes) {
+                body += `- \`${s.branch}\`: #${s.backportPrNum}\n`;
               }
-              throw new Error(`Backport failed some branches. See warnings for details.`);
+              body += '\n';
+            }
+            if (skipped.length) {
+              body += '**Skipped (already applied):**\n';
+              for (const s of skipped) {
+                body += `- \`${s.branch}\`: ${s.reason}\n`;
+              }
+              body += '\n';
+            }
+            if (errors.length) {
+              body += '**Failed:**\n';
+              for (const e of errors) {
+                body += `- \`${e.branch}\`: ${e.reason}\n`;
+              }
+              body += '\nTo resolve manually:\n';
+              body += '```bash\n';
+              body += `git fetch origin <release-branch>\n`;
+              body += `git checkout -b backport-pr${prNum} origin/<release-branch>\n`;
+              body += `git cherry-pick ${commit}\n`;
+              body += '# resolve conflicts, then push and open a PR\n';
+              body += '```\n';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNum,
+              body: body
+            });
+
+            if (errors.length) {
+              throw new Error(`Backport failed for: ${errors.map(e => e.branch).join(', ')}. See PR #${prNum} for details.`);
             }
         env:
           VERSIONS: ${{ steps.versions.outputs.versions }}
