@@ -72,6 +72,15 @@ class DeviceLayout:
     row_spacing: float = 20.0
     zone_gap: float = 20.0
 
+    def __post_init__(self) -> None:
+        if self.sites_per_word < 1:
+            raise ValueError(
+                f"sites_per_word must be >= 1, got {self.sites_per_word}"
+            )
+        for name in ("site_spacing", "pair_spacing", "row_spacing", "zone_gap"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative, got {getattr(self, name)}")
+
 
 @dataclass(frozen=True)
 class ArchBlueprint:

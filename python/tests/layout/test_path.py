@@ -180,3 +180,43 @@ def test_find_path_returns_none_when_intermediate_nodes_block_all_routes():
 
     result = path_finder.find_path(start, end, occupied=occupied)
     assert result is None
+
+
+def test_find_path_respects_per_bus_word_scoping():
+    """Site buses scoped to specific words should not be used by other words."""
+    # Build a 2-zone arch: zone A has site buses, zone B has none.
+    bp = ArchBlueprint(
+        zones={
+            "a": ZoneSpec(
+                num_rows=1,
+                num_cols=2,
+                entangling=True,
+                word_topology=HypercubeWordTopology(),
+                site_topology=AllToAllSiteTopology(),
+            ),
+            "b": ZoneSpec(
+                num_rows=1,
+                num_cols=2,
+                entangling=True,
+                word_topology=HypercubeWordTopology(),
+                # No site_topology: zone B has no site buses
+            ),
+        },
+        layout=DeviceLayout(sites_per_word=4),
+    )
+    from bloqade.lanes.arch.topology import MatchingTopology
+
+    result = build_arch(bp, connections={("a", "b"): MatchingTopology()})
+    arch = result.arch
+    path_finder = PathFinder(arch)
+
+    # Zone B words should not have site bus moves
+    zone_b_words = set(result.zone_grids["b"].all_word_ids)
+    for word_id in zone_b_words:
+        assert word_id not in arch.has_site_buses
+
+    # Attempting an intra-word site move in zone B should fail (no site bus)
+    b_word = min(zone_b_words)
+    start = LocationAddress(b_word, 0)
+    end = LocationAddress(b_word, 1)
+    assert arch.get_lane_address(start, end) is None

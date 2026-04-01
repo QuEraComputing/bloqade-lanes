@@ -100,6 +100,27 @@ def test_get_blockaded_location_multiple_words():
     assert blockaded4 == layout.LocationAddress(2, 2)
 
 
+def test_blockaded_location_preserves_site_index():
+    """Site-symmetric pairing: get_blockaded_location preserves site_id across all CZ pairs."""
+    arch_spec = logical.get_arch_spec()
+    for zone in arch_spec.entangling_zones:
+        for w_a, w_b in zone:
+            num_sites = len(arch_spec.words[w_a].site_indices)
+            for s in range(num_sites):
+                loc_a = layout.LocationAddress(w_a, s)
+                loc_b = layout.LocationAddress(w_b, s)
+                blockaded_a = arch_spec.get_blockaded_location(loc_a)
+                blockaded_b = arch_spec.get_blockaded_location(loc_b)
+                assert blockaded_a is not None
+                assert blockaded_a.site_id == s, (
+                    f"Site mismatch: ({w_a},{s}) -> site {blockaded_a.site_id}"
+                )
+                assert blockaded_a.word_id == w_b
+                assert blockaded_b is not None
+                assert blockaded_b.site_id == s
+                assert blockaded_b.word_id == w_a
+
+
 def test_get_lane_address_site_move_forward():
     """get_lane_address returns the correct lane for a site-bus move (forward)."""
     arch_spec = logical.get_arch_spec()

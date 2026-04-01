@@ -100,7 +100,9 @@ def build_arch(
         buses = topology.generate_word_buses(zone_grids[zone_a], zone_grids[zone_b])
         all_word_buses.extend(buses)
 
-    # 4. Build zone lists (zone 0 = all words, Rust requirement)
+    # 4. Build zone lists.
+    # Zone 0 is always "all words" (Rust validation requirement).
+    # User-defined zones are appended starting at index 1.
     all_word_ids = tuple(range(total_words))
     arch_zones: list[tuple[int, ...]] = [all_word_ids]
     zone_indices: dict[str, int] = {}
@@ -130,6 +132,7 @@ def build_arch(
         measurement_mode_zones=measurement_mode_zones,
         entangling_zones=entangling_zones,
         has_site_buses=frozenset(site_bus_word_ids),
+        # Word buses move entire words, so all site indices are valid landing positions.
         has_word_buses=frozenset(range(layout.sites_per_word)),
         site_buses=site_buses,
         word_buses=tuple(all_word_buses),

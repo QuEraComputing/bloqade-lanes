@@ -42,6 +42,54 @@ def test_compute_move_layers_word_0_to_1():
             assert arch_spec.validate_lane(lane) == set()
 
 
+def test_compute_move_layers_cross_word_exact():
+    """Anchor test: verify exact move layer for a direct word bus hop."""
+    arch_spec = get_arch_spec()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+        move_count=(0, 0),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(1, 0), LocationAddress(2, 0)),
+        move_count=(1, 0),
+    )
+    result = compute_move_layers(arch_spec, state_before, state_after)
+    # Single word bus layer: word 0 → word 1 at site 0
+    assert len(result) == 1
+    assert len(result[0]) == 1
+    lane = result[0][0]
+    assert isinstance(lane, WordLaneAddress)
+    assert lane.word_id == 0
+    assert lane.site_id == 0
+    assert lane.direction == Direction.FORWARD
+
+
+def test_compute_move_layers_site_bus_exact():
+    """Anchor test: verify exact move layer for an intra-word site bus move."""
+    arch_spec = get_arch_spec()
+    state_before = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0),),
+        move_count=(0,),
+    )
+    state_after = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 1),),
+        move_count=(1,),
+    )
+    result = compute_move_layers(arch_spec, state_before, state_after)
+    # Single site bus layer: site 0 → site 1 within word 0
+    assert len(result) == 1
+    assert len(result[0]) == 1
+    lane = result[0][0]
+    assert isinstance(lane, SiteLaneAddress)
+    assert lane.word_id == 0
+    assert lane.site_id == 0
+    assert lane.direction == Direction.FORWARD
+
+
 def test_compute_move_layers_word_1_to_0():
     """Cross-word move: qubit moves from word 1 to word 0 (backward word bus)."""
     arch_spec = get_arch_spec()

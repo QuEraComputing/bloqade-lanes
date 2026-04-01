@@ -39,7 +39,7 @@ class Word:
 
     @property
     def n_rows(self) -> int:
-        """Number of rows (sites per column) in this word."""
+        """Number of sites along the y-axis of this word's grid."""
         return int(self.positions.shape[1])
 
     def __getitem__(self, index: int) -> WordSite:

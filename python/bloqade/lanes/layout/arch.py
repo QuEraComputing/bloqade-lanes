@@ -151,6 +151,7 @@ class ArchSpec:
 
     @cached_property
     def has_word_buses(self) -> frozenset[int]:
+        """Site indices that serve as word bus landing positions."""
         return frozenset(self._inner.sites_with_word_buses)
 
     @cached_property

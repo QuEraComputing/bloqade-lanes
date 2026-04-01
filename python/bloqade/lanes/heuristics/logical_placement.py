@@ -56,10 +56,6 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 class LogicalPlacementMethods:
     arch_spec: layout.ArchSpec
 
-    @property
-    def _n_rows(self) -> int:
-        return self.arch_spec.words[0].n_rows
-
     def desired_cz_layout(
         self,
         state: ConcreteState,
@@ -438,23 +434,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                 )
             ),
         )
-
-    def _is_direction_mode_allowed(
-        self,
-        *,
-        src_word: int,
-        dst_word: int,
-        mode: str,
-    ) -> bool:
-        if src_word == dst_word:
-            return True
-        if mode == "none":
-            return False
-        if mode == "01":
-            return src_word == 0 and dst_word == 1
-        if mode == "10":
-            return src_word == 1 and dst_word == 0
-        raise ValueError(f"Unknown direction mode: {mode}")
 
     def _word_sig_transition(
         self,
