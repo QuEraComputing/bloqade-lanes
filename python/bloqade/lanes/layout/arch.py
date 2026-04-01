@@ -108,13 +108,32 @@ class ArchSpec:
     @cached_property
     def entangling_zones(self) -> tuple[tuple[tuple[int, int], ...], ...]:
         return tuple(
-            tuple(tuple(pair) for pair in zone)
+            tuple((pair[0], pair[1]) for pair in zone)
             for zone in self._inner.entangling_zones
         )
 
     @property
     def blockade_radius(self) -> float:
         return self._inner.blockade_radius
+
+    @cached_property
+    def _home_words(self) -> frozenset[int]:
+        """Words that are 'home' (not CZ-staging) — lower word_id in each pair."""
+        home: set[int] = set()
+        paired: set[int] = set()
+        for zone in self.entangling_zones:
+            for w_a, w_b in zone:
+                home.add(min(w_a, w_b))
+                paired.add(w_a)
+                paired.add(w_b)
+        # Unpaired words are also home
+        all_words = set(range(len(self.words)))
+        home |= all_words - paired
+        return frozenset(home)
+
+    def is_home_position(self, addr: LocationAddress) -> bool:
+        """True if this address is at a home (non-CZ-staging) word."""
+        return addr.word_id in self._home_words
 
     @property
     def feed_forward(self) -> bool:
