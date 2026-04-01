@@ -330,19 +330,52 @@ def test_collects_multiple_goal_nodes(monkeypatch):
     assert all(goal(n) for n in result.goal_nodes)
 
 
-def test_solution_branch_cutoff_ancestor():
+def test_solution_branch_cutoff_ancestor_returns_first_ancestor_below_branch():
     tree = _make_tree()
     target = {0: LocationAddress(0, 5)}
     search = EntropyGuidedSearch(
         tree,
         target,
         placement_goal(target),
-        params=SearchParams(solution_branch_cutoff=2),
     )
+    branch_child = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
+    )
+    sibling = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
+    )
+    tree.root.children = {
+        frozenset(): branch_child,
+        frozenset({SiteLaneAddress(0, 0, 0)}): sibling,
+    }
+
+    deep = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=branch_child, depth=2
+    )
+    goal = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=deep, depth=3
+    )
+
+    assert search._cutoff_ancestor(goal) is branch_child
+
+
+def test_solution_branch_cutoff_ancestor_returns_root_for_linear_branch():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    search = EntropyGuidedSearch(tree, target, placement_goal(target))
+
     n1 = ConfigurationNode(
         configuration=dict(tree.root.configuration), parent=tree.root, depth=1
     )
     n2 = ConfigurationNode(
         configuration=dict(tree.root.configuration), parent=n1, depth=2
     )
-    assert search._cutoff_ancestor(n2) is tree.root
+    goal = ConfigurationNode(
+        configuration=dict(tree.root.configuration), parent=n2, depth=3
+    )
+
+    tree.root.children = {frozenset(): n1}
+    n1.children = {frozenset(): n2}
+    n2.children = {frozenset(): goal}
+
+    assert search._cutoff_ancestor(goal) is tree.root

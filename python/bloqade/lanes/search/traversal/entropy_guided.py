@@ -345,10 +345,16 @@ class EntropyGuidedSearch:
         return (node.depth, encoded_program)
 
     def _cutoff_ancestor(self, goal_node: ConfigurationNode) -> ConfigurationNode:
+        """Return the first ancestor whose parent has multiple children.
+
+        Walk upward from the goal branch and stop at the first node where its
+        parent is an actual branch point (2+ children). If no branch point
+        exists on the path, cut back to the root.
+        """
         ancestor = goal_node
-        for _ in range(self.params.solution_branch_cutoff):
-            if ancestor.parent is None:
-                break
+        while ancestor.parent is not None:
+            if len(ancestor.parent.children) > 1:
+                return ancestor
             ancestor = ancestor.parent
         return ancestor
 

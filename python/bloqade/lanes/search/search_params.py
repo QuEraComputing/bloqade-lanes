@@ -21,7 +21,6 @@ class SearchParams:
         delta_e: Entropy increment per revisit or failed generation.
         e_max: Entropy threshold that triggers reversion.
         max_goal_candidates: Number of goal nodes to collect before stopping.
-        solution_branch_cutoff: Parent steps to backtrack after each found goal.
     """
 
     w_d: float = 1.0
@@ -34,8 +33,7 @@ class SearchParams:
     reversion_steps: int = 1
     delta_e: int = 1
     e_max: int = 4
-    max_goal_candidates: int = 2
-    solution_branch_cutoff: int = 2
+    max_goal_candidates: int = 1
 
     def __post_init__(self) -> None:
         if self.delta_e < 1:
@@ -50,5 +48,3 @@ class SearchParams:
             raise ValueError("reversion_steps must be >= 1")
         if self.max_goal_candidates < 1:
             raise ValueError("max_goal_candidates must be >= 1")
-        if self.solution_branch_cutoff < 1:
-            raise ValueError("solution_branch_cutoff must be >= 1")
