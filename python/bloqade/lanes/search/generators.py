@@ -101,9 +101,7 @@ class ExhaustiveMoveGenerator:
                     else tree.arch_spec.has_site_buses
                 )
                 src_locs = [
-                    LocationAddress(w, s)
-                    for w in bus_word_ids
-                    for s in bus.src
+                    LocationAddress(w, s) for w in bus_word_ids for s in bus.src
                 ]
                 yield from self._rectangles_to_move_sets(
                     src_locs, occupied, MoveType.SITE, bus_id, direction, tree

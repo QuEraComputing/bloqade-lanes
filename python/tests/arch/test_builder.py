@@ -19,7 +19,9 @@ def _two_zone_blueprint(
     return ArchBlueprint(
         zones={
             "proc": ZoneSpec(
-                num_rows=2, num_cols=2, entangling=True,
+                num_rows=2,
+                num_cols=2,
+                entangling=True,
                 word_topology=HypercubeWordTopology() if entangling_word_topo else None,
                 site_topology=HypercubeSiteTopology() if entangling_site_topo else None,
             ),
@@ -45,7 +47,9 @@ class TestBuildArchSingleZone:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=2, num_cols=2, entangling=True,
+                    num_rows=2,
+                    num_cols=2,
+                    entangling=True,
                     word_topology=HypercubeWordTopology(),
                 ),
             },
@@ -59,7 +63,9 @@ class TestBuildArchSingleZone:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=1, num_cols=2, entangling=True,
+                    num_rows=1,
+                    num_cols=2,
+                    entangling=True,
                     site_topology=HypercubeSiteTopology(),
                 ),
             },
@@ -82,9 +88,12 @@ class TestBuildArchTwoZones:
 
     def test_two_zones_with_matching(self) -> None:
         bp = _two_zone_blueprint()
-        result = build_arch(bp, connections={
-            ("proc", "mem"): MatchingTopology(),
-        })
+        result = build_arch(
+            bp,
+            connections={
+                ("proc", "mem"): MatchingTopology(),
+            },
+        )
         # 2 intra-zone (proc hypercube) + 1 inter-zone (matching) = 3
         assert len(result.arch.word_buses) == 3
 
@@ -129,7 +138,9 @@ class TestBuildArchThreeZones:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=2, num_cols=2, entangling=True,
+                    num_rows=2,
+                    num_cols=2,
+                    entangling=True,
                     word_topology=HypercubeWordTopology(),
                 ),
                 "buffer": ZoneSpec(num_rows=2, num_cols=2),
@@ -137,10 +148,13 @@ class TestBuildArchThreeZones:
             },
             layout=DeviceLayout(sites_per_word=4),
         )
-        result = build_arch(bp, connections={
-            ("proc", "buffer"): MatchingTopology(),
-            ("buffer", "mem"): MatchingTopology(),
-        })
+        result = build_arch(
+            bp,
+            connections={
+                ("proc", "buffer"): MatchingTopology(),
+                ("buffer", "mem"): MatchingTopology(),
+            },
+        )
         assert len(result.arch.words) == 12
         assert result.zone_indices == {"proc": 1, "buffer": 2, "mem": 3}
         # 2 intra (proc) + 2 inter = 4 word buses
@@ -159,9 +173,12 @@ class TestBuildArchValidation:
     def test_rust_validation_passes(self) -> None:
         """Ensure the generated ArchSpec passes Rust validation."""
         bp = _two_zone_blueprint()
-        result = build_arch(bp, connections={
-            ("proc", "mem"): MatchingTopology(),
-        })
+        result = build_arch(
+            bp,
+            connections={
+                ("proc", "mem"): MatchingTopology(),
+            },
+        )
         # from_components calls _inner.validate() — no exception = pass
         assert result.arch is not None
 
@@ -205,11 +222,14 @@ class TestBuildArchPerBusWords:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=1, num_cols=2, entangling=True,
+                    num_rows=1,
+                    num_cols=2,
+                    entangling=True,
                     site_topology=HypercubeSiteTopology(),
                 ),
                 "mem": ZoneSpec(
-                    num_rows=1, num_cols=2,
+                    num_rows=1,
+                    num_cols=2,
                     site_topology=AllToAllSiteTopology(),
                 ),
             },
@@ -237,7 +257,9 @@ class TestBuildArchPerBusWords:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=1, num_cols=2, entangling=True,
+                    num_rows=1,
+                    num_cols=2,
+                    entangling=True,
                     site_topology=HypercubeSiteTopology(),
                 ),
             },
@@ -252,7 +274,9 @@ class TestBuildArchPerBusWords:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=1, num_cols=2, entangling=True,
+                    num_rows=1,
+                    num_cols=2,
+                    entangling=True,
                     site_topology=HypercubeSiteTopology(),
                 ),
                 "mem": ZoneSpec(num_rows=1, num_cols=2),
@@ -277,7 +301,9 @@ class TestPathFinderIntegration:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=1, num_cols=2, entangling=True,
+                    num_rows=1,
+                    num_cols=2,
+                    entangling=True,
                     site_topology=HypercubeSiteTopology(),
                 ),
                 "mem": ZoneSpec(num_rows=1, num_cols=2),
@@ -302,16 +328,21 @@ class TestPathFinderIntegration:
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
-                    num_rows=1, num_cols=2, entangling=True,
+                    num_rows=1,
+                    num_cols=2,
+                    entangling=True,
                     site_topology=HypercubeSiteTopology(),
                 ),
                 "mem": ZoneSpec(num_rows=1, num_cols=2),
             },
             layout=DeviceLayout(sites_per_word=4),
         )
-        result = build_arch(bp, connections={
-            ("proc", "mem"): MatchingTopology(),
-        })
+        result = build_arch(
+            bp,
+            connections={
+                ("proc", "mem"): MatchingTopology(),
+            },
+        )
         pf = PathFinder(result.arch)
 
         # proc word 0 → mem word 2 (same site): reachable via matching word bus

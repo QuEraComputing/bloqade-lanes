@@ -112,9 +112,9 @@ def test_blockaded_location_preserves_site_index():
                 blockaded_a = arch_spec.get_blockaded_location(loc_a)
                 blockaded_b = arch_spec.get_blockaded_location(loc_b)
                 assert blockaded_a is not None
-                assert blockaded_a.site_id == s, (
-                    f"Site mismatch: ({w_a},{s}) -> site {blockaded_a.site_id}"
-                )
+                assert (
+                    blockaded_a.site_id == s
+                ), f"Site mismatch: ({w_a},{s}) -> site {blockaded_a.site_id}"
                 assert blockaded_a.word_id == w_b
                 assert blockaded_b is not None
                 assert blockaded_b.site_id == s

@@ -52,7 +52,9 @@ class ConfigurationNode:
 
     def __post_init__(self) -> None:
         self._config_key = frozenset(self.configuration.items())
-        self._occupied_locations = frozenset(self.configuration.values()) | self.external_occupied
+        self._occupied_locations = (
+            frozenset(self.configuration.values()) | self.external_occupied
+        )
         self._qubit_at_location = {loc: qid for qid, loc in self.configuration.items()}
 
     @cached_property

@@ -124,9 +124,7 @@ class TestArchBlueprint:
         assert bp.zone_names == ("mem", "proc", "buffer")
 
     def test_default_layout(self) -> None:
-        bp = ArchBlueprint(
-            zones={"proc": ZoneSpec(num_rows=1, num_cols=2)}
-        )
+        bp = ArchBlueprint(zones={"proc": ZoneSpec(num_rows=1, num_cols=2)})
         assert bp.layout == DeviceLayout()
 
     def test_custom_layout(self) -> None:
@@ -139,8 +137,6 @@ class TestArchBlueprint:
         assert bp.layout.zone_gap == 50.0
 
     def test_frozen(self) -> None:
-        bp = ArchBlueprint(
-            zones={"proc": ZoneSpec(num_rows=1, num_cols=2)}
-        )
+        bp = ArchBlueprint(zones={"proc": ZoneSpec(num_rows=1, num_cols=2)})
         with pytest.raises(AttributeError):
             bp.zones = {}  # type: ignore[misc]

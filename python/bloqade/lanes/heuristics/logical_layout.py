@@ -57,9 +57,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             [
                 layout.LocationAddress(word_id, site_id)
                 for word_id in self.arch_spec._home_words
-                for site_id in range(
-                    len(self.arch_spec.words[word_id].site_indices)
-                )
+                for site_id in range(len(self.arch_spec.words[word_id].site_indices))
             ]
         )
 

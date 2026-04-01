@@ -208,7 +208,6 @@ def test_find_path_respects_per_bus_word_scoping():
 
     result = build_arch(bp, connections={("a", "b"): MatchingTopology()})
     arch = result.arch
-    path_finder = PathFinder(arch)
 
     # Zone B words should not have site bus moves
     zone_b_words = set(result.zone_grids["b"].all_word_ids)

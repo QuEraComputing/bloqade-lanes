@@ -21,8 +21,7 @@ from bloqade.gemini.logical.dialects.operations.stmts import (
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome

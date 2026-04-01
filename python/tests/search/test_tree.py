@@ -159,9 +159,7 @@ def test_expand_produces_valid_children():
 def test_expand_deadlock():
     arch_spec = logical.get_arch_spec()
     # Fill all 8 words × 2 sites = 16 locations to create a deadlock
-    placement = {
-        i: LocationAddress(i // 2, i % 2) for i in range(16)
-    }
+    placement = {i: LocationAddress(i // 2, i % 2) for i in range(16)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
 

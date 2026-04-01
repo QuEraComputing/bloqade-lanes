@@ -26,13 +26,10 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         bus_id = node.lanes[0].bus_id
 
         y_positions = [
-            get_coordinate(lane.site_id, self.sites_per_word)[1]
-            for lane in node.lanes
+            get_coordinate(lane.site_id, self.sites_per_word)[1] for lane in node.lanes
         ]
 
-        y_mask = ilist.IList(
-            [i in y_positions for i in range(self.sites_per_word)]
-        )
+        y_mask = ilist.IList([i in y_positions for i in range(self.sites_per_word)])
 
         (y_mask_stmt := py.Constant(y_mask)).insert_before(node)
 

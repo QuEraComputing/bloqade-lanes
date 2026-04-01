@@ -48,7 +48,8 @@ def build_arch(
     zone_y = 0.0
     for zone_name, zone_spec in blueprint.zones.items():
         grid = create_zone_words(
-            zone_spec, layout,
+            zone_spec,
+            layout,
             y_offset=zone_y,
             word_id_offset=word_id_offset,
         )
@@ -57,9 +58,7 @@ def build_arch(
         zone_height = (zone_spec.num_rows - 1) * layout.row_spacing
         zone_y += zone_height + layout.zone_gap
 
-    all_words = tuple(
-        word for grid in zone_grids.values() for word in grid.words
-    )
+    all_words = tuple(word for grid in zone_grids.values() for word in grid.words)
     total_words = len(all_words)
 
     # 2. Generate per-zone site buses with bus.words set
@@ -120,9 +119,7 @@ def build_arch(
     ]
 
     measurement_mode_zones = (0,) + tuple(
-        zone_indices[name]
-        for name, spec in blueprint.zones.items()
-        if spec.measurement
+        zone_indices[name] for name, spec in blueprint.zones.items() if spec.measurement
     )
 
     # 6. Build ArchSpec

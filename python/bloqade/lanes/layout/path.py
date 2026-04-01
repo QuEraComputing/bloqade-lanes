@@ -46,7 +46,9 @@ class PathFinder:
         self.site_graph.add_nodes_from(range(len(self.physical_addresses)))
 
         for bus_id, bus in enumerate(self.spec.site_buses):
-            bus_word_ids = bus.words if bus.words is not None else self.spec.has_site_buses
+            bus_word_ids = (
+                bus.words if bus.words is not None else self.spec.has_site_buses
+            )
             for word_id in bus_word_ids:
                 for src, dst in zip(bus.src, bus.dst):
                     src_site = LocationAddress(word_id, src)

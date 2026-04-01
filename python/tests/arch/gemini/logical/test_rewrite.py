@@ -36,9 +36,7 @@ def test_logical_architecture_rewrite_site():
     rewrite_rule.rewrite(test_block)
 
     expected_block = ir.Block()
-    expected_block.stmts.append(
-        const_list := py.Constant(ilist.IList([True, True]))
-    )
+    expected_block.stmts.append(const_list := py.Constant(ilist.IList([True, True])))
     expected_block.stmts.append(
         SiteBusMove(
             current_state=current_state,

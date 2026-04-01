@@ -141,9 +141,7 @@ class TestHypercubeWordTopology:
     def test_non_power_of_two_rows_raises(self) -> None:
         grid = _make_grid(num_rows=2, num_cols=4)
         # Hack the grid to have 3 rows
-        bad_grid = WordGrid(
-            words=grid.words, num_rows=3, num_cols=4, word_id_offset=0
-        )
+        bad_grid = WordGrid(words=grid.words, num_rows=3, num_cols=4, word_id_offset=0)
         topo = HypercubeWordTopology()
         with pytest.raises(ValueError, match="power of 2"):
             topo.generate_word_buses(bad_grid)

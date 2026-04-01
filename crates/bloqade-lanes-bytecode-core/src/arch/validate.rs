@@ -124,29 +124,19 @@ fn check_measurement_mode_first_is_zone0(spec: &ArchSpec, errors: &mut Vec<ArchS
     }
 }
 
-fn check_entangling_zones_pairs(
-    spec: &ArchSpec,
-    num_words: u32,
-    errors: &mut Vec<ArchSpecError>,
-) {
+fn check_entangling_zones_pairs(spec: &ArchSpec, num_words: u32, errors: &mut Vec<ArchSpecError>) {
     let mut seen_words: HashSet<u32> = HashSet::new();
     for (zone_idx, zone_pairs) in spec.entangling_zones.iter().enumerate() {
         for pair in zone_pairs {
             let [w_a, w_b] = *pair;
             if w_a >= num_words {
                 errors.push(ArchSpecError::Zone {
-                    message: format!(
-                        "entangling_zones[{}]: invalid word ID {}",
-                        zone_idx, w_a
-                    ),
+                    message: format!("entangling_zones[{}]: invalid word ID {}", zone_idx, w_a),
                 });
             }
             if w_b >= num_words {
                 errors.push(ArchSpecError::Zone {
-                    message: format!(
-                        "entangling_zones[{}]: invalid word ID {}",
-                        zone_idx, w_b
-                    ),
+                    message: format!("entangling_zones[{}]: invalid word ID {}", zone_idx, w_b),
                 });
             }
             if !seen_words.insert(w_a) {

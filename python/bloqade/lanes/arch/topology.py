@@ -205,9 +205,7 @@ class TransversalSiteTopology:
         logical_sites = num_sites // d
 
         if logical_sites < 1:
-            raise ValueError(
-                f"num_sites={num_sites} too small for code_distance={d}"
-            )
+            raise ValueError(f"num_sites={num_sites} too small for code_distance={d}")
 
         buses: list[Bus] = []
 

@@ -82,7 +82,9 @@ def assert_valid_cz_placement(
             assert arch_spec.validate_lane(lane) == set(), f"Invalid lane: {lane}"
 
 
-def assert_all_home(arch_spec: layout.ArchSpec, addrs: tuple[LocationAddress, ...]) -> None:
+def assert_all_home(
+    arch_spec: layout.ArchSpec, addrs: tuple[LocationAddress, ...]
+) -> None:
     """Assert all addresses are at home positions."""
     for addr in addrs:
         assert arch_spec.is_home_position(addr), f"{addr} is not a home position"
@@ -156,7 +158,10 @@ class TestDesiredCzLayout:
         home_words = sorted(arch._home_words)
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(home_words[0], 0), LocationAddress(home_words[1], 0)),
+            layout=(
+                LocationAddress(home_words[0], 0),
+                LocationAddress(home_words[1], 0),
+            ),
             move_count=(0, 0),
         )
         result = methods.desired_cz_layout(state, controls=(0,), targets=(1,))
@@ -267,9 +272,7 @@ class TestNoHomeReturnLayout:
         arch = placement.arch_spec
         home_sites = placement._home_sites()
         # Home word(s) × all sites per word
-        expected_count = sum(
-            len(arch.words[w].site_indices) for w in arch._home_words
-        )
+        expected_count = sum(len(arch.words[w].site_indices) for w in arch._home_words)
         assert len(home_sites) == expected_count
         for addr in home_sites:
             assert arch.is_home_position(addr)
@@ -316,7 +319,10 @@ class TestFullCzPipeline:
         # Qubits at matching sites in different home words
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(home_words[0], 0), LocationAddress(home_words[1], 0)),
+            layout=(
+                LocationAddress(home_words[0], 0),
+                LocationAddress(home_words[1], 0),
+            ),
             move_count=(0, 0),
         )
         result = placement.cz_placements(state, controls=(0,), targets=(1,))
@@ -330,7 +336,9 @@ class TestMoveToLeft:
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_move_to_left_reverse(self, word_size_y: int):
         arch_spec = _make_arch(word_size_y)
-        non_home = [w for w in range(len(arch_spec.words)) if w not in arch_spec._home_words]
+        non_home = [
+            w for w in range(len(arch_spec.words)) if w not in arch_spec._home_words
+        ]
         home_words = sorted(arch_spec._home_words)
         # Move qubit from non-home word back to home
         state_before = ConcreteState(
@@ -340,7 +348,10 @@ class TestMoveToLeft:
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(home_words[0], 0), LocationAddress(home_words[0], 1)),
+            layout=(
+                LocationAddress(home_words[0], 0),
+                LocationAddress(home_words[0], 1),
+            ),
             move_count=(2, 0),
         )
         out_state, layers = move_to_left(arch_spec, state_before, state_after)

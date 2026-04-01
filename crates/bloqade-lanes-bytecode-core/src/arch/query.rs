@@ -402,9 +402,7 @@ impl ArchSpec {
                         .site_bus_by_id(lane.bus_id)
                         .and_then(|bus| bus.words.as_ref())
                         .map(|words| words.contains(&lane.word_id))
-                        .unwrap_or_else(|| {
-                            self.words_with_site_buses.contains(&lane.word_id)
-                        });
+                        .unwrap_or_else(|| self.words_with_site_buses.contains(&lane.word_id));
                     if !allowed {
                         bad_words.insert(lane.word_id);
                     }

@@ -68,7 +68,9 @@ def _compute_move_layers(
 
     if cross_word:
         # Try direct single-hop word bus first, fall back to PathFinder
-        site_adjustments: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
+        site_adjustments: list[
+            tuple[layout.LocationAddress, layout.LocationAddress]
+        ] = []
         word_bus_lanes: dict[int, list[layout.LaneAddress]] = {}
         multi_hop: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
 
@@ -79,8 +81,7 @@ def _compute_move_layers(
             if dst.site_id != src.site_id:
                 candidate_sites.append(dst.site_id)
             candidate_sites.extend(
-                s for s in sorted(arch_spec.has_word_buses)
-                if s not in candidate_sites
+                s for s in sorted(arch_spec.has_word_buses) if s not in candidate_sites
             )
             for wb_site in candidate_sites:
                 if wb_site not in arch_spec.has_word_buses:

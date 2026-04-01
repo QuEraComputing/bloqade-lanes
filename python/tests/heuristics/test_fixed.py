@@ -9,11 +9,10 @@ from bloqade.lanes.heuristics.logical_placement import (
     LogicalPlacementStrategy,
     LogicalPlacementStrategyNoHome,
 )
-from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
+from bloqade.lanes.heuristics.move_synthesis import move_to_left
 from bloqade.lanes.layout.encoding import (
     LocationAddress,
 )
-
 
 # ── Shared validation helpers ──
 
@@ -289,7 +288,9 @@ def test_nohome_choose_return_layout():
     )
     assert_all_home(arch, mid_state.layout)
     _, expected_left_move_layers = move_to_left(
-        arch, state_before, mid_state,
+        arch,
+        state_before,
+        mid_state,
     )
     assert left_move_layers == expected_left_move_layers
 
@@ -374,8 +375,12 @@ def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyP
     calls = {"count": 0}
 
     def fake_find_path(
-        _pathfinder, start, end,
-        occupied=frozenset(), path_heuristic=None, edge_weight=None,
+        _pathfinder,
+        start,
+        end,
+        occupied=frozenset(),
+        path_heuristic=None,
+        edge_weight=None,
     ):
         _ = occupied, path_heuristic
         assert start == src

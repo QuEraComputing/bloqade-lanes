@@ -288,11 +288,13 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     ) -> tuple[layout.LocationAddress, ...]:
         home_sites = self._home_sites()
         used_home = {
-            addr for addr in state_before.layout
+            addr
+            for addr in state_before.layout
             if self.arch_spec.is_home_position(addr)
         }
         used_home |= {
-            addr for addr in state_before.occupied
+            addr
+            for addr in state_before.occupied
             if self.arch_spec.is_home_position(addr)
         }
         available_home = set(home_sites - used_home)
@@ -302,9 +304,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             if self.arch_spec.is_home_position(addr):
                 continue
             if not available_home:
-                raise ValueError(
-                    "No empty home site available for return move"
-                )
+                raise ValueError("No empty home site available for return move")
             best_home = min(
                 available_home,
                 key=lambda home_site: self._distance_key(addr, home_site),
@@ -461,16 +461,16 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
         home_sites = self._home_sites()
         used_home = {
-            addr for addr in state_before.layout
+            addr
+            for addr in state_before.layout
             if self.arch_spec.is_home_position(addr)
         }
         used_home |= {
-            addr for addr in state_before.occupied
+            addr
+            for addr in state_before.occupied
             if self.arch_spec.is_home_position(addr)
         }
-        holes = sorted(
-            home_sites - used_home, key=lambda x: (x.word_id, x.site_id)
-        )
+        holes = sorted(home_sites - used_home, key=lambda x: (x.word_id, x.site_id))
         returners = [
             qid
             for qid, addr in enumerate(state_before.layout)
@@ -479,9 +479,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         if not returners:
             return [state_before.layout]
         if len(holes) < len(returners):
-            raise ValueError(
-                "No empty home site available for return move"
-            )
+            raise ValueError("No empty home site available for return move")
 
         partner_weights = self._partner_weights(lookahead_layers)
         baseline_layout = self._nearest_home_layout(state_before)
