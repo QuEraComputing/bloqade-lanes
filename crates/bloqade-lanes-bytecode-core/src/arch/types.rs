@@ -466,6 +466,39 @@ mod tests {
     }
 
     #[test]
+    fn hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let spec1 = example_arch_spec();
+        let spec2 = example_arch_spec();
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        spec1.hash(&mut h1);
+        spec2.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn hash_negative_zero_equals_positive_zero() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut spec1 = example_arch_spec();
+        let mut spec2 = example_arch_spec();
+        spec1.blockade_radius = 0.0;
+        spec2.blockade_radius = -0.0;
+        // PartialEq treats 0.0 == -0.0
+        assert_eq!(spec1, spec2);
+        // Hash must also agree
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        spec1.hash(&mut h1);
+        spec2.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
     fn lane_hex_missing_prefix_rejected() {
         let json = r#"{"lane": "00000001", "waypoints": []}"#;
         let err = serde_json::from_str::<TransportPath>(json).unwrap_err();

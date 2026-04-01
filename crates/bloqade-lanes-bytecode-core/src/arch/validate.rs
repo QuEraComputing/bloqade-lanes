@@ -748,6 +748,39 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_measurement_mode_zones() {
+        let mut spec = example_arch_spec();
+        spec.measurement_mode_zones = vec![];
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("must not be empty"))
+        ));
+    }
+
+    #[test]
+    fn test_non_finite_word_grid() {
+        let mut spec = example_arch_spec();
+        spec.geometry.words[0].positions.x_start = f64::INFINITY;
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("non-finite"))
+        ));
+    }
+
+    #[test]
+    fn test_site_bus_invalid_word_in_bus_words() {
+        let mut spec = example_arch_spec();
+        spec.buses.site_buses[0].words = Some(vec![0, 99]);
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("invalid word ID 99 in bus.words"))
+        ));
+    }
+
+    #[test]
     fn multiple_errors_collected() {
         let mut spec = example_arch_spec();
         spec.zones[0].words = vec![0];
