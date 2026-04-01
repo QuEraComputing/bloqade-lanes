@@ -54,9 +54,9 @@ task = GeminiLogicalSimulator().task(main)
 
 # run simulation with and without noise
 print("Running simulation with noise...")
-future = task.run_async(100000)
+future = task.run_async(10000)
 print("Running simulation without noise...")
-future_wo_noise = task.run_async(100000, with_noise=False)
+future_wo_noise = task.run_async(10000, with_noise=False)
 
 result_wo_noise = future_wo_noise.result()
 result = future.result()
