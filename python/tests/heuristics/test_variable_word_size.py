@@ -148,7 +148,14 @@ class TestDesiredCzLayout:
             move_count=(0, 0),
         )
         result = methods.desired_cz_layout(state, controls=(0,), targets=(1,))
-        assert_valid_cz_placement(arch, result, controls=(0,), targets=(1,))
+        # desired_cz_layout returns ConcreteState (no move layers), check blockade only
+        for c, t in zip((0,), (1,)):
+            c_addr = result.layout[c]
+            t_addr = result.layout[t]
+            assert (
+                arch.get_blockaded_location(c_addr) == t_addr
+                or arch.get_blockaded_location(t_addr) == c_addr
+            ), f"CZ pair ({c_addr}, {t_addr}) not at blockade positions"
 
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_cross_word_cz(self, word_size_y: int):
@@ -165,7 +172,13 @@ class TestDesiredCzLayout:
             move_count=(0, 0),
         )
         result = methods.desired_cz_layout(state, controls=(0,), targets=(1,))
-        assert_valid_cz_placement(arch, result, controls=(0,), targets=(1,))
+        for c, t in zip((0,), (1,)):
+            c_addr = result.layout[c]
+            t_addr = result.layout[t]
+            assert (
+                arch.get_blockaded_location(c_addr) == t_addr
+                or arch.get_blockaded_location(t_addr) == c_addr
+            ), f"CZ pair ({c_addr}, {t_addr}) not at blockade positions"
 
 
 class TestComputeMoveLayers:
