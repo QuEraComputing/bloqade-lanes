@@ -334,11 +334,42 @@ class EntropyGuidedSearch:
 
         return None
 
-    def _make_result(self, goal_node: ConfigurationNode | None = None) -> SearchResult:
+    @staticmethod
+    def _goal_sort_key(
+        node: ConfigurationNode,
+    ) -> tuple[int, tuple[tuple[int, ...], ...]]:
+        move_program = node.to_move_program()
+        encoded_program = tuple(
+            tuple(lane.encode() for lane in step) for step in move_program
+        )
+        return (node.depth, encoded_program)
+
+    def _cutoff_ancestor(self, goal_node: ConfigurationNode) -> ConfigurationNode:
+        """Return the first ancestor whose parent has multiple children.
+
+        Walk upward from the goal branch and stop at the first node where its
+        parent is an actual branch point (2+ children). If no branch point
+        exists on the path, cut back to the root.
+        """
+        ancestor = goal_node
+        while ancestor.parent is not None:
+            if len(ancestor.parent.children) > 1:
+                return ancestor
+            ancestor = ancestor.parent
+        return ancestor
+
+    def _make_result(
+        self,
+        goal_nodes: tuple[ConfigurationNode, ...] = (),
+    ) -> SearchResult:
+        if goal_nodes:
+            sorted_goal_nodes = tuple(sorted(goal_nodes, key=self._goal_sort_key))
+        else:
+            sorted_goal_nodes = ()
         return SearchResult(
-            goal_node=goal_node,
             nodes_expanded=self.nodes_expanded,
             max_depth_reached=self.max_depth_reached,
+            goal_nodes=sorted_goal_nodes,
         )
 
     def _sequential_fallback(self, current_node: ConfigurationNode) -> SearchResult:
@@ -391,16 +422,19 @@ class EntropyGuidedSearch:
                 self.debug.fallback_step(node, qid, moveset)
 
         if self.goal(node):
-            return self._make_result(goal_node=node)
+            return self._make_result(goal_nodes=(node,))
 
         return self._make_result()
 
     def run(self) -> SearchResult:
         """Execute the entropy-guided search and return the result."""
+        found_goals: list[ConfigurationNode] = []
         if self.goal(self.tree.root):
             self.debug.goal(self.tree.root, entropy=0)
             return SearchResult(
-                goal_node=self.tree.root, nodes_expanded=0, max_depth_reached=0
+                nodes_expanded=0,
+                max_depth_reached=0,
+                goal_nodes=(self.tree.root,),
             )
 
         current_node = self.tree.root
@@ -419,7 +453,9 @@ class EntropyGuidedSearch:
 
                 ancestor_sn = self._get_or_create_search_node(ancestor)
                 if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
-                    return self._sequential_fallback(self.tree.root)
+                    fallback_result = self._sequential_fallback(self.tree.root)
+                    combined_goals = found_goals + list(fallback_result.goal_nodes)
+                    return self._make_result(goal_nodes=tuple(combined_goals))
 
                 ancestor_sn.bump_entropy(self.params.delta_e)
                 self.debug.revert(ancestor, ancestor_sn, sn)
@@ -476,11 +512,15 @@ class EntropyGuidedSearch:
 
             if self.goal(child):
                 self.debug.goal(child, entropy=sn.entropy)
-                return self._make_result(goal_node=child)
+                found_goals.append(child)
+                if len(found_goals) >= self.params.max_goal_candidates:
+                    return self._make_result(goal_nodes=tuple(found_goals))
+                current_node = self._cutoff_ancestor(child)
+                continue
 
             current_node = child
 
-        return self._make_result()
+        return self._make_result(goal_nodes=tuple(found_goals))
 
 
 def entropy_guided_search(
