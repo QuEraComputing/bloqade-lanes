@@ -111,3 +111,59 @@ def test_move_to_squin_physical_no_init():
     t = MoveToSquinPhysical(arch_spec=arch, noise_model=model)
     assert t._get_initialize_kernel() is None
     assert t._get_initialize_noise_kernel() is None
+
+
+def test_no_double_init_in_compiled_output():
+    """Regression: compiled output must not contain both clean and noisy init.
+
+    When add_noise=True, the noisy init kernel should appear in the output
+    but the clean init kernel should not.
+    When add_noise=False, the clean init kernel should appear but the noisy
+    one should not.
+    """
+    from kirin.dialects import func
+
+    from bloqade import qubit, squin
+    from bloqade.gemini import logical as gemini_logical
+    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.logical_mvp import compile_squin_to_move
+    from bloqade.lanes.noise_model import generate_logical_noise_model
+    from bloqade.lanes.transform import MoveToSquinLogical
+
+    @gemini_logical.kernel
+    def main():
+        reg = qubit.qalloc(1)
+        squin.h(reg[0])
+
+    model = generate_logical_noise_model()
+    clean, noisy = model.get_logical_initialize()
+
+    move_mt = compile_squin_to_move(main, transversal_rewrite=True, no_raise=True)
+
+    for add_noise in (False, True):
+        squin_kernel = MoveToSquinLogical(
+            arch_spec=generate_arch_hypercube(4),
+            noise_model=model,
+            add_noise=add_noise,
+        ).emit(move_mt.similar(), no_raise=True)
+
+        # Walk the IR and collect all func.Invoke callees
+        callees = set()
+        for stmt in squin_kernel.callable_region.walk():
+            if isinstance(stmt, func.Invoke):
+                callees.add(stmt.callee)
+
+        if add_noise:
+            assert (
+                clean not in callees
+            ), "clean init kernel should not appear with add_noise=True"
+            assert (
+                noisy in callees
+            ), "noisy init kernel should appear with add_noise=True"
+        else:
+            assert (
+                clean in callees
+            ), "clean init kernel should appear with add_noise=False"
+            assert (
+                noisy not in callees
+            ), "noisy init kernel should not appear with add_noise=False"

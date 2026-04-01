@@ -115,11 +115,15 @@ class MoveToSquinBase(abc.ABC):
 class MoveToSquinLogical(MoveToSquinBase):
     """Rewrite pass for **logical** compilation.
 
-    Uses the clean initialization kernel from the noise model for
-    ``InsertGates`` to rewrite ``PhysicalInitialize`` nodes. When
-    ``add_noise`` is ``True``, also inserts gate/move noise via
-    ``InsertNoise`` and applies the noisy initialization kernel after
-    initialization.
+    When ``add_noise`` is ``False``, uses the clean initialization kernel
+    from the noise model for ``InsertGates`` to rewrite
+    ``PhysicalInitialize`` nodes. No noise is inserted.
+
+    When ``add_noise`` is ``True``, the clean initialization kernel is
+    **not** passed to ``InsertGates``. Instead, only ``InsertNoise``
+    handles initialization using the noisy kernel, and gate/move noise
+    is inserted as well. This ensures initialization is applied exactly
+    once — either clean or noisy, never both.
     """
 
     noise_model: LogicalNoiseModelABC
