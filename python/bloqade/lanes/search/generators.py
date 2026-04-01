@@ -90,7 +90,7 @@ class ExhaustiveMoveGenerator:
         node: ConfigurationNode,
         tree: ConfigurationTree,
     ) -> Iterator[frozenset[LaneAddress]]:
-        occupied = node.occupied_locations
+        occupied = node.occupied_locations | tree.blocked_locations
 
         # Enumerate site buses
         for bus_id, bus in enumerate(tree.arch_spec.site_buses):
@@ -274,7 +274,7 @@ class HeuristicMoveGenerator:
             groups[(mt, bid, d)] = [(qid, scores[best_key])]
 
         # Build one moveset per group with conflict resolution
-        occupied = node.occupied_locations
+        occupied = node.occupied_locations | tree.blocked_locations
         candidates: list[tuple[float, frozenset[LaneAddress]]] = []
 
         for (mt, bid, d), qubit_scores in groups.items():

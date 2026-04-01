@@ -155,7 +155,11 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
-        tree = ConfigurationTree.from_initial_placement(self.arch_spec, placement)
+        tree = ConfigurationTree.from_initial_placement(
+            self.arch_spec,
+            placement,
+            blocked_locations=state.occupied,
+        )
 
         should_trace = (
             self.trace_cz_index is None or self._cz_counter == self.trace_cz_index

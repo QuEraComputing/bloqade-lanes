@@ -302,7 +302,7 @@ class EntropyGuidedSearch:
         self, node: ConfigurationNode
     ) -> int | None:
         """Return one unresolved qubit that currently has no valid lane move."""
-        occupied = node.occupied_locations
+        occupied = node.occupied_locations | self.tree.blocked_locations
         for qid, target_loc in self.target.items():
             current_loc = node.configuration.get(qid)
             if current_loc is None or current_loc == target_loc:
@@ -395,8 +395,9 @@ class EntropyGuidedSearch:
             if current_loc == target_loc:
                 continue
 
-            occupied = frozenset(
-                loc for q, loc in node.configuration.items() if q != qid
+            occupied = (
+                frozenset(loc for q, loc in node.configuration.items() if q != qid)
+                | self.tree.blocked_locations
             )
 
             result = self.tree.path_finder.find_path(
