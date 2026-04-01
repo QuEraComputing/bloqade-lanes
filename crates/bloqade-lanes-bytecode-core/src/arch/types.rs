@@ -70,7 +70,7 @@ impl std::hash::Hash for ArchSpec {
         self.sites_with_word_buses.hash(state);
         self.zones.hash(state);
         self.entangling_zones.hash(state);
-        self.blockade_radius.to_bits().hash(state);
+        canonical_f64_bits(self.blockade_radius).hash(state);
         self.measurement_mode_zones.hash(state);
         self.paths.hash(state);
         self.feed_forward.hash(state);

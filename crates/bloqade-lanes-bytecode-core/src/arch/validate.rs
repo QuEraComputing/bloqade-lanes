@@ -75,6 +75,9 @@ impl ArchSpec {
         // Rule: path lane addresses must be valid
         check_path_lanes(self, &mut errors);
 
+        // Rule: blockade_radius must be finite and non-negative
+        check_blockade_radius(self, &mut errors);
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -391,6 +394,17 @@ fn check_path_lanes(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
                 }
             }
         }
+    }
+}
+
+fn check_blockade_radius(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    if !spec.blockade_radius.is_finite() || spec.blockade_radius < 0.0 {
+        errors.push(ArchSpecError::Geometry {
+            message: format!(
+                "blockade_radius must be finite and non-negative, got {}",
+                spec.blockade_radius
+            ),
+        });
     }
 }
 
@@ -718,6 +732,28 @@ mod tests {
         assert!(has_error(
             &errors,
             |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("grid shape"))
+        ));
+    }
+
+    #[test]
+    fn test_negative_blockade_radius() {
+        let mut spec = example_arch_spec();
+        spec.blockade_radius = -1.0;
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("blockade_radius"))
+        ));
+    }
+
+    #[test]
+    fn test_nan_blockade_radius() {
+        let mut spec = example_arch_spec();
+        spec.blockade_radius = f64::NAN;
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("blockade_radius"))
         ));
     }
 
