@@ -30,8 +30,9 @@ def _compute_move_layers(
 ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
     """Compute move layers from state_before to state_after.
 
-    Cross-word moves use PathFinder for multi-hop word bus routing.
-    Same-word moves use site bus only.
+    For each qubit that needs to move, finds the path from source to
+    destination. Single-hop moves (direct bus connection) are batched
+    by bus_id. Multi-hop moves are sequenced individually using PathFinder.
     """
     diffs = [
         (src, dst)
@@ -51,15 +52,58 @@ def _compute_move_layers(
     moves: list[tuple[layout.LaneAddress, ...]] = []
 
     if cross_word:
-        path_finder = PathFinder(arch_spec)
+        # Try direct single-hop word bus first, fall back to PathFinder
+        site_adjustments: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
+        word_bus_lanes: dict[int, list[layout.LaneAddress]] = {}
+        multi_hop: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
 
         for src, dst in cross_word:
-            result = path_finder.find_path(src, dst)
-            assert result is not None, f"No path from {src} to {dst}"
-            lanes, _ = result
-            # Each lane in the path is a separate move layer
-            for lane in lanes:
-                moves.append((lane,))
+            # Try direct word bus at matching site
+            for wb_site in sorted(arch_spec.has_word_buses):
+                wb_src = layout.LocationAddress(src.word_id, wb_site)
+                wb_dst = layout.LocationAddress(dst.word_id, wb_site)
+                lane = arch_spec.get_lane_address(wb_src, wb_dst)
+                if lane is not None:
+                    # Site adjustment before word bus if needed
+                    if src.site_id != wb_site:
+                        site_adjustments.append(
+                            (src, layout.LocationAddress(src.word_id, wb_site))
+                        )
+                    word_bus_lanes.setdefault(lane.bus_id, []).append(lane)
+                    # Site adjustment after word bus if needed
+                    if wb_site != dst.site_id:
+                        same_word.append(
+                            (layout.LocationAddress(dst.word_id, wb_site), dst)
+                        )
+                    break
+            else:
+                # No direct word bus — need multi-hop
+                multi_hop.append((src, dst))
+
+        # Execute site adjustments first
+        if site_adjustments:
+            for word_id in {s.word_id for s, _ in site_adjustments}:
+                word_diffs = [
+                    (s, d) for s, d in site_adjustments if s.word_id == word_id
+                ]
+                moves.extend(_intra_word_moves(arch_spec, word_diffs))
+
+        # Then single-hop word bus moves (batched by bus)
+        for lanes in word_bus_lanes.values():
+            moves.append(tuple(lanes))
+
+        # Then multi-hop moves (sequenced individually via PathFinder)
+        if multi_hop:
+            # Collect all occupied positions to avoid collisions
+            all_positions = set(state_before.layout) | set(state_after.layout)
+            path_finder = PathFinder(arch_spec)
+            for src, dst in multi_hop:
+                occupied = frozenset(all_positions - {src, dst})
+                result = path_finder.find_path(src, dst, occupied=occupied)
+                assert result is not None, f"No path from {src} to {dst}"
+                lanes, _ = result
+                for lane in lanes:
+                    moves.append((lane,))
 
     # Same-word moves: site bus only
     for word_id in {s.word_id for s, _ in same_word}:

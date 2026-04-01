@@ -10,21 +10,21 @@ from bloqade.lanes.layout.encoding import (
 
 def test_logical_architecture():
     arch = logical.get_arch_spec()
-    assert len(arch.words) == 8
+    assert len(arch.words) == 10
     assert len(arch.words[0].site_indices) == 2
     assert len(arch.site_buses) == 1
-    assert len(arch.word_buses) == 3
-    assert arch.max_qubits == 8
-    assert sorted(arch._home_words) == [0, 2, 4, 6]
+    assert len(arch.word_buses) == 9
+    assert arch.max_qubits == 10
+    assert sorted(arch._home_words) == [0, 2, 4, 6, 8]
 
 
 def test_physical_architecture():
     arch = physical.get_arch_spec()
-    assert len(arch.words) == 8
+    assert len(arch.words) == 10
     assert len(arch.words[0].site_indices) == 16
     assert len(arch.site_buses) == 4
-    assert len(arch.word_buses) == 3
-    assert arch.max_qubits == 64
+    assert len(arch.word_buses) == 9
+    assert arch.max_qubits == 80
 
 
 def test_get_zone_index():
@@ -58,7 +58,7 @@ def test_entangling_zones():
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(8, 0), {"invalid location word_id=8, site_id=0"}
+    yield arch_spec, LocationAddress(10, 0), {"invalid location word_id=10, site_id=0"}
     yield arch_spec, LocationAddress(0, 2), {"invalid location word_id=0, site_id=2"}
 
 

@@ -135,6 +135,47 @@ class HypercubeWordTopology:
         return tuple(buses)
 
 
+@dataclass(frozen=True)
+class DiagonalWordTopology:
+    """Diagonal word connectivity replicating old Gemini site-bus pattern.
+
+    For a grid of (N rows × 2 cols), produces 2*N - 1 buses.
+    Each bus connects words in column 0 to words in column 1 at a
+    diagonal offset:
+
+    - Group 1 (shift 0..N-1): col_0[r] → col_1[r + shift]
+      for r in 0..N-1-shift
+    - Group 2 (shift 1..N-1): col_0[r + shift] → col_1[r]
+      for r in 0..N-1-shift (reverse diagonal)
+
+    This gives full connectivity between all (col_0, col_1) word pairs,
+    organized by diagonal. Requires exactly 2 columns.
+    """
+
+    def generate_word_buses(self, grid: WordGrid) -> tuple[Bus, ...]:
+        if grid.num_cols != 2:
+            raise ValueError(
+                f"DiagonalWordTopology requires exactly 2 columns, got {grid.num_cols}"
+            )
+        n = grid.num_rows
+        buses: list[Bus] = []
+
+        # Group 1: col_0[r] → col_1[r + shift]
+        for shift in range(n):
+            src = [grid.word_id_at(r, 0) for r in range(n - shift)]
+            dst = [grid.word_id_at(r + shift, 1) for r in range(n - shift)]
+            buses.append(Bus(src=src, dst=dst))
+
+        # Group 2: col_0[r + shift] → col_1[r] (reverse diagonals)
+        for diff in range(1, n):
+            shift = n - diff
+            src = [grid.word_id_at(r + shift, 0) for r in range(n - shift)]
+            dst = [grid.word_id_at(r, 1) for r in range(n - shift)]
+            buses.append(Bus(src=src, dst=dst))
+
+        return tuple(buses)
+
+
 # ── Inter-zone topologies ──
 
 
