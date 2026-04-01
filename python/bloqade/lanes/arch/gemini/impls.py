@@ -112,11 +112,13 @@ def _calc_hypercube_word_path_dict(words: tuple[Word, ...]):
 
     path_dict: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
 
+    buses = _hypercube_busses(hypercube_dims)
     for bus_id in range(hypercube_dims):
         shift = 2 ** (hypercube_dims - bus_id - 1)
         word_shifts = _get_word_bus_shifts(shift)
 
-        for word_id, word in enumerate(words[:shift]):
+        for word_id in buses[bus_id].src:
+            word = words[word_id]
             for site_id in range(word_size_y, 2 * word_size_y):
                 lane_addr = WordLaneAddress(word_id, site_id, bus_id)
                 path = _get_path_from_shift(word_shifts, word.site_position(site_id))

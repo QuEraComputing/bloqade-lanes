@@ -15,7 +15,7 @@ from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrateg
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.transform import MoveToSquinPhysical
 from bloqade.lanes.upstream import squin_to_move
 
 __all__ = [
@@ -101,9 +101,8 @@ def compile_to_physical_squin_noise_model(
         placement_strategy=placement_strategy,
         insert_return_moves=insert_return_moves,
     )
-    transformer = MoveToSquin(
+    transformer = MoveToSquinPhysical(
         arch_spec=arch_spec,
-        logical_initialization=None,
         noise_model=noise_model,
         aggressive_unroll=False,
     )
