@@ -52,16 +52,16 @@ def test_root_is_goal():
 
 def test_finds_one_step_goal():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     result = entropy_guided_search(tree, target, placement_goal(target))
     assert result.goal_node is not None
-    assert result.goal_node.configuration[0] == LocationAddress(0, 5)
+    assert result.goal_node.configuration[0] == LocationAddress(0, 1)
     assert result.goal_node.depth >= 1
 
 
 def test_returns_search_result():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     result = entropy_guided_search(tree, target, placement_goal(target))
     assert hasattr(result, "goal_node")
     assert hasattr(result, "nodes_expanded")
@@ -70,7 +70,7 @@ def test_returns_search_result():
 
 def test_max_expansions_limit():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 9)}
+    target = {0: LocationAddress(7, 1)}
     result = entropy_guided_search(
         tree, target, placement_goal(target), max_expansions=10
     )
@@ -79,7 +79,7 @@ def test_max_expansions_limit():
 
 def test_move_program_extraction():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     result = entropy_guided_search(tree, target, placement_goal(target))
     assert result.goal_node is not None
     program = result.goal_node.to_move_program()
@@ -90,7 +90,7 @@ def test_move_program_extraction():
 
 def test_custom_params():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     params = SearchParams(w_d=2.0, w_m=0.5, e_max=4)
     result = entropy_guided_search(tree, target, placement_goal(target), params=params)
     assert result.goal_node is not None
@@ -98,18 +98,18 @@ def test_custom_params():
 
 def test_two_qubit_goal():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 1)}
     result = entropy_guided_search(
         tree, target, placement_goal(target), max_expansions=100
     )
     if result.goal_node is not None:
-        assert result.goal_node.configuration[0] == LocationAddress(0, 5)
-        assert result.goal_node.configuration[1] == LocationAddress(1, 5)
+        assert result.goal_node.configuration[0] == LocationAddress(0, 1)
+        assert result.goal_node.configuration[1] == LocationAddress(1, 1)
 
 
 def test_reversion_expands_more_than_depth():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     result = entropy_guided_search(
         tree, target, placement_goal(target), params=params, max_expansions=200
@@ -119,26 +119,26 @@ def test_reversion_expands_more_than_depth():
 
 def test_sequential_fallback_triggered():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     result = entropy_guided_search(tree, target, placement_goal(target), params=params)
     assert result.goal_node is not None
-    assert result.goal_node.configuration[0] == LocationAddress(0, 5)
+    assert result.goal_node.configuration[0] == LocationAddress(0, 1)
 
 
 def test_sequential_fallback_direct():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 0)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 0)}
     search = EntropyGuidedSearch(tree, target, placement_goal(target))
     result = search._sequential_fallback(tree.root)
     assert result.goal_node is not None
-    assert result.goal_node.configuration[0] == LocationAddress(0, 5)
+    assert result.goal_node.configuration[0] == LocationAddress(0, 1)
     assert result.goal_node.configuration[1] == LocationAddress(1, 0)
 
 
 def test_max_candidates_enforced():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     params = SearchParams(max_candidates=1, e_max=4)
     result = entropy_guided_search(tree, target, placement_goal(target), params=params)
     assert result.goal_node is not None
@@ -146,7 +146,7 @@ def test_max_candidates_enforced():
 
 def test_on_step_callback_fires():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     records, record = _make_on_step_recorder()
     result = entropy_guided_search(tree, target, placement_goal(target), on_step=record)
     assert result.goal_node is not None
@@ -158,14 +158,14 @@ def test_on_step_callback_fires():
 
 def test_on_step_none_is_noop():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     result = entropy_guided_search(tree, target, placement_goal(target), on_step=None)
     assert result.goal_node is not None
 
 
 def test_on_step_records_revert():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     records, record = _make_on_step_recorder()
     entropy_guided_search(
@@ -201,7 +201,7 @@ def test_on_step_records_revert():
 
 def test_on_step_fallback_events():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     records, record = _make_on_step_recorder()
     entropy_guided_search(
@@ -213,7 +213,7 @@ def test_on_step_fallback_events():
 
 def test_outcome_transposition_maps_to_state_seen(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     records, record = _make_on_step_recorder()
     candidate = frozenset({SiteLaneAddress(0, 0, 0)})
@@ -245,7 +245,7 @@ def test_outcome_transposition_maps_to_state_seen(monkeypatch):
 
 def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     records, record = _make_on_step_recorder()
     candidate = frozenset({SiteLaneAddress(0, 0, 0)})

@@ -47,7 +47,7 @@ def test_apply_move_set_valid():
     assert child.depth == 1
     assert child.parent is tree.root
     assert child.parent_moves == move_set
-    assert child.configuration[0] == LocationAddress(0, 5)
+    assert child.configuration[0] == LocationAddress(0, 1)
     assert child.configuration[1] == LocationAddress(1, 0)
 
 
@@ -56,7 +56,7 @@ def test_apply_move_set_collision_strict_raises():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 5),
+        1: LocationAddress(0, 1),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
@@ -72,7 +72,7 @@ def test_apply_move_set_collision_nonstrict_returns_none():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 5),
+        1: LocationAddress(0, 1),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
@@ -88,7 +88,7 @@ def test_collision_filtered_by_generator():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 5),
+        1: LocationAddress(0, 1),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
@@ -158,7 +158,10 @@ def test_expand_produces_valid_children():
 
 def test_expand_deadlock():
     arch_spec = logical.get_arch_spec()
-    placement = {i: LocationAddress(0, i) for i in range(10)}
+    # Fill all 8 words × 2 sites = 16 locations to create a deadlock
+    placement = {
+        i: LocationAddress(i // 2, i % 2) for i in range(16)
+    }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
 
@@ -206,7 +209,7 @@ def test_try_move_set_reports_collision():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 5),
+        1: LocationAddress(0, 1),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     move_set = frozenset({SiteLaneAddress(0, 0, 0)})
@@ -288,36 +291,35 @@ def test_valid_lanes_filter_by_direction():
         assert lane.direction == Direction.BACKWARD
 
 
-def test_apply_move_set_rejects_incomplete_grid():
-    """An incomplete AOD grid (not a full Cartesian product) raises InvalidMoveError."""
+def test_apply_move_set_rejects_inconsistent_group():
+    """A lane group with mixed move types raises InvalidMoveError."""
     tree = _make_tree()
 
-    # Three lanes spanning 2 words × 2 sites = 4 expected, but only 3 provided.
-    # This violates the AOD grid constraint.
-    incomplete_grid = frozenset(
+    from bloqade.lanes.layout import WordLaneAddress
+
+    # Mixing site bus and word bus lanes violates lane-group consistency.
+    inconsistent_group = frozenset(
         {
             SiteLaneAddress(0, 0, 0),
-            SiteLaneAddress(1, 0, 0),
-            SiteLaneAddress(0, 1, 0),
-            # Missing: SiteLaneAddress(1, 1, 0)
+            WordLaneAddress(0, 0, 0),
         }
     )
 
     with pytest.raises(InvalidMoveError, match="lane-group validation"):
-        tree.apply_move_set(tree.root, incomplete_grid)
+        tree.apply_move_set(tree.root, inconsistent_group)
 
 
 def test_valid_lanes_no_collisions():
-    """All sites occupied — no valid lanes with unoccupied destinations."""
+    """All sites in a word occupied — no valid site-bus lanes for that word."""
     arch_spec = logical.get_arch_spec()
-    placement = {i: LocationAddress(0, i) for i in range(10)}
+    # Fill both sites in word 0 so site bus lanes within word 0 are blocked
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(0, 1)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
-    # Site bus lanes within word 0 should all be blocked
     from bloqade.lanes.layout import MoveType
 
-    site_lanes = tree.valid_lanes(tree.root, move_type=MoveType.SITE)
-    # May still have word bus lanes, but site bus on word 0 should be empty
+    site_lanes = list(tree.valid_lanes(tree.root, move_type=MoveType.SITE))
+    # Site bus lanes on word 0 should be blocked (both sites occupied)
     for lane in site_lanes:
         src, dst = tree.arch_spec.get_endpoints(lane)
         assert not tree.root.is_occupied(dst)

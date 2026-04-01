@@ -19,7 +19,7 @@ def invalid_methods():
     @lanes_kernel
     def invalid_location(state: State):
 
-        return move.fill(state, location_addresses=(LocationAddress(2, 1),))
+        return move.fill(state, location_addresses=(LocationAddress(8, 0),))
 
     yield invalid_location
 

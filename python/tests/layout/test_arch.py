@@ -104,7 +104,7 @@ def test_get_lane_address_site_move_forward():
     """get_lane_address returns the correct lane for a site-bus move (forward)."""
     arch_spec = logical.get_arch_spec()
     src = layout.LocationAddress(0, 0)
-    dst = layout.LocationAddress(0, 5)
+    dst = layout.LocationAddress(0, 1)
     lane = arch_spec.get_lane_address(src, dst)
     assert lane is not None
     assert isinstance(lane, SiteLaneAddress)
@@ -118,7 +118,7 @@ def test_get_lane_address_site_move_backward():
     """get_lane_address returns the correct lane for a site-bus move (backward)."""
     arch_spec = logical.get_arch_spec()
     src = layout.LocationAddress(0, 0)
-    dst = layout.LocationAddress(0, 5)
+    dst = layout.LocationAddress(0, 1)
     forward_lane = arch_spec.get_lane_address(src, dst)
     assert forward_lane is not None
     backward_lane = arch_spec.get_lane_address(dst, src)
@@ -131,8 +131,8 @@ def test_get_lane_address_site_move_backward():
 def test_get_lane_address_word_move():
     """get_lane_address returns the correct lane for a word-bus move."""
     arch_spec = logical.get_arch_spec()
-    src = layout.LocationAddress(0, 5)
-    dst = layout.LocationAddress(1, 5)
+    src = layout.LocationAddress(0, 0)
+    dst = layout.LocationAddress(1, 0)
     lane = arch_spec.get_lane_address(src, dst)
     assert lane is not None
     assert isinstance(lane, WordLaneAddress)
@@ -147,10 +147,6 @@ def test_get_lane_address_returns_none_for_unconnected_pair():
     arch_spec = logical.get_arch_spec()
     loc = layout.LocationAddress(0, 0)
     assert arch_spec.get_lane_address(loc, loc) is None
-    # Two sites not on the same bus (e.g. word 0 site 0 and word 1 site 0)
-    src = layout.LocationAddress(0, 0)
-    dst = layout.LocationAddress(1, 0)
-    assert arch_spec.get_lane_address(src, dst) is None
 
 
 def test_get_lane_address_roundtrip():

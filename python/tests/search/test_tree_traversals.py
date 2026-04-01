@@ -16,7 +16,7 @@ def _make_tree() -> ConfigurationTree:
     return ConfigurationTree.from_initial_placement(arch_spec, placement)
 
 
-_TARGET = LocationAddress(0, 5)
+_TARGET = LocationAddress(0, 1)
 _GEN = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
 
 

@@ -59,11 +59,11 @@ def test_apply_moves():
 
     expected_atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
-            layout.LocationAddress(0, 5): 0,
+            layout.LocationAddress(0, 1): 0,
             layout.LocationAddress(1, 0): 1,
         },
         qubit_to_locations={
-            0: layout.LocationAddress(0, 5),
+            0: layout.LocationAddress(0, 1),
             1: layout.LocationAddress(1, 0),
         },
         prev_lanes={
@@ -79,11 +79,11 @@ def test_apply_moves_with_collision():
     atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
             layout.LocationAddress(0, 0): 0,
-            layout.LocationAddress(0, 5): 1,
+            layout.LocationAddress(0, 1): 1,
         },
         qubit_to_locations={
             0: layout.LocationAddress(0, 0),
-            1: layout.LocationAddress(0, 5),
+            1: layout.LocationAddress(0, 1),
         },
     )
 
@@ -130,14 +130,14 @@ def test_get_qubit_pairing():
 
 def test_get_qubit_pairing_with_pairs():
     # Word 0 pairs with word 1. Place qubits at matching sites.
-    # (0,0)↔(1,0) paired, (0,1)↔(1,1) paired, (0,2) unpaired.
+    # (0,0)↔(1,0) paired, (0,1)↔(1,1) paired, (2,0) unpaired (word 2 pairs with word 3).
     atom_state = atom_state_data.AtomStateData.new(
         [
             layout.LocationAddress(0, 0),  # qubit 0 — pairs with qubit 1
             layout.LocationAddress(1, 0),  # qubit 1 — pairs with qubit 0
             layout.LocationAddress(0, 1),  # qubit 2 — pairs with qubit 3
             layout.LocationAddress(1, 1),  # qubit 3 — pairs with qubit 2
-            layout.LocationAddress(0, 2),  # qubit 4 — unpaired (no qubit at (1,2))
+            layout.LocationAddress(2, 0),  # qubit 4 — unpaired (no qubit at (3,0))
         ]
     )
 

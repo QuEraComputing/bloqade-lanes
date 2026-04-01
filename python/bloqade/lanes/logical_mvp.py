@@ -22,7 +22,7 @@ from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
@@ -165,7 +165,7 @@ def compile_squin_to_move_and_visualize(
         layout_heuristic=layout_heuristic,
     )
     if transversal_rewrite:
-        arch_spec = generate_arch_hypercube(4)
+        arch_spec = physical.get_arch_spec()
         marker = "o"
     else:
         arch_spec = logical.get_arch_spec()
@@ -209,7 +209,7 @@ def compile_to_physical_squin_noise_model(
         layout_heuristic=layout_heuristic,
     )
     transformer = MoveToSquin(
-        arch_spec=generate_arch_hypercube(4),
+        arch_spec=physical.get_arch_spec(),
         logical_initialization=logical.steane7_initialize,
         noise_model=noise_model,
         aggressive_unroll=False,
@@ -415,7 +415,7 @@ def compile_task(
 
     run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
 
-    physical_arch_spec = generate_arch_hypercube(4)
+    physical_arch_spec = physical.get_arch_spec()
     physical_move_kernel = compile_squin_to_move(
         logical_squin_kernel, transversal_rewrite=True
     )

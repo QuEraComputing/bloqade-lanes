@@ -66,10 +66,9 @@ class LogicalPlacementMethods:
         controls: tuple[int, ...],
         targets: tuple[int, ...],
     ) -> ConcreteState:
-        start_word_id = self._word_balance(state, controls, targets)
         moves: list[MoveOp] = []
         for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
-            moves.append(self._pick_move(state, moves, start_word_id, c, t))
+            moves.append(self._pick_move(state, moves, c, t))
         return self._update_positions(state, moves)
 
     def validate_initial_layout(
@@ -81,19 +80,6 @@ class LogicalPlacementMethods:
                 raise ValueError(
                     f"Initial layout address {addr} is not at a home position"
                 )
-
-    def _word_balance(
-        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
-    ) -> int:
-        word_move_counts = {0: 0, 1: 0}
-        for c, t in zip(controls, targets):
-            c_addr = state.layout[c]
-            t_addr = state.layout[t]
-            if c_addr.word_id != t_addr.word_id:
-                word_move_counts[c_addr.word_id] += state.move_count[c]
-                word_move_counts[t_addr.word_id] += state.move_count[t]
-
-        return 0 if word_move_counts[0] <= word_move_counts[1] else 1
 
     def _pick_move_by_conflict(
         self,
@@ -116,7 +102,6 @@ class LogicalPlacementMethods:
         self,
         state: ConcreteState,
         moves: list[MoveOp],
-        start_word_id: int,
         control: int,
         target: int,
     ) -> MoveOp:
@@ -141,7 +126,8 @@ class LogicalPlacementMethods:
             if c_move_count > t_move_count:
                 return move_t_to_c
             return self._pick_move_by_conflict(moves, move_c_to_t, move_t_to_c)
-        if t_addr.word_id == start_word_id:
+        # Qubits in different words: prefer moving from home to CZ-staging
+        if self.arch_spec.is_home_position(t_addr):
             return move_t_to_c
         return move_c_to_t
 

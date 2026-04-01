@@ -10,12 +10,13 @@ from bloqade.lanes.layout.encoding import MoveType
 from . import stmts
 
 
-def get_coordinate(site_id: int) -> tuple[int, int]:
-    return (site_id // 5, site_id % 5)
+def get_coordinate(site_id: int, sites_per_word: int) -> tuple[int, int]:
+    return (site_id // sites_per_word, site_id % sites_per_word)
 
 
 @dataclass
 class RewriteMoves(rewrite_abc.RewriteRule):
+    sites_per_word: int = 2
 
     def get_address_info(self, node: move.Move):
 
@@ -24,9 +25,14 @@ class RewriteMoves(rewrite_abc.RewriteRule):
         word = node.lanes[0].word_id
         bus_id = node.lanes[0].bus_id
 
-        y_positions = [get_coordinate(lane.site_id)[1] for lane in node.lanes]
+        y_positions = [
+            get_coordinate(lane.site_id, self.sites_per_word)[1]
+            for lane in node.lanes
+        ]
 
-        y_mask = ilist.IList([i in y_positions for i in range(5)])
+        y_mask = ilist.IList(
+            [i in y_positions for i in range(self.sites_per_word)]
+        )
 
         (y_mask_stmt := py.Constant(y_mask)).insert_before(node)
 
@@ -51,6 +57,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
                     word=word,
                     bus_id=bus_id,
                     direction=direction,
+                    sites_per_word=self.sites_per_word,
                 )
             )
         elif move_type == MoveType.WORD:
@@ -59,6 +66,7 @@ class RewriteMoves(rewrite_abc.RewriteRule):
                     current_state=node.current_state,
                     y_mask=y_mask_ref,
                     direction=direction,
+                    sites_per_word=self.sites_per_word,
                 )
             )
         else:

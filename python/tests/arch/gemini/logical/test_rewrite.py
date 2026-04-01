@@ -27,19 +27,17 @@ def test_logical_architecture_rewrite_site():
             lanes=(
                 SiteLaneAddress(0, 0, 0, Direction.FORWARD),
                 SiteLaneAddress(0, 1, 0, Direction.FORWARD),
-                SiteLaneAddress(0, 2, 0, Direction.FORWARD),
-                SiteLaneAddress(0, 3, 0, Direction.FORWARD),
             ),
         )
     )
 
-    rewrite_rule = rewrite.Walk(RewriteMoves())
+    rewrite_rule = rewrite.Walk(RewriteMoves(sites_per_word=2))
 
     rewrite_rule.rewrite(test_block)
 
     expected_block = ir.Block()
     expected_block.stmts.append(
-        const_list := py.Constant(ilist.IList([True, True, True, True, False]))
+        const_list := py.Constant(ilist.IList([True, True]))
     )
     expected_block.stmts.append(
         SiteBusMove(
@@ -48,6 +46,7 @@ def test_logical_architecture_rewrite_site():
             word=0,
             bus_id=0,
             direction=Direction.FORWARD,
+            sites_per_word=2,
         )
     )
     assert_nodes(test_block, expected_block)
@@ -61,7 +60,7 @@ def test_logical_architecture_rewrite_site_no_lanes():
 
     expected_block = ir.Block()
 
-    rewrite.Walk(RewriteMoves()).rewrite(test_block)
+    rewrite.Walk(RewriteMoves(sites_per_word=2)).rewrite(test_block)
 
     assert_nodes(test_block, expected_block)
 

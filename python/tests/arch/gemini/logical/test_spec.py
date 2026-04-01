@@ -1,7 +1,6 @@
 import pytest
 
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     LocationAddress,
@@ -9,69 +8,58 @@ from bloqade.lanes.layout.encoding import (
 )
 
 
-def test_architecture_generation():
-    arch_physical = generate_arch_hypercube()
+def test_logical_architecture():
+    arch = logical.get_arch_spec()
+    assert len(arch.words) == 8
+    assert len(arch.words[0].site_indices) == 2
+    assert len(arch.site_buses) == 1
+    assert len(arch.word_buses) == 3
+    assert arch.max_qubits == 8
+    assert sorted(arch._home_words) == [0, 2, 4, 6]
 
-    assert len(arch_physical.words) == 16
-    assert len(arch_physical.site_buses) == 9
-    assert len(arch_physical.word_buses) == 4
+
+def test_physical_architecture():
+    arch = physical.get_arch_spec()
+    assert len(arch.words) == 8
+    assert len(arch.words[0].site_indices) == 16
+    assert len(arch.site_buses) == 4
+    assert len(arch.word_buses) == 3
+    assert arch.max_qubits == 64
 
 
 def test_get_zone_index():
-    arch_physical = generate_arch_hypercube()
+    arch = logical.get_arch_spec()
 
     loc_addr = LocationAddress(word_id=0, site_id=0)
     zone_id = ZoneAddress(0)
-    index = arch_physical.get_zone_index(loc_addr, zone_id)
+    index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 0
 
     loc_addr = LocationAddress(word_id=0, site_id=1)
     zone_id = ZoneAddress(0)
-    index = arch_physical.get_zone_index(loc_addr, zone_id)
+    index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 1
 
     loc_addr = LocationAddress(word_id=1, site_id=0)
     zone_id = ZoneAddress(0)
-    index = arch_physical.get_zone_index(loc_addr, zone_id)
-    assert index == 10
+    index = arch.get_zone_index(loc_addr, zone_id)
+    assert index == 2
 
 
-def test_logical_architecture():
-    assert logical.get_arch_spec() == generate_arch_hypercube(
-        hypercube_dims=1, word_size_y=5
-    )
-
-
-def plot():
-    from matplotlib import pyplot as plt
-
-    arch_physical = generate_arch_hypercube()
-    f, axs = plt.subplots(1, 1)
-
-    ax = arch_physical.plot(
-        show_words=(0, 1), show_site_bus=tuple(range(4)), show_word_bus=(0,), ax=axs
-    )
-
-    ax.set_aspect(0.25)
-    xmin, xmax = ax.get_xlim()
-    ymin, ymax = ax.get_ylim()
-    ax.set_xlim(xmin - 2, xmax + 2)
-    ax.set_ylim(ymin - 2, ymax + 2)
-
-    f, axs = plt.subplots(2, 2, figsize=(10, 8))
-
-    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(0,), ax=axs[0, 0])
-    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(1,), ax=axs[0, 1])
-    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(2,), ax=axs[1, 0])
-    arch_physical.plot(show_words=tuple(range(16)), show_word_bus=(3,), ax=axs[1, 1])
-
-    plt.show()
+def test_entangling_zones():
+    arch = logical.get_arch_spec()
+    assert len(arch.entangling_zones) == 1
+    pairs = arch.entangling_zones[0]
+    assert (0, 1) in pairs
+    assert (2, 3) in pairs
+    assert (4, 5) in pairs
+    assert (6, 7) in pairs
 
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(16, 0), {"invalid location word_id=16, site_id=0"}
-    yield arch_spec, LocationAddress(0, 32), {"invalid location word_id=0, site_id=32"}
+    yield arch_spec, LocationAddress(8, 0), {"invalid location word_id=8, site_id=0"}
+    yield arch_spec, LocationAddress(0, 2), {"invalid location word_id=0, site_id=2"}
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())

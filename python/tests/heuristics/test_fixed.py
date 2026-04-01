@@ -48,13 +48,12 @@ def assert_all_home(
 
 
 def cz_placement_cases():
-    all_zones = frozenset([layout.ZoneAddress(0)])
-
     # Trivial cases
     yield ("top", AtomState.top(), (0, 1), (2, 3), AtomState.top())
     yield ("bottom", AtomState.bottom(), (0, 1), (2, 3), AtomState.bottom())
 
     # Qubits in different home words — already at blockade positions
+    # (0,0)↔(1,0) and (0,1)↔(1,1) are CZ pairs
     yield (
         "cross_word_no_move",
         ConcreteState(
@@ -72,7 +71,7 @@ def cz_placement_cases():
         None,  # property-check only
     )
 
-    # All qubits in same home word — one must move to partner
+    # Two qubits in same home word — one must move to partner word for CZ
     yield (
         "same_word_needs_move",
         ConcreteState(
@@ -80,13 +79,11 @@ def cz_placement_cases():
             layout=(
                 LocationAddress(0, 0),
                 LocationAddress(0, 1),
-                LocationAddress(0, 2),
-                LocationAddress(0, 3),
             ),
-            move_count=(0, 0, 0, 0),
+            move_count=(0, 0),
         ),
-        (0, 1),
-        (2, 3),
+        (0,),
+        (1,),
         None,
     )
 
@@ -98,13 +95,11 @@ def cz_placement_cases():
             layout=(
                 LocationAddress(0, 0),
                 LocationAddress(0, 1),
-                LocationAddress(0, 2),
-                LocationAddress(0, 3),
             ),
-            move_count=(1, 1, 0, 0),
+            move_count=(1, 0),
         ),
-        (0, 1),
-        (2, 3),
+        (0,),
+        (1,),
         None,
     )
 
@@ -116,8 +111,8 @@ def cz_placement_cases():
             layout=(
                 LocationAddress(0, 0),
                 LocationAddress(0, 1),
-                LocationAddress(0, 2),
-                LocationAddress(0, 3),
+                LocationAddress(2, 0),
+                LocationAddress(2, 1),
             ),
             move_count=(1, 0, 0, 0),
         ),
@@ -172,9 +167,9 @@ def test_fixed_sq_placement():
         occupied=frozenset(),
         layout=(
             LocationAddress(0, 0),
-            LocationAddress(0, 2),
-            LocationAddress(1, 0),
-            LocationAddress(1, 2),
+            LocationAddress(0, 1),
+            LocationAddress(2, 0),
+            LocationAddress(2, 1),
         ),
         move_count=(0, 0, 0, 0),
     )
@@ -202,9 +197,9 @@ def test_fixed_invalid_initial_layout_bad_word():
     placement_strategy = LogicalPlacementStrategy()
     invalid_layout = (
         LocationAddress(0, 0),
-        LocationAddress(1, 0),
         LocationAddress(2, 0),
-        LocationAddress(3, 0),
+        LocationAddress(4, 0),
+        LocationAddress(99, 0),
     )
     with pytest.raises(ValueError):
         placement_strategy.validate_initial_layout(invalid_layout)
@@ -212,35 +207,34 @@ def test_fixed_invalid_initial_layout_bad_word():
 
 def test_initial_layout():
     layout_heuristic = logical_layout.LogicalLayoutHeuristic()
-    edges = {(i, j): 1 for i in range(10) for j in range(i + 1, 10, 1)}
+    num_qubits = layout_heuristic.arch_spec.max_qubits  # 8 for new arch
+    edges = {(i, j): 1 for i in range(num_qubits) for j in range(i + 1, num_qubits)}
     edges[(0, 1)] = 10
     edges = sum((weight * (edge,) for edge, weight in edges.items()), ())
 
-    result = layout_heuristic.compute_layout(tuple(range(10)), [edges])
+    result = layout_heuristic.compute_layout(tuple(range(num_qubits)), [edges])
 
     arch = layout_heuristic.arch_spec
     # All qubits should be at home positions
     assert_all_home(arch, result)
-    assert len(result) == 10
+    assert len(result) == num_qubits
 
 
 def test_move_scheduler_cz():
-    # Place qubits in home word only, with enough room for CZ moves
+    # Place qubits in same home word — CZ requires moving to partner
     initial_state = ConcreteState(
         frozenset(),
         (
             LocationAddress(0, 0),
             LocationAddress(0, 1),
-            LocationAddress(0, 2),
-            LocationAddress(0, 3),
         ),
-        (0, 0, 0, 0),
+        (0, 0),
     )
 
     placement = LogicalPlacementStrategy()
     arch = placement.arch_spec
-    controls = (0, 1)
-    targets = (2, 3)
+    controls = (0,)
+    targets = (1,)
 
     final_state = placement.cz_placements(initial_state, controls, targets)
     assert isinstance(final_state, ExecuteCZ)
@@ -278,11 +272,16 @@ def test_nohome_choose_return_layout_duplicate_collision():
     non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
     assert len(non_home) > 0
 
-    # Fill almost all home sites with occupied atoms
+    # Fill ALL home sites with occupied atoms except one (used by qubit 1)
     home_word = min(arch._home_words)
-    n_sites = len(arch.words[home_word].site_indices)
+    all_home_sites = [
+        LocationAddress(w, s)
+        for w in sorted(arch._home_words)
+        for s in range(len(arch.words[w].site_indices))
+    ]
+    # qubit 1 is at (home_word, 0), fill the rest
     occupied = frozenset(
-        LocationAddress(home_word, s) for s in range(1, n_sites)
+        addr for addr in all_home_sites if addr != LocationAddress(home_word, 0)
     )
     state_before = ConcreteState(
         occupied=occupied,
@@ -302,19 +301,17 @@ def test_nohome_choose_return_layout_sequential_no_conflicts():
     non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
     assert len(non_home) > 0
 
-    # Multiple qubits at non-home positions
+    # Two qubits at non-home positions (2 sites per word)
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
             LocationAddress(non_home[0], 0),
             LocationAddress(non_home[0], 1),
-            LocationAddress(non_home[0], 2),
-            LocationAddress(non_home[0], 3),
         ),
-        move_count=(0, 0, 0, 0),
+        move_count=(0, 0),
     )
     mid_state, _ = placement.choose_return_layout(
-        state_before, controls=(0, 1), targets=(2, 3)
+        state_before, controls=(0,), targets=(1,)
     )
     assert_all_home(arch, mid_state.layout)
 
@@ -342,7 +339,7 @@ def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyP
     placement = LogicalPlacementStrategyNoHome()
     # Find a valid src→dst pair with a lane
     src = LocationAddress(0, 0)
-    dst = LocationAddress(0, 5)
+    dst = LocationAddress(0, 1)
     lane = placement.arch_spec.get_lane_address(src, dst)
     assert lane is not None
 
@@ -371,7 +368,7 @@ def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyP
 def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatch):
     placement = LogicalPlacementStrategyNoHome()
     src = LocationAddress(0, 0)
-    dst = LocationAddress(0, 5)
+    dst = LocationAddress(0, 1)
 
     monkeypatch.setattr(
         type(placement._path_finder), "find_path", lambda *_args, **_kwargs: None
@@ -381,15 +378,29 @@ def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatc
     assert placement._path_cost(path) == placement.large_cost
 
 
-@pytest.mark.parametrize("word_size_y", [3, 5, 7])
-def test_initial_layout_variable_word_size(word_size_y):
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+@pytest.mark.parametrize("sites_per_word", [2, 4])
+def test_initial_layout_variable_sites_per_word(sites_per_word):
+    from bloqade.lanes.arch.builder import build_arch
+    from bloqade.lanes.arch.topology import HypercubeSiteTopology, HypercubeWordTopology
+    from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 
-    arch_spec = generate_arch_hypercube(hypercube_dims=1, word_size_y=word_size_y)
+    bp = ArchBlueprint(
+        zones={
+            "gate": ZoneSpec(
+                num_rows=4,
+                num_cols=2,
+                entangling=True,
+                word_topology=HypercubeWordTopology(),
+                site_topology=HypercubeSiteTopology(),
+            )
+        },
+        layout=DeviceLayout(sites_per_word=sites_per_word),
+    )
+    arch_spec = build_arch(bp).arch
     layout_heuristic = logical_layout.LogicalLayoutHeuristic()
     layout_heuristic.arch_spec = arch_spec
 
-    num_qubits = word_size_y
+    num_qubits = sites_per_word * 2  # 2 home words minimum
     edges = {(i, j): 1 for i in range(num_qubits) for j in range(i + 1, num_qubits)}
     edges[(0, 1)] = 10
     edges = sum((weight * (edge,) for edge, weight in edges.items()), ())

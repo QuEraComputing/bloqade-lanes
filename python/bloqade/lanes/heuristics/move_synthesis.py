@@ -7,6 +7,7 @@ for lane lookup instead of hardcoded bus arithmetic.
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
+from bloqade.lanes.layout.path import PathFinder
 
 
 def _intra_word_moves(
@@ -29,8 +30,8 @@ def _compute_move_layers(
 ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
     """Compute move layers from state_before to state_after.
 
-    Cross-word moves: site bus adjustment first (within starting word),
-    then word bus transfer. Same-word moves: site bus only.
+    Cross-word moves use PathFinder for multi-hop word bus routing.
+    Same-word moves use site bus only.
     """
     diffs = [
         (src, dst)
@@ -49,58 +50,16 @@ def _compute_move_layers(
 
     moves: list[tuple[layout.LaneAddress, ...]] = []
 
-    # Cross-word moves: site bus first (rearrange within starting word),
-    # then word bus (transfer to destination word)
     if cross_word:
-        # For each cross-word move, find the word bus lane and determine
-        # the intermediate site (the site_id where the word bus operates)
-        site_adjustments: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
-        word_bus_lanes: dict[int, list[layout.LaneAddress]] = {}
+        path_finder = PathFinder(arch_spec)
 
         for src, dst in cross_word:
-            # Try direct word bus at dst.site_id first
-            adjusted_src = layout.LocationAddress(src.word_id, dst.site_id)
-            lane = arch_spec.get_lane_address(adjusted_src, dst)
-
-            if lane is None:
-                # dst.site_id doesn't have a word bus — find one that does
-                # Try each site in has_word_buses to find a valid word bus
-                found = False
-                for wb_site in sorted(arch_spec.has_word_buses):
-                    wb_src = layout.LocationAddress(src.word_id, wb_site)
-                    wb_dst = layout.LocationAddress(dst.word_id, wb_site)
-                    lane = arch_spec.get_lane_address(wb_src, wb_dst)
-                    if lane is not None:
-                        # Site adjustment: src → (src.word, wb_site)
-                        if src.site_id != wb_site:
-                            site_adjustments.append(
-                                (src, layout.LocationAddress(src.word_id, wb_site))
-                            )
-                        word_bus_lanes.setdefault(lane.bus_id, []).append(lane)
-                        # Post word-bus site adjustment: (dst.word, wb_site) → dst
-                        # will be handled as a same-word move in a second pass
-                        if wb_site != dst.site_id:
-                            same_word.append(
-                                (layout.LocationAddress(dst.word_id, wb_site), dst)
-                            )
-                        found = True
-                        break
-                assert found, f"No word bus path from {src} to {dst}"
-            else:
-                # Direct word bus at dst.site_id works
-                if src.site_id != dst.site_id:
-                    site_adjustments.append((src, adjusted_src))
-                word_bus_lanes.setdefault(lane.bus_id, []).append(lane)
-
-        # Execute site adjustments first
-        if site_adjustments:
-            for word_id in {s.word_id for s, _ in site_adjustments}:
-                word_diffs = [(s, d) for s, d in site_adjustments if s.word_id == word_id]
-                moves.extend(_intra_word_moves(arch_spec, word_diffs))
-
-        # Then word bus moves
-        for lanes in word_bus_lanes.values():
-            moves.append(tuple(lanes))
+            result = path_finder.find_path(src, dst)
+            assert result is not None, f"No path from {src} to {dst}"
+            lanes, _ = result
+            # Each lane in the path is a separate move layer
+            for lane in lanes:
+                moves.append((lane,))
 
     # Same-word moves: site bus only
     for word_id in {s.word_id for s, _ in same_word}:
