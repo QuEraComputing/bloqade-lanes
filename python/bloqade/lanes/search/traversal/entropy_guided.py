@@ -414,12 +414,27 @@ class EntropyGuidedSearch:
 
             for lane in lanes:
                 moveset = frozenset({lane})
-                child = self.tree.apply_move_set(node, moveset, strict=False)
-                if child is None:
+                outcome = self.tree.try_move_set(node, moveset, strict=False)
+                if (
+                    outcome.status == ExpansionStatus.CREATED_CHILD
+                    and outcome.child is not None
+                ):
+                    next_node = outcome.child
+                elif (
+                    outcome.status == ExpansionStatus.ALREADY_CHILD
+                    and outcome.child is not None
+                ):
+                    next_node = outcome.child
+                elif (
+                    outcome.status == ExpansionStatus.TRANSPOSITION_SEEN
+                    and outcome.existing_node is not None
+                ):
+                    next_node = outcome.existing_node
+                else:
                     return self._make_result()
                 self.nodes_expanded += 1
-                self.max_depth_reached = max(self.max_depth_reached, child.depth)
-                node = child
+                self.max_depth_reached = max(self.max_depth_reached, next_node.depth)
+                node = next_node
                 self.debug.fallback_step(node, qid, moveset)
 
         if self.goal(node):
