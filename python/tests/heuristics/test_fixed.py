@@ -412,7 +412,6 @@ def test_initial_layout_variable_sites_per_word(sites_per_word):
     assert_all_home(arch_spec, result)
 
 
-@pytest.mark.skip(reason="Old Gemini arch word-bus-only-at-right-column constraint not yet handled")
 def test_nohome_lookahead_can_change_return_choice():
     """Tests that lookahead can influence the return layout choice."""
     arch = get_arch_spec()
