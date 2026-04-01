@@ -161,14 +161,13 @@ bloqade-bytecode arch <INPUT>
 **Example output:**
 
 ```
-ArchSpec v1.0
+ArchSpec v2.0
 
 Geometry: 2 word(s), 10 sites/word
   Word 0: 2x10 grid, 10 sites
     x: start=0, spacing=[5.0]
     y: start=0, spacing=[1.0, 1.0, ...]
     site_indices: (0,0) (0,1) (0,2) ...
-    has_cz: (1,0) (1,1) (1,2) ...
 
 Buses: 1 site bus(es), 1 word bus(es)
   Site bus 0: src=[0, 1, 2, 3, 4] dst=[5, 6, 7, 8, 9]
@@ -178,7 +177,7 @@ Buses: 1 site bus(es), 1 word bus(es)
 
 Zones: 1 zone(s)
   Zone 0: words=[0, 1]
-  entangling_zones: [0]
+  entangling_zones: [[[0, 1]]]
   measurement_mode_zones: [0]
 
 Paths: 1 path(s)

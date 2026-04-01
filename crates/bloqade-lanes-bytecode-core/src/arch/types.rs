@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn optional_fields_absent() {
         let json = r#"{
-            "version": "1.0",
+            "version": "2.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn capability_fields_present() {
         let json = r#"{
-            "version": "1.0",
+            "version": "2.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
