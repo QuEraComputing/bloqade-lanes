@@ -1,4 +1,3 @@
-from bloqade.lanes import generate_simple_noise_model
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
@@ -8,7 +7,8 @@ from bloqade.lanes.layout.encoding import (
     WordLaneAddress,
     ZoneAddress,
 )
-from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.transform import MoveToSquinPhysical
 
 lane1 = SiteLaneAddress(0, 0, 0)
 lane2 = WordLaneAddress(0, 5, 0)
@@ -30,7 +30,7 @@ def main(cond: bool):
 
 arch_spec = get_arch_spec()
 
-squin_kernel = MoveToSquin(
+squin_kernel = MoveToSquinPhysical(
     arch_spec=get_arch_spec(),
     noise_model=generate_simple_noise_model(),
 ).emit(main)

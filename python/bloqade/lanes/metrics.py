@@ -5,14 +5,13 @@ from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
-from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics import logical_layout
 from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.logical_mvp import transversal_rewrites
-from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
-from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
+from bloqade.lanes.transform import MoveToSquinLogical
 from bloqade.lanes.upstream import (
     default_merge_heuristic,
     squin_to_move,
@@ -72,7 +71,7 @@ class Metrics:
     """
 
     arch_spec: Any  # ArchSpec — use Any to avoid circular import
-    noise_model: NoiseModelABC | None = None
+    noise_model: LogicalNoiseModelABC | None = None
     move_calc: MoveMetricCalculator = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -88,9 +87,13 @@ class Metrics:
         insert_return_moves: bool,
         merge_heuristic=default_merge_heuristic,
     ) -> ir.Method:
-        noise_model = self.noise_model
-        if noise_model is None:
-            noise_model = generate_simple_noise_model()
+        noise_model: LogicalNoiseModelABC
+        if self.noise_model is None:
+            noise_model = generate_logical_noise_model()
+        elif isinstance(self.noise_model, LogicalNoiseModelABC):
+            noise_model = self.noise_model
+        else:
+            noise_model = generate_logical_noise_model()
 
         move_mt = squin_to_move(
             mt,
@@ -100,10 +103,10 @@ class Metrics:
             merge_heuristic=merge_heuristic,
         )
         move_mt = transversal_rewrites(move_mt)
-        transformer = MoveToSquin(
+        transformer = MoveToSquinLogical(
             arch_spec=self.arch_spec,
-            logical_initialization=logical.steane7_initialize,
             noise_model=noise_model,
+            add_noise=True,
             aggressive_unroll=False,
         )
         return transformer.emit(move_mt)

@@ -12,7 +12,6 @@ from kirin.dialects import ilist
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes import compile
-from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
@@ -24,8 +23,8 @@ from bloqade.lanes.logical_mvp import (
     compile_squin_to_move,
     transversal_rewrites,
 )
-from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.transform import MoveToSquinLogical, MoveToSquinPhysical
 from bloqade.lanes.upstream import (
     always_merge_heuristic,
     default_merge_heuristic,
@@ -68,7 +67,7 @@ def main():
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
-    noise_model = generate_simple_noise_model()
+    logical_noise = generate_logical_noise_model()
     move_mt = squin_to_move(
         mt,
         layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
@@ -77,10 +76,10 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
         merge_heuristic=merge_heuristic,
     )
     move_mt = transversal_rewrites(move_mt)
-    transformer = MoveToSquin(
+    transformer = MoveToSquinLogical(
         arch_spec=generate_arch_hypercube(4),
-        logical_initialization=logical.steane7_initialize,
-        noise_model=noise_model,
+        noise_model=logical_noise,
+        add_noise=True,
         aggressive_unroll=False,
     )
     physical_squin = transformer.emit(move_mt)
@@ -146,7 +145,7 @@ def test_logical_compilation():
 
     logical_move = compile_squin_to_move(main, no_raise=False)
 
-    decompiled_squin = MoveToSquin(get_arch_spec()).emit(logical_move)
+    decompiled_squin = MoveToSquinPhysical(get_arch_spec()).emit(logical_move)
 
     AggressiveUnroll(main.dialects).fixpoint(main)
 
@@ -163,7 +162,7 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
             squin.cx(reg[0], reg[i])
 
     physical_move = compile.compile_squin_to_move(ghz, no_raise=False)
-    roundtrip_squin = MoveToSquin(get_physical_arch_spec()).emit(
+    roundtrip_squin = MoveToSquinPhysical(get_physical_arch_spec()).emit(
         physical_move, no_raise=False
     )
 
