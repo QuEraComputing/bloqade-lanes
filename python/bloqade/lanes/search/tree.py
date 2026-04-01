@@ -134,17 +134,23 @@ class ConfigurationTree:
         cls,
         arch_spec: ArchSpec,
         placement: dict[int, LocationAddress],
+        occupied: frozenset[LocationAddress] = frozenset(),
     ) -> ConfigurationTree:
         """Create a tree from an initial qubit placement.
 
         Args:
             arch_spec: Architecture specification for lane validation.
             placement: Mapping of qubit IDs to their initial locations.
+            occupied: Locations occupied by atoms outside this placement
+                (e.g. other qubits not involved in the current operation).
+                These are treated as immovable obstacles during path search.
 
         Returns:
             A new ConfigurationTree rooted at the given placement.
         """
-        root = ConfigurationNode(configuration=dict(placement))
+        root = ConfigurationNode(
+            configuration=dict(placement), external_occupied=occupied
+        )
         return cls(arch_spec=arch_spec, root=root)
 
     def lanes_for(
@@ -344,6 +350,7 @@ class ConfigurationTree:
             parent=node,
             parent_moves=move_set,
             depth=node.depth + 1,
+            external_occupied=node.external_occupied,
         )
         key = new_node.config_key
 

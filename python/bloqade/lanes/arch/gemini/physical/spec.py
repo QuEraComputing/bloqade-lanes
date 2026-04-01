@@ -1,5 +1,5 @@
 from bloqade.lanes.arch.builder import build_arch
-from bloqade.lanes.arch.topology import DiagonalWordTopology, HypercubeSiteTopology
+from bloqade.lanes.arch.topology import AllToAllSiteTopology, DiagonalWordTopology
 from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 from bloqade.lanes.layout.arch import ArchSpec
 
@@ -12,7 +12,7 @@ def get_arch_spec() -> ArchSpec:
                 num_cols=2,
                 entangling=True,
                 word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
+                site_topology=AllToAllSiteTopology(),
             )
         },
         layout=DeviceLayout(sites_per_word=16),

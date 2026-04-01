@@ -22,7 +22,7 @@ def test_physical_architecture():
     arch = physical.get_arch_spec()
     assert len(arch.words) == 10
     assert len(arch.words[0].site_indices) == 16
-    assert len(arch.site_buses) == 4
+    assert len(arch.site_buses) == 120
     assert len(arch.word_buses) == 9
     assert arch.max_qubits == 80
 
