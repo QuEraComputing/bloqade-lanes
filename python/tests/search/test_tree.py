@@ -216,6 +216,21 @@ def test_try_move_set_reports_collision():
     assert outcome.child is None
 
 
+def test_try_move_set_reports_collision_with_blocked_locations():
+    arch_spec = logical.get_arch_spec()
+    placement = {0: LocationAddress(0, 0)}
+    blocked = frozenset({LocationAddress(0, 1)})
+    tree = ConfigurationTree(
+        arch_spec=arch_spec,
+        root=ConfigurationTree.from_initial_placement(arch_spec, placement).root,
+        blocked_locations=blocked,
+    )
+    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    outcome = tree.try_move_set(tree.root, move_set, strict=False)
+    assert outcome.status == ExpansionStatus.COLLISION
+    assert outcome.child is None
+
+
 def test_try_move_set_reports_invalid_lane():
     tree = _make_tree()
     invalid = LaneAddress(MoveType.SITE, 999, 999, 999, Direction.FORWARD)
@@ -256,6 +271,22 @@ def test_valid_lanes_returns_nonempty():
         src, dst = tree.arch_spec.get_endpoints(lane)
         assert tree.root.is_occupied(src)
         assert not tree.root.is_occupied(dst)
+
+
+def test_valid_lanes_excludes_blocked_destinations():
+    arch_spec = logical.get_arch_spec()
+    placement = {0: LocationAddress(0, 0)}
+    blocked = frozenset({LocationAddress(0, 1)})
+    tree = ConfigurationTree(
+        arch_spec=arch_spec,
+        root=ConfigurationTree.from_initial_placement(arch_spec, placement).root,
+        blocked_locations=blocked,
+    )
+    lanes = frozenset(tree.valid_lanes(tree.root))
+    assert len(lanes) > 0
+    for lane in lanes:
+        _, dst = tree.arch_spec.get_endpoints(lane)
+        assert dst not in blocked
 
 
 def test_valid_lanes_filter_by_move_type():

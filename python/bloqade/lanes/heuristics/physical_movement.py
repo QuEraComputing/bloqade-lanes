@@ -41,7 +41,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     traversal: TraversalName = "entropy"
     search_params: SearchParams = field(default_factory=SearchParams)
     max_depth: int | None = None
-    max_expansions: int | None = None
+    max_expansions: int | None = 300
     on_search_step: OnSearchStep | None = None
     trace_cz_index: int | None = None
 
@@ -149,7 +149,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
         tree = ConfigurationTree.from_initial_placement(
-            self.arch_spec, placement, occupied=state.occupied
+            self.arch_spec,
+            placement,
+            blocked_locations=state.occupied,
         )
 
         should_trace = (
@@ -167,11 +169,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         result = self._run_search(tree, target, callback)
         self._cz_counter += 1
 
-        if result.goal_node is None:
+        if not result.goal_nodes:
             return AtomState.bottom()
 
-        move_program = result.goal_node.to_move_program()
-        goal_layout_map = result.goal_node.configuration
+        best_goal = result.goal_nodes[0]
+        move_program = best_goal.to_move_program()
+        goal_layout_map = best_goal.configuration
         goal_layout = tuple(goal_layout_map[qid] for qid in range(len(state.layout)))
         move_count = tuple(
             mc + int(src != dst)

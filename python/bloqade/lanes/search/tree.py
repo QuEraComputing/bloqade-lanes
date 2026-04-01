@@ -60,6 +60,7 @@ class ConfigurationTree:
 
     arch_spec: ArchSpec
     root: ConfigurationNode
+    blocked_locations: frozenset[LocationAddress] = frozenset()
     path_finder: PathFinder = field(init=False, repr=False)
     seen: dict[Configuration, ConfigurationNode] = field(
         default_factory=dict, init=False, repr=False
@@ -134,14 +135,14 @@ class ConfigurationTree:
         cls,
         arch_spec: ArchSpec,
         placement: dict[int, LocationAddress],
-        occupied: frozenset[LocationAddress] = frozenset(),
+        blocked_locations: frozenset[LocationAddress] = frozenset(),
     ) -> ConfigurationTree:
         """Create a tree from an initial qubit placement.
 
         Args:
             arch_spec: Architecture specification for lane validation.
             placement: Mapping of qubit IDs to their initial locations.
-            occupied: Locations occupied by atoms outside this placement
+            blocked_locations: Locations occupied by atoms outside this placement
                 (e.g. other qubits not involved in the current operation).
                 These are treated as immovable obstacles during path search.
 
@@ -149,9 +150,14 @@ class ConfigurationTree:
             A new ConfigurationTree rooted at the given placement.
         """
         root = ConfigurationNode(
-            configuration=dict(placement), external_occupied=occupied
+            configuration=dict(placement),
+            external_occupied=blocked_locations,
         )
-        return cls(arch_spec=arch_spec, root=root)
+        return cls(
+            arch_spec=arch_spec,
+            root=root,
+            blocked_locations=frozenset(blocked_locations),
+        )
 
     def lanes_for(
         self,
@@ -208,6 +214,7 @@ class ConfigurationTree:
             Valid LaneAddress values.
         """
         occupied = node.occupied_locations
+        blocked = self.blocked_locations
 
         move_types = (
             [move_type] if move_type is not None else [MoveType.SITE, MoveType.WORD]
@@ -230,7 +237,11 @@ class ConfigurationTree:
                 for d in directions:
                     for lane in self.lanes_for(mt, bid, d):
                         src, dst = self.arch_spec.get_endpoints(lane)
-                        if src in occupied and dst not in occupied:
+                        if (
+                            src in occupied
+                            and dst not in occupied
+                            and dst not in blocked
+                        ):
                             yield lane
 
     def apply_move_set(
@@ -307,6 +318,7 @@ class ConfigurationTree:
 
         new_config = dict(node.configuration)
         occupied = node.occupied_locations
+        blocked = self.blocked_locations
 
         for lane in move_set:
             try:
@@ -328,11 +340,14 @@ class ConfigurationTree:
             # Bus src and dst are disjoint sets, so within a single-bus
             # move set, two sources cannot map to the same destination.
             # We only need to check against stationary atoms.
-            if dst in occupied:
+            if dst in occupied or dst in blocked:
                 blocker = node.get_qubit_at(dst)
+                blocker_text = (
+                    f"qubit {blocker}" if blocker is not None else "a blocked location"
+                )
                 msg = (
                     f"Collision: qubit {qid} moving to {dst!r} "
-                    f"which is occupied by qubit {blocker}"
+                    f"which is occupied by {blocker_text}"
                 )
                 if strict:
                     raise InvalidMoveError(msg)
