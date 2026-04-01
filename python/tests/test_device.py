@@ -12,7 +12,7 @@ from bloqade.gemini.device import (
     GeminiLogicalSimulator,
     Result,
 )
-from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 
@@ -146,7 +146,7 @@ def test_run_detectors_via_task():
 @pytest.mark.slow
 def test_run_detectors_task_directly():
     """Test creating a GeminiLogicalSimulatorTask and calling run(run_detectors=True)."""
-    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    sim = GeminiLogicalSimulator(noise_model=generate_logical_noise_model())
     task = sim.task(main)
     result = task.run(shots=5, with_noise=False, run_detectors=True)
     assert len(result.detectors) == 5
@@ -156,7 +156,7 @@ def test_run_detectors_task_directly():
 @pytest.mark.slow
 def test_run_detectors_task_async():
     """Test run_async(run_detectors=True) directly on GeminiLogicalSimulatorTask."""
-    sim = GeminiLogicalSimulator(noise_model=generate_simple_noise_model())
+    sim = GeminiLogicalSimulator(noise_model=generate_logical_noise_model())
     task = sim.task(main)
     future = task.run_async(shots=5, with_noise=False, run_detectors=True)
     result = future.result()

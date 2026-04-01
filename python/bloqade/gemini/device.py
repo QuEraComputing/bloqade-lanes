@@ -25,15 +25,15 @@ from bloqade import tsim
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
     from bloqade.lanes.layout.arch import ArchSpec
-    from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
+    from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
 RetType = TypeVar("RetType")
 
 
-def _default_noise_model() -> NoiseModelABC:
-    from bloqade.lanes.noise_model import generate_simple_noise_model
+def _default_noise_model() -> "LogicalNoiseModelABC":
+    from bloqade.lanes.noise_model import generate_logical_noise_model
 
-    return generate_simple_noise_model()
+    return generate_logical_noise_model()
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     logical_squin_kernel: ir.Method[[], RetType]
     """The input logical squin kernel to be executed on the Gemini architecture."""
-    noise_model: NoiseModelABC
+    noise_model: LogicalNoiseModelABC
     """The noise model to be inserted into the physical squin kernel."""
     physical_arch_spec: ArchSpec = field(repr=False)
     """The physical architecture specification."""
@@ -185,14 +185,24 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     @cached_property
     def physical_squin_kernel(self) -> ir.Method[[], RetType]:
-        """The physical squin kernel corresponding to the physical move kernel, including noise."""
-        from bloqade.lanes.arch.gemini.logical import steane7_initialize
-        from bloqade.lanes.transform import MoveToSquin
+        """The physical squin kernel with noise channels."""
+        from bloqade.lanes.transform import MoveToSquinLogical
 
-        return MoveToSquin(
-            self.physical_arch_spec,
-            steane7_initialize,
-            self.noise_model,
+        return MoveToSquinLogical(
+            arch_spec=self.physical_arch_spec,
+            noise_model=self.noise_model,
+            add_noise=True,
+        ).emit(self.physical_move_kernel)
+
+    @cached_property
+    def noiseless_physical_squin_kernel(self) -> ir.Method[[], RetType]:
+        """The physical squin kernel without noise channels."""
+        from bloqade.lanes.transform import MoveToSquinLogical
+
+        return MoveToSquinLogical(
+            arch_spec=self.physical_arch_spec,
+            noise_model=self.noise_model,
+            add_noise=False,
         ).emit(self.physical_move_kernel)
 
     @cached_property
@@ -206,8 +216,12 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
 
     @cached_property
     def noiseless_tsim_circuit(self) -> tsim_backend.Circuit:
-        """The noiseless tsim circuit."""
-        return self.tsim_circuit.without_noise()
+        """The noiseless tsim circuit compiled without noise channels."""
+        from bloqade.lanes.rewrite.squin2stim import RemoveReturn
+
+        noiseless_kernel = self.noiseless_physical_squin_kernel.similar()
+        rewrite.Walk(RemoveReturn()).rewrite(noiseless_kernel.code)
+        return tsim.Circuit(noiseless_kernel)
 
     @cached_property
     def measurement_sampler(self):
@@ -432,8 +446,8 @@ class GeminiLogicalSimulator:
     compile-and-execute convenience.
     """
 
-    noise_model: NoiseModelABC = field(default_factory=_default_noise_model)
-    """The noise model used for simulation. Defaults to :func:`generate_simple_noise_model`."""
+    noise_model: LogicalNoiseModelABC = field(default_factory=_default_noise_model)
+    """The noise model used for simulation. Defaults to :func:`generate_logical_noise_model`."""
 
     def task(
         self,
