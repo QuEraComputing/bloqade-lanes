@@ -126,6 +126,9 @@ class MoveToSquinLogical(MoveToSquinBase):
     add_noise: bool = False
 
     def _get_initialize_kernel(self) -> InitKernel:
+        if self.add_noise:
+            return None
+
         clean, _ = self.noise_model.get_logical_initialize()
         return clean
 
