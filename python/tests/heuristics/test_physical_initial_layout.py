@@ -1,12 +1,35 @@
 import pytest
 
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch import (
+    AllToAllSiteTopology,
+    ArchBlueprint,
+    DeviceLayout,
+    HypercubeWordTopology,
+    ZoneSpec,
+    build_arch,
+)
 from bloqade.lanes.heuristics.physical_layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.simple_layout import PhysicalLayoutHeuristicFixed
 
 pymetis = pytest.importorskip("pymetis")
+
+
+def _make_arch(dims: int = 1, sites_per_word: int = 10):
+    bp = ArchBlueprint(
+        zones={
+            "gate": ZoneSpec(
+                num_rows=1,
+                num_cols=2 * 2**dims,
+                entangling=True,
+                word_topology=HypercubeWordTopology(),
+                site_topology=AllToAllSiteTopology(),
+            )
+        },
+        layout=DeviceLayout(sites_per_word=sites_per_word),
+    )
+    return build_arch(bp).arch
 
 
 def _weighted_stages(
@@ -44,7 +67,7 @@ def _layout_affinity_cost(
 
 def test_initial_layout_is_left_only_and_full_word_first():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(1),
+        arch_spec=_make_arch(1),
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -71,7 +94,7 @@ def test_initial_layout_is_left_only_and_full_word_first():
 
 def test_fill_capacity_enforcement_avoids_balanced_split_when_target_is_5_3():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(1),
+        arch_spec=_make_arch(1),
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -89,7 +112,7 @@ def test_fill_capacity_enforcement_avoids_balanced_split_when_target_is_5_3():
 
 def test_initial_layout_is_deterministic():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(1),
+        arch_spec=_make_arch(1),
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -112,7 +135,7 @@ def test_initial_layout_is_deterministic():
 
 def test_partition_word_fill_is_full_then_partial_left_to_right():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(1),
+        arch_spec=_make_arch(1),
         max_words=2,
     )
     qubits = tuple(range(6))
@@ -137,7 +160,7 @@ def test_partition_word_fill_is_full_then_partial_left_to_right():
 
 def test_within_word_affinity_cost_beats_naive_ordering():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(1),
+        arch_spec=_make_arch(1),
         max_words=1,
     )
     qubits = tuple(range(5))
@@ -163,7 +186,7 @@ def test_within_word_affinity_cost_beats_naive_ordering():
 
 def test_word_assignment_overflow_expands_to_next_word():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(4),
+        arch_spec=_make_arch(4),
         max_words=4,
     )
     qubits = tuple(range(8))
@@ -183,7 +206,7 @@ def test_word_assignment_overflow_expands_to_next_word():
 
 def test_final_partial_word_places_from_lowest_site_up():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(1, word_size_y=7),
+        arch_spec=_make_arch(1, sites_per_word=14),
         max_words=1,
     )
     qubits = (0,)
@@ -195,7 +218,7 @@ def test_final_partial_word_places_from_lowest_site_up():
 
 def test_relabel_words_fill_left_to_right():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=generate_arch_hypercube(2),
+        arch_spec=_make_arch(2),
         max_words=4,
     )
     # Partition ids are arbitrary METIS labels; largest block should map to leftmost word.
@@ -213,7 +236,7 @@ def test_relabel_words_fill_left_to_right():
 
 def test_fixed_baseline_fill_order():
     strategy = PhysicalLayoutHeuristicFixed(
-        arch_spec=generate_arch_hypercube(1),
+        arch_spec=_make_arch(1),
     )
     qubits = tuple(range(6))
     out = strategy.compute_layout(qubits, _weighted_stages({}))

@@ -5,7 +5,14 @@ import pytest
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch import (
+    AllToAllSiteTopology,
+    ArchBlueprint,
+    DeviceLayout,
+    HypercubeWordTopology,
+    ZoneSpec,
+    build_arch,
+)
 from bloqade.lanes.heuristics.logical_placement import (
     LogicalPlacementMethods,
     LogicalPlacementStrategyNoHome,
@@ -15,7 +22,19 @@ from bloqade.lanes.layout.encoding import LocationAddress
 
 
 def _make_arch(word_size_y: int) -> layout.ArchSpec:
-    return generate_arch_hypercube(hypercube_dims=1, word_size_y=word_size_y)
+    bp = ArchBlueprint(
+        zones={
+            "gate": ZoneSpec(
+                num_rows=1,
+                num_cols=4,
+                entangling=True,
+                word_topology=HypercubeWordTopology(),
+                site_topology=AllToAllSiteTopology(),
+            )
+        },
+        layout=DeviceLayout(sites_per_word=word_size_y),
+    )
+    return build_arch(bp).arch
 
 
 def _make_placement_methods(word_size_y: int) -> LogicalPlacementMethods:
@@ -72,14 +91,14 @@ def assert_all_home(arch_spec: layout.ArchSpec, addrs: tuple[LocationAddress, ..
 # ── Tests ──
 
 
-class TestWordNRows:
-    """Verify Word.n_rows property works for different word sizes."""
+class TestWordSiteCount:
+    """Verify words have the correct number of sites for different word sizes."""
 
     @pytest.mark.parametrize("word_size_y", [3, 5, 7, 10])
-    def test_word_n_rows(self, word_size_y: int):
+    def test_word_site_count(self, word_size_y: int):
         arch_spec = _make_arch(word_size_y)
         for word in arch_spec.words:
-            assert word.n_rows == word_size_y
+            assert len(word.site_indices) == word_size_y
 
 
 class TestValidateInitialLayout:
@@ -134,10 +153,10 @@ class TestDesiredCzLayout:
         methods = _make_placement_methods(word_size_y)
         arch = methods.arch_spec
         # Two qubits on different home words (both at site 0)
-        # Word 0 ↔ Word 1: already at blockade positions, may need 0 moves
+        home_words = sorted(arch._home_words)
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+            layout=(LocationAddress(home_words[0], 0), LocationAddress(home_words[1], 0)),
             move_count=(0, 0),
         )
         result = methods.desired_cz_layout(state, controls=(0,), targets=(1,))
@@ -151,15 +170,15 @@ class TestComputeMoveLayers:
     def test_same_word_move(self, word_size_y: int):
         arch_spec = _make_arch(word_size_y)
         n = word_size_y
-        # Move a qubit within the same word (left col → right col via site bus)
+        # Move a qubit within the same word (site 0 → last site via site bus)
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, n), LocationAddress(1, 0)),
+            layout=(LocationAddress(0, n - 1), LocationAddress(2, 0)),
             move_count=(1, 0),
         )
         layers = compute_move_layers(arch_spec, state_before, state_after)
@@ -171,16 +190,36 @@ class TestComputeMoveLayers:
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_cross_word_move(self, word_size_y: int):
         arch_spec = _make_arch(word_size_y)
-        n = word_size_y
-        # Move qubit from word 0 to word 1: site bus to right col, then word bus
+        # Move qubit from word 0 to word 1 (CZ partner) — single word bus hop
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(1, n), LocationAddress(1, 0)),
+            layout=(LocationAddress(1, 0), LocationAddress(2, 0)),
+            move_count=(1, 0),
+        )
+        layers = compute_move_layers(arch_spec, state_before, state_after)
+        assert len(layers) > 0
+        for layer in layers:
+            for lane in layer:
+                assert arch_spec.validate_lane(lane) == set()
+
+    @pytest.mark.parametrize("word_size_y", [3, 5, 7])
+    def test_multi_hop_move(self, word_size_y: int):
+        arch_spec = _make_arch(word_size_y)
+        # Move qubit from word 0 to word 3 — requires word bus across CZ pair
+        # boundary (word 0 → word 2 or word 0 → word 1 → word 3)
+        state_before = ConcreteState(
+            occupied=frozenset(),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
+            move_count=(0, 0),
+        )
+        state_after = ConcreteState(
+            occupied=frozenset(),
+            layout=(LocationAddress(3, 0), LocationAddress(2, 0)),
             move_count=(1, 0),
         )
         layers = compute_move_layers(arch_spec, state_before, state_after)
@@ -194,7 +233,7 @@ class TestComputeMoveLayers:
         arch_spec = _make_arch(word_size_y)
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         layers = compute_move_layers(arch_spec, state, state)
@@ -208,12 +247,13 @@ class TestNoHomeReturnLayout:
     def test_return_from_non_home(self, word_size_y: int):
         placement = _make_nohome(word_size_y)
         arch = placement.arch_spec
+        home_words = sorted(arch._home_words)
         # One qubit at non-home (CZ-staging) word, one at home
         non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
         assert len(non_home) > 0
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(non_home[0], 0), LocationAddress(0, 1)),
+            layout=(LocationAddress(non_home[0], 0), LocationAddress(home_words[0], 1)),
             move_count=(1, 0),
         )
         mid_state, _ = placement.choose_return_layout(
@@ -240,12 +280,11 @@ class TestNoHomeReturnLayout:
         arch = placement.arch_spec
         non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
         assert len(non_home) > 0
-        # CZ address in non-home word, home address in word 0
+        # CZ address in non-home word, home address in blockade partner word
         cz_addr = LocationAddress(non_home[0], 0)
-        home_addr = LocationAddress(0, 0)
-        key = placement._distance_key(cz_addr, home_addr)
-        # blockade partner of (non_home, 0) is (0, 0) — same as home_addr
-        # word_distance=0, site_distance=0
+        partner = arch.get_blockaded_location(cz_addr)
+        assert partner is not None
+        key = placement._distance_key(cz_addr, partner)
         assert key[0] == 0  # word_distance
         assert key[1] == 0  # site_distance
 
@@ -257,10 +296,11 @@ class TestFullCzPipeline:
     def test_cz_placements_end_to_end(self, word_size_y: int):
         placement = _make_nohome(word_size_y)
         arch = placement.arch_spec
-        # Start with 2 qubits on home word
+        # Start with 2 qubits on same home word
+        home_word = sorted(arch._home_words)[0]
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(0, 1)),
+            layout=(LocationAddress(home_word, 0), LocationAddress(home_word, 1)),
             move_count=(0, 0),
         )
         result = placement.cz_placements(state, controls=(0,), targets=(1,))
@@ -272,10 +312,11 @@ class TestFullCzPipeline:
     def test_cz_placements_cross_word(self, word_size_y: int):
         placement = _make_nohome(word_size_y)
         arch = placement.arch_spec
-        # Qubits at matching sites in paired words — already CZ-ready
+        home_words = sorted(arch._home_words)
+        # Qubits at matching sites in different home words
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(1, 0)),
+            layout=(LocationAddress(home_words[0], 0), LocationAddress(home_words[1], 0)),
             move_count=(0, 0),
         )
         result = placement.cz_placements(state, controls=(0,), targets=(1,))
@@ -289,15 +330,17 @@ class TestMoveToLeft:
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_move_to_left_reverse(self, word_size_y: int):
         arch_spec = _make_arch(word_size_y)
+        non_home = [w for w in range(len(arch_spec.words)) if w not in arch_spec._home_words]
+        home_words = sorted(arch_spec._home_words)
         # Move qubit from non-home word back to home
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(1, 0), LocationAddress(0, 1)),
+            layout=(LocationAddress(non_home[0], 0), LocationAddress(home_words[0], 1)),
             move_count=(1, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0), LocationAddress(0, 1)),
+            layout=(LocationAddress(home_words[0], 0), LocationAddress(home_words[0], 1)),
             move_count=(2, 0),
         )
         out_state, layers = move_to_left(arch_spec, state_before, state_after)
