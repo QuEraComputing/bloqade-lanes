@@ -146,6 +146,21 @@ def test_sequential_fallback_direct():
     assert result.goal_node.configuration[1] == LocationAddress(1, 0)
 
 
+def test_sequential_fallback_reuses_already_seen_child():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 1)}
+    search = EntropyGuidedSearch(tree, target, placement_goal(target))
+
+    # Pre-create the first fallback step so replaying it hits ALREADY_CHILD.
+    first_step = frozenset({SiteLaneAddress(0, 0, 0)})
+    first_child = tree.apply_move_set(tree.root, first_step, strict=False)
+    assert first_child is not None
+
+    result = search._sequential_fallback(tree.root)
+    assert result.goal_node is not None
+    assert result.goal_node.configuration[0] == LocationAddress(0, 1)
+
+
 def test_max_candidates_enforced():
     tree = _make_tree()
     target = {0: LocationAddress(0, 1)}
@@ -293,7 +308,7 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
 
 def test_collects_multiple_goal_nodes(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     goal = placement_goal(target)
     c1 = frozenset({SiteLaneAddress(0, 0, 0)})
     c2 = frozenset({SiteLaneAddress(0, 0, 1)})
@@ -304,7 +319,7 @@ def test_collects_multiple_goal_nodes(monkeypatch):
 
     def fake_try_move_set(node, move_set, strict=True):  # type: ignore[no-untyped-def]
         goal_node = ConfigurationNode(
-            configuration={0: LocationAddress(0, 5), 1: node.configuration[1]},
+            configuration={0: LocationAddress(0, 1), 1: node.configuration[1]},
             parent=node,
             parent_moves=move_set,
             depth=node.depth + 1,
@@ -332,7 +347,7 @@ def test_collects_multiple_goal_nodes(monkeypatch):
 
 def test_solution_branch_cutoff_ancestor_returns_first_ancestor_below_branch():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     search = EntropyGuidedSearch(
         tree,
         target,
@@ -361,7 +376,7 @@ def test_solution_branch_cutoff_ancestor_returns_first_ancestor_below_branch():
 
 def test_solution_branch_cutoff_ancestor_returns_root_for_linear_branch():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     search = EntropyGuidedSearch(tree, target, placement_goal(target))
 
     n1 = ConfigurationNode(
