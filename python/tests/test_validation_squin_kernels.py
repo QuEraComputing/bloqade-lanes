@@ -70,10 +70,6 @@ def _assert_cz_pairs_are_blockaded_neighbors(move_kernel) -> None:
 @pytest.mark.parametrize("spec", select_kernels(), ids=lambda spec: spec.name)
 def test_kernel_catalog_compiles_to_valid_physical_move(spec: KernelSpec):
     """Ensure every catalog kernel compiles and passes physical address validation."""
-    if spec.name == "qasmbench_qpe_n9_manual":
-        pytest.xfail(
-            "9-qubit QPE exhausts placement search with zone-based arch layout"
-        )
     kernel = spec.build_kernel()
     move_kernel = _compile_physical_move(kernel)
 
@@ -96,10 +92,6 @@ def test_kernel_catalog_compiles_to_valid_physical_move(spec: KernelSpec):
 @pytest.mark.parametrize("spec", select_kernels(), ids=lambda spec: spec.name)
 def test_tagged_kernel_features_appear_in_compiled_move_ir(spec: KernelSpec):
     """Check that tag-labeled behaviors are present in compiled move operations."""
-    if spec.name == "qasmbench_qpe_n9_manual":
-        pytest.xfail(
-            "9-qubit QPE exhausts placement search with zone-based arch layout"
-        )
     kernel = spec.build_kernel()
     move_kernel = _compile_physical_move(kernel)
     nodes = _collect_move_nodes(move_kernel)

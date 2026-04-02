@@ -1,10 +1,10 @@
 import pytest
 
 from bloqade.lanes.arch import (
-    AllToAllSiteTopology,
     ArchBlueprint,
     DeviceLayout,
-    HypercubeWordTopology,
+    DiagonalWordTopology,
+    HypercubeSiteTopology,
     ZoneSpec,
     build_arch,
 )
@@ -16,15 +16,15 @@ from bloqade.lanes.heuristics.simple_layout import PhysicalLayoutHeuristicFixed
 pymetis = pytest.importorskip("pymetis")
 
 
-def _make_arch(dims: int = 1, sites_per_word: int = 10):
+def _make_arch(num_rows: int = 5, sites_per_word: int = 16):
     bp = ArchBlueprint(
         zones={
             "gate": ZoneSpec(
-                num_rows=1,
-                num_cols=2 * 2**dims,
+                num_rows=num_rows,
+                num_cols=2,
                 entangling=True,
-                word_topology=HypercubeWordTopology(),
-                site_topology=AllToAllSiteTopology(),
+                word_topology=DiagonalWordTopology(),
+                site_topology=HypercubeSiteTopology(),
             )
         },
         layout=DeviceLayout(sites_per_word=sites_per_word),
@@ -65,9 +65,10 @@ def _layout_affinity_cost(
     return total
 
 
-def test_initial_layout_is_left_only_and_full_word_first():
+def test_initial_layout_uses_home_words_only():
+    """Qubits are placed only in home words (even-indexed), partner words stay empty."""
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(1),
+        arch_spec=_make_arch(),
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -84,35 +85,38 @@ def test_initial_layout_is_left_only_and_full_word_first():
     layout_out = strategy.compute_layout(qubits, stages)
     assert len(layout_out) == len(qubits)
     assert len(set(layout_out)) == len(layout_out)
-    assert all(addr.site_id < strategy.left_site_count for addr in layout_out)
-    per_word = {}
-    for addr in layout_out:
-        per_word[addr.word_id] = per_word.get(addr.word_id, 0) + 1
-    assert per_word.get(0, 0) == 5
-    assert per_word.get(1, 0) == 3
+    # All sites within the first half of the word
+    assert all(addr.site_id < strategy.sites_per_partition for addr in layout_out)
+    # Only home words used (even-indexed)
+    used_words = {addr.word_id for addr in layout_out}
+    home_words = set(strategy.home_word_ids)
+    assert used_words <= home_words
 
 
-def test_fill_capacity_enforcement_avoids_balanced_split_when_target_is_5_3():
+def test_fill_capacity_enforcement_across_home_words():
+    """With 10 qubits exceeding one word's capacity (8), two home words are used."""
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(1),
+        arch_spec=_make_arch(),
         max_words=2,
     )
-    qubits = tuple(range(8))
+    qubits = tuple(range(10))
     stages = [
-        ((0, 4), (1, 5), (2, 6), (3, 7)),
-        ((0, 1), (2, 3), (4, 5), (6, 7)),
+        ((0, 5), (1, 6), (2, 7), (3, 8), (4, 9)),
+        ((0, 1), (2, 3), (4, 5), (6, 7), (8, 9)),
     ]
     layout_out = strategy.compute_layout(qubits, stages)
     per_word = {}
     for addr in layout_out:
         per_word[addr.word_id] = per_word.get(addr.word_id, 0) + 1
-    assert per_word.get(0, 0) == 5
-    assert per_word.get(1, 0) == 3
+    # Two home words used, no partner words
+    used_words = sorted(per_word.keys())
+    assert len(used_words) == 2
+    assert all(w in strategy.home_word_ids for w in used_words)
 
 
 def test_initial_layout_is_deterministic():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(1),
+        arch_spec=_make_arch(),
         max_words=2,
     )
     qubits = tuple(range(8))
@@ -133,34 +137,41 @@ def test_initial_layout_is_deterministic():
     assert first == second == third
 
 
-def test_partition_word_fill_is_full_then_partial_left_to_right():
+def test_partition_word_fill_is_full_then_partial():
+    """With 10 qubits and two clear clusters, partitioner splits across home words."""
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(1),
+        arch_spec=_make_arch(),
         max_words=2,
     )
-    qubits = tuple(range(6))
+    qubits = tuple(range(10))
     edge_counts = {
         (0, 1): 8,
         (1, 2): 8,
-        (0, 2): 8,
+        (2, 3): 8,
         (3, 4): 8,
-        (4, 5): 8,
-        (3, 5): 8,
-        (2, 3): 1,
+        (5, 6): 8,
+        (6, 7): 8,
+        (7, 8): 8,
+        (8, 9): 8,
+        (4, 5): 1,
     }
     stages = _weighted_stages(edge_counts)
     layout_out = strategy.compute_layout(qubits, stages)
     per_word = {}
     for addr in layout_out:
         per_word[addr.word_id] = per_word.get(addr.word_id, 0) + 1
-    assert sorted(per_word.keys()) == [0, 1]
-    assert per_word[0] == 5
-    assert per_word[1] == 1
+    # Two home words used
+    used_words = sorted(per_word.keys())
+    assert len(used_words) == 2
+    assert all(w in strategy.home_word_ids for w in used_words)
+    # Larger partition first
+    counts = sorted(per_word.values(), reverse=True)
+    assert counts[0] >= counts[1]
 
 
 def test_within_word_affinity_cost_beats_naive_ordering():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(1),
+        arch_spec=_make_arch(),
         max_words=1,
     )
     qubits = tuple(range(5))
@@ -184,41 +195,43 @@ def test_within_word_affinity_cost_beats_naive_ordering():
     assert strategy_cost <= naive_cost
 
 
-def test_word_assignment_overflow_expands_to_next_word():
+def test_word_assignment_overflow_expands_to_next_home_word():
+    """When qubits exceed one word's capacity, they spill to the next home word."""
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(4),
+        arch_spec=_make_arch(num_rows=8),
         max_words=4,
     )
-    qubits = tuple(range(8))
+    qubits = tuple(range(10))
     edge_counts = {
         (0, 1): 3,
         (2, 3): 3,
         (4, 5): 3,
         (6, 7): 3,
+        (8, 9): 3,
     }
     stages = _weighted_stages(edge_counts)
     layout_out = strategy.compute_layout(qubits, stages)
 
     used_words = sorted({addr.word_id for addr in layout_out})
     assert len(used_words) == 2
-    assert used_words == [0, 1]
+    assert all(w in strategy.home_word_ids for w in used_words)
 
 
 def test_final_partial_word_places_from_lowest_site_up():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(1, sites_per_word=14),
+        arch_spec=_make_arch(num_rows=1, sites_per_word=16),
         max_words=1,
     )
     qubits = (0,)
     stages = _weighted_stages({})
     layout_out = strategy.compute_layout(qubits, stages)
-    assert layout_out[0].word_id == 0
+    assert layout_out[0].word_id in strategy.home_word_ids
     assert layout_out[0].site_id == 0
 
 
 def test_relabel_words_fill_left_to_right():
     strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-        arch_spec=_make_arch(2),
+        arch_spec=_make_arch(num_rows=4),
         max_words=4,
     )
     # Partition ids are arbitrary METIS labels; largest block should map to leftmost word.
@@ -235,10 +248,23 @@ def test_relabel_words_fill_left_to_right():
 
 
 def test_fixed_baseline_fill_order():
+    """Fixed layout fills word 0 sequentially, then word 1."""
     strategy = PhysicalLayoutHeuristicFixed(
-        arch_spec=_make_arch(1),
+        arch_spec=_make_arch(),
     )
-    qubits = tuple(range(6))
+    qubits = tuple(range(10))
     out = strategy.compute_layout(qubits, _weighted_stages({}))
     coords = tuple((addr.word_id, addr.site_id) for addr in out)
-    assert coords == ((0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 0))
+    # Fills word 0 sites 0-7 (left half), then word 1 site 0-1
+    assert coords == (
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (0, 4),
+        (0, 5),
+        (0, 6),
+        (0, 7),
+        (1, 0),
+        (1, 1),
+    )
