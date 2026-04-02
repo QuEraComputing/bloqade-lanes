@@ -1,9 +1,10 @@
 """Tree traversal strategies for configuration search."""
 
-from bloqade.lanes.search.traversal.astar import astar
-from bloqade.lanes.search.traversal.bfs import bfs
+from bloqade.lanes.search.traversal.astar import AStarTraversal, astar
+from bloqade.lanes.search.traversal.bfs import BFSTraversal, bfs
 from bloqade.lanes.search.traversal.entropy_guided import (
     EntropyGuidedSearch,
+    EntropyGuidedTraversal,
     entropy_guided_search,
 )
 from bloqade.lanes.search.traversal.goal import (
@@ -15,7 +16,11 @@ from bloqade.lanes.search.traversal.goal import (
     placement_goal,
     zone_goal,
 )
-from bloqade.lanes.search.traversal.greedy import greedy_best_first
+from bloqade.lanes.search.traversal.greedy import (
+    GreedyBestFirstTraversal,
+    greedy_best_first,
+)
+from bloqade.lanes.search.traversal.interface import TraversalStrategyABC
 from bloqade.lanes.search.traversal.step_info import (
     DescendStepInfo,
     EntropyBumpStepInfo,
@@ -28,17 +33,22 @@ from bloqade.lanes.search.traversal.step_info import (
 
 __all__ = [
     "CostFunction",
+    "AStarTraversal",
+    "BFSTraversal",
     "DescendStepInfo",
     "EntropyBumpStepInfo",
     "EntropyGuidedSearch",
+    "EntropyGuidedTraversal",
     "FallbackStartStepInfo",
     "FallbackStepInfo",
+    "GreedyBestFirstTraversal",
     "GoalPredicate",
     "GoalStepInfo",
     "HeuristicFunction",
     "RevertStepInfo",
     "SearchResult",
     "StepInfo",
+    "TraversalStrategyABC",
     "astar",
     "bfs",
     "entropy_guided_search",

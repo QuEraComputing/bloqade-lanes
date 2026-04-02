@@ -14,12 +14,14 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.search import (
+    BFSTraversal,
+    CandidateScorer,
     ConfigurationTree,
+    EntropyGuidedTraversal,
     ExhaustiveMoveGenerator,
+    GreedyBestFirstTraversal,
+    HeuristicMoveGenerator,
     SearchParams,
-    bfs,
-    entropy_guided_search,
-    greedy_best_first,
     placement_goal,
 )
 
@@ -111,27 +113,37 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> SearchResult:
         goal = placement_goal(target)
         if self.traversal == "entropy":
-            return entropy_guided_search(
-                tree=tree,
-                target=target,
-                goal=goal,
+            scorer = CandidateScorer(params=self.search_params, target=target)
+            generator = HeuristicMoveGenerator(
+                scorer=scorer,
                 params=self.search_params,
+                search_nodes={},
+            )
+            traversal = EntropyGuidedTraversal(
+                target=target,
+                params=self.search_params,
+                on_step=callback,
+            )
+            return traversal.search(
+                tree=tree,
+                generator=generator,
+                goal=goal,
                 max_depth=self.max_depth,
                 max_expansions=self.max_expansions,
-                on_step=callback,
             )
 
         generator = ExhaustiveMoveGenerator()
         if self.traversal == "greedy":
-            return greedy_best_first(
+            return GreedyBestFirstTraversal(
+                heuristic=self._mismatch_heuristic(target)
+            ).search(
                 tree=tree,
                 generator=generator,
                 goal=goal,
-                heuristic=self._mismatch_heuristic(target),
                 max_expansions=self.max_expansions,
             )
         if self.traversal == "bfs":
-            return bfs(
+            return BFSTraversal().search(
                 tree=tree,
                 generator=generator,
                 goal=goal,

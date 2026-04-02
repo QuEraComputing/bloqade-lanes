@@ -28,31 +28,39 @@ def test_traversal_selection_calls_selected_backend(monkeypatch):
     state = _make_state()
     calls: list[str] = []
 
-    def fake_entropy(**kwargs):
+    def fake_entropy(self, **kwargs):
+        _ = self
         calls.append("entropy")
         return SearchResult(
             goal_node=kwargs["tree"].root, nodes_expanded=0, max_depth_reached=0
         )
 
-    def fake_greedy(**kwargs):
+    def fake_greedy(self, **kwargs):
+        _ = self
         calls.append("greedy")
         return SearchResult(
             goal_node=kwargs["tree"].root, nodes_expanded=0, max_depth_reached=0
         )
 
-    def fake_bfs(**kwargs):
+    def fake_bfs(self, **kwargs):
+        _ = self
         calls.append("bfs")
         return SearchResult(
             goal_node=kwargs["tree"].root, nodes_expanded=0, max_depth_reached=0
         )
 
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.entropy_guided_search", fake_entropy
+        "bloqade.lanes.heuristics.physical_movement.EntropyGuidedTraversal.search",
+        fake_entropy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.greedy_best_first", fake_greedy
+        "bloqade.lanes.heuristics.physical_movement.GreedyBestFirstTraversal.search",
+        fake_greedy,
     )
-    monkeypatch.setattr("bloqade.lanes.heuristics.physical_movement.bfs", fake_bfs)
+    monkeypatch.setattr(
+        "bloqade.lanes.heuristics.physical_movement.BFSTraversal.search",
+        fake_bfs,
+    )
 
     for traversal in ("entropy", "greedy", "bfs"):
         strategy.traversal = traversal
