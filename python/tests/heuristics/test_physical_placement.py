@@ -3,7 +3,12 @@ from __future__ import annotations
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical_placement import (
+    BFSPlacementTraversal,
+    EntropyPlacementTraversal,
+    GreedyPlacementTraversal,
+    PhysicalPlacementStrategy,
+)
 from bloqade.lanes.search.traversal.goal import SearchResult
 
 
@@ -20,7 +25,16 @@ def _make_state() -> ConcreteState:
 
 def test_default_traversal_is_entropy():
     strategy = PhysicalPlacementStrategy()
-    assert strategy.traversal == "entropy"
+    assert isinstance(strategy.traversal, EntropyPlacementTraversal)
+
+
+def test_rejects_string_traversal():
+    try:
+        PhysicalPlacementStrategy(traversal="entropy")  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        assert False, "expected TypeError for non-object traversal"
 
 
 def test_traversal_selection_calls_selected_backend(monkeypatch):
@@ -50,19 +64,23 @@ def test_traversal_selection_calls_selected_backend(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.EntropyGuidedTraversal.search",
+        "bloqade.lanes.heuristics.physical_movement.EntropyPlacementTraversal.path_to_target_config",
         fake_entropy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.GreedyBestFirstTraversal.search",
+        "bloqade.lanes.heuristics.physical_movement.GreedyPlacementTraversal.path_to_target_config",
         fake_greedy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.BFSTraversal.search",
+        "bloqade.lanes.heuristics.physical_movement.BFSPlacementTraversal.path_to_target_config",
         fake_bfs,
     )
 
-    for traversal in ("entropy", "greedy", "bfs"):
+    for traversal in (
+        EntropyPlacementTraversal(),
+        GreedyPlacementTraversal(),
+        BFSPlacementTraversal(),
+    ):
         strategy.traversal = traversal
         _ = strategy.cz_placements(state, controls=(0,), targets=(1,))
 
