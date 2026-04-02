@@ -5,8 +5,13 @@
 
 pub mod astar;
 pub mod config;
+pub mod expander;
 pub mod graph;
+pub mod heuristic;
+pub mod lane_index;
+pub mod solve;
 
 pub use astar::{Expander, SearchResult, astar};
 pub use config::Config;
 pub use graph::{MoveSet, NodeId, SearchGraph};
+pub use lane_index::LaneIndex;

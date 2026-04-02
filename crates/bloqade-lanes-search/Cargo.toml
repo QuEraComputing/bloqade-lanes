@@ -8,3 +8,4 @@ name = "bloqade_lanes_search"
 
 [dependencies]
 bloqade-lanes-bytecode-core = { path = "../bloqade-lanes-bytecode-core" }
+serde_json = "1"
