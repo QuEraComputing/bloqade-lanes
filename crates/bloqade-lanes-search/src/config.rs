@@ -106,6 +106,17 @@ impl Config {
         self.entries.iter().any(|&(_, eloc)| eloc == encoded)
     }
 
+    /// Build a reverse lookup: encoded_location → qubit_id.
+    ///
+    /// Use this when you need many `qubit_at` lookups on the same config
+    /// (e.g., in the expander inner loop) to avoid O(n) per lookup.
+    pub fn location_to_qubit_map(&self) -> std::collections::HashMap<u32, u32> {
+        self.entries
+            .iter()
+            .map(|&(qid, eloc)| (eloc, qid))
+            .collect()
+    }
+
     /// Iterate over `(qubit_id, LocationAddr)` pairs in qubit ID order.
     pub fn iter(&self) -> impl Iterator<Item = (u32, LocationAddr)> + '_ {
         self.entries

@@ -124,26 +124,46 @@ impl PyMoveSolver {
     #[pyo3(signature = (initial, target, blocked, max_expansions=None))]
     fn solve(
         &self,
+        py: Python<'_>,
         initial: Vec<(u32, u32, u32)>,
         target: Vec<(u32, u32, u32)>,
         blocked: Vec<(u32, u32)>,
         max_expansions: Option<u32>,
-    ) -> Option<PySolveResult> {
-        let initial_pairs = initial
-            .into_iter()
-            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }));
+    ) -> PyResult<Option<PySolveResult>> {
+        // Validate: check for duplicate qubit IDs in initial.
+        {
+            let mut seen = std::collections::HashSet::new();
+            for &(qid, _, _) in &initial {
+                if !seen.insert(qid) {
+                    return Err(PyValueError::new_err(format!(
+                        "duplicate qubit_id {qid} in initial placement"
+                    )));
+                }
+            }
+        }
 
-        let target_pairs = target
+        let initial_pairs: Vec<_> = initial
             .into_iter()
-            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }));
+            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))
+            .collect();
 
-        let blocked_locs = blocked
+        let target_pairs: Vec<_> = target
             .into_iter()
-            .map(|(word_id, site_id)| LocationAddr { word_id, site_id });
+            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))
+            .collect();
 
-        self.inner
-            .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
-            .map(|result| PySolveResult { inner: result })
+        let blocked_locs: Vec<_> = blocked
+            .into_iter()
+            .map(|(word_id, site_id)| LocationAddr { word_id, site_id })
+            .collect();
+
+        // Release the GIL during search (pure Rust, no Python objects needed).
+        let result = py.allow_threads(|| {
+            self.inner
+                .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
+        });
+
+        Ok(result.map(|r| PySolveResult { inner: r }))
     }
 
     fn __repr__(&self) -> String {

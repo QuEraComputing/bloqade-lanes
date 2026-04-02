@@ -56,7 +56,14 @@ impl<'a> ExhaustiveExpander<'a> {
 
 impl Expander for ExhaustiveExpander<'_> {
     fn expand(&self, config: &Config, out: &mut Vec<(MoveSet, Config, f64)>) {
-        let occupied = self.occupied_set(config);
+        let ctx = ExpandContext {
+            occupied: self.occupied_set(config),
+            loc_to_qubit: config.location_to_qubit_map(),
+            config,
+            index: self.index,
+            max_x_capacity: self.max_x_capacity,
+            max_y_capacity: self.max_y_capacity,
+        };
 
         for (mt, bus_id, dir) in self.index.triplets() {
             let lanes = self.index.lanes_for(mt, bus_id, dir);
@@ -64,18 +71,25 @@ impl Expander for ExhaustiveExpander<'_> {
                 continue;
             }
 
-            // Collect source info for this triplet.
-            rectangles_to_move_sets(
-                lanes,
-                &occupied,
-                config,
-                self.index,
-                self.max_x_capacity,
-                self.max_y_capacity,
-                out,
-            );
+            rectangles_to_move_sets(lanes, &ctx, out);
         }
     }
+}
+
+/// Shared context for rectangle enumeration, built once per `expand()` call.
+struct ExpandContext<'a> {
+    occupied: HashSet<u32>,
+    loc_to_qubit: HashMap<u32, u32>,
+    config: &'a Config,
+    index: &'a LaneIndex,
+    max_x_capacity: Option<usize>,
+    max_y_capacity: Option<usize>,
+}
+
+/// Per-triplet data built during rectangle enumeration.
+struct TripletData {
+    pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)>,
+    invalid_locs: HashSet<u32>,
 }
 
 /// Enumerate all valid AOD rectangles for a set of lanes and push results.
@@ -83,26 +97,20 @@ impl Expander for ExhaustiveExpander<'_> {
 /// Direct port of Python's `_rectangles_to_move_sets` + `_enumerate_xy_combinations`.
 fn rectangles_to_move_sets(
     lanes: &[LaneAddr],
-    occupied: &HashSet<u32>,
-    config: &Config,
-    index: &LaneIndex,
-    max_x_cap: Option<usize>,
-    max_y_cap: Option<usize>,
+    ctx: &ExpandContext<'_>,
     out: &mut Vec<(MoveSet, Config, f64)>,
 ) {
-    // Build position → (location, lane) and track unique X/Y.
-    // Use BTreeSet<u64> for sorted unique positions (f64 bits for exact comparison).
     let mut pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)> = HashMap::new();
     let mut unique_x: BTreeSet<u64> = BTreeSet::new();
     let mut unique_y: BTreeSet<u64> = BTreeSet::new();
     let mut invalid_locs: HashSet<u32> = HashSet::new();
 
     for &lane in lanes {
-        let (src, dst) = match index.endpoints(&lane) {
+        let (src, dst) = match ctx.index.endpoints(&lane) {
             Some(ep) => ep,
             None => continue,
         };
-        let (x, y) = match index.position(src) {
+        let (x, y) = match ctx.index.position(src) {
             Some(p) => p,
             None => continue,
         };
@@ -112,9 +120,8 @@ fn rectangles_to_move_sets(
         unique_x.insert(xb);
         unique_y.insert(yb);
 
-        // Pre-filter: if src is occupied and dst is also occupied, mark invalid.
         let src_enc = src.encode();
-        if occupied.contains(&src_enc) && occupied.contains(&dst.encode()) {
+        if ctx.occupied.contains(&src_enc) && ctx.occupied.contains(&dst.encode()) {
             invalid_locs.insert(src_enc);
         }
     }
@@ -122,14 +129,23 @@ fn rectangles_to_move_sets(
     let sorted_xs: Vec<u64> = unique_x.into_iter().collect();
     let sorted_ys: Vec<u64> = unique_y.into_iter().collect();
 
-    let max_nx = max_x_cap.unwrap_or(sorted_xs.len()).min(sorted_xs.len());
-    let max_ny = max_y_cap.unwrap_or(sorted_ys.len()).min(sorted_ys.len());
+    let max_nx = ctx
+        .max_x_capacity
+        .unwrap_or(sorted_xs.len())
+        .min(sorted_xs.len());
+    let max_ny = ctx
+        .max_y_capacity
+        .unwrap_or(sorted_ys.len())
+        .min(sorted_ys.len());
 
-    // Enumerate all nx × ny combinations.
+    let td = TripletData {
+        pos_to_info,
+        invalid_locs,
+    };
+
     for nx in 1..=max_nx {
         let mut x_indices = vec![0usize; nx];
         loop {
-            // Initialize x_subset from current x_indices.
             let x_subset: Vec<u64> = x_indices.iter().map(|&i| sorted_xs[i]).collect();
 
             for ny in 1..=max_ny {
@@ -137,16 +153,7 @@ fn rectangles_to_move_sets(
                 loop {
                     let y_subset: Vec<u64> = y_indices.iter().map(|&i| sorted_ys[i]).collect();
 
-                    // Check this rectangle.
-                    try_rectangle(
-                        &x_subset,
-                        &y_subset,
-                        &pos_to_info,
-                        &invalid_locs,
-                        config,
-                        index,
-                        out,
-                    );
+                    try_rectangle(&x_subset, &y_subset, &td, ctx, out);
 
                     if !next_combination(&mut y_indices, sorted_ys.len()) {
                         break;
@@ -165,10 +172,8 @@ fn rectangles_to_move_sets(
 fn try_rectangle(
     x_subset: &[u64],
     y_subset: &[u64],
-    pos_to_info: &HashMap<(u64, u64), (LocationAddr, LaneAddr)>,
-    invalid_locs: &HashSet<u32>,
-    config: &Config,
-    index: &LaneIndex,
+    td: &TripletData,
+    ctx: &ExpandContext<'_>,
     out: &mut Vec<(MoveSet, Config, f64)>,
 ) {
     let mut lane_addrs: Vec<LaneAddr> = Vec::new();
@@ -177,19 +182,18 @@ fn try_rectangle(
 
     for &xb in x_subset {
         for &yb in y_subset {
-            let Some(&(src, lane)) = pos_to_info.get(&(xb, yb)) else {
-                return; // Position not in grid → invalid rectangle.
+            let Some(&(src, lane)) = td.pos_to_info.get(&(xb, yb)) else {
+                return;
             };
             let src_enc = src.encode();
-            if invalid_locs.contains(&src_enc) {
-                return; // Source with occupied destination → invalid.
+            if td.invalid_locs.contains(&src_enc) {
+                return;
             }
             lane_addrs.push(lane);
 
-            // If an atom is at this source, record the move.
-            if let Some(qid) = config.qubit_at(src) {
+            if let Some(&qid) = ctx.loc_to_qubit.get(&src_enc) {
                 has_atom = true;
-                if let Some((_, dst)) = index.endpoints(&lane) {
+                if let Some((_, dst)) = ctx.index.endpoints(&lane) {
                     moves.push((qid, dst));
                 }
             }
@@ -197,11 +201,11 @@ fn try_rectangle(
     }
 
     if !has_atom {
-        return; // No atoms in this rectangle.
+        return;
     }
 
     let move_set = MoveSet::new(lane_addrs);
-    let new_config = config.with_moves(&moves);
+    let new_config = ctx.config.with_moves(&moves);
     out.push((move_set, new_config, 1.0));
 }
 
