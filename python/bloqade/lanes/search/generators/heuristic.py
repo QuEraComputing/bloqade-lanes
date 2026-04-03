@@ -77,7 +77,7 @@ class HeuristicMoveGenerator:
 
         # Fallback: if no group has positive-scoring qubits, use best single entry
         if not groups:
-            best_key = max(scores, key=scores.get)  # type: ignore[arg-type]
+            best_key = max(scores, key=lambda key: scores[key])
             qid, mt, bid, d = best_key
             groups[(mt, bid, d)] = [(qid, scores[best_key])]
 
