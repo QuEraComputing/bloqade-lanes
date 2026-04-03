@@ -23,6 +23,8 @@ class StepInfo:
 
     entropy: int
     unresolved_count: int
+    candidate_movesets: tuple[frozenset[LaneAddress], ...] = ()
+    candidate_index: int | None = None
 
 
 @dataclass
@@ -56,6 +58,8 @@ class RevertStepInfo(StepInfo):
     reason: str = ""
     state_seen_node_id: int | None = None
     no_valid_moves_qubit: int | None = None
+    trigger_node_id: int | None = None
+    trigger_entropy: int | None = None
 
 
 @dataclass
@@ -66,6 +70,7 @@ class EntropyBumpStepInfo(StepInfo):
     reason: str = ""
     no_valid_moves_qubit: int | None = None
     state_seen_node_id: int | None = None
+    attempted_moveset: frozenset[LaneAddress] = field(default_factory=frozenset)
 
 
 @dataclass
