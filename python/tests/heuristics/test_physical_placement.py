@@ -91,8 +91,8 @@ def test_cz_placements_returns_bottom_when_search_fails(monkeypatch):
     strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
     state = _make_state()
 
-    def fake_run_search(self, tree, target, callback):
-        _ = self, tree, target, callback
+    def fake_run_search(self, tree, target, traversal=None):
+        _ = self, tree, target, traversal
         return SearchResult(goal_node=None, nodes_expanded=1, max_depth_reached=0)
 
     monkeypatch.setattr(PhysicalPlacementStrategy, "_run_search", fake_run_search)
@@ -104,8 +104,8 @@ def test_cz_placements_populates_move_layers_from_goal_node(monkeypatch):
     strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
     state = _make_state()
 
-    def fake_run_search(self, tree, target, callback):
-        _ = self, target, callback
+    def fake_run_search(self, tree, target, traversal=None):
+        _ = self, target, traversal
         lane = next(tree.valid_lanes(tree.root))
         goal = tree.apply_move_set(tree.root, frozenset([lane]), strict=False)
         assert goal is not None
@@ -131,8 +131,8 @@ def test_cz_placements_passes_idle_occupied_as_blockers(monkeypatch):
     )
     seen_blocked_locations: list[frozenset[layout.LocationAddress]] = []
 
-    def fake_run_search(self, tree, target, callback):
-        _ = self, target, callback
+    def fake_run_search(self, tree, target, traversal=None):
+        _ = self, target, traversal
         seen_blocked_locations.append(tree.blocked_locations)
         return SearchResult(
             goal_node=tree.root, nodes_expanded=0, max_depth_reached=tree.root.depth

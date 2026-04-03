@@ -121,6 +121,26 @@ class _DebugEmitter:
             if node.configuration.get(qid) != loc
         )
 
+    @staticmethod
+    def _candidate_snapshot(sn: _SearchNode) -> tuple[frozenset[LaneAddress], ...]:
+        return tuple(sn.candidate_cache)
+
+    @staticmethod
+    def _candidate_index(
+        sn: _SearchNode, candidate: frozenset[LaneAddress]
+    ) -> int | None:
+        for idx, cached in enumerate(sn.candidate_cache):
+            if cached == candidate:
+                return idx
+        return None
+
+    @staticmethod
+    def _last_attempt(sn: _SearchNode) -> tuple[int | None, frozenset[LaneAddress]]:
+        idx = sn.candidates_tried - 1
+        if 0 <= idx < len(sn.candidate_cache):
+            return idx, sn.candidate_cache[idx]
+        return None, frozenset()
+
     def goal(self, node: ConfigurationNode, entropy: int) -> None:
         self._emit_step(
             "goal",
@@ -148,6 +168,9 @@ class _DebugEmitter:
                 reason=reason,
                 state_seen_node_id=seen_node_id,
                 no_valid_moves_qubit=no_valid_qid,
+                trigger_node_id=id(trigger_sn.config_node),
+                trigger_entropy=trigger_sn.entropy,
+                candidate_movesets=self._candidate_snapshot(trigger_sn),
             ),
         )
 
@@ -156,6 +179,7 @@ class _DebugEmitter:
         node: ConfigurationNode,
         sn: _SearchNode,
     ) -> None:
+        candidate_index, attempted_moveset = self._last_attempt(sn)
         self._emit_step(
             "entropy_bump",
             node,
@@ -166,6 +190,9 @@ class _DebugEmitter:
                 reason=sn.last_entropy_bump_reason,
                 state_seen_node_id=sn.last_state_seen_node_id,
                 no_valid_moves_qubit=sn.last_no_valid_moves_qubit,
+                attempted_moveset=attempted_moveset,
+                candidate_index=candidate_index,
+                candidate_movesets=self._candidate_snapshot(sn),
             ),
         )
 
@@ -178,6 +205,7 @@ class _DebugEmitter:
     ) -> None:
         if self.on_step is not None:
             moveset_score = self.scorer.score_moveset(candidate, parent, self.tree)
+            candidate_index = self._candidate_index(sn, candidate)
             self._emit_step(
                 "descend",
                 child,
@@ -186,6 +214,8 @@ class _DebugEmitter:
                     unresolved_count=self._unresolved_count(child),
                     moveset=candidate,
                     moveset_score=moveset_score,
+                    candidate_index=candidate_index,
+                    candidate_movesets=self._candidate_snapshot(sn),
                 ),
             )
 
