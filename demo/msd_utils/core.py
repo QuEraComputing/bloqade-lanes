@@ -210,7 +210,7 @@ def run_task(
     shots: int,
     *,
     with_noise: bool = True,
-    chunk_size: int | None = None,
+    chunk_size: int | None = 1_000_000,
 ) -> BasisDataset:
     if chunk_size is None or shots <= chunk_size:
         result = task.run(shots, with_noise=with_noise, run_detectors=True)
