@@ -5,7 +5,19 @@
 
 ## Problem
 
+### Flair integration gap
+
 Flair is a pulse-level language that generates AOD waveforms using a waypoint abstraction. AOD moves are expressed as sequences of grids (Cartesian products of x-positions and y-positions). The ArchSpec in bloqade-lanes defines the physical architecture but does not expose move information in a form natural to flair. This design adds zone-level APIs to ArchSpec that flair can consume directly for generating AOD grid moves.
+
+### Unaligned grids and zone composition
+
+The current ArchSpec data model has a deeper structural problem: it does not support unaligned grids well. The architecture is constructed by laying out all words in a flat global space and then grouping those words into zones after the fact. This means zones are an afterthought rather than a compositional primitive — you cannot naturally express zones with different grid alignments, spacings, or orientations.
+
+PR #398 begins to address this by introducing a zone-based builder API (`ZoneSpec`, `ArchBlueprint`, `build_arch()`) where zones are composed together rather than carved out of a monolithic word layout. However, the underlying data model still stores words globally and zones as word-ID groupings. The new grid-based APIs proposed here (particularly `get_zone_grid` and `get_grid_endpoints`) make this limitation more acute: if zones have unaligned grids, the per-zone Grid returned must faithfully represent each zone's geometry independently, which requires the data model to treat zones as first-class compositional units with their own coordinate systems.
+
+This also motivates extending `LaneAddress` and `LocationAddress` to include a zone index in the address itself. Currently, a `LaneAddress` encodes `(word_id, site_id, bus_id, move_type, direction)` and a `LocationAddress` encodes `(word_id, site_id)` — neither carries zone context. When zones have unaligned grids, the same `word_id` in different zones refers to fundamentally different physical geometries. Embedding the zone index in the address allows the system to meaningfully distinguish between different move topologies (e.g., a site bus move within a tightly-spaced entangling zone vs. the same bus type within a wider storage zone) and correctly dispatch to the right grid geometry without ambient zone context. This change is scoped to step 2 (#421).
+
+For this iteration we constrain all zones to have the same number of x/y grid points to avoid the cross-zone mapping problem. The schema restructuring (#422) and the zone-based builder from PR #398 lay the groundwork for lifting this constraint in the future.
 
 ## Background: Flair AOD Moves
 
