@@ -62,20 +62,92 @@ def _bures_measure(points: np.ndarray) -> np.ndarray:
 
 
 def _grid_axis_points(posterior_samples: int) -> int:
-    axis_points = max(9, int(round(float(max(posterior_samples, 1)) ** (1.0 / 3.0))))
-    if axis_points % 2 == 0:
-        axis_points += 1
-    return axis_points
+    # Use a much finer 1D grid than the previous cube-root heuristic, closer in
+    # spirit to the paper's binary-precision Bloch grid. We keep the total work
+    # manageable later by adaptively cropping around the measured expectations.
+    binary_precision = max(
+        4,
+        int(round(np.log2(float(max(posterior_samples, 1))) / 2.0)),
+    )
+    return min(513, 2**binary_precision + 1)
 
 
 @lru_cache(maxsize=None)
-def _bloch_ball_grid(axis_points: int) -> np.ndarray:
+def _grid_axis_values(axis_points: int) -> np.ndarray:
     # Use cell centers instead of endpoints so the Bures prior stays finite.
     edges = np.linspace(-1.0, 1.0, axis_points + 1, dtype=np.float64)
-    centers = (edges[:-1] + edges[1:]) / 2.0
-    x, y, z = np.meshgrid(centers, centers, centers, indexing="ij")
+    return (edges[:-1] + edges[1:]) / 2.0
+
+
+def _axis_window(
+    values: np.ndarray, n_i: int, k_i: int, *, min_points: int = 33
+) -> np.ndarray:
+    if n_i <= 0 or len(values) <= min_points:
+        return values
+
+    p = float(np.clip(k_i / n_i, 1e-6, 1.0 - 1e-6))
+    mean = 2.0 * p - 1.0
+    sigma = 2.0 * np.sqrt(max(p * (1.0 - p), 1.0 / max(4 * n_i, 1)) / n_i)
+    half_width = max(0.08, 8.0 * sigma)
+    low = max(-1.0, mean - half_width)
+    high = min(1.0, mean + half_width)
+
+    mask = (values >= low) & (values <= high)
+    if int(mask.sum()) >= min_points:
+        return values[mask]
+
+    center = int(np.argmin(np.abs(values - mean)))
+    radius = min_points // 2
+    start = max(0, center - radius)
+    stop = min(len(values), center + radius + 1)
+    if stop - start < min_points:
+        if start == 0:
+            stop = min(len(values), min_points)
+        else:
+            start = max(0, len(values) - min_points)
+    return values[start:stop]
+
+
+def _downsample_axis(values: np.ndarray, keep: int) -> np.ndarray:
+    if len(values) <= keep:
+        return values
+    indices = np.linspace(0, len(values) - 1, num=keep, dtype=int)
+    return values[np.unique(indices)]
+
+
+def _adaptive_bloch_ball_grid(
+    axis_points: int, n: np.ndarray, k: np.ndarray
+) -> np.ndarray:
+    axis_values = _grid_axis_values(axis_points)
+    subsets = [
+        _axis_window(axis_values, int(n_i), int(k_i))
+        for n_i, k_i in zip(n, k, strict=True)
+    ]
+
+    max_grid_points = 1_500_000
+    total_points = len(subsets[0]) * len(subsets[1]) * len(subsets[2])
+    if total_points > max_grid_points:
+        scale = (total_points / max_grid_points) ** (1.0 / 3.0)
+        subsets = [
+            _downsample_axis(values, max(33, int(round(len(values) / scale))))
+            for values in subsets
+        ]
+
+    x, y, z = np.meshgrid(*subsets, indexing="ij")
     points = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
-    return points[np.sum(points * points, axis=1) <= 1.0]
+    points = points[np.sum(points * points, axis=1) <= 1.0]
+    if len(points):
+        return points
+
+    # Rare edge case: with very few accepted shots, the empirical expectations
+    # can sit near +/-1 on all three axes. A tight crop around that corner of
+    # the cube can miss the physical Bloch ball entirely and spuriously drive
+    # the posterior fallback to fidelity 0.5. When that happens, fall back to a
+    # broad but still downsampled full-axis grid.
+    broad_axis = _downsample_axis(axis_values, min(len(axis_values), 113))
+    x, y, z = np.meshgrid(broad_axis, broad_axis, broad_axis, indexing="ij")
+    broad_points = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
+    return broad_points[np.sum(broad_points * broad_points, axis=1) <= 1.0]
 
 
 def _histogram_quantiles(
@@ -104,7 +176,7 @@ def _posterior_fidelity_quantiles(
     posterior_samples: int,
 ) -> np.ndarray:
     axis_points = _grid_axis_points(posterior_samples)
-    points = _bloch_ball_grid(axis_points)
+    points = _adaptive_bloch_ball_grid(axis_points, n, k)
 
     probs = np.clip((1.0 + points) / 2.0, 1e-12, 1.0 - 1e-12)
     log_likelihood = (k * np.log(probs) + (n - k) * np.log1p(-probs)).sum(axis=1)
@@ -127,19 +199,10 @@ def _posterior_fidelity_quantiles(
         0.0,
         1.0,
     )
-
-    bins = max(50, axis_points)
-    fidelity_prob, fidelity_edges = np.histogram(
-        fidelities,
-        bins=bins,
-        range=(0.0, 1.0),
-        weights=weights,
-    )
-    if fidelity_prob.sum() <= 0.0:
+    if weights.sum() <= 0.0:
         point = 0.5
         return np.array([point, point, point], dtype=np.float64)
-    fidelity_prob = fidelity_prob / fidelity_prob.sum()
-    return _histogram_quantiles(fidelity_edges, fidelity_prob, [0.16, 0.5, 0.84])
+    return weighted_quantile(fidelities, [0.16, 0.5, 0.84], weights)
 
 
 def fidelity_from_counts(
