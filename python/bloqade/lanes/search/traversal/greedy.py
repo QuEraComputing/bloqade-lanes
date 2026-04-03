@@ -2,18 +2,54 @@
 
 from __future__ import annotations
 
-__all__ = ["greedy_best_first"]
+__all__ = ["GreedyBestFirstTraversal", "greedy_best_first"]
 
 import heapq
+from dataclasses import dataclass
 
 from bloqade.lanes.search.generators import MoveGenerator
+from bloqade.lanes.search.traversal.driver import run_frontier_search
 from bloqade.lanes.search.traversal.goal import (
     GoalPredicate,
     HeuristicFunction,
     PriorityEntry,
     SearchResult,
 )
+from bloqade.lanes.search.traversal.interface import TraversalStrategyABC
 from bloqade.lanes.search.tree import ConfigurationTree
+
+
+@dataclass(frozen=True)
+class GreedyBestFirstTraversal(TraversalStrategyABC):
+    """Greedy best-first traversal policy."""
+
+    heuristic: HeuristicFunction
+
+    def search(
+        self,
+        *,
+        tree: ConfigurationTree,
+        generator: MoveGenerator,
+        goal: GoalPredicate,
+        max_expansions: int | None = None,
+        max_depth: int | None = None,
+    ) -> SearchResult:
+        _ = max_depth
+        frontier: list[PriorityEntry] = []
+        heapq.heappush(frontier, PriorityEntry(self.heuristic(tree.root), tree.root))
+        return run_frontier_search(
+            tree=tree,
+            generator=generator,
+            goal=goal,
+            pop_next=lambda: heapq.heappop(frontier).node if frontier else None,
+            push_child=lambda child: heapq.heappush(
+                frontier, PriorityEntry(self.heuristic(child), child)
+            ),
+            frontier_has_items=lambda: bool(frontier),
+            max_expansions=max_expansions,
+            max_depth=None,
+            goal_on_pop=False,
+        )
 
 
 def greedy_best_first(
@@ -40,36 +76,9 @@ def greedy_best_first(
     Returns:
         SearchResult with the goal node (or None if not found).
     """
-    if goal(tree.root):
-        return SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
-
-    frontier: list[PriorityEntry] = []
-    heapq.heappush(frontier, PriorityEntry(heuristic(tree.root), tree.root))
-
-    nodes_expanded = 0
-    max_depth = 0
-
-    while frontier:
-        if max_expansions is not None and nodes_expanded >= max_expansions:
-            break
-
-        entry = heapq.heappop(frontier)
-        node = entry.node
-
-        nodes_expanded += 1
-        max_depth = max(max_depth, node.depth)
-
-        for child in tree.expand_node(node, generator, strict=False):
-            if goal(child):
-                return SearchResult(
-                    goal_node=child,
-                    nodes_expanded=nodes_expanded,
-                    max_depth_reached=max(max_depth, child.depth),
-                )
-            heapq.heappush(frontier, PriorityEntry(heuristic(child), child))
-
-    return SearchResult(
-        goal_node=None,
-        nodes_expanded=nodes_expanded,
-        max_depth_reached=max_depth,
+    return GreedyBestFirstTraversal(heuristic=heuristic).search(
+        tree=tree,
+        generator=generator,
+        goal=goal,
+        max_expansions=max_expansions,
     )
