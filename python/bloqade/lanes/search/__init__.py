@@ -10,8 +10,13 @@ from bloqade.lanes.search.generators import (
 from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal import (
+    AStarTraversal,
+    BFSTraversal,
     EntropyGuidedSearch,
+    EntropyGuidedTraversal,
+    GreedyBestFirstTraversal,
     SearchResult,
+    TraversalStrategyABC,
     astar,
     bfs,
     entropy_guided_search,
@@ -24,16 +29,21 @@ from bloqade.lanes.search.tree import ConfigurationTree, InvalidMoveError
 
 __all__ = [
     "CandidateScorer",
+    "AStarTraversal",
+    "BFSTraversal",
     "ConfigurationNode",
     "ConfigurationTree",
     "EntropyGuidedSearch",
+    "EntropyGuidedTraversal",
     "ExhaustiveMoveGenerator",
+    "GreedyBestFirstTraversal",
     "GreedyMoveGenerator",
     "HeuristicMoveGenerator",
     "InvalidMoveError",
     "MoveGenerator",
     "SearchParams",
     "SearchResult",
+    "TraversalStrategyABC",
     "astar",
     "bfs",
     "entropy_guided_search",

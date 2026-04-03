@@ -243,7 +243,7 @@ def test_outcome_transposition_maps_to_state_seen(monkeypatch):
     records, record = _make_on_step_recorder()
     candidate = frozenset({SiteLaneAddress(0, 0, 0)})
 
-    def fake_next_candidate(_self, _sn, _node):  # type: ignore[no-untyped-def]
+    def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
         return candidate
 
     def fake_try_move_set(_node, move_set, strict=True):  # type: ignore[no-untyped-def]
@@ -275,7 +275,7 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
     records, record = _make_on_step_recorder()
     candidate = frozenset({SiteLaneAddress(0, 0, 0)})
 
-    def fake_next_candidate(_self, _sn, _node):  # type: ignore[no-untyped-def]
+    def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
         return candidate
 
     def fake_try_move_set(_node, move_set, strict=True):  # type: ignore[no-untyped-def]
@@ -314,7 +314,7 @@ def test_collects_multiple_goal_nodes(monkeypatch):
     c2 = frozenset({SiteLaneAddress(0, 0, 1)})
     candidate_sequence = iter([c1, c2])
 
-    def fake_next_candidate(_self, _sn, _node):  # type: ignore[no-untyped-def]
+    def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
         return next(candidate_sequence, None)
 
     def fake_try_move_set(node, move_set, strict=True):  # type: ignore[no-untyped-def]
