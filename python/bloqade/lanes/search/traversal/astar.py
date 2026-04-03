@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-__all__ = ["astar"]
+__all__ = ["AStarTraversal", "astar"]
 
 import heapq
+from dataclasses import dataclass
 
 from bloqade.lanes.search.generators import MoveGenerator
+from bloqade.lanes.search.traversal.driver import run_frontier_search
 from bloqade.lanes.search.traversal.goal import (
     CostFunction,
     GoalPredicate,
@@ -14,7 +16,46 @@ from bloqade.lanes.search.traversal.goal import (
     PriorityEntry,
     SearchResult,
 )
+from bloqade.lanes.search.traversal.interface import TraversalStrategyABC
 from bloqade.lanes.search.tree import ConfigurationTree
+
+
+@dataclass(frozen=True)
+class AStarTraversal(TraversalStrategyABC):
+    """A* traversal policy."""
+
+    heuristic: HeuristicFunction
+    cost: CostFunction | None = None
+
+    def search(
+        self,
+        *,
+        tree: ConfigurationTree,
+        generator: MoveGenerator,
+        goal: GoalPredicate,
+        max_expansions: int | None = None,
+        max_depth: int | None = None,
+    ) -> SearchResult:
+        _ = max_depth
+        cost_fn: CostFunction = (
+            self.cost if self.cost is not None else lambda node: float(node.depth)
+        )
+        frontier: list[PriorityEntry] = []
+        root_f = cost_fn(tree.root) + self.heuristic(tree.root)
+        heapq.heappush(frontier, PriorityEntry(root_f, tree.root))
+        return run_frontier_search(
+            tree=tree,
+            generator=generator,
+            goal=goal,
+            pop_next=lambda: heapq.heappop(frontier).node if frontier else None,
+            push_child=lambda child: heapq.heappush(
+                frontier, PriorityEntry(cost_fn(child) + self.heuristic(child), child)
+            ),
+            frontier_has_items=lambda: bool(frontier),
+            max_expansions=max_expansions,
+            max_depth=None,
+            goal_on_pop=True,
+        )
 
 
 def astar(
@@ -43,43 +84,9 @@ def astar(
     Returns:
         SearchResult with the goal node (or None if not found).
     """
-    cost_fn: CostFunction = cost if cost is not None else lambda node: float(node.depth)
-
-    if goal(tree.root):
-        return SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
-
-    frontier: list[PriorityEntry] = []
-    f_score = cost_fn(tree.root) + heuristic(tree.root)
-    heapq.heappush(frontier, PriorityEntry(f_score, tree.root))
-
-    nodes_expanded = 0
-    max_depth = 0
-
-    while frontier:
-        if max_expansions is not None and nodes_expanded >= max_expansions:
-            break
-
-        entry = heapq.heappop(frontier)
-        node = entry.node
-
-        # A* guarantees optimality when the goal is popped from the
-        # frontier (confirmed lowest f-score), not when first generated.
-        if goal(node):
-            return SearchResult(
-                goal_node=node,
-                nodes_expanded=nodes_expanded,
-                max_depth_reached=max(max_depth, node.depth),
-            )
-
-        nodes_expanded += 1
-        max_depth = max(max_depth, node.depth)
-
-        for child in tree.expand_node(node, generator, strict=False):
-            f_score = cost_fn(child) + heuristic(child)
-            heapq.heappush(frontier, PriorityEntry(f_score, child))
-
-    return SearchResult(
-        goal_node=None,
-        nodes_expanded=nodes_expanded,
-        max_depth_reached=max_depth,
+    return AStarTraversal(heuristic=heuristic, cost=cost).search(
+        tree=tree,
+        generator=generator,
+        goal=goal,
+        max_expansions=max_expansions,
     )
