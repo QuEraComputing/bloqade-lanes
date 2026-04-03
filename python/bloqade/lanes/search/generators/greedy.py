@@ -44,13 +44,17 @@ class GreedyMoveGenerator:
         3. Group by (move_type, bus_id, direction).
         4. Build AOD-compatible rectangular grids per group.
         """
+        occupied = node.occupied_locations | tree.blocked_locations
+
         first_lanes: dict[int, LaneAddress] = {}
         for qid, current in node.configuration.items():
             target_loc = self.target.get(qid)
             if target_loc is None or current == target_loc:
                 continue
 
-            result = tree.path_finder.find_path(current, target_loc)
+            result = tree.path_finder.find_path(
+                current, target_loc, occupied=occupied - {current}
+            )
             if result is None:
                 continue
 
@@ -69,7 +73,6 @@ class GreedyMoveGenerator:
             key = (lane.move_type, lane.bus_id, lane.direction)
             groups.setdefault(key, {})[qid] = lane
 
-        occupied = node.occupied_locations | tree.blocked_locations
         for (mt, bid, d), entries in groups.items():
             ctx = BusContext.from_tree(tree, occupied, mt, bid, d)
             yield from ctx.build_aod_grids(entries)
