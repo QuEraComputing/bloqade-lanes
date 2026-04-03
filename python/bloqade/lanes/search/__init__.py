@@ -3,6 +3,7 @@
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.generators import (
     ExhaustiveMoveGenerator,
+    GreedyMoveGenerator,
     HeuristicMoveGenerator,
     MoveGenerator,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "EntropyGuidedTraversal",
     "ExhaustiveMoveGenerator",
     "GreedyBestFirstTraversal",
+    "GreedyMoveGenerator",
     "HeuristicMoveGenerator",
     "InvalidMoveError",
     "MoveGenerator",
