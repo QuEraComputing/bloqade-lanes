@@ -15,12 +15,14 @@ applied to the tree.
 from bloqade.lanes.search.generators.aod_grouping import BusContext
 from bloqade.lanes.search.generators.base import EntropyNode, MoveGenerator
 from bloqade.lanes.search.generators.exhaustive import ExhaustiveMoveGenerator
+from bloqade.lanes.search.generators.greedy import GreedyMoveGenerator
 from bloqade.lanes.search.generators.heuristic import HeuristicMoveGenerator
 
 __all__ = [
     "BusContext",
     "EntropyNode",
     "ExhaustiveMoveGenerator",
+    "GreedyMoveGenerator",
     "HeuristicMoveGenerator",
     "MoveGenerator",
 ]
