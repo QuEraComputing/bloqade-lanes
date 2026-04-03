@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__all__ = ["entropy_guided_search", "EntropyGuidedSearch"]
+__all__ = ["entropy_guided_search", "EntropyGuidedSearch", "EntropyGuidedTraversal"]
 
 from dataclasses import dataclass, field
 from typing import Callable
@@ -14,10 +14,15 @@ from bloqade.lanes.layout import (
     MoveType,
 )
 from bloqade.lanes.search.configuration import ConfigurationNode
-from bloqade.lanes.search.generators import EntropyNode, HeuristicMoveGenerator
+from bloqade.lanes.search.generators import (
+    EntropyNode,
+    HeuristicMoveGenerator,
+    MoveGenerator,
+)
 from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal.goal import GoalPredicate, SearchResult
+from bloqade.lanes.search.traversal.interface import TraversalStrategyABC
 from bloqade.lanes.search.traversal.step_info import (
     DescendStepInfo,
     EntropyBumpStepInfo,
@@ -116,6 +121,26 @@ class _DebugEmitter:
             if node.configuration.get(qid) != loc
         )
 
+    @staticmethod
+    def _candidate_snapshot(sn: _SearchNode) -> tuple[frozenset[LaneAddress], ...]:
+        return tuple(sn.candidate_cache)
+
+    @staticmethod
+    def _candidate_index(
+        sn: _SearchNode, candidate: frozenset[LaneAddress]
+    ) -> int | None:
+        for idx, cached in enumerate(sn.candidate_cache):
+            if cached == candidate:
+                return idx
+        return None
+
+    @staticmethod
+    def _last_attempt(sn: _SearchNode) -> tuple[int | None, frozenset[LaneAddress]]:
+        idx = sn.candidates_tried - 1
+        if 0 <= idx < len(sn.candidate_cache):
+            return idx, sn.candidate_cache[idx]
+        return None, frozenset()
+
     def goal(self, node: ConfigurationNode, entropy: int) -> None:
         self._emit_step(
             "goal",
@@ -143,6 +168,9 @@ class _DebugEmitter:
                 reason=reason,
                 state_seen_node_id=seen_node_id,
                 no_valid_moves_qubit=no_valid_qid,
+                trigger_node_id=id(trigger_sn.config_node),
+                trigger_entropy=trigger_sn.entropy,
+                candidate_movesets=self._candidate_snapshot(trigger_sn),
             ),
         )
 
@@ -151,6 +179,7 @@ class _DebugEmitter:
         node: ConfigurationNode,
         sn: _SearchNode,
     ) -> None:
+        candidate_index, attempted_moveset = self._last_attempt(sn)
         self._emit_step(
             "entropy_bump",
             node,
@@ -161,6 +190,9 @@ class _DebugEmitter:
                 reason=sn.last_entropy_bump_reason,
                 state_seen_node_id=sn.last_state_seen_node_id,
                 no_valid_moves_qubit=sn.last_no_valid_moves_qubit,
+                attempted_moveset=attempted_moveset,
+                candidate_index=candidate_index,
+                candidate_movesets=self._candidate_snapshot(sn),
             ),
         )
 
@@ -173,6 +205,7 @@ class _DebugEmitter:
     ) -> None:
         if self.on_step is not None:
             moveset_score = self.scorer.score_moveset(candidate, parent, self.tree)
+            candidate_index = self._candidate_index(sn, candidate)
             self._emit_step(
                 "descend",
                 child,
@@ -181,6 +214,8 @@ class _DebugEmitter:
                     unresolved_count=self._unresolved_count(child),
                     moveset=candidate,
                     moveset_score=moveset_score,
+                    candidate_index=candidate_index,
+                    candidate_movesets=self._candidate_snapshot(sn),
                 ),
             )
 
@@ -240,13 +275,6 @@ class EntropyGuidedSearch:
 
         self.scorer = CandidateScorer(params=params, target=target)
         self.search_nodes: dict[int, _SearchNode] = {}
-        # _SearchNode satisfies EntropyNode protocol; cast for dict invariance.
-        entropy_view: dict[int, EntropyNode] = self.search_nodes  # type: ignore[assignment]
-        self.generator = HeuristicMoveGenerator(
-            scorer=self.scorer,
-            params=params,
-            search_nodes=entropy_view,
-        )
         self.debug = _DebugEmitter(scorer=self.scorer, tree=tree, on_step=on_step)
         self.nodes_expanded = 0
         self.max_depth_reached = 0
@@ -260,7 +288,10 @@ class EntropyGuidedSearch:
         return sn
 
     def _get_next_candidate(
-        self, sn: _SearchNode, node: ConfigurationNode
+        self,
+        sn: _SearchNode,
+        node: ConfigurationNode,
+        generator: MoveGenerator,
     ) -> frozenset[LaneAddress] | None:
         """Get the next untried candidate, enforcing max_candidates (K) limit.
 
@@ -269,7 +300,7 @@ class EntropyGuidedSearch:
         (failed generation).
         """
         if sn.candidates_tried >= self.params.max_candidates:
-            new_candidates = list(self.generator.generate(node, self.tree))
+            new_candidates = list(generator.generate(node, self.tree))
             sn.candidate_cache = new_candidates
             sn.candidates_tried = 0
 
@@ -286,7 +317,7 @@ class EntropyGuidedSearch:
                 return candidate
             sn.candidates_tried += 1
 
-        new_candidates = list(self.generator.generate(node, self.tree))
+        new_candidates = list(generator.generate(node, self.tree))
         sn.candidate_cache = new_candidates
         sn.candidates_tried = 0
 
@@ -442,7 +473,7 @@ class EntropyGuidedSearch:
 
         return self._make_result()
 
-    def run(self) -> SearchResult:
+    def run(self, generator: MoveGenerator) -> SearchResult:
         """Execute the entropy-guided search and return the result."""
         found_goals: list[ConfigurationNode] = []
         if self.goal(self.tree.root):
@@ -478,7 +509,7 @@ class EntropyGuidedSearch:
                 current_node = ancestor
                 continue
 
-            candidate = self._get_next_candidate(sn, current_node)
+            candidate = self._get_next_candidate(sn, current_node, generator)
 
             if candidate is None:
                 no_valid_qid = self._first_unresolved_qubit_without_valid_move(
@@ -539,6 +570,38 @@ class EntropyGuidedSearch:
         return self._make_result(goal_nodes=tuple(found_goals))
 
 
+@dataclass(frozen=True)
+class EntropyGuidedTraversal(TraversalStrategyABC):
+    """Traversal strategy adapter for entropy-guided search."""
+
+    target: dict[int, LocationAddress]
+    params: SearchParams = SearchParams()
+    on_step: Callable[[str, ConfigurationNode, StepInfo], None] | None = None
+
+    def search(
+        self,
+        *,
+        tree: ConfigurationTree,
+        generator: MoveGenerator,
+        goal: GoalPredicate,
+        max_expansions: int | None = None,
+        max_depth: int | None = None,
+    ) -> SearchResult:
+        search = EntropyGuidedSearch(
+            tree=tree,
+            target=self.target,
+            goal=goal,
+            params=self.params,
+            max_depth=max_depth,
+            max_expansions=max_expansions,
+            on_step=self.on_step,
+        )
+        if isinstance(generator, HeuristicMoveGenerator):
+            entropy_view: dict[int, EntropyNode] = search.search_nodes  # type: ignore[assignment]
+            generator.search_nodes = entropy_view
+        return search.run(generator=generator)
+
+
 def entropy_guided_search(
     tree: ConfigurationTree,
     target: dict[int, LocationAddress],
@@ -554,7 +617,8 @@ def entropy_guided_search(
     Also takes *target* directly (in addition to *goal*) because scoring needs
     the raw target mapping.
     """
-    return EntropyGuidedSearch(
+    scorer = CandidateScorer(params=params, target=target)
+    search = EntropyGuidedSearch(
         tree=tree,
         target=target,
         goal=goal,
@@ -562,4 +626,11 @@ def entropy_guided_search(
         max_depth=max_depth,
         max_expansions=max_expansions,
         on_step=on_step,
-    ).run()
+    )
+    entropy_view: dict[int, EntropyNode] = search.search_nodes  # type: ignore[assignment]
+    generator = HeuristicMoveGenerator(
+        scorer=scorer,
+        params=params,
+        search_nodes=entropy_view,
+    )
+    return search.run(generator=generator)
