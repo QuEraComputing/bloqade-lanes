@@ -23,9 +23,10 @@ class GreedyMoveGenerator:
     """Greedy shortest-path move generator.
 
     For each unresolved qubit, computes the shortest path to its target
-    (without assuming other atoms have moved) and takes the first lane.
-    Those first-step lanes are grouped by (move_type, bus_id, direction)
-    and partitioned into AOD-compatible rectangular grids via BusContext.
+    while routing around all other atoms (but not itself) and takes the
+    first lane. Those first-step lanes are grouped by
+    (move_type, bus_id, direction) and partitioned into AOD-compatible
+    rectangular grids via BusContext.
     """
 
     target: dict[int, LocationAddress]
@@ -39,7 +40,8 @@ class GreedyMoveGenerator:
         """Yield candidate move sets.
 
         Steps:
-        1. For each qubit, find shortest path to target (ignoring other atoms).
+        1. For each qubit, find shortest path to target routing around
+           all other atoms (but not itself).
         2. Take the first lane from each path.
         3. Group by (move_type, bus_id, direction).
         4. Build AOD-compatible rectangular grids per group.
