@@ -888,7 +888,7 @@
 <a href=#888 id=888 data-nosnippet>888</a>
 <a href=#889 id=889 data-nosnippet>889</a>    </span><span class="kw">fn </span>test_arch_spec() -&gt; ArchSpec {
 <a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">let </span>json = <span class="string">r#"{
-<a href=#891 id=891 data-nosnippet>891</a>            "version": "1.0",
+<a href=#891 id=891 data-nosnippet>891</a>            "version": "2.0",
 <a href=#892 id=892 data-nosnippet>892</a>            "geometry": {
 <a href=#893 id=893 data-nosnippet>893</a>                "sites_per_word": 2,
 <a href=#894 id=894 data-nosnippet>894</a>                "words": [
@@ -909,7 +909,7 @@
 <a href=#909 id=909 data-nosnippet>909</a>            "zones": [
 <a href=#910 id=910 data-nosnippet>910</a>                { "words": [0] }
 <a href=#911 id=911 data-nosnippet>911</a>            ],
-<a href=#912 id=912 data-nosnippet>912</a>            "entangling_zones": [0],
+<a href=#912 id=912 data-nosnippet>912</a>            "entangling_zones": [],
 <a href=#913 id=913 data-nosnippet>913</a>            "measurement_mode_zones": [0]
 <a href=#914 id=914 data-nosnippet>914</a>        }"#</span>;
 <a href=#915 id=915 data-nosnippet>915</a>        ArchSpec::from_json(json).unwrap()
@@ -1082,7 +1082,7 @@
 <a href=#1082 id=1082 data-nosnippet>1082</a>    <span class="attr">#[test]
 <a href=#1083 id=1083 data-nosnippet>1083</a>    </span><span class="kw">fn </span>test_lane_group_word_not_in_site_bus_list() {
 <a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="kw">let </span>json = <span class="string">r#"{
-<a href=#1085 id=1085 data-nosnippet>1085</a>            "version": "1.0",
+<a href=#1085 id=1085 data-nosnippet>1085</a>            "version": "2.0",
 <a href=#1086 id=1086 data-nosnippet>1086</a>            "geometry": {
 <a href=#1087 id=1087 data-nosnippet>1087</a>                "sites_per_word": 2,
 <a href=#1088 id=1088 data-nosnippet>1088</a>                "words": [
@@ -1103,7 +1103,7 @@
 <a href=#1103 id=1103 data-nosnippet>1103</a>            "words_with_site_buses": [0],
 <a href=#1104 id=1104 data-nosnippet>1104</a>            "sites_with_word_buses": [],
 <a href=#1105 id=1105 data-nosnippet>1105</a>            "zones": [{ "words": [0, 1] }],
-<a href=#1106 id=1106 data-nosnippet>1106</a>            "entangling_zones": [0],
+<a href=#1106 id=1106 data-nosnippet>1106</a>            "entangling_zones": [[[0, 1]]],
 <a href=#1107 id=1107 data-nosnippet>1107</a>            "measurement_mode_zones": [0]
 <a href=#1108 id=1108 data-nosnippet>1108</a>        }"#</span>;
 <a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="kw">let </span>arch = ArchSpec::from_json(json).unwrap();

@@ -52,11 +52,16 @@
       "minItems": 1
     },
     "entangling_zones": {
-      "description": "Zone IDs where entangling (CZ) gates can be performed. Every entry must reference a valid zone ID defined in zones.",
+      "description": "Entanglement zones. Each zone is a list of word-ID pairs [w_a, w_b] whose matching sites are within blockade radius for CZ gates.",
       "type": "array",
       "items": {
-        "type": "integer",
-        "minimum": 0
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 2,
+          "maxItems": 2
+        }
       }
     },
     "measurement_mode_zones": {
@@ -84,6 +89,11 @@
       "description": "Whether the device supports reloading atoms after initial fill. When false (default), no fill instruction is allowed (only initial_fill).",
       "type": "boolean",
       "default": false
+    },
+    "blockade_radius": {
+      "description": "Rydberg blockade radius in micrometers. Sites within this distance are considered entangled during CZ gates.",
+      "type": "number",
+      "default": 2.0
     }
   },
   "$defs": {
@@ -121,19 +131,6 @@
         },
         "site_indices": {
           "description": "Site positions as [x_idx, y_idx] pairs. Each pair indexes into the grid's computed x and y coordinate arrays respectively. Length must equal geometry.sites_per_word.",
-          "type": "array",
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "minItems": 2,
-            "maxItems": 2
-          }
-        },
-        "has_cz": {
-          "description": "Optional CZ entanglement partners for each site. has_cz[i] = [word_id, site_id] specifies the site that site i entangles with during a CZ gate. Length must equal site_indices.length if present.",
           "type": "array",
           "items": {
             "type": "array",

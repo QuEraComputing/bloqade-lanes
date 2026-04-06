@@ -185,7 +185,7 @@
 <p>The formal JSON Schema is available at <a href="./archspec-schema.json"><code>archspec-schema.json</code></a>.</p>
 <h2 id="top-level-structure"><a class="header" href="#top-level-structure">Top-Level Structure</a></h2>
 <pre><code class="language-jsonc">{
-  &quot;version&quot;: &quot;1.0&quot;,
+  &quot;version&quot;: &quot;2.0&quot;,
   &quot;geometry&quot;: { ... },
   &quot;buses&quot;: { ... },
   &quot;words_with_site_buses&quot;: [...],
@@ -193,20 +193,22 @@
   &quot;zones&quot;: [...],
   &quot;entangling_zones&quot;: [...],
   &quot;measurement_mode_zones&quot;: [...],
+  &quot;blockade_radius&quot;: 2.0,         // optional, default 2.0
   &quot;paths&quot;: [...],                 // optional
   &quot;feed_forward&quot;: false,          // optional, default false
   &quot;atom_reloading&quot;: false          // optional, default false
 }
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>version</code></td><td>string</td><td>Format version as <code>&quot;major.minor&quot;</code> (e.g. <code>&quot;1.0&quot;</code>).</td></tr>
+<tr><td><code>version</code></td><td>string</td><td>Format version as <code>&quot;major.minor&quot;</code> (e.g. <code>&quot;2.0&quot;</code>).</td></tr>
 <tr><td><code>geometry</code></td><td>object</td><td>Physical geometry — words, grids, and site positions.</td></tr>
 <tr><td><code>buses</code></td><td>object</td><td>Transport bus definitions (site buses and word buses).</td></tr>
 <tr><td><code>words_with_site_buses</code></td><td>integer[]</td><td>Word IDs with intra-word site transport capability.</td></tr>
 <tr><td><code>sites_with_word_buses</code></td><td>integer[]</td><td>Site indices that serve as landing pads for inter-word transport.</td></tr>
 <tr><td><code>zones</code></td><td>Zone[]</td><td>Logical groupings of words for execution phases.</td></tr>
-<tr><td><code>entangling_zones</code></td><td>integer[]</td><td>Zone IDs where CZ gates can be performed.</td></tr>
+<tr><td><code>entangling_zones</code></td><td>[word_a, word_b][][]</td><td>Entanglement zones, each containing word-ID pairs whose matching sites are within blockade radius.</td></tr>
 <tr><td><code>measurement_mode_zones</code></td><td>integer[]</td><td>Zone IDs that support measurement.</td></tr>
+<tr><td><code>blockade_radius</code></td><td>float</td><td><em>(optional, default <code>2.0</code>)</em> Rydberg blockade radius in micrometers.</td></tr>
 <tr><td><code>paths</code></td><td>TransportPath[]</td><td><em>(optional)</em> AOD transport paths between locations.</td></tr>
 <tr><td><code>feed_forward</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports mid-circuit measurement with classical feedback.</td></tr>
 <tr><td><code>atom_reloading</code></td><td>bool</td><td><em>(optional, default <code>false</code>)</em> Whether the device supports reloading atoms after initial fill.</td></tr>
@@ -225,8 +227,7 @@
         &quot;x_spacing&quot;: [2.0, 2.0, 2.0, 2.0],
         &quot;y_spacing&quot;: [2.5]
       },
-      &quot;site_indices&quot;: [[0, 0], [1, 0], [2, 0], ...],
-      &quot;has_cz&quot;: [[0, 5], [0, 6], ...]       // optional
+      &quot;site_indices&quot;: [[0, 0], [1, 0], [2, 0], ...]
     }
   ]
 }
@@ -237,7 +238,6 @@
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>positions</code></td><td>Grid</td><td>The 2D coordinate system for this word.</td></tr>
 <tr><td><code>site_indices</code></td><td>[x_idx, y_idx][]</td><td>Site positions as index pairs into the grid's x and y coordinate arrays.</td></tr>
-<tr><td><code>has_cz</code></td><td>[word_id, site_id][]</td><td><em>(optional)</em> CZ entanglement partner for each site. <code>has_cz[i]</code> is the site that site <code>i</code> entangles with.</td></tr>
 </tbody></table>
 </div>
 <h3 id="grid"><a class="header" href="#grid">Grid</a></h3>
@@ -280,7 +280,11 @@
 <p>A zone's ID is its index in the <code>zones</code> array (e.g., the first zone is zone 0).</p>
 <p>Zone 0 is special — it must contain every word in the geometry. This ensures there is always a &quot;global&quot; zone that covers the entire device.</p>
 <h3 id="entangling-zones"><a class="header" href="#entangling-zones">Entangling Zones</a></h3>
-<p><code>entangling_zones</code> lists zone IDs where CZ (entangling) gates can be performed. Words in these zones must have <code>has_cz</code> defined to specify entanglement partners.</p>
+<p><code>entangling_zones</code> defines which word pairs can perform CZ (entangling) gates. Each entangling zone is a list of <code>[word_a, word_b]</code> pairs. Within a pair, sites at matching indices in <code>word_a</code> and <code>word_b</code> are within blockade radius.</p>
+<pre><code class="language-jsonc">&quot;entangling_zones&quot;: [
+  [[0, 1], [2, 3]]   // zone 0: words 0↔1 and 2↔3 are CZ pairs
+]
+</code></pre>
 <h3 id="measurement-mode-zones"><a class="header" href="#measurement-mode-zones">Measurement Mode Zones</a></h3>
 <p><code>measurement_mode_zones</code> lists zone IDs that support measurement operations. If non-empty, the first entry must be zone 0.</p>
 <hr />
@@ -331,7 +335,6 @@
 <h3 id="word--site-rules"><a class="header" href="#word--site-rules">Word / Site Rules</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error</th></tr></thead><tbody>
 <tr><td>Every word must have exactly <code>sites_per_word</code> site_indices</td><td><code>WrongSiteCount</code></td></tr>
-<tr><td>If present, <code>has_cz</code> must have exactly <code>sites_per_word</code> entries</td><td><code>WrongCzPairsCount</code></td></tr>
 <tr><td>All words must have the same grid shape (same number of x and y positions)</td><td><code>InconsistentGridShape</code></td></tr>
 <tr><td>Grid coordinates must be finite (no NaN or Inf)</td><td><code>NonFiniteGridValue</code></td></tr>
 <tr><td>Site <code>x_idx</code> must be &lt; number of x grid points (<code>len(x_spacing) + 1</code>)</td><td><code>SiteXIndexOutOfRange</code></td></tr>
@@ -386,7 +389,7 @@
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <p>Minimal spec with one word and one site bus:</p>
 <pre><code class="language-json">{
-  &quot;version&quot;: &quot;1.0&quot;,
+  &quot;version&quot;: &quot;2.0&quot;,
   &quot;geometry&quot;: {
     &quot;sites_per_word&quot;: 5,
     &quot;words&quot;: [
