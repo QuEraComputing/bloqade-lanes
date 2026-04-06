@@ -169,6 +169,69 @@ def test_max_candidates_enforced():
     assert result.goal_node is not None
 
 
+def test_candidate_cache_keeps_only_top_unique_generated_candidates():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    params = SearchParams(max_candidates=2, e_max=4)
+    search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
+
+    node = tree.root
+    existing_child_moveset = frozenset({SiteLaneAddress(0, 0, 0)})
+    node.children = {
+        existing_child_moveset: ConfigurationNode(
+            configuration=dict(node.configuration),
+            parent=node,
+            parent_moves=existing_child_moveset,
+            depth=node.depth + 1,
+        )
+    }
+
+    top_candidate = frozenset({SiteLaneAddress(0, 0, 1)})
+    duplicate_top_candidate = frozenset({SiteLaneAddress(0, 0, 1)})
+    second_candidate = frozenset({SiteLaneAddress(0, 0, 2)})
+    lower_ranked_candidate = frozenset({SiteLaneAddress(0, 0, 3)})
+
+    class _StubGenerator:
+        def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
+            return iter(
+                [
+                    existing_child_moveset,
+                    top_candidate,
+                    duplicate_top_candidate,
+                    second_candidate,
+                    lower_ranked_candidate,
+                ]
+            )
+
+    sn = search._get_or_create_search_node(node)
+    next_candidate = search._get_next_candidate(sn, node, _StubGenerator())
+
+    assert next_candidate == top_candidate
+    assert sn.candidate_cache == [existing_child_moveset, top_candidate]
+
+
+def test_candidate_cache_top_k_applies_to_global_rectangle_order():
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 5)}
+    params = SearchParams(max_candidates=2, e_max=4)
+    search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
+
+    node = tree.root
+    rect_top = frozenset({SiteLaneAddress(0, 0, 0), SiteLaneAddress(1, 0, 0)})
+    rect_second = frozenset({SiteLaneAddress(0, 0, 1), SiteLaneAddress(1, 0, 1)})
+    rect_third = frozenset({SiteLaneAddress(0, 0, 2), SiteLaneAddress(1, 0, 2)})
+
+    class _RectangleStubGenerator:
+        def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
+            return iter([rect_top, rect_second, rect_third])
+
+    sn = search._get_or_create_search_node(node)
+    next_candidate = search._get_next_candidate(sn, node, _RectangleStubGenerator())
+
+    assert next_candidate == rect_top
+    assert sn.candidate_cache == [rect_top, rect_second]
+
+
 def test_on_step_callback_fires():
     tree = _make_tree()
     target = {0: LocationAddress(0, 1)}
