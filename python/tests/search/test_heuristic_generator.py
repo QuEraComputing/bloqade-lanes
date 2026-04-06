@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import LocationAddress, WordLaneAddress
+from bloqade.lanes.layout import LocationAddress, SiteLaneAddress
 from bloqade.lanes.search.generators import EntropyNode, HeuristicMoveGenerator
 from bloqade.lanes.search.scoring import CandidateScorer, RectangleBusCandidates
 from bloqade.lanes.search.search_params import SearchParams
@@ -93,8 +93,8 @@ def test_generate_filters_rectangles_with_invalid_sources(monkeypatch):
     gen, tree, search_nodes = _make_setup()
     search_nodes[id(tree.root)] = _EntropyNode()
 
-    lane_ok = WordLaneAddress(0, 0, 0)
-    lane_bad = WordLaneAddress(1, 0, 9)
+    lane_ok = SiteLaneAddress(0, 0, 0)
+    lane_bad = SiteLaneAddress(1, 0, 0)
     bad_src = LocationAddress(1, 0)
 
     def fake_bus_candidates(_node, _entropy, _tree):  # type: ignore[no-untyped-def]
@@ -132,9 +132,9 @@ def test_generate_ranks_rectangles_globally_across_buses(monkeypatch):
     gen, tree, search_nodes = _make_setup()
     search_nodes[id(tree.root)] = _EntropyNode()
 
-    a1 = WordLaneAddress(0, 0, 0)
-    a2 = WordLaneAddress(4, 0, 0)
-    b1 = WordLaneAddress(1, 0, 9)
+    a1 = SiteLaneAddress(0, 0, 0)
+    a2 = SiteLaneAddress(1, 0, 0)
+    b1 = SiteLaneAddress(0, 0, 1)
 
     def fake_bus_candidates(_node, _entropy, _tree):  # type: ignore[no-untyped-def]
         return {
@@ -183,7 +183,7 @@ def test_generate_falls_back_to_best_singleton_when_no_positive_rectangles(
     gen, tree, search_nodes = _make_setup()
     search_nodes[id(tree.root)] = _EntropyNode()
 
-    lane = WordLaneAddress(0, 0, 0)
+    lane = SiteLaneAddress(0, 0, 0)
 
     monkeypatch.setattr(
         gen.scorer,

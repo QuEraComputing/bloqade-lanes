@@ -252,7 +252,7 @@ def test_max_candidates_enforced():
 
 def test_candidate_cache_keeps_only_top_unique_generated_candidates():
     tree = _make_tree()
-    target = {0: LocationAddress(5, 0)}
+    target = {0: LocationAddress(0, 5)}
     params = SearchParams(max_candidates=2, e_max=4)
     search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
 
@@ -267,10 +267,10 @@ def test_candidate_cache_keeps_only_top_unique_generated_candidates():
         )
     }
 
-    top_candidate = frozenset({SiteLaneAddress(2, 0, 0)})
-    duplicate_top_candidate = frozenset({SiteLaneAddress(2, 0, 0)})
-    second_candidate = frozenset({SiteLaneAddress(3, 0, 0)})
-    lower_ranked_candidate = frozenset({SiteLaneAddress(4, 0, 0)})
+    top_candidate = frozenset({SiteLaneAddress(0, 0, 1)})
+    duplicate_top_candidate = frozenset({SiteLaneAddress(0, 0, 1)})
+    second_candidate = frozenset({SiteLaneAddress(0, 0, 2)})
+    lower_ranked_candidate = frozenset({SiteLaneAddress(0, 0, 3)})
 
     class _StubGenerator:
         def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
@@ -293,14 +293,14 @@ def test_candidate_cache_keeps_only_top_unique_generated_candidates():
 
 def test_candidate_cache_top_k_applies_to_global_rectangle_order():
     tree = _make_tree()
-    target = {0: LocationAddress(5, 0)}
+    target = {0: LocationAddress(0, 5)}
     params = SearchParams(max_candidates=2, e_max=4)
     search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
 
     node = tree.root
     rect_top = frozenset({SiteLaneAddress(0, 0, 0), SiteLaneAddress(1, 0, 0)})
-    rect_second = frozenset({SiteLaneAddress(2, 0, 0), SiteLaneAddress(3, 0, 0)})
-    rect_third = frozenset({SiteLaneAddress(4, 0, 0), SiteLaneAddress(5, 0, 0)})
+    rect_second = frozenset({SiteLaneAddress(0, 0, 1), SiteLaneAddress(1, 0, 1)})
+    rect_third = frozenset({SiteLaneAddress(0, 0, 2), SiteLaneAddress(1, 0, 2)})
 
     class _RectangleStubGenerator:
         def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
