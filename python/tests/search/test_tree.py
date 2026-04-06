@@ -240,13 +240,12 @@ def test_try_move_set_reports_already_child():
     assert second.child is first.child
 
 
-def test_try_move_set_creates_child_for_same_configuration():
+def test_try_move_set_reports_transposition_for_same_configuration():
     tree = _make_tree()
     outcome = tree.try_move_set(tree.root, frozenset(), strict=False)
-    assert outcome.status == ExpansionStatus.CREATED_CHILD
-    assert outcome.child is not None
-    assert outcome.child is not tree.root
-    assert outcome.child.configuration == tree.root.configuration
+    assert outcome.status == ExpansionStatus.TRANSPOSITION_SEEN
+    assert outcome.child is None
+    assert outcome.existing_node is tree.root
 
 
 def test_try_move_set_reports_collision():
