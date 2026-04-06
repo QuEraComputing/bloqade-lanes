@@ -185,12 +185,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> None:
         _ = initial_layout
 
-    @staticmethod
-    def _paired_site(site_id: int, half: int) -> int:
-        if site_id < half:
-            return site_id + half
-        return site_id - half
-
     def _target_from_stage_controls_only(
         self,
         placement: dict[int, layout.LocationAddress],
@@ -199,13 +193,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> dict[int, layout.LocationAddress]:
         if len(placement) == 0:
             return {}
-        n_sites = len(self.arch_spec.words[0].site_indices)
-        half = n_sites // 2
         target = dict(placement)
         for control_qid, target_qid in zip(controls, targets):
             target_loc = placement[target_qid]
-            dst_site = self._paired_site(target_loc.site_id, half)
-            target[control_qid] = target_loc.replace(site_id=dst_site)
+            blockade_partner = self.arch_spec.get_blockaded_location(target_loc)
+            assert blockade_partner is not None, f"No blockade partner for {target_loc}"
+            target[control_qid] = blockade_partner
         return target
 
     def _run_search(

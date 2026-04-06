@@ -106,7 +106,7 @@ def test_insert_move_noise_no_op():
 
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
-            {0: layout.LocationAddress(0, 0), 1: layout.LocationAddress(0, 1)}
+            {0: layout.LocationAddress(0, 0), 1: layout.LocationAddress(2, 0)}
         )
     )
 
@@ -135,16 +135,18 @@ def test_insert_move_noise_no_op():
 def test_insert_move_noise_lane_noise():
     state = ir.TestValue()
     test_block = ir.Block(
-        [node := move.Move(state, lanes=(layout.SiteLaneAddress(0, 0, 1),))]
+        [node := move.Move(state, lanes=(layout.SiteLaneAddress(0, 0, 0),))]
     )
 
     physical_ssa_values = {
         0: (zero := ir.TestValue()),
         1: (one := ir.TestValue()),
     }
+    # state_after: qubit 0 moved from (0,0) to (0,1) via SiteLaneAddress(0,0,0);
+    # qubit 1 remains at (2,0)
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
-            {0: layout.LocationAddress(0, 6), 1: layout.LocationAddress(0, 1)}
+            {0: layout.LocationAddress(0, 1), 1: layout.LocationAddress(2, 0)}
         )
     )
 
@@ -166,7 +168,7 @@ def test_insert_move_noise_lane_noise():
             func.Invoke(inputs=(zero,), callee=lane_noise_kernel),
             reg := ilist.New((one,)),
             func.Invoke(inputs=(reg.result,), callee=bus_idle_noise_kernel),
-            move.Move(state, lanes=(layout.SiteLaneAddress(0, 0, 1),)),
+            move.Move(state, lanes=(layout.SiteLaneAddress(0, 0, 0),)),
         ]
     )
 
@@ -183,13 +185,15 @@ def test_insert_cz_noise():
         2: (two := ir.TestValue()),
         3: (three := ir.TestValue()),
     }
+    # Place atoms so qubit 1 at (0,0) pairs with qubit 2 at (1,0) (word 0 <-> word 1)
+    # Qubits 0 at (2,0) and 3 at (3,1) are unpaired (different sites in pair 2↔3)
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 6),
-                1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                0: layout.LocationAddress(2, 0),
+                1: layout.LocationAddress(0, 0),
+                2: layout.LocationAddress(1, 0),
+                3: layout.LocationAddress(3, 1),
             }
         )
     )
@@ -251,8 +255,8 @@ def test_insert_local_gate_noise():
             {
                 0: layout.LocationAddress(0, 0),
                 1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                2: layout.LocationAddress(2, 0),
+                3: layout.LocationAddress(2, 1),
             }
         )
     )
@@ -314,8 +318,8 @@ def test_insert_global_gate_noise():
             {
                 0: layout.LocationAddress(0, 0),
                 1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                2: layout.LocationAddress(2, 0),
+                3: layout.LocationAddress(2, 1),
             }
         )
     )

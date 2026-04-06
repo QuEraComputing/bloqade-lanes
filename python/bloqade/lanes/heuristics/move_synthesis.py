@@ -1,142 +1,150 @@
-"""Shared two-word move synthesis: layout transition to move layers.
+"""Move synthesis: layout transition to move layers.
 
 Given an architecture spec and two concrete states (before/after layouts),
-computes the sequence of move layers for the 2-word logical architecture.
-Used by the fixed-home placement strategy and (in the future) by non-fixed
-strategies for both right-to-left and left-to-right phases.
+computes the sequence of move layers. Uses ArchSpec.get_lane_address()
+for lane lookup instead of hardcoded bus arithmetic.
 """
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
+from bloqade.lanes.layout.path import PathFinder
 
 
-def _assert_valid_word_bus_move(
-    arch_spec: layout.ArchSpec,
-    src_word: int,
-    src_site: int,
-    bus_id: int,
-    direction: layout.Direction,
-) -> layout.WordLaneAddress:
-    lane = layout.WordLaneAddress(
-        src_word,
-        src_site,
-        bus_id,
-        direction,
-    )
-    err = arch_spec.validate_lane(lane)
-    assert err == set(), f"Invalid word bus move: {err}"
-    return lane
-
-
-def _assert_valid_site_bus_move(
-    arch_spec: layout.ArchSpec,
-    src_word: int,
-    src_site: int,
-    bus_id: int,
-    direction: layout.Direction,
-) -> layout.SiteLaneAddress:
-    lane = layout.SiteLaneAddress(
-        src_word,
-        src_site,
-        bus_id,
-        direction,
-    )
-    err = arch_spec.validate_lane(lane)
-    assert err == set(), f"Invalid site bus move: {err}"
-    return lane
-
-
-def _site_moves(
+def _intra_word_moves(
     arch_spec: layout.ArchSpec,
     diffs: list[tuple[layout.LocationAddress, layout.LocationAddress]],
-    word_id: int,
+    path_finder: PathFinder | None = None,
 ) -> list[tuple[layout.LaneAddress, ...]]:
-    start_site_ids = [before.site_id for before, _ in diffs]
-    assert len(set(start_site_ids)) == len(
-        start_site_ids
-    ), "Start site ids must be unique"
+    """Compute lanes for moves within the same word, grouped by bus_id.
 
+    Falls back to PathFinder for multi-hop site bus moves (e.g.,
+    HypercubeSiteTopology where not all site pairs are directly connected).
+    """
     bus_moves: dict[int, list[layout.LaneAddress]] = {}
-    n_rows = arch_spec.words[0].n_rows
+    multi_hop_lanes: list[tuple[layout.LaneAddress, ...]] = []
     for before, end in diffs:
-        bus_id = (end.site_id % n_rows) - (before.site_id % n_rows)
-        if bus_id < 0:
-            bus_id += len(arch_spec.site_buses)  # wrap around sites
-        bus_moves.setdefault(bus_id, []).append(
-            _assert_valid_site_bus_move(
-                arch_spec,
-                word_id,
-                before.site_id,
-                bus_id,
-                layout.Direction.FORWARD,
-            )
-        )
-    return list(map(tuple, bus_moves.values()))
+        lane = arch_spec.get_lane_address(before, end)
+        if lane is not None:
+            bus_moves.setdefault(lane.bus_id, []).append(lane)
+        else:
+            # Multi-hop intra-word move
+            if path_finder is None:
+                path_finder = PathFinder(arch_spec)
+            result = path_finder.find_path(before, end)
+            assert result is not None, f"No path from {before} to {end}"
+            lanes, _ = result
+            for hop in lanes:
+                multi_hop_lanes.append((hop,))
+    return [tuple(lanes) for lanes in bus_moves.values()] + multi_hop_lanes
 
 
-def _compute_move_layers_two_words(
+def _compute_move_layers(
     arch_spec: layout.ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
 ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
-    """Compute move layers for the 2-word logical arch from state_before to state_after."""
+    """Compute move layers from state_before to state_after.
+
+    For each qubit that needs to move, finds the path from source to
+    destination. Single-hop moves (direct bus connection) are batched
+    by bus_id. Multi-hop moves are sequenced individually using PathFinder.
+    """
     diffs = [
-        ele for ele in zip(state_before.layout, state_after.layout) if ele[0] != ele[1]
+        (src, dst)
+        for src, dst in zip(state_before.layout, state_after.layout)
+        if src != dst
     ]
 
-    groups: dict[
-        tuple[int, int], list[tuple[layout.LocationAddress, layout.LocationAddress]]
-    ] = {}
+    # Group by same-word vs cross-word
+    same_word: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
+    cross_word: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
     for src, dst in diffs:
-        groups.setdefault((src.word_id, dst.word_id), []).append((src, dst))
+        if src.word_id == dst.word_id:
+            same_word.append((src, dst))
+        else:
+            cross_word.append((src, dst))
 
-    word_moves_10 = groups.get((1, 0), [])
-    word_moves_01 = groups.get((0, 1), [])
+    moves: list[tuple[layout.LaneAddress, ...]] = []
 
-    assert not (
-        word_moves_10 and word_moves_01
-    ), "Cannot have both (0,1) and (1,0) moves in logical arch"
-    if word_moves_10:
-        word_moves = word_moves_10
-        word_start = 1
-    elif word_moves_01:
-        word_moves = word_moves_01
-        word_start = 0
-    else:
-        word_moves = []
-        word_start = 0
+    if cross_word:
+        # Try direct single-hop word bus first, fall back to PathFinder
+        site_adjustments: list[
+            tuple[layout.LocationAddress, layout.LocationAddress]
+        ] = []
+        word_bus_lanes: dict[int, list[layout.LaneAddress]] = {}
+        multi_hop: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
 
-    moves: list[tuple[layout.LaneAddress, ...]] = _site_moves(
-        arch_spec, word_moves, word_start
-    )
-    # handle word bus moves
-    if len(moves) > 0:
-        moves.append(
-            tuple(
-                _assert_valid_word_bus_move(
-                    arch_spec,
-                    0,
-                    end.site_id,
-                    0,
-                    (
-                        layout.Direction.FORWARD
-                        if word_start == 0
-                        else layout.Direction.BACKWARD
-                    ),
-                )
-                for _, end in word_moves
+        for src, dst in cross_word:
+            # Try direct word bus — prefer source site (no adjustment needed),
+            # then destination site, then any available site
+            candidate_sites = [src.site_id]
+            if dst.site_id != src.site_id:
+                candidate_sites.append(dst.site_id)
+            candidate_sites.extend(
+                s for s in sorted(arch_spec.has_word_buses) if s not in candidate_sites
             )
-        )
+            for wb_site in candidate_sites:
+                if wb_site not in arch_spec.has_word_buses:
+                    continue
+                wb_src = layout.LocationAddress(src.word_id, wb_site)
+                wb_dst = layout.LocationAddress(dst.word_id, wb_site)
+                lane = arch_spec.get_lane_address(wb_src, wb_dst)
+                if lane is not None:
+                    # Site adjustment before word bus if needed
+                    if src.site_id != wb_site:
+                        site_adjustments.append(
+                            (src, layout.LocationAddress(src.word_id, wb_site))
+                        )
+                    word_bus_lanes.setdefault(lane.bus_id, []).append(lane)
+                    # Site adjustment after word bus if needed
+                    if wb_site != dst.site_id:
+                        same_word.append(
+                            (layout.LocationAddress(dst.word_id, wb_site), dst)
+                        )
+                    break
+            else:
+                # No direct word bus — need multi-hop
+                multi_hop.append((src, dst))
 
-    # handle site bus moves
-    moves.extend(_site_moves(arch_spec, groups.get((0, 0), []), 0))
-    moves.extend(_site_moves(arch_spec, groups.get((1, 1), []), 1))
+        # Execute site adjustments first
+        if site_adjustments:
+            for word_id in {s.word_id for s, _ in site_adjustments}:
+                word_diffs = [
+                    (s, d) for s, d in site_adjustments if s.word_id == word_id
+                ]
+                moves.extend(_intra_word_moves(arch_spec, word_diffs))
+
+        # Then single-hop word bus moves (batched by bus)
+        for lanes in word_bus_lanes.values():
+            moves.append(tuple(lanes))
+
+        # Then multi-hop moves (sequenced individually via PathFinder)
+        if multi_hop:
+            # Collect all occupied positions (qubit layouts + external obstacles)
+            all_positions = (
+                set(state_before.layout)
+                | set(state_after.layout)
+                | set(state_before.occupied)
+            )
+            path_finder = PathFinder(arch_spec)
+            for src, dst in multi_hop:
+                occupied = frozenset(all_positions - {src, dst})
+                result = path_finder.find_path(src, dst, occupied=occupied)
+                assert result is not None, f"No path from {src} to {dst}"
+                lanes, _ = result
+                for lane in lanes:
+                    moves.append((lane,))
+
+    # Same-word moves: site bus only
+    for word_id in {s.word_id for s, _ in same_word}:
+        word_diffs = [(s, d) for s, d in same_word if s.word_id == word_id]
+        moves.extend(_intra_word_moves(arch_spec, word_diffs))
 
     return tuple(moves)
 
 
-# Public API: implementation is 2-word only for the time being
-compute_move_layers = _compute_move_layers_two_words
+# Public API
+compute_move_layers = _compute_move_layers
 
 
 def move_to_entangle(
@@ -154,7 +162,6 @@ def move_to_left(
     state_after: ConcreteState,
 ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
     """Synthesize move layers from CZ layout to post-CZ return layout."""
-    # This uses reverse lanes for a non-existent CZ to derive the return moves.
     forward_layers = compute_move_layers(arch_spec, state_after, state_before)
     reverse_layers = tuple(
         tuple(lane.reverse() for lane in move_lanes[::-1])

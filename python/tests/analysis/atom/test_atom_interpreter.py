@@ -35,7 +35,7 @@ def test_atom_interpreter_simple():
         results = move.get_future_result(
             future,
             zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 5),
+            location_address=move.LocationAddress(0, 1),
         )
 
         return results

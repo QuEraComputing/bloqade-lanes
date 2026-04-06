@@ -26,7 +26,7 @@ def test_placement_goal_partial_match():
     target = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
     goal = placement_goal(target)
 
-    node = _make_node({0: LocationAddress(0, 0), 1: LocationAddress(0, 5)})
+    node = _make_node({0: LocationAddress(0, 0), 1: LocationAddress(0, 1)})
     assert goal(node) is False
 
 
@@ -42,8 +42,8 @@ def test_placement_goal_ignores_extra_qubits():
 def test_partial_placement_goal_min_placed():
     target = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(1, 0),
-        2: LocationAddress(0, 5),
+        1: LocationAddress(2, 0),
+        2: LocationAddress(0, 1),
     }
     goal = partial_placement_goal(target, min_placed=2)
 
@@ -51,8 +51,8 @@ def test_partial_placement_goal_min_placed():
     node = _make_node(
         {
             0: LocationAddress(0, 0),
-            1: LocationAddress(1, 0),
-            2: LocationAddress(1, 5),  # not at target
+            1: LocationAddress(2, 0),
+            2: LocationAddress(2, 1),  # not at target
         }
     )
     assert goal(node) is True
@@ -61,16 +61,16 @@ def test_partial_placement_goal_min_placed():
 def test_partial_placement_goal_not_enough():
     target = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(1, 0),
-        2: LocationAddress(0, 5),
+        1: LocationAddress(2, 0),
+        2: LocationAddress(0, 1),
     }
     goal = partial_placement_goal(target, min_placed=3)
 
     node = _make_node(
         {
             0: LocationAddress(0, 0),
-            1: LocationAddress(1, 0),
-            2: LocationAddress(1, 5),
+            1: LocationAddress(2, 0),
+            2: LocationAddress(2, 1),
         }
     )
     assert goal(node) is False
@@ -81,7 +81,7 @@ def test_partial_placement_goal_none_means_all():
     goal = partial_placement_goal(target, min_placed=None)
 
     node_match = _make_node({0: LocationAddress(0, 0)})
-    node_miss = _make_node({0: LocationAddress(0, 5)})
+    node_miss = _make_node({0: LocationAddress(0, 1)})
     assert goal(node_match) is True
     assert goal(node_miss) is False
 

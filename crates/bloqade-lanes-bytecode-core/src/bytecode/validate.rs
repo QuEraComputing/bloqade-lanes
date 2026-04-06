@@ -888,7 +888,7 @@ mod tests {
 
     fn test_arch_spec() -> ArchSpec {
         let json = r#"{
-            "version": "1.0",
+            "version": "2.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
@@ -909,7 +909,7 @@ mod tests {
             "zones": [
                 { "words": [0] }
             ],
-            "entangling_zones": [0],
+            "entangling_zones": [],
             "measurement_mode_zones": [0]
         }"#;
         ArchSpec::from_json(json).unwrap()
@@ -1082,7 +1082,7 @@ mod tests {
     #[test]
     fn test_lane_group_word_not_in_site_bus_list() {
         let json = r#"{
-            "version": "1.0",
+            "version": "2.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
@@ -1103,7 +1103,7 @@ mod tests {
             "words_with_site_buses": [0],
             "sites_with_word_buses": [],
             "zones": [{ "words": [0, 1] }],
-            "entangling_zones": [0],
+            "entangling_zones": [[[0, 1]]],
             "measurement_mode_zones": [0]
         }"#;
         let arch = ArchSpec::from_json(json).unwrap();

@@ -35,7 +35,7 @@ def test_distance_to_target_zero_when_at_target():
 def test_distance_to_target_positive_when_not_at_target():
     scorer, tree = _make_scorer_and_tree()
     dist = scorer._distance_to_target(
-        LocationAddress(0, 0), LocationAddress(0, 5), tree
+        LocationAddress(0, 0), LocationAddress(0, 1), tree
     )
     assert dist > 0.0
 
@@ -49,7 +49,7 @@ def test_mobility_at_position():
 
 
 def test_score_all_qubit_bus_pairs_returns_dict():
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 1)}
     scorer, tree = _make_scorer_and_tree(target=target)
     scores = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
     assert isinstance(scores, dict)
@@ -60,7 +60,7 @@ def test_score_all_qubit_bus_pairs_returns_dict():
 
 
 def test_score_all_qubit_bus_pairs_skips_resolved_qubits():
-    target = {0: LocationAddress(0, 0), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 0), 1: LocationAddress(1, 1)}
     scorer, tree = _make_scorer_and_tree(target=target)
     scores = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
     qubit_ids_in_scores = {k[0] for k in scores}
@@ -68,7 +68,7 @@ def test_score_all_qubit_bus_pairs_skips_resolved_qubits():
 
 
 def test_score_all_entropy_shifts_weights():
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 1)}
     scorer, tree = _make_scorer_and_tree(target=target)
     scores_e1 = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
     scores_e3 = scorer.score_all_qubit_bus_pairs(tree.root, entropy=3, tree=tree)
@@ -78,7 +78,7 @@ def test_score_all_entropy_shifts_weights():
 
 
 def test_score_moveset_positive_for_good_move():
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 0)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 0)}
     scorer, tree = _make_scorer_and_tree(target=target)
     from bloqade.lanes.layout import SiteLaneAddress
 
@@ -89,7 +89,7 @@ def test_score_moveset_positive_for_good_move():
 
 
 def test_score_moveset_arrived_gain():
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     scorer, tree = _make_scorer_and_tree(target=target)
     from bloqade.lanes.layout import SiteLaneAddress
 
@@ -97,16 +97,16 @@ def test_score_moveset_arrived_gain():
     moveset = frozenset({lane})
     score_with_arrival = scorer.score_moveset(moveset, tree.root, tree)
     scorer_no_arrival = CandidateScorer(
-        params=SearchParams(), target={0: LocationAddress(0, 9)}
+        params=SearchParams(), target={0: LocationAddress(7, 1)}
     )
     score_no_arrival = scorer_no_arrival.score_moveset(moveset, tree.root, tree)
     assert score_with_arrival > score_no_arrival
 
 
 def test_score_all_qubit_bus_pairs_excludes_blocked_destinations():
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(0, 1)}
     scorer, base_tree = _make_scorer_and_tree(target=target)
-    blocked = frozenset({LocationAddress(0, 5)})
+    blocked = frozenset({LocationAddress(0, 1)})
     tree = ConfigurationTree(
         arch_spec=base_tree.arch_spec,
         root=base_tree.root,

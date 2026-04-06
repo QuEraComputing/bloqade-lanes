@@ -22,7 +22,7 @@ fn canonical_f64_bits(v: f64) -> u64 {
 /// from JSON via [`from_json`](ArchSpec::from_json) /
 /// [`from_json_validated`](ArchSpec::from_json_validated),
 /// or constructed programmatically.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchSpec {
     /// Spec format version.
     pub version: Version,
@@ -36,8 +36,13 @@ pub struct ArchSpec {
     pub sites_with_word_buses: Vec<u32>,
     /// Logical zones grouping words for execution phases.
     pub zones: Vec<Zone>,
-    /// Zone IDs where entangling (CZ) gates can be performed.
-    pub entangling_zones: Vec<u32>,
+    /// Entangling zones, each defined as a list of word-ID pairs.
+    /// Within a zone, `[w_a, w_b]` means sites at matching indices in
+    /// `w_a` and `w_b` are within blockade radius for CZ gates.
+    pub entangling_zones: Vec<Vec<[u32; 2]>>,
+    /// Rydberg blockade radius in micrometers.
+    #[serde(default = "default_blockade_radius")]
+    pub blockade_radius: f64,
     /// Zone IDs that support measurement mode. Must not be empty;
     /// the first entry must be zone 0.
     pub measurement_mode_zones: Vec<u32>,
@@ -52,6 +57,25 @@ pub struct ArchSpec {
     /// Defaults to `false` when absent in JSON.
     #[serde(default)]
     pub atom_reloading: bool,
+}
+
+impl Eq for ArchSpec {}
+
+impl std::hash::Hash for ArchSpec {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.version.hash(state);
+        self.geometry.hash(state);
+        self.buses.hash(state);
+        self.words_with_site_buses.hash(state);
+        self.sites_with_word_buses.hash(state);
+        self.zones.hash(state);
+        self.entangling_zones.hash(state);
+        canonical_f64_bits(self.blockade_radius).hash(state);
+        self.measurement_mode_zones.hash(state);
+        self.paths.hash(state);
+        self.feed_forward.hash(state);
+        self.atom_reloading.hash(state);
+    }
 }
 
 /// A transport path for a lane, defined as a sequence of (x, y) waypoints.
@@ -136,10 +160,10 @@ pub struct Word {
     /// Each entry is `[x_idx, y_idx]` indexing into the grid's x and y
     /// coordinate arrays.
     pub site_indices: Vec<[u32; 2]>,
-    /// Optional. `has_cz[i]` is `[word_id, site_id]` — the site that
-    /// site `i` entangles with during CZ.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub has_cz: Option<Vec<[u32; 2]>>,
+}
+
+fn default_blockade_radius() -> f64 {
+    2.0
 }
 
 /// A 2D coordinate grid for positioning atom sites within a word.
@@ -288,6 +312,11 @@ pub struct Bus {
     pub src: Vec<u32>,
     /// Destination indices (same length as `src`).
     pub dst: Vec<u32>,
+    /// Optional list of word IDs this bus applies to (site buses only).
+    /// When `Some`, only these words can use this bus. When `None`,
+    /// falls back to the global `words_with_site_buses` list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<u32>>,
 }
 
 /// A logical zone grouping words for execution phases.
@@ -316,7 +345,7 @@ mod tests {
     #[test]
     fn optional_fields_absent() {
         let json = r#"{
-            "version": "1.0",
+            "version": "2.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
@@ -335,15 +364,15 @@ mod tests {
         }"#;
         let spec: ArchSpec = serde_json::from_str(json).unwrap();
         assert!(spec.paths.is_none());
-        assert!(spec.geometry.words[0].has_cz.is_none());
         assert!(!spec.feed_forward);
         assert!(!spec.atom_reloading);
+        assert_eq!(spec.blockade_radius, 2.0); // default
     }
 
     #[test]
     fn capability_fields_present() {
         let json = r#"{
-            "version": "1.0",
+            "version": "2.0",
             "geometry": {
                 "sites_per_word": 2,
                 "words": [
@@ -434,6 +463,39 @@ mod tests {
     #[should_panic(expected = "y_positions must have at least one element")]
     fn grid_from_positions_empty_y() {
         Grid::from_positions(&[1.0], &[]);
+    }
+
+    #[test]
+    fn hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let spec1 = example_arch_spec();
+        let spec2 = example_arch_spec();
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        spec1.hash(&mut h1);
+        spec2.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn hash_negative_zero_equals_positive_zero() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut spec1 = example_arch_spec();
+        let mut spec2 = example_arch_spec();
+        spec1.blockade_radius = 0.0;
+        spec2.blockade_radius = -0.0;
+        // PartialEq treats 0.0 == -0.0
+        assert_eq!(spec1, spec2);
+        // Hash must also agree
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        spec1.hash(&mut h1);
+        spec2.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
     }
 
     #[test]

@@ -12,7 +12,7 @@ from kirin.dialects import ilist
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes import compile
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.heuristics import logical_layout
@@ -77,7 +77,7 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
     )
     move_mt = transversal_rewrites(move_mt)
     transformer = MoveToSquinLogical(
-        arch_spec=generate_arch_hypercube(4),
+        arch_spec=physical.get_arch_spec(),
         noise_model=logical_noise,
         add_noise=True,
         aggressive_unroll=False,

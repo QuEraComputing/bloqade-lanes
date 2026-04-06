@@ -48,8 +48,8 @@ impl ArchSpec {
         // Rule 2: measurement_mode_zones[0] must be zone 0
         check_measurement_mode_first_is_zone0(self, &mut errors);
 
-        // Rule 3a: All entangling_zones IDs must be valid zone indices
-        check_entangling_zones_valid(self, num_zones, &mut errors);
+        // Rule 3a: Entangling zones word pairs are valid
+        check_entangling_zones_pairs(self, num_words, &mut errors);
 
         // Rule 3b: All measurement_mode_zones IDs must be valid zone indices
         check_measurement_mode_zones_valid(self, num_zones, &mut errors);
@@ -58,7 +58,7 @@ impl ArchSpec {
         check_word_sites(self, &mut errors);
 
         // Rules 6, 7, 8: Site bus validation
-        check_site_buses(self, sites_per_word, &mut errors);
+        check_site_buses(self, sites_per_word, num_words, &mut errors);
 
         // Rules 9, 10: Word bus validation
         check_word_buses(self, num_words, &mut errors);
@@ -74,6 +74,9 @@ impl ArchSpec {
 
         // Rule: path lane addresses must be valid
         check_path_lanes(self, &mut errors);
+
+        // Rule: blockade_radius must be finite and non-negative
+        check_blockade_radius(self, &mut errors);
 
         if errors.is_empty() {
             Ok(())
@@ -121,12 +124,37 @@ fn check_measurement_mode_first_is_zone0(spec: &ArchSpec, errors: &mut Vec<ArchS
     }
 }
 
-fn check_entangling_zones_valid(spec: &ArchSpec, num_zones: u32, errors: &mut Vec<ArchSpecError>) {
-    for &id in &spec.entangling_zones {
-        if id >= num_zones {
-            errors.push(ArchSpecError::Zone {
-                message: format!("entangling_zones contains invalid zone ID {}", id),
-            });
+fn check_entangling_zones_pairs(spec: &ArchSpec, num_words: u32, errors: &mut Vec<ArchSpecError>) {
+    let mut seen_words: HashSet<u32> = HashSet::new();
+    for (zone_idx, zone_pairs) in spec.entangling_zones.iter().enumerate() {
+        for pair in zone_pairs {
+            let [w_a, w_b] = *pair;
+            if w_a >= num_words {
+                errors.push(ArchSpecError::Zone {
+                    message: format!("entangling_zones[{}]: invalid word ID {}", zone_idx, w_a),
+                });
+            }
+            if w_b >= num_words {
+                errors.push(ArchSpecError::Zone {
+                    message: format!("entangling_zones[{}]: invalid word ID {}", zone_idx, w_b),
+                });
+            }
+            if !seen_words.insert(w_a) {
+                errors.push(ArchSpecError::Zone {
+                    message: format!(
+                        "entangling_zones[{}]: word {} appears in multiple pairs",
+                        zone_idx, w_a
+                    ),
+                });
+            }
+            if !seen_words.insert(w_b) {
+                errors.push(ArchSpecError::Zone {
+                    message: format!(
+                        "entangling_zones[{}]: word {} appears in multiple pairs",
+                        zone_idx, w_b
+                    ),
+                });
+            }
         }
     }
 }
@@ -167,18 +195,6 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
                 ),
             });
         }
-        if let Some(cz) = &word.has_cz
-            && cz.len() != sites_per_word as usize
-        {
-            errors.push(ArchSpecError::Geometry {
-                message: format!(
-                    "word {} has {} cz_pairs, expected {} (sites_per_word)",
-                    word_id,
-                    cz.len(),
-                    sites_per_word
-                ),
-            });
-        }
         let x_len = word.positions.num_x();
         let y_len = word.positions.num_y();
         for (site_idx, site) in word.site_indices.iter().enumerate() {
@@ -204,7 +220,12 @@ fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     }
 }
 
-fn check_site_buses(spec: &ArchSpec, sites_per_word: u32, errors: &mut Vec<ArchSpecError>) {
+fn check_site_buses(
+    spec: &ArchSpec,
+    sites_per_word: u32,
+    num_words: u32,
+    errors: &mut Vec<ArchSpecError>,
+) {
     for (bus_id, bus) in spec.buses.site_buses.iter().enumerate() {
         let bus_id = bus_id as u32;
         if bus.src.len() != bus.dst.len() {
@@ -236,6 +257,18 @@ fn check_site_buses(spec: &ArchSpec, sites_per_word: u32, errors: &mut Vec<ArchS
                         bus_id, idx
                     ),
                 });
+            }
+        }
+        if let Some(ref words) = bus.words {
+            for &wid in words {
+                if wid >= num_words {
+                    errors.push(ArchSpecError::Bus {
+                        message: format!(
+                            "site_bus {}: invalid word ID {} in bus.words",
+                            bus_id, wid
+                        ),
+                    });
+                }
             }
         }
     }
@@ -354,6 +387,17 @@ fn check_path_lanes(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
     }
 }
 
+fn check_blockade_radius(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    if !spec.blockade_radius.is_finite() || spec.blockade_radius < 0.0 {
+        errors.push(ArchSpecError::Geometry {
+            message: format!(
+                "blockade_radius must be finite and non-negative, got {}",
+                spec.blockade_radius
+            ),
+        });
+    }
+}
+
 fn check_sites_with_word_buses(
     spec: &ArchSpec,
     sites_per_word: u32,
@@ -410,13 +454,25 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_entangling_zone() {
+    fn test_invalid_entangling_zone_word_id() {
         let mut spec = example_arch_spec();
-        spec.entangling_zones.push(99);
+        spec.entangling_zones.push(vec![[99, 100]]);
         let errors = spec.validate().unwrap_err();
         assert!(has_error(
             &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("invalid zone ID 99"))
+            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("invalid word ID 99"))
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_word_in_entangling_pairs() {
+        let mut spec = example_arch_spec();
+        // Word 0 is already in the first zone's pair, add it again
+        spec.entangling_zones.push(vec![[0, 1]]);
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("appears in multiple pairs"))
         ));
     }
 
@@ -439,17 +495,6 @@ mod tests {
         assert!(has_error(
             &errors,
             |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("9 sites, expected 10"))
-        ));
-    }
-
-    #[test]
-    fn test_wrong_cz_pairs_count() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[0].has_cz.as_mut().unwrap().pop();
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("9 cz_pairs, expected 10"))
         ));
     }
 
@@ -677,6 +722,61 @@ mod tests {
         assert!(has_error(
             &errors,
             |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("grid shape"))
+        ));
+    }
+
+    #[test]
+    fn test_negative_blockade_radius() {
+        let mut spec = example_arch_spec();
+        spec.blockade_radius = -1.0;
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("blockade_radius"))
+        ));
+    }
+
+    #[test]
+    fn test_nan_blockade_radius() {
+        let mut spec = example_arch_spec();
+        spec.blockade_radius = f64::NAN;
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("blockade_radius"))
+        ));
+    }
+
+    #[test]
+    fn test_empty_measurement_mode_zones() {
+        let mut spec = example_arch_spec();
+        spec.measurement_mode_zones = vec![];
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("must not be empty"))
+        ));
+    }
+
+    #[test]
+    fn test_non_finite_word_grid() {
+        let mut spec = example_arch_spec();
+        spec.geometry.words[0].positions.x_start = f64::INFINITY;
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("non-finite"))
+        ));
+    }
+
+    #[test]
+    fn test_site_bus_invalid_word_in_bus_words() {
+        let mut spec = example_arch_spec();
+        spec.buses.site_buses[0].words = Some(vec![0, 99]);
+        let errors = spec.validate().unwrap_err();
+        assert!(has_error(
+            &errors,
+            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("invalid word ID 99 in bus.words"))
         ));
     }
 

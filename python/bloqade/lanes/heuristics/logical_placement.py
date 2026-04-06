@@ -56,20 +56,15 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 class LogicalPlacementMethods:
     arch_spec: layout.ArchSpec
 
-    @property
-    def _n_rows(self) -> int:
-        return self.arch_spec.words[0].n_rows
-
     def desired_cz_layout(
         self,
         state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
     ) -> ConcreteState:
-        start_word_id = self._word_balance(state, controls, targets)
         moves: list[MoveOp] = []
         for c, t in self._sorted_cz_pairs_by_move_count(state, controls, targets):
-            moves.append(self._pick_move(state, moves, start_word_id, c, t))
+            moves.append(self._pick_move(state, moves, c, t))
         return self._update_positions(state, moves)
 
     def validate_initial_layout(
@@ -77,28 +72,10 @@ class LogicalPlacementMethods:
         initial_layout: tuple[layout.LocationAddress, ...],
     ) -> None:
         for addr in initial_layout:
-            if addr.word_id >= 2:
+            if not self.arch_spec.is_home_position(addr):
                 raise ValueError(
-                    "Initial layout contains invalid word id for logical arch"
+                    f"Initial layout address {addr} is not at a home position"
                 )
-            if addr.site_id >= self._n_rows:
-                raise ValueError(
-                    "Initial layout should only site ids < "
-                    f"{self._n_rows} for logical arch"
-                )
-
-    def _word_balance(
-        self, state: ConcreteState, controls: tuple[int, ...], targets: tuple[int, ...]
-    ) -> int:
-        word_move_counts = {0: 0, 1: 0}
-        for c, t in zip(controls, targets):
-            c_addr = state.layout[c]
-            t_addr = state.layout[t]
-            if c_addr.word_id != t_addr.word_id:
-                word_move_counts[c_addr.word_id] += state.move_count[c]
-                word_move_counts[t_addr.word_id] += state.move_count[t]
-
-        return 0 if word_move_counts[0] <= word_move_counts[1] else 1
 
     def _pick_move_by_conflict(
         self,
@@ -121,16 +98,18 @@ class LogicalPlacementMethods:
         self,
         state: ConcreteState,
         moves: list[MoveOp],
-        start_word_id: int,
         control: int,
         target: int,
     ) -> MoveOp:
         c_addr = state.layout[control]
         t_addr = state.layout[target]
 
-        n_rows = self._n_rows
-        c_addr_dst = layout.LocationAddress(t_addr.word_id, t_addr.site_id + n_rows)
-        t_addr_dst = layout.LocationAddress(c_addr.word_id, c_addr.site_id + n_rows)
+        # CZ destination: blockade partner of the other qubit's position
+        c_addr_dst = self.arch_spec.get_blockaded_location(t_addr)
+        t_addr_dst = self.arch_spec.get_blockaded_location(c_addr)
+        assert c_addr_dst is not None, f"No CZ partner for {t_addr}"
+        assert t_addr_dst is not None, f"No CZ partner for {c_addr}"
+
         c_move_count = state.move_count[control]
         t_move_count = state.move_count[target]
 
@@ -143,7 +122,8 @@ class LogicalPlacementMethods:
             if c_move_count > t_move_count:
                 return move_t_to_c
             return self._pick_move_by_conflict(moves, move_c_to_t, move_t_to_c)
-        if t_addr.word_id == start_word_id:
+        # Qubits in different words: prefer moving from home to CZ-staging
+        if self.arch_spec.is_home_position(t_addr):
             return move_t_to_c
         return move_c_to_t
 
@@ -236,27 +216,29 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             sig_maxcost[sig] = max(sig_maxcost.get(sig, 0.0), lane_cost)
         return sig_maxcost
 
-    def _left_sites(self) -> set[layout.LocationAddress]:
-        n_rows = self._n_rows
+    def _home_sites(self) -> set[layout.LocationAddress]:
         return {
             layout.LocationAddress(word_id, site_id)
-            for word_id in range(2)
-            for site_id in range(n_rows)
+            for word_id in self.arch_spec._home_words
+            for site_id in range(len(self.arch_spec.words[word_id].site_indices))
         }
 
     def _distance_key(
         self,
-        right_addr: layout.LocationAddress,
-        left_addr: layout.LocationAddress,
+        cz_addr: layout.LocationAddress,
+        home_addr: layout.LocationAddress,
     ) -> tuple[int, int, int, int]:
-        right_row = right_addr.site_id - self._n_rows
-        word_distance = 0 if left_addr.word_id == right_addr.word_id else 1
-        site_distance = abs(left_addr.site_id - right_row)
+        # Map CZ position back to its home equivalent
+        home_equivalent = self.arch_spec.get_blockaded_location(cz_addr)
+        if home_equivalent is None:
+            home_equivalent = cz_addr
+        word_distance = 0 if home_addr.word_id == home_equivalent.word_id else 1
+        site_distance = abs(home_addr.site_id - home_equivalent.site_id)
         return (
             word_distance,
             site_distance,
-            left_addr.word_id,
-            left_addr.site_id,
+            home_addr.word_id,
+            home_addr.site_id,
         )
 
     def _pair_distance(
@@ -301,33 +283,34 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             self._get_lane_cost(lane) + self.lane_move_overhead_cost for lane in path
         )
 
-    def _nearest_left_layout(
+    def _nearest_home_layout(
         self, state_before: ConcreteState
     ) -> tuple[layout.LocationAddress, ...]:
-        n_rows = self._n_rows
-        left_sites = self._left_sites()
-        used_left_sites = {
-            addr for addr in state_before.layout if addr.site_id < n_rows
+        home_sites = self._home_sites()
+        used_home = {
+            addr
+            for addr in state_before.layout
+            if self.arch_spec.is_home_position(addr)
         }
-        used_left_sites |= {
-            addr for addr in state_before.occupied if addr.site_id < n_rows
+        used_home |= {
+            addr
+            for addr in state_before.occupied
+            if self.arch_spec.is_home_position(addr)
         }
-        available_left_sites = set(left_sites - used_left_sites)
+        available_home = set(home_sites - used_home)
         return_layout = list(state_before.layout)
 
         for qid, addr in enumerate(state_before.layout):
-            if addr.site_id < n_rows:
+            if self.arch_spec.is_home_position(addr):
                 continue
-            if not available_left_sites:
-                raise ValueError(
-                    "No empty left-column site available for right-column return move"
-                )
-            best_left_site = min(
-                available_left_sites,
-                key=lambda left_site: self._distance_key(addr, left_site),
+            if not available_home:
+                raise ValueError("No empty home site available for return move")
+            best_home = min(
+                available_home,
+                key=lambda home_site: self._distance_key(addr, home_site),
             )
-            return_layout[qid] = best_left_site
-            available_left_sites.remove(best_left_site)
+            return_layout[qid] = best_home
+            available_home.remove(best_home)
         return tuple(return_layout)
 
     def _partner_weights(
@@ -452,23 +435,6 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             ),
         )
 
-    def _is_direction_mode_allowed(
-        self,
-        *,
-        src_word: int,
-        dst_word: int,
-        mode: str,
-    ) -> bool:
-        if src_word == dst_word:
-            return True
-        if mode == "none":
-            return False
-        if mode == "01":
-            return src_word == 0 and dst_word == 1
-        if mode == "10":
-            return src_word == 1 and dst_word == 0
-        raise ValueError(f"Unknown direction mode: {mode}")
-
     def _word_sig_transition(
         self,
         locked_word_sig: tuple[layout.MoveType, int, layout.Direction] | None,
@@ -491,44 +457,43 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
     ) -> list[tuple[layout.LocationAddress, ...]]:
         if not lookahead_layers:
-            return [self._nearest_left_layout(state_before)]
+            return [self._nearest_home_layout(state_before)]
 
-        n_rows = self._n_rows
-        left_sites = self._left_sites()
-        used_left_sites = {
-            addr for addr in state_before.layout if addr.site_id < n_rows
+        home_sites = self._home_sites()
+        used_home = {
+            addr
+            for addr in state_before.layout
+            if self.arch_spec.is_home_position(addr)
         }
-        used_left_sites |= {
-            addr for addr in state_before.occupied if addr.site_id < n_rows
+        used_home |= {
+            addr
+            for addr in state_before.occupied
+            if self.arch_spec.is_home_position(addr)
         }
-        holes = sorted(
-            left_sites - used_left_sites, key=lambda x: (x.word_id, x.site_id)
-        )
+        holes = sorted(home_sites - used_home, key=lambda x: (x.word_id, x.site_id))
         returners = [
             qid
             for qid, addr in enumerate(state_before.layout)
-            if addr.site_id >= n_rows
+            if not self.arch_spec.is_home_position(addr)
         ]
         if not returners:
             return [state_before.layout]
         if len(holes) < len(returners):
-            raise ValueError(
-                "No empty left-column site available for right-column return move"
-            )
+            raise ValueError("No empty home site available for return move")
 
         partner_weights = self._partner_weights(lookahead_layers)
-        baseline_layout = self._nearest_left_layout(state_before)
+        baseline_layout = self._nearest_home_layout(state_before)
         baseline_guess = {
             qid: baseline_layout[qid]
             for qid in returners
-            if baseline_layout[qid].site_id < n_rows
+            if self.arch_spec.is_home_position(baseline_layout[qid])
         }
-        left_stayers = {
+        home_stayers = {
             qid: addr
             for qid, addr in enumerate(state_before.layout)
-            if addr.site_id < n_rows
+            if self.arch_spec.is_home_position(addr)
         }
-        reference_positions = {**left_stayers, **baseline_guess}
+        reference_positions = {**home_stayers, **baseline_guess}
 
         edge_costs: dict[tuple[int, int], float] = {}
         edge_sigs: dict[
