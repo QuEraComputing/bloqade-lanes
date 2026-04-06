@@ -10,12 +10,12 @@ class SearchParams:
     """Tunable parameters for entropy-guided search.
 
     Attributes:
-        w_d: Distance weight in per-qubit-bus scoring.
-        w_m: Mobility weight in per-qubit-bus scoring.
+        w_d: Distance weight in per-qubit lane scoring.
+        w_m: Mobility weight in per-qubit lane scoring.
         alpha: Distance weight in moveset scoring.
         beta: Arrived-gain weight in moveset scoring.
         gamma: Mobility weight in moveset scoring.
-        top_c: Top candidate (move_type, bus_id, direction) triples per qubit.
+        top_c: Legacy per-qubit shortlist width (unused by rectangle heuristic).
         max_candidates: Candidates to try per entropy level before regenerating.
         reversion_steps: Steps to revert up the tree on deadlock.
         delta_e: Entropy increment per revisit or failed generation.

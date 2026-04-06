@@ -287,6 +287,26 @@ class EntropyGuidedSearch:
             self.search_nodes[node_id] = sn
         return sn
 
+    def _refresh_candidate_cache(
+        self,
+        sn: _SearchNode,
+        node: ConfigurationNode,
+        generator: MoveGenerator,
+    ) -> None:
+        """Populate cache with top unique generated candidates up to max_candidates."""
+        max_candidates = self.params.max_candidates
+        filtered: list[frozenset[LaneAddress]] = []
+        seen: set[frozenset[LaneAddress]] = set()
+        for candidate in generator.generate(node, self.tree):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            filtered.append(candidate)
+            if len(filtered) >= max_candidates:
+                break
+        sn.candidate_cache = filtered
+        sn.candidates_tried = 0
+
     def _get_next_candidate(
         self,
         sn: _SearchNode,
@@ -300,16 +320,7 @@ class EntropyGuidedSearch:
         (failed generation).
         """
         if sn.candidates_tried >= self.params.max_candidates:
-            new_candidates = list(generator.generate(node, self.tree))
-            sn.candidate_cache = new_candidates
-            sn.candidates_tried = 0
-
-            while sn.candidates_tried < len(sn.candidate_cache):
-                candidate = sn.candidate_cache[sn.candidates_tried]
-                if candidate not in node.children:
-                    return candidate
-                sn.candidates_tried += 1
-            return None
+            self._refresh_candidate_cache(sn, node, generator)
 
         while sn.candidates_tried < len(sn.candidate_cache):
             candidate = sn.candidate_cache[sn.candidates_tried]
@@ -317,10 +328,7 @@ class EntropyGuidedSearch:
                 return candidate
             sn.candidates_tried += 1
 
-        new_candidates = list(generator.generate(node, self.tree))
-        sn.candidate_cache = new_candidates
-        sn.candidates_tried = 0
-
+        self._refresh_candidate_cache(sn, node, generator)
         while sn.candidates_tried < len(sn.candidate_cache):
             candidate = sn.candidate_cache[sn.candidates_tried]
             if candidate not in node.children:
