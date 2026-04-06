@@ -64,7 +64,7 @@ def test_is_valid_rect_all_present():
             (1.0, 1.0): LocationAddress(1, 1),
         }
     )
-    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is True
+    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}, set()) is True
 
 
 def test_is_valid_rect_missing_position():
@@ -77,14 +77,14 @@ def test_is_valid_rect_missing_position():
             (1.0, 1.0): LocationAddress(1, 1),
         }
     )
-    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is False
+    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}, set()) is False
 
 
 def test_is_valid_rect_collision():
     """Returns False when a position is a collision source."""
     loc = LocationAddress(0, 0)
     ctx = _make_bus_context({(0.0, 0.0): loc}, frozenset({loc}))
-    assert ctx.is_valid_rect({0.0}, {0.0}) is False
+    assert ctx.is_valid_rect({0.0}, {0.0}, set()) is False
 
 
 # --- BusContext.rect_to_lanes ---
@@ -124,7 +124,7 @@ def test_merge_clusters_merges_compatible():
         ({0.0}, {0.0}),
         ({0.0}, {1.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, set())
     assert len(solved) == 1
     xs, ys = solved[0]
     assert xs == {0.0}
@@ -141,7 +141,7 @@ def test_merge_clusters_incompatible_stay_separate():
         ({0.0}, {0.0}),
         ({1.0}, {1.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, set())
     assert len(solved) == 2
 
 
@@ -163,7 +163,7 @@ def test_merge_clusters_solves_non_participants():
         ({0.0}, {1.0}),
         ({2.0}, {0.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, set())
     # a+b merged, c stays separate
     assert len(solved) == 2
 

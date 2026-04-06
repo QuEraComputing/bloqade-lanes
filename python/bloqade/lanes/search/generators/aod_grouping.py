@@ -103,13 +103,15 @@ class BusContext:
 
     # --- Primitives ---
 
-    def is_valid_rect(self, xs: set[float], ys: set[float]) -> bool:
+    def is_valid_rect(
+        self, xs: set[float], ys: set[float], movers: set[LocationAddress]
+    ) -> bool:
         """Check if every position in the X * Y rectangle is a valid bus
         source with no collision."""
         for x in xs:
             for y in ys:
                 loc = self.pos_to_loc.get((x, y))
-                if loc is None or loc in self.collision_srcs:
+                if loc is None or (loc not in movers and loc in self.collision_srcs):
                     return False
         return True
 
@@ -150,14 +152,16 @@ class BusContext:
            Clusters that cannot merge are marked solved and removed from
            the active set so they don't slow down later rounds.
         """
-        clusters = self.greedy_init(entries)
-        solved = self.merge_clusters(clusters)
+        movers = {src for src, _ in map(self.arch_spec.get_endpoints, entries.values())}
+        clusters = self.greedy_init(entries, movers)
+        solved = self.merge_clusters(clusters, movers)
 
         return [moveset for xs, ys in solved if (moveset := self.rect_to_lanes(xs, ys))]
 
     def greedy_init(
         self,
         entries: dict[int, LaneAddress],
+        movers: set[LocationAddress],
     ) -> list[Cluster]:
         """Form initial clusters via greedy sequential expansion.
 
@@ -167,7 +171,6 @@ class BusContext:
         """
         clusters: list[Cluster] = []
         remaining = dict(entries)
-
         while remaining:
             xs: set[float] = set()
             ys: set[float] = set()
@@ -182,7 +185,7 @@ class BusContext:
                 new_xs = xs | {x}
                 new_ys = ys | {y}
 
-                if self.is_valid_rect(new_xs, new_ys):
+                if self.is_valid_rect(new_xs, new_ys, movers):
                     xs = new_xs
                     ys = new_ys
                 else:
@@ -200,6 +203,7 @@ class BusContext:
     def merge_clusters(
         self,
         clusters: list[Cluster],
+        movers: set[LocationAddress],
     ) -> list[Cluster]:
         """Merge clusters until no more merges are possible.
 
@@ -224,7 +228,7 @@ class BusContext:
                         continue
                     merged_xs = clusters[i][0] | clusters[j][0]
                     merged_ys = clusters[i][1] | clusters[j][1]
-                    if self.is_valid_rect(merged_xs, merged_ys):
+                    if self.is_valid_rect(merged_xs, merged_ys, movers):
                         clusters[i] = (merged_xs, merged_ys)
                         consumed.add(j)
                         merged_flags[i] = True

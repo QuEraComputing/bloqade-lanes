@@ -89,7 +89,7 @@ def test_generate_negative_fallback():
     assert isinstance(moves, list)
 
 
-def test_generate_filters_rectangles_with_invalid_sources(monkeypatch):
+def test_generate_keeps_rectangles_built_by_bus_context(monkeypatch):
     gen, tree, search_nodes = _make_setup()
     search_nodes[id(tree.root)] = _EntropyNode()
 
@@ -125,7 +125,7 @@ def test_generate_filters_rectangles_with_invalid_sources(monkeypatch):
     monkeypatch.setattr(gen.scorer, "score_moveset", lambda ms, _n, _t: float(len(ms)))
 
     moves = list(gen.generate(tree.root, tree))
-    assert moves == [frozenset({lane_ok})]
+    assert moves == [frozenset({lane_ok, lane_bad}), frozenset({lane_ok})]
 
 
 def test_generate_ranks_rectangles_globally_across_buses(monkeypatch):

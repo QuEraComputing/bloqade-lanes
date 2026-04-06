@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Iterator
 
 from bloqade.lanes.layout import (
     LaneAddress,
-    LocationAddress,
 )
 from bloqade.lanes.search.generators.aod_grouping import BusContext
 from bloqade.lanes.search.generators.base import EntropyNode
@@ -65,13 +64,6 @@ class HeuristicMoveGenerator:
                 direction=direction,
             )
             for moveset in context.build_aod_grids(bucket.valid_entries):
-                if not self._is_valid_rectangle_candidate(
-                    moveset=moveset,
-                    node=node,
-                    tree=tree,
-                    invalid_sources=bucket.invalid_sources,
-                ):
-                    continue
                 ms_score = self.scorer.score_moveset(moveset, node, tree)
                 best = scored_candidates.get(moveset)
                 if best is None or ms_score > best:
@@ -85,27 +77,6 @@ class HeuristicMoveGenerator:
             fallback = self._best_singleton_fallback(node, tree, entropy)
             if fallback is not None:
                 yield fallback
-
-    def _is_valid_rectangle_candidate(
-        self,
-        moveset: frozenset[LaneAddress],
-        node: ConfigurationNode,
-        tree: ConfigurationTree,
-        invalid_sources: frozenset[LocationAddress],
-    ) -> bool:
-        """Reject rectangles that include any invalid occupied source."""
-        for lane in moveset:
-            src, _ = tree.arch_spec.get_endpoints(lane)
-            if src in invalid_sources:
-                return False
-            qid = node.get_qubit_at(src)
-            if qid is None:
-                continue
-            if qid not in self.scorer.target:
-                return False
-            if node.configuration[qid] == self.scorer.target[qid]:
-                return False
-        return True
 
     def _best_singleton_fallback(
         self,
