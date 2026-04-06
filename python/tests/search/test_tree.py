@@ -115,7 +115,7 @@ def test_transposition_table_deduplication():
 
 def test_try_move_set_reports_transposition_for_ancestor_revisit():
     tree = _make_tree()
-    forward = frozenset({WordLaneAddress(0, 0, 0)})
+    forward = frozenset({SiteLaneAddress(0, 0, 0)})
 
     first = tree.try_move_set(tree.root, forward, strict=False)
     assert first.status == ExpansionStatus.CREATED_CHILD
@@ -124,7 +124,7 @@ def test_try_move_set_reports_transposition_for_ancestor_revisit():
     backward_lane = None
     for lane in tree.valid_lanes(first.child, direction=Direction.BACKWARD):
         src, dst = tree.arch_spec.get_endpoints(lane)
-        if src == LocationAddress(1, 0) and dst == LocationAddress(0, 0):
+        if src == LocationAddress(0, 5) and dst == LocationAddress(0, 0):
             backward_lane = lane
             break
     assert backward_lane is not None
@@ -138,8 +138,8 @@ def test_try_move_set_reports_transposition_for_ancestor_revisit():
 
 def test_try_move_set_allows_same_config_from_different_branch():
     tree = _make_tree()
-    q0_forward = frozenset({WordLaneAddress(0, 0, 0)})
-    q1_forward = frozenset({WordLaneAddress(4, 0, 0)})
+    q0_forward = frozenset({SiteLaneAddress(0, 0, 0)})
+    q1_forward = frozenset({SiteLaneAddress(1, 0, 0)})
 
     a1 = tree.try_move_set(tree.root, q0_forward, strict=False)
     assert a1.status == ExpansionStatus.CREATED_CHILD
@@ -240,12 +240,13 @@ def test_try_move_set_reports_already_child():
     assert second.child is first.child
 
 
-def test_try_move_set_reports_transposition_for_same_configuration():
+def test_try_move_set_creates_child_for_same_configuration():
     tree = _make_tree()
     outcome = tree.try_move_set(tree.root, frozenset(), strict=False)
-    assert outcome.status == ExpansionStatus.TRANSPOSITION_SEEN
-    assert outcome.child is None
-    assert outcome.existing_node is tree.root
+    assert outcome.status == ExpansionStatus.CREATED_CHILD
+    assert outcome.child is not None
+    assert outcome.child is not tree.root
+    assert outcome.child.configuration == tree.root.configuration
 
 
 def test_try_move_set_reports_collision():

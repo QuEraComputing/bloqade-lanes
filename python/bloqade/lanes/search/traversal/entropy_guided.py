@@ -545,6 +545,9 @@ class EntropyGuidedSearch:
 
                 ancestor_sn = self._get_or_create_search_node(ancestor)
                 if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
+                    if self.max_expansions is None:
+                        return self._make_result(goal_nodes=tuple(found_goals))
+                    self.nodes_expanded = self.max_expansions
                     break
 
                 ancestor_sn.bump_entropy(self.params.delta_e)
@@ -616,7 +619,7 @@ class EntropyGuidedSearch:
         if (
             self.max_expansions is not None
             and self.nodes_expanded >= self.max_expansions
-        ) or hit_max_depth:
+        ):
             nodes_before_fallback = self.nodes_expanded
             depth_before_fallback = self.max_depth_reached
             fallback_result = self._sequential_fallback(self.tree.root)

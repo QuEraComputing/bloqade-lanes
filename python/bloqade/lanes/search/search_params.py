@@ -41,7 +41,7 @@ class SearchParams:
     reversion_steps: int = 1
     delta_e: int = 1
     e_max: int = 4
-    max_goal_candidates: int = 2
+    max_goal_candidates: int = 32
 
     def __post_init__(self) -> None:
         if self.delta_e < self.MIN_DELTA_E:
