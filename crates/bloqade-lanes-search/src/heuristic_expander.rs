@@ -139,11 +139,9 @@ impl Expander for HeuristicExpander<'_> {
             }
         }
 
-        if all_scores.is_empty() {
-            return;
-        }
-
         // Step 3: per qubit, keep top C triples.
+        // (If all_scores is empty, this produces no candidates and the
+        // deadlock escape at the end activates.)
         let mut per_qubit: HashMap<u32, Vec<(TripletKey, ScoredTriple)>> = HashMap::new();
         for entry in all_scores {
             per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
@@ -236,6 +234,28 @@ impl Expander for HeuristicExpander<'_> {
 
         for (_, move_set, new_config) in candidates {
             out.push((move_set, new_config, 1.0));
+        }
+
+        // Step 7: deadlock escape.
+        // If no positive-score candidates were produced (deadlock — all
+        // improving moves blocked), also generate all valid single-lane
+        // moves for EVERY qubit in the config. This includes moving
+        // resolved qubits out of the way to unblock others. A*/DFS will
+        // explore these escape moves and find the path through.
+        if !has_positive {
+            for (qid, loc) in config.iter() {
+                for &lane in self.index.outgoing_lanes(loc) {
+                    let Some((_, dst)) = self.index.endpoints(&lane) else {
+                        continue;
+                    };
+                    if occupied.contains(&dst.encode()) {
+                        continue;
+                    }
+                    let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
+                    let new_cfg = config.with_moves(&[(qid, dst)]);
+                    out.push((ms, new_cfg, 1.0));
+                }
+            }
         }
     }
 }
@@ -485,5 +505,74 @@ mod tests {
         assert!(result.goal.is_some());
         let path = result.solution_path().unwrap();
         assert_eq!(path.len(), 2);
+    }
+
+    #[test]
+    fn deadlock_escape_generates_moves() {
+        // Two qubits mutually blocking: q0 at site 0 wants site 5,
+        // q1 at site 5 wants site 0. Both direct moves are blocked.
+        // Verify the escape generates at least some moves (even if the
+        // full search can't solve the swap on this bus topology).
+        use crate::astar::Expander;
+
+        let index = make_index();
+        let targets = vec![(0u32, loc(0, 5)), (1, loc(0, 0))];
+        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+
+        let mut out = Vec::new();
+        exp.expand(&config, &mut out);
+
+        // q1 at site 5 has word bus outgoing lanes (sites_with_word_buses = [5..9]).
+        // The escape should find these even though no heuristic move improves distance.
+        assert!(
+            !out.is_empty(),
+            "escape should produce moves even when heuristic candidates are blocked"
+        );
+    }
+
+    #[test]
+    fn deadlock_escape_solves_blocking() {
+        // q0 at site 0, target site 5. q1 at site 5, target word 1 site 5.
+        // q1 blocks q0's direct move (0→5). But q1 can escape via word bus
+        // (site 5 is in sites_with_word_buses). Path:
+        //   q1: word 0 site 5 → word 1 site 5 (word bus fwd) — reaches target!
+        //   q0: site 0 → site 5 (site bus fwd) — now unblocked.
+        // The heuristic expander normally can't find this because q0's
+        // improving move is blocked. The escape generates q1's word bus
+        // move, enabling q0's move on the next expansion.
+        use crate::astar::astar;
+        use crate::heuristic::HopDistanceHeuristic;
+
+        let index = make_index();
+        let targets = vec![(0u32, loc(0, 5)), (1, loc(1, 5))];
+        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+        let h = HopDistanceHeuristic::new(targets.clone(), &table);
+
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+
+        let result = astar(
+            config,
+            |cfg| {
+                cfg.location_of(0)
+                    .is_some_and(|l| l.encode() == loc(0, 5).encode())
+                    && cfg
+                        .location_of(1)
+                        .is_some_and(|l| l.encode() == loc(1, 5).encode())
+            },
+            |cfg| h.estimate(cfg),
+            &exp,
+            Some(500),
+        );
+
+        assert!(
+            result.goal.is_some(),
+            "should solve blocking via escape (expanded {} nodes)",
+            result.nodes_expanded
+        );
     }
 }
