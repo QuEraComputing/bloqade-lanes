@@ -13,25 +13,20 @@ const EXCEPTIONS_MODULE: &str = "bloqade.lanes.bytecode.exceptions";
 fn arch_spec_error_to_py(py: Python<'_>, error: &ArchSpecError) -> PyResult<PyObject> {
     let module = py.import(EXCEPTIONS_MODULE)?;
 
-    let obj = match error {
-        ArchSpecError::Zone { message } => {
-            let cls = module.getattr("ArchSpecZoneError")?;
-            cls.call1((message.as_str(),))?
-        }
-        ArchSpecError::Geometry { message } => {
-            let cls = module.getattr("ArchSpecGeometryError")?;
-            cls.call1((message.as_str(),))?
-        }
-        ArchSpecError::Bus { message } => {
-            let cls = module.getattr("ArchSpecBusError")?;
-            cls.call1((message.as_str(),))?
-        }
-        ArchSpecError::Path { message } => {
-            let cls = module.getattr("ArchSpecPathError")?;
-            cls.call1((message.as_str(),))?
-        }
+    // All ArchSpecError variants contain a String message. Map each to the
+    // most appropriate existing Python exception class.
+    let (cls_name, message) = match error {
+        ArchSpecError::Structure(msg) => ("ArchSpecGeometryError", msg.as_str()),
+        ArchSpecError::ZoneBus(msg) => ("ArchSpecBusError", msg.as_str()),
+        ArchSpecError::InterZoneBus(msg) => ("ArchSpecBusError", msg.as_str()),
+        ArchSpecError::GridInvariant(msg) => ("ArchSpecGeometryError", msg.as_str()),
+        ArchSpecError::EntanglingPair(msg) => ("ArchSpecZoneError", msg.as_str()),
+        ArchSpecError::Mode(msg) => ("ArchSpecZoneError", msg.as_str()),
+        ArchSpecError::Path(msg) => ("ArchSpecPathError", msg.as_str()),
     };
 
+    let cls = module.getattr(cls_name)?;
+    let obj = cls.call1((message,))?;
     Ok(obj.into())
 }
 
@@ -86,9 +81,13 @@ pub fn location_group_error_to_py(
             let cls = module.getattr("DuplicateLocationAddressError")?;
             cls.call1((*address,))?
         }
-        LocationGroupError::InvalidAddress { word_id, site_id } => {
+        LocationGroupError::InvalidAddress {
+            zone_id,
+            word_id,
+            site_id,
+        } => {
             let cls = module.getattr("InvalidLocationAddressError")?;
-            cls.call1((*word_id, *site_id))?
+            cls.call1((*zone_id, *word_id, *site_id))?
         }
     };
 
@@ -112,11 +111,11 @@ pub fn lane_group_error_to_py(py: Python<'_>, error: &LaneGroupError) -> PyResul
             let cls = module.getattr("LaneGroupInconsistentError")?;
             cls.call1((message.as_str(),))?
         }
-        LaneGroupError::WordNotInSiteBusList { word_id } => {
+        LaneGroupError::WordNotInSiteBusList { zone_id: _, word_id } => {
             let cls = module.getattr("LaneWordNotInSiteBusListError")?;
             cls.call1((*word_id,))?
         }
-        LaneGroupError::SiteNotInWordBusList { site_id } => {
+        LaneGroupError::SiteNotInWordBusList { zone_id: _, site_id } => {
             let cls = module.getattr("LaneSiteNotInWordBusListError")?;
             cls.call1((*site_id,))?
         }

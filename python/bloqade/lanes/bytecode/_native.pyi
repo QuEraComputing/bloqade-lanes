@@ -33,10 +33,12 @@ class MoveType:
     Attributes:
         SITE: Moves atoms between sites within a word (value 0).
         WORD: Moves atoms between words (value 1).
+        ZONE: Moves atoms between zones (value 2).
     """
 
     SITE: MoveType
     WORD: MoveType
+    ZONE: MoveType
     @property
     def name(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
@@ -47,19 +49,25 @@ class MoveType:
 
 @final
 class LocationAddress:
-    """Bit-packed atom location address.
+    """Bit-packed atom location address (zone + word + site).
 
-    Encodes a physical atom location as ``word_id`` (16 bits) and
-    ``site_id`` (16 bits) into a 32-bit word.
+    Encodes ``zone_id`` (8 bits), ``word_id`` (16 bits), and
+    ``site_id`` (16 bits) into a 64-bit word.
 
-    Layout: ``[word_id:16][site_id:16]``
+    Layout: ``[zone_id:8][word_id:16][site_id:16][pad:24]``
 
     Args:
+        zone_id (int): Zone identifier (0..255).
         word_id (int): Word identifier (0..65535).
         site_id (int): Site identifier within the word (0..65535).
     """
 
-    def __init__(self, word_id: int, site_id: int) -> None: ...
+    def __init__(self, zone_id: int, word_id: int, site_id: int) -> None: ...
+    @property
+    def zone_id(self) -> int:
+        """Zone identifier."""
+        ...
+
     @property
     def word_id(self) -> int:
         """Word identifier."""
@@ -71,19 +79,19 @@ class LocationAddress:
         ...
 
     def encode(self) -> int:
-        """Encode to a 32-bit packed integer.
+        """Encode to a 64-bit packed integer.
 
         Returns:
-            int: The 32-bit packed representation.
+            int: The 64-bit packed representation.
         """
         ...
 
     @staticmethod
     def decode(bits: int) -> LocationAddress:
-        """Decode a 32-bit packed integer into a LocationAddress.
+        """Decode a 64-bit packed integer into a LocationAddress.
 
         Args:
-            bits (int): The 32-bit packed representation.
+            bits (int): The 64-bit packed representation.
 
         Returns:
             LocationAddress: The decoded address.
@@ -98,16 +106,17 @@ class LocationAddress:
 class LaneAddress:
     """Bit-packed lane address for atom move operations.
 
-    Encodes direction (1 bit), move_type (1 bit), word_id (16 bits),
-    site_id (16 bits), and bus_id (16 bits) across two 32-bit data words,
-    returned as a combined 64-bit value.
+    Encodes direction (1 bit), move_type (2 bits), zone_id (8 bits),
+    word_id (16 bits), site_id (16 bits), and bus_id (16 bits) across
+    two 32-bit data words, returned as a combined 64-bit value.
 
     Layout:
         data0: ``[word_id:16][site_id:16]``
-        data1: ``[dir:1][mt:1][pad:14][bus_id:16]``
+        data1: ``[dir:1][mt:2][zone_id:8][pad:5][bus_id:16]``
 
     Args:
-        move_type (MoveType): SITE or WORD.
+        move_type (MoveType): SITE, WORD, or ZONE.
+        zone_id (int): Zone identifier (0..255).
         word_id (int): Word identifier (0..65535).
         site_id (int): Site identifier within the word (0..65535).
         bus_id (int): Bus identifier (0..65535).
@@ -117,6 +126,7 @@ class LaneAddress:
     def __init__(
         self,
         move_type: MoveType,
+        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
@@ -129,7 +139,12 @@ class LaneAddress:
 
     @property
     def move_type(self) -> MoveType:
-        """Bus type (SITE or WORD)."""
+        """Bus type (SITE, WORD, or ZONE)."""
+        ...
+
+    @property
+    def zone_id(self) -> int:
+        """Zone identifier."""
         ...
 
     @property
@@ -175,9 +190,9 @@ class LaneAddress:
 class ZoneAddress:
     """Bit-packed zone address.
 
-    Encodes a zone identifier (16 bits) into a 32-bit value.
+    Encodes a zone identifier (8 bits) into a 32-bit value.
 
-    Layout: ``[pad:16][zone_id:16]``
+    Layout: ``[pad:24][zone_id:8]``
 
     Args:
         zone_id (int): Zone identifier (0..65535).
@@ -304,101 +319,65 @@ class Grid:
 class Word:
     """A group of atom sites that share a coordinate grid.
 
-    Each word contains a fixed number of sites (determined by
-    ``Geometry.sites_per_word``). Sites are positioned on the word's
-    grid via ``(x_idx, y_idx)`` index pairs.
+    Each word contains a fixed number of sites. Sites are positioned on the
+    parent zone's grid via ``[x_idx, y_idx]`` index pairs.
 
     Args:
-        positions (Grid): Coordinate grid for this word's sites.
-        site_indices (list[tuple[int, int]]): Site positions as ``(x_idx, y_idx)`` grid index pairs.
+        sites (list[tuple[int, int]]): Site positions as ``(x_idx, y_idx)`` grid index pairs.
 
-    Note: A word's identity is determined by its position in the ``Geometry.words`` list.
+    Note: A word's identity is determined by its position in the ``ArchSpec.words`` list.
     """
 
-    def __init__(
-        self,
-        positions: Grid,
-        site_indices: list[tuple[int, int]],
-    ) -> None: ...
+    def __init__(self, sites: list[tuple[int, int]]) -> None: ...
     @property
-    def positions(self) -> Grid:
-        """Coordinate grid for this word's sites."""
-        ...
-
-    @property
-    def site_indices(self) -> list[tuple[int, int]]:
+    def sites(self) -> list[tuple[int, int]]:
         """Site positions as ``(x_idx, y_idx)`` grid index pairs."""
-        ...
-
-    def site_position(self, site_idx: int) -> Optional[tuple[float, float]]:
-        """Look up the ``(x, y)`` physical position of a site by index.
-
-        Args:
-            site_idx (int): Index of the site within this word.
-
-        Returns:
-            tuple[float, float]: The ``(x, y)`` physical position, or None if out of range.
-        """
         ...
 
     def __repr__(self) -> str: ...
 
 @final
-class Bus:
-    """A transport bus that maps source positions to destination positions.
+class SiteBus:
+    """A transport bus that maps source sites to destination sites within a zone.
 
-    The ``src`` and ``dst`` lists are parallel arrays: ``src[i]`` maps to
-    ``dst[i]``. For site buses, values are site indices within a word. For
-    word buses, values are word IDs. Whether a bus is a site bus or word bus
-    is determined by which list it belongs to in ``Buses``.
+    The ``src`` and ``dst`` lists are parallel arrays of site indices:
+    ``src[i]`` maps to ``dst[i]``.
 
     Args:
-        src (list[int]): Source indices (site indices for site buses, word IDs for word buses).
-        dst (list[int]): Destination indices.
-
-    Note: A bus's identity is determined by its position in the parent list.
+        src (list[int]): Source site indices.
+        dst (list[int]): Destination site indices.
     """
 
-    def __init__(
-        self,
-        src: list[int],
-        dst: list[int],
-        words: list[int] | None = None,
-    ) -> None: ...
+    def __init__(self, src: list[int], dst: list[int]) -> None: ...
     @property
     def src(self) -> list[int]:
-        """Source indices."""
+        """Source site indices."""
         ...
 
     @property
     def dst(self) -> list[int]:
-        """Destination indices."""
-        ...
-
-    @property
-    def words(self) -> list[int] | None:
-        """Word IDs this bus applies to (site buses only). None = global fallback."""
+        """Destination site indices."""
         ...
 
     def resolve_forward(self, src: int) -> Optional[int]:
-        """Map a source value to its destination.
+        """Map a source site to its destination.
 
         Args:
-            src (int): Source index to look up.
+            src (int): Source site index.
 
         Returns:
-            int: The corresponding destination index, or None if not found.
+            int: The destination site index, or None if not found.
         """
         ...
 
     def resolve_backward(self, dst: int) -> Optional[int]:
-        """Map a destination value back to its source.
+        """Map a destination site back to its source.
 
         Args:
-            dst (int): Destination index to look up.
+            dst (int): Destination site index.
 
         Returns:
-            int: The corresponding source index, or None if not found.
+            int: The source site index, or None if not found.
         """
         ...
 
@@ -407,66 +386,166 @@ class Bus:
     def __hash__(self) -> int: ...
 
 @final
-class Buses:
-    """Container for all site buses and word buses in an architecture.
+class WordBus:
+    """A transport bus that maps source words to destination words within a zone.
+
+    The ``src`` and ``dst`` lists are parallel arrays of word indices:
+    ``src[i]`` maps to ``dst[i]``.
 
     Args:
-        site_buses (list[Bus]): Site bus definitions.
-        word_buses (list[Bus]): Word bus definitions.
+        src (list[int]): Source word indices.
+        dst (list[int]): Destination word indices.
     """
 
-    def __init__(self, site_buses: list[Bus], word_buses: list[Bus]) -> None: ...
+    def __init__(self, src: list[int], dst: list[int]) -> None: ...
     @property
-    def site_buses(self) -> list[Bus]:
-        """All site bus definitions."""
+    def src(self) -> list[int]:
+        """Source word indices."""
         ...
 
     @property
-    def word_buses(self) -> list[Bus]:
-        """All word bus definitions."""
+    def dst(self) -> list[int]:
+        """Destination word indices."""
+        ...
+
+    def resolve_forward(self, src: int) -> Optional[int]:
+        """Map a source word to its destination.
+
+        Args:
+            src (int): Source word index.
+
+        Returns:
+            int: The destination word index, or None if not found.
+        """
+        ...
+
+    def resolve_backward(self, dst: int) -> Optional[int]:
+        """Map a destination word back to its source.
+
+        Args:
+            dst (int): Destination word index.
+
+        Returns:
+            int: The source word index, or None if not found.
+        """
         ...
 
     def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class ZoneBus:
+    """An inter-zone transport bus that maps source zone+word pairs to destinations.
+
+    The ``src`` and ``dst`` lists are parallel arrays of ``(zone_id, word_id)``
+    tuples: ``src[i]`` maps to ``dst[i]``.
+
+    Args:
+        src (list[tuple[int, int]]): Source ``(zone_id, word_id)`` pairs.
+        dst (list[tuple[int, int]]): Destination ``(zone_id, word_id)`` pairs.
+    """
+
+    def __init__(
+        self,
+        src: list[tuple[int, int]],
+        dst: list[tuple[int, int]],
+    ) -> None: ...
+    @property
+    def src(self) -> list[tuple[int, int]]:
+        """Source ``(zone_id, word_id)`` pairs."""
+        ...
+
+    @property
+    def dst(self) -> list[tuple[int, int]]:
+        """Destination ``(zone_id, word_id)`` pairs."""
+        ...
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
 class Zone:
-    """A group of words that form a logical zone.
+    """A logical zone grouping words with a shared coordinate grid and buses.
 
-    Zones partition words for operations like entangling gates and
-    measurement. Zone 0 must contain all words.
+    Each zone owns its grid and the site/word buses that operate within it.
 
     Args:
-        words (list[int]): Word identifiers belonging to this zone.
-
-    Note: A zone's identity is determined by its position in the ``ArchSpec.zones`` list.
+        grid (Grid): Coordinate grid for all words in this zone.
+        site_buses (list[SiteBus]): Site buses within this zone.
+        word_buses (list[WordBus]): Word buses within this zone.
+        words_with_site_buses (list[int]): Word IDs with site-bus transport.
+        sites_with_word_buses (list[int]): Site indices with word-bus transport.
     """
 
-    def __init__(self, words: list[int]) -> None: ...
+    def __init__(
+        self,
+        grid: Grid,
+        site_buses: list[SiteBus],
+        word_buses: list[WordBus],
+        words_with_site_buses: list[int],
+        sites_with_word_buses: list[int],
+    ) -> None: ...
     @property
-    def words(self) -> list[int]:
-        """Word identifiers belonging to this zone."""
+    def grid(self) -> Grid:
+        """Coordinate grid for this zone."""
+        ...
+
+    @property
+    def site_buses(self) -> list[SiteBus]:
+        """Site buses within this zone."""
+        ...
+
+    @property
+    def word_buses(self) -> list[WordBus]:
+        """Word buses within this zone."""
+        ...
+
+    @property
+    def words_with_site_buses(self) -> list[int]:
+        """Word IDs with site-bus transport capability."""
+        ...
+
+    @property
+    def sites_with_word_buses(self) -> list[int]:
+        """Site indices that participate in word-bus transport."""
         ...
 
     def __repr__(self) -> str: ...
 
 @final
-class Geometry:
-    """Device geometry: the set of words and their site layout.
+class Mode:
+    """A named operational mode for the device.
+
+    Modes define subsets of zones and the bitstring ordering used for
+    measurement results.
 
     Args:
-        sites_per_word (int): Number of atom sites in each word.
-        words (list[Word]): Word definitions.
+        name (str): Human-readable mode name.
+        zones (list[int]): Zone IDs active in this mode.
+        bitstring_order (list[LocationAddress]): Bit-to-location mapping.
     """
 
-    def __init__(self, sites_per_word: int, words: list[Word]) -> None: ...
+    def __init__(
+        self,
+        name: str,
+        zones: list[int],
+        bitstring_order: list[LocationAddress],
+    ) -> None: ...
     @property
-    def sites_per_word(self) -> int:
-        """Number of atom sites in each word."""
+    def name(self) -> str:
+        """Human-readable mode name."""
         ...
 
     @property
-    def words(self) -> list[Word]:
-        """All word definitions."""
+    def zones(self) -> list[int]:
+        """Zone IDs active in this mode."""
+        ...
+
+    @property
+    def bitstring_order(self) -> list[LocationAddress]:
+        """Bit-to-location mapping for measurement results."""
         ...
 
     def __repr__(self) -> str: ...
@@ -476,7 +555,7 @@ class TransportPath:
     """A transport path for a lane, defined by waypoints.
 
     The lane is identified by a ``LaneAddress`` which encodes the direction,
-    move type, word, site, and bus.
+    move type, zone, word, site, and bus.
 
     Args:
         lane (LaneAddress): Lane address identifying the transport lane.
@@ -513,39 +592,33 @@ class TransportPath:
 class ArchSpec:
     """Architecture specification for a quantum device.
 
-    Describes the full hardware topology: geometry (words, sites, grids),
-    bus connectivity, zones, and operational constraints. Can be loaded
-    from JSON or constructed programmatically.
+    Describes the full hardware topology: words, zones (each owning a grid
+    and intra-zone buses), inter-zone buses, entangling pairs, operational
+    modes, and device capabilities.
 
     Args:
         version (tuple[int, int]): Spec version as ``(major, minor)``.
-        geometry (Geometry): Device geometry (words and sites).
-        buses (Buses): Bus connectivity (site buses and word buses).
-        words_with_site_buses (list[int]): Word IDs that participate in site-bus moves.
-        sites_with_word_buses (list[int]): Site indices that participate in word-bus moves.
-        zones (list[Zone]): Zone definitions partitioning words.
-        entangling_zones (list[list[tuple[int, int]]]): Entangling zones as lists of word-ID pairs.
-        measurement_mode_zones (list[int]): Zone IDs for measurement (first must be zone 0).
+        words (list[Word]): Word definitions.
+        zones (list[Zone]): Zone definitions (each owns a grid and buses).
+        zone_buses (list[ZoneBus]): Inter-zone word buses.
+        entangling_zone_pairs (list[tuple[int, int]]): Pairs of zone IDs for CZ gates.
+        modes (list[Mode]): Operational modes.
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
-        feed_forward (bool): Whether the device supports mid-circuit measurement with classical feedback. Default = False.
-        atom_reloading (bool): Whether the device supports reloading atoms after initial fill. Default = False.
-        blockade_radius (float): Rydberg blockade radius in micrometers. Default = 2.0.
+        feed_forward (bool): Whether the device supports mid-circuit measurement. Default = False.
+        atom_reloading (bool): Whether the device supports atom reloading. Default = False.
     """
 
     def __init__(
         self,
         version: tuple[int, int],
-        geometry: Geometry,
-        buses: Buses,
-        words_with_site_buses: list[int],
-        sites_with_word_buses: list[int],
+        words: list[Word],
         zones: list[Zone],
-        entangling_zones: list[list[tuple[int, int]]],
-        measurement_mode_zones: list[int],
+        zone_buses: list[ZoneBus],
+        entangling_zone_pairs: list[tuple[int, int]],
+        modes: list[Mode],
         paths: Optional[list[TransportPath]] = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
-        blockade_radius: float = 2.0,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -599,23 +672,8 @@ class ArchSpec:
         ...
 
     @property
-    def geometry(self) -> Geometry:
-        """Device geometry."""
-        ...
-
-    @property
-    def buses(self) -> Buses:
-        """Bus connectivity."""
-        ...
-
-    @property
-    def words_with_site_buses(self) -> list[int]:
-        """Word IDs that participate in site-bus moves."""
-        ...
-
-    @property
-    def sites_with_word_buses(self) -> list[int]:
-        """Site indices that participate in word-bus moves."""
+    def words(self) -> list[Word]:
+        """Word definitions."""
         ...
 
     @property
@@ -624,18 +682,23 @@ class ArchSpec:
         ...
 
     @property
-    def entangling_zones(self) -> list[list[tuple[int, int]]]:
-        """Entangling zones as lists of word-ID pairs."""
+    def zone_buses(self) -> list[ZoneBus]:
+        """Inter-zone word buses."""
         ...
 
     @property
-    def blockade_radius(self) -> float:
-        """Rydberg blockade radius in micrometers."""
+    def entangling_zone_pairs(self) -> list[tuple[int, int]]:
+        """Pairs of zone IDs for CZ entangling gates."""
         ...
 
     @property
-    def measurement_mode_zones(self) -> list[int]:
-        """Zone IDs for measurement mode."""
+    def modes(self) -> list[Mode]:
+        """Operational modes."""
+        ...
+
+    @property
+    def sites_per_word(self) -> int:
+        """Number of sites in each word (0 if no words)."""
         ...
 
     @property
@@ -657,7 +720,7 @@ class ArchSpec:
         """Look up a word by its index.
 
         Args:
-            id (int): Word index in ``geometry.words``.
+            id (int): Word index in ``words``.
 
         Returns:
             Word: The word, or None if not found.
@@ -675,28 +738,6 @@ class ArchSpec:
         """
         ...
 
-    def site_bus_by_id(self, id: int) -> Optional[Bus]:
-        """Look up a site bus by its index.
-
-        Args:
-            id (int): Site bus index in ``buses.site_buses``.
-
-        Returns:
-            Bus: The site bus, or None if not found.
-        """
-        ...
-
-    def word_bus_by_id(self, id: int) -> Optional[Bus]:
-        """Look up a word bus by its index.
-
-        Args:
-            id (int): Word bus index in ``buses.word_buses``.
-
-        Returns:
-            Bus: The word bus, or None if not found.
-        """
-        ...
-
     def location_position(self, loc: LocationAddress) -> Optional[tuple[float, float]]:
         """Get the ``(x, y)`` physical position for an atom location.
 
@@ -704,8 +745,8 @@ class ArchSpec:
             loc (LocationAddress): The location address to look up.
 
         Returns:
-            tuple[float, float]: The ``(x, y)`` position, or None if the word or site
-                is not found.
+            tuple[float, float]: The ``(x, y)`` position, or None if the zone,
+                word, or site is not found.
         """
         ...
 
@@ -714,9 +755,9 @@ class ArchSpec:
     ) -> Optional[tuple[LocationAddress, LocationAddress]]:
         """Resolve a lane address to its source and destination locations.
 
-        Traces through the appropriate bus (site bus or word bus) in the
-        specified direction (forward or backward) to determine which two
-        ``LocationAddress`` endpoints the lane connects.
+        Traces through the appropriate bus (site bus, word bus, or zone bus)
+        in the specified direction (forward or backward) to determine which
+        two ``LocationAddress`` endpoints the lane connects.
 
         Args:
             lane (LaneAddress): The lane address to resolve.
@@ -724,6 +765,21 @@ class ArchSpec:
         Returns:
             tuple[LocationAddress, LocationAddress]: A ``(src, dst)`` pair, or None if the
                 lane references an invalid bus, word, or site.
+        """
+        ...
+
+    def get_cz_partner(self, loc: LocationAddress) -> Optional[LocationAddress]:
+        """Get the CZ partner for a given location.
+
+        For a site in zone Z, finds the partner zone from ``entangling_zone_pairs``
+        and returns the same (word_id, site_id) in the partner zone.
+
+        Args:
+            loc (LocationAddress): The location address to look up.
+
+        Returns:
+            LocationAddress: The partner location, or None if the zone has no
+                entangling partner.
         """
         ...
 
@@ -743,7 +799,7 @@ class ArchSpec:
     ) -> list[LocationGroupError]:
         """Validate a group of location addresses against this architecture.
 
-        Checks for duplicate addresses and invalid word/site combinations.
+        Checks for duplicate addresses and invalid zone/word/site combinations.
 
         Args:
             locations (list[LocationAddress]): Location addresses to validate.
@@ -769,7 +825,6 @@ class ArchSpec:
 
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
 
 # ── AtomStateData ──
 
@@ -794,7 +849,7 @@ class AtomStateData:
             from location to qubit id, default = None (empty).
         qubit_to_locations (Optional[dict[int, LocationAddress]]): Forward index
             from qubit id to location, default = None (empty).
-        collision (Optional[dict[int, int]]): Cumulative collision record — key is
+        collision (Optional[dict[int, int]]): Cumulative collision record -- key is
             the moving qubit, value is the qubit it displaced, default = None (empty).
         prev_lanes (Optional[dict[int, LaneAddress]]): Lane each qubit used in
             the most recent move step, default = None (empty).
@@ -939,7 +994,7 @@ class AtomStateData:
         """Find CZ gate control/target qubit pairings within a zone.
 
         For each qubit in the zone, checks whether the CZ pair site (via
-        the arch spec's blockaded location data) is also occupied. If both
+        the arch spec's entangling zone pairs) is also occupied. If both
         sites have qubits, they form a control/target pair.
 
         Args:
@@ -1016,12 +1071,13 @@ class Instruction:
         ...
 
     @staticmethod
-    def const_loc(word_id: int, site_id: int) -> Instruction:
+    def const_loc(zone_id: int, word_id: int, site_id: int) -> Instruction:
         """Push a location address constant onto the stack.
 
         Args:
-            word_id (int): Word identifier (0..255).
-            site_id (int): Site identifier (0..255).
+            zone_id (int): Zone identifier (0..255).
+            word_id (int): Word identifier (0..65535).
+            site_id (int): Site identifier (0..65535).
 
         Returns:
             Instruction: The constant instruction.
@@ -1031,6 +1087,7 @@ class Instruction:
     @staticmethod
     def const_lane(
         move_type: MoveType,
+        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
@@ -1039,10 +1096,11 @@ class Instruction:
         """Push a lane address constant onto the stack.
 
         Args:
-            move_type (MoveType): SITE or WORD.
-            word_id (int): Word identifier (0..255).
-            site_id (int): Site identifier (0..255).
-            bus_id (int): Bus identifier (0..255).
+            move_type (MoveType): SITE, WORD, or ZONE.
+            zone_id (int): Zone identifier (0..255).
+            word_id (int): Word identifier (0..65535).
+            site_id (int): Site identifier (0..65535).
+            bus_id (int): Bus identifier (0..65535).
             direction (Direction): FORWARD or BACKWARD. Default: FORWARD.
 
         Returns:
@@ -1362,20 +1420,20 @@ class Program:
         """
         ...
 
-    def validate(self, arch: Optional[ArchSpec] = None, stack: bool = False) -> None:
+    def validate(
+        self,
+        arch: Optional[ArchSpec] = None,
+        stack: bool = False,
+    ) -> None:
         """Validate the program.
 
-        Validation runs in layers:
-        - **Structural** (always): operand bounds, arity limits, instruction ordering.
-        - **Architecture** (when ``arch`` is provided): address validity against the device spec.
-        - **Stack simulation** (when ``stack=True``): type checking via abstract interpretation.
-
-        All errors are collected before raising.
+        Structural validation always runs. With ``arch``, also validates
+        addresses and capabilities. With ``stack=True``, runs stack type
+        simulation.
 
         Args:
-            arch (Optional[ArchSpec]): Architecture spec for address validation, default = None.
-            stack (bool): If True, run stack type simulation (uses ``arch`` if provided),
-                default = False.
+            arch (Optional[ArchSpec]): Architecture spec for address validation.
+            stack (bool): Whether to run stack type simulation. Default: False.
 
         Raises:
             ValidationError: With ``.errors`` list containing individual
@@ -1394,8 +1452,5 @@ class Program:
         ...
 
     def __repr__(self) -> str: ...
-    def __len__(self) -> int:
-        """Number of instructions in the program."""
-        ...
-
+    def __len__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
