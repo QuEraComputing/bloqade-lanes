@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import abc
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -22,12 +23,14 @@ from bloqade.lanes.layout import (
     ZoneAddress,
 )
 from bloqade.lanes.search import (
+    BFSTraversal,
+    CandidateScorer,
     ConfigurationTree,
+    EntropyGuidedTraversal,
     ExhaustiveMoveGenerator,
+    GreedyBestFirstTraversal,
+    HeuristicMoveGenerator,
     SearchParams,
-    bfs,
-    entropy_guided_search,
-    greedy_best_first,
     placement_goal,
 )
 
@@ -37,8 +40,124 @@ if TYPE_CHECKING:
     from bloqade.lanes.search.traversal.step_info import StepInfo
 
 
-TraversalName = Literal["entropy", "greedy", "bfs", "rust", "rust-dfs"]
 OnSearchStep = Callable[[str, "ConfigurationNode", "StepInfo"], None]
+
+
+class PlacementTraversalABC(abc.ABC):
+    """Placement-facing traversal API for target-configuration search."""
+
+    @abc.abstractmethod
+    def path_to_target_config(
+        self,
+        *,
+        tree: ConfigurationTree,
+        target: dict[int, layout.LocationAddress],
+    ) -> SearchResult:
+        """Run search and return one or more goal nodes."""
+        ...
+
+
+def _mismatch_heuristic(
+    target: dict[int, layout.LocationAddress],
+) -> Callable[[ConfigurationNode], float]:
+    def h(node: ConfigurationNode) -> float:
+        return float(
+            sum(
+                1
+                for qid, desired_loc in target.items()
+                if node.configuration.get(qid) != desired_loc
+            )
+        )
+
+    return h
+
+
+@dataclass(frozen=True)
+class EntropyPlacementTraversal(PlacementTraversalABC):
+    """Placement traversal adapter backed by entropy-guided search."""
+
+    search_params: SearchParams = field(default_factory=SearchParams)
+    max_depth: int | None = None
+    max_expansions: int | None = 300
+    on_search_step: OnSearchStep | None = None
+
+    def path_to_target_config(
+        self,
+        *,
+        tree: ConfigurationTree,
+        target: dict[int, layout.LocationAddress],
+    ) -> SearchResult:
+        params = self.search_params
+        scorer = CandidateScorer(params=params, target=target)
+        generator = HeuristicMoveGenerator(
+            scorer=scorer,
+            params=params,
+            search_nodes={},
+        )
+        traversal = EntropyGuidedTraversal(
+            target=target,
+            params=params,
+            on_step=self.on_search_step,
+        )
+        return traversal.search(
+            tree=tree,
+            generator=generator,
+            goal=placement_goal(target),
+            max_depth=self.max_depth,
+            max_expansions=self.max_expansions,
+        )
+
+
+@dataclass(frozen=True)
+class GreedyPlacementTraversal(PlacementTraversalABC):
+    """Placement traversal adapter backed by greedy best-first search."""
+
+    max_expansions: int | None = 300
+
+    def path_to_target_config(
+        self,
+        *,
+        tree: ConfigurationTree,
+        target: dict[int, layout.LocationAddress],
+    ) -> SearchResult:
+        return GreedyBestFirstTraversal(heuristic=_mismatch_heuristic(target)).search(
+            tree=tree,
+            generator=ExhaustiveMoveGenerator(),
+            goal=placement_goal(target),
+            max_expansions=self.max_expansions,
+        )
+
+
+@dataclass(frozen=True)
+class BFSPlacementTraversal(PlacementTraversalABC):
+    """Placement traversal adapter backed by breadth-first search."""
+
+    max_depth: int | None = None
+    max_expansions: int | None = 300
+
+    def path_to_target_config(
+        self,
+        *,
+        tree: ConfigurationTree,
+        target: dict[int, layout.LocationAddress],
+    ) -> SearchResult:
+        return BFSTraversal().search(
+            tree=tree,
+            generator=ExhaustiveMoveGenerator(),
+            goal=placement_goal(target),
+            max_depth=self.max_depth,
+            max_expansions=self.max_expansions,
+        )
+
+
+@dataclass(frozen=True)
+class RustPlacementTraversal:
+    """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
+
+    strategy: str = "astar"
+    top_c: int = 3
+    max_movesets_per_group: int = 3
+    max_expansions: int | None = 300
 
 
 @dataclass
@@ -46,16 +165,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     """Physical placement strategy backed by configuration-tree search."""
 
     arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
-    traversal: TraversalName = "entropy"
-    search_params: SearchParams = field(default_factory=SearchParams)
-    max_depth: int | None = None
-    max_expansions: int | None = 300
-    top_c: int = 3
-    max_movesets_per_group: int = 3
-    on_search_step: OnSearchStep | None = None
-    trace_cz_index: int | None = None
+    traversal: PlacementTraversalABC | RustPlacementTraversal = field(
+        default_factory=EntropyPlacementTraversal
+    )
 
     _cz_counter: int = field(default=0, init=False, repr=False)
+    _trace_cz_index: int | None = field(default=None, init=False, repr=False)
     _traced_tree: ConfigurationTree | None = field(default=None, init=False, repr=False)
     _traced_target: dict[int, layout.LocationAddress] = field(
         default_factory=dict, init=False, repr=False
@@ -69,6 +184,23 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     @property
     def traced_target(self) -> dict[int, layout.LocationAddress]:
         return dict(self._traced_target)
+
+    @property
+    def trace_cz_index(self) -> int | None:
+        return self._trace_cz_index
+
+    @trace_cz_index.setter
+    def trace_cz_index(self, value: int | None) -> None:
+        self._trace_cz_index = value
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.traversal, (PlacementTraversalABC, RustPlacementTraversal)
+        ):
+            raise TypeError(
+                "traversal must implement PlacementTraversalABC or be a "
+                "RustPlacementTraversal instance"
+            )
 
     def validate_initial_layout(
         self,
@@ -92,57 +224,17 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             target[control_qid] = blockade_partner
         return target
 
-    @staticmethod
-    def _mismatch_heuristic(
-        target: dict[int, layout.LocationAddress],
-    ) -> Callable[[ConfigurationNode], float]:
-        def h(node: ConfigurationNode) -> float:
-            return float(
-                sum(
-                    1
-                    for qid, desired_loc in target.items()
-                    if node.configuration.get(qid) != desired_loc
-                )
-            )
-
-        return h
-
     def _run_search(
         self,
         tree: ConfigurationTree,
         target: dict[int, layout.LocationAddress],
-        callback: OnSearchStep | None,
+        traversal: PlacementTraversalABC | None = None,
     ) -> SearchResult:
-        goal = placement_goal(target)
-        if self.traversal == "entropy":
-            return entropy_guided_search(
-                tree=tree,
-                target=target,
-                goal=goal,
-                params=self.search_params,
-                max_depth=self.max_depth,
-                max_expansions=self.max_expansions,
-                on_step=callback,
-            )
-
-        generator = ExhaustiveMoveGenerator()
-        if self.traversal == "greedy":
-            return greedy_best_first(
-                tree=tree,
-                generator=generator,
-                goal=goal,
-                heuristic=self._mismatch_heuristic(target),
-                max_expansions=self.max_expansions,
-            )
-        if self.traversal == "bfs":
-            return bfs(
-                tree=tree,
-                generator=generator,
-                goal=goal,
-                max_depth=self.max_depth,
-                max_expansions=self.max_expansions,
-            )
-        raise ValueError(f"Unknown traversal strategy: {self.traversal}")
+        active_traversal = self.traversal if traversal is None else traversal
+        return active_traversal.path_to_target_config(
+            tree=tree,
+            target=target,
+        )
 
     def cz_placements(
         self,
@@ -157,10 +249,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
-        if self.traversal == "rust":
-            return self._cz_placements_rust(state, controls, targets, strategy="astar")
-        if self.traversal == "rust-dfs":
-            return self._cz_placements_rust(state, controls, targets, strategy="dfs")
+        if isinstance(self.traversal, RustPlacementTraversal):
+            return self._cz_placements_rust(state, controls, targets)
 
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
@@ -171,18 +261,16 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         )
 
         should_trace = (
-            self.trace_cz_index is None or self._cz_counter == self.trace_cz_index
+            self._trace_cz_index is None or self._cz_counter == self._trace_cz_index
         )
-        callback = (
-            self.on_search_step
-            if should_trace and self.traversal == "entropy"
-            else None
-        )
+        traversal = self.traversal
+        if isinstance(traversal, EntropyPlacementTraversal) and not should_trace:
+            traversal = replace(traversal, on_search_step=None)
         if should_trace:
             self._traced_tree = tree
             self._traced_target = dict(target)
 
-        result = self._run_search(tree, target, callback)
+        result = self._run_search(tree, target, traversal)
         self._cz_counter += 1
 
         if not result.goal_nodes:
@@ -217,8 +305,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
-        strategy: str = "astar",
     ) -> AtomState:
+        assert isinstance(self.traversal, RustPlacementTraversal)
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
 
@@ -231,10 +319,10 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             initial,
             target_tuples,
             blocked,
-            self.max_expansions,
-            strategy=strategy,
-            top_c=self.top_c,
-            max_movesets_per_group=self.max_movesets_per_group,
+            self.traversal.max_expansions,
+            strategy=self.traversal.strategy,
+            top_c=self.traversal.top_c,
+            max_movesets_per_group=self.traversal.max_movesets_per_group,
         )
 
         if result is None:
