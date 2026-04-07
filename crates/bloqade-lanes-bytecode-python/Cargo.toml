@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 bloqade-lanes-bytecode-core = { path = "../bloqade-lanes-bytecode-core" }
 bloqade-lanes-search = { path = "../bloqade-lanes-search" }
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+serde_json = "1"

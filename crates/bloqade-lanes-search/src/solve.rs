@@ -72,6 +72,8 @@ impl MoveSolver {
     /// * `target` — Desired qubit positions: `(qubit_id, location)` pairs.
     /// * `blocked` — Locations occupied by external atoms (immovable obstacles).
     /// * `max_expansions` — Optional limit on A* node expansions.
+    /// * `max_x_capacity` — Maximum AOD X capacity (None = unlimited).
+    /// * `max_y_capacity` — Maximum AOD Y capacity (None = unlimited).
     ///
     /// # Returns
     ///
@@ -82,6 +84,8 @@ impl MoveSolver {
         target: impl IntoIterator<Item = (u32, LocationAddr)>,
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
+        max_x_capacity: Option<usize>,
+        max_y_capacity: Option<usize>,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -102,7 +106,8 @@ impl MoveSolver {
         let heuristic_fn = |config: &Config| -> f64 { heuristic.estimate(config) };
 
         // Build expander.
-        let expander = ExhaustiveExpander::new(&self.index, blocked, None, None);
+        let expander =
+            ExhaustiveExpander::new(&self.index, blocked, max_x_capacity, max_y_capacity);
 
         // Run A*.
         let result = astar::astar(root, goal, heuristic_fn, &expander, max_expansions);
@@ -176,6 +181,8 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
+                None,
+                None,
             )
             .unwrap();
 
@@ -193,6 +200,8 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
+                None,
+                None,
             )
             .unwrap();
 
@@ -211,6 +220,8 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(100),
+                None,
+                None,
             )
             .unwrap();
 
@@ -229,6 +240,8 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
+                None,
+                None,
             )
             .unwrap();
 
@@ -245,6 +258,8 @@ mod tests {
             [(0, loc(99, 99))],
             std::iter::empty(),
             Some(100),
+            None,
+            None,
         );
 
         assert!(result.is_none());
@@ -260,6 +275,8 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
+                None,
+                None,
             )
             .unwrap();
 
@@ -269,6 +286,8 @@ mod tests {
                 [(0, loc(0, 0))],
                 std::iter::empty(),
                 Some(100),
+                None,
+                None,
             )
             .unwrap();
 
@@ -281,7 +300,14 @@ mod tests {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Qubit at site 0, target site 5, but site 5 is blocked.
         // Should find no solution (or a longer path if one exists).
-        let result = solver.solve([(0, loc(0, 0))], [(0, loc(0, 5))], [loc(0, 5)], Some(100));
+        let result = solver.solve(
+            [(0, loc(0, 0))],
+            [(0, loc(0, 5))],
+            [loc(0, 5)],
+            Some(100),
+            None,
+            None,
+        );
 
         // Can't reach blocked destination.
         assert!(result.is_none());
@@ -297,6 +323,8 @@ mod tests {
                 [(0, loc(0, 5)), (1, loc(0, 6))],
                 std::iter::empty(),
                 Some(1000),
+                None,
+                None,
             )
             .unwrap();
 

@@ -13,6 +13,14 @@ from bloqade.lanes.analysis.placement import (
     PlacementStrategyABC,
 )
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
+from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.layout import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    ZoneAddress,
+)
 from bloqade.lanes.search import (
     ConfigurationTree,
     ExhaustiveMoveGenerator,
@@ -29,7 +37,7 @@ if TYPE_CHECKING:
     from bloqade.lanes.search.traversal.step_info import StepInfo
 
 
-TraversalName = Literal["entropy", "greedy", "bfs"]
+TraversalName = Literal["entropy", "greedy", "bfs", "rust"]
 OnSearchStep = Callable[[str, "ConfigurationNode", "StepInfo"], None]
 
 
@@ -50,6 +58,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _traced_target: dict[int, layout.LocationAddress] = field(
         default_factory=dict, init=False, repr=False
     )
+    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
     @property
     def traced_tree(self) -> ConfigurationTree | None:
@@ -146,6 +155,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
+        if self.traversal == "rust":
+            return self._cz_placements_rust(state, controls, targets)
+
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
         tree = ConfigurationTree.from_initial_placement(
@@ -186,6 +198,57 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             move_count=move_count,
             active_cz_zones=frozenset([layout.ZoneAddress(0)]),
             move_layers=move_program,
+        )
+
+    def _get_rust_solver(self) -> MoveSolver:
+        if self._rust_solver is None:
+            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
+        return self._rust_solver
+
+    _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
+    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD}
+
+    def _cz_placements_rust(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> AtomState:
+        placement = {qid: loc for qid, loc in enumerate(state.layout)}
+        target = self._target_from_stage_controls_only(placement, controls, targets)
+
+        initial = [(qid, loc.word_id, loc.site_id) for qid, loc in placement.items()]
+        target_tuples = [(qid, loc.word_id, loc.site_id) for qid, loc in target.items()]
+        blocked = [(loc.word_id, loc.site_id) for loc in state.occupied]
+
+        solver = self._get_rust_solver()
+        result = solver.solve(initial, target_tuples, blocked, self.max_expansions)
+
+        if result is None:
+            return AtomState.bottom()
+
+        move_layers = tuple(
+            tuple(
+                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d])
+                for d, mt, word, site, bus in step
+            )
+            for step in result.move_layers
+        )
+
+        goal_map = {qid: LocationAddress(w, s) for qid, w, s in result.goal_config}
+        goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
+
+        move_count = tuple(
+            mc + int(src != dst)
+            for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
+        )
+
+        return ExecuteCZ(
+            occupied=state.occupied,
+            layout=goal_layout,
+            move_count=move_count,
+            active_cz_zones=frozenset([ZoneAddress(0)]),
+            move_layers=move_layers,
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:

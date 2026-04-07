@@ -10,6 +10,8 @@ use pyo3::prelude::*;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::solve::{MoveSolver, SolveResult};
 
+use crate::arch_python::PyArchSpec;
+
 /// Result of a move synthesis solve.
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
@@ -108,6 +110,19 @@ impl PyMoveSolver {
         Ok(Self { inner })
     }
 
+    /// Create a solver from a native ArchSpec object.
+    ///
+    /// Serializes the ArchSpec to JSON internally, avoiding manual
+    /// JSON round-trips.
+    #[staticmethod]
+    fn from_arch_spec(arch: &PyArchSpec) -> PyResult<Self> {
+        let json = serde_json::to_string(&arch.inner)
+            .map_err(|e| PyValueError::new_err(format!("failed to serialize arch spec: {e}")))?;
+        let inner = MoveSolver::from_json(&json)
+            .map_err(|e| PyValueError::new_err(format!("invalid arch spec: {e}")))?;
+        Ok(Self { inner })
+    }
+
     /// Solve a move synthesis problem.
     ///
     /// Finds the minimum-cost sequence of parallel move steps to move
@@ -118,10 +133,12 @@ impl PyMoveSolver {
     ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
     ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on A* node expansions.
+    ///     max_x_capacity: Optional maximum AOD X capacity.
+    ///     max_y_capacity: Optional maximum AOD Y capacity.
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, max_x_capacity=None, max_y_capacity=None))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -129,6 +146,8 @@ impl PyMoveSolver {
         target: Vec<(u32, u32, u32)>,
         blocked: Vec<(u32, u32)>,
         max_expansions: Option<u32>,
+        max_x_capacity: Option<usize>,
+        max_y_capacity: Option<usize>,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -159,8 +178,14 @@ impl PyMoveSolver {
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py.allow_threads(|| {
-            self.inner
-                .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
+            self.inner.solve(
+                initial_pairs,
+                target_pairs,
+                blocked_locs,
+                max_expansions,
+                max_x_capacity,
+                max_y_capacity,
+            )
         });
 
         Ok(result.map(|r| PySolveResult { inner: r }))
