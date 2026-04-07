@@ -133,12 +133,10 @@ impl PyMoveSolver {
     ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
     ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on A* node expansions.
-    ///     max_x_capacity: Optional maximum AOD X capacity.
-    ///     max_y_capacity: Optional maximum AOD Y capacity.
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, max_x_capacity=None, max_y_capacity=None))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -146,8 +144,6 @@ impl PyMoveSolver {
         target: Vec<(u32, u32, u32)>,
         blocked: Vec<(u32, u32)>,
         max_expansions: Option<u32>,
-        max_x_capacity: Option<usize>,
-        max_y_capacity: Option<usize>,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -178,14 +174,8 @@ impl PyMoveSolver {
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py.allow_threads(|| {
-            self.inner.solve(
-                initial_pairs,
-                target_pairs,
-                blocked_locs,
-                max_expansions,
-                max_x_capacity,
-                max_y_capacity,
-            )
+            self.inner
+                .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
         });
 
         Ok(result.map(|r| PySolveResult { inner: r }))

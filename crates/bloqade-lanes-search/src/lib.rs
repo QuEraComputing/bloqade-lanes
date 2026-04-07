@@ -8,6 +8,7 @@ pub mod config;
 pub mod expander;
 pub mod graph;
 pub mod heuristic;
+pub mod heuristic_expander;
 pub mod lane_index;
 pub mod solve;
 

@@ -8,9 +8,9 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
 use crate::astar;
 use crate::config::Config;
-use crate::expander::ExhaustiveExpander;
 use crate::graph::MoveSet;
-use crate::heuristic::HopDistanceHeuristic;
+use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
+use crate::heuristic_expander::HeuristicExpander;
 use crate::lane_index::LaneIndex;
 
 /// Result of a successful solve.
@@ -72,8 +72,6 @@ impl MoveSolver {
     /// * `target` — Desired qubit positions: `(qubit_id, location)` pairs.
     /// * `blocked` — Locations occupied by external atoms (immovable obstacles).
     /// * `max_expansions` — Optional limit on A* node expansions.
-    /// * `max_x_capacity` — Maximum AOD X capacity (None = unlimited).
-    /// * `max_y_capacity` — Maximum AOD Y capacity (None = unlimited).
     ///
     /// # Returns
     ///
@@ -84,8 +82,6 @@ impl MoveSolver {
         target: impl IntoIterator<Item = (u32, LocationAddr)>,
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
-        max_x_capacity: Option<usize>,
-        max_y_capacity: Option<usize>,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -101,13 +97,23 @@ impl MoveSolver {
             })
         };
 
-        // Build heuristic (precomputes BFS hop distances).
-        let heuristic = HopDistanceHeuristic::new(target_pairs, &self.index);
+        // Build distance table (shared between heuristic and expander).
+        let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &self.index);
+
+        // Build heuristic from shared distance table.
+        let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
         let heuristic_fn = |config: &Config| -> f64 { heuristic.estimate(config) };
 
-        // Build expander.
-        let expander =
-            ExhaustiveExpander::new(&self.index, blocked, max_x_capacity, max_y_capacity);
+        // Build expander (heuristic: scores qubit-bus pairs, generates ~5-15 candidates).
+        let expander = HeuristicExpander::new(
+            &self.index,
+            blocked,
+            target_pairs.iter().copied(),
+            &dist_table,
+            3, // top_c
+            3, // max_movesets_per_group
+        );
 
         // Run A*.
         let result = astar::astar(root, goal, heuristic_fn, &expander, max_expansions);
@@ -181,8 +187,6 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
-                None,
-                None,
             )
             .unwrap();
 
@@ -200,8 +204,6 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
-                None,
-                None,
             )
             .unwrap();
 
@@ -220,8 +222,6 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(100),
-                None,
-                None,
             )
             .unwrap();
 
@@ -240,8 +240,6 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
-                None,
-                None,
             )
             .unwrap();
 
@@ -258,8 +256,6 @@ mod tests {
             [(0, loc(99, 99))],
             std::iter::empty(),
             Some(100),
-            None,
-            None,
         );
 
         assert!(result.is_none());
@@ -275,8 +271,6 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
-                None,
-                None,
             )
             .unwrap();
 
@@ -286,8 +280,6 @@ mod tests {
                 [(0, loc(0, 0))],
                 std::iter::empty(),
                 Some(100),
-                None,
-                None,
             )
             .unwrap();
 
@@ -300,14 +292,7 @@ mod tests {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Qubit at site 0, target site 5, but site 5 is blocked.
         // Should find no solution (or a longer path if one exists).
-        let result = solver.solve(
-            [(0, loc(0, 0))],
-            [(0, loc(0, 5))],
-            [loc(0, 5)],
-            Some(100),
-            None,
-            None,
-        );
+        let result = solver.solve([(0, loc(0, 0))], [(0, loc(0, 5))], [loc(0, 5)], Some(100));
 
         // Can't reach blocked destination.
         assert!(result.is_none());
@@ -323,8 +308,6 @@ mod tests {
                 [(0, loc(0, 5)), (1, loc(0, 6))],
                 std::iter::empty(),
                 Some(1000),
-                None,
-                None,
             )
             .unwrap();
 

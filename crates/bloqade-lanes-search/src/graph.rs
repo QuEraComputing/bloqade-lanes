@@ -39,6 +39,13 @@ impl MoveSet {
         Self { lanes: encoded }
     }
 
+    /// Create from pre-encoded lane u64 values. Sorts and deduplicates.
+    pub fn from_encoded(mut encoded: Vec<u64>) -> Self {
+        encoded.sort_unstable();
+        encoded.dedup();
+        Self { lanes: encoded }
+    }
+
     /// Decode back to `LaneAddr` values.
     pub fn decode(&self) -> Vec<LaneAddr> {
         self.lanes
