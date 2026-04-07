@@ -574,7 +574,7 @@ impl<'a> StackSimulator<'a> {
                 self.push_const(TAG_INT, *v as u64);
             }
             Instruction::LaneConst(LaneConstInstruction::ConstLoc(v)) => {
-                self.push_const(TAG_LOCATION, *v as u64);
+                self.push_const(TAG_LOCATION, *v);
             }
             Instruction::LaneConst(LaneConstInstruction::ConstLane(d0, d1)) => {
                 let combined = (*d0 as u64) | ((*d1 as u64) << 32);

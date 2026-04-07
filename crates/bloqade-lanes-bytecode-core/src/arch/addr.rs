@@ -141,7 +141,7 @@ impl LaneAddr {
         Self {
             direction,
             move_type,
-            zone_id: ((data1 >> 21) & 0xFF) as u32,
+            zone_id: (data1 >> 21) & 0xFF,
             word_id: (data0 >> 16) & 0xFFFF,
             site_id: data0 & 0xFFFF,
             bus_id: data1 & 0xFFFF,
