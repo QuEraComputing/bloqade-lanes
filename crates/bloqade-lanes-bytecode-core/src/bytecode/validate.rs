@@ -172,6 +172,7 @@ pub fn validate_addresses(program: &Program, arch: &ArchSpec) -> Vec<ValidationE
                     errors.push(ValidationError::LocationGroupValidation {
                         pc,
                         error: LocationGroupError::InvalidAddress {
+                            zone_id: addr.zone_id,
                             word_id: addr.word_id,
                             site_id: addr.site_id,
                         },
@@ -440,7 +441,7 @@ impl<'a> StackSimulator<'a> {
         let loc_values: Vec<Option<u64>> = (0..arity).map(|_| self.pop_location()).collect();
         let locations: Vec<LocationAddr> = loc_values
             .iter()
-            .filter_map(|v| v.map(|bits| LocationAddr::decode(bits as u32)))
+            .filter_map(|v| v.map(LocationAddr::decode))
             .collect();
         if let Some(arch) = self.arch {
             self.push_location_group_errors(arch.check_locations(&locations));
@@ -657,6 +658,8 @@ pub fn simulate_stack(program: &Program, arch: Option<&ArchSpec>) -> Vec<Validat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arch::addr::{Direction, LaneAddr, MoveType, SiteRef, WordRef};
+    use crate::arch::types::{Bus, Grid, Mode, Word, Zone};
     use crate::version::Version;
 
     // --- Structural validation tests ---
@@ -887,41 +890,50 @@ mod tests {
     // --- Address validation tests ---
 
     fn test_arch_spec() -> ArchSpec {
-        let json = r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 2,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
-                        "site_indices": [[0, 0], [1, 0]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [
-                    { "src": [0], "dst": [1] }
-                ],
-                "word_buses": []
-            },
-            "words_with_site_buses": [0],
-            "sites_with_word_buses": [],
-            "zones": [
-                { "words": [0] }
-            ],
-            "entangling_zones": [],
-            "measurement_mode_zones": [0]
-        }"#;
-        ArchSpec::from_json(json).unwrap()
+        // 1 word with 2 sites, 1 zone with site bus 0->1
+        let grid = Grid::from_positions(&[0.0, 5.0], &[0.0]);
+        ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![Word {
+                sites: vec![[0, 0], [1, 0]],
+            }],
+            zones: vec![Zone {
+                grid,
+                site_buses: vec![Bus {
+                    src: vec![SiteRef(0)],
+                    dst: vec![SiteRef(1)],
+                }],
+                word_buses: vec![],
+                words_with_site_buses: vec![0],
+                sites_with_word_buses: vec![],
+            }],
+            zone_buses: vec![],
+            entangling_zone_pairs: vec![],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        }
     }
 
     #[test]
     fn test_addr_valid_location() {
         let arch = test_arch_spec();
+        // Encode (zone_id=0, word_id=0, site_id=1) — valid since word 0 has 2 sites
+        let valid_loc = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 1,
+        }
+        .encode();
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![Instruction::LaneConst(LaneConstInstruction::ConstLoc(
-                0x0001,
+                valid_loc,
             ))],
         };
         assert!(validate_addresses(&program, &arch).is_empty());
@@ -930,10 +942,17 @@ mod tests {
     #[test]
     fn test_addr_invalid_location() {
         let arch = test_arch_spec();
+        // Encode (zone_id=0, word_id=0, site_id=5) — invalid because word 0 has only 2 sites
+        let bad_loc = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 5,
+        }
+        .encode();
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![Instruction::LaneConst(LaneConstInstruction::ConstLoc(
-                0x0005,
+                bad_loc,
             ))],
         };
         let errors = validate_addresses(&program, &arch);
@@ -943,6 +962,7 @@ mod tests {
             ValidationError::LocationGroupValidation {
                 pc: 0,
                 error: LocationGroupError::InvalidAddress {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 5
                 }
@@ -993,10 +1013,47 @@ mod tests {
 
     // --- Lane group validation tests ---
 
-    use crate::arch::addr::{Direction, LaneAddr, MoveType};
-
     fn lane_group_arch_spec() -> ArchSpec {
-        crate::arch::example_arch_spec()
+        // 2 words with 4 sites each. Zone 0 has site bus mapping [0,1]->[2,3].
+        // Grid x=[0.0, 2.0, 4.0, 6.0], y=[0.0, 10.0] so sites land on a grid:
+        //   Word 0: site0=(0.0, 0.0), site1=(2.0, 0.0), site2=(4.0, 0.0), site3=(6.0, 0.0)
+        //   Word 1: site0=(0.0, 10.0), site1=(2.0, 10.0), site2=(4.0, 10.0), site3=(6.0, 10.0)
+        let grid0 = Grid::from_positions(&[0.0, 2.0, 4.0, 6.0], &[0.0, 10.0]);
+
+        ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![
+                Word {
+                    sites: vec![[0, 0], [1, 0], [2, 0], [3, 0]],
+                },
+                Word {
+                    sites: vec![[0, 1], [1, 1], [2, 1], [3, 1]],
+                },
+            ],
+            zones: vec![Zone {
+                grid: grid0,
+                site_buses: vec![Bus {
+                    src: vec![SiteRef(0), SiteRef(1)],
+                    dst: vec![SiteRef(2), SiteRef(3)],
+                }],
+                word_buses: vec![Bus {
+                    src: vec![WordRef(0)],
+                    dst: vec![WordRef(1)],
+                }],
+                words_with_site_buses: vec![0, 1],
+                sites_with_word_buses: vec![0],
+            }],
+            zone_buses: vec![],
+            entangling_zone_pairs: vec![],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        }
     }
 
     fn make_lane(
@@ -1009,6 +1066,7 @@ mod tests {
         LaneAddr {
             direction: dir,
             move_type: mt,
+            zone_id: 0,
             word_id,
             site_id,
             bus_id,
@@ -1019,8 +1077,9 @@ mod tests {
     #[test]
     fn test_lane_group_consistent_passes() {
         let arch = lane_group_arch_spec();
+        // Both lanes: Forward, SiteBus, bus 0, site 0 (valid source), different words
         let lane0 = make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0);
-        let lane1 = make_lane(Direction::Forward, MoveType::SiteBus, 0, 1, 0);
+        let lane1 = make_lane(Direction::Forward, MoveType::SiteBus, 1, 0, 0);
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
@@ -1036,8 +1095,9 @@ mod tests {
     #[test]
     fn test_lane_group_inconsistent_bus_id() {
         let arch = lane_group_arch_spec();
+        // Same direction and move type, but different bus_id (0 vs 1)
         let lane0 = make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0);
-        let lane1 = make_lane(Direction::Forward, MoveType::SiteBus, 0, 1, 1);
+        let lane1 = make_lane(Direction::Forward, MoveType::SiteBus, 1, 0, 1);
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
@@ -1059,8 +1119,9 @@ mod tests {
     #[test]
     fn test_lane_group_inconsistent_direction() {
         let arch = lane_group_arch_spec();
+        // Same bus but different directions
         let lane0 = make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0);
-        let lane1 = make_lane(Direction::Backward, MoveType::SiteBus, 0, 1, 0);
+        let lane1 = make_lane(Direction::Backward, MoveType::SiteBus, 1, 0, 0);
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
@@ -1081,32 +1142,40 @@ mod tests {
 
     #[test]
     fn test_lane_group_word_not_in_site_bus_list() {
-        let json = r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 2,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
-                        "site_indices": [[0, 0], [1, 0]]
-                    },
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0], "y_spacing": [] },
-                        "site_indices": [[0, 0], [1, 0]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [{ "src": [0], "dst": [1] }],
-                "word_buses": []
-            },
-            "words_with_site_buses": [0],
-            "sites_with_word_buses": [],
-            "zones": [{ "words": [0, 1] }],
-            "entangling_zones": [[[0, 1]]],
-            "measurement_mode_zones": [0]
-        }"#;
-        let arch = ArchSpec::from_json(json).unwrap();
+        // Build a spec where zone 0 has words_with_site_buses = [0] only
+        // (word 1 is NOT in the site bus list).
+        let grid = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
+        let arch = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![
+                Word {
+                    sites: vec![[0, 0], [1, 0]],
+                },
+                Word {
+                    sites: vec![[0, 0], [1, 0]],
+                },
+            ],
+            zones: vec![Zone {
+                grid,
+                site_buses: vec![Bus {
+                    src: vec![SiteRef(0)],
+                    dst: vec![SiteRef(1)],
+                }],
+                word_buses: vec![],
+                words_with_site_buses: vec![0],
+                sites_with_word_buses: vec![],
+            }],
+            zone_buses: vec![],
+            entangling_zone_pairs: vec![],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        };
 
         let lane0 = make_lane(Direction::Forward, MoveType::SiteBus, 1, 0, 0);
         let lane1 = make_lane(Direction::Forward, MoveType::SiteBus, 1, 1, 0);
@@ -1123,7 +1192,10 @@ mod tests {
             e,
             ValidationError::LaneGroupValidation {
                 pc: 2,
-                error: LaneGroupError::WordNotInSiteBusList { word_id: 1 }
+                error: LaneGroupError::WordNotInSiteBusList {
+                    zone_id: 0,
+                    word_id: 1
+                }
             }
         )));
     }
@@ -1132,10 +1204,10 @@ mod tests {
     fn test_lane_group_aod_constraint_rectangle_passes() {
         let arch = lane_group_arch_spec();
         // Use valid forward sources on two words to form a 2x2 grid:
-        // Word 0, Site 0: (1.0, 2.5)
-        // Word 0, Site 1: (3.0, 2.5)
-        // Word 1, Site 0: (1.0, 12.5)
-        // Word 1, Site 1: (3.0, 12.5)
+        // Word 0, Site 0: (0.0, 0.0)
+        // Word 0, Site 1: (2.0, 0.0)
+        // Word 1, Site 0: (0.0, 10.0)
+        // Word 1, Site 1: (2.0, 10.0)
         let lanes: Vec<(u32, u32)> = vec![
             make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0),
             make_lane(Direction::Forward, MoveType::SiteBus, 0, 1, 0),
@@ -1159,10 +1231,10 @@ mod tests {
     #[test]
     fn test_lane_group_aod_constraint_not_rectangle() {
         let arch = lane_group_arch_spec();
-        // 3 corners of a grid (missing word 1, site 1) — not a complete grid
-        // Word 0, Site 0: (1.0, 2.5)
-        // Word 0, Site 1: (3.0, 2.5)
-        // Word 1, Site 0: (1.0, 12.5)
+        // 3 corners of a grid (missing word 1, site 1) — not a complete 2x2 grid
+        // Word 0, Site 0: (0.0, 0.0)
+        // Word 0, Site 1: (2.0, 0.0)
+        // Word 1, Site 0: (0.0, 10.0)
         let lanes: Vec<(u32, u32)> = vec![
             make_lane(Direction::Forward, MoveType::SiteBus, 0, 0, 0),
             make_lane(Direction::Forward, MoveType::SiteBus, 0, 1, 0),
@@ -1212,6 +1284,7 @@ mod tests {
     #[test]
     fn test_duplicate_location_in_initial_fill() {
         let addr = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 9,
         }
@@ -1239,6 +1312,7 @@ mod tests {
     #[test]
     fn test_duplicate_location_in_fill() {
         let addr = LocationAddr {
+            zone_id: 0,
             word_id: 1,
             site_id: 2,
         }
@@ -1269,6 +1343,7 @@ mod tests {
     #[test]
     fn test_duplicate_location_in_local_r() {
         let addr = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 3,
         }
@@ -1300,6 +1375,7 @@ mod tests {
     #[test]
     fn test_duplicate_location_in_local_rz() {
         let addr = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 5,
         }
@@ -1354,6 +1430,7 @@ mod tests {
     #[test]
     fn test_duplicate_location_reported_once() {
         let addr = LocationAddr {
+            zone_id: 0,
             word_id: 1,
             site_id: 2,
         }
@@ -1422,12 +1499,16 @@ mod tests {
 
     #[test]
     fn test_no_duplicate_location_passes() {
+        // Three distinct locations
+        let loc0 = LocationAddr { zone_id: 0, word_id: 0, site_id: 0 }.encode();
+        let loc1 = LocationAddr { zone_id: 0, word_id: 0, site_id: 1 }.encode();
+        let loc2 = LocationAddr { zone_id: 0, word_id: 1, site_id: 0 }.encode();
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
-                Instruction::LaneConst(LaneConstInstruction::ConstLoc(0x0000)),
-                Instruction::LaneConst(LaneConstInstruction::ConstLoc(0x0001)),
-                Instruction::LaneConst(LaneConstInstruction::ConstLoc(0x0002)),
+                Instruction::LaneConst(LaneConstInstruction::ConstLoc(loc0)),
+                Instruction::LaneConst(LaneConstInstruction::ConstLoc(loc1)),
+                Instruction::LaneConst(LaneConstInstruction::ConstLoc(loc2)),
                 Instruction::AtomArrangement(AtomArrangementInstruction::InitialFill { arity: 3 }),
                 Instruction::Cpu(CpuInstruction::Halt),
             ],
