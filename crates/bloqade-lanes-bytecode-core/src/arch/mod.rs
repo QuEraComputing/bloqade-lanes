@@ -13,12 +13,11 @@
 //! - [`Direction`], [`MoveType`] — transport enums
 
 pub mod addr;
-// TODO(task6): re-enable after query module is rewritten for zone-centric model
-// pub mod query;
+pub mod query;
 pub mod types;
 pub mod validate;
 
 pub use addr::{Direction, LaneAddr, LocationAddr, MoveType, SiteRef, WordRef, ZoneAddr, ZonedWordRef};
-// pub use query::ArchSpecLoadError;
+pub use query::ArchSpecLoadError;
 pub use types::{ArchSpec, Bus, Grid, Mode, TransportPath, Word, Zone};
 pub use validate::ArchSpecError;
