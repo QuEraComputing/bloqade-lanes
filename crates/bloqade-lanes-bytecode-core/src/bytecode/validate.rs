@@ -1500,9 +1500,24 @@ mod tests {
     #[test]
     fn test_no_duplicate_location_passes() {
         // Three distinct locations
-        let loc0 = LocationAddr { zone_id: 0, word_id: 0, site_id: 0 }.encode();
-        let loc1 = LocationAddr { zone_id: 0, word_id: 0, site_id: 1 }.encode();
-        let loc2 = LocationAddr { zone_id: 0, word_id: 1, site_id: 0 }.encode();
+        let loc0 = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        }
+        .encode();
+        let loc1 = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 1,
+        }
+        .encode();
+        let loc2 = LocationAddr {
+            zone_id: 0,
+            word_id: 1,
+            site_id: 0,
+        }
+        .encode();
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![

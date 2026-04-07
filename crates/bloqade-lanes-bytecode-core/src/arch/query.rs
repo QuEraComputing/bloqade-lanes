@@ -660,7 +660,9 @@ impl ArchSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType, SiteRef, WordRef, ZoneAddr, ZonedWordRef};
+    use crate::arch::addr::{
+        Direction, LaneAddr, LocationAddr, MoveType, SiteRef, WordRef, ZoneAddr, ZonedWordRef,
+    };
     use crate::arch::types::{Grid, Mode};
     use crate::version::Version;
 
@@ -1105,13 +1107,14 @@ mod tests {
     #[test]
     fn test_check_location_valid() {
         let spec = make_valid_two_zone_spec();
-        assert!(spec
-            .check_location(&LocationAddr {
+        assert!(
+            spec.check_location(&LocationAddr {
                 zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             })
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -1288,9 +1291,11 @@ mod tests {
             },
         ];
         let errors = spec.check_locations(&locs);
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, LocationGroupError::DuplicateAddress { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, LocationGroupError::DuplicateAddress { .. }))
+        );
     }
 
     #[test]
@@ -1302,8 +1307,10 @@ mod tests {
             site_id: 0,
         }];
         let errors = spec.check_locations(&locs);
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, LocationGroupError::InvalidAddress { .. })));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, LocationGroupError::InvalidAddress { .. }))
+        );
     }
 }

@@ -628,8 +628,18 @@ impl PyZoneBus {
     }
 
     fn __repr__(&self) -> String {
-        let src: Vec<(u8, u16)> = self.inner.src.iter().map(|s| (s.zone_id, s.word_id)).collect();
-        let dst: Vec<(u8, u16)> = self.inner.dst.iter().map(|d| (d.zone_id, d.word_id)).collect();
+        let src: Vec<(u8, u16)> = self
+            .inner
+            .src
+            .iter()
+            .map(|s| (s.zone_id, s.word_id))
+            .collect();
+        let dst: Vec<(u8, u16)> = self
+            .inner
+            .dst
+            .iter()
+            .map(|d| (d.zone_id, d.word_id))
+            .collect();
         format!("ZoneBus(src={:?}, dst={:?})", src, dst)
     }
 

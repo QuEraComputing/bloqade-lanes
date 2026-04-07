@@ -215,10 +215,16 @@ fn print_arch_spec(spec: &ArchSpec) {
             );
         }
         if !zone.words_with_site_buses.is_empty() {
-            println!("    words_with_site_buses: {:?}", zone.words_with_site_buses);
+            println!(
+                "    words_with_site_buses: {:?}",
+                zone.words_with_site_buses
+            );
         }
         if !zone.sites_with_word_buses.is_empty() {
-            println!("    sites_with_word_buses: {:?}", zone.sites_with_word_buses);
+            println!(
+                "    sites_with_word_buses: {:?}",
+                zone.sites_with_word_buses
+            );
         }
     }
 

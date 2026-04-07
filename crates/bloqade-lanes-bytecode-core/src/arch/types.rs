@@ -210,7 +210,6 @@ fn deserialize_lane_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u6
     u64::from_str_radix(hex, 16).map_err(serde::de::Error::custom)
 }
 
-
 /// A 2D coordinate grid for positioning atom sites within a word.
 ///
 /// Positions are computed as cumulative sums from the start value:
@@ -336,7 +335,6 @@ impl Grid {
         positions
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,207 @@
+<h2>Zone-Centric Hardware Model</h2>
+<p class="subtitle">Four-zone architecture — gate pair (zones 0,1) + memory pair (zones 2,3)</p>
+
+<div class="section">
+  <div style="background: #0d1117; border-radius: 12px; padding: 32px; font-family: monospace; font-size: 13px; color: #c9d1d9; overflow-x: auto;">
+
+    <div style="text-align: center; color: #7aa2f7; font-size: 16px; margin-bottom: 28px; font-weight: bold;">
+      Neutral Atom Quantum Processor — Physical Layout
+    </div>
+
+    <!-- Gate Region Label -->
+    <div style="color: #bb9af7; font-size: 13px; font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #bb9af7; padding-bottom: 4px; display: inline-block;">
+      Gate Region &nbsp;(entangling_zone_pairs: [(0, 1)])
+    </div>
+
+    <!-- Gate region: zones 0 and 1 interleaved -->
+    <!-- Using a coordinate-like layout. X axis left-to-right, Y axis top-to-bottom -->
+    <!-- Zone 0: x=[0, 10, 20] y=[0, 10] — purple -->
+    <!-- Zone 1: x=[2, 12, 22] y=[0, 10] — shifted right 2.0 — orange -->
+
+    <div style="position: relative; height: 200px; margin: 16px 0 24px 0; border: 1px solid #21262d; border-radius: 8px; padding: 16px; background: #0a0e14;">
+
+      <!-- Y-axis labels -->
+      <div style="position: absolute; left: 4px; top: 28px; color: #565f89; font-size: 9px;">y=0</div>
+      <div style="position: absolute; left: 4px; top: 128px; color: #565f89; font-size: 9px;">y=10</div>
+
+      <!-- X-axis labels -->
+      <div style="position: absolute; left: 42px; top: 170px; color: #bb9af7; font-size: 9px;">0</div>
+      <div style="position: absolute; left: 62px; top: 170px; color: #ff9e64; font-size: 9px;">2</div>
+      <div style="position: absolute; left: 142px; top: 170px; color: #bb9af7; font-size: 9px;">10</div>
+      <div style="position: absolute; left: 162px; top: 170px; color: #ff9e64; font-size: 9px;">12</div>
+      <div style="position: absolute; left: 242px; top: 170px; color: #bb9af7; font-size: 9px;">20</div>
+      <div style="position: absolute; left: 262px; top: 170px; color: #ff9e64; font-size: 9px;">22</div>
+
+      <!-- Zone 0 sites (purple) — x=0,10,20 y=0,10 -->
+      <!-- Word 0 (x=0): s0 at y=0, s1 at y=10 -->
+      <div style="position: absolute; left: 38px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #bb9af7;">0</div>
+      <div style="position: absolute; left: 38px; top: 124px; width: 22px; height: 22px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #bb9af7;">0</div>
+      <!-- Vertical line connecting word 0 sites -->
+      <div style="position: absolute; left: 48px; top: 48px; width: 2px; height: 74px; background: #bb9af740;"></div>
+
+      <!-- Word 1 (x=10): s0 at y=0, s1 at y=10 -->
+      <div style="position: absolute; left: 138px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #bb9af7;">1</div>
+      <div style="position: absolute; left: 138px; top: 124px; width: 22px; height: 22px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #bb9af7;">1</div>
+      <div style="position: absolute; left: 148px; top: 48px; width: 2px; height: 74px; background: #bb9af740;"></div>
+
+      <!-- Word 2 (x=20): s0 at y=0, s1 at y=10 -->
+      <div style="position: absolute; left: 238px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #bb9af7;">2</div>
+      <div style="position: absolute; left: 238px; top: 124px; width: 22px; height: 22px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #bb9af7;">2</div>
+      <div style="position: absolute; left: 248px; top: 48px; width: 2px; height: 74px; background: #bb9af740;"></div>
+
+      <!-- Zone 1 sites (orange) — x=2,12,22 y=0,10 — shifted right 2.0 -->
+      <!-- Word 0 (x=2): s0 at y=0, s1 at y=10 -->
+      <div style="position: absolute; left: 58px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ff9e64;">0</div>
+      <div style="position: absolute; left: 58px; top: 124px; width: 22px; height: 22px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ff9e64;">0</div>
+      <div style="position: absolute; left: 68px; top: 48px; width: 2px; height: 74px; background: #ff9e6440;"></div>
+
+      <!-- Word 1 (x=12) -->
+      <div style="position: absolute; left: 158px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ff9e64;">1</div>
+      <div style="position: absolute; left: 158px; top: 124px; width: 22px; height: 22px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ff9e64;">1</div>
+      <div style="position: absolute; left: 168px; top: 48px; width: 2px; height: 74px; background: #ff9e6440;"></div>
+
+      <!-- Word 2 (x=22) -->
+      <div style="position: absolute; left: 258px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ff9e64;">2</div>
+      <div style="position: absolute; left: 258px; top: 124px; width: 22px; height: 22px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ff9e64;">2</div>
+      <div style="position: absolute; left: 268px; top: 48px; width: 2px; height: 74px; background: #ff9e6440;"></div>
+
+      <!-- Blockade radius arrows between paired sites -->
+      <div style="position: absolute; left: 62px; top: 18px; color: #f7768e; font-size: 8px; text-align: center; width: 0;">
+        <div style="position: relative; left: -8px;">&#8592;2&#8594;</div>
+      </div>
+
+      <!-- Labels -->
+      <div style="position: absolute; right: 12px; top: 8px; text-align: right;">
+        <div style="display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-bottom: 4px;">
+          <span style="color: #bb9af7; font-size: 10px;">Zone 0</span>
+          <div style="width: 12px; height: 12px; border-radius: 50%; background: #1a1a3a; border: 2px solid #bb9af7;"></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-bottom: 4px;">
+          <span style="color: #ff9e64; font-size: 10px;">Zone 1</span>
+          <div style="width: 12px; height: 12px; border-radius: 50%; background: #2a1a0a; border: 2px solid #ff9e64;"></div>
+        </div>
+        <div style="color: #f7768e; font-size: 9px; margin-top: 4px;">
+          shift = 2.0 (blockade radius)<br>
+          &#8594; entangling pair
+        </div>
+      </div>
+    </div>
+
+    <!-- Memory Region Label -->
+    <div style="color: #9ece6a; font-size: 13px; font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #9ece6a; padding-bottom: 4px; display: inline-block;">
+      Memory Region &nbsp;(no entangling — shift too large)
+    </div>
+
+    <!-- Memory region: zones 2 and 3 interleaved -->
+    <!-- Zone 2: x=[0, 8, 12] y=[20, 24] — green -->
+    <!-- Zone 3: x=[4, 12, 16] y=[20, 24] — shifted right 4.0 — teal -->
+
+    <div style="position: relative; height: 160px; margin: 16px 0 16px 0; border: 1px solid #21262d; border-radius: 8px; padding: 16px; background: #0a0e14;">
+
+      <!-- Y-axis labels -->
+      <div style="position: absolute; left: 2px; top: 28px; color: #565f89; font-size: 9px;">y=20</div>
+      <div style="position: absolute; left: 2px; top: 98px; color: #565f89; font-size: 9px;">y=24</div>
+
+      <!-- X-axis labels -->
+      <div style="position: absolute; left: 42px; top: 135px; color: #9ece6a; font-size: 9px;">0</div>
+      <div style="position: absolute; left: 82px; top: 135px; color: #73daca; font-size: 9px;">4</div>
+      <div style="position: absolute; left: 122px; top: 135px; color: #9ece6a; font-size: 9px;">8</div>
+      <div style="position: absolute; left: 162px; top: 135px; color: #73daca; font-size: 9px;">12</div>
+      <div style="position: absolute; left: 162px; top: 147px; color: #9ece6a; font-size: 9px;">12</div>
+      <div style="position: absolute; left: 202px; top: 135px; color: #73daca; font-size: 9px;">16</div>
+
+      <!-- Zone 2 sites (green) — x=[0, 8, 12] y=[20, 24] -->
+      <div style="position: absolute; left: 38px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #9ece6a;">0</div>
+      <div style="position: absolute; left: 38px; top: 94px; width: 22px; height: 22px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #9ece6a;">0</div>
+      <div style="position: absolute; left: 48px; top: 48px; width: 2px; height: 44px; background: #9ece6a40;"></div>
+
+      <div style="position: absolute; left: 118px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #9ece6a;">1</div>
+      <div style="position: absolute; left: 118px; top: 94px; width: 22px; height: 22px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #9ece6a;">1</div>
+      <div style="position: absolute; left: 128px; top: 48px; width: 2px; height: 44px; background: #9ece6a40;"></div>
+
+      <div style="position: absolute; left: 158px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #9ece6a;">2</div>
+      <div style="position: absolute; left: 158px; top: 94px; width: 22px; height: 22px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #9ece6a;">2</div>
+      <div style="position: absolute; left: 168px; top: 48px; width: 2px; height: 44px; background: #9ece6a40;"></div>
+
+      <!-- Zone 3 sites (teal) — x=[4, 12, 16] y=[20, 24] — shifted right 4.0 -->
+      <div style="position: absolute; left: 78px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #73daca;">0</div>
+      <div style="position: absolute; left: 78px; top: 94px; width: 22px; height: 22px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #73daca;">0</div>
+      <div style="position: absolute; left: 88px; top: 48px; width: 2px; height: 44px; background: #73daca40;"></div>
+
+      <div style="position: absolute; left: 158px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #73daca;">1</div>
+      <div style="position: absolute; left: 158px; top: 94px; width: 22px; height: 22px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #73daca;">1</div>
+
+      <div style="position: absolute; left: 198px; top: 24px; width: 22px; height: 22px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #73daca;">2</div>
+      <div style="position: absolute; left: 198px; top: 94px; width: 22px; height: 22px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #73daca;">2</div>
+      <div style="position: absolute; left: 208px; top: 48px; width: 2px; height: 44px; background: #73daca40;"></div>
+
+      <!-- Shift annotation -->
+      <div style="position: absolute; left: 82px; top: 18px; color: #565f89; font-size: 8px;">
+        <div style="position: relative; left: -10px;">&#8592; 4.0 &#8594;</div>
+      </div>
+
+      <!-- Labels -->
+      <div style="position: absolute; right: 12px; top: 8px; text-align: right;">
+        <div style="display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-bottom: 4px;">
+          <span style="color: #9ece6a; font-size: 10px;">Zone 2</span>
+          <div style="width: 12px; height: 12px; border-radius: 50%; background: #1a2a1a; border: 2px solid #9ece6a;"></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-bottom: 4px;">
+          <span style="color: #73daca; font-size: 10px;">Zone 3</span>
+          <div style="width: 12px; height: 12px; border-radius: 50%; background: #0a2a2a; border: 2px solid #73daca;"></div>
+        </div>
+        <div style="color: #565f89; font-size: 9px; margin-top: 4px;">
+          shift = 4.0 (too far for CZ)<br>
+          &#8594; NOT an entangling pair
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+      <div style="padding: 12px; background: #1a1a2e; border-radius: 8px; border-left: 3px solid #f7768e;">
+        <div style="color: #f7768e; font-weight: bold; font-size: 12px;">Entangling zone pairs</div>
+        <div style="color: #c9d1d9; font-size: 12px; margin-top: 6px; line-height: 1.6;">
+          <code>entangling_zone_pairs: [(0, 1)]</code><br>
+          Zones 0 and 1 are interleaved with a 2.0 shift — within blockade radius.
+          Every (word_id, site_id) in zone 0 pairs 1:1 with the same address in zone 1.
+        </div>
+      </div>
+      <div style="padding: 12px; background: #1a1a2e; border-radius: 8px; border-left: 3px solid #565f89;">
+        <div style="color: #565f89; font-weight: bold; font-size: 12px;">Non-entangling pairs</div>
+        <div style="color: #c9d1d9; font-size: 12px; margin-top: 6px; line-height: 1.6;">
+          Zones 2 and 3 are interleaved with a 4.0 shift — too far for CZ.
+          They share the same structure for symmetry, but atoms must be transported to the gate region for entangling.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 12px; padding: 12px; background: #1a1a2e; border-radius: 8px; border-left: 3px solid #7aa2f7;">
+      <div style="color: #7aa2f7; font-weight: bold; font-size: 12px;">Key insight: zones come in interleaved pairs</div>
+      <div style="color: #c9d1d9; font-size: 12px; margin-top: 6px; line-height: 1.6;">
+        The physical hardware naturally organizes into <strong>pairs of zones</strong> — one grid shifted relative to the other.
+        Whether the shift is small enough for CZ gates determines if they are an entangling pair.
+        All zones share the same logical word/site structure (3 words, 2 sites each) — only the grid coordinates and bus connectivity differ.
+      </div>
+    </div>
+
+    <!-- Data model mapping -->
+    <div style="margin-top: 12px; padding: 12px; background: #0d1117; border: 1px solid #21262d; border-radius: 8px;">
+      <div style="color: #e0af68; font-weight: bold; font-size: 12px; margin-bottom: 8px;">Data model mapping</div>
+      <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: 11px; line-height: 1.8;">
+        <span style="color: #7aa2f7;">words (global):</span>
+        <span style="color: #a0a0c0;">[{sites: [(0,0),(0,1)]}, {sites: [(1,0),(1,1)]}, {sites: [(2,0),(2,1)]}]</span>
+        <span style="color: #bb9af7;">zones[0].grid:</span>
+        <span style="color: #a0a0c0;">x=[0.0, 10.0, 20.0] y=[0.0, 10.0]</span>
+        <span style="color: #ff9e64;">zones[1].grid:</span>
+        <span style="color: #a0a0c0;">x=[2.0, 12.0, 22.0] y=[0.0, 10.0]</span>
+        <span style="color: #9ece6a;">zones[2].grid:</span>
+        <span style="color: #a0a0c0;">x=[0.0, 8.0, 12.0] y=[20.0, 24.0]</span>
+        <span style="color: #73daca;">zones[3].grid:</span>
+        <span style="color: #a0a0c0;">x=[4.0, 12.0, 16.0] y=[20.0, 24.0]</span>
+        <span style="color: #f7768e;">entangling_zone_pairs:</span>
+        <span style="color: #a0a0c0;">[(0, 1)]</span>
+      </div>
+    </div>
+  </div>
+</div>

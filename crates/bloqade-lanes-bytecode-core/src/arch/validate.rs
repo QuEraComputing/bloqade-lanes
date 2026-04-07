@@ -343,11 +343,7 @@ fn check_zone_buses(
 // --- Entangling zone pair validation ---
 
 /// Both zone indices must be valid and no duplicate pairs.
-fn check_entangling_zone_pairs(
-    spec: &ArchSpec,
-    num_zones: usize,
-    errors: &mut Vec<ArchSpecError>,
-) {
+fn check_entangling_zone_pairs(spec: &ArchSpec, num_zones: usize, errors: &mut Vec<ArchSpecError>) {
     let mut seen: HashSet<[u32; 2]> = HashSet::new();
     for (idx, pair) in spec.entangling_zone_pairs.iter().enumerate() {
         let [a, b] = *pair;

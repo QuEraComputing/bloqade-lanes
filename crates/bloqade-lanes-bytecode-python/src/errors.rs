@@ -111,11 +111,17 @@ pub fn lane_group_error_to_py(py: Python<'_>, error: &LaneGroupError) -> PyResul
             let cls = module.getattr("LaneGroupInconsistentError")?;
             cls.call1((message.as_str(),))?
         }
-        LaneGroupError::WordNotInSiteBusList { zone_id: _, word_id } => {
+        LaneGroupError::WordNotInSiteBusList {
+            zone_id: _,
+            word_id,
+        } => {
             let cls = module.getattr("LaneWordNotInSiteBusListError")?;
             cls.call1((*word_id,))?
         }
-        LaneGroupError::SiteNotInWordBusList { zone_id: _, site_id } => {
+        LaneGroupError::SiteNotInWordBusList {
+            zone_id: _,
+            site_id,
+        } => {
             let cls = module.getattr("LaneSiteNotInWordBusListError")?;
             cls.call1((*site_id,))?
         }
