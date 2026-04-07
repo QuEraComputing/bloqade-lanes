@@ -156,9 +156,10 @@ impl LaneAddr {
 
 /// Bit-packed zone address.
 ///
-/// Encodes a zone identifier (16 bits) into a 32-bit value.
+/// Encodes a zone identifier (8 bits) into a 32-bit value.
+/// Matches the 8-bit zone_id width used in [`LocationAddr`] and [`ZonedWordRef`].
 ///
-/// Layout: `[pad:16][zone_id:16]`
+/// Layout: `[pad:24][zone_id:8]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ZoneAddr {
     pub zone_id: u32,
@@ -167,13 +168,13 @@ pub struct ZoneAddr {
 impl ZoneAddr {
     /// Encode to a 32-bit packed integer.
     pub fn encode(&self) -> u32 {
-        self.zone_id as u16 as u32
+        self.zone_id as u8 as u32
     }
 
     /// Decode a 32-bit packed integer into a `ZoneAddr`.
     pub fn decode(bits: u32) -> Self {
         Self {
-            zone_id: bits & 0xFFFF,
+            zone_id: bits & 0xFF,
         }
     }
 }
@@ -299,9 +300,9 @@ mod tests {
 
     #[test]
     fn test_zone_addr_max() {
-        let addr = ZoneAddr { zone_id: 0xFFFF };
+        let addr = ZoneAddr { zone_id: 0xFF };
         let bits = addr.encode();
-        assert_eq!(bits, 0xFFFF);
+        assert_eq!(bits, 0xFF);
         assert_eq!(ZoneAddr::decode(bits), addr);
     }
 
