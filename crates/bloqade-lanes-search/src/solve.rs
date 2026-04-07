@@ -86,10 +86,13 @@ impl MoveSolver {
     /// * `blocked` — Locations occupied by external atoms (immovable obstacles).
     /// * `max_expansions` — Optional limit on node expansions.
     /// * `strategy` — Search strategy to use.
+    /// * `top_c` — Top bus options per qubit in the heuristic expander.
+    /// * `max_movesets_per_group` — Max movesets generated per bus group.
     ///
     /// # Returns
     ///
     /// `Some(SolveResult)` if a solution is found, `None` otherwise.
+    #[allow(clippy::too_many_arguments)]
     pub fn solve(
         &self,
         initial: impl IntoIterator<Item = (u32, LocationAddr)>,
@@ -97,6 +100,8 @@ impl MoveSolver {
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
         strategy: Strategy,
+        top_c: usize,
+        max_movesets_per_group: usize,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -126,8 +131,8 @@ impl MoveSolver {
             blocked,
             target_pairs.iter().copied(),
             &dist_table,
-            3, // top_c
-            3, // max_movesets_per_group
+            top_c,
+            max_movesets_per_group,
         );
 
         // Run search with the chosen strategy.
@@ -220,6 +225,8 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 
@@ -238,6 +245,8 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 
@@ -257,6 +266,8 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 
@@ -276,6 +287,8 @@ mod tests {
                 std::iter::empty(),
                 Some(1000),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 
@@ -293,6 +306,8 @@ mod tests {
             std::iter::empty(),
             Some(100),
             Strategy::AStar,
+            3,
+            3,
         );
 
         assert!(result.is_none());
@@ -309,6 +324,8 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 
@@ -319,6 +336,8 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 
@@ -337,6 +356,8 @@ mod tests {
             [loc(0, 5)],
             Some(100),
             Strategy::AStar,
+            3,
+            3,
         );
 
         // Can't reach blocked destination.
@@ -354,6 +375,8 @@ mod tests {
                 std::iter::empty(),
                 Some(1000),
                 Strategy::AStar,
+                3,
+                3,
             )
             .unwrap();
 

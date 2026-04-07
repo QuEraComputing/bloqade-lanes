@@ -50,6 +50,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     search_params: SearchParams = field(default_factory=SearchParams)
     max_depth: int | None = None
     max_expansions: int | None = 300
+    top_c: int = 3
+    max_movesets_per_group: int = 3
     on_search_step: OnSearchStep | None = None
     trace_cz_index: int | None = None
 
@@ -226,7 +228,13 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
         solver = self._get_rust_solver()
         result = solver.solve(
-            initial, target_tuples, blocked, self.max_expansions, strategy=strategy
+            initial,
+            target_tuples,
+            blocked,
+            self.max_expansions,
+            strategy=strategy,
+            top_c=self.top_c,
+            max_movesets_per_group=self.max_movesets_per_group,
         )
 
         if result is None:

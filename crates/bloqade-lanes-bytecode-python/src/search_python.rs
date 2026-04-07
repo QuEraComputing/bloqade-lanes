@@ -134,10 +134,12 @@ impl PyMoveSolver {
     ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
     ///     strategy: Search strategy: "astar" (default), "dfs", "bfs", "greedy".
+    ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
+    ///     max_movesets_per_group: Max movesets per bus group (default 3).
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar"))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -146,6 +148,8 @@ impl PyMoveSolver {
         blocked: Vec<(u32, u32)>,
         max_expansions: Option<u32>,
         strategy: &str,
+        top_c: usize,
+        max_movesets_per_group: usize,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -194,6 +198,8 @@ impl PyMoveSolver {
                 blocked_locs,
                 max_expansions,
                 strat,
+                top_c,
+                max_movesets_per_group,
             )
         });
 
