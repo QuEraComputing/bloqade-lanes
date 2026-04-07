@@ -3,7 +3,7 @@
 //! These types encode device-level addresses into compact integer
 //! representations used in the 16-byte instruction format.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Site index within a word. Matches the 16-bit site_id field in LocationAddr.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -38,48 +38,70 @@ pub enum MoveType {
     SiteBus = 0,
     /// Moves atoms between words (value 1).
     WordBus = 1,
+    /// Moves atoms between zones (value 2).
+    ZoneBus = 2,
 }
 
-/// Bit-packed atom location address (word + site).
+/// Bit-packed atom location address (zone + word + site).
 ///
-/// Encodes `word_id` (16 bits) and `site_id` (16 bits) into a 32-bit word.
+/// Encodes `zone_id` (8 bits), `word_id` (16 bits), and `site_id` (16 bits)
+/// into a 64-bit word.
 ///
-/// Layout: `[word_id:16][site_id:16]`
+/// Layout: `[zone_id:8][word_id:16][site_id:16][pad:24]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocationAddr {
+    pub zone_id: u32,
     pub word_id: u32,
     pub site_id: u32,
 }
 
 impl LocationAddr {
-    /// Encode to a 32-bit packed integer.
+    /// Encode to a 64-bit packed integer.
     ///
-    /// Layout: `[word_id:16][site_id:16]`
-    pub fn encode(&self) -> u32 {
-        ((self.word_id as u16 as u32) << 16) | (self.site_id as u16 as u32)
+    /// Layout: `[zone_id:8][word_id:16][site_id:16][pad:24]`
+    pub fn encode(&self) -> u64 {
+        ((self.zone_id as u8 as u64) << 56)
+            | ((self.word_id as u16 as u64) << 40)
+            | ((self.site_id as u16 as u64) << 24)
     }
 
-    /// Decode a 32-bit packed integer into a `LocationAddr`.
-    pub fn decode(bits: u32) -> Self {
+    /// Decode a 64-bit packed integer into a `LocationAddr`.
+    pub fn decode(bits: u64) -> Self {
         Self {
-            word_id: (bits >> 16) & 0xFFFF,
-            site_id: bits & 0xFFFF,
+            zone_id: ((bits >> 56) & 0xFF) as u32,
+            word_id: ((bits >> 40) & 0xFFFF) as u32,
+            site_id: ((bits >> 24) & 0xFFFF) as u32,
         }
+    }
+}
+
+impl Serialize for LocationAddr {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u64(self.encode())
+    }
+}
+
+impl<'de> Deserialize<'de> for LocationAddr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let bits = u64::deserialize(deserializer)?;
+        Ok(Self::decode(bits))
     }
 }
 
 /// Bit-packed lane address for atom move operations.
 ///
-/// Encodes direction (1 bit), move type (1 bit), word_id (16 bits),
-/// site_id (16 bits), and bus_id (16 bits) across two 32-bit data words.
+/// Encodes direction (1 bit), move type (2 bits), zone_id (8 bits),
+/// word_id (16 bits), site_id (16 bits), and bus_id (16 bits) across
+/// two 32-bit data words.
 ///
 /// Layout:
 /// - data0: `[word_id:16][site_id:16]`
-/// - data1: `[dir:1][mt:1][pad:14][bus_id:16]`
+/// - data1: `[dir:1][mt:2][zone_id:8][pad:5][bus_id:16]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LaneAddr {
     pub direction: Direction,
     pub move_type: MoveType,
+    pub zone_id: u32,
     pub word_id: u32,
     pub site_id: u32,
     pub bus_id: u32,
@@ -90,7 +112,8 @@ impl LaneAddr {
     pub fn encode(&self) -> (u32, u32) {
         let data0 = ((self.word_id as u16 as u32) << 16) | (self.site_id as u16 as u32);
         let data1 = ((self.direction as u32) << 31)
-            | ((self.move_type as u32) << 30)
+            | ((self.move_type as u32) << 29)
+            | ((self.zone_id as u8 as u32) << 21)
             | (self.bus_id as u16 as u32);
         (data0, data1)
     }
@@ -108,14 +131,17 @@ impl LaneAddr {
         } else {
             Direction::Backward
         };
-        let move_type = if (data1 >> 30) & 1 == 0 {
-            MoveType::SiteBus
-        } else {
-            MoveType::WordBus
+        let mt_bits = (data1 >> 29) & 0x3;
+        let move_type = match mt_bits {
+            0 => MoveType::SiteBus,
+            1 => MoveType::WordBus,
+            2 => MoveType::ZoneBus,
+            _ => panic!("invalid move type bits: {}", mt_bits),
         };
         Self {
             direction,
             move_type,
+            zone_id: ((data1 >> 21) & 0xFF) as u32,
             word_id: (data0 >> 16) & 0xFFFF,
             site_id: data0 & 0xFFFF,
             bus_id: data1 & 0xFFFF,
@@ -157,23 +183,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_location_addr_round_trip() {
+    fn test_move_type_zone_bus() {
+        assert_eq!(MoveType::SiteBus as u8, 0);
+        assert_eq!(MoveType::WordBus as u8, 1);
+        assert_eq!(MoveType::ZoneBus as u8, 2);
+    }
+
+    #[test]
+    fn test_location_addr_64bit_round_trip() {
         let addr = LocationAddr {
-            word_id: 0xABCD,
-            site_id: 0x1234,
+            zone_id: 5,
+            word_id: 0x1234,
+            site_id: 0x5678,
         };
         let bits = addr.encode();
-        assert_eq!(bits, 0xABCD_1234);
         assert_eq!(LocationAddr::decode(bits), addr);
+        assert_eq!((bits >> 56) & 0xFF, 5);
+        assert_eq!((bits >> 40) & 0xFFFF, 0x1234);
+        assert_eq!((bits >> 24) & 0xFFFF, 0x5678);
+        assert_eq!(bits & 0xFFFFFF, 0);
     }
 
     #[test]
     fn test_location_addr_zero() {
         let addr = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
         };
-        assert_eq!(addr.encode(), 0);
+        assert_eq!(addr.encode(), 0u64);
         assert_eq!(LocationAddr::decode(0), addr);
     }
 
@@ -182,6 +220,7 @@ mod tests {
         let addr = LaneAddr {
             direction: Direction::Backward,
             move_type: MoveType::WordBus,
+            zone_id: 0,
             word_id: 0x1234,
             site_id: 0x5678,
             bus_id: 0x9ABC,
@@ -195,7 +234,7 @@ mod tests {
 
         // Check bit positions in data1
         assert_eq!((data1 >> 31) & 1, 1); // direction = Backward
-        assert_eq!((data1 >> 30) & 1, 1); // move_type = WordBus
+        assert_eq!((data1 >> 29) & 0x3, 1); // move_type = WordBus
         assert_eq!(data1 & 0xFFFF, 0x9ABC); // bus_id
     }
 
@@ -204,6 +243,7 @@ mod tests {
         let addr = LaneAddr {
             direction: Direction::Forward,
             move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 1,
@@ -219,12 +259,34 @@ mod tests {
         let addr = LaneAddr {
             direction: Direction::Backward,
             move_type: MoveType::WordBus,
+            zone_id: 0,
             word_id: 1,
             site_id: 0,
             bus_id: 0,
         };
         let packed = addr.encode_u64();
         assert_eq!(LaneAddr::decode_u64(packed), addr);
+    }
+
+    #[test]
+    fn test_lane_addr_with_zone_id() {
+        let addr = LaneAddr {
+            direction: Direction::Backward,
+            move_type: MoveType::ZoneBus,
+            zone_id: 7,
+            word_id: 0x1234,
+            site_id: 0x5678,
+            bus_id: 0x9ABC,
+        };
+        let (data0, data1) = addr.encode();
+        let decoded = LaneAddr::decode(data0, data1);
+        assert_eq!(decoded, addr);
+        assert_eq!((data0 >> 16) & 0xFFFF, 0x1234);
+        assert_eq!(data0 & 0xFFFF, 0x5678);
+        assert_eq!((data1 >> 31) & 1, 1);
+        assert_eq!((data1 >> 29) & 0x3, 2);
+        assert_eq!((data1 >> 21) & 0xFF, 7);
+        assert_eq!(data1 & 0xFFFF, 0x9ABC);
     }
 
     #[test]
