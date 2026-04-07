@@ -23,7 +23,7 @@ ARCH_SPEC = layout.ArchSpec.from_components(
     ),
     ((0,),),
     (0,),
-    frozenset([0]),
+    [],
     frozenset(),
     frozenset(),
     (),

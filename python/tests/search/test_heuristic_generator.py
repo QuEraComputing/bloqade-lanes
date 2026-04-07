@@ -23,7 +23,7 @@ def _make_setup():
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     params = SearchParams()
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    target = {0: LocationAddress(0, 1), 1: LocationAddress(1, 1)}
     scorer = CandidateScorer(params=params, target=target)
     search_nodes: dict[int, EntropyNode] = {}
     gen = HeuristicMoveGenerator(
@@ -76,7 +76,7 @@ def test_generate_with_higher_entropy_produces_different_candidates():
 def test_generate_negative_fallback():
     """When all scores are negative, generator may produce no rectangle candidates."""
     arch_spec = logical.get_arch_spec()
-    placement = {0: LocationAddress(0, 5)}
+    placement = {0: LocationAddress(0, 1)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     params = SearchParams()
     target = {0: LocationAddress(0, 0)}

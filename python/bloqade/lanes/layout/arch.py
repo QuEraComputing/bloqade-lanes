@@ -68,8 +68,9 @@ class ArchSpec:
     @cached_property
     def _lane_map(self) -> dict[tuple[LocationAddress, LocationAddress], LaneAddress]:
         lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
-        for word_id in self.has_site_buses:
-            for bus_id, bus in enumerate(self.site_buses):
+        for bus_id, bus in enumerate(self.site_buses):
+            bus_word_ids = bus.words if bus.words is not None else self.has_site_buses
+            for word_id in bus_word_ids:
                 for i in range(len(bus.src)):
                     for direction in (Direction.FORWARD, Direction.BACKWARD):
                         lane_addr = SiteLaneAddress(
@@ -105,8 +106,34 @@ class ArchSpec:
         return tuple(self._inner.measurement_mode_zones)
 
     @cached_property
-    def entangling_zones(self) -> frozenset[int]:
-        return frozenset(self._inner.entangling_zones)
+    def entangling_zones(self) -> tuple[tuple[tuple[int, int], ...], ...]:
+        return tuple(
+            tuple((pair[0], pair[1]) for pair in zone)
+            for zone in self._inner.entangling_zones
+        )
+
+    @property
+    def blockade_radius(self) -> float:
+        return self._inner.blockade_radius
+
+    @cached_property
+    def _home_words(self) -> frozenset[int]:
+        """Words that are 'home' (not CZ-staging) — lower word_id in each pair."""
+        home: set[int] = set()
+        paired: set[int] = set()
+        for zone in self.entangling_zones:
+            for w_a, w_b in zone:
+                home.add(min(w_a, w_b))
+                paired.add(w_a)
+                paired.add(w_b)
+        # Unpaired words are also home
+        all_words = set(range(len(self.words)))
+        home |= all_words - paired
+        return frozenset(home)
+
+    def is_home_position(self, addr: LocationAddress) -> bool:
+        """True if this address is at a home (non-CZ-staging) word."""
+        return addr.word_id in self._home_words
 
     @property
     def feed_forward(self) -> bool:
@@ -124,6 +151,7 @@ class ArchSpec:
 
     @cached_property
     def has_word_buses(self) -> frozenset[int]:
+        """Site indices that serve as word bus landing positions."""
         return frozenset(self._inner.sites_with_word_buses)
 
     @cached_property
@@ -156,7 +184,7 @@ class ArchSpec:
         words: tuple[Word, ...],
         zones: tuple[tuple[int, ...], ...],
         measurement_mode_zones: tuple[int, ...],
-        entangling_zones: frozenset[int],
+        entangling_zones: Sequence[Sequence[tuple[int, int]]],
         has_site_buses: frozenset[int],
         has_word_buses: frozenset[int],
         site_buses: tuple[Bus, ...],
@@ -164,6 +192,7 @@ class ArchSpec:
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
+        blockade_radius: float = 2.0,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
         sites_per_word = len(words[0].site_indices) if words else 0
@@ -194,14 +223,15 @@ class ArchSpec:
             ]
 
         inner = _RustArchSpec(
-            version=(1, 0),
+            version=(2, 0),
             geometry=rust_geometry,
             buses=rust_buses,
             words_with_site_buses=sorted(has_site_buses),
             sites_with_word_buses=sorted(has_word_buses),
             zones=rust_zones,
-            entangling_zones=sorted(entangling_zones),
+            entangling_zones=[list(zone) for zone in entangling_zones],
             measurement_mode_zones=list(measurement_mode_zones),
+            blockade_radius=blockade_radius,
             paths=rust_paths,
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
@@ -454,8 +484,25 @@ class ArchSpec:
         else:
             return dst, src
 
+    @cached_property
+    def _word_partner_map(self) -> dict[int, int]:
+        """Map word_id → partner_word_id from entangling_zones pairs."""
+        partner_map: dict[int, int] = {}
+        for zone in self.entangling_zones:
+            for w_a, w_b in zone:
+                partner_map[w_a] = w_b
+                partner_map[w_b] = w_a
+        return partner_map
+
     def get_blockaded_location(
         self, location: LocationAddress
     ) -> LocationAddress | None:
-        """Get the blockaded location (CZ pair) for a given location."""
-        return self.words[location.word_id][location.site_id].cz_pair
+        """Get the blockaded location (CZ pair) for a given location.
+
+        Derives from entangling_zones word pairs: site i in word_a maps
+        to site i in the partner word. Returns None for unpaired words.
+        """
+        partner = self._word_partner_map.get(location.word_id)
+        if partner is None:
+            return None
+        return LocationAddress(partner, location.site_id)

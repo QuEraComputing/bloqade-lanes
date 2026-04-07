@@ -415,17 +415,11 @@ pub struct PyWord {
 #[pymethods]
 impl PyWord {
     #[new]
-    #[pyo3(signature = (positions, site_indices, has_cz=None))]
-    fn new(
-        positions: &PyGrid,
-        site_indices: Vec<(u32, u32)>,
-        has_cz: Option<Vec<(u32, u32)>>,
-    ) -> Self {
+    fn new(positions: &PyGrid, site_indices: Vec<(u32, u32)>) -> Self {
         Self {
             inner: rs::Word {
                 positions: positions.inner.clone(),
                 site_indices: site_indices.into_iter().map(|(x, y)| [x, y]).collect(),
-                has_cz: has_cz.map(|v| v.into_iter().map(|(a, b)| [a, b]).collect()),
             },
         }
     }
@@ -444,14 +438,6 @@ impl PyWord {
             .iter()
             .map(|s| (s[0], s[1]))
             .collect()
-    }
-
-    #[getter]
-    fn has_cz(&self) -> Option<Vec<(u32, u32)>> {
-        self.inner
-            .has_cz
-            .as_ref()
-            .map(|v| v.iter().map(|p| (p[0], p[1])).collect())
     }
 
     fn site_position(&self, site_idx: usize) -> Option<(f64, f64)> {
@@ -518,11 +504,13 @@ pub struct PyBus {
 #[pymethods]
 impl PyBus {
     #[new]
-    fn new(src: Vec<i64>, dst: Vec<i64>) -> PyResult<Self> {
+    #[pyo3(signature = (src, dst, words=None))]
+    fn new(src: Vec<i64>, dst: Vec<i64>, words: Option<Vec<i64>>) -> PyResult<Self> {
         let src = validate_vec::<u32>("src", src)?;
         let dst = validate_vec::<u32>("dst", dst)?;
+        let words = words.map(|w| validate_vec::<u32>("words", w)).transpose()?;
         Ok(Self {
-            inner: rs::Bus { src, dst },
+            inner: rs::Bus { src, dst, words },
         })
     }
 
@@ -534,6 +522,11 @@ impl PyBus {
     #[getter]
     fn dst(&self) -> Vec<u32> {
         self.inner.dst.clone()
+    }
+
+    #[getter]
+    fn words(&self) -> Option<Vec<u32>> {
+        self.inner.words.clone()
     }
 
     /// Map a source value to its destination (forward move).
@@ -713,7 +706,7 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, geometry, buses, words_with_site_buses, sites_with_word_buses, zones, entangling_zones, measurement_mode_zones, paths=None, feed_forward=false, atom_reloading=false))]
+    #[pyo3(signature = (version, geometry, buses, words_with_site_buses, sites_with_word_buses, zones, entangling_zones, measurement_mode_zones, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=2.0))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
@@ -722,19 +715,32 @@ impl PyArchSpec {
         words_with_site_buses: Vec<i64>,
         sites_with_word_buses: Vec<i64>,
         zones: Vec<PyRef<'_, PyZone>>,
-        entangling_zones: Vec<i64>,
+        entangling_zones: Vec<Vec<(i64, i64)>>,
         measurement_mode_zones: Vec<i64>,
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
         feed_forward: bool,
         atom_reloading: bool,
+        blockade_radius: f64,
     ) -> PyResult<Self> {
         let words_with_site_buses =
             validate_vec::<u32>("words_with_site_buses", words_with_site_buses)?;
         let sites_with_word_buses =
             validate_vec::<u32>("sites_with_word_buses", sites_with_word_buses)?;
-        let entangling_zones = validate_vec::<u32>("entangling_zones", entangling_zones)?;
         let measurement_mode_zones =
             validate_vec::<u32>("measurement_mode_zones", measurement_mode_zones)?;
+        let entangling_zones: Vec<Vec<[u32; 2]>> = entangling_zones
+            .into_iter()
+            .map(|zone_pairs| {
+                zone_pairs
+                    .into_iter()
+                    .map(|(a, b)| {
+                        let a = validate_field::<u32>("entangling_zones word_id", a)?;
+                        let b = validate_field::<u32>("entangling_zones word_id", b)?;
+                        Ok([a, b])
+                    })
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
@@ -744,6 +750,7 @@ impl PyArchSpec {
                 sites_with_word_buses,
                 zones: zones.iter().map(|z| z.inner.clone()).collect(),
                 entangling_zones,
+                blockade_radius,
                 measurement_mode_zones,
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
                 feed_forward,
@@ -811,8 +818,17 @@ impl PyArchSpec {
     }
 
     #[getter]
-    fn entangling_zones(&self) -> Vec<u32> {
-        self.inner.entangling_zones.clone()
+    fn entangling_zones(&self) -> Vec<Vec<(u32, u32)>> {
+        self.inner
+            .entangling_zones
+            .iter()
+            .map(|zone| zone.iter().map(|p| (p[0], p[1])).collect())
+            .collect()
+    }
+
+    #[getter]
+    fn blockade_radius(&self) -> f64 {
+        self.inner.blockade_radius
     }
 
     #[getter]

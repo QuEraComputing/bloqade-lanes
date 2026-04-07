@@ -142,11 +142,17 @@ class ConfigurationTree:
         Args:
             arch_spec: Architecture specification for lane validation.
             placement: Mapping of qubit IDs to their initial locations.
+            blocked_locations: Locations occupied by atoms outside this placement
+                (e.g. other qubits not involved in the current operation).
+                These are treated as immovable obstacles during path search.
 
         Returns:
             A new ConfigurationTree rooted at the given placement.
         """
-        root = ConfigurationNode(configuration=dict(placement))
+        root = ConfigurationNode(
+            configuration=dict(placement),
+            external_occupied=blocked_locations,
+        )
         return cls(
             arch_spec=arch_spec,
             root=root,
@@ -359,6 +365,7 @@ class ConfigurationTree:
             parent=node,
             parent_moves=move_set,
             depth=node.depth + 1,
+            external_occupied=node.external_occupied,
         )
         key = new_node.config_key
 

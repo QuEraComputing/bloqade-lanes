@@ -8,7 +8,7 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 
 ```jsonc
 {
-  "version": "1.0",
+  "version": "2.0",
   "geometry": { ... },
   "buses": { ... },
   "words_with_site_buses": [...],
@@ -16,6 +16,7 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
   "zones": [...],
   "entangling_zones": [...],
   "measurement_mode_zones": [...],
+  "blockade_radius": 2.0,         // optional, default 2.0
   "paths": [...],                 // optional
   "feed_forward": false,          // optional, default false
   "atom_reloading": false          // optional, default false
@@ -24,14 +25,15 @@ The formal JSON Schema is available at [`archspec-schema.json`](./archspec-schem
 
 | Field | Type | Description |
 |---|---|---|
-| `version` | string | Format version as `"major.minor"` (e.g. `"1.0"`). |
+| `version` | string | Format version as `"major.minor"` (e.g. `"2.0"`). |
 | `geometry` | object | Physical geometry — words, grids, and site positions. |
 | `buses` | object | Transport bus definitions (site buses and word buses). |
 | `words_with_site_buses` | integer[] | Word IDs with intra-word site transport capability. |
 | `sites_with_word_buses` | integer[] | Site indices that serve as landing pads for inter-word transport. |
 | `zones` | Zone[] | Logical groupings of words for execution phases. |
-| `entangling_zones` | integer[] | Zone IDs where CZ gates can be performed. |
+| `entangling_zones` | [word_a, word_b][][] | Entanglement zones, each containing word-ID pairs whose matching sites are within blockade radius. |
 | `measurement_mode_zones` | integer[] | Zone IDs that support measurement. |
+| `blockade_radius` | float | *(optional, default `2.0`)* Rydberg blockade radius in micrometers. |
 | `paths` | TransportPath[] | *(optional)* AOD transport paths between locations. |
 | `feed_forward` | bool | *(optional, default `false`)* Whether the device supports mid-circuit measurement with classical feedback. |
 | `atom_reloading` | bool | *(optional, default `false`)* Whether the device supports reloading atoms after initial fill. |
@@ -53,8 +55,7 @@ The geometry describes the physical layout of the device: how many words exist, 
         "x_spacing": [2.0, 2.0, 2.0, 2.0],
         "y_spacing": [2.5]
       },
-      "site_indices": [[0, 0], [1, 0], [2, 0], ...],
-      "has_cz": [[0, 5], [0, 6], ...]       // optional
+      "site_indices": [[0, 0], [1, 0], [2, 0], ...]
     }
   ]
 }
@@ -70,7 +71,6 @@ A word's ID is its index in the `geometry.words` array (e.g., the first word is 
 |---|---|---|
 | `positions` | Grid | The 2D coordinate system for this word. |
 | `site_indices` | [x_idx, y_idx][] | Site positions as index pairs into the grid's x and y coordinate arrays. |
-| `has_cz` | [word_id, site_id][] | *(optional)* CZ entanglement partner for each site. `has_cz[i]` is the site that site `i` entangles with. |
 
 ### Grid
 
@@ -138,7 +138,13 @@ Zone 0 is special — it must contain every word in the geometry. This ensures t
 
 ### Entangling Zones
 
-`entangling_zones` lists zone IDs where CZ (entangling) gates can be performed. Words in these zones must have `has_cz` defined to specify entanglement partners.
+`entangling_zones` defines which word pairs can perform CZ (entangling) gates. Each entangling zone is a list of `[word_a, word_b]` pairs. Within a pair, sites at matching indices in `word_a` and `word_b` are within blockade radius.
+
+```jsonc
+"entangling_zones": [
+  [[0, 1], [2, 3]]   // zone 0: words 0↔1 and 2↔3 are CZ pairs
+]
+```
 
 ### Measurement Mode Zones
 
@@ -213,7 +219,6 @@ The `ArchSpec::validate()` method checks all structural rules in a single pass, 
 | Rule | Error |
 |---|---|
 | Every word must have exactly `sites_per_word` site_indices | `WrongSiteCount` |
-| If present, `has_cz` must have exactly `sites_per_word` entries | `WrongCzPairsCount` |
 | All words must have the same grid shape (same number of x and y positions) | `InconsistentGridShape` |
 | Grid coordinates must be finite (no NaN or Inf) | `NonFiniteGridValue` |
 | Site `x_idx` must be < number of x grid points (`len(x_spacing) + 1`) | `SiteXIndexOutOfRange` |
@@ -281,7 +286,7 @@ Minimal spec with one word and one site bus:
 
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "geometry": {
     "sites_per_word": 5,
     "words": [

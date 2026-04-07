@@ -19,7 +19,7 @@ def _make_setup(
     if placement is None:
         placement = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
     if target is None:
-        target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+        target = {0: LocationAddress(4, 0), 1: LocationAddress(5, 0)}
     tree = ConfigurationTree.from_initial_placement(
         arch_spec, placement, blocked_locations=blocked
     )
@@ -183,8 +183,8 @@ def test_generate_yields_frozensets():
 
 def test_generate_all_resolved_yields_nothing():
     """When all qubits are already at target, no candidates are generated."""
-    placement = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
-    target = {0: LocationAddress(0, 5), 1: LocationAddress(1, 5)}
+    placement = {0: LocationAddress(4, 0), 1: LocationAddress(5, 0)}
+    target = {0: LocationAddress(4, 0), 1: LocationAddress(5, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert moves == []
@@ -193,7 +193,7 @@ def test_generate_all_resolved_yields_nothing():
 def test_generate_moves_advance_toward_target():
     """The first yielded move set should move at least one qubit closer."""
     placement = {0: LocationAddress(0, 0)}
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1
@@ -217,7 +217,7 @@ def test_generate_expand_node_integration():
 def test_generate_qubit_not_in_target_is_ignored():
     """Qubits not in the target dict should not generate moves."""
     placement = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1
@@ -231,7 +231,7 @@ def test_generate_qubit_not_in_target_is_ignored():
 def test_generate_single_atom():
     """A single atom produces at least one valid moveset."""
     placement = {0: LocationAddress(0, 0)}
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1
@@ -261,8 +261,12 @@ def test_generate_no_destination_collisions():
 
 
 def test_generate_multiple_atoms_can_merge():
-    """Two atoms that can form a valid rectangle should be merged."""
-    gen, tree = _make_setup()
+    """Two atoms in the same word that can share a site bus move should merge."""
+    # Place both atoms in the same word — site bus moves operate within a word
+    # and can merge atoms that share the same bus pattern.
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(0, 1)}
+    target = {0: LocationAddress(2, 0), 1: LocationAddress(2, 1)}
+    gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
 
     found_merged = any(len(grid) > 1 for grid in moves)

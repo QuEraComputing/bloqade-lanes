@@ -181,9 +181,9 @@ example_kernel.print()
 # architecture to get the atom states on physical qubits.
 
 # %%
-from bloqade.lanes.arch.gemini.impls import generate_arch  # noqa: E402
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec  # noqa: E402
 
-physical_arch = generate_arch(4)
+physical_arch = get_physical_arch_spec()
 
 frame, _ = atom.AtomInterpreter(example_kernel.dialects, arch_spec=physical_arch).run(
     example_kernel

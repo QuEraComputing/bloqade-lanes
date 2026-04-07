@@ -659,8 +659,8 @@ mod tests {
     #[test]
     fn get_qubit_pairing_all_unpaired() {
         let spec = example_arch_spec();
-        // Place qubits at sites 0, 1, 2 — site 0 pairs with 5, site 1 with 6,
-        // site 2 with 7, but none of the pair sites are occupied.
+        // Word 0 pairs with word 1. Place qubits at word 0 sites 0,1
+        // and word 1 site 2 — no matching site occupancy across the pair.
         let state = AtomStateData::from_locations(&[
             (
                 0,
@@ -680,7 +680,7 @@ mod tests {
                 2,
                 LocationAddr {
                     word_id: 1,
-                    site_id: 0,
+                    site_id: 2,
                 },
             ),
         ]);
@@ -696,8 +696,9 @@ mod tests {
     #[test]
     fn get_qubit_pairing_with_pairs() {
         let spec = example_arch_spec();
-        // Site 0 pairs with site 5 in the same word. Place qubits at both.
-        // Also place unpaired qubit at site 1 (pair site 6 is empty).
+        // Word 0 pairs with word 1. Site i in word 0 ↔ site i in word 1.
+        // Place qubits at (word 0, site 0) and (word 1, site 0) → paired.
+        // Also place at (word 0, site 1) without partner → unpaired.
         let state = AtomStateData::from_locations(&[
             (
                 0,
@@ -709,26 +710,12 @@ mod tests {
             (
                 1,
                 LocationAddr {
-                    word_id: 0,
-                    site_id: 5,
-                },
-            ),
-            (
-                2,
-                LocationAddr {
                     word_id: 1,
                     site_id: 0,
                 },
             ),
             (
-                3,
-                LocationAddr {
-                    word_id: 1,
-                    site_id: 5,
-                },
-            ),
-            (
-                4,
+                2,
                 LocationAddr {
                     word_id: 0,
                     site_id: 1,
@@ -739,16 +726,16 @@ mod tests {
         let zone = ZoneAddr { zone_id: 0 };
         let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
 
-        // Qubits 0+1 and 2+3 should be paired
-        assert_eq!(controls.len(), 2);
-        assert_eq!(targets.len(), 2);
+        // Qubits 0 and 1 should be paired (both at site 0 in paired words)
+        assert_eq!(controls.len(), 1);
+        assert_eq!(targets.len(), 1);
         use std::collections::HashSet;
         let control_set: HashSet<u32> = controls.iter().copied().collect();
         let target_set: HashSet<u32> = targets.iter().copied().collect();
-        assert_eq!(control_set, HashSet::from([0, 2]));
-        assert_eq!(target_set, HashSet::from([1, 3]));
-        // Qubit 4 is unpaired (site 1, pair site 6 is empty)
-        assert_eq!(unpaired, vec![4]);
+        assert_eq!(control_set, HashSet::from([0]));
+        assert_eq!(target_set, HashSet::from([1]));
+        // Qubit 2 is unpaired (word 0 site 1, partner word 1 site 1 is empty)
+        assert_eq!(unpaired, vec![2]);
     }
 
     #[test]

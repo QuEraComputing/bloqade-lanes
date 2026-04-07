@@ -8,7 +8,9 @@ import kahip
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
+from bloqade.lanes.arch.gemini.physical import (
+    get_physical_layout_arch_spec,
+)
 
 
 def _to_cz_layers(
@@ -24,7 +26,7 @@ def _to_cz_layers(
 
 @dataclass
 class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
+    arch_spec: layout.ArchSpec = field(default_factory=get_physical_layout_arch_spec)
     max_words: int | None = None
     u_factor: int = 1
     partitioner_seed: int = 0
@@ -32,16 +34,30 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
     KAHIP_MODE_ECO = 1
 
     @property
-    def left_site_count(self) -> int:
+    def home_word_ids(self) -> tuple[int, ...]:
+        """Word IDs available for qubit placement (home words of entangling pairs).
+
+        For architectures with inter-word CZ (entangling_zones contains word
+        pairs), returns the first word of each pair — the "home" word.  The
+        second word in each pair is reserved as the CZ partner and is kept
+        empty by the layout.
+        """
+        if not self.arch_spec.entangling_zones:
+            return tuple(range(len(self.arch_spec.words)))
+        zone = self.arch_spec.entangling_zones[0]
+        return tuple(pair[0] for pair in zone)
+
+    @property
+    def sites_per_partition(self) -> int:
+        """Maximum number of qubits placed per home word."""
         return len(self.arch_spec.words[0].site_indices) // 2
 
     def _effective_fill(self) -> int:
-        # Pack words by physical capacity first: full words, then one partial word.
-        return self.left_site_count
+        return self.sites_per_partition
 
     def _word_count(self, qubit_count: int) -> int:
         max_words = (
-            len(self.arch_spec.words) if self.max_words is None else self.max_words
+            len(self.home_word_ids) if self.max_words is None else self.max_words
         )
         f_eff = self._effective_fill()
         return min(max_words, math.ceil(qubit_count / f_eff))
@@ -50,7 +66,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         sizes: list[int] = []
         remaining = qubit_count
         for _ in range(k_words):
-            size = min(self.left_site_count, remaining)
+            size = min(self.sites_per_partition, remaining)
             sizes.append(size)
             remaining -= size
             if remaining == 0:
@@ -148,21 +164,19 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         }
         return {qid: remap[wid] for qid, wid in q_to_word.items()}
 
-    def _left_sites_center_out(self, word_id: int) -> list[layout.LocationAddress]:
-        left_sites = [
-            layout.LocationAddress(word_id, site_id)
-            for site_id in range(self.left_site_count)
-        ]
-        center_site = (self.left_site_count - 1) / 2.0
+    def _sites_center_out(self, word_id: int) -> list[layout.LocationAddress]:
+        n = self.sites_per_partition
+        sites = [layout.LocationAddress(word_id, site_id) for site_id in range(n)]
+        center = (n - 1) / 2.0
         return sorted(
-            left_sites,
-            key=lambda addr: (abs(addr.site_id - center_site), addr.site_id),
+            sites,
+            key=lambda addr: (abs(addr.site_id - center), addr.site_id),
         )
 
-    def _left_sites_bottom_up(self, word_id: int) -> list[layout.LocationAddress]:
+    def _sites_bottom_up(self, word_id: int) -> list[layout.LocationAddress]:
         return [
             layout.LocationAddress(word_id, site_id)
-            for site_id in range(self.left_site_count)
+            for site_id in range(self.sites_per_partition)
         ]
 
     def _within_word_placement(
@@ -243,7 +257,6 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             members_by_word[q_to_word[qid]].append(qid)
 
         # Enforce exact left-to-right capacities after partition assignment.
-        # This guarantees full words first (and at most one partial trailing word).
         capacities = {word_id: target_sizes[word_id] for word_id in range(k_words)}
         for word_id in range(k_words):
             members_by_word.setdefault(word_id, [])
@@ -283,17 +296,21 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
                 "physical initial layout."
             )
 
+        # Map partition indices to physical home word IDs.
+        home_words = self.home_word_ids
+
         q_to_location: dict[int, layout.LocationAddress] = {}
-        for word_id in range(k_words):
-            members = members_by_word[word_id]
+        for word_idx in range(k_words):
+            physical_word_id = home_words[word_idx]
+            members = members_by_word[word_idx]
             is_last_partial_word = (
-                word_id == (k_words - 1) and capacities[word_id] < self.left_site_count
+                word_idx == (k_words - 1)
+                and capacities[word_idx] < self.sites_per_partition
             )
             if is_last_partial_word:
-                # For the final partial word, place from lowest site upward.
-                sites = self._left_sites_bottom_up(word_id)
+                sites = self._sites_bottom_up(physical_word_id)
             else:
-                sites = self._left_sites_center_out(word_id)
+                sites = self._sites_center_out(physical_word_id)
             assigned = self._within_word_placement(
                 members,
                 q_to_node=q_to_node,

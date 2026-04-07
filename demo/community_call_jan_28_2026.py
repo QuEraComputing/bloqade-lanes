@@ -1,6 +1,6 @@
 # %%
 # %matplotlib inline
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.layout import ArchSpec
 
 
@@ -8,14 +8,14 @@ def show_lanes(arch: ArchSpec):
     from matplotlib import pyplot as plt
 
     f, axs = plt.subplots(1, 2, figsize=(12, 5))
-    arch.plot(show_words=range(len(arch.words)), show_site_bus=(0,), ax=axs[0])
-    arch.plot(show_words=range(len(arch.words)), show_word_bus=(0,), ax=axs[1])
+    arch.plot(show_words=range(min(4, len(arch.words))), show_site_bus=(0,), ax=axs[0])
+    arch.plot(show_words=range(min(4, len(arch.words))), show_word_bus=(0,), ax=axs[1])
     axs[0].set_title("site bus 0")
     axs[1].set_title("word bus 0")
     plt.show()
 
 
-logical_arch = generate_arch_hypercube(1, 5)
+logical_arch = logical.get_arch_spec()
 show_lanes(logical_arch)
 
 # %%
@@ -35,18 +35,24 @@ def main():
     # linear type State
     empty_state = move.load()
 
+    # Fill two qubits in the same word (word 0, sites 0 and 1)
     state = move.fill(
-        empty_state, location_addresses=(LocationAddress(0, 0), LocationAddress(1, 0))
+        empty_state, location_addresses=(LocationAddress(0, 0), LocationAddress(0, 1))
     )
     state = move.local_r(
         state, 0.25, -0.25, location_addresses=(LocationAddress(0, 0),)
     )
-    state = move.move(state, lanes=(SiteLaneAddress(0, 0, 0),))
-    state = move.move(state, lanes=(WordLaneAddress(0, 5, 0),))
+    # Word bus: move atom at site 1 from word 0 → word 1
+    state = move.move(state, lanes=(WordLaneAddress(0, 1, 0),))
+    # Site bus: move atom in word 1 from site 1 → site 0 (aligns for CZ)
+    state = move.move(state, lanes=(SiteLaneAddress(1, 0, 0, Direction.BACKWARD),))
+    # CZ between words 0 and 1 at matching site 0
     state = move.cz(state, zone_address=ZoneAddress(0))
 
-    state = move.move(state, lanes=(WordLaneAddress(0, 5, 0, Direction.BACKWARD),))
-    state = move.move(state, lanes=(SiteLaneAddress(0, 0, 0, Direction.BACKWARD),))
+    # Reverse: site bus forward (site 0 → site 1 in word 1)
+    state = move.move(state, lanes=(SiteLaneAddress(1, 0, 0),))
+    # Reverse: word bus backward (word 1 → word 0 at site 1)
+    state = move.move(state, lanes=(WordLaneAddress(0, 1, 0, Direction.BACKWARD),))
     state = move.local_r(state, 0.25, 0.25, location_addresses=(LocationAddress(0, 0),))
 
 
@@ -60,7 +66,7 @@ debugger(main, arch_spec=logical_arch, atom_marker="s")
 
 # %%
 # %matplotlib inline
-physical_arch = generate_arch_hypercube(4, 5)
+physical_arch = physical.get_arch_spec()
 show_lanes(physical_arch)
 
 # %% [markdown]
@@ -68,23 +74,20 @@ show_lanes(physical_arch)
 #
 # ```python
 # def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | None:
-#     """This function is used to map logical addresses to physical addresses.
+#     """Map logical addresses to physical addresses via site expansion.
 #
 #     The Steane [[7,1,3]] code encodes one logical qubit into seven physical qubits.
-#     The mapping is as follows:
+#     Each logical site expands to 7 physical sites within the same word:
 #
-#     Logical Word ID 0 -> Physical Word IDs 0 to 6
-#     Logical Word ID 1 -> Physical Word IDs 8 to 14
+#         Logical site s → Physical sites s*7, s*7+1, ..., s*7+6
 #
-#     All other Word IDs remain unchanged.
-#
+#     Word ID is preserved. Only expands logical site IDs (0 and 1).
+#     Returns None for site IDs >= 2 (already physical / not a logical site).
 #     """
-#     if address.word_id == 0:
-#         return (replace(address, word_id=word_id) for word_id in range(7))
-#     elif address.word_id == 1:
-#         return (replace(address, word_id=word_id) for word_id in range(8, 15, 1))
-#     else:
+#     if address.site_id >= 2:
 #         return None
+#     base = address.site_id * 7
+#     return (address.replace(site_id=base + i) for i in range(7))
 # ```
 
 # %%

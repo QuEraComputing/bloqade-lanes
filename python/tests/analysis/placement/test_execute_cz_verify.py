@@ -5,7 +5,6 @@ from bloqade.geometry.dialects import grid
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.word import Word
 
 
@@ -24,17 +23,17 @@ def _make_execute_cz(
 
 
 def test_verify_one_pair():
-    """Qubits at (0,0) and (0,5) are CZ pairs on logical arch"""
+    """Qubits at (0,0) and (1,0) are CZ pairs on logical arch (word 0 <-> word 1)"""
     arch_spec = logical.get_arch_spec()
     state = _make_execute_cz(
-        (layout.LocationAddress(0, 0), layout.LocationAddress(0, 5))
+        (layout.LocationAddress(0, 0), layout.LocationAddress(1, 0))
     )
     assert state.verify(arch_spec, (0,), (1,))
     assert state.verify(arch_spec, (1,), (0,))
 
 
 def test_verify_one_pair_unblockaded():
-    """Qubits at (0,0) and (0,1) are CZ pairs on logical arch"""
+    """Qubits at (0,0) and (0,1) are in the same word, not a CZ pair"""
     arch_spec = logical.get_arch_spec()
     state = _make_execute_cz(
         (layout.LocationAddress(0, 0), layout.LocationAddress(0, 1))
@@ -44,20 +43,20 @@ def test_verify_one_pair_unblockaded():
 
 
 def test_verify_length_mismatch():
-    """Qubits at (0,0) and (0,1) are CZ pairs on logical arch"""
+    """Mismatched control/target lengths should fail"""
     arch_spec = logical.get_arch_spec()
     state = _make_execute_cz(
-        (layout.LocationAddress(0, 0), layout.LocationAddress(0, 5))
+        (layout.LocationAddress(0, 0), layout.LocationAddress(1, 0))
     )
     assert state.verify(arch_spec, (0, 0), (1,)) is False
     assert state.verify(arch_spec, (1,), (0, 0)) is False
 
 
 def test_verify_invalid_indices():
-    """Test archspec w/invalid indices in one word"""
+    """Test archspec w/invalid indices"""
     arch_spec = logical.get_arch_spec()
     state = _make_execute_cz(
-        (layout.LocationAddress(0, 0), layout.LocationAddress(0, 5))
+        (layout.LocationAddress(0, 0), layout.LocationAddress(1, 0))
     )
     assert state.verify(arch_spec, (-1,), (1,)) is False
     assert state.verify(arch_spec, (2,), (0,)) is False
@@ -66,20 +65,22 @@ def test_verify_invalid_indices():
 
 
 def test_verify_multi_word():
-    """Test archspec w/multiple words"""
+    """Test archspec w/multiple words (word 0 <-> word 1 pairing)"""
     arch_spec = logical.get_arch_spec()
     state = _make_execute_cz(
         (
             layout.LocationAddress(0, 0),
-            layout.LocationAddress(1, 5),
             layout.LocationAddress(1, 0),
+            layout.LocationAddress(1, 5),
             layout.LocationAddress(0, 5),
         )
     )
-    assert state.verify(arch_spec, (0,), (3,))
-    assert state.verify(arch_spec, (1,), (2,))
-    assert state.verify(arch_spec, (1, 0), (2, 3))
-    assert state.verify(arch_spec, (1, 1), (2, 3)) is False
+    # qubit 0 at (0,0), qubit 1 at (1,0) -> CZ pair (word 0 <-> word 1, site 0)
+    # qubit 2 at (1,5), qubit 3 at (0,5) -> CZ pair (word 1 <-> word 0, site 5)
+    assert state.verify(arch_spec, (0,), (1,))
+    assert state.verify(arch_spec, (2,), (3,))
+    assert state.verify(arch_spec, (0, 2), (1, 3))
+    assert state.verify(arch_spec, (0, 1), (2, 3)) is False
     assert state.verify(arch_spec, (1, 4), (2, 0)) is False
 
 
@@ -95,7 +96,7 @@ def test_verify_no_czs():
         (word,),
         ((0,),),
         (0,),
-        frozenset([0]),
+        [],
         frozenset(),
         frozenset(),
         (),
@@ -117,32 +118,28 @@ def test_verify_custom_large_arch():
         Word(
             word_grid.shift(10.0 * ix, 0.0),
             ((0, 0), (0, 1), (1, 0), (1, 1)),
-            has_cz=(
-                LocationAddress(ix, 2),
-                LocationAddress(ix, 3),
-                LocationAddress(ix, 0),
-                LocationAddress(ix, 1),
-            ),
         )
         for ix in range(4)
     )
+    # Entangling pairs: word 0 <-> word 1, word 2 <-> word 3
     arch_spec = layout.ArchSpec.from_components(
         words,
         (tuple(range(4)),),
         (0,),
-        frozenset([0]),
+        [[(0, 1), (2, 3)]],
         frozenset(),
         frozenset(),
         (),
         (),
     )
 
+    # Place qubits at paired locations: word 0 <-> word 1, word 2 <-> word 3
     state = _make_execute_cz(
         (
             layout.LocationAddress(0, 0),
-            layout.LocationAddress(0, 2),
+            layout.LocationAddress(1, 0),
+            layout.LocationAddress(2, 1),
             layout.LocationAddress(3, 1),
-            layout.LocationAddress(3, 3),
         )
     )
     assert state.verify(arch_spec, (0, 2), (1, 3)) is True

@@ -204,10 +204,6 @@ fn print_arch_spec(spec: &ArchSpec) {
             .map(|s| format!("({},{})", s[0], s[1]))
             .collect();
         println!("    site_indices: {}", site_indices_str.join(" "));
-        if let Some(cz) = &word.has_cz {
-            let cz_str: Vec<String> = cz.iter().map(|p| format!("({},{})", p[0], p[1])).collect();
-            println!("    has_cz: {}", cz_str.join(" "));
-        }
     }
     println!();
 

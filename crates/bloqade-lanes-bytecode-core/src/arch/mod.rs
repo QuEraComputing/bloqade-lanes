@@ -26,19 +26,17 @@ pub use validate::ArchSpecError;
 #[cfg(test)]
 pub(crate) fn example_arch_spec() -> ArchSpec {
     let json = r#"{
-        "version": "1.0",
+        "version": "2.0",
         "geometry": {
             "sites_per_word": 10,
             "words": [
                 {
                     "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                    "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]],
-                    "has_cz": [[0, 5], [0, 6], [0, 7], [0, 8], [0, 9], [0, 0], [0, 1], [0, 2], [0, 3], [0, 4]]
+                    "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
                 },
                 {
                     "positions": { "x_start": 1.0, "y_start": 12.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                    "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]],
-                    "has_cz": [[1, 5], [1, 6], [1, 7], [1, 8], [1, 9], [1, 0], [1, 1], [1, 2], [1, 3], [1, 4]]
+                    "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
                 }
             ]
         },
@@ -55,7 +53,8 @@ pub(crate) fn example_arch_spec() -> ArchSpec {
         "zones": [
             { "words": [0, 1] }
         ],
-        "entangling_zones": [0],
+        "entangling_zones": [[[0, 1]]],
+        "blockade_radius": 2.0,
         "measurement_mode_zones": [0],
         "paths": [
             {"lane": "0xC000000000000005", "waypoints": [[1.0, 15.0], [1.0, 10.0], [1.0, 5.0]]}

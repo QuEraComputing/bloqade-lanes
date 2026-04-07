@@ -17,23 +17,20 @@ AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
 
 
 def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | None:
-    """This function is used to map logical addresses to physical addresses.
+    """Map logical addresses to physical addresses via site expansion.
 
     The Steane [[7,1,3]] code encodes one logical qubit into seven physical qubits.
-    The mapping is as follows:
+    Each logical site expands to 7 physical sites within the same word:
 
-    Logical Word ID 0 -> Physical Word IDs 0 to 6
-    Logical Word ID 1 -> Physical Word IDs 8 to 14
+        Logical site s → Physical sites s*7, s*7+1, ..., s*7+6
 
-    All other Word IDs remain unchanged.
-
+    Word ID is preserved. Only expands logical site IDs (0 and 1).
+    Returns None for site IDs >= 2 (already physical / not a logical site).
     """
-    if address.word_id == 0:
-        return (address.replace(word_id=word_id) for word_id in range(7))
-    elif address.word_id == 1:
-        return (address.replace(word_id=word_id) for word_id in range(8, 15, 1))
-    else:
+    if address.site_id >= 2:
         return None
+    base = address.site_id * 7
+    return (address.replace(site_id=base + i) for i in range(7))
 
 
 @squin.kernel
@@ -215,12 +212,15 @@ def steane7_initialize_with_noise(
 
 class SpecializeGemini:
 
+    def __init__(self, sites_per_word: int = 16):
+        self.sites_per_word = sites_per_word
+
     def emit(self, mt: ir.Method, no_raise=True) -> ir.Method:
         out = mt.similar(dialects=mt.dialects.add(dialect))
 
         rewrite.Walk(
             rewrite.Chain(
-                RewriteMoves(),
+                RewriteMoves(sites_per_word=self.sites_per_word),
                 RewriteFill(),
                 RewriteInitialize(),
                 RewriteGetItem(steane7_transversal_map),

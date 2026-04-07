@@ -45,12 +45,12 @@ def test_generate_simple_noise_model_has_no_init():
 
 def test_move_to_squin_logical_no_noise_uses_clean_init():
     """With add_noise=False, InsertGates gets the clean kernel, no noise kernel."""
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
     from bloqade.lanes.noise_model import generate_logical_noise_model
     from bloqade.lanes.transform import MoveToSquinLogical
 
     model = generate_logical_noise_model()
-    arch = generate_arch_hypercube(4)
+    arch = get_arch_spec()
 
     t = MoveToSquinLogical(arch_spec=arch, noise_model=model, add_noise=False)
     assert t._get_initialize_kernel() is not None
@@ -63,12 +63,12 @@ def test_move_to_squin_logical_with_noise_uses_noisy_init_only():
 
     This ensures only the noisy initialization is inserted, not both clean and noisy.
     """
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
     from bloqade.lanes.noise_model import generate_logical_noise_model
     from bloqade.lanes.transform import MoveToSquinLogical
 
     model = generate_logical_noise_model()
-    arch = generate_arch_hypercube(4)
+    arch = get_arch_spec()
 
     t = MoveToSquinLogical(arch_spec=arch, noise_model=model, add_noise=True)
     # InsertGates should NOT get an init kernel when noise is enabled
@@ -81,12 +81,12 @@ def test_move_to_squin_logical_with_noise_uses_noisy_init_only():
 
 def test_move_to_squin_logical_init_kernels_mutually_exclusive():
     """Clean and noisy init kernels are never both active at the same time."""
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
     from bloqade.lanes.noise_model import generate_logical_noise_model
     from bloqade.lanes.transform import MoveToSquinLogical
 
     model = generate_logical_noise_model()
-    arch = generate_arch_hypercube(4)
+    arch = get_arch_spec()
 
     for add_noise in (False, True):
         t = MoveToSquinLogical(arch_spec=arch, noise_model=model, add_noise=add_noise)
@@ -101,11 +101,11 @@ def test_move_to_squin_logical_init_kernels_mutually_exclusive():
 
 def test_move_to_squin_physical_no_init():
     """MoveToSquinPhysical never provides init kernels."""
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
     from bloqade.lanes.noise_model import generate_simple_noise_model
     from bloqade.lanes.transform import MoveToSquinPhysical
 
-    arch = generate_arch_hypercube(4)
+    arch = get_arch_spec()
     model = generate_simple_noise_model()
 
     t = MoveToSquinPhysical(arch_spec=arch, noise_model=model)
@@ -125,7 +125,7 @@ def test_no_double_init_in_compiled_output():
 
     from bloqade import qubit, squin
     from bloqade.gemini import logical as gemini_logical
-    from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
     from bloqade.lanes.logical_mvp import compile_squin_to_move
     from bloqade.lanes.noise_model import generate_logical_noise_model
     from bloqade.lanes.transform import MoveToSquinLogical
@@ -142,7 +142,7 @@ def test_no_double_init_in_compiled_output():
 
     for add_noise in (False, True):
         squin_kernel = MoveToSquinLogical(
-            arch_spec=generate_arch_hypercube(4),
+            arch_spec=get_arch_spec(),
             noise_model=model,
             add_noise=add_noise,
         ).emit(move_mt.similar(), no_raise=True)

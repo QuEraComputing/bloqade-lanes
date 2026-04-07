@@ -48,18 +48,6 @@ EXAMPLE_JSON = json.dumps(
                         [3, 1],
                         [4, 1],
                     ],
-                    "has_cz": [
-                        [0, 5],
-                        [0, 6],
-                        [0, 7],
-                        [0, 8],
-                        [0, 9],
-                        [0, 0],
-                        [0, 1],
-                        [0, 2],
-                        [0, 3],
-                        [0, 4],
-                    ],
                 },
                 {
                     "positions": {
@@ -80,18 +68,6 @@ EXAMPLE_JSON = json.dumps(
                         [3, 1],
                         [4, 1],
                     ],
-                    "has_cz": [
-                        [1, 5],
-                        [1, 6],
-                        [1, 7],
-                        [1, 8],
-                        [1, 9],
-                        [1, 0],
-                        [1, 1],
-                        [1, 2],
-                        [1, 3],
-                        [1, 4],
-                    ],
                 },
             ],
         },
@@ -102,7 +78,7 @@ EXAMPLE_JSON = json.dumps(
         "words_with_site_buses": [0, 1],
         "sites_with_word_buses": [5, 6, 7, 8, 9],
         "zones": [{"words": [0, 1]}],
-        "entangling_zones": [0],
+        "entangling_zones": [[[0, 1]]],
         "measurement_mode_zones": [0],
         "paths": [
             {
@@ -133,19 +109,7 @@ def _make_word(word_id, y_start):
         (3, 1),
         (4, 1),
     ]
-    cz_pairs = [
-        (word_id, 5),
-        (word_id, 6),
-        (word_id, 7),
-        (word_id, 8),
-        (word_id, 9),
-        (word_id, 0),
-        (word_id, 1),
-        (word_id, 2),
-        (word_id, 3),
-        (word_id, 4),
-    ]
-    return Word(positions=grid, site_indices=sites, has_cz=cz_pairs)
+    return Word(positions=grid, site_indices=sites)
 
 
 def _build_spec_from_python():
@@ -166,7 +130,7 @@ def _build_spec_from_python():
         words_with_site_buses=[0, 1],
         sites_with_word_buses=[5, 6, 7, 8, 9],
         zones=[zone],
-        entangling_zones=[0],
+        entangling_zones=[[(0, 1)]],
         measurement_mode_zones=[0],
         paths=[
             TransportPath(
@@ -200,7 +164,7 @@ class TestConstructFromPython:
     def test_word_without_cz_pairs(self):
         grid = Grid(x_start=1.0, y_start=2.0, x_spacing=[], y_spacing=[])
         word = Word(positions=grid, site_indices=[(0, 0)])
-        assert word.has_cz is None
+        assert len(word.site_indices) == 1
 
 
 class TestCapabilityFlags:
@@ -237,7 +201,7 @@ class TestCapabilityFlags:
             words_with_site_buses=[0, 1],
             sites_with_word_buses=[5, 6, 7, 8, 9],
             zones=[zone],
-            entangling_zones=[0],
+            entangling_zones=[[(0, 1)]],
             measurement_mode_zones=[0],
             feed_forward=True,
             atom_reloading=True,
@@ -343,9 +307,6 @@ class TestPropertyAccess:
         assert grid.x_positions == [1.0, 3.0, 5.0, 7.0, 9.0]
         assert grid.y_positions == [2.5, 5.0]
 
-        assert word.has_cz is not None
-        assert word.has_cz[0] == (0, 5)
-
     def test_buses(self):
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         buses = spec.buses
@@ -365,7 +326,7 @@ class TestPropertyAccess:
         spec = ArchSpec.from_json(EXAMPLE_JSON)
         assert spec.words_with_site_buses == [0, 1]
         assert spec.sites_with_word_buses == [5, 6, 7, 8, 9]
-        assert spec.entangling_zones == [0]
+        assert spec.entangling_zones == [[(0, 1)]]
         assert spec.measurement_mode_zones == [0]
 
     def test_paths(self):

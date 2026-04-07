@@ -17,13 +17,12 @@ from bloqade.lanes.layout.word import Word
 word = Word(
     positions=Grid.from_positions([0.0, 1.0], [0.0]),
     site_indices=((0, 0), (1, 0)),
-    has_cz=None,
 )
 arch_spec = ArchSpec.from_components(
     words=(word, word),
     zones=((0, 1),),
     measurement_mode_zones=(0,),
-    entangling_zones=frozenset([0]),
+    entangling_zones=[[(0, 1)]],
     has_site_buses=frozenset([0]),
     has_word_buses=frozenset([0]),
     site_buses=(Bus(src=[0], dst=[1]),),
@@ -70,7 +69,7 @@ def test_post_init_invalid_zone():
             words=(word, word),
             zones=((1,),),
             measurement_mode_zones=(0,),
-            entangling_zones=frozenset([0]),
+            entangling_zones=[[(0, 1)]],
             has_site_buses=frozenset([0]),
             has_word_buses=frozenset([0]),
             site_buses=(Bus(src=[0], dst=[1]),),
@@ -151,9 +150,28 @@ def test_get_endpoints_word_and_site():
     assert isinstance(dst2, LocationAddress)
 
 
-def test_get_blockaded_location_none():
+def test_get_blockaded_location_paired():
     loc = LocationAddress(0, 0)
-    assert arch_spec.get_blockaded_location(loc) is None
+    assert arch_spec.get_blockaded_location(loc) == LocationAddress(1, 0)
+
+
+def test_get_blockaded_location_none():
+    word_no_cz = Word(
+        positions=Grid.from_positions([0.0, 1.0], [0.0]),
+        site_indices=((0, 0), (1, 0)),
+    )
+    spec_no_cz = ArchSpec.from_components(
+        words=(word_no_cz,),
+        zones=((0,),),
+        measurement_mode_zones=(0,),
+        entangling_zones=[],
+        has_site_buses=frozenset(),
+        has_word_buses=frozenset(),
+        site_buses=(),
+        word_buses=(),
+    )
+    loc = LocationAddress(0, 0)
+    assert spec_no_cz.get_blockaded_location(loc) is None
 
 
 def test_capability_flags_default():
@@ -166,7 +184,7 @@ def test_capability_flags_from_components():
         words=(word, word),
         zones=((0, 1),),
         measurement_mode_zones=(0,),
-        entangling_zones=frozenset([0]),
+        entangling_zones=[[(0, 1)]],
         has_site_buses=frozenset([0]),
         has_word_buses=frozenset([0]),
         site_buses=(Bus(src=[0], dst=[1]),),

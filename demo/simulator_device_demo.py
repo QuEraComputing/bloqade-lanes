@@ -37,7 +37,7 @@ def kl_divergence(p_hist: Counter, q_hist: Counter) -> float:
 def main():
     # see arXiv: 2412.15165v1, Figure 3a
     reg = qubit.qalloc(5)
-    squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
+    # squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
 
     squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
     squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
@@ -54,9 +54,9 @@ task = GeminiLogicalSimulator().task(main)
 
 # run simulation with and without noise
 print("Running simulation with noise...")
-future = task.run_async(10000)
+future = task.run_async(1000)
 print("Running simulation without noise...")
-future_wo_noise = task.run_async(10000, with_noise=False)
+future_wo_noise = task.run_async(1000, with_noise=False)
 
 result_wo_noise = future_wo_noise.result()
 result = future.result()

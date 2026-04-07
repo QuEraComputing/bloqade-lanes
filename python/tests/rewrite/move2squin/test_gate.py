@@ -57,7 +57,7 @@ def test_gate_rewrite_cz():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )
@@ -101,7 +101,7 @@ def test_gate_rewrite_global_rz():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )
@@ -154,7 +154,7 @@ def test_gate_rewrite_global_r():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )
@@ -199,7 +199,7 @@ def test_gate_rewrite_local_r():
                 axis_angle=axis_angle,
                 location_addresses=(
                     layout.LocationAddress(0, 0),
-                    layout.LocationAddress(0, 5),
+                    layout.LocationAddress(1, 0),
                 ),
             )
         ]
@@ -214,7 +214,7 @@ def test_gate_rewrite_local_r():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )
@@ -253,7 +253,7 @@ def test_gate_rewrite_local_rz():
                 rotation_angle=rotation_angle,
                 location_addresses=(
                     layout.LocationAddress(0, 0),
-                    layout.LocationAddress(0, 5),
+                    layout.LocationAddress(1, 0),
                 ),
             )
         ]
@@ -268,7 +268,7 @@ def test_gate_rewrite_local_rz():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )
@@ -311,7 +311,7 @@ def test_gate_rewrite_logical_initialize():
                 lams=(lam, lam),
                 location_addresses=(
                     layout.LocationAddress(0, 0),
-                    layout.LocationAddress(0, 5),
+                    layout.LocationAddress(1, 0),
                 ),
             )
         ]
@@ -326,7 +326,7 @@ def test_gate_rewrite_logical_initialize():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )
@@ -368,7 +368,7 @@ def test_gate_rewrite_physical_initialize():
                 lams=(lam, lam),
                 location_addresses=(
                     (layout.LocationAddress(0, 0),),
-                    (layout.LocationAddress(0, 5),),
+                    (layout.LocationAddress(1, 0),),
                 ),
             )
         ]
@@ -383,7 +383,7 @@ def test_gate_rewrite_physical_initialize():
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                1: layout.LocationAddress(1, 0),
             }
         )
     )

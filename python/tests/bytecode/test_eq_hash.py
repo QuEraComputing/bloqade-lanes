@@ -272,12 +272,14 @@ class TestTransportPathEqHash:
 # ── ArchSpec ──
 
 
-def _minimal_arch_spec(entangling_zones: list[int] | None = None) -> ArchSpec:
+def _minimal_arch_spec(
+    entangling_zones: list[list[tuple[int, int]]] | None = None,
+) -> ArchSpec:
     """Build a minimal valid ArchSpec for testing."""
     grid = Grid(0.0, 0.0, [], [])
     word = Word(positions=grid, site_indices=[(0, 0)])
     return ArchSpec(
-        version=(1, 0),
+        version=(2, 0),
         geometry=Geometry(sites_per_word=1, words=[word]),
         buses=Buses(site_buses=[], word_buses=[]),
         words_with_site_buses=[],
@@ -297,7 +299,7 @@ class TestArchSpecEqHash:
 
     def test_different_entangling_zones(self):
         a = _minimal_arch_spec(entangling_zones=[])
-        b = _minimal_arch_spec(entangling_zones=[0])
+        b = _minimal_arch_spec(entangling_zones=[[(0, 0)]])
         assert a != b
 
     def test_as_dict_key(self):
