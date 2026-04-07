@@ -174,75 +174,69 @@ fn print_arch_spec(spec: &ArchSpec) {
     println!("ArchSpec v{}", spec.version);
     println!();
 
-    // Geometry
-    let geom = &spec.geometry;
+    // Words (global template)
     println!(
-        "Geometry: {} word(s), {} sites/word",
-        geom.words.len(),
-        geom.sites_per_word
+        "Words: {} word(s), {} sites/word",
+        spec.words.len(),
+        spec.sites_per_word()
     );
-    for (word_idx, word) in geom.words.iter().enumerate() {
-        let positions = &word.positions;
-        println!(
-            "  Word {}: {}x{} grid, {} sites",
-            word_idx,
-            positions.num_x(),
-            positions.num_y(),
-            word.site_indices.len()
-        );
-        println!(
-            "    x: start={}, spacing={:?}",
-            positions.x_start, positions.x_spacing
-        );
-        println!(
-            "    y: start={}, spacing={:?}",
-            positions.y_start, positions.y_spacing
-        );
-        let site_indices_str: Vec<String> = word
-            .site_indices
+    for (word_idx, word) in spec.words.iter().enumerate() {
+        let sites_str: Vec<String> = word
+            .sites
             .iter()
             .map(|s| format!("({},{})", s[0], s[1]))
             .collect();
-        println!("    site_indices: {}", site_indices_str.join(" "));
-    }
-    println!();
-
-    // Buses
-    println!(
-        "Buses: {} site bus(es), {} word bus(es)",
-        spec.buses.site_buses.len(),
-        spec.buses.word_buses.len()
-    );
-    for (bus_idx, bus) in spec.buses.site_buses.iter().enumerate() {
-        println!(
-            "  Site bus {}: src={:?} dst={:?}",
-            bus_idx, bus.src, bus.dst
-        );
-    }
-    for (bus_idx, bus) in spec.buses.word_buses.iter().enumerate() {
-        println!(
-            "  Word bus {}: src={:?} dst={:?}",
-            bus_idx, bus.src, bus.dst
-        );
-    }
-    if !spec.words_with_site_buses.is_empty() {
-        println!("  words_with_site_buses: {:?}", spec.words_with_site_buses);
-    }
-    if !spec.sites_with_word_buses.is_empty() {
-        println!("  sites_with_word_buses: {:?}", spec.sites_with_word_buses);
+        println!("  Word {}: sites=[{}]", word_idx, sites_str.join(" "));
     }
     println!();
 
     // Zones
     println!("Zones: {} zone(s)", spec.zones.len());
     for (zone_idx, zone) in spec.zones.iter().enumerate() {
-        println!("  Zone {}: words={:?}", zone_idx, zone.words);
+        let grid = &zone.grid;
+        println!(
+            "  Zone {}: {}x{} grid, {} site bus(es), {} word bus(es)",
+            zone_idx,
+            grid.num_x(),
+            grid.num_y(),
+            zone.site_buses.len(),
+            zone.word_buses.len()
+        );
+        for (bus_idx, bus) in zone.site_buses.iter().enumerate() {
+            println!(
+                "    Site bus {}: src={:?} dst={:?}",
+                bus_idx, bus.src, bus.dst
+            );
+        }
+        for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
+            println!(
+                "    Word bus {}: src={:?} dst={:?}",
+                bus_idx, bus.src, bus.dst
+            );
+        }
+        if !zone.words_with_site_buses.is_empty() {
+            println!("    words_with_site_buses: {:?}", zone.words_with_site_buses);
+        }
+        if !zone.sites_with_word_buses.is_empty() {
+            println!("    sites_with_word_buses: {:?}", zone.sites_with_word_buses);
+        }
     }
-    println!("  entangling_zones: {:?}", spec.entangling_zones);
-    println!(
-        "  measurement_mode_zones: {:?}",
-        spec.measurement_mode_zones
-    );
+
+    // Zone buses
+    if !spec.zone_buses.is_empty() {
+        println!("  Zone buses: {} bus(es)", spec.zone_buses.len());
+        for (bus_idx, bus) in spec.zone_buses.iter().enumerate() {
+            println!(
+                "    Zone bus {}: src={:?} dst={:?}",
+                bus_idx, bus.src, bus.dst
+            );
+        }
+    }
+    println!("  entangling_zone_pairs: {:?}", spec.entangling_zone_pairs);
+    println!("  modes: {} mode(s)", spec.modes.len());
+    for mode in &spec.modes {
+        println!("    {}: zones={:?}", mode.name, mode.zones);
+    }
 
     // Capabilities
     println!();
