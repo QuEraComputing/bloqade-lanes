@@ -129,6 +129,18 @@ impl SearchGraph {
         self.nodes[id.0 as usize].g_score
     }
 
+    /// Get the depth of a node (number of steps from root).
+    /// Walks parent pointers, so O(depth).
+    pub fn depth(&self, id: NodeId) -> u32 {
+        let mut d: u32 = 0;
+        let mut current = id;
+        while let Some(parent_id) = self.nodes[current.0 as usize].parent {
+            d += 1;
+            current = parent_id;
+        }
+        d
+    }
+
     /// Number of nodes in the arena (always >= 1 due to root).
     pub fn len(&self) -> usize {
         self.nodes.len()

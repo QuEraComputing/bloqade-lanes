@@ -8,7 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::solve::{MoveSolver, SolveResult};
+use bloqade_lanes_search::solve::{MoveSolver, SolveResult, Strategy};
 
 use crate::arch_python::PyArchSpec;
 
@@ -132,11 +132,12 @@ impl PyMoveSolver {
     ///     initial: List of (qubit_id, word_id, site_id) tuples for starting positions.
     ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
     ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
-    ///     max_expansions: Optional limit on A* node expansions.
+    ///     max_expansions: Optional limit on node expansions.
+    ///     strategy: Search strategy: "astar" (default), "dfs", "bfs", "greedy".
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar"))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -144,6 +145,7 @@ impl PyMoveSolver {
         target: Vec<(u32, u32, u32)>,
         blocked: Vec<(u32, u32)>,
         max_expansions: Option<u32>,
+        strategy: &str,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -172,10 +174,27 @@ impl PyMoveSolver {
             .map(|(word_id, site_id)| LocationAddr { word_id, site_id })
             .collect();
 
+        let strat = match strategy {
+            "astar" => Strategy::AStar,
+            "dfs" => Strategy::HeuristicDfs,
+            "bfs" => Strategy::Bfs,
+            "greedy" => Strategy::GreedyBestFirst,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy"
+                )));
+            }
+        };
+
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py.allow_threads(|| {
-            self.inner
-                .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
+            self.inner.solve(
+                initial_pairs,
+                target_pairs,
+                blocked_locs,
+                max_expansions,
+                strat,
+            )
         });
 
         Ok(result.map(|r| PySolveResult { inner: r }))

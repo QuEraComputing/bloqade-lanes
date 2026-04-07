@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from bloqade.lanes.search.traversal.step_info import StepInfo
 
 
-TraversalName = Literal["entropy", "greedy", "bfs", "rust"]
+TraversalName = Literal["entropy", "greedy", "bfs", "rust", "rust-dfs"]
 OnSearchStep = Callable[[str, "ConfigurationNode", "StepInfo"], None]
 
 
@@ -156,7 +156,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             return AtomState.top()
 
         if self.traversal == "rust":
-            return self._cz_placements_rust(state, controls, targets)
+            return self._cz_placements_rust(state, controls, targets, strategy="astar")
+        if self.traversal == "rust-dfs":
+            return self._cz_placements_rust(state, controls, targets, strategy="dfs")
 
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
@@ -213,6 +215,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
+        strategy: str = "astar",
     ) -> AtomState:
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
@@ -222,7 +225,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         blocked = [(loc.word_id, loc.site_id) for loc in state.occupied]
 
         solver = self._get_rust_solver()
-        result = solver.solve(initial, target_tuples, blocked, self.max_expansions)
+        result = solver.solve(
+            initial, target_tuples, blocked, self.max_expansions, strategy=strategy
+        )
 
         if result is None:
             return AtomState.bottom()

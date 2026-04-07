@@ -6,6 +6,7 @@
 pub mod astar;
 pub mod config;
 pub mod expander;
+pub mod frontier;
 pub mod graph;
 pub mod heuristic;
 pub mod heuristic_expander;

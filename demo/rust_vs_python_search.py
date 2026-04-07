@@ -116,7 +116,7 @@ print("  " + "-" * (len(header) - 2))
 
 for label, kernel in circuits:
     results = []
-    for name, traversal in [("Python", "entropy"), ("Rust A*", "rust")]:
+    for name, traversal in [("Python", "entropy"), ("Rust A*", "rust"), ("Rust DFS", "rust-dfs")]:
         ms, events, lanes, ok = compile_with(kernel, traversal)
         status = "" if ok else " FAILED"
         results.append((name, ms, events, lanes, ok))
@@ -125,11 +125,13 @@ for label, kernel in circuits:
         )
         label = ""  # only print circuit name on first line
 
-    # Speedup + quality comparison
-    py, rs = results[0], results[1]
-    if py[4] and rs[4] and rs[1] > 0:
-        speedup = py[1] / rs[1]
-        move_diff = rs[2] - py[2]
+    # Speedup: compare Python vs fastest Rust
+    py = results[0]
+    rust_results = [r for r in results[1:] if r[4]]
+    if py[4] and rust_results:
+        best_rust = min(rust_results, key=lambda r: r[1])
+        speedup = py[1] / best_rust[1]
+        move_diff = best_rust[2] - py[2]
         sign = "+" if move_diff > 0 else ""
         print(
             f"  {'':25s} {'':>15s} "

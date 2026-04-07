@@ -6,12 +6,25 @@
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-use crate::astar;
 use crate::config::Config;
+use crate::frontier::{self, BfsFrontier, DfsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
 use crate::heuristic_expander::HeuristicExpander;
 use crate::lane_index::LaneIndex;
+
+/// Search strategy for the solver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strategy {
+    /// A* search: optimal (with admissible heuristic), goal on pop.
+    AStar,
+    /// Heuristic depth-first search: fast, bounded memory, not optimal.
+    HeuristicDfs,
+    /// Breadth-first search: finds shallowest solution, no heuristic.
+    Bfs,
+    /// Greedy best-first: fast, uses heuristic only (no path cost).
+    GreedyBestFirst,
+}
 
 /// Result of a successful solve.
 #[derive(Debug)]
@@ -71,7 +84,8 @@ impl MoveSolver {
     /// * `initial` — Starting qubit positions: `(qubit_id, location)` pairs.
     /// * `target` — Desired qubit positions: `(qubit_id, location)` pairs.
     /// * `blocked` — Locations occupied by external atoms (immovable obstacles).
-    /// * `max_expansions` — Optional limit on A* node expansions.
+    /// * `max_expansions` — Optional limit on node expansions.
+    /// * `strategy` — Search strategy to use.
     ///
     /// # Returns
     ///
@@ -82,11 +96,12 @@ impl MoveSolver {
         target: impl IntoIterator<Item = (u32, LocationAddr)>,
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
+        strategy: Strategy,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
 
-        // Build goal predicate: all qubits at their target locations.
+        // Build goal predicate.
         let target_encoded: Vec<(u32, u32)> =
             target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
         let goal = |config: &Config| -> bool {
@@ -101,11 +116,11 @@ impl MoveSolver {
         let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
         let dist_table = DistanceTable::new(&target_locs, &self.index);
 
-        // Build heuristic from shared distance table.
+        // Build heuristic.
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
         let heuristic_fn = |config: &Config| -> f64 { heuristic.estimate(config) };
 
-        // Build expander (heuristic: scores qubit-bus pairs, generates ~5-15 candidates).
+        // Build expander.
         let expander = HeuristicExpander::new(
             &self.index,
             blocked,
@@ -115,8 +130,25 @@ impl MoveSolver {
             3, // max_movesets_per_group
         );
 
-        // Run A*.
-        let result = astar::astar(root, goal, heuristic_fn, &expander, max_expansions);
+        // Run search with the chosen strategy.
+        let result = match strategy {
+            Strategy::AStar => {
+                let mut f = PriorityFrontier::astar(heuristic_fn);
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+            }
+            Strategy::HeuristicDfs => {
+                let mut f = DfsFrontier::new(heuristic_fn);
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+            }
+            Strategy::Bfs => {
+                let mut f = BfsFrontier::new();
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+            }
+            Strategy::GreedyBestFirst => {
+                let mut f = PriorityFrontier::greedy(heuristic_fn);
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+            }
+        };
 
         let goal_id = result.goal?;
         let move_layers = result.solution_path().unwrap_or_default();
@@ -187,6 +219,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
+                Strategy::AStar,
             )
             .unwrap();
 
@@ -204,6 +237,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
+                Strategy::AStar,
             )
             .unwrap();
 
@@ -222,6 +256,7 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(100),
+                Strategy::AStar,
             )
             .unwrap();
 
@@ -240,6 +275,7 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
+                Strategy::AStar,
             )
             .unwrap();
 
@@ -256,6 +292,7 @@ mod tests {
             [(0, loc(99, 99))],
             std::iter::empty(),
             Some(100),
+            Strategy::AStar,
         );
 
         assert!(result.is_none());
@@ -271,6 +308,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
+                Strategy::AStar,
             )
             .unwrap();
 
@@ -280,6 +318,7 @@ mod tests {
                 [(0, loc(0, 0))],
                 std::iter::empty(),
                 Some(100),
+                Strategy::AStar,
             )
             .unwrap();
 
@@ -292,7 +331,13 @@ mod tests {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Qubit at site 0, target site 5, but site 5 is blocked.
         // Should find no solution (or a longer path if one exists).
-        let result = solver.solve([(0, loc(0, 0))], [(0, loc(0, 5))], [loc(0, 5)], Some(100));
+        let result = solver.solve(
+            [(0, loc(0, 0))],
+            [(0, loc(0, 5))],
+            [loc(0, 5)],
+            Some(100),
+            Strategy::AStar,
+        );
 
         // Can't reach blocked destination.
         assert!(result.is_none());
@@ -308,6 +353,7 @@ mod tests {
                 [(0, loc(0, 5)), (1, loc(0, 6))],
                 std::iter::empty(),
                 Some(1000),
+                Strategy::AStar,
             )
             .unwrap();
 
