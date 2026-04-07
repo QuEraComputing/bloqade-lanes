@@ -115,6 +115,38 @@ impl ArchSpec {
     pub fn sites_per_word(&self) -> usize {
         self.words.first().map_or(0, |w| w.sites.len())
     }
+
+    /// Construct an ArchSpec from all components, validating on creation.
+    ///
+    /// Returns the validated ArchSpec, or a list of validation errors.
+    /// This is the primary construction path — prefer this over building
+    /// the struct directly to ensure invariants hold.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_components(
+        version: Version,
+        words: Vec<Word>,
+        zones: Vec<Zone>,
+        zone_buses: Vec<Bus<ZonedWordRef>>,
+        entangling_zone_pairs: Vec<[u32; 2]>,
+        modes: Vec<Mode>,
+        paths: Option<Vec<TransportPath>>,
+        feed_forward: bool,
+        atom_reloading: bool,
+    ) -> Result<Self, Vec<super::validate::ArchSpecError>> {
+        let spec = Self {
+            version,
+            words,
+            zones,
+            zone_buses,
+            entangling_zone_pairs,
+            modes,
+            paths,
+            feed_forward,
+            atom_reloading,
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
 }
 
 /// A transport path for a lane, defined as a sequence of (x, y) waypoints.
