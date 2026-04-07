@@ -19,13 +19,13 @@ def invalid_methods():
     @lanes_kernel
     def invalid_location(state: State):
 
-        return move.fill(state, location_addresses=(LocationAddress(10, 0),))
+        return move.fill(state, location_addresses=(LocationAddress(0, 10, 0),))
 
     yield invalid_location
 
     @lanes_kernel
     def invalid_move_lane(state: State):
-        return move.move(state, lanes=(SiteLaneAddress(0, 0, 10, Direction.FORWARD),))
+        return move.move(state, lanes=(SiteLaneAddress(0, 0, 0, 10, Direction.FORWARD),))
 
     yield invalid_move_lane
 
@@ -34,8 +34,8 @@ def invalid_methods():
         return move.move(
             state,
             lanes=(
-                SiteLaneAddress(0, 0, 1, Direction.FORWARD),
-                SiteLaneAddress(0, 1, 0, Direction.FORWARD),
+                SiteLaneAddress(0, 0, 0, 1, Direction.FORWARD),
+                SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
             ),
         )
 
@@ -44,7 +44,7 @@ def invalid_methods():
     @lanes_kernel
     def invalid_index(future: move.MeasurementFuture):
         return move.get_future_result(
-            future, zone_address=ZoneAddress(0), location_address=LocationAddress(5, 5)
+            future, zone_address=ZoneAddress(0), location_address=LocationAddress(0, 5, 5)
         )
 
     yield invalid_index

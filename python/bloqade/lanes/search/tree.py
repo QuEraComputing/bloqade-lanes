@@ -88,39 +88,49 @@ class ConfigurationTree:
         ] = {}
         outgoing: dict[LocationAddress, list[LaneAddress]] = defaultdict(list)
 
-        for mt in (MoveType.SITE, MoveType.WORD):
-            buses = (
-                self.arch_spec.site_buses
-                if mt == MoveType.SITE
-                else self.arch_spec.word_buses
-            )
-            for bus_id, bus in enumerate(buses):
-                for direction in (Direction.FORWARD, Direction.BACKWARD):
-                    key = (mt, bus_id, direction)
-                    lanes_for_key: list[LaneAddress] = []
-                    src_map: dict[LocationAddress, LaneAddress] = {}
-                    if mt == MoveType.SITE:
-                        for word_id in self.arch_spec.has_site_buses:
-                            for site_id in bus.src:
-                                lane = LaneAddress(
-                                    mt, word_id, site_id, bus_id, direction
-                                )
-                                src, _ = self.arch_spec.get_endpoints(lane)
-                                lanes_for_key.append(lane)
-                                src_map[src] = lane
-                                outgoing[src].append(lane)
-                    else:
-                        for word_id in bus.src:
-                            for site_id in self.arch_spec.has_word_buses:
-                                lane = LaneAddress(
-                                    mt, word_id, site_id, bus_id, direction
-                                )
-                                src, _ = self.arch_spec.get_endpoints(lane)
-                                lanes_for_key.append(lane)
-                                src_map[src] = lane
-                                outgoing[src].append(lane)
-                    lanes_by_triplet[key] = lanes_for_key
-                    lane_by_src[key] = src_map
+        for zone_id, zone in enumerate(self.arch_spec.zones):
+            for mt in (MoveType.SITE, MoveType.WORD):
+                buses = (
+                    zone.site_buses if mt == MoveType.SITE else zone.word_buses
+                )
+                for bus_id, bus in enumerate(buses):
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        key = (mt, bus_id, direction)
+                        if key not in lanes_by_triplet:
+                            lanes_by_triplet[key] = []
+                            lane_by_src[key] = {}
+                        lanes_for_key = lanes_by_triplet[key]
+                        src_map = lane_by_src[key]
+                        if mt == MoveType.SITE:
+                            for word_id in zone.words_with_site_buses:
+                                for site_id in bus.src:
+                                    lane = LaneAddress(
+                                        mt,
+                                        zone_id,
+                                        word_id,
+                                        site_id,
+                                        bus_id,
+                                        direction,
+                                    )
+                                    src, _ = self.arch_spec.get_endpoints(lane)
+                                    lanes_for_key.append(lane)
+                                    src_map[src] = lane
+                                    outgoing[src].append(lane)
+                        else:
+                            for word_id in bus.src:
+                                for site_id in zone.sites_with_word_buses:
+                                    lane = LaneAddress(
+                                        mt,
+                                        zone_id,
+                                        word_id,
+                                        site_id,
+                                        bus_id,
+                                        direction,
+                                    )
+                                    src, _ = self.arch_spec.get_endpoints(lane)
+                                    lanes_for_key.append(lane)
+                                    src_map[src] = lane
+                                    outgoing[src].append(lane)
 
         self._lanes_by_triplet = {
             key: tuple(values) for key, values in lanes_by_triplet.items()
@@ -175,7 +185,9 @@ class ConfigurationTree:
         Yields:
             LaneAddress values.
         """
-        yield from self._lanes_by_triplet[(move_type, bus_id, direction)]
+        key = (move_type, bus_id, direction)
+        if key in self._lanes_by_triplet:
+            yield from self._lanes_by_triplet[key]
 
     def lane_for_source(
         self,
@@ -185,7 +197,10 @@ class ConfigurationTree:
         source: LocationAddress,
     ) -> LaneAddress | None:
         """Resolve one lane by source for a specific triplet."""
-        return self._lane_by_src[(move_type, bus_id, direction)].get(source)
+        src_map = self._lane_by_src.get((move_type, bus_id, direction))
+        if src_map is None:
+            return None
+        return src_map.get(source)
 
     def outgoing_lanes(self, source: LocationAddress) -> tuple[LaneAddress, ...]:
         """Return all precomputed outgoing lanes from source."""
@@ -226,15 +241,22 @@ class ConfigurationTree:
         )
 
         for mt in move_types:
-            buses = (
-                self.arch_spec.site_buses
-                if mt == MoveType.SITE
-                else self.arch_spec.word_buses
-            )
-            bus_ids = [bus_id] if bus_id is not None else list(range(len(buses)))
+            if bus_id is not None:
+                bus_ids = [bus_id]
+            else:
+                bus_ids = sorted(
+                    {
+                        bid
+                        for (mtype, bid, _d) in self._lanes_by_triplet
+                        if mtype == mt
+                    }
+                )
 
             for bid in bus_ids:
                 for d in directions:
+                    key = (mt, bid, d)
+                    if key not in self._lanes_by_triplet:
+                        continue
                     for lane in self.lanes_for(mt, bid, d):
                         src, dst = self.arch_spec.get_endpoints(lane)
                         if (

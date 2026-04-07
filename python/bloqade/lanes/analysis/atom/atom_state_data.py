@@ -17,13 +17,14 @@ from bloqade.lanes.layout.arch import ArchSpec
 
 def _from_rust_loc(rust_loc: _RustLocationAddress) -> LocationAddress:
     """Convert a Rust LocationAddress to a Python LocationAddress."""
-    return LocationAddress(rust_loc.word_id, rust_loc.site_id)
+    return LocationAddress(rust_loc.zone_id, rust_loc.word_id, rust_loc.site_id)
 
 
 def _from_rust_lane(rust_lane: _RustLaneAddress) -> LaneAddress:
     """Convert a Rust LaneAddress to a Python LaneAddress."""
     return LaneAddress(
         rust_lane.move_type,
+        rust_lane.zone_id,
         rust_lane.word_id,
         rust_lane.site_id,
         rust_lane.bus_id,

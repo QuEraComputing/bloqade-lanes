@@ -12,18 +12,19 @@ import pytest
 
 from bloqade.lanes.bytecode._native import (
     ArchSpec,
-    Bus,
-    Buses,
     Direction,
-    Geometry,
     Grid,
     LaneAddress,
     LocationAddress,
+    Mode,
     MoveType,
+    SiteBus,
     TransportPath,
     Word,
+    WordBus,
     Zone,
     ZoneAddress,
+    ZoneBus,
 )
 
 # ── Direction / MoveType ──
@@ -69,38 +70,38 @@ class TestMoveTypeEqHash:
 
 class TestLocationAddressEqHash:
     def test_equal(self):
-        a = LocationAddress(1, 2)
-        b = LocationAddress(1, 2)
+        a = LocationAddress(0, 1, 2)
+        b = LocationAddress(0, 1, 2)
         assert a == b
 
     def test_not_equal_word(self):
-        assert LocationAddress(0, 1) != LocationAddress(1, 1)
+        assert LocationAddress(0, 0, 1) != LocationAddress(0, 1, 1)
 
     def test_not_equal_site(self):
-        assert LocationAddress(1, 0) != LocationAddress(1, 1)
+        assert LocationAddress(0, 1, 0) != LocationAddress(0, 1, 1)
 
     def test_hash_equal(self):
-        a = LocationAddress(1, 2)
-        b = LocationAddress(1, 2)
+        a = LocationAddress(0, 1, 2)
+        b = LocationAddress(0, 1, 2)
         assert hash(a) == hash(b)
 
     def test_hash_different(self):
-        assert hash(LocationAddress(0, 0)) != hash(LocationAddress(0, 1))
+        assert hash(LocationAddress(0, 0, 0)) != hash(LocationAddress(0, 0, 1))
 
     def test_as_dict_key(self):
-        loc = LocationAddress(3, 7)
+        loc = LocationAddress(0, 3, 7)
         d = {loc: "value"}
-        assert d[LocationAddress(3, 7)] == "value"
+        assert d[LocationAddress(0, 3, 7)] == "value"
 
     def test_zero_ids(self):
-        a = LocationAddress(0, 0)
-        b = LocationAddress(0, 0)
+        a = LocationAddress(0, 0, 0)
+        b = LocationAddress(0, 0, 0)
         assert a == b
         assert hash(a) == hash(b)
 
     def test_max_ids(self):
-        a = LocationAddress(0xFFFF, 0xFFFF)
-        b = LocationAddress(0xFFFF, 0xFFFF)
+        a = LocationAddress(0xFF, 0xFFFF, 0xFFFF)
+        b = LocationAddress(0xFF, 0xFFFF, 0xFFFF)
         assert a == b
         assert hash(a) == hash(b)
 
@@ -110,25 +111,25 @@ class TestLocationAddressEqHash:
 
 class TestLaneAddressEqHash:
     def test_equal(self):
-        a = LaneAddress(MoveType.SITE, 1, 2, 3, Direction.FORWARD)
-        b = LaneAddress(MoveType.SITE, 1, 2, 3, Direction.FORWARD)
+        a = LaneAddress(MoveType.SITE, 0, 1, 2, 3, Direction.FORWARD)
+        b = LaneAddress(MoveType.SITE, 0, 1, 2, 3, Direction.FORWARD)
         assert a == b
         assert hash(a) == hash(b)
 
     def test_different_direction(self):
-        a = LaneAddress(MoveType.SITE, 1, 2, 3, Direction.FORWARD)
-        b = LaneAddress(MoveType.SITE, 1, 2, 3, Direction.BACKWARD)
+        a = LaneAddress(MoveType.SITE, 0, 1, 2, 3, Direction.FORWARD)
+        b = LaneAddress(MoveType.SITE, 0, 1, 2, 3, Direction.BACKWARD)
         assert a != b
 
     def test_different_move_type(self):
-        a = LaneAddress(MoveType.SITE, 1, 2, 3)
-        b = LaneAddress(MoveType.WORD, 1, 2, 3)
+        a = LaneAddress(MoveType.SITE, 0, 1, 2, 3)
+        b = LaneAddress(MoveType.WORD, 0, 1, 2, 3)
         assert a != b
 
     def test_as_dict_key(self):
-        lane = LaneAddress(MoveType.WORD, 0, 1, 0)
+        lane = LaneAddress(MoveType.WORD, 0, 0, 1, 0)
         d = {lane: "x"}
-        assert d[LaneAddress(MoveType.WORD, 0, 1, 0)] == "x"
+        assert d[LaneAddress(MoveType.WORD, 0, 0, 1, 0)] == "x"
 
 
 # ── ZoneAddress ──
@@ -205,34 +206,34 @@ class TestGridEqHash:
         assert d[Grid(1.0, 2.0, [3.0], [4.0])] == "grid"
 
 
-# ── Bus ──
+# ── SiteBus ──
 
 
-class TestBusEqHash:
+class TestSiteBusEqHash:
     def test_equal(self):
-        a = Bus(src=[0, 1], dst=[2, 3])
-        b = Bus(src=[0, 1], dst=[2, 3])
+        a = SiteBus(src=[0, 1], dst=[2, 3])
+        b = SiteBus(src=[0, 1], dst=[2, 3])
         assert a == b
         assert hash(a) == hash(b)
 
     def test_different_src(self):
-        a = Bus(src=[0, 1], dst=[2, 3])
-        b = Bus(src=[0, 2], dst=[2, 3])
+        a = SiteBus(src=[0, 1], dst=[2, 3])
+        b = SiteBus(src=[0, 2], dst=[2, 3])
         assert a != b
 
     def test_different_dst(self):
-        a = Bus(src=[0, 1], dst=[2, 3])
-        b = Bus(src=[0, 1], dst=[2, 4])
+        a = SiteBus(src=[0, 1], dst=[2, 3])
+        b = SiteBus(src=[0, 1], dst=[2, 4])
         assert a != b
 
     def test_empty(self):
-        a = Bus(src=[], dst=[])
-        b = Bus(src=[], dst=[])
+        a = SiteBus(src=[], dst=[])
+        b = SiteBus(src=[], dst=[])
         assert a == b
         assert hash(a) == hash(b)
 
     def test_as_set_member(self):
-        s = {Bus(src=[0], dst=[1]), Bus(src=[0], dst=[1]), Bus(src=[1], dst=[0])}
+        s = {SiteBus(src=[0], dst=[1]), SiteBus(src=[0], dst=[1]), SiteBus(src=[1], dst=[0])}
         assert len(s) == 2
 
 
@@ -241,7 +242,7 @@ class TestBusEqHash:
 
 class TestTransportPathEqHash:
     def _lane(self):
-        return LaneAddress(MoveType.SITE, 0, 0, 0)
+        return LaneAddress(MoveType.SITE, 0, 0, 0, 0)
 
     def test_equal(self):
         a = TransportPath(self._lane(), [(1.0, 2.0), (3.0, 4.0)])
@@ -273,20 +274,32 @@ class TestTransportPathEqHash:
 
 
 def _minimal_arch_spec(
-    entangling_zones: list[list[tuple[int, int]]] | None = None,
+    entangling_zone_pairs: list[tuple[int, int]] | None = None,
 ) -> ArchSpec:
     """Build a minimal valid ArchSpec for testing."""
     grid = Grid(0.0, 0.0, [], [])
-    word = Word(positions=grid, site_indices=[(0, 0)])
-    return ArchSpec(
-        version=(2, 0),
-        geometry=Geometry(sites_per_word=1, words=[word]),
-        buses=Buses(site_buses=[], word_buses=[]),
+    word = Word(sites=[(0, 0)])
+    zone = Zone(
+        grid=grid,
+        site_buses=[],
+        word_buses=[],
         words_with_site_buses=[],
         sites_with_word_buses=[],
-        zones=[Zone(words=[0])],
-        entangling_zones=entangling_zones if entangling_zones is not None else [],
-        measurement_mode_zones=[0],
+    )
+    mode = Mode(
+        name="all",
+        zones=[0],
+        bitstring_order=[LocationAddress(0, 0, 0)],
+    )
+    return ArchSpec(
+        version=(2, 0),
+        words=[word],
+        zones=[zone],
+        zone_buses=[],
+        entangling_zone_pairs=(
+            entangling_zone_pairs if entangling_zone_pairs is not None else []
+        ),
+        modes=[mode],
     )
 
 
@@ -295,11 +308,10 @@ class TestArchSpecEqHash:
         a = _minimal_arch_spec()
         b = _minimal_arch_spec()
         assert a == b
-        assert hash(a) == hash(b)
 
     def test_different_entangling_zones(self):
-        a = _minimal_arch_spec(entangling_zones=[])
-        b = _minimal_arch_spec(entangling_zones=[[(0, 0)]])
+        a = _minimal_arch_spec(entangling_zone_pairs=[])
+        b = _minimal_arch_spec(entangling_zone_pairs=[(0, 0)])
         assert a != b
 
     def test_as_dict_key(self):

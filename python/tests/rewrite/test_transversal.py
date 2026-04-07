@@ -28,16 +28,16 @@ def cases():
     node = move.Move(
         current_state := ir.TestValue(),
         lanes=(
-            SiteLaneAddress(0, 1, 0, Direction.FORWARD),
-            SiteLaneAddress(1, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 1, 1, 0, Direction.FORWARD),
         ),
     )
 
     expected_node = move.Move(
         current_state,
         lanes=(
-            SiteLaneAddress(0, 1, 0, Direction.FORWARD),
-            SiteLaneAddress(1, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 1, 1, 0, Direction.FORWARD),
         ),
     )
 
@@ -46,16 +46,16 @@ def cases():
     node = move.Move(
         current_state := ir.TestValue(),
         lanes=(
-            SiteLaneAddress(0, 1, 0, Direction.FORWARD),
-            SiteLaneAddress(0, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
         ),
     )
 
     expected_node = move.Move(
         current_state,
         lanes=(
-            SiteLaneAddress(0, 1, 0, Direction.FORWARD),
-            SiteLaneAddress(0, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
+            SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
         ),
     )
 

@@ -16,8 +16,8 @@ def _make_state() -> ConcreteState:
     return ConcreteState(
         occupied=frozenset(),
         layout=(
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(1, 0),
+            layout.LocationAddress(0, 0, 0),
+            layout.LocationAddress(0, 1, 0),
         ),
         move_count=(0, 0),
     )
@@ -122,10 +122,10 @@ def test_cz_placements_populates_move_layers_from_goal_node(monkeypatch):
 def test_cz_placements_passes_idle_occupied_as_blockers(monkeypatch):
     strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
     state = ConcreteState(
-        occupied=frozenset({layout.LocationAddress(0, 5)}),
+        occupied=frozenset({layout.LocationAddress(0, 0, 5)}),
         layout=(
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(1, 0),
+            layout.LocationAddress(0, 0, 0),
+            layout.LocationAddress(0, 1, 0),
         ),
         move_count=(0, 0),
     )

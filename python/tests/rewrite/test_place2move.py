@@ -14,20 +14,32 @@ from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout import word
 from bloqade.lanes.rewrite import place2move
 
+from bloqade.lanes.bytecode._native import (
+    Grid as RustGrid,
+    Mode as RustMode,
+    Zone as RustZone,
+)
+from bloqade.lanes.bytecode._native import LocationAddress as RustLocAddr
+
+_word = word.Word(sites=((0, 0), (0, 1)))
+_rust_grid = RustGrid.from_positions([0.0], [0.0, 1.0])
+_rust_zone = RustZone(
+    grid=_rust_grid,
+    site_buses=[],
+    word_buses=[],
+    words_with_site_buses=[],
+    sites_with_word_buses=[],
+)
+_rust_mode = RustMode(
+    name="all",
+    zones=[0],
+    bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1)],
+)
 ARCH_SPEC = layout.ArchSpec.from_components(
-    (
-        word.Word(
-            positions=grid.Grid.from_positions([0], [0, 1]),
-            site_indices=((0, 0), (0, 1)),
-        ),
-    ),
-    ((0,),),
-    (0,),
+    (_word,),
+    (_rust_zone,),
     [],
-    frozenset(),
-    frozenset(),
-    (),
-    (),
+    [_rust_mode],
 )
 
 
@@ -282,7 +294,7 @@ def test_local_rz():
     )
 
     placement_analysis[stmt.results[0]] = ConcreteState(
-        frozenset([layout.LocationAddress(0, 0)]), (), ()
+        frozenset([layout.LocationAddress(0, 0, 0)]), (), ()
     )
 
     expected_block = ir.Block(
@@ -318,7 +330,7 @@ def test_local_r():
     )
 
     placement_analysis[stmt.results[0]] = ConcreteState(
-        frozenset([layout.LocationAddress(0, 0)]), (), ()
+        frozenset([layout.LocationAddress(0, 0, 0)]), (), ()
     )
 
     expected_block = ir.Block(
@@ -374,8 +386,8 @@ def test_insert_measure():
         ]
     )
     qubit_layout = (
-        layout.LocationAddress(0, 1),
-        layout.LocationAddress(0, 0),
+        layout.LocationAddress(0, 0, 1),
+        layout.LocationAddress(0, 0, 0),
     )
     placement_analysis[stmt.results[0]] = ExecuteMeasure(
         frozenset(), qubit_layout, (), (layout.ZoneAddress(0), layout.ZoneAddress(1))
@@ -392,12 +404,12 @@ def test_insert_measure():
             zone_result_0 := move.GetFutureResult(
                 future.result,
                 zone_address=layout.ZoneAddress(0),
-                location_address=layout.LocationAddress(0, 1),
+                location_address=layout.LocationAddress(0, 0, 1),
             ),
             zone_result_1 := move.GetFutureResult(
                 future.result,
                 zone_address=layout.ZoneAddress(1),
-                location_address=layout.LocationAddress(0, 0),
+                location_address=layout.LocationAddress(0, 0, 0),
             ),
             place.Yield(state_before, zone_result_0.result, zone_result_1.result),
         ],

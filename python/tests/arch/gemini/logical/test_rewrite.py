@@ -25,8 +25,8 @@ def test_logical_architecture_rewrite_site():
         move.Move(
             current_state=current_state,
             lanes=(
-                SiteLaneAddress(0, 0, 0, Direction.FORWARD),
-                SiteLaneAddress(0, 1, 0, Direction.FORWARD),
+                SiteLaneAddress(0, 0, 0, 0, Direction.FORWARD),
+                SiteLaneAddress(0, 0, 1, 0, Direction.FORWARD),
             ),
         )
     )
@@ -72,9 +72,9 @@ def test_logical_architecture_rewrite_fill():
         move.Fill(
             current_state=current_state,
             location_addresses=(
-                LocationAddress(0, 0),
-                LocationAddress(1, 2),
-                LocationAddress(2, 4),
+                LocationAddress(0, 0, 0),
+                LocationAddress(0, 1, 2),
+                LocationAddress(0, 2, 4),
             ),
         )
     )
@@ -103,9 +103,9 @@ def test_logical_architecture_rewrite_logical_initialize():
     phis = (ir.TestValue(), ir.TestValue(), ir.TestValue())
     lams = (ir.TestValue(), ir.TestValue(), ir.TestValue())
     location_addresses = (
-        LocationAddress(0, 0),
-        LocationAddress(1, 2),
-        LocationAddress(2, 4),
+        LocationAddress(0, 0, 0),
+        LocationAddress(0, 1, 2),
+        LocationAddress(0, 2, 4),
     )
 
     test_block = ir.Block()

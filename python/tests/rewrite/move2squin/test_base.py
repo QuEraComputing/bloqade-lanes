@@ -12,8 +12,8 @@ from bloqade.lanes.rewrite.move2squin import base
 
 def test_insert_qubits():
     location_addresses = (
-        layout.LocationAddress(0, 0),
-        layout.LocationAddress(0, 1),
+        layout.LocationAddress(0, 0, 0),
+        layout.LocationAddress(0, 0, 1),
     )
 
     @kernel
@@ -43,14 +43,14 @@ def test_base_rewrite_rule():
         physical_ssa_values={0: (zero := ir.TestValue()), 1: (one := ir.TestValue())},
     )
     atom_state_data = atom.AtomStateData.new(
-        {0: layout.LocationAddress(0, 0), 1: layout.LocationAddress(0, 1)}
+        {0: layout.LocationAddress(0, 0, 0), 1: layout.LocationAddress(0, 0, 1)}
     )
     atom_state = atom.AtomState(atom_state_data)
 
     locations = (
-        layout.LocationAddress(0, 0),
-        layout.LocationAddress(0, 1),
-        layout.LocationAddress(1, 0),
+        layout.LocationAddress(0, 0, 0),
+        layout.LocationAddress(0, 0, 1),
+        layout.LocationAddress(0, 1, 0),
     )
     assert rule.get_qubit_ssa_from_locations(atom_state, locations) == (zero, one, None)
 

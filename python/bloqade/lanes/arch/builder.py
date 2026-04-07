@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bloqade.lanes.bytecode._native import Bus as _NativeBus
+from bloqade.lanes.bytecode._native import (
+    Grid as _RustGrid,
+    LocationAddress as _RustLocAddr,
+    Mode as _RustMode,
+    Zone as _RustZone,
+    ZoneBus as _RustZoneBus,
+)
 from bloqade.lanes.layout.arch import ArchSpec
 
 from .topology import InterZoneTopology
@@ -25,11 +31,46 @@ class ArchResult:
     zone_indices: dict[str, int]
 
 
+def _build_zone_grid(
+    zone_spec, layout, n, s,
+):
+    """Build a Rust Grid covering all columns and rows in a zone.
+
+    The grid must have enough x-positions to cover all interleaved CZ pairs
+    and enough y-positions for all rows.
+    """
+    num_rows = zone_spec.num_rows
+    num_cols = zone_spec.num_cols
+    pair_width = (2 * n - 1) * s
+
+    # Build x positions for ALL columns (interleaved pattern)
+    x_positions = []
+    num_pairs = num_cols // 2
+    for pair_idx in range(num_pairs):
+        pair_x = pair_idx * (pair_width + layout.pair_spacing)
+        for i in range(n):
+            # Even col site
+            x_positions.append(pair_x + 2.0 * s * i)
+            # Odd col site
+            x_positions.append(pair_x + s + 2.0 * s * i)
+
+    x_pos_sorted = sorted(set(x_positions))
+    y_positions = [row * layout.row_spacing for row in range(num_rows)]
+    if not y_positions:
+        y_positions = [0.0]
+
+    return _RustGrid.from_positions(x_pos_sorted, y_positions)
+
+
 def build_arch(
     blueprint: ArchBlueprint,
     connections: dict[tuple[str, str], InterZoneTopology] | None = None,
 ) -> ArchResult:
     """Build an ArchSpec from a blueprint and inter-zone connections.
+
+    For entangling ZoneSpecs (with paired word columns), the builder splits
+    the ZoneSpec into two Rust zones (even columns and odd columns) and adds
+    an entangling_zone_pair between them.
 
     Args:
         blueprint: Architecture blueprint with zones and layout.
@@ -42,98 +83,179 @@ def build_arch(
     connections = connections or {}
     layout = blueprint.layout
 
-    # 1. Create word grids for each zone, stacked vertically
+    # 1. Create word grids for each zone
     zone_grids: dict[str, WordGrid] = {}
     word_id_offset = 0
-    zone_y = 0.0
     for zone_name, zone_spec in blueprint.zones.items():
         grid = create_zone_words(
             zone_spec,
             layout,
-            y_offset=zone_y,
             word_id_offset=word_id_offset,
         )
         zone_grids[zone_name] = grid
         word_id_offset += zone_spec.num_words
-        zone_height = (zone_spec.num_rows - 1) * layout.row_spacing
-        zone_y += zone_height + layout.zone_gap
 
     all_words = tuple(word for grid in zone_grids.values() for word in grid.words)
-    total_words = len(all_words)
+    n = layout.sites_per_word
+    s = layout.site_spacing
 
-    # 2. Generate per-zone site buses with bus.words set
-    all_site_buses: list[_NativeBus] = []
-    site_bus_word_ids: set[int] = set()
-
-    for zone_name, zone_spec in blueprint.zones.items():
-        if zone_spec.site_topology is not None:
-            grid = zone_grids[zone_name]
-            zone_word_ids = list(grid.all_word_ids)
-            site_bus_word_ids.update(zone_word_ids)
-            buses = zone_spec.site_topology.generate_site_buses(layout.sites_per_word)
-            for bus in buses:
-                all_site_buses.append(
-                    _NativeBus(src=bus.src, dst=bus.dst, words=zone_word_ids)
-                )
-
-    site_buses = tuple(all_site_buses)
-
-    # 3. Generate word buses
-    all_word_buses: list[_NativeBus] = []
-
-    for zone_name, zone_spec in blueprint.zones.items():
-        if zone_spec.word_topology is not None:
-            buses = zone_spec.word_topology.generate_word_buses(zone_grids[zone_name])
-            all_word_buses.extend(buses)
-
-    for (zone_a, zone_b), topology in connections.items():
-        if zone_a == zone_b:
-            raise ValueError(
-                f"Self-connection not allowed: '{zone_a}'. "
-                "Use word_topology on ZoneSpec for intra-zone connectivity."
-            )
-        if zone_a not in zone_grids:
-            raise ValueError(f"Unknown zone '{zone_a}' in connection")
-        if zone_b not in zone_grids:
-            raise ValueError(f"Unknown zone '{zone_b}' in connection")
-        buses = topology.generate_word_buses(zone_grids[zone_a], zone_grids[zone_b])
-        all_word_buses.extend(buses)
-
-    # 4. Build zone lists.
-    # Zone 0 is always "all words" (Rust validation requirement).
-    # User-defined zones are appended starting at index 1.
-    all_word_ids = tuple(range(total_words))
-    arch_zones: list[tuple[int, ...]] = [all_word_ids]
+    # 2. Build Rust Zone objects.
+    # For entangling zones: split into even-col and odd-col sub-zones.
     zone_indices: dict[str, int] = {}
+    rust_zones: list[_RustZone] = []
+    entangling_zone_pairs: list[tuple[int, int]] = []
 
-    for i, zone_name in enumerate(blueprint.zones):
+    # Track which Rust zone indices correspond to even/odd columns
+    # for building word buses between them
+    zone_even_odd_map: dict[str, tuple[int, int]] = {}
+
+    for zone_name, zone_spec in blueprint.zones.items():
         grid = zone_grids[zone_name]
-        arch_zones.append(tuple(grid.all_word_ids))
-        zone_indices[zone_name] = i + 1
 
-    # 5. Entangling zones as word pairs + measurement zones
-    entangling_zones: list[list[tuple[int, int]]] = [
-        list(zone_grids[name].cz_pairs())
-        for name, spec in blueprint.zones.items()
-        if spec.entangling
+        # Build per-zone site buses
+        site_buses = []
+        if zone_spec.site_topology is not None:
+            site_buses = list(
+                zone_spec.site_topology.generate_site_buses(layout.sites_per_word)
+            )
+
+        # Build per-zone word buses (intra-zone only)
+        word_buses = []
+        if zone_spec.word_topology is not None:
+            word_buses = list(zone_spec.word_topology.generate_word_buses(grid))
+
+        # Also add inter-zone word buses from connections
+        for (zone_a, zone_b), topology in connections.items():
+            if zone_a == zone_b:
+                raise ValueError(
+                    f"Self-connection not allowed: '{zone_a}'. "
+                    "Use word_topology on ZoneSpec for intra-zone connectivity."
+                )
+            if zone_a not in zone_grids:
+                raise ValueError(f"Unknown zone '{zone_a}' in connection")
+            if zone_b not in zone_grids:
+                raise ValueError(f"Unknown zone '{zone_b}' in connection")
+            if zone_name == zone_a or zone_name == zone_b:
+                buses = topology.generate_word_buses(
+                    zone_grids[zone_a], zone_grids[zone_b]
+                )
+                word_buses.extend(buses)
+
+        all_zone_word_ids = list(grid.all_word_ids)
+
+        if zone_spec.entangling:
+            # Split into even-col and odd-col sub-zones
+            even_word_ids = [
+                grid.word_id_at(r, c)
+                for r in range(zone_spec.num_rows)
+                for c in range(0, zone_spec.num_cols, 2)
+            ]
+            odd_word_ids = [
+                grid.word_id_at(r, c)
+                for r in range(zone_spec.num_rows)
+                for c in range(1, zone_spec.num_cols, 2)
+            ]
+
+            # Both sub-zones share the same full grid (all x/y positions)
+            rust_grid = _build_zone_grid(zone_spec, layout, n, s)
+            rust_grid_even = rust_grid
+            rust_grid_odd = rust_grid
+
+            even_zone_id = len(rust_zones)
+            rust_zones.append(
+                _RustZone(
+                    grid=rust_grid_even,
+                    site_buses=site_buses,
+                    word_buses=word_buses,
+                    words_with_site_buses=even_word_ids if site_buses else [],
+                    sites_with_word_buses=(
+                        list(range(layout.sites_per_word)) if word_buses else []
+                    ),
+                )
+            )
+
+            odd_zone_id = len(rust_zones)
+            rust_zones.append(
+                _RustZone(
+                    grid=rust_grid_odd,
+                    site_buses=site_buses,
+                    word_buses=word_buses,
+                    words_with_site_buses=odd_word_ids if site_buses else [],
+                    sites_with_word_buses=(
+                        list(range(layout.sites_per_word)) if word_buses else []
+                    ),
+                )
+            )
+
+            entangling_zone_pairs.append((even_zone_id, odd_zone_id))
+            zone_even_odd_map[zone_name] = (even_zone_id, odd_zone_id)
+            zone_indices[zone_name] = even_zone_id
+        else:
+            # Non-entangling zone: single Rust zone
+            rust_grid = _build_zone_grid(zone_spec, layout, n, s)
+            zone_id = len(rust_zones)
+            rust_zones.append(
+                _RustZone(
+                    grid=rust_grid,
+                    site_buses=site_buses,
+                    word_buses=word_buses,
+                    words_with_site_buses=all_zone_word_ids if site_buses else [],
+                    sites_with_word_buses=(
+                        list(range(layout.sites_per_word)) if word_buses else []
+                    ),
+                )
+            )
+            zone_indices[zone_name] = zone_id
+
+    # 3. Modes (measurement modes)
+    all_zone_ids = list(range(len(rust_zones)))
+    all_bitstring_order: list[_RustLocAddr] = []
+    for zone_id in all_zone_ids:
+        for word_id in range(len(all_words)):
+            for site_id in range(layout.sites_per_word):
+                all_bitstring_order.append(_RustLocAddr(zone_id, word_id, site_id))
+    modes: list[_RustMode] = [
+        _RustMode(name="all", zones=all_zone_ids, bitstring_order=all_bitstring_order)
     ]
 
-    measurement_mode_zones = (0,) + tuple(
-        zone_indices[name] for name, spec in blueprint.zones.items() if spec.measurement
-    )
+    # Per-zone measurement modes
+    for name, spec in blueprint.zones.items():
+        if spec.measurement:
+            zone_grid = zone_grids[name]
+            if name in zone_even_odd_map:
+                even_id, odd_id = zone_even_odd_map[name]
+                zone_ids = [even_id, odd_id]
+            else:
+                zone_ids = [zone_indices[name]]
+            bitstring_order: list[_RustLocAddr] = []
+            for z_id in zone_ids:
+                for word_id in zone_grid.all_word_ids:
+                    for site_id in range(layout.sites_per_word):
+                        bitstring_order.append(_RustLocAddr(z_id, word_id, site_id))
+            modes.append(
+                _RustMode(name=name, zones=zone_ids, bitstring_order=bitstring_order)
+            )
 
-    # 6. Build ArchSpec
+    # 4. Zone buses (inter-zone)
+    zone_buses: list[_RustZoneBus] = []
+    for (zone_a_name, zone_b_name), topology in connections.items():
+        z_a = zone_indices[zone_a_name]
+        z_b = zone_indices[zone_b_name]
+        grid_a = zone_grids[zone_a_name]
+        grid_b = zone_grids[zone_b_name]
+        buses = topology.generate_word_buses(grid_a, grid_b)
+        for bus in buses:
+            src_pairs = [(z_a, w) for w in bus.src]
+            dst_pairs = [(z_b, w) for w in bus.dst]
+            zone_buses.append(_RustZoneBus(src=src_pairs, dst=dst_pairs))
+
+    # 5. Build ArchSpec
     arch = ArchSpec.from_components(
         words=all_words,
-        zones=tuple(arch_zones),
-        measurement_mode_zones=measurement_mode_zones,
-        entangling_zones=entangling_zones,
-        has_site_buses=frozenset(site_bus_word_ids),
-        # Word buses move entire words, so all site indices are valid landing positions.
-        has_word_buses=frozenset(range(layout.sites_per_word)),
-        site_buses=site_buses,
-        word_buses=tuple(all_word_buses),
-        blockade_radius=layout.site_spacing,
+        zones=tuple(rust_zones),
+        entangling_zone_pairs=entangling_zone_pairs,
+        modes=modes,
+        zone_buses=zone_buses,
     )
 
     return ArchResult(

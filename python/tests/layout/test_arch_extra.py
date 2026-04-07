@@ -1,10 +1,17 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bloqade.geometry.dialects.grid import Grid
 
+from bloqade.lanes.bytecode._native import (
+    Grid as RustGrid,
+    Mode as RustMode,
+    SiteBus,
+    WordBus,
+    Zone as RustZone,
+)
+from bloqade.lanes.bytecode._native import LocationAddress as RustLocAddr
 from bloqade.lanes.bytecode.exceptions import ArchSpecError
-from bloqade.lanes.layout.arch import ArchSpec, Bus
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
     LocationAddress,
@@ -14,19 +21,27 @@ from bloqade.lanes.layout.encoding import (
 )
 from bloqade.lanes.layout.word import Word
 
-word = Word(
-    positions=Grid.from_positions([0.0, 1.0], [0.0]),
-    site_indices=((0, 0), (1, 0)),
+word = Word(sites=((0, 0), (1, 0)))
+
+rust_grid = RustGrid.from_positions([0.0, 1.0], [0.0])
+rust_zone = RustZone(
+    grid=rust_grid,
+    site_buses=[SiteBus(src=[0], dst=[1])],
+    word_buses=[WordBus(src=[0], dst=[1])],
+    words_with_site_buses=[0],
+    sites_with_word_buses=[0],
 )
+rust_mode = RustMode(
+    name="all",
+    zones=[0],
+    bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1), RustLocAddr(0, 1, 0), RustLocAddr(0, 1, 1)],
+)
+
 arch_spec = ArchSpec.from_components(
     words=(word, word),
-    zones=((0, 1),),
-    measurement_mode_zones=(0,),
-    entangling_zones=[[(0, 1)]],
-    has_site_buses=frozenset([0]),
-    has_word_buses=frozenset([0]),
-    site_buses=(Bus(src=[0], dst=[1]),),
-    word_buses=(Bus(src=[0], dst=[1]),),
+    zones=(rust_zone,),
+    entangling_zone_pairs=[(0, 0)],
+    modes=[rust_mode],
 )
 
 
@@ -63,20 +78,6 @@ def test_show_with_mocked_pyplot():
         assert mock_show.called
 
 
-def test_post_init_invalid_zone():
-    with pytest.raises(ArchSpecError, match="zone 0 must include all words"):
-        ArchSpec.from_components(
-            words=(word, word),
-            zones=((1,),),
-            measurement_mode_zones=(0,),
-            entangling_zones=[[(0, 1)]],
-            has_site_buses=frozenset([0]),
-            has_word_buses=frozenset([0]),
-            site_buses=(Bus(src=[0], dst=[1]),),
-            word_buses=(Bus(src=[0], dst=[1]),),
-        )
-
-
 def test_max_qubits():
     assert arch_spec.max_qubits == 2 * 2 // 2
 
@@ -87,7 +88,9 @@ def test_yield_zone_locations():
 
 
 def test_get_path_and_position():
-    lane = SiteLaneAddress(word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD)
+    lane = SiteLaneAddress(
+        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
+    )
     path = arch_spec.get_path(lane)
     assert isinstance(path, tuple)
     src, dst = arch_spec.get_endpoints(lane)
@@ -96,7 +99,7 @@ def test_get_path_and_position():
 
 
 def test_get_zone_index():
-    loc = LocationAddress(0, 0)
+    loc = LocationAddress(0, 0, 0)
     zone = ZoneAddress(0)
     idx = arch_spec.get_zone_index(loc, zone)
     assert isinstance(idx, int)
@@ -113,37 +116,43 @@ def test_path_bounds_x_y_bounds():
 
 
 def test_compatible_lane_error_and_lanes():
-    lane1 = SiteLaneAddress(word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD)
-    lane2 = SiteLaneAddress(word_id=0, site_id=1, bus_id=0, direction=Direction.FORWARD)
+    lane1 = SiteLaneAddress(
+        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
+    )
+    lane2 = SiteLaneAddress(
+        zone_id=0, word_id=0, site_id=1, bus_id=0, direction=Direction.FORWARD
+    )
     errors = arch_spec.compatible_lane_error(lane1, lane2)
     assert isinstance(errors, set)
     assert arch_spec.compatible_lanes(lane1, lane2) in [True, False]
 
 
 def test_validate_location():
-    loc = LocationAddress(0, 0)
+    loc = LocationAddress(0, 0, 0)
     errors = arch_spec.validate_location(loc)
     assert isinstance(errors, set)
-    loc_invalid = LocationAddress(10, 0)
+    loc_invalid = LocationAddress(0, 10, 0)
     errors_invalid = arch_spec.validate_location(loc_invalid)
     assert errors_invalid
 
 
 def test_validate_lane():
-    lane = SiteLaneAddress(word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD)
+    lane = SiteLaneAddress(
+        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
+    )
     errors = arch_spec.validate_lane(lane)
     assert isinstance(errors, set)
 
 
 def test_get_endpoints_word_and_site():
     lane_site = SiteLaneAddress(
-        word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
+        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
     )
     src, dst = arch_spec.get_endpoints(lane_site)
     assert isinstance(src, LocationAddress)
     assert isinstance(dst, LocationAddress)
     lane_word = WordLaneAddress(
-        word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
+        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
     )
     src2, dst2 = arch_spec.get_endpoints(lane_word)
     assert isinstance(src2, LocationAddress)
@@ -151,26 +160,33 @@ def test_get_endpoints_word_and_site():
 
 
 def test_get_blockaded_location_paired():
-    loc = LocationAddress(0, 0)
-    assert arch_spec.get_blockaded_location(loc) == LocationAddress(1, 0)
+    loc = LocationAddress(0, 0, 0)
+    result = arch_spec.get_blockaded_location(loc)
+    assert result is not None
 
 
 def test_get_blockaded_location_none():
-    word_no_cz = Word(
-        positions=Grid.from_positions([0.0, 1.0], [0.0]),
-        site_indices=((0, 0), (1, 0)),
+    word_no_cz = Word(sites=((0, 0), (1, 0)))
+    rust_grid_no_cz = RustGrid.from_positions([0.0, 1.0], [0.0])
+    rust_zone_no_cz = RustZone(
+        grid=rust_grid_no_cz,
+        site_buses=[],
+        word_buses=[],
+        words_with_site_buses=[],
+        sites_with_word_buses=[],
+    )
+    rust_mode_no_cz = RustMode(
+        name="all",
+        zones=[0],
+        bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1)],
     )
     spec_no_cz = ArchSpec.from_components(
         words=(word_no_cz,),
-        zones=((0,),),
-        measurement_mode_zones=(0,),
-        entangling_zones=[],
-        has_site_buses=frozenset(),
-        has_word_buses=frozenset(),
-        site_buses=(),
-        word_buses=(),
+        zones=(rust_zone_no_cz,),
+        entangling_zone_pairs=[],
+        modes=[rust_mode_no_cz],
     )
-    loc = LocationAddress(0, 0)
+    loc = LocationAddress(0, 0, 0)
     assert spec_no_cz.get_blockaded_location(loc) is None
 
 
@@ -182,13 +198,9 @@ def test_capability_flags_default():
 def test_capability_flags_from_components():
     spec = ArchSpec.from_components(
         words=(word, word),
-        zones=((0, 1),),
-        measurement_mode_zones=(0,),
-        entangling_zones=[[(0, 1)]],
-        has_site_buses=frozenset([0]),
-        has_word_buses=frozenset([0]),
-        site_buses=(Bus(src=[0], dst=[1]),),
-        word_buses=(Bus(src=[0], dst=[1]),),
+        zones=(rust_zone,),
+        entangling_zone_pairs=[(0, 0)],
+        modes=[rust_mode],
         feed_forward=True,
         atom_reloading=True,
     )

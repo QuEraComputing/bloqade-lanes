@@ -1,23 +1,18 @@
 """Word creation helpers for zone-based architectures.
 
 Creates row-words arranged in a 2D grid. CZ pairing between horizontally
-adjacent words is defined at the architecture level via entangling_zones,
+adjacent words is defined at the architecture level via entangling_zone_pairs,
 not per-word.
 
-Physical layout (2 words × 5 sites, interleaved):
-
-  w0.s0  w1.s0  w0.s1  w1.s1  w0.s2  w1.s2  w0.s3  w1.s3  w0.s4  w1.s4
-    o      o      o      o      o      o      o      o      o      o
-
-CZ partners (w0.si and w1.si) are separated by site_spacing (blockade radius).
+Words now contain grid index pairs (x_idx, y_idx). Physical positions are
+resolved via the zone's Grid at the ArchSpec level. Each word has unique
+grid indices that map to distinct positions within the zone grid.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-from bloqade.geometry.dialects.grid import Grid
 
 from bloqade.lanes.layout.word import Word
 
@@ -65,41 +60,31 @@ def create_zone_words(
 ) -> WordGrid:
     """Create all words for a zone in a 2D grid layout.
 
-    Words are horizontal rows with sites along the x-axis. Within a CZ pair,
-    the two words' sites are interleaved: even word at x = 0, 2s, 4s, ...
-    and odd word at x = s, 3s, 5s, ... (where s = site_spacing).
+    Each word's sites are represented as grid index pairs (x_idx, y_idx).
+    For interleaved CZ pairs:
+    - Even-column words: sites at x_idx = 0, 2, 4, ... (in the full grid)
+    - Odd-column words: sites at x_idx = 1, 3, 5, ...
 
-    Words are assigned IDs in row-major order starting from word_id_offset.
-    CZ pairing is defined at the architecture level, not per-word.
+    Words in different rows use different y_idx values.
     """
     n = layout.sites_per_word
-    s = layout.site_spacing
-    site_indices = tuple((i, 0) for i in range(n))
-
-    # Even word sites at x = 0, 2s, 4s, ...
-    even_x = [2.0 * s * i for i in range(n)]
-    even_base = Grid.from_positions(even_x, [0.0])
-
-    # Odd word sites at x = s, 3s, 5s, ...
-    odd_x = [s + 2.0 * s * i for i in range(n)]
-    odd_base = Grid.from_positions(odd_x, [0.0])
-
-    # Width of one interleaved pair
-    pair_width = (2 * n - 1) * s
+    num_cols = zone_spec.num_cols
 
     words: list[Word] = []
 
     for row in range(zone_spec.num_rows):
-        row_y = y_offset + row * layout.row_spacing
-        for col in range(zone_spec.num_cols):
+        for col in range(num_cols):
             pair_idx = col // 2
             is_odd = col % 2
-            pair_x = x_offset + pair_idx * (pair_width + layout.pair_spacing)
-
-            base = odd_base if is_odd else even_base
-            grid = base.shift(pair_x, row_y)
-
-            words.append(Word(grid, site_indices))
+            # Number of x positions per pair: 2*n (interleaved)
+            x_base = pair_idx * 2 * n
+            if is_odd:
+                # Odd column: sites at odd x indices
+                sites = tuple((x_base + 2 * i + 1, row) for i in range(n))
+            else:
+                # Even column: sites at even x indices
+                sites = tuple((x_base + 2 * i, row) for i in range(n))
+            words.append(Word(sites))
 
     return WordGrid(
         words=tuple(words),

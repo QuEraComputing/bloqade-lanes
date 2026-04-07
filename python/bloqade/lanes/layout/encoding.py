@@ -72,13 +72,17 @@ class ZoneAddress(Encoder):
 
 
 class LocationAddress(Encoder):
-    """Address identifying a physical atom location (word + site)."""
+    """Address identifying a physical atom location (zone + word + site)."""
 
     _inner: _RustLocationAddress
 
-    def __init__(self, word_id: int, site_id: int):
-        self._inner = _RustLocationAddress(word_id, site_id)
+    def __init__(self, zone_id: int, word_id: int, site_id: int):
+        self._inner = _RustLocationAddress(zone_id, word_id, site_id)
         self.__post_init__()
+
+    @property
+    def zone_id(self) -> int:
+        return self._inner.zone_id
 
     @property
     def word_id(self) -> int:
@@ -102,16 +106,22 @@ class LocationAddress(Encoder):
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, LocationAddress):
             return NotImplemented
-        return (self.word_id, self.site_id) < (other.word_id, other.site_id)
+        return (self.zone_id, self.word_id, self.site_id) < (
+            other.zone_id,
+            other.word_id,
+            other.site_id,
+        )
 
     def replace(
         self,
         *,
+        zone_id: int | None = None,
         word_id: int | None = None,
         site_id: int | None = None,
     ) -> Self:
         """Return a copy, optionally replacing fields."""
         return LocationAddress(  # type: ignore[return-value]
+            zone_id if zone_id is not None else self.zone_id,
             word_id if word_id is not None else self.word_id,
             site_id if site_id is not None else self.site_id,
         )
@@ -125,6 +135,7 @@ class LaneAddress(Encoder):
     def __init__(
         self,
         move_type: MoveType,
+        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
@@ -132,6 +143,7 @@ class LaneAddress(Encoder):
     ):
         self._inner = _RustLaneAddress(
             move_type,
+            zone_id,
             word_id,
             site_id,
             bus_id,
@@ -142,6 +154,10 @@ class LaneAddress(Encoder):
     @property
     def move_type(self) -> MoveType:
         return self._inner.move_type
+
+    @property
+    def zone_id(self) -> int:
+        return self._inner.zone_id
 
     @property
     def word_id(self) -> int:
@@ -172,12 +188,13 @@ class LaneAddress(Encoder):
 
     def src_site(self) -> LocationAddress:
         """Get the source site as a LocationAddress."""
-        return LocationAddress(self.word_id, self.site_id)
+        return LocationAddress(self.zone_id, self.word_id, self.site_id)
 
     def replace(
         self,
         *,
         move_type: MoveType | None = None,
+        zone_id: int | None = None,
         word_id: int | None = None,
         site_id: int | None = None,
         bus_id: int | None = None,
@@ -186,6 +203,7 @@ class LaneAddress(Encoder):
         """Return a copy, optionally replacing fields."""
         return LaneAddress(  # type: ignore[return-value]
             move_type if move_type is not None else self.move_type,
+            zone_id if zone_id is not None else self.zone_id,
             word_id if word_id is not None else self.word_id,
             site_id if site_id is not None else self.site_id,
             bus_id if bus_id is not None else self.bus_id,
@@ -206,12 +224,13 @@ class SiteLaneAddress(LaneAddress):
 
     def __init__(
         self,
+        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
         direction: Direction = Direction.FORWARD,
     ):
-        super().__init__(MoveType.SITE, word_id, site_id, bus_id, direction)
+        super().__init__(MoveType.SITE, zone_id, word_id, site_id, bus_id, direction)
 
 
 class WordLaneAddress(LaneAddress):
@@ -219,9 +238,10 @@ class WordLaneAddress(LaneAddress):
 
     def __init__(
         self,
+        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
         direction: Direction = Direction.FORWARD,
     ):
-        super().__init__(MoveType.WORD, word_id, site_id, bus_id, direction)
+        super().__init__(MoveType.WORD, zone_id, word_id, site_id, bus_id, direction)

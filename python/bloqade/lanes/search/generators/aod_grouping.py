@@ -63,18 +63,26 @@ class BusContext:
     ) -> BusContext:
         """Build a BusContext from a ConfigurationTree and occupied set."""
         arch_spec = tree.arch_spec
-        bus = (
-            arch_spec.site_buses if move_type == MoveType.SITE else arch_spec.word_buses
-        )[bus_id]
 
-        if move_type == MoveType.SITE:
-            src_locs = [
-                LocationAddress(w, s) for w in arch_spec.has_site_buses for s in bus.src
-            ]
-        else:
-            src_locs = [
-                LocationAddress(w, s) for w in bus.src for s in arch_spec.has_word_buses
-            ]
+        # Aggregate sources across zones
+        src_locs: list[LocationAddress] = []
+        for zone_id, zone in enumerate(arch_spec.zones):
+            if move_type == MoveType.SITE:
+                if bus_id < len(zone.site_buses):
+                    bus = zone.site_buses[bus_id]
+                    src_locs.extend(
+                        LocationAddress(zone_id, w, s)
+                        for w in zone.words_with_site_buses
+                        for s in bus.src
+                    )
+            else:
+                if bus_id < len(zone.word_buses):
+                    bus = zone.word_buses[bus_id]
+                    src_locs.extend(
+                        LocationAddress(zone_id, w, s)
+                        for w in bus.src
+                        for s in zone.sites_with_word_buses
+                    )
 
         pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
         for loc in src_locs:
@@ -86,7 +94,7 @@ class BusContext:
         for loc in src_locs:
             if loc in occupied:
                 lane = LaneAddress(
-                    move_type, loc.word_id, loc.site_id, bus_id, direction
+                    move_type, loc.zone_id, loc.word_id, loc.site_id, bus_id, direction
                 )
                 _, dst = arch_spec.get_endpoints(lane)
                 if dst in occupied:
@@ -123,6 +131,7 @@ class BusContext:
                     lanes.append(
                         LaneAddress(
                             self.move_type,
+                            loc.zone_id,
                             loc.word_id,
                             loc.site_id,
                             self.bus_id,

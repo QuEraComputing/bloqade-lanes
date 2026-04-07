@@ -14,8 +14,8 @@ def test_empty_configuration():
 
 
 def test_configuration_with_atoms():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
     node = ConfigurationNode(configuration={0: loc0, 1: loc1})
 
     assert node.configuration[0] == loc0
@@ -23,8 +23,8 @@ def test_configuration_with_atoms():
 
 
 def test_config_key_is_hashable():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
     node = ConfigurationNode(configuration={0: loc0, 1: loc1})
 
     key = node.config_key
@@ -35,8 +35,8 @@ def test_config_key_is_hashable():
 
 
 def test_config_key_order_independent():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
 
     # Build same configuration in different insertion order
     node1 = ConfigurationNode(configuration={0: loc0, 1: loc1})
@@ -46,9 +46,9 @@ def test_config_key_order_independent():
 
 
 def test_is_occupied():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
-    empty_loc = LocationAddress(0, 1)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
+    empty_loc = LocationAddress(0, 0, 1)
 
     node = ConfigurationNode(configuration={0: loc0, 1: loc1})
 
@@ -58,9 +58,9 @@ def test_is_occupied():
 
 
 def test_get_qubit_at():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
-    empty_loc = LocationAddress(0, 1)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
+    empty_loc = LocationAddress(0, 0, 1)
 
     node = ConfigurationNode(configuration={0: loc0, 1: loc1})
 
@@ -70,17 +70,17 @@ def test_get_qubit_at():
 
 
 def test_occupied_locations():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
     node = ConfigurationNode(configuration={0: loc0, 1: loc1})
 
     assert node.occupied_locations == frozenset({loc0, loc1})
 
 
 def test_cached_derived_views_and_lookup_methods_are_stable():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(1, 0)
-    empty_loc = LocationAddress(0, 1)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 1, 0)
+    empty_loc = LocationAddress(0, 0, 1)
     node = ConfigurationNode(configuration={0: loc0, 1: loc1})
 
     first_key = node.config_key
@@ -101,17 +101,17 @@ def test_cached_derived_views_and_lookup_methods_are_stable():
 
 
 def test_path_to_root_at_root():
-    node = ConfigurationNode(configuration={0: LocationAddress(0, 0)})
+    node = ConfigurationNode(configuration={0: LocationAddress(0, 0, 0)})
     assert node.path_to_root() == []
 
 
 def test_path_to_root_three_levels():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(0, 1)
-    loc2 = LocationAddress(1, 1)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 0, 1)
+    loc2 = LocationAddress(0, 1, 1)
 
-    lane1 = SiteLaneAddress(0, 0, 0)
-    lane2 = SiteLaneAddress(0, 1, 0)
+    lane1 = SiteLaneAddress(0, 0, 0, 0)
+    lane2 = SiteLaneAddress(0, 0, 1, 0)
 
     moves1 = frozenset({lane1})
     moves2 = frozenset({lane2})
@@ -137,10 +137,10 @@ def test_path_to_root_three_levels():
 
 
 def test_to_move_program():
-    loc0 = LocationAddress(0, 0)
-    loc1 = LocationAddress(0, 1)
+    loc0 = LocationAddress(0, 0, 0)
+    loc1 = LocationAddress(0, 0, 1)
 
-    lane1 = SiteLaneAddress(0, 0, 0)
+    lane1 = SiteLaneAddress(0, 0, 0, 0)
     moves1 = frozenset({lane1})
 
     root = ConfigurationNode(configuration={0: loc0}, depth=0)

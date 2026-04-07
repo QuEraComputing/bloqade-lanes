@@ -58,10 +58,10 @@ def cz_placement_cases():
         ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, 0),
-                LocationAddress(0, 1),
-                LocationAddress(1, 0),
-                LocationAddress(1, 1),
+                LocationAddress(0, 0, 0),
+                LocationAddress(0, 0, 1),
+                LocationAddress(0, 1, 0),
+                LocationAddress(0, 1, 1),
             ),
             move_count=(0, 0, 0, 0),
         ),
@@ -76,8 +76,8 @@ def cz_placement_cases():
         ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, 0),
-                LocationAddress(0, 1),
+                LocationAddress(0, 0, 0),
+                LocationAddress(0, 0, 1),
             ),
             move_count=(0, 0),
         ),
@@ -92,8 +92,8 @@ def cz_placement_cases():
         ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, 0),
-                LocationAddress(0, 1),
+                LocationAddress(0, 0, 0),
+                LocationAddress(0, 0, 1),
             ),
             move_count=(1, 0),
         ),
@@ -108,10 +108,10 @@ def cz_placement_cases():
         ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, 0),
-                LocationAddress(0, 1),
-                LocationAddress(2, 0),
-                LocationAddress(2, 1),
+                LocationAddress(0, 0, 0),
+                LocationAddress(0, 0, 1),
+                LocationAddress(0, 2, 0),
+                LocationAddress(0, 2, 1),
             ),
             move_count=(1, 0, 0, 0),
         ),
@@ -165,10 +165,10 @@ def test_fixed_sq_placement():
     state = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(0, 0),
-            LocationAddress(0, 1),
-            LocationAddress(2, 0),
-            LocationAddress(2, 1),
+            LocationAddress(0, 0, 0),
+            LocationAddress(0, 0, 1),
+            LocationAddress(0, 2, 0),
+            LocationAddress(0, 2, 1),
         ),
         move_count=(0, 0, 0, 0),
     )
@@ -182,10 +182,10 @@ def test_fixed_invalid_initial_layout_non_home():
     non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
     assert len(non_home) > 0
     invalid_layout = (
-        LocationAddress(0, 0),
-        LocationAddress(0, 1),
-        LocationAddress(0, 2),
-        LocationAddress(non_home[0], 0),
+        LocationAddress(0, 0, 0),
+        LocationAddress(0, 0, 1),
+        LocationAddress(0, 0, 2),
+        LocationAddress(0, non_home[0], 0),
     )
     with pytest.raises(ValueError):
         placement_strategy.validate_initial_layout(invalid_layout)
@@ -195,10 +195,10 @@ def test_fixed_invalid_initial_layout_bad_word():
     """Word ID beyond architecture should be rejected."""
     placement_strategy = LogicalPlacementStrategy()
     invalid_layout = (
-        LocationAddress(0, 0),
-        LocationAddress(2, 0),
-        LocationAddress(4, 0),
-        LocationAddress(99, 0),
+        LocationAddress(0, 0, 0),
+        LocationAddress(0, 2, 0),
+        LocationAddress(0, 4, 0),
+        LocationAddress(0, 99, 0),
     )
     with pytest.raises(ValueError):
         placement_strategy.validate_initial_layout(invalid_layout)
@@ -224,8 +224,8 @@ def test_move_scheduler_cz():
     initial_state = ConcreteState(
         frozenset(),
         (
-            LocationAddress(0, 0),
-            LocationAddress(0, 1),
+            LocationAddress(0, 0, 0),
+            LocationAddress(0, 0, 1),
         ),
         (0, 0),
     )
@@ -247,7 +247,7 @@ def test_move_scheduler_cz_exact_layers():
     arch = placement.arch_spec
     initial_state = ConcreteState(
         frozenset(),
-        (LocationAddress(0, 0), LocationAddress(0, 1)),
+        (LocationAddress(0, 0, 0), LocationAddress(0, 0, 1)),
         (0, 0),
     )
     result = placement.cz_placements(initial_state, controls=(0,), targets=(1,))
@@ -278,8 +278,8 @@ def test_nohome_choose_return_layout():
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(non_home[0], 0),
-            LocationAddress(0, 1),
+            LocationAddress(0, non_home[0], 0),
+            LocationAddress(0, 0, 1),
         ),
         move_count=(3, 4),
     )
@@ -304,19 +304,19 @@ def test_nohome_choose_return_layout_duplicate_collision():
     # Fill ALL home sites with occupied atoms except one (used by qubit 1)
     home_word = min(arch._home_words)
     all_home_sites = [
-        LocationAddress(w, s)
+        LocationAddress(0, w, s)
         for w in sorted(arch._home_words)
         for s in range(len(arch.words[w].site_indices))
     ]
     # qubit 1 is at (home_word, 0), fill the rest
     occupied = frozenset(
-        addr for addr in all_home_sites if addr != LocationAddress(home_word, 0)
+        addr for addr in all_home_sites if addr != LocationAddress(0, home_word, 0)
     )
     state_before = ConcreteState(
         occupied=occupied,
         layout=(
-            LocationAddress(non_home[0], 0),
-            LocationAddress(home_word, 0),
+            LocationAddress(0, non_home[0], 0),
+            LocationAddress(0, home_word, 0),
         ),
         move_count=(0, 0),
     )
@@ -334,8 +334,8 @@ def test_nohome_choose_return_layout_sequential_no_conflicts():
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(non_home[0], 0),
-            LocationAddress(non_home[0], 1),
+            LocationAddress(0, non_home[0], 0),
+            LocationAddress(0, non_home[0], 1),
         ),
         move_count=(0, 0),
     )
@@ -354,8 +354,8 @@ def test_nohome_cz_placements_combines_return_and_entangle_layers():
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(non_home[0], 0),
-            LocationAddress(0, 1),
+            LocationAddress(0, non_home[0], 0),
+            LocationAddress(0, 0, 1),
         ),
         move_count=(0, 0),
     )
@@ -367,8 +367,8 @@ def test_nohome_cz_placements_combines_return_and_entangle_layers():
 def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyPatch):
     placement = LogicalPlacementStrategyNoHome()
     # Find a valid src→dst pair with a lane
-    src = LocationAddress(0, 0)
-    dst = LocationAddress(0, 1)
+    src = LocationAddress(0, 0, 0)
+    dst = LocationAddress(0, 0, 1)
     lane = placement.arch_spec.get_lane_address(src, dst)
     assert lane is not None
 
@@ -400,8 +400,8 @@ def test_nohome_best_path_uses_pathfinder_and_caches(monkeypatch: pytest.MonkeyP
 
 def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatch):
     placement = LogicalPlacementStrategyNoHome()
-    src = LocationAddress(0, 0)
-    dst = LocationAddress(0, 1)
+    src = LocationAddress(0, 0, 0)
+    dst = LocationAddress(0, 0, 1)
 
     monkeypatch.setattr(
         type(placement._path_finder), "find_path", lambda *_args, **_kwargs: None
@@ -455,8 +455,8 @@ def test_nohome_lookahead_can_change_return_choice():
     state_before = ConcreteState(
         occupied=frozenset(),
         layout=(
-            LocationAddress(non_home[0], 0),
-            LocationAddress(0, 1),
+            LocationAddress(0, non_home[0], 0),
+            LocationAddress(0, 0, 1),
         ),
         move_count=(0, 0),
     )

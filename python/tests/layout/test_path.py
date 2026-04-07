@@ -58,12 +58,12 @@ def _path_weight(
 def test_find_path_defaults_to_duration_shortest_paths():
     path_finder = _build_pathfinder()
     # Word 0 → word 6 (0b000 → 0b110): two hops via word 2 or word 4
-    start = LocationAddress(0, 5)
-    end = LocationAddress(6, 5)
+    start = LocationAddress(0, 0, 5)
+    end = LocationAddress(0, 6, 5)
 
     candidate_paths = (
-        (LocationAddress(0, 5), LocationAddress(2, 5), LocationAddress(6, 5)),
-        (LocationAddress(0, 5), LocationAddress(4, 5), LocationAddress(6, 5)),
+        (LocationAddress(0, 0, 5), LocationAddress(0, 2, 5), LocationAddress(0, 6, 5)),
+        (LocationAddress(0, 0, 5), LocationAddress(0, 4, 5), LocationAddress(0, 6, 5)),
     )
     durations = [_path_duration(path_finder, path) for path in candidate_paths]
     min_duration = min(durations)
@@ -83,8 +83,8 @@ def test_find_path_defaults_to_duration_shortest_paths():
 def test_find_path_uses_custom_edge_weight_shortest_path():
     path_finder = _build_pathfinder()
     # Word 0 → word 6: can go via word 2 or word 4
-    start = LocationAddress(0, 5)
-    end = LocationAddress(6, 5)
+    start = LocationAddress(0, 0, 5)
+    end = LocationAddress(0, 6, 5)
 
     def custom_edge_weight(lane_address: LaneAddress) -> float:
         src, dst = path_finder.get_endpoints(lane_address)
@@ -95,14 +95,14 @@ def test_find_path_uses_custom_edge_weight_shortest_path():
         return 1.0
 
     path_via_word2 = (
-        LocationAddress(0, 5),
-        LocationAddress(2, 5),
-        LocationAddress(6, 5),
+        LocationAddress(0, 0, 5),
+        LocationAddress(0, 2, 5),
+        LocationAddress(0, 6, 5),
     )
     path_via_word4 = (
-        LocationAddress(0, 5),
-        LocationAddress(4, 5),
-        LocationAddress(6, 5),
+        LocationAddress(0, 0, 5),
+        LocationAddress(0, 4, 5),
+        LocationAddress(0, 6, 5),
     )
     assert _path_weight(path_finder, path_via_word4, custom_edge_weight) < _path_weight(
         path_finder, path_via_word2, custom_edge_weight
@@ -117,8 +117,8 @@ def test_find_path_uses_custom_edge_weight_shortest_path():
 def test_find_path_tie_breaks_with_path_heuristic():
     """Tests the path heuristic as a tie-breaker for shortest paths"""
     path_finder = _build_pathfinder()
-    start = LocationAddress(0, 5)
-    end = LocationAddress(6, 5)
+    start = LocationAddress(0, 0, 5)
+    end = LocationAddress(0, 6, 5)
 
     def constant_weight(_lane_address: LaneAddress) -> float:
         return 1.0
@@ -126,7 +126,7 @@ def test_find_path_tie_breaks_with_path_heuristic():
     def prefer_word4(
         _lanes: tuple[LaneAddress, ...], locations: tuple[LocationAddress, ...]
     ) -> float:
-        return 0.0 if LocationAddress(4, 5) in locations else 1.0
+        return 0.0 if LocationAddress(0, 4, 5) in locations else 1.0
 
     result = path_finder.find_path(
         start,
@@ -137,25 +137,25 @@ def test_find_path_tie_breaks_with_path_heuristic():
     assert result is not None
     _, locations = result
     assert locations == (
-        LocationAddress(0, 5),
-        LocationAddress(4, 5),
-        LocationAddress(6, 5),
+        LocationAddress(0, 0, 5),
+        LocationAddress(0, 4, 5),
+        LocationAddress(0, 6, 5),
     )
 
 
 @pytest.mark.parametrize(
     "occupied",
     [
-        frozenset({LocationAddress(0, 5)}),
-        frozenset({LocationAddress(6, 5)}),
+        frozenset({LocationAddress(0, 0, 5)}),
+        frozenset({LocationAddress(0, 6, 5)}),
     ],
 )
 def test_find_path_returns_none_when_start_or_end_is_occupied(
     occupied: frozenset[LocationAddress],
 ):
     path_finder = _build_pathfinder()
-    start = LocationAddress(0, 5)
-    end = LocationAddress(6, 5)
+    start = LocationAddress(0, 0, 5)
+    end = LocationAddress(0, 6, 5)
 
     result = path_finder.find_path(start, end, occupied=occupied)
     assert result is None
@@ -164,14 +164,14 @@ def test_find_path_returns_none_when_start_or_end_is_occupied(
 def test_find_path_returns_none_when_intermediate_nodes_block_all_routes():
     """Tests that find_path returns None when intermediate nodes block all possible paths"""
     path_finder = _build_pathfinder()
-    start = LocationAddress(0, 5)
-    end = LocationAddress(6, 5)
+    start = LocationAddress(0, 0, 5)
+    end = LocationAddress(0, 6, 5)
     word_size = len(path_finder.spec.words[0].site_indices)
     num_words = len(path_finder.spec.words)
     # Block every word except start (0) and end (6) to ensure no path exists
     occupied = frozenset(
         {
-            LocationAddress(word_id, site_id)
+            LocationAddress(0, word_id, site_id)
             for word_id in range(num_words)
             if word_id not in (0, 6)
             for site_id in range(word_size)
@@ -216,6 +216,6 @@ def test_find_path_respects_per_bus_word_scoping():
 
     # Attempting an intra-word site move in zone B should fail (no site bus)
     b_word = min(zone_b_words)
-    start = LocationAddress(b_word, 0)
-    end = LocationAddress(b_word, 1)
+    start = LocationAddress(1, b_word, 0)
+    end = LocationAddress(1, b_word, 1)
     assert arch.get_lane_address(start, end) is None

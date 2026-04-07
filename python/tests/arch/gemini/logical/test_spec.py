@@ -30,36 +30,43 @@ def test_physical_architecture():
 def test_get_zone_index():
     arch = logical.get_arch_spec()
 
-    loc_addr = LocationAddress(word_id=0, site_id=0)
+    loc_addr = LocationAddress(zone_id=0, word_id=0, site_id=0)
     zone_id = ZoneAddress(0)
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 0
 
-    loc_addr = LocationAddress(word_id=0, site_id=1)
+    loc_addr = LocationAddress(zone_id=0, word_id=0, site_id=1)
     zone_id = ZoneAddress(0)
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 1
 
-    loc_addr = LocationAddress(word_id=1, site_id=0)
+    loc_addr = LocationAddress(zone_id=0, word_id=1, site_id=0)
     zone_id = ZoneAddress(0)
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 2
 
 
-def test_entangling_zones():
+def test_entangling_zone_pairs():
     arch = logical.get_arch_spec()
-    assert len(arch.entangling_zones) == 1
-    pairs = arch.entangling_zones[0]
-    assert (0, 1) in pairs
-    assert (2, 3) in pairs
-    assert (4, 5) in pairs
-    assert (6, 7) in pairs
+    # In the new model, entangling_zone_pairs are zone-level pairs
+    assert len(arch.entangling_zone_pairs) == 1
+    # The single zone is self-entangling
+    assert arch.entangling_zone_pairs[0] == (0, 0)
+
+
+def test_cz_partner():
+    """Test that get_cz_partner works for the logical arch spec."""
+    arch = logical.get_arch_spec()
+    # In a self-entangling zone, CZ partners are determined by zone pairs
+    loc = LocationAddress(0, 0, 0)
+    partner = arch.get_cz_partner(loc)
+    assert partner is not None
 
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(10, 0), {"invalid location word_id=10, site_id=0"}
-    yield arch_spec, LocationAddress(0, 2), {"invalid location word_id=0, site_id=2"}
+    yield arch_spec, LocationAddress(0, 10, 0), {"invalid location zone_id=0, word_id=10, site_id=0"}
+    yield arch_spec, LocationAddress(0, 0, 2), {"invalid location zone_id=0, word_id=0, site_id=2"}
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())
@@ -72,6 +79,6 @@ def test_location_validation(
 def test_negative_location_ids_rejected():
     """Negative IDs are rejected at construction time by the Rust-backed type."""
     with pytest.raises(ValueError, match="must be non-negative"):
-        LocationAddress(-1, 0)
+        LocationAddress(0, -1, 0)
     with pytest.raises(ValueError, match="must be non-negative"):
-        LocationAddress(0, -1)
+        LocationAddress(0, 0, -1)

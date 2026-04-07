@@ -41,7 +41,7 @@ class TestBuildArchSingleZone:
         assert isinstance(result, ArchResult)
         assert len(result.arch.words) == 2
         assert "proc" in result.zone_grids
-        assert result.zone_indices == {"proc": 1}
+        assert result.zone_indices == {"proc": 0}
 
     def test_with_word_topology(self) -> None:
         bp = ArchBlueprint(
@@ -57,7 +57,7 @@ class TestBuildArchSingleZone:
         )
         result = build_arch(bp)
         # 2x2 grid → 1 row dim + 1 col dim = 2 word buses
-        assert len(result.arch.word_buses) == 2
+        assert len(result.arch.word_buses) == 4  # 2 per zone * 2 zones (entangling split)
 
     def test_with_site_topology(self) -> None:
         bp = ArchBlueprint(
@@ -73,7 +73,7 @@ class TestBuildArchSingleZone:
         )
         result = build_arch(bp)
         # 4 sites → log2(4) = 2 site buses
-        assert len(result.arch.site_buses) == 2
+        assert len(result.arch.site_buses) == 4  # 2 per zone * 2 zones (entangling split)
         assert result.arch.has_site_buses == frozenset({0, 1})
 
 
@@ -82,9 +82,9 @@ class TestBuildArchTwoZones:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
         assert len(result.arch.words) == 8  # 4 + 4
-        assert result.zone_indices == {"proc": 1, "mem": 2}
+        assert result.zone_indices == {"proc": 0, "mem": 2}
         # Only proc has word topology → 2 word buses
-        assert len(result.arch.word_buses) == 2
+        assert len(result.arch.word_buses) == 4  # 2 per zone * 2 zones (entangling split)
 
     def test_two_zones_with_matching(self) -> None:
         bp = _two_zone_blueprint()
@@ -285,7 +285,7 @@ class TestBuildArchPerBusWords:
         )
         result = build_arch(bp)
         # Only proc buses, mem has no site topology
-        assert len(result.arch.site_buses) == 2
+        assert len(result.arch.site_buses) == 4  # 2 per zone * 2 zones (entangling split)
         for bus in result.arch.site_buses:
             assert bus.words == [0, 1]
         # has_site_buses = only proc words
@@ -315,10 +315,10 @@ class TestPathFinderIntegration:
         pf = PathFinder(result.arch)
 
         # proc word 0, site 0 → site 1: reachable (proc has site buses)
-        assert pf.find_path(LocationAddress(0, 0), LocationAddress(0, 1)) is not None
+        assert pf.find_path(LocationAddress(0, 0, 0), LocationAddress(0, 0, 1)) is not None
 
         # mem word 2, site 0 → site 1: NOT reachable (no site buses, no connections)
-        assert pf.find_path(LocationAddress(2, 0), LocationAddress(2, 1)) is None
+        assert pf.find_path(LocationAddress(0, 2, 0), LocationAddress(0, 2, 1)) is None
 
     def test_cross_zone_reachable_via_word_bus(self) -> None:
         """PathFinder can route across zones via inter-zone word buses."""
@@ -346,4 +346,4 @@ class TestPathFinderIntegration:
         pf = PathFinder(result.arch)
 
         # proc word 0 → mem word 2 (same site): reachable via matching word bus
-        assert pf.find_path(LocationAddress(0, 0), LocationAddress(2, 0)) is not None
+        assert pf.find_path(LocationAddress(0, 0, 0), LocationAddress(0, 2, 0)) is not None

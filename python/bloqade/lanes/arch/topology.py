@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from math import log2
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from bloqade.lanes.layout.arch import Bus
+from bloqade.lanes.bytecode._native import SiteBus, WordBus
 
 if TYPE_CHECKING:
     from .word_factory import WordGrid
@@ -23,14 +23,14 @@ if TYPE_CHECKING:
 class SiteTopology(Protocol):
     """Generates site buses for movement within a single word (row of sites)."""
 
-    def generate_site_buses(self, num_sites: int) -> tuple[Bus, ...]: ...
+    def generate_site_buses(self, num_sites: int) -> tuple[SiteBus, ...]: ...
 
 
 @runtime_checkable
 class WordTopology(Protocol):
     """Generates word buses for movement between words in a 2D grid."""
 
-    def generate_word_buses(self, grid: WordGrid) -> tuple[Bus, ...]: ...
+    def generate_word_buses(self, grid: WordGrid) -> tuple[WordBus, ...]: ...
 
 
 @runtime_checkable
@@ -39,7 +39,7 @@ class InterZoneTopology(Protocol):
 
     def generate_word_buses(
         self, grid_a: WordGrid, grid_b: WordGrid
-    ) -> tuple[Bus, ...]: ...
+    ) -> tuple[WordBus, ...]: ...
 
 
 # ── Helpers ──
@@ -63,14 +63,14 @@ class HypercubeSiteTopology:
     dst = [sites with bit d=1]. Each bus has N/2 parallel moves.
     """
 
-    def generate_site_buses(self, num_sites: int) -> tuple[Bus, ...]:
+    def generate_site_buses(self, num_sites: int) -> tuple[SiteBus, ...]:
         dims = _check_power_of_two(num_sites, "num_sites")
-        buses: list[Bus] = []
+        buses: list[SiteBus] = []
         for d in range(dims):
             mask = 1 << d
             src = [i for i in range(num_sites) if i & mask == 0]
             dst = [i | mask for i in src]
-            buses.append(Bus(src=src, dst=dst))
+            buses.append(SiteBus(src=src, dst=dst))
         return tuple(buses)
 
 
@@ -82,9 +82,9 @@ class AllToAllSiteTopology:
     any site to reach any other site directly.
     """
 
-    def generate_site_buses(self, num_sites: int) -> tuple[Bus, ...]:
+    def generate_site_buses(self, num_sites: int) -> tuple[SiteBus, ...]:
         return tuple(
-            Bus(src=[i], dst=[j])
+            SiteBus(src=[i], dst=[j])
             for i in range(num_sites)
             for j in range(i + 1, num_sites)
         )
@@ -103,10 +103,10 @@ class HypercubeWordTopology:
     to word(row, col ^ 2^d).
     """
 
-    def generate_word_buses(self, grid: WordGrid) -> tuple[Bus, ...]:
+    def generate_word_buses(self, grid: WordGrid) -> tuple[WordBus, ...]:
         row_dims = _check_power_of_two(grid.num_rows, "num_rows")
         col_dims = _check_power_of_two(grid.num_cols, "num_cols")
-        buses: list[Bus] = []
+        buses: list[WordBus] = []
 
         for d in range(row_dims):
             mask = 1 << d
@@ -118,7 +118,7 @@ class HypercubeWordTopology:
                 for c in range(grid.num_cols):
                     src.append(grid.word_id_at(r, c))
                     dst.append(grid.word_id_at(r | mask, c))
-            buses.append(Bus(src=src, dst=dst))
+            buses.append(WordBus(src=src, dst=dst))
 
         for d in range(col_dims):
             mask = 1 << d
@@ -130,7 +130,7 @@ class HypercubeWordTopology:
                         continue
                     src.append(grid.word_id_at(r, c))
                     dst.append(grid.word_id_at(r, c | mask))
-            buses.append(Bus(src=src, dst=dst))
+            buses.append(WordBus(src=src, dst=dst))
 
         return tuple(buses)
 
@@ -139,39 +139,39 @@ class HypercubeWordTopology:
 class DiagonalWordTopology:
     """Diagonal word connectivity replicating old Gemini site-bus pattern.
 
-    For a grid of (N rows × 2 cols), produces 2*N - 1 buses.
+    For a grid of (N rows x 2 cols), produces 2*N - 1 buses.
     Each bus connects words in column 0 to words in column 1 at a
     diagonal offset:
 
-    - Group 1 (shift 0..N-1): col_0[r] → col_1[r + shift]
+    - Group 1 (shift 0..N-1): col_0[r] -> col_1[r + shift]
       for r in 0..N-1-shift
-    - Group 2 (shift 1..N-1): col_0[r + shift] → col_1[r]
+    - Group 2 (shift 1..N-1): col_0[r + shift] -> col_1[r]
       for r in 0..N-1-shift (reverse diagonal)
 
     This gives full connectivity between all (col_0, col_1) word pairs,
     organized by diagonal. Requires exactly 2 columns.
     """
 
-    def generate_word_buses(self, grid: WordGrid) -> tuple[Bus, ...]:
+    def generate_word_buses(self, grid: WordGrid) -> tuple[WordBus, ...]:
         if grid.num_cols != 2:
             raise ValueError(
                 f"DiagonalWordTopology requires exactly 2 columns, got {grid.num_cols}"
             )
         n = grid.num_rows
-        buses: list[Bus] = []
+        buses: list[WordBus] = []
 
-        # Group 1: col_0[r] → col_1[r + shift]
+        # Group 1: col_0[r] -> col_1[r + shift]
         for shift in range(n):
             src = [grid.word_id_at(r, 0) for r in range(n - shift)]
             dst = [grid.word_id_at(r + shift, 1) for r in range(n - shift)]
-            buses.append(Bus(src=src, dst=dst))
+            buses.append(WordBus(src=src, dst=dst))
 
-        # Group 2: col_0[r + shift] → col_1[r] (reverse diagonals)
+        # Group 2: col_0[r + shift] -> col_1[r] (reverse diagonals)
         for diff in range(1, n):
             shift = n - diff
             src = [grid.word_id_at(r + shift, 0) for r in range(n - shift)]
             dst = [grid.word_id_at(r, 1) for r in range(n - shift)]
-            buses.append(Bus(src=src, dst=dst))
+            buses.append(WordBus(src=src, dst=dst))
 
         return tuple(buses)
 
@@ -186,11 +186,11 @@ class TransversalSiteTopology:
     Produces two kinds of buses (transversal buses first so that logical
     bus IDs are preserved):
 
-    1. **Transversal buses** — each logical bus is "inflated" so that every
+    1. **Transversal buses** -- each logical bus is "inflated" so that every
        ``(src, dst)`` element becomes ``d`` parallel physical elements.
        Logical bus *B* becomes physical bus *B* with the same index.
 
-    2. **Intra-group buses** (optional) — generated by ``intra_group_topology``
+    2. **Intra-group buses** (optional) -- generated by ``intra_group_topology``
        for ``d`` sites, then replicated and offset for each group.  These
        support non-transversal operations within a code word (e.g. Steane
        code initialisation, syndrome extraction).
@@ -200,14 +200,14 @@ class TransversalSiteTopology:
     code_distance: int
     intra_group_topology: SiteTopology | None = None
 
-    def generate_site_buses(self, num_sites: int) -> tuple[Bus, ...]:
+    def generate_site_buses(self, num_sites: int) -> tuple[SiteBus, ...]:
         d = self.code_distance
         logical_sites = num_sites // d
 
         if logical_sites < 1:
             raise ValueError(f"num_sites={num_sites} too small for code_distance={d}")
 
-        buses: list[Bus] = []
+        buses: list[SiteBus] = []
 
         # 1. Transversal buses: inflate each logical bus by d
         for logical_bus in self.logical_topology.generate_site_buses(logical_sites):
@@ -217,7 +217,7 @@ class TransversalSiteTopology:
                 for offset in range(d):
                     expanded_src.append(s * d + offset)
                     expanded_dst.append(t * d + offset)
-            buses.append(Bus(src=expanded_src, dst=expanded_dst))
+            buses.append(SiteBus(src=expanded_src, dst=expanded_dst))
 
         # 2. Intra-group buses: replicated per group, offset by group base
         if self.intra_group_topology is not None:
@@ -226,7 +226,7 @@ class TransversalSiteTopology:
                 base = group * d
                 for bus in group_buses:
                     buses.append(
-                        Bus(
+                        SiteBus(
                             src=[s + base for s in bus.src],
                             dst=[t + base for t in bus.dst],
                         )
@@ -248,7 +248,7 @@ class MatchingTopology:
 
     def generate_word_buses(
         self, grid_a: WordGrid, grid_b: WordGrid
-    ) -> tuple[Bus, ...]:
+    ) -> tuple[WordBus, ...]:
         if (grid_a.num_rows, grid_a.num_cols) != (grid_b.num_rows, grid_b.num_cols):
             raise ValueError(
                 f"Grid dimensions must match: "
@@ -261,4 +261,4 @@ class MatchingTopology:
             for c in range(grid_a.num_cols):
                 src.append(grid_a.word_id_at(r, c))
                 dst.append(grid_b.word_id_at(r, c))
-        return (Bus(src=src, dst=dst),)
+        return (WordBus(src=src, dst=dst),)
