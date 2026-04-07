@@ -3,6 +3,23 @@
 //! These types encode device-level addresses into compact integer
 //! representations used in the 16-byte instruction format.
 
+use serde::{Deserialize, Serialize};
+
+/// Site index within a word. Matches the 16-bit site_id field in LocationAddr.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SiteRef(pub u16);
+
+/// Word index within a zone. Matches the 16-bit word_id field in LocationAddr.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WordRef(pub u16);
+
+/// Zone-qualified word reference for inter-zone bus entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ZonedWordRef {
+    pub zone_id: u8,
+    pub word_id: u16,
+}
+
 /// Atom movement direction along a transport bus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -224,5 +241,36 @@ mod tests {
         let bits = addr.encode();
         assert_eq!(bits, 0xFFFF);
         assert_eq!(ZoneAddr::decode(bits), addr);
+    }
+
+    #[test]
+    fn test_site_ref_newtype() {
+        let s = SiteRef(42);
+        assert_eq!(s.0, 42);
+        let json = serde_json::to_string(&s).unwrap();
+        let deserialized: SiteRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, deserialized);
+    }
+
+    #[test]
+    fn test_word_ref_newtype() {
+        let w = WordRef(100);
+        assert_eq!(w.0, 100);
+        let json = serde_json::to_string(&w).unwrap();
+        let deserialized: WordRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(w, deserialized);
+    }
+
+    #[test]
+    fn test_zoned_word_ref() {
+        let zwr = ZonedWordRef {
+            zone_id: 3,
+            word_id: 42,
+        };
+        assert_eq!(zwr.zone_id, 3);
+        assert_eq!(zwr.word_id, 42);
+        let json = serde_json::to_string(&zwr).unwrap();
+        let deserialized: ZonedWordRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(zwr, deserialized);
     }
 }
