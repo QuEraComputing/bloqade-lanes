@@ -58,6 +58,7 @@ def _build_spec_from_python():
         word_buses=[word_bus],
         words_with_site_buses=[0, 1],
         sites_with_word_buses=[5, 6, 7, 8, 9],
+        entangling_pairs=[(0, 1)],
     )
     mode = Mode(
         name="all",
@@ -73,7 +74,6 @@ def _build_spec_from_python():
         words=[word0, word1],
         zones=[zone],
         zone_buses=[],
-        entangling_zone_pairs=[(0, 0)],
         modes=[mode],
         paths=[
             TransportPath(
@@ -133,6 +133,7 @@ class TestCapabilityFlags:
             word_buses=[word_bus],
             words_with_site_buses=[0, 1],
             sites_with_word_buses=[5, 6, 7, 8, 9],
+            entangling_pairs=[(0, 1)],
         )
         mode = Mode(
             name="all",
@@ -144,7 +145,6 @@ class TestCapabilityFlags:
             words=[word0, word1],
             zones=[zone],
             zone_buses=[],
-            entangling_zone_pairs=[(0, 0)],
             modes=[mode],
             feed_forward=True,
             atom_reloading=True,

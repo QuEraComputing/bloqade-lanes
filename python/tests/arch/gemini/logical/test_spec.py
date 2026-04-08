@@ -10,13 +10,13 @@ from bloqade.lanes.layout.encoding import (
 
 def test_logical_architecture():
     arch = logical.get_arch_spec()
-    assert len(arch.words) == 10
-    assert len(arch.words[0].site_indices) == 2
-    # Entangling zone splits into 2 sub-zones; buses duplicated per sub-zone
-    assert len(arch.site_buses) == 2  # 1 per sub-zone × 2
-    assert len(arch.word_buses) == 18  # 9 per sub-zone × 2
+    assert len(arch.words) == 20
+    assert len(arch.words[0].site_indices) == 1
+    # Single zone with no site buses and 10 word buses
+    assert len(arch.site_buses) == 0
+    assert len(arch.word_buses) == 10
     assert arch.max_qubits == 10
-    assert sorted(arch._home_words) == [0, 2, 4, 6, 8]
+    assert sorted(arch._home_words) == [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
 
 
 def test_physical_architecture():
@@ -37,13 +37,14 @@ def test_get_zone_index():
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 0
 
-    loc_addr = LocationAddress(zone_id=0, word_id=0, site_id=1)
+    # Word 1 is at index 1 in zone 0 (1 site per word)
+    loc_addr = LocationAddress(zone_id=0, word_id=1, site_id=0)
     zone_id = ZoneAddress(0)
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 1
 
-    # Word 1 is at index 2 in zone 0 (after word 0 sites 0 and 1)
-    loc_addr = LocationAddress(zone_id=0, word_id=1, site_id=0)
+    # Word 2 is at index 2
+    loc_addr = LocationAddress(zone_id=0, word_id=2, site_id=0)
     zone_id = ZoneAddress(0)
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 2
@@ -51,11 +52,13 @@ def test_get_zone_index():
 
 def test_entangling_pairs():
     arch = logical.get_arch_spec()
-    # Both zones carry entangling_pairs pairing column-0 words with column-1 words
+    # Single zone with adjacent word pairs
     zones = arch._inner.zones
-    expected_pairs = [(0, 5), (1, 6), (2, 7), (3, 8), (4, 9)]
+    expected_pairs = [
+        (0, 1), (2, 3), (4, 5), (6, 7), (8, 9),
+        (10, 11), (12, 13), (14, 15), (16, 17), (18, 19),
+    ]
     assert zones[0].entangling_pairs == expected_pairs
-    assert zones[1].entangling_pairs == expected_pairs
 
 
 def test_cz_partner():
@@ -69,7 +72,7 @@ def test_cz_partner():
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(10, 0), {"invalid location zone_id=0, word_id=10, site_id=0"}
+    yield arch_spec, LocationAddress(99, 0), {"invalid location zone_id=0, word_id=99, site_id=0"}
     yield arch_spec, LocationAddress(0, 2), {"invalid location zone_id=0, word_id=0, site_id=2"}
 
 

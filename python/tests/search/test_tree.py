@@ -9,6 +9,7 @@ from bloqade.lanes.layout import (
     LocationAddress,
     MoveType,
     SiteLaneAddress,
+    WordLaneAddress,
 )
 from bloqade.lanes.search.generators import ExhaustiveMoveGenerator, MoveGenerator
 from bloqade.lanes.search.tree import (
@@ -23,7 +24,7 @@ def _make_tree() -> ConfigurationTree:
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(1, 0),
+        1: LocationAddress(4, 0),
     }
     return ConfigurationTree.from_initial_placement(arch_spec, placement)
 
@@ -39,7 +40,7 @@ def test_from_initial_placement():
 def test_apply_move_set_valid():
     tree = _make_tree()
 
-    lane = SiteLaneAddress(0, 0, 0)
+    lane = WordLaneAddress(0, 0, 0)
     move_set = frozenset({lane})
 
     child = tree.apply_move_set(tree.root, move_set, strict=False)
@@ -47,8 +48,8 @@ def test_apply_move_set_valid():
     assert child.depth == 1
     assert child.parent is tree.root
     assert child.parent_moves == move_set
-    assert child.configuration[0] == LocationAddress(0, 1)
-    assert child.configuration[1] == LocationAddress(1, 0)
+    assert child.configuration[0] == LocationAddress(1, 0)
+    assert child.configuration[1] == LocationAddress(4, 0)
 
 
 def test_apply_move_set_collision_strict_raises():
@@ -56,11 +57,11 @@ def test_apply_move_set_collision_strict_raises():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 1),
+        1: LocationAddress(1, 0),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
-    lane = SiteLaneAddress(0, 0, 0)
+    lane = WordLaneAddress(0, 0, 0)
     move_set = frozenset({lane})
 
     with pytest.raises(InvalidMoveError, match="Collision"):
@@ -72,11 +73,11 @@ def test_apply_move_set_collision_nonstrict_returns_none():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 1),
+        1: LocationAddress(1, 0),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
-    lane = SiteLaneAddress(0, 0, 0)
+    lane = WordLaneAddress(0, 0, 0)
     move_set = frozenset({lane})
 
     child = tree.apply_move_set(tree.root, move_set, strict=False)
@@ -88,7 +89,7 @@ def test_collision_filtered_by_generator():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 1),
+        1: LocationAddress(1, 0),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
@@ -104,7 +105,7 @@ def test_collision_filtered_by_generator():
 def test_transposition_table_deduplication():
     tree = _make_tree()
 
-    lane_fwd = SiteLaneAddress(0, 0, 0)
+    lane_fwd = WordLaneAddress(0, 0, 0)
     child = tree.apply_move_set(tree.root, frozenset({lane_fwd}), strict=False)
     assert child is not None
 
@@ -158,8 +159,8 @@ def test_expand_produces_valid_children():
 
 def test_expand_deadlock():
     arch_spec = logical.get_arch_spec()
-    # Fill all 8 words × 2 sites = 16 locations to create a deadlock
-    placement = {i: LocationAddress(i // 2, i % 2) for i in range(16)}
+    # Fill all 20 words × 1 site = 20 locations to create a deadlock
+    placement = {i: LocationAddress(i, 0) for i in range(20)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
     gen = ExhaustiveMoveGenerator()
 
@@ -177,7 +178,7 @@ class _FixedMoveGenerator:
 
 def test_try_move_set_reports_created_child():
     tree = _make_tree()
-    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    move_set = frozenset({WordLaneAddress(0, 0, 0)})
     outcome = tree.try_move_set(tree.root, move_set, strict=False)
     assert outcome.status == ExpansionStatus.CREATED_CHILD
     assert outcome.child is not None
@@ -187,7 +188,7 @@ def test_try_move_set_reports_created_child():
 
 def test_try_move_set_reports_already_child():
     tree = _make_tree()
-    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    move_set = frozenset({WordLaneAddress(0, 0, 0)})
     first = tree.try_move_set(tree.root, move_set, strict=False)
     assert first.status == ExpansionStatus.CREATED_CHILD
     second = tree.try_move_set(tree.root, move_set, strict=False)
@@ -207,10 +208,10 @@ def test_try_move_set_reports_collision():
     arch_spec = logical.get_arch_spec()
     placement = {
         0: LocationAddress(0, 0),
-        1: LocationAddress(0, 1),
+        1: LocationAddress(1, 0),
     }
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
-    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    move_set = frozenset({WordLaneAddress(0, 0, 0)})
     outcome = tree.try_move_set(tree.root, move_set, strict=False)
     assert outcome.status == ExpansionStatus.COLLISION
     assert outcome.child is None
@@ -219,13 +220,13 @@ def test_try_move_set_reports_collision():
 def test_try_move_set_reports_collision_with_blocked_locations():
     arch_spec = logical.get_arch_spec()
     placement = {0: LocationAddress(0, 0)}
-    blocked = frozenset({LocationAddress(0, 1)})
+    blocked = frozenset({LocationAddress(1, 0)})
     tree = ConfigurationTree(
         arch_spec=arch_spec,
         root=ConfigurationTree.from_initial_placement(arch_spec, placement).root,
         blocked_locations=blocked,
     )
-    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    move_set = frozenset({WordLaneAddress(0, 0, 0)})
     outcome = tree.try_move_set(tree.root, move_set, strict=False)
     assert outcome.status == ExpansionStatus.COLLISION
     assert outcome.child is None
@@ -241,7 +242,7 @@ def test_try_move_set_reports_invalid_lane():
 
 def test_expand_node_detailed_reports_all_attempts():
     tree = _make_tree()
-    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    move_set = frozenset({WordLaneAddress(0, 0, 0)})
     invalid = frozenset({LaneAddress(MoveType.SITE, 999, 999, 999, Direction.FORWARD)})
     gen: MoveGenerator = _FixedMoveGenerator([move_set, move_set, invalid])  # type: ignore[assignment]
     outcomes = list(tree.expand_node_detailed(tree.root, gen, strict=False))
@@ -255,7 +256,7 @@ def test_expand_node_detailed_reports_all_attempts():
 
 def test_expand_node_compat_filters_to_created_children_only():
     tree = _make_tree()
-    move_set = frozenset({SiteLaneAddress(0, 0, 0)})
+    move_set = frozenset({WordLaneAddress(0, 0, 0)})
     invalid = frozenset({LaneAddress(MoveType.SITE, 999, 999, 999, Direction.FORWARD)})
     gen: MoveGenerator = _FixedMoveGenerator([move_set, move_set, invalid])  # type: ignore[assignment]
     children = tree.expand_node(tree.root, gen, strict=False)
@@ -276,7 +277,7 @@ def test_valid_lanes_returns_nonempty():
 def test_valid_lanes_excludes_blocked_destinations():
     arch_spec = logical.get_arch_spec()
     placement = {0: LocationAddress(0, 0)}
-    blocked = frozenset({LocationAddress(0, 1)})
+    blocked = frozenset({LocationAddress(1, 0)})
     tree = ConfigurationTree(
         arch_spec=arch_spec,
         root=ConfigurationTree.from_initial_placement(arch_spec, placement).root,
@@ -324,8 +325,6 @@ def test_apply_move_set_rejects_inconsistent_group():
     """A lane group with mixed move types raises InvalidMoveError."""
     tree = _make_tree()
 
-    from bloqade.lanes.layout import WordLaneAddress
-
     # Mixing site bus and word bus lanes violates lane-group consistency.
     inconsistent_group = frozenset(
         {
@@ -339,16 +338,16 @@ def test_apply_move_set_rejects_inconsistent_group():
 
 
 def test_valid_lanes_no_collisions():
-    """All sites in a word occupied — no valid site-bus lanes for that word."""
+    """Destinations of valid lanes must be unoccupied."""
     arch_spec = logical.get_arch_spec()
-    # Fill both sites in word 0 so site bus lanes within word 0 are blocked
-    placement = {0: LocationAddress(0, 0), 1: LocationAddress(0, 1)}
+    # Place atoms at word 0 and word 1 so forward bus-0 from word 0 collides
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
     tree = ConfigurationTree.from_initial_placement(arch_spec, placement)
 
     from bloqade.lanes.layout import MoveType
 
-    site_lanes = list(tree.valid_lanes(tree.root, move_type=MoveType.SITE))
-    # Site bus lanes on word 0 should be blocked (both sites occupied)
-    for lane in site_lanes:
+    word_lanes = list(tree.valid_lanes(tree.root, move_type=MoveType.WORD))
+    # All valid lanes must have unoccupied destinations
+    for lane in word_lanes:
         src, dst = tree.arch_spec.get_endpoints(lane)
         assert not tree.root.is_occupied(dst)

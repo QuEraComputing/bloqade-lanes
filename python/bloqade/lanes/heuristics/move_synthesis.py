@@ -86,20 +86,20 @@ def _compute_move_layers(
             for wb_site in candidate_sites:
                 if wb_site not in arch_spec.has_word_buses:
                     continue
-                wb_src = layout.LocationAddress(src.zone_id, src.word_id, wb_site)
-                wb_dst = layout.LocationAddress(dst.zone_id, dst.word_id, wb_site)
+                wb_src = layout.LocationAddress(src.word_id, wb_site, src.zone_id)
+                wb_dst = layout.LocationAddress(dst.word_id, wb_site, dst.zone_id)
                 lane = arch_spec.get_lane_address(wb_src, wb_dst)
                 if lane is not None:
                     # Site adjustment before word bus if needed
                     if src.site_id != wb_site:
                         site_adjustments.append(
-                            (src, layout.LocationAddress(src.zone_id, src.word_id, wb_site))
+                            (src, layout.LocationAddress(src.word_id, wb_site, src.zone_id))
                         )
                     word_bus_lanes.setdefault(lane.bus_id, []).append(lane)
                     # Site adjustment after word bus if needed
                     if wb_site != dst.site_id:
                         same_word.append(
-                            (layout.LocationAddress(dst.zone_id, dst.word_id, wb_site), dst)
+                            (layout.LocationAddress(dst.word_id, wb_site, dst.zone_id), dst)
                         )
                     break
             else:

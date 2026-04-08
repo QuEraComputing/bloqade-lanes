@@ -87,7 +87,7 @@ class BusContext:
                 if bus_id < len(zone.site_buses):
                     bus = zone.site_buses[bus_id]
                     src_locs.extend(
-                        LocationAddress(zid, w, s)
+                        LocationAddress(w, s, zid)
                         for w in zone.words_with_site_buses
                         for s in bus.src
                     )
@@ -95,7 +95,7 @@ class BusContext:
                 if bus_id < len(zone.word_buses):
                     bus = zone.word_buses[bus_id]
                     src_locs.extend(
-                        LocationAddress(zid, w, s)
+                        LocationAddress(w, s, zid)
                         for w in bus.src
                         for s in zone.sites_with_word_buses
                     )
@@ -110,7 +110,7 @@ class BusContext:
         for loc in src_locs:
             if loc in occupied:
                 lane = LaneAddress(
-                    move_type, loc.zone_id, loc.word_id, loc.site_id, bus_id, direction
+                    move_type, loc.word_id, loc.site_id, bus_id, direction, loc.zone_id
                 )
                 _, dst = arch_spec.get_endpoints(lane)
                 if dst in occupied:
@@ -147,11 +147,11 @@ class BusContext:
                     lanes.append(
                         LaneAddress(
                             self.move_type,
-                            loc.zone_id,
                             loc.word_id,
                             loc.site_id,
                             self.bus_id,
                             self.direction,
+                            loc.zone_id,
                         )
                     )
         return frozenset(lanes)

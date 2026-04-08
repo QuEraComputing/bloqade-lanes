@@ -53,7 +53,7 @@ class ExhaustiveMoveGenerator:
                 for direction in (Direction.FORWARD, Direction.BACKWARD):
                     bus_word_ids = zone.words_with_site_buses
                     src_locs = [
-                        LocationAddress(zone_id, w, s)
+                        LocationAddress(w, s, zone_id)
                         for w in bus_word_ids
                         for s in bus.src
                     ]
@@ -71,7 +71,7 @@ class ExhaustiveMoveGenerator:
             for bus_id, bus in enumerate(zone.word_buses):
                 for direction in (Direction.FORWARD, Direction.BACKWARD):
                     src_locs = [
-                        LocationAddress(zone_id, w, s)
+                        LocationAddress(w, s, zone_id)
                         for w in bus.src
                         for s in zone.sites_with_word_buses
                     ]

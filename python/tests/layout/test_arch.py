@@ -22,10 +22,10 @@ def test_get_blockaded_location_with_pair():
     blockaded = arch_spec.get_blockaded_location(location)
 
     assert blockaded is not None
-    assert blockaded == layout.LocationAddress(5, 0)
+    assert blockaded == layout.LocationAddress(1, 0)
 
     # test reverse
-    location2 = layout.LocationAddress(5, 0)
+    location2 = layout.LocationAddress(1, 0)
     blockaded2 = arch_spec.get_blockaded_location(location2)
 
     assert blockaded2 is not None
@@ -82,24 +82,25 @@ def test_blockaded_location_preserves_site_index():
                 ), f"Site mismatch: (w={word_id},s={s}) -> site {blockaded.site_id}"
 
 
-def test_get_lane_address_site_move_forward():
-    """get_lane_address returns the correct lane for a site-bus move (forward)."""
+def test_get_lane_address_word_move_forward():
+    """get_lane_address returns the correct lane for a word-bus move (forward)."""
     arch_spec = logical.get_arch_spec()
+    # Word bus 0 maps word 0 -> word 1
     src = layout.LocationAddress(0, 0)
-    dst = layout.LocationAddress(0, 1)
+    dst = layout.LocationAddress(1, 0)
     lane = arch_spec.get_lane_address(src, dst)
     assert lane is not None
-    assert lane.move_type == MoveType.SITE
+    assert lane.move_type == MoveType.WORD
     assert lane.direction == Direction.FORWARD
     got_src, got_dst = arch_spec.get_endpoints(lane)
     assert (got_src, got_dst) == (src, dst)
 
 
-def test_get_lane_address_site_move_backward():
-    """get_lane_address returns the correct lane for a site-bus move (backward)."""
+def test_get_lane_address_word_move_backward():
+    """get_lane_address returns the correct lane for a word-bus move (backward)."""
     arch_spec = logical.get_arch_spec()
     src = layout.LocationAddress(0, 0)
-    dst = layout.LocationAddress(0, 1)
+    dst = layout.LocationAddress(1, 0)
     forward_lane = arch_spec.get_lane_address(src, dst)
     assert forward_lane is not None
     backward_lane = arch_spec.get_lane_address(dst, src)

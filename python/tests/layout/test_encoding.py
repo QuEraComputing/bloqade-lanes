@@ -74,21 +74,23 @@ class TestRangeValidation:
 
     def test_lane_address_word_id_overflow(self):
         with pytest.raises(ValueError, match="word_id=65536 exceeds maximum"):
-            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0x10000, 0, 0)
+            encoding.LaneAddress(encoding.MoveType.SITE, 0x10000, 0, 0)
 
     def test_lane_address_site_id_overflow(self):
         with pytest.raises(ValueError, match="site_id=65536 exceeds maximum"):
-            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, 0x10000, 0)
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0x10000, 0)
 
     def test_lane_address_bus_id_overflow(self):
         with pytest.raises(ValueError, match="bus_id=65536 exceeds maximum"):
-            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, 0, 0x10000)
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, 0x10000)
 
     def test_max_valid_values_accepted(self):
         """Maximum valid values are accepted."""
         encoding.ZoneAddress(zone_id=0xFFFF)
         encoding.LocationAddress(zone_id=0xFF, word_id=0xFFFF, site_id=0xFFFF)
-        encoding.LaneAddress(encoding.MoveType.SITE, 0xFF, 0xFFFF, 0xFFFF, 0xFFFF)
+        encoding.LaneAddress(
+            encoding.MoveType.SITE, 0xFFFF, 0xFFFF, 0xFFFF, zone_id=0xFF
+        )
 
     def test_zone_address_negative(self):
         with pytest.raises(ValueError, match="must be non-negative"):
@@ -102,8 +104,8 @@ class TestRangeValidation:
 
     def test_lane_address_negative(self):
         with pytest.raises(ValueError, match="must be non-negative"):
-            encoding.LaneAddress(encoding.MoveType.SITE, 0, -1, 0, 0)
+            encoding.LaneAddress(encoding.MoveType.SITE, -1, 0, 0)
         with pytest.raises(ValueError, match="must be non-negative"):
-            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, -1, 0)
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, -1, 0)
         with pytest.raises(ValueError, match="must be non-negative"):
-            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, 0, -1)
+            encoding.LaneAddress(encoding.MoveType.SITE, 0, 0, -1)

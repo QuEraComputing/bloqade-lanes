@@ -546,7 +546,7 @@ class ArchSpec:
         partner_word = self._word_partner_map.get(location.word_id)
         if partner_word is None:
             return None
-        return LocationAddress(location.zone_id, partner_word, location.site_id)
+        return LocationAddress(partner_word, location.site_id, location.zone_id)
 
     @cached_property
     def _word_partner_map(self) -> dict[int, int]:

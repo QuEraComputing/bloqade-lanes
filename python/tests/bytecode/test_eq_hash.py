@@ -274,31 +274,38 @@ class TestTransportPathEqHash:
 
 
 def _minimal_arch_spec(
-    entangling_zone_pairs: list[tuple[int, int]] | None = None,
+    entangling_pairs: list[tuple[int, int]] | None = None,
 ) -> ArchSpec:
     """Build a minimal valid ArchSpec for testing."""
     grid = Grid(0.0, 0.0, [], [])
     word = Word(sites=[(0, 0)])
+    words = [word]
+    if entangling_pairs:
+        # Need a second word for valid entangling pairs
+        words = [word, Word(sites=[(0, 0)])]
     zone = Zone(
         grid=grid,
         site_buses=[],
         word_buses=[],
         words_with_site_buses=[],
         sites_with_word_buses=[],
+        entangling_pairs=entangling_pairs,
     )
+    bitstring_order = [
+        LocationAddress(0, w, s)
+        for w in range(len(words))
+        for s in range(1)
+    ]
     mode = Mode(
         name="all",
         zones=[0],
-        bitstring_order=[LocationAddress(0, 0, 0)],
+        bitstring_order=bitstring_order,
     )
     return ArchSpec(
         version=(2, 0),
-        words=[word],
+        words=words,
         zones=[zone],
         zone_buses=[],
-        entangling_zone_pairs=(
-            entangling_zone_pairs if entangling_zone_pairs is not None else []
-        ),
         modes=[mode],
     )
 
@@ -310,8 +317,8 @@ class TestArchSpecEqHash:
         assert a == b
 
     def test_different_entangling_zones(self):
-        a = _minimal_arch_spec(entangling_zone_pairs=[])
-        b = _minimal_arch_spec(entangling_zone_pairs=[(0, 0)])
+        a = _minimal_arch_spec(entangling_pairs=[])
+        b = _minimal_arch_spec(entangling_pairs=[(0, 1)])
         assert a != b
 
     def test_not_hashable(self):

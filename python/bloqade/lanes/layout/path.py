@@ -55,14 +55,14 @@ class PathFinder:
                 bus_word_ids = zone.words_with_site_buses
                 for word_id in bus_word_ids:
                     for src, dst in zip(bus.src, bus.dst):
-                        src_site = LocationAddress(zone_id, word_id, src)
-                        dst_site = LocationAddress(zone_id, word_id, dst)
+                        src_site = LocationAddress(word_id, src, zone_id)
+                        dst_site = LocationAddress(word_id, dst, zone_id)
                         lane_addr = SiteLaneAddress(
-                            zone_id,
                             word_id,
                             src,
                             bus_id,
                             Direction.FORWARD,
+                            zone_id,
                         )
                         src_idx = self.physical_address_map[src_site]
                         dst_idx = self.physical_address_map[dst_site]
@@ -78,14 +78,14 @@ class PathFinder:
             for bus_id, bus in enumerate(zone.word_buses):
                 for src_word, dst_word in zip(bus.src, bus.dst):
                     for site in zone.sites_with_word_buses:
-                        src_site = LocationAddress(zone_id, src_word, site)
-                        dst_site = LocationAddress(zone_id, dst_word, site)
+                        src_site = LocationAddress(src_word, site, zone_id)
+                        dst_site = LocationAddress(dst_word, site, zone_id)
                         lane_addr = WordLaneAddress(
-                            zone_id,
                             src_word,
                             site,
                             bus_id,
                             Direction.FORWARD,
+                            zone_id,
                         )
                         src_idx = self.physical_address_map[src_site]
                         dst_idx = self.physical_address_map[dst_site]

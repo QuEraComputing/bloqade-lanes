@@ -106,11 +106,11 @@ class ConfigurationTree:
                                 for site_id in bus.src:
                                     lane = LaneAddress(
                                         mt,
-                                        zone_id,
                                         word_id,
                                         site_id,
                                         bus_id,
                                         direction,
+                                        zone_id,
                                     )
                                     src, _ = self.arch_spec.get_endpoints(lane)
                                     lanes_for_key.append(lane)
@@ -121,11 +121,11 @@ class ConfigurationTree:
                                 for site_id in zone.sites_with_word_buses:
                                     lane = LaneAddress(
                                         mt,
-                                        zone_id,
                                         word_id,
                                         site_id,
                                         bus_id,
                                         direction,
+                                        zone_id,
                                     )
                                     src, _ = self.arch_spec.get_endpoints(lane)
                                     lanes_for_key.append(lane)
