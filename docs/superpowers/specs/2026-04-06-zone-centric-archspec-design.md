@@ -70,10 +70,11 @@ pub struct Zone {
     pub word_buses: Vec<Bus<WordRef>>,
     pub words_with_site_buses: Vec<u32>,
     pub sites_with_word_buses: Vec<u32>,
+    pub entangling_pairs: Vec<[u32; 2]>,  // word pairs within this zone for CZ gates
 }
 ```
 
-Each zone is a self-contained unit for internal connectivity. The `grid` is the zone's coordinate system — a site's physical position is `(grid.x[word.sites[s][0]], grid.y[word.sites[s][1]])`.
+Each zone is a self-contained unit for internal connectivity and entangling capability. The `grid` is the zone's coordinate system — a site's physical position is `(grid.x[word.sites[s][0]], grid.y[word.sites[s][1]])`. The `entangling_pairs` field lists word pairs within this zone that are within blockade radius for CZ gates. A zone with empty `entangling_pairs` is a storage/low-connectivity zone.
 
 #### Word
 
@@ -105,7 +106,6 @@ pub struct ArchSpec {
     pub words: Vec<Word>,
     pub zones: Vec<Zone>,
     pub zone_buses: Vec<Bus<ZonedWordRef>>,
-    pub entangling_zone_pairs: Vec<[u32; 2]>,
     pub modes: Vec<Mode>,
     pub paths: Option<Vec<TransportPath>>,
     pub feed_forward: bool,
@@ -113,13 +113,17 @@ pub struct ArchSpec {
 }
 ```
 
-Removed fields: `geometry` (struct), `buses` (struct), `words_with_site_buses`, `sites_with_word_buses`, `entangling_zones`, `measurement_mode_zones`, `has_cz` (on Word).
+Removed fields: `geometry` (struct), `buses` (struct), `words_with_site_buses`, `sites_with_word_buses`, `entangling_zones`, `measurement_mode_zones`, `has_cz` (on Word), `entangling_zone_pairs` (moved into Zone).
 
-#### Entangling zone pairs
+#### Entangling pairs (intra-zone)
 
-`entangling_zone_pairs: [(0, 1)]` means every `(word_id, site_id)` in Zone 0 can entangle with the same `(word_id, site_id)` in Zone 1. The 1:1 correspondence is guaranteed by the uniform zone dimension constraint. This replaces `entangling_zones`, `has_cz`, and the old word-pair entangling model.
+Entangling pairs are a **zone-level** concept. Each zone declares its own `entangling_pairs: Vec<[u32; 2]>` — word pairs within that zone that are at blockade radius for CZ gates. A gate zone has entangling pairs; a storage zone does not.
 
-**Replacement API for `has_cz` / `get_blockaded_location`:** Given a `LocationAddr(zone=z, word=w, site=s)`, its CZ partner is `LocationAddr(zone=z', word=w, site=s)` where `(z, z')` or `(z', z)` appears in `entangling_zone_pairs`. If no such pair exists, the site has no CZ partner. The Python `ArchSpec` wrapper provides a `get_cz_partner(loc: LocationAddr) -> Optional[LocationAddr]` method implementing this lookup. The old `Word.cz_pair`, `Word.has_cz`, and `ArchSpec.get_blockaded_location()` are removed.
+For example, a single gate zone containing 10 words in a 2-column interleaved grid might have `entangling_pairs: [[0,5], [1,6], [2,7], [3,8], [4,9]]` — pairing words in column 0 with words in column 1.
+
+**Replacement API for `has_cz` / `get_blockaded_location`:** Given a `LocationAddr(zone=z, word=w, site=s)`, its CZ partner is `LocationAddr(zone=z, word=w', site=s)` where `(w, w')` or `(w', w)` appears in `zones[z].entangling_pairs`. The partner is always in the **same zone**. If no pair exists, the site has no CZ partner. The Python `ArchSpec` wrapper provides a `get_cz_partner(loc: LocationAddr) -> Optional[LocationAddr]` method implementing this lookup. The old `Word.cz_pair`, `Word.has_cz`, and `ArchSpec.get_blockaded_location()` are removed.
+
+**Why intra-zone, not inter-zone:** CZ gate execution targets a specific zone. The zone must contain both words in the pair. This means all compilation algorithms operate within a single zone_id — no cross-zone addressing is needed for gate execution. Zones with entangling pairs are high-connectivity gate zones; zones without are low-connectivity storage zones. Zone buses handle transport between them.
 
 #### sites_per_word
 
@@ -177,14 +181,16 @@ The `Grid` serialization format is unchanged — it uses the existing `x_start`/
       "site_buses": [{ "src": [0, 1], "dst": [2, 3] }],
       "word_buses": [{ "src": [0], "dst": [1] }],
       "words_with_site_buses": [0, 1],
-      "sites_with_word_buses": [0, 1, 2]
+      "sites_with_word_buses": [0, 1, 2],
+      "entangling_pairs": [[0, 1]]
     },
     {
       "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [7.5, 7.5], "y_spacing": [4.0, 4.0, 4.0] },
       "site_buses": [],
       "word_buses": [],
       "words_with_site_buses": [],
-      "sites_with_word_buses": []
+      "sites_with_word_buses": [],
+      "entangling_pairs": []
     }
   ],
   "zone_buses": [
@@ -193,7 +199,6 @@ The `Grid` serialization format is unchanged — it uses the existing `x_start`/
       "dst": [{ "zone_id": 1, "word_id": 0 }]
     }
   ],
-  "entangling_zone_pairs": [[0, 1]],
   "modes": [
     {
       "name": "full",
@@ -226,9 +231,10 @@ The `Grid` serialization format is unchanged — it uses the existing `x_start`/
 - All words must have the same number of sites (sites_per_word)
 - Word site indices must be within the zone grid dimensions
 
-#### Entangling zone pairs
-- Both zone indices must be valid
-- Paired zones must have matching structure (guaranteed by uniform dimension constraint)
+#### Entangling pairs (per-zone)
+- Word indices in `entangling_pairs` must be valid (< number of words)
+- Both words in a pair must be distinct
+- No duplicate pairs (order-independent)
 
 #### Modes
 - Zone indices in `modes[*].zones` must be valid
@@ -251,7 +257,7 @@ pub struct PyZoneBus(Bus<ZonedWordRef>);
 
 Updated wrappers:
 - `PyZone`: expose `grid`, `site_buses`, `word_buses`, membership lists
-- `PyArchSpec`: expose `zones`, `zone_buses`, `entangling_zone_pairs`, `modes`, `words`
+- `PyArchSpec`: expose `zones`, `zone_buses`, `modes`, `words`
 - `PyLocationAddr`: widen to 64-bit, add `zone_id` property
 - `PyLaneAddr`: add `zone_id` property, `MoveType` gains `ZoneBus` variant
 - `PyMode`: new wrapper for measurement configurations
@@ -295,7 +301,7 @@ The zone-based builder from PR #398 (`ZoneSpec`, `ArchBlueprint`, `build_arch()`
 - Each zone gets its own `Grid` with zone-specific spacing
 - Site buses and word buses written per-zone
 - `InterZoneTopology` produces `Bus<ZonedWordRef>` entries for `zone_buses`
-- Generates `entangling_zone_pairs` from zone specs with `entangling=True`
+- Generates per-zone `entangling_pairs` from zone specs with `entangling=True`
 - Generates default `Mode` entries from zone specs with `measurement=True`
 
 #### Zone 0 convention removed
@@ -328,8 +334,8 @@ This is a breaking change across all API surfaces (Rust, Python, C FFI). No back
 ### Breaking changes by surface
 
 **Rust:**
-- `ArchSpec` struct: removed `geometry`, `buses`, `words_with_site_buses`, `sites_with_word_buses`, `entangling_zones`, `measurement_mode_zones`. Added `words`, `zone_buses`, `entangling_zone_pairs`, `modes`.
-- `Zone` struct: added `grid`, `site_buses`, `word_buses`, membership lists.
+- `ArchSpec` struct: removed `geometry`, `buses`, `words_with_site_buses`, `sites_with_word_buses`, `entangling_zones`, `measurement_mode_zones`. Added `words`, `zone_buses`, `modes`.
+- `Zone` struct: added `grid`, `site_buses`, `word_buses`, membership lists, `entangling_pairs`.
 - `Word` struct: simplified to `sites: Vec<[u32; 2]>`. Removed `positions`, `site_indices`, `has_cz`.
 - `Bus` struct: now generic `Bus<T>`. Old `Bus { src: Vec<u32>, dst: Vec<u32> }` replaced.
 - `Buses` struct: removed.
