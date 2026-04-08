@@ -169,7 +169,3 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     )
 
     assert check_circuit(ghz, roundtrip_squin)
-
-
-if __name__ == "__main__":
-    test_default_and_always_merge_have_same_operations()

@@ -199,3 +199,5 @@ cython_debug/
 .agents/skills/writing-skills
 .claude/skills/writing-skills
 .superpowers/
+*.png
+scripts/visualize_arch.py
