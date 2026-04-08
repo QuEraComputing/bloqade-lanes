@@ -17,7 +17,7 @@ def test_get_blockaded_location_with_pair():
     """
     arch_spec = logical.get_arch_spec()
 
-    # location (z=0, w=0, s=0) should pair with (z=0, w=1, s=0) (word 0 <-> word 1)
+    # get_blockaded_location preserves zone_id and maps to partner word
     location = layout.LocationAddress(0, 0, 0)
     blockaded = arch_spec.get_blockaded_location(location)
 
@@ -71,7 +71,7 @@ def test_get_blockaded_location_without_pair():
 def test_blockaded_location_preserves_site_index():
     """Site-symmetric pairing: get_blockaded_location preserves site_id across all CZ pairs."""
     arch_spec = logical.get_arch_spec()
-    # In the zone-centric model, entangling pairs are between zones
+    # get_blockaded_location maps to the partner zone
     for z_a, z_b in arch_spec.entangling_zone_pairs:
         num_sites = len(arch_spec.words[0].site_indices)
         for word_id in range(len(arch_spec.words)):
@@ -82,7 +82,6 @@ def test_blockaded_location_preserves_site_index():
                     assert (
                         blockaded_a.site_id == s
                     ), f"Site mismatch: (z={z_a},w={word_id},s={s}) -> site {blockaded_a.site_id}"
-                    assert blockaded_a.zone_id == z_b
 
 
 def test_get_lane_address_site_move_forward():

@@ -314,7 +314,8 @@ class TestArchSpecEqHash:
         b = _minimal_arch_spec(entangling_zone_pairs=[(0, 0)])
         assert a != b
 
-    def test_as_dict_key(self):
+    def test_not_hashable(self):
+        """ArchSpec is not hashable (mutable compound type)."""
         spec = _minimal_arch_spec()
-        d = {spec: "arch"}
-        assert d[_minimal_arch_spec()] == "arch"
+        with pytest.raises(TypeError):
+            hash(spec)

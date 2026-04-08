@@ -207,11 +207,32 @@ def build_arch(
             )
             zone_indices[zone_name] = zone_id
 
-    # 3. Modes (measurement modes)
+    # 3. Build a mapping from Rust zone index → valid word IDs.
+    # For entangling zones, even sub-zone gets even-col words and odd sub-zone
+    # gets odd-col words.  Non-entangling zones get all their words.
+    rust_zone_word_ids: dict[int, list[int]] = {}
+    for zone_name, zone_spec in blueprint.zones.items():
+        grid = zone_grids[zone_name]
+        if zone_name in zone_even_odd_map:
+            even_id, odd_id = zone_even_odd_map[zone_name]
+            rust_zone_word_ids[even_id] = [
+                grid.word_id_at(r, c)
+                for r in range(zone_spec.num_rows)
+                for c in range(0, zone_spec.num_cols, 2)
+            ]
+            rust_zone_word_ids[odd_id] = [
+                grid.word_id_at(r, c)
+                for r in range(zone_spec.num_rows)
+                for c in range(1, zone_spec.num_cols, 2)
+            ]
+        else:
+            rust_zone_word_ids[zone_indices[zone_name]] = list(grid.all_word_ids)
+
+    # Modes (measurement modes)
     all_zone_ids = list(range(len(rust_zones)))
     all_bitstring_order: list[_RustLocAddr] = []
     for zone_id in all_zone_ids:
-        for word_id in range(len(all_words)):
+        for word_id in rust_zone_word_ids[zone_id]:
             for site_id in range(layout.sites_per_word):
                 all_bitstring_order.append(_RustLocAddr(zone_id, word_id, site_id))
     modes: list[_RustMode] = [
@@ -221,7 +242,6 @@ def build_arch(
     # Per-zone measurement modes
     for name, spec in blueprint.zones.items():
         if spec.measurement:
-            zone_grid = zone_grids[name]
             if name in zone_even_odd_map:
                 even_id, odd_id = zone_even_odd_map[name]
                 zone_ids = [even_id, odd_id]
@@ -229,7 +249,7 @@ def build_arch(
                 zone_ids = [zone_indices[name]]
             bitstring_order: list[_RustLocAddr] = []
             for z_id in zone_ids:
-                for word_id in zone_grid.all_word_ids:
+                for word_id in rust_zone_word_ids[z_id]:
                     for site_id in range(layout.sites_per_word):
                         bitstring_order.append(_RustLocAddr(z_id, word_id, site_id))
             modes.append(

@@ -12,8 +12,9 @@ def test_logical_architecture():
     arch = logical.get_arch_spec()
     assert len(arch.words) == 10
     assert len(arch.words[0].site_indices) == 2
-    assert len(arch.site_buses) == 1
-    assert len(arch.word_buses) == 9
+    # Entangling zone splits into 2 sub-zones; buses duplicated per sub-zone
+    assert len(arch.site_buses) == 2  # 1 per sub-zone × 2
+    assert len(arch.word_buses) == 18  # 9 per sub-zone × 2
     assert arch.max_qubits == 10
     assert sorted(arch._home_words) == [0, 2, 4, 6, 8]
 
@@ -22,8 +23,9 @@ def test_physical_architecture():
     arch = physical.get_arch_spec()
     assert len(arch.words) == 10
     assert len(arch.words[0].site_indices) == 16
-    assert len(arch.site_buses) == 43
-    assert len(arch.word_buses) == 9
+    # Entangling zone splits into 2 sub-zones; buses duplicated per sub-zone
+    assert len(arch.site_buses) == 86  # 43 per sub-zone × 2
+    assert len(arch.word_buses) == 18  # 9 per sub-zone × 2
     assert arch.max_qubits == 80
 
 
@@ -40,6 +42,7 @@ def test_get_zone_index():
     index = arch.get_zone_index(loc_addr, zone_id)
     assert index == 1
 
+    # Word 1 is at index 2 in zone 0 (after word 0 sites 0 and 1)
     loc_addr = LocationAddress(zone_id=0, word_id=1, site_id=0)
     zone_id = ZoneAddress(0)
     index = arch.get_zone_index(loc_addr, zone_id)
@@ -48,10 +51,9 @@ def test_get_zone_index():
 
 def test_entangling_zone_pairs():
     arch = logical.get_arch_spec()
-    # In the new model, entangling_zone_pairs are zone-level pairs
+    # Entangling gate zone splits into sub-zone 0 (even cols) and sub-zone 1 (odd cols)
     assert len(arch.entangling_zone_pairs) == 1
-    # The single zone is self-entangling
-    assert arch.entangling_zone_pairs[0] == (0, 0)
+    assert arch.entangling_zone_pairs[0] == (0, 1)
 
 
 def test_cz_partner():

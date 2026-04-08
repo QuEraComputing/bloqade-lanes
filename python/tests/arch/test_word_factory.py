@@ -29,8 +29,8 @@ class TestWordGrid:
         grid = self._make_grid()
         word = grid.word_at(0, 0)
         assert len(word.site_indices) == 3
-        # Row word: sites along x-axis -> (i, 0)
-        assert word.site_indices == ((0, 0), (1, 0), (2, 0))
+        # Even-column word: sites at even x indices (interleaved CZ pairing)
+        assert word.site_indices == ((0, 0), (2, 0), (4, 0))
 
     def test_cz_pairs(self) -> None:
         grid = self._make_grid()

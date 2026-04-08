@@ -17,9 +17,11 @@ def _make_setup(
 ):
     arch_spec = logical.get_arch_spec()
     if placement is None:
-        placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(0, 1, 0)}
+        # Word 0 is in zone 0 (even), word 1 is in zone 1 (odd)
+        placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(1, 1, 0)}
     if target is None:
-        target = {0: LocationAddress(0, 4, 0), 1: LocationAddress(0, 5, 0)}
+        # Word 4 is in zone 0 (even), word 5 is in zone 1 (odd)
+        target = {0: LocationAddress(0, 4, 0), 1: LocationAddress(1, 5, 0)}
     tree = ConfigurationTree.from_initial_placement(
         arch_spec, placement, blocked_locations=blocked
     )
@@ -216,7 +218,8 @@ def test_generate_expand_node_integration():
 
 def test_generate_qubit_not_in_target_is_ignored():
     """Qubits not in the target dict should not generate moves."""
-    placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(0, 1, 0)}
+    # Word 0 is in zone 0, word 1 is in zone 1
+    placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(1, 1, 0)}
     target = {0: LocationAddress(0, 4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
@@ -225,7 +228,8 @@ def test_generate_qubit_not_in_target_is_ignored():
     for ms in moves:
         for lane in ms:
             src, _ = tree.arch_spec.get_endpoints(lane)
-            assert src == LocationAddress(0, 0, 0)
+            # Only qubit 0 (zone 0, word 0) should be moving
+            assert src.word_id == 0
 
 
 def test_generate_single_atom():

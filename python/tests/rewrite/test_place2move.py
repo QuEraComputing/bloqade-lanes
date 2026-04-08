@@ -71,8 +71,8 @@ def test_insert_move():
     )
 
     lane_group = (
-        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 0, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 1, 0, 0, layout.Direction.FORWARD),
     )
 
     placement_analysis: dict[ir.SSAValue, AtomState] = {
@@ -103,12 +103,12 @@ def test_insert_move():
 
 def test_insert_palindrom_moves():
     lane_group = (
-        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 0, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 1, 0, 0, layout.Direction.FORWARD),
     )
     reverse_moves = (
-        layout.SiteLaneAddress(0, 0, 0, layout.Direction.BACKWARD),
-        layout.SiteLaneAddress(0, 1, 0, layout.Direction.BACKWARD),
+        layout.SiteLaneAddress(0, 0, 0, 0, layout.Direction.BACKWARD),
+        layout.SiteLaneAddress(0, 1, 0, 0, layout.Direction.BACKWARD),
     )
 
     state_before = ir.TestValue()

@@ -53,11 +53,12 @@ def test_gate_rewrite_cz():
         1: (one := ir.TestValue()),
     }
     arch_spec = get_arch_spec()
+    # CZ partners: (z=0, w=0) ↔ (z=1, w=0) in zone-split model
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 0, 0),
-                1: layout.LocationAddress(0, 1, 0),
+                1: layout.LocationAddress(1, 0, 0),
             }
         )
     )

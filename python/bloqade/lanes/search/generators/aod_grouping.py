@@ -60,18 +60,34 @@ class BusContext:
         move_type: MoveType,
         bus_id: int,
         direction: Direction,
+        zone_id: int | None = None,
     ) -> BusContext:
-        """Build a BusContext from a ConfigurationTree and occupied set."""
+        """Build a BusContext from a ConfigurationTree and occupied set.
+
+        Args:
+            tree: The configuration tree.
+            occupied: Set of occupied locations.
+            move_type: Type of move (SITE or WORD).
+            bus_id: Bus index.
+            direction: Move direction.
+            zone_id: If provided, restrict sources to this zone only.
+        """
         arch_spec = tree.arch_spec
 
-        # Aggregate sources across zones
+        # Aggregate sources across zones (or a single zone if specified)
         src_locs: list[LocationAddress] = []
-        for zone_id, zone in enumerate(arch_spec.zones):
+        zone_iter: list[tuple[int, object]] = []
+        if zone_id is not None:
+            zone_iter = [(zone_id, arch_spec.zones[zone_id])]
+        else:
+            zone_iter = list(enumerate(arch_spec.zones))
+
+        for zid, zone in zone_iter:
             if move_type == MoveType.SITE:
                 if bus_id < len(zone.site_buses):
                     bus = zone.site_buses[bus_id]
                     src_locs.extend(
-                        LocationAddress(zone_id, w, s)
+                        LocationAddress(zid, w, s)
                         for w in zone.words_with_site_buses
                         for s in bus.src
                     )
@@ -79,7 +95,7 @@ class BusContext:
                 if bus_id < len(zone.word_buses):
                     bus = zone.word_buses[bus_id]
                     src_locs.extend(
-                        LocationAddress(zone_id, w, s)
+                        LocationAddress(zid, w, s)
                         for w in bus.src
                         for s in zone.sites_with_word_buses
                     )

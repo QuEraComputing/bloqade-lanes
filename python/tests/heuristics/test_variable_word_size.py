@@ -196,7 +196,7 @@ class TestComputeMoveLayers:
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, n - 1), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(0, 0, n - 1), LocationAddress(0, 2, 0)),
             move_count=(1, 0),
         )
         layers = compute_move_layers(arch_spec, state_before, state_after)

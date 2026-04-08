@@ -399,20 +399,27 @@ initial_fill 1
 
 
 MINIMAL_ARCH_JSON = """{
-    "version": "1.0",
-    "geometry": {
-        "sites_per_word": 2,
-        "words": [{
-            "positions": {"x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0], "y_spacing": []},
-            "site_indices": [[0, 0], [1, 0]]
-        }]
-    },
-    "buses": {"site_buses": [], "word_buses": []},
-    "words_with_site_buses": [],
-    "sites_with_word_buses": [],
-    "zones": [{"words": [0]}],
-    "entangling_zones": [],
-    "measurement_mode_zones": [0]
+    "version": "2.0",
+    "words": [
+        {"sites": [[0, 0], [1, 0]]}
+    ],
+    "zones": [
+        {
+            "grid": {
+                "x_start": 0.0, "y_start": 0.0,
+                "x_spacing": [1.0], "y_spacing": []
+            },
+            "site_buses": [],
+            "word_buses": [],
+            "words_with_site_buses": [],
+            "sites_with_word_buses": []
+        }
+    ],
+    "zone_buses": [],
+    "entangling_zone_pairs": [],
+    "modes": [
+        {"name": "default", "zones": [0], "bitstring_order": []}
+    ]
 }"""
 
 

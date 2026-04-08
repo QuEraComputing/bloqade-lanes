@@ -261,12 +261,39 @@ class ArchSpec:
     def yield_zone_locations(
         self, zone_address: ZoneAddress
     ) -> Iterator[LocationAddress]:
-        """Yield all location addresses in a given zone address."""
+        """Yield all location addresses in a given zone address.
+
+        Yields all words for the given zone_id. The Python heuristic layer
+        addresses qubits with a single zone_id (typically 0) for all words,
+        so this must iterate over every word to find all qubits.
+        """
         zone_id = zone_address.zone_id
         for word_id in range(len(self.words)):
             word = self.words[word_id]
             for site_id in range(len(word.site_indices)):
                 yield LocationAddress(zone_id, word_id, site_id)
+
+    def _zone_word_ids(self, zone_id: int) -> list[int]:
+        """Get the word IDs that belong to a specific Rust zone.
+
+        Derives this from the zone's words_with_site_buses and
+        sites_with_word_buses. If both are empty, falls back to
+        looking at the modes bitstring_order.
+        """
+        zone = self._inner.zones[zone_id]
+        # Use words_with_site_buses as the canonical word list for the zone
+        word_ids = list(zone.words_with_site_buses)
+        if word_ids:
+            return word_ids
+        # Fallback: derive from sites_with_word_buses via word_buses
+        # If the zone has word buses, collect src words
+        for bus in zone.word_buses:
+            word_ids.extend(bus.src)
+            word_ids.extend(bus.dst)
+        if word_ids:
+            return sorted(set(word_ids))
+        # Final fallback: all words (for zones with no buses at all)
+        return list(range(len(self.words)))
 
     def get_path(
         self,
@@ -519,9 +546,9 @@ class ArchSpec:
     ) -> LocationAddress | None:
         """Get the CZ partner for a given location using word-level pairing.
 
-        Maps to the partner word within the same zone. For the Python layer's
-        heuristics, CZ partners are resolved as word-to-word within the
-        zone pair, keeping the same zone_id as the input.
+        Maps to the partner word, preserving the input zone_id. This is used
+        by the Python heuristics layer where CZ partners are resolved within
+        the same zone coordinate frame (word buses connect words within a zone).
         """
         partner_word = self._word_partner_map.get(location.word_id)
         if partner_word is None:

@@ -185,15 +185,16 @@ def test_insert_cz_noise():
         2: (two := ir.TestValue()),
         3: (three := ir.TestValue()),
     }
-    # Place atoms so qubit 1 at (0,0) pairs with qubit 2 at (1,0) (word 0 <-> word 1)
-    # Qubits 0 at (2,0) and 3 at (3,1) are unpaired (different sites in pair 2↔3)
+    # CZ partners in zone-split: (z=0,w=0)↔(z=1,w=0), (z=0,w=2)↔(z=1,w=2).
+    # Qubit 1 at (z=0,w=0,s=0) pairs with qubit 2 at (z=1,w=0,s=0).
+    # Qubits 0 at (z=0,w=2,s=0) and 3 at (z=1,w=2,s=1) are unpaired (different sites).
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
             {
                 0: layout.LocationAddress(0, 2, 0),
                 1: layout.LocationAddress(0, 0, 0),
-                2: layout.LocationAddress(0, 1, 0),
-                3: layout.LocationAddress(0, 3, 1),
+                2: layout.LocationAddress(1, 0, 0),
+                3: layout.LocationAddress(1, 2, 1),
             }
         )
     )
@@ -211,6 +212,8 @@ def test_insert_cz_noise():
 
     rewriter.rewrite(test_block)
     test_block.print()
+    # With zone-split model, qubit 3 at (z=1,w=2,s=1) has no matching CZ
+    # partner in zone 0, so only qubit 0 at (z=0,w=2,s=0) is unpaired.
     expected_block = ir.Block(
         [
             move.CZ(state, zone_address=layout.ZoneAddress(0)),
@@ -220,7 +223,7 @@ def test_insert_cz_noise():
                 inputs=(controls_reg.result, targets_reg.result),
                 callee=cz_paired_noise_kernel,
             ),
-            unpaired_reg := ilist.New((zero, three)),
+            unpaired_reg := ilist.New((zero,)),
             func.Invoke(inputs=(unpaired_reg.result,), callee=cz_unpaired_noise_kernel),
         ]
     )

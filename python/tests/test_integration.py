@@ -4,12 +4,8 @@ from collections import Counter
 from typing import Any
 
 import pytest
-from bloqade.decoders.dialects import annotate
-from bloqade.stim.emit.stim_str import EmitStimMain
-from bloqade.stim.upstream.from_squin import squin_to_stim
-from kirin.dialects import ilist
-
 from bloqade import qubit, squin, types
+from bloqade.decoders.dialects import annotate
 from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes import compile
 from bloqade.lanes.arch.gemini import physical
@@ -31,6 +27,9 @@ from bloqade.lanes.upstream import (
     squin_to_move,
 )
 from bloqade.lanes.utils import check_circuit
+from bloqade.stim.emit.stim_str import EmitStimMain
+from bloqade.stim.upstream.from_squin import squin_to_stim
+from kirin.dialects import ilist
 
 
 @gemini_logical.kernel(verify=False)
@@ -144,7 +143,6 @@ def test_logical_compilation():
         squin.broadcast.sqrt_y_adj(reg)
 
     logical_move = compile_squin_to_move(main, no_raise=False)
-
     decompiled_squin = MoveToSquinPhysical(get_arch_spec()).emit(logical_move)
 
     AggressiveUnroll(main.dialects).fixpoint(main)

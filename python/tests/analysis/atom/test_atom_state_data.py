@@ -106,14 +106,14 @@ def test_apply_moves_with_collision():
 
 
 def test_get_qubit_pairing():
-    # Word 0 pairs with word 1. Place qubits at (0,0), (0,1), and (1,0).
-    # Qubit 0 at (0,0) pairs with qubit 2 at (1,0) — matching site 0.
-    # Qubit 1 at (0,1) has no partner at (1,1) — unpaired.
+    # CZ partners: (z=0, w=0) ↔ (z=1, w=0).
+    # Qubit 0 at (0,0,0) pairs with qubit 2 at (1,0,0) — matching site 0.
+    # Qubit 1 at (0,0,1) has no partner at (1,0,1) — unpaired.
     atom_state = atom_state_data.AtomStateData.new(
         [
             layout.LocationAddress(0, 0, 0),
             layout.LocationAddress(0, 0, 1),
-            layout.LocationAddress(0, 1, 0),
+            layout.LocationAddress(1, 0, 0),
         ]
     )
 
@@ -129,15 +129,17 @@ def test_get_qubit_pairing():
 
 
 def test_get_qubit_pairing_with_pairs():
-    # Word 0 pairs with word 1. Place qubits at matching sites.
-    # (0,0)↔(1,0) paired, (0,1)↔(1,1) paired, (2,0) unpaired (word 2 pairs with word 3).
+    # CZ partners: (z=0, w=0) ↔ (z=1, w=0), (z=0, w=2) ↔ (z=1, w=2)
+    # (z=0,w=0,s=0) ↔ (z=1,w=0,s=0) paired
+    # (z=0,w=0,s=1) ↔ (z=1,w=0,s=1) paired
+    # (z=0,w=2,s=0) unpaired (no qubit at (z=1,w=2,s=0))
     atom_state = atom_state_data.AtomStateData.new(
         [
             layout.LocationAddress(0, 0, 0),  # qubit 0 — pairs with qubit 1
-            layout.LocationAddress(0, 1, 0),  # qubit 1 — pairs with qubit 0
+            layout.LocationAddress(1, 0, 0),  # qubit 1 — pairs with qubit 0
             layout.LocationAddress(0, 0, 1),  # qubit 2 — pairs with qubit 3
-            layout.LocationAddress(0, 1, 1),  # qubit 3 — pairs with qubit 2
-            layout.LocationAddress(0, 2, 0),  # qubit 4 — unpaired (no qubit at (3,0))
+            layout.LocationAddress(1, 0, 1),  # qubit 3 — pairs with qubit 2
+            layout.LocationAddress(0, 2, 0),  # qubit 4 — unpaired (no qubit at (1,2,0))
         ]
     )
 
