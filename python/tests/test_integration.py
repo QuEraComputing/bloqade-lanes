@@ -66,6 +66,9 @@ def main():
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
+    from bloqade.lanes.arch.gemini import logical
+    from bloqade.lanes.visualize import debugger
+
     logical_noise = generate_logical_noise_model()
     move_mt = squin_to_move(
         mt,
@@ -75,6 +78,7 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
         merge_heuristic=merge_heuristic,
     )
     move_mt = transversal_rewrites(move_mt)
+    # debugger(move_mt, physical.get_arch_spec())
     transformer = MoveToSquinLogical(
         arch_spec=physical.get_arch_spec(),
         noise_model=logical_noise,
@@ -165,3 +169,7 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     )
 
     assert check_circuit(ghz, roundtrip_squin)
+
+
+if __name__ == "__main__":
+    test_default_and_always_merge_have_same_operations()

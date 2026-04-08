@@ -21,12 +21,13 @@ def test_logical_architecture():
 
 def test_physical_architecture():
     arch = physical.get_arch_spec()
-    assert len(arch.words) == 10
-    assert len(arch.words[0].site_indices) == 16
-    # Entangling zone splits into 2 sub-zones; buses duplicated per sub-zone
-    assert len(arch.site_buses) == 86  # 43 per sub-zone × 2
-    assert len(arch.word_buses) == 18  # 9 per sub-zone × 2
-    assert arch.max_qubits == 80
+    assert len(arch.words) == 20
+    assert len(arch.words[0].site_indices) == 8
+    zone = arch._inner.zones[0]
+    assert len(zone.site_buses) == 3  # 3D hypercube on 8 sites
+    assert len(zone.word_buses) == 10  # 9 merged shifts + 1 cross-gap
+    assert len(zone.entangling_pairs) == 10
+    assert arch.max_qubits == 80  # 20 words × 8 sites // 2
 
 
 def test_get_zone_index():
