@@ -49,26 +49,28 @@ def test_get_zone_index():
     assert index == 2
 
 
-def test_entangling_zone_pairs():
+def test_entangling_pairs():
     arch = logical.get_arch_spec()
-    # Entangling gate zone splits into sub-zone 0 (even cols) and sub-zone 1 (odd cols)
-    assert len(arch.entangling_zone_pairs) == 1
-    assert arch.entangling_zone_pairs[0] == (0, 1)
+    # Both zones carry entangling_pairs pairing column-0 words with column-1 words
+    zones = arch._inner.zones
+    expected_pairs = [(0, 5), (1, 6), (2, 7), (3, 8), (4, 9)]
+    assert zones[0].entangling_pairs == expected_pairs
+    assert zones[1].entangling_pairs == expected_pairs
 
 
 def test_cz_partner():
     """Test that get_cz_partner works for the logical arch spec."""
     arch = logical.get_arch_spec()
     # In a self-entangling zone, CZ partners are determined by zone pairs
-    loc = LocationAddress(0, 0, 0)
+    loc = LocationAddress(0, 0)
     partner = arch.get_cz_partner(loc)
     assert partner is not None
 
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(0, 10, 0), {"invalid location zone_id=0, word_id=10, site_id=0"}
-    yield arch_spec, LocationAddress(0, 0, 2), {"invalid location zone_id=0, word_id=0, site_id=2"}
+    yield arch_spec, LocationAddress(10, 0), {"invalid location zone_id=0, word_id=10, site_id=0"}
+    yield arch_spec, LocationAddress(0, 2), {"invalid location zone_id=0, word_id=0, site_id=2"}
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())
@@ -81,6 +83,6 @@ def test_location_validation(
 def test_negative_location_ids_rejected():
     """Negative IDs are rejected at construction time by the Rust-backed type."""
     with pytest.raises(ValueError, match="must be non-negative"):
-        LocationAddress(0, -1, 0)
+        LocationAddress(-1, 0)
     with pytest.raises(ValueError, match="must be non-negative"):
-        LocationAddress(0, 0, -1)
+        LocationAddress(0, -1)

@@ -18,10 +18,10 @@ def _make_setup(
     arch_spec = logical.get_arch_spec()
     if placement is None:
         # Word 0 is in zone 0 (even), word 1 is in zone 1 (odd)
-        placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(1, 1, 0)}
+        placement = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0, 1)}
     if target is None:
         # Word 4 is in zone 0 (even), word 5 is in zone 1 (odd)
-        target = {0: LocationAddress(0, 4, 0), 1: LocationAddress(1, 5, 0)}
+        target = {0: LocationAddress(4, 0), 1: LocationAddress(5, 0, 1)}
     tree = ConfigurationTree.from_initial_placement(
         arch_spec, placement, blocked_locations=blocked
     )
@@ -60,10 +60,10 @@ def test_is_valid_rect_all_present():
     """Returns True when all positions map to non-collision sources."""
     ctx = _make_bus_context(
         {
-            (0.0, 0.0): LocationAddress(0, 0, 0),
-            (0.0, 1.0): LocationAddress(0, 0, 1),
-            (1.0, 0.0): LocationAddress(0, 1, 0),
-            (1.0, 1.0): LocationAddress(0, 1, 1),
+            (0.0, 0.0): LocationAddress(0, 0),
+            (0.0, 1.0): LocationAddress(0, 1),
+            (1.0, 0.0): LocationAddress(1, 0),
+            (1.0, 1.0): LocationAddress(1, 1),
         }
     )
     assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is True
@@ -73,10 +73,10 @@ def test_is_valid_rect_missing_position():
     """Returns False when a position has no bus source."""
     ctx = _make_bus_context(
         {
-            (0.0, 0.0): LocationAddress(0, 0, 0),
+            (0.0, 0.0): LocationAddress(0, 0),
             # (0.0, 1.0) missing
-            (1.0, 0.0): LocationAddress(0, 1, 0),
-            (1.0, 1.0): LocationAddress(0, 1, 1),
+            (1.0, 0.0): LocationAddress(1, 0),
+            (1.0, 1.0): LocationAddress(1, 1),
         }
     )
     assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is False
@@ -84,7 +84,7 @@ def test_is_valid_rect_missing_position():
 
 def test_is_valid_rect_collision():
     """Returns False when a position is a collision source."""
-    loc = LocationAddress(0, 0, 0)
+    loc = LocationAddress(0, 0)
     ctx = _make_bus_context({(0.0, 0.0): loc}, frozenset({loc}))
     assert ctx.is_valid_rect({0.0}, {0.0}) is False
 
@@ -96,10 +96,10 @@ def test_rect_to_lanes_builds_complete_grid():
     """Produces one lane per position in the rectangle."""
     ctx = _make_bus_context(
         {
-            (0.0, 0.0): LocationAddress(0, 0, 0),
-            (0.0, 1.0): LocationAddress(0, 0, 1),
-            (1.0, 0.0): LocationAddress(0, 1, 0),
-            (1.0, 1.0): LocationAddress(0, 1, 1),
+            (0.0, 0.0): LocationAddress(0, 0),
+            (0.0, 1.0): LocationAddress(0, 1),
+            (1.0, 0.0): LocationAddress(1, 0),
+            (1.0, 1.0): LocationAddress(1, 1),
         }
     )
     lanes = ctx.rect_to_lanes({0.0, 1.0}, {0.0, 1.0})
@@ -109,7 +109,7 @@ def test_rect_to_lanes_builds_complete_grid():
 
 def test_rect_to_lanes_skips_missing_positions():
     """Positions not in pos_to_loc are silently skipped."""
-    ctx = _make_bus_context({(0.0, 0.0): LocationAddress(0, 0, 0)})
+    ctx = _make_bus_context({(0.0, 0.0): LocationAddress(0, 0)})
     lanes = ctx.rect_to_lanes({0.0, 1.0}, {0.0})
     assert len(lanes) == 1
 
@@ -119,8 +119,8 @@ def test_rect_to_lanes_skips_missing_positions():
 
 def test_merge_clusters_merges_compatible():
     """Two compatible 1x1 clusters should be merged into one."""
-    loc_a = LocationAddress(0, 0, 0)
-    loc_b = LocationAddress(0, 0, 1)
+    loc_a = LocationAddress(0, 0)
+    loc_b = LocationAddress(0, 1)
     ctx = _make_bus_context({(0.0, 0.0): loc_a, (0.0, 1.0): loc_b})
     clusters: list[tuple[set[float], set[float]]] = [
         ({0.0}, {0.0}),
@@ -135,8 +135,8 @@ def test_merge_clusters_merges_compatible():
 
 def test_merge_clusters_incompatible_stay_separate():
     """Clusters that can't merge remain as separate solved clusters."""
-    loc_a = LocationAddress(0, 0, 0)
-    loc_b = LocationAddress(0, 1, 1)
+    loc_a = LocationAddress(0, 0)
+    loc_b = LocationAddress(1, 1)
     # Missing (0.0, 1.0) and (1.0, 0.0) means the 2x2 rect is invalid
     ctx = _make_bus_context({(0.0, 0.0): loc_a, (1.0, 1.0): loc_b})
     clusters: list[tuple[set[float], set[float]]] = [
@@ -149,9 +149,9 @@ def test_merge_clusters_incompatible_stay_separate():
 
 def test_merge_clusters_solves_non_participants():
     """Clusters that don't participate in any merge are promoted to solved."""
-    loc_a = LocationAddress(0, 0, 0)
-    loc_b = LocationAddress(0, 0, 1)
-    loc_c = LocationAddress(0, 1, 0)
+    loc_a = LocationAddress(0, 0)
+    loc_b = LocationAddress(0, 1)
+    loc_c = LocationAddress(1, 0)
     # a and b can merge (same x), but c can't join (missing (1,1))
     ctx = _make_bus_context(
         {
@@ -185,8 +185,8 @@ def test_generate_yields_frozensets():
 
 def test_generate_all_resolved_yields_nothing():
     """When all qubits are already at target, no candidates are generated."""
-    placement = {0: LocationAddress(0, 4, 0), 1: LocationAddress(0, 5, 0)}
-    target = {0: LocationAddress(0, 4, 0), 1: LocationAddress(0, 5, 0)}
+    placement = {0: LocationAddress(4, 0), 1: LocationAddress(5, 0)}
+    target = {0: LocationAddress(4, 0), 1: LocationAddress(5, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert moves == []
@@ -194,8 +194,8 @@ def test_generate_all_resolved_yields_nothing():
 
 def test_generate_moves_advance_toward_target():
     """The first yielded move set should move at least one qubit closer."""
-    placement = {0: LocationAddress(0, 0, 0)}
-    target = {0: LocationAddress(0, 4, 0)}
+    placement = {0: LocationAddress(0, 0)}
+    target = {0: LocationAddress(4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1
@@ -203,7 +203,7 @@ def test_generate_moves_advance_toward_target():
     first_moveset = moves[0]
     child = tree.apply_move_set(tree.root, first_moveset, strict=False)
     assert child is not None
-    assert child.configuration[0] != LocationAddress(0, 0, 0)
+    assert child.configuration[0] != LocationAddress(0, 0)
 
 
 def test_generate_expand_node_integration():
@@ -219,8 +219,8 @@ def test_generate_expand_node_integration():
 def test_generate_qubit_not_in_target_is_ignored():
     """Qubits not in the target dict should not generate moves."""
     # Word 0 is in zone 0, word 1 is in zone 1
-    placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(1, 1, 0)}
-    target = {0: LocationAddress(0, 4, 0)}
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(1, 0, 1)}
+    target = {0: LocationAddress(4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1
@@ -234,8 +234,8 @@ def test_generate_qubit_not_in_target_is_ignored():
 
 def test_generate_single_atom():
     """A single atom produces at least one valid moveset."""
-    placement = {0: LocationAddress(0, 0, 0)}
-    target = {0: LocationAddress(0, 4, 0)}
+    placement = {0: LocationAddress(0, 0)}
+    target = {0: LocationAddress(4, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
     assert len(moves) >= 1
@@ -268,8 +268,8 @@ def test_generate_multiple_atoms_can_merge():
     """Two atoms in the same word that can share a site bus move should merge."""
     # Place both atoms in the same word — site bus moves operate within a word
     # and can merge atoms that share the same bus pattern.
-    placement = {0: LocationAddress(0, 0, 0), 1: LocationAddress(0, 0, 1)}
-    target = {0: LocationAddress(0, 2, 0), 1: LocationAddress(0, 2, 1)}
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(0, 1)}
+    target = {0: LocationAddress(2, 0), 1: LocationAddress(2, 1)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
 

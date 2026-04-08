@@ -60,7 +60,7 @@ class ArchSpec:
             for word_id in range(len(self.words)):
                 word = self.words[word_id]
                 for site_id in range(len(word.site_indices)):
-                    loc_addr = LocationAddress(zone_id, word_id, site_id)
+                    loc_addr = LocationAddress(word_id, site_id, zone_id)
                     zone_address = ZoneAddress(zone_id)
                     result[loc_addr][zone_address] = index
                     index += 1
@@ -104,12 +104,6 @@ class ArchSpec:
     @property
     def zones(self) -> tuple[_RustZone, ...]:
         return tuple(self._inner.zones)
-
-    @cached_property
-    def entangling_zone_pairs(self) -> tuple[tuple[int, int], ...]:
-        return tuple(
-            (pair[0], pair[1]) for pair in self._inner.entangling_zone_pairs
-        )
 
     @cached_property
     def modes(self) -> tuple[_RustMode, ...]:
@@ -200,7 +194,6 @@ class ArchSpec:
         cls,
         words: tuple[Word, ...],
         zones: tuple[_RustZone, ...],
-        entangling_zone_pairs: Sequence[tuple[int, int]],
         modes: Sequence[_RustMode],
         zone_buses: Sequence[ZoneBus] = (),
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
@@ -231,7 +224,6 @@ class ArchSpec:
             words=[w._inner for w in words],
             zones=list(zones),
             zone_buses=list(zone_buses),
-            entangling_zone_pairs=list(entangling_zone_pairs),
             modes=list(modes),
             paths=rust_paths,
             feed_forward=feed_forward,
@@ -271,7 +263,7 @@ class ArchSpec:
         for word_id in range(len(self.words)):
             word = self.words[word_id]
             for site_id in range(len(word.site_indices)):
-                yield LocationAddress(zone_id, word_id, site_id)
+                yield LocationAddress(word_id, site_id, zone_id)
 
     def _zone_word_ids(self, zone_id: int) -> list[int]:
         """Get the word IDs that belong to a specific Rust zone.
@@ -332,7 +324,7 @@ class ArchSpec:
         x_max = float("-inf")
         for word_id in range(len(self.words)):
             for site_id in range(len(self.words[word_id].site_indices)):
-                pos = self.get_position(LocationAddress(0, word_id, site_id))
+                pos = self.get_position(LocationAddress(word_id, site_id))
                 x_min = min(x_min, pos[0])
                 x_max = max(x_max, pos[0])
 
@@ -350,7 +342,7 @@ class ArchSpec:
         y_max = float("-inf")
         for word_id in range(len(self.words)):
             for site_id in range(len(self.words[word_id].site_indices)):
-                pos = self.get_position(LocationAddress(0, word_id, site_id))
+                pos = self.get_position(LocationAddress(word_id, site_id))
                 y_min = min(y_min, pos[1])
                 y_max = max(y_max, pos[1])
 
@@ -425,7 +417,7 @@ class ArchSpec:
             word = self.words[word_id]
             # Plot sites using their positions from the arch spec
             positions = [
-                self.get_position(LocationAddress(0, word_id, site_id))
+                self.get_position(LocationAddress(word_id, site_id))
                 for site_id in range(len(word.site_indices))
             ]
             x_positions = [p[0] for p in positions]
@@ -525,8 +517,8 @@ class ArchSpec:
         if result is None:
             raise ValueError(f"Invalid lane address: {lane_address!r}")
         rust_src, rust_dst = result
-        src = LocationAddress(rust_src.zone_id, rust_src.word_id, rust_src.site_id)
-        dst = LocationAddress(rust_dst.zone_id, rust_dst.word_id, rust_dst.site_id)
+        src = LocationAddress(rust_src.word_id, rust_src.site_id, rust_src.zone_id)
+        dst = LocationAddress(rust_dst.word_id, rust_dst.site_id, rust_dst.zone_id)
         return src, dst
 
     def get_cz_partner(
@@ -534,12 +526,13 @@ class ArchSpec:
     ) -> LocationAddress | None:
         """Get the CZ partner for a given location.
 
-        Uses Rust-side get_cz_partner which resolves via entangling_zone_pairs.
+        Uses Rust-side get_cz_partner which resolves via the zone's
+        entangling_pairs.
         """
         result = self._inner.get_cz_partner(location._inner)
         if result is None:
             return None
-        return LocationAddress(result.zone_id, result.word_id, result.site_id)
+        return LocationAddress(result.word_id, result.site_id, result.zone_id)
 
     def get_blockaded_location(
         self, location: LocationAddress
@@ -557,18 +550,14 @@ class ArchSpec:
 
     @cached_property
     def _word_partner_map(self) -> dict[int, int]:
-        """Map word_id -> partner_word_id from entangling_zone_pairs.
+        """Map word_id -> partner_word_id from each zone's entangling_pairs.
 
-        Pairs words at matching positions across the two zones in each
-        entangling zone pair.
+        Iterates entangling_pairs on each zone and builds a bidirectional
+        word partner mapping.
         """
         partner_map: dict[int, int] = {}
-        for z_a, z_b in self.entangling_zone_pairs:
-            zone_a = self._inner.zones[z_a]
-            zone_b = self._inner.zones[z_b]
-            wids_a = zone_a.words_with_site_buses
-            wids_b = zone_b.words_with_site_buses
-            for w_a, w_b in zip(wids_a, wids_b):
+        for zone in self._inner.zones:
+            for w_a, w_b in zone.entangling_pairs:
                 partner_map[w_a] = w_b
                 partner_map[w_b] = w_a
         return partner_map

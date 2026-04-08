@@ -477,6 +477,8 @@ class Zone:
         word_buses (list[WordBus]): Word buses within this zone.
         words_with_site_buses (list[int]): Word IDs with site-bus transport.
         sites_with_word_buses (list[int]): Site indices with word-bus transport.
+        entangling_pairs (Optional[list[tuple[int, int]]]): Pairs of word IDs
+            within this zone for CZ entangling gates. Default = None (no pairs).
     """
 
     def __init__(
@@ -486,6 +488,7 @@ class Zone:
         word_buses: list[WordBus],
         words_with_site_buses: list[int],
         sites_with_word_buses: list[int],
+        entangling_pairs: Optional[list[tuple[int, int]]] = None,
     ) -> None: ...
     @property
     def grid(self) -> Grid:
@@ -510,6 +513,11 @@ class Zone:
     @property
     def sites_with_word_buses(self) -> list[int]:
         """Site indices that participate in word-bus transport."""
+        ...
+
+    @property
+    def entangling_pairs(self) -> list[tuple[int, int]]:
+        """Pairs of word IDs within this zone for CZ entangling gates."""
         ...
 
     def __repr__(self) -> str: ...
@@ -592,16 +600,15 @@ class TransportPath:
 class ArchSpec:
     """Architecture specification for a quantum device.
 
-    Describes the full hardware topology: words, zones (each owning a grid
-    and intra-zone buses), inter-zone buses, entangling pairs, operational
+    Describes the full hardware topology: words, zones (each owning a grid,
+    intra-zone buses, and entangling pairs), inter-zone buses, operational
     modes, and device capabilities.
 
     Args:
         version (tuple[int, int]): Spec version as ``(major, minor)``.
         words (list[Word]): Word definitions.
-        zones (list[Zone]): Zone definitions (each owns a grid and buses).
+        zones (list[Zone]): Zone definitions (each owns a grid, buses, and entangling pairs).
         zone_buses (list[ZoneBus]): Inter-zone word buses.
-        entangling_zone_pairs (list[tuple[int, int]]): Pairs of zone IDs for CZ gates.
         modes (list[Mode]): Operational modes.
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
         feed_forward (bool): Whether the device supports mid-circuit measurement. Default = False.
@@ -614,7 +621,6 @@ class ArchSpec:
         words: list[Word],
         zones: list[Zone],
         zone_buses: list[ZoneBus],
-        entangling_zone_pairs: list[tuple[int, int]],
         modes: list[Mode],
         paths: Optional[list[TransportPath]] = None,
         feed_forward: bool = False,
@@ -684,11 +690,6 @@ class ArchSpec:
     @property
     def zone_buses(self) -> list[ZoneBus]:
         """Inter-zone word buses."""
-        ...
-
-    @property
-    def entangling_zone_pairs(self) -> list[tuple[int, int]]:
-        """Pairs of zone IDs for CZ entangling gates."""
         ...
 
     @property
@@ -771,15 +772,15 @@ class ArchSpec:
     def get_cz_partner(self, loc: LocationAddress) -> Optional[LocationAddress]:
         """Get the CZ partner for a given location.
 
-        For a site in zone Z, finds the partner zone from ``entangling_zone_pairs``
-        and returns the same (word_id, site_id) in the partner zone.
+        Searches the zone's ``entangling_pairs`` for a pair containing the
+        location's word_id and returns the partner word in the same zone.
 
         Args:
             loc (LocationAddress): The location address to look up.
 
         Returns:
-            LocationAddress: The partner location, or None if the zone has no
-                entangling partner.
+            LocationAddress: The partner location, or None if the word is not
+                in any entangling pair within its zone.
         """
         ...
 

@@ -1,7 +1,7 @@
 """Word creation helpers for zone-based architectures.
 
 Creates row-words arranged in a 2D grid. CZ pairing between horizontally
-adjacent words is defined at the architecture level via entangling_zone_pairs,
+adjacent words is defined at the zone level via entangling_pairs,
 not per-word.
 
 Words now contain grid index pairs (x_idx, y_idx). Physical positions are

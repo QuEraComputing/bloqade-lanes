@@ -416,7 +416,6 @@ MINIMAL_ARCH_JSON = """{
         }
     ],
     "zone_buses": [],
-    "entangling_zone_pairs": [],
     "modes": [
         {"name": "default", "zones": [0], "bitstring_order": []}
     ]

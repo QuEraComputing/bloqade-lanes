@@ -109,12 +109,17 @@ class TestBuildArchTwoZones:
         assert proc_grid.num_rows == 2
         assert mem_grid.num_rows == 2
 
-    def test_entangling_zones(self) -> None:
+    def test_entangling_pairs(self) -> None:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
         # Proc zone splits into 2 sub-zones: zone 0 (even) and zone 1 (odd)
-        assert len(result.arch.entangling_zone_pairs) == 1
-        assert result.arch.entangling_zone_pairs[0] == (0, 1)
+        # Both sub-zones carry the same entangling_pairs: even words <-> odd words
+        zones = result.arch._inner.zones
+        assert len(zones[0].entangling_pairs) == 2
+        assert zones[0].entangling_pairs == [(0, 1), (2, 3)]
+        assert zones[1].entangling_pairs == [(0, 1), (2, 3)]
+        # Non-entangling mem zone has no entangling pairs
+        assert zones[2].entangling_pairs == []
 
     def test_measurement_zones(self) -> None:
         bp = _two_zone_blueprint()
@@ -334,10 +339,10 @@ class TestPathFinderIntegration:
         pf = PathFinder(result.arch)
 
         # proc word 0, site 0 → site 1: reachable (proc has site buses)
-        assert pf.find_path(LocationAddress(0, 0, 0), LocationAddress(0, 0, 1)) is not None
+        assert pf.find_path(LocationAddress(0, 0), LocationAddress(0, 1)) is not None
 
         # mem word 2, site 0 → site 1: NOT reachable (no site buses, no connections)
-        assert pf.find_path(LocationAddress(0, 2, 0), LocationAddress(0, 2, 1)) is None
+        assert pf.find_path(LocationAddress(2, 0), LocationAddress(2, 1)) is None
 
     def test_cross_zone_reachable_via_word_bus(self) -> None:
         """PathFinder can route across zones via inter-zone word buses."""
@@ -365,4 +370,4 @@ class TestPathFinderIntegration:
         pf = PathFinder(result.arch)
 
         # proc word 0 → mem word 2 (same site): reachable via matching word bus
-        assert pf.find_path(LocationAddress(0, 0, 0), LocationAddress(0, 2, 0)) is not None
+        assert pf.find_path(LocationAddress(0, 0), LocationAddress(2, 0)) is not None

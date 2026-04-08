@@ -10,13 +10,13 @@ from bloqade.lanes.search.tree import ConfigurationTree
 def _make_tree() -> ConfigurationTree:
     arch_spec = logical.get_arch_spec()
     placement = {
-        0: LocationAddress(0, 0, 0),
-        1: LocationAddress(0, 1, 0),
+        0: LocationAddress(0, 0),
+        1: LocationAddress(1, 0),
     }
     return ConfigurationTree.from_initial_placement(arch_spec, placement)
 
 
-_TARGET = LocationAddress(0, 0, 1)
+_TARGET = LocationAddress(0, 1)
 _GEN = ExhaustiveMoveGenerator(max_x_capacity=1, max_y_capacity=1)
 
 

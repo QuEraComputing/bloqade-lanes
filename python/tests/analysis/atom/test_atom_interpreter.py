@@ -14,28 +14,28 @@ def test_atom_interpreter_simple():
     @kernel
     def main():
         state0 = move.load()
-        state1 = move.fill(state0, location_addresses=(move.LocationAddress(0, 0, 0),))
+        state1 = move.fill(state0, location_addresses=(move.LocationAddress(0, 0),))
         state2 = move.logical_initialize(
             state1,
             thetas=(0.0,),
             phis=(0.0,),
             lams=(0.0,),
-            location_addresses=(move.LocationAddress(0, 0, 0),),
+            location_addresses=(move.LocationAddress(0, 0),),
         )
 
         state3 = move.local_r(
             state2,
             axis_angle=0.0,
             rotation_angle=1.57,
-            location_addresses=(move.LocationAddress(0, 0, 0),),
+            location_addresses=(move.LocationAddress(0, 0),),
         )
 
-        state4 = move.move(state3, lanes=(SiteLaneAddress(0, 0, 0, 0),))
+        state4 = move.move(state3, lanes=(SiteLaneAddress(0, 0, 0),))
         future = move.end_measure(state4, zone_addresses=(move.ZoneAddress(0),))
         results = move.get_future_result(
             future,
             zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 0, 1),
+            location_address=move.LocationAddress(0, 1),
         )
 
         return results
@@ -53,20 +53,20 @@ def test_get_post_processing():
         state1 = move.fill(
             state0,
             location_addresses=(
-                move.LocationAddress(0, 0, 0),
-                move.LocationAddress(0, 0, 1),
+                move.LocationAddress(0, 0),
+                move.LocationAddress(0, 1),
             ),
         )
         future = move.end_measure(state1, zone_addresses=(move.ZoneAddress(0),))
         results_1 = move.get_future_result(
             future,
             zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 0, 1),
+            location_address=move.LocationAddress(0, 1),
         )
         results_2 = move.get_future_result(
             future,
             zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 0, 0),
+            location_address=move.LocationAddress(0, 0),
         )
         return squin.set_detector([results_1, results_2], [0, 1]), squin.set_observable(
             [results_1, results_2]

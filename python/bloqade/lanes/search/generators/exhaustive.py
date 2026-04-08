@@ -118,7 +118,7 @@ class ExhaustiveMoveGenerator:
         loc_to_lane: dict[LocationAddress, LaneAddress] = {}
         invalid_locs: set[LocationAddress] = set()
         for loc in src_locs:
-            lane = LaneAddress(move_type, zone_id, loc.word_id, loc.site_id, bus_id, direction)
+            lane = LaneAddress(move_type, loc.word_id, loc.site_id, bus_id, direction, zone_id)
             loc_to_lane[loc] = lane
 
             if loc in occupied:

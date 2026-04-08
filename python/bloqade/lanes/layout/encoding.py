@@ -188,7 +188,7 @@ class LaneAddress(Encoder):
 
     def src_site(self) -> LocationAddress:
         """Get the source site as a LocationAddress."""
-        return LocationAddress(self.zone_id, self.word_id, self.site_id)
+        return LocationAddress(self.word_id, self.site_id, self.zone_id)
 
     def replace(
         self,

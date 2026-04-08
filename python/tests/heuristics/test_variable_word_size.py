@@ -112,7 +112,7 @@ class TestValidateInitialLayout:
         arch = methods.arch_spec
         # All home word sites should be valid
         valid_layout = tuple(
-            LocationAddress(0, word_id, site_id)
+            LocationAddress(word_id, site_id)
             for word_id in arch._home_words
             for site_id in range(len(arch.words[word_id].site_indices))
         )
@@ -127,8 +127,8 @@ class TestValidateInitialLayout:
         non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
         assert len(non_home) > 0, "Need at least one non-home word"
         invalid_layout = (
-            LocationAddress(0, 0, 0),
-            LocationAddress(0, non_home[0], 0),
+            LocationAddress(0, 0),
+            LocationAddress(non_home[0], 0),
         )
         with pytest.raises(ValueError, match="not at a home position"):
             methods.validate_initial_layout(invalid_layout)
@@ -144,7 +144,7 @@ class TestDesiredCzLayout:
         # Two qubits on the same home word
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0, 0), LocationAddress(0, 0, 1)),
+            layout=(LocationAddress(0, 0), LocationAddress(0, 1)),
             move_count=(0, 0),
         )
         result = methods.desired_cz_layout(state, controls=(0,), targets=(1,))
@@ -166,8 +166,8 @@ class TestDesiredCzLayout:
         state = ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, home_words[0], 0),
-                LocationAddress(0, home_words[1], 0),
+                LocationAddress(home_words[0], 0),
+                LocationAddress(home_words[1], 0),
             ),
             move_count=(0, 0),
         )
@@ -191,12 +191,12 @@ class TestComputeMoveLayers:
         # Move a qubit within the same word (site 0 → last site via site bus)
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0, 0), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0, n - 1), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(0, n - 1), LocationAddress(2, 0)),
             move_count=(1, 0),
         )
         layers = compute_move_layers(arch_spec, state_before, state_after)
@@ -211,12 +211,12 @@ class TestComputeMoveLayers:
         # Move qubit from word 0 to word 1 (CZ partner) — single word bus hop
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0, 0), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 1, 0), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(1, 0), LocationAddress(2, 0)),
             move_count=(1, 0),
         )
         layers = compute_move_layers(arch_spec, state_before, state_after)
@@ -232,12 +232,12 @@ class TestComputeMoveLayers:
         # boundary (word 0 → word 2 or word 0 → word 1 → word 3)
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0, 0), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 3, 0), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(3, 0), LocationAddress(2, 0)),
             move_count=(1, 0),
         )
         layers = compute_move_layers(arch_spec, state_before, state_after)
@@ -251,7 +251,7 @@ class TestComputeMoveLayers:
         arch_spec = _make_arch(word_size_y)
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, 0, 0), LocationAddress(0, 2, 0)),
+            layout=(LocationAddress(0, 0), LocationAddress(2, 0)),
             move_count=(0, 0),
         )
         layers = compute_move_layers(arch_spec, state, state)
@@ -271,7 +271,7 @@ class TestNoHomeReturnLayout:
         assert len(non_home) > 0
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, non_home[0], 0), LocationAddress(0, home_words[0], 1)),
+            layout=(LocationAddress(non_home[0], 0), LocationAddress(home_words[0], 1)),
             move_count=(1, 0),
         )
         mid_state, _ = placement.choose_return_layout(
@@ -297,7 +297,7 @@ class TestNoHomeReturnLayout:
         non_home = [w for w in range(len(arch.words)) if w not in arch._home_words]
         assert len(non_home) > 0
         # CZ address in non-home word, home address in blockade partner word
-        cz_addr = LocationAddress(0, non_home[0], 0)
+        cz_addr = LocationAddress(non_home[0], 0)
         partner = arch.get_blockaded_location(cz_addr)
         assert partner is not None
         key = placement._distance_key(cz_addr, partner)
@@ -316,7 +316,7 @@ class TestFullCzPipeline:
         home_word = sorted(arch._home_words)[0]
         state = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, home_word, 0), LocationAddress(0, home_word, 1)),
+            layout=(LocationAddress(home_word, 0), LocationAddress(home_word, 1)),
             move_count=(0, 0),
         )
         result = placement.cz_placements(state, controls=(0,), targets=(1,))
@@ -333,8 +333,8 @@ class TestFullCzPipeline:
         state = ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, home_words[0], 0),
-                LocationAddress(0, home_words[1], 0),
+                LocationAddress(home_words[0], 0),
+                LocationAddress(home_words[1], 0),
             ),
             move_count=(0, 0),
         )
@@ -356,14 +356,14 @@ class TestMoveToLeft:
         # Move qubit from non-home word back to home
         state_before = ConcreteState(
             occupied=frozenset(),
-            layout=(LocationAddress(0, non_home[0], 0), LocationAddress(0, home_words[0], 1)),
+            layout=(LocationAddress(non_home[0], 0), LocationAddress(home_words[0], 1)),
             move_count=(1, 0),
         )
         state_after = ConcreteState(
             occupied=frozenset(),
             layout=(
-                LocationAddress(0, home_words[0], 0),
-                LocationAddress(0, home_words[0], 1),
+                LocationAddress(home_words[0], 0),
+                LocationAddress(home_words[0], 1),
             ),
             move_count=(2, 0),
         )

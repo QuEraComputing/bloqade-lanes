@@ -42,7 +42,7 @@ class PathFinder:
             word_ids = range(len(self.spec.words))
             site_ids = range(self.spec.sites_per_word)
             for word_id, site_id in product(word_ids, site_ids):
-                addr = LocationAddress(zone_id, word_id, site_id)
+                addr = LocationAddress(word_id, site_id, zone_id)
                 if addr not in self.physical_address_map:
                     idx = len(self.physical_addresses)
                     self.physical_addresses.append(addr)

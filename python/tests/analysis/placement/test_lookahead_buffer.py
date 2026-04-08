@@ -13,7 +13,7 @@ def _build_analysis() -> PlacementAnalysis:
     analysis.cz_lookahead_buffers = {}
     analysis.cz_lookahead_stmt_positions = {}
     analysis.placement_strategy = LogicalPlacementStrategy()
-    analysis.initial_layout = (LocationAddress(0, 0, 0), LocationAddress(0, 0, 1))
+    analysis.initial_layout = (LocationAddress(0, 0), LocationAddress(0, 1))
     analysis.address_analysis = {}
     return analysis
 

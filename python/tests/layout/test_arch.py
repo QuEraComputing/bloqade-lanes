@@ -12,24 +12,24 @@ from bloqade.lanes.layout.word import Word
 def test_get_blockaded_location_with_pair():
     """Test get_blockaded_location returns the correct paired location.
 
-    In the zone-centric model, CZ pairs are between zones (zone 0 <-> zone 1).
-    The CZ partner of (zone=0, word=W, site=S) is (zone=1, word=W, site=S).
+    Entangling pairs are defined within each zone. The CZ partner of
+    (zone=0, word=W, site=S) is (zone=0, partner_word, site=S).
     """
     arch_spec = logical.get_arch_spec()
 
     # get_blockaded_location preserves zone_id and maps to partner word
-    location = layout.LocationAddress(0, 0, 0)
+    location = layout.LocationAddress(0, 0)
     blockaded = arch_spec.get_blockaded_location(location)
 
     assert blockaded is not None
-    assert blockaded == layout.LocationAddress(0, 1, 0)
+    assert blockaded == layout.LocationAddress(5, 0)
 
     # test reverse
-    location2 = layout.LocationAddress(0, 1, 0)
+    location2 = layout.LocationAddress(5, 0)
     blockaded2 = arch_spec.get_blockaded_location(location2)
 
     assert blockaded2 is not None
-    assert blockaded2 == layout.LocationAddress(0, 0, 0)
+    assert blockaded2 == layout.LocationAddress(0, 0)
 
 
 def test_get_blockaded_location_without_pair():
@@ -57,38 +57,36 @@ def test_get_blockaded_location_without_pair():
     )
 
     arch_spec = layout.ArchSpec.from_components(
-        (word,),
-        (rust_zone,),
-        [],
-        [rust_mode],
+        words=(word,),
+        zones=(rust_zone,),
+        modes=[rust_mode],
     )
 
-    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 0, 0)) is None
-    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 0, 1)) is None
-    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 0, 2)) is None
+    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 0)) is None
+    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 1)) is None
+    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 2)) is None
 
 
 def test_blockaded_location_preserves_site_index():
     """Site-symmetric pairing: get_blockaded_location preserves site_id across all CZ pairs."""
     arch_spec = logical.get_arch_spec()
-    # get_blockaded_location maps to the partner zone
-    for z_a, z_b in arch_spec.entangling_zone_pairs:
-        num_sites = len(arch_spec.words[0].site_indices)
-        for word_id in range(len(arch_spec.words)):
-            for s in range(num_sites):
-                loc_a = layout.LocationAddress(z_a, word_id, s)
-                blockaded_a = arch_spec.get_blockaded_location(loc_a)
-                if blockaded_a is not None:
-                    assert (
-                        blockaded_a.site_id == s
-                    ), f"Site mismatch: (z={z_a},w={word_id},s={s}) -> site {blockaded_a.site_id}"
+    # get_blockaded_location maps to the partner word within the same zone
+    num_sites = len(arch_spec.words[0].site_indices)
+    for word_id in range(len(arch_spec.words)):
+        for s in range(num_sites):
+            loc = layout.LocationAddress(word_id, s)
+            blockaded = arch_spec.get_blockaded_location(loc)
+            if blockaded is not None:
+                assert (
+                    blockaded.site_id == s
+                ), f"Site mismatch: (w={word_id},s={s}) -> site {blockaded.site_id}"
 
 
 def test_get_lane_address_site_move_forward():
     """get_lane_address returns the correct lane for a site-bus move (forward)."""
     arch_spec = logical.get_arch_spec()
-    src = layout.LocationAddress(0, 0, 0)
-    dst = layout.LocationAddress(0, 0, 1)
+    src = layout.LocationAddress(0, 0)
+    dst = layout.LocationAddress(0, 1)
     lane = arch_spec.get_lane_address(src, dst)
     assert lane is not None
     assert lane.move_type == MoveType.SITE
@@ -100,8 +98,8 @@ def test_get_lane_address_site_move_forward():
 def test_get_lane_address_site_move_backward():
     """get_lane_address returns the correct lane for a site-bus move (backward)."""
     arch_spec = logical.get_arch_spec()
-    src = layout.LocationAddress(0, 0, 0)
-    dst = layout.LocationAddress(0, 0, 1)
+    src = layout.LocationAddress(0, 0)
+    dst = layout.LocationAddress(0, 1)
     forward_lane = arch_spec.get_lane_address(src, dst)
     assert forward_lane is not None
     backward_lane = arch_spec.get_lane_address(dst, src)
@@ -114,8 +112,8 @@ def test_get_lane_address_site_move_backward():
 def test_get_lane_address_word_move():
     """get_lane_address returns the correct lane for a word-bus move."""
     arch_spec = logical.get_arch_spec()
-    src = layout.LocationAddress(0, 0, 0)
-    dst = layout.LocationAddress(0, 1, 0)
+    src = layout.LocationAddress(0, 0)
+    dst = layout.LocationAddress(1, 0)
     lane = arch_spec.get_lane_address(src, dst)
     assert lane is not None
     assert lane.move_type == MoveType.WORD
@@ -127,7 +125,7 @@ def test_get_lane_address_word_move():
 def test_get_lane_address_returns_none_for_unconnected_pair():
     """get_lane_address returns None when no lane connects the two locations."""
     arch_spec = logical.get_arch_spec()
-    loc = layout.LocationAddress(0, 0, 0)
+    loc = layout.LocationAddress(0, 0)
     assert arch_spec.get_lane_address(loc, loc) is None
 
 

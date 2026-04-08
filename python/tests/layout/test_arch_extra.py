@@ -30,6 +30,7 @@ rust_zone = RustZone(
     word_buses=[WordBus(src=[0], dst=[1])],
     words_with_site_buses=[0],
     sites_with_word_buses=[0],
+    entangling_pairs=[(0, 1)],
 )
 rust_mode = RustMode(
     name="all",
@@ -40,7 +41,6 @@ rust_mode = RustMode(
 arch_spec = ArchSpec.from_components(
     words=(word, word),
     zones=(rust_zone,),
-    entangling_zone_pairs=[(0, 0)],
     modes=[rust_mode],
 )
 
@@ -99,7 +99,7 @@ def test_get_path_and_position():
 
 
 def test_get_zone_index():
-    loc = LocationAddress(0, 0, 0)
+    loc = LocationAddress(0, 0)
     zone = ZoneAddress(0)
     idx = arch_spec.get_zone_index(loc, zone)
     assert isinstance(idx, int)
@@ -128,10 +128,10 @@ def test_compatible_lane_error_and_lanes():
 
 
 def test_validate_location():
-    loc = LocationAddress(0, 0, 0)
+    loc = LocationAddress(0, 0)
     errors = arch_spec.validate_location(loc)
     assert isinstance(errors, set)
-    loc_invalid = LocationAddress(0, 10, 0)
+    loc_invalid = LocationAddress(10, 0)
     errors_invalid = arch_spec.validate_location(loc_invalid)
     assert errors_invalid
 
@@ -160,7 +160,7 @@ def test_get_endpoints_word_and_site():
 
 
 def test_get_blockaded_location_paired():
-    loc = LocationAddress(0, 0, 0)
+    loc = LocationAddress(0, 0)
     result = arch_spec.get_blockaded_location(loc)
     assert result is not None
 
@@ -183,10 +183,9 @@ def test_get_blockaded_location_none():
     spec_no_cz = ArchSpec.from_components(
         words=(word_no_cz,),
         zones=(rust_zone_no_cz,),
-        entangling_zone_pairs=[],
         modes=[rust_mode_no_cz],
     )
-    loc = LocationAddress(0, 0, 0)
+    loc = LocationAddress(0, 0)
     assert spec_no_cz.get_blockaded_location(loc) is None
 
 
@@ -199,7 +198,6 @@ def test_capability_flags_from_components():
     spec = ArchSpec.from_components(
         words=(word, word),
         zones=(rust_zone,),
-        entangling_zone_pairs=[(0, 0)],
         modes=[rust_mode],
         feed_forward=True,
         atom_reloading=True,

@@ -573,7 +573,7 @@ class StateArtist:
                 from bloqade.lanes.layout.encoding import LocationAddress
 
                 pos = self.arch_spec.get_position(
-                    LocationAddress(zone_id, word_id, site_id)
+                    LocationAddress(word_id, site_id, zone_id)
                 )
                 y_min = min(y_min, pos[1])
                 y_max = max(y_max, pos[1])

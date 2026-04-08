@@ -25,5 +25,5 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
         sites: list[layout.LocationAddress] = []
         for word_id in range(len(self.arch_spec.words)):
             for site_id in range(self.left_site_count):
-                sites.append(layout.LocationAddress(0, word_id, site_id))
+                sites.append(layout.LocationAddress(word_id, site_id))
         return tuple(sites[: len(qubits)])

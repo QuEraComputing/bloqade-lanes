@@ -103,7 +103,6 @@ def build_arch(
     # For entangling zones: split into even-col and odd-col sub-zones.
     zone_indices: dict[str, int] = {}
     rust_zones: list[_RustZone] = []
-    entangling_zone_pairs: list[tuple[int, int]] = []
 
     # Track which Rust zone indices correspond to even/odd columns
     # for building word buses between them
@@ -156,6 +155,10 @@ def build_arch(
                 for c in range(1, zone_spec.num_cols, 2)
             ]
 
+            # Build entangling pairs: pair even-col words with odd-col words
+            # at the same row position.
+            entangling_pairs = list(zip(even_word_ids, odd_word_ids))
+
             # Both sub-zones share the same full grid (all x/y positions)
             rust_grid = _build_zone_grid(zone_spec, layout, n, s)
             rust_grid_even = rust_grid
@@ -171,6 +174,7 @@ def build_arch(
                     sites_with_word_buses=(
                         list(range(layout.sites_per_word)) if word_buses else []
                     ),
+                    entangling_pairs=entangling_pairs,
                 )
             )
 
@@ -184,10 +188,10 @@ def build_arch(
                     sites_with_word_buses=(
                         list(range(layout.sites_per_word)) if word_buses else []
                     ),
+                    entangling_pairs=entangling_pairs,
                 )
             )
 
-            entangling_zone_pairs.append((even_zone_id, odd_zone_id))
             zone_even_odd_map[zone_name] = (even_zone_id, odd_zone_id)
             zone_indices[zone_name] = even_zone_id
         else:
@@ -273,7 +277,6 @@ def build_arch(
     arch = ArchSpec.from_components(
         words=all_words,
         zones=tuple(rust_zones),
-        entangling_zone_pairs=entangling_zone_pairs,
         modes=modes,
         zone_buses=zone_buses,
     )

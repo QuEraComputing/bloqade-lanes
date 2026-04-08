@@ -36,10 +36,9 @@ _rust_mode = RustMode(
     bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1)],
 )
 ARCH_SPEC = layout.ArchSpec.from_components(
-    (_word,),
-    (_rust_zone,),
-    [],
-    [_rust_mode],
+    words=(_word,),
+    zones=(_rust_zone,),
+    modes=[_rust_mode],
 )
 
 
@@ -71,8 +70,8 @@ def test_insert_move():
     )
 
     lane_group = (
-        layout.SiteLaneAddress(0, 0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(0, 1, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(1, 0, 0, layout.Direction.FORWARD),
     )
 
     placement_analysis: dict[ir.SSAValue, AtomState] = {
@@ -103,12 +102,12 @@ def test_insert_move():
 
 def test_insert_palindrom_moves():
     lane_group = (
-        layout.SiteLaneAddress(0, 0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(0, 1, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(1, 0, 0, layout.Direction.FORWARD),
     )
     reverse_moves = (
-        layout.SiteLaneAddress(0, 0, 0, 0, layout.Direction.BACKWARD),
-        layout.SiteLaneAddress(0, 1, 0, 0, layout.Direction.BACKWARD),
+        layout.SiteLaneAddress(0, 0, 0, layout.Direction.BACKWARD),
+        layout.SiteLaneAddress(1, 0, 0, layout.Direction.BACKWARD),
     )
 
     state_before = ir.TestValue()
@@ -294,7 +293,7 @@ def test_local_rz():
     )
 
     placement_analysis[stmt.results[0]] = ConcreteState(
-        frozenset([layout.LocationAddress(0, 0, 0)]), (), ()
+        frozenset([layout.LocationAddress(0, 0)]), (), ()
     )
 
     expected_block = ir.Block(
@@ -330,7 +329,7 @@ def test_local_r():
     )
 
     placement_analysis[stmt.results[0]] = ConcreteState(
-        frozenset([layout.LocationAddress(0, 0, 0)]), (), ()
+        frozenset([layout.LocationAddress(0, 0)]), (), ()
     )
 
     expected_block = ir.Block(
@@ -386,8 +385,8 @@ def test_insert_measure():
         ]
     )
     qubit_layout = (
-        layout.LocationAddress(0, 0, 1),
-        layout.LocationAddress(0, 0, 0),
+        layout.LocationAddress(0, 1),
+        layout.LocationAddress(0, 0),
     )
     placement_analysis[stmt.results[0]] = ExecuteMeasure(
         frozenset(), qubit_layout, (), (layout.ZoneAddress(0), layout.ZoneAddress(1))
@@ -404,12 +403,12 @@ def test_insert_measure():
             zone_result_0 := move.GetFutureResult(
                 future.result,
                 zone_address=layout.ZoneAddress(0),
-                location_address=layout.LocationAddress(0, 0, 1),
+                location_address=layout.LocationAddress(0, 1),
             ),
             zone_result_1 := move.GetFutureResult(
                 future.result,
                 zone_address=layout.ZoneAddress(1),
-                location_address=layout.LocationAddress(0, 0, 0),
+                location_address=layout.LocationAddress(0, 0),
             ),
             place.Yield(state_before, zone_result_0.result, zone_result_1.result),
         ],

@@ -35,7 +35,7 @@ def make_atom_state():
     # Use a real AtomState with minimal valid data and correct types
     # Use SiteLaneAddress for LaneAddress
     lane_addr = SiteLaneAddress(zone_id=0, word_id=0, site_id=0, bus_id=0)
-    loc_addr = LocationAddress(0, 0, 0)
+    loc_addr = LocationAddress(0, 0)
     data = AtomStateData.from_fields(
         prev_lanes={0: lane_addr},
         qubit_to_locations={0: loc_addr},
@@ -46,8 +46,8 @@ def make_atom_state():
 
 def make_atom_state_with_stationary():
     lane_addr = SiteLaneAddress(zone_id=0, word_id=0, site_id=0, bus_id=0)
-    moving_loc = LocationAddress(0, 0, 0)
-    stationary_loc = LocationAddress(0, 0, 1)
+    moving_loc = LocationAddress(0, 0)
+    stationary_loc = LocationAddress(0, 1)
     data = AtomStateData.from_fields(
         prev_lanes={0: lane_addr},
         qubit_to_locations={0: moving_loc, 1: stationary_loc},
@@ -123,8 +123,8 @@ def test_move_renderer_adds_and_updates_atom_number_labels():
     sa = artist.StateArtist(ax, arch, params, 0, 10, 0, 10)
     state = make_atom_state_with_stationary()
 
-    moving_loc = LocationAddress(0, 0, 0)
-    stationary_loc = LocationAddress(0, 0, 1)
+    moving_loc = LocationAddress(0, 0)
+    stationary_loc = LocationAddress(0, 1)
     arch.get_position.side_effect = lambda loc: {
         moving_loc: (1.0, 1.0),
         stationary_loc: (2.0, 2.0),
