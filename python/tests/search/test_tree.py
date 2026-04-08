@@ -247,6 +247,18 @@ def test_try_move_set_reports_transposition_for_same_configuration():
     assert outcome.existing_node is tree.root
 
 
+def test_try_move_set_strips_noop_lanes_from_recorded_program():
+    tree = _make_tree()
+    active_lane = SiteLaneAddress(0, 0, 0)
+    noop_lane = SiteLaneAddress(0, 1, 0)
+    outcome = tree.try_move_set(
+        tree.root, frozenset({active_lane, noop_lane}), strict=False
+    )
+    assert outcome.status == ExpansionStatus.CREATED_CHILD
+    assert outcome.child is not None
+    assert outcome.child.parent_moves == frozenset({active_lane})
+
+
 def test_try_move_set_reports_collision():
     arch_spec = logical.get_arch_spec()
     placement = {
