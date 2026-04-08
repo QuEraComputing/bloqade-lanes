@@ -211,21 +211,16 @@ class Move(interp.MethodTable):
         future = frame.get(stmt.measurement_future)
 
         if not isinstance(future, MeasureFuture):
-            print("GetFutureResult: future is not MeasureFuture")
             return (Bottom(),)
 
         result = future.results.get(stmt.zone_address)
 
         if result is None:
-            print(f"GetFutureResult: no result for zone address {stmt.zone_address}")
             return (Bottom(),)
 
         qubit_id = result.get(stmt.location_address)
 
         if qubit_id is None:
-            print(
-                f"GetFutureResult: no qubit id for location address {stmt.zone_address} {stmt.location_address}"
-            )
             return (Bottom(),)
 
         return (MeasureResult(qubit_id),)
