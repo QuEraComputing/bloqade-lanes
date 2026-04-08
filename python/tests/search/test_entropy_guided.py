@@ -97,11 +97,17 @@ def test_sequential_fallback_triggers_on_max_expansions(monkeypatch):
         return SearchResult(nodes_expanded=0, max_depth_reached=0, goal_nodes=())
 
     monkeypatch.setattr(EntropyGuidedSearch, "_sequential_fallback", fake_fallback)
+    monkeypatch.setattr(
+        EntropyGuidedSearch,
+        "_get_next_candidate",
+        lambda _self, _sn, _node, _generator: None,
+    )
 
     entropy_guided_search(
         tree,
         target,
         placement_goal(target),
+        params=SearchParams(e_max=2, delta_e=1),
         max_expansions=1,
     )
     assert fallback_called["value"] is True

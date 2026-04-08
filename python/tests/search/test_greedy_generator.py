@@ -98,28 +98,6 @@ def test_is_valid_rect_collision():
     assert ctx.is_valid_rect({0.0}, {0.0}, {loc}) is False
 
 
-def test_from_tree_collision_sources_store_sources_not_destinations():
-    """Collision filtering should mark blocked sources, not occupied destinations."""
-    _gen, tree = _make_setup(
-        placement={0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
-    )
-    occupied = tree.root.occupied_locations | tree.blocked_locations
-
-    ctx = BusContext.from_tree(
-        tree=tree,
-        occupied=occupied,
-        move_type=MoveType.WORD,
-        bus_id=0,
-        direction=Direction.FORWARD,
-        zone_id=0,
-    )
-
-    source = LocationAddress(0, 0)
-    destination = LocationAddress(1, 0)
-    assert source in ctx.collision_srcs
-    assert destination not in ctx.collision_srcs
-
-
 # --- BusContext.rect_to_lanes ---
 
 

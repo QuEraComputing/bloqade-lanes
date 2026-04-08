@@ -127,10 +127,7 @@ class BusContext:
     # --- Primitives ---
 
     def is_valid_rect(
-        self,
-        xs: set[float],
-        ys: set[float],
-        movers: set[LocationAddress] | None = None,
+        self, xs: set[float], ys: set[float], movers: set[LocationAddress]
     ) -> bool:
         """Check if every position in the X * Y rectangle is a valid bus
         source with no collision."""
@@ -138,8 +135,6 @@ class BusContext:
             for y in ys:
                 loc = self.pos_to_loc.get((x, y))
                 if loc is None or (loc not in movers or loc in self.collision_srcs):
-                    return False
-                if movers is not None and loc not in movers:
                     return False
         return True
 
@@ -190,9 +185,7 @@ class BusContext:
         return [moveset for xs, ys in solved if (moveset := self.rect_to_lanes(xs, ys))]
 
     def greedy_init(
-        self,
-        entries: dict[int, LaneAddress],
-        movers: set[LocationAddress] | None = None,
+        self, entries: dict[int, LaneAddress], movers: set[LocationAddress]
     ) -> list[Cluster]:
         """Form initial clusters via greedy sequential expansion.
 
@@ -234,9 +227,7 @@ class BusContext:
         return clusters
 
     def merge_clusters(
-        self,
-        clusters: list[Cluster],
-        movers: set[LocationAddress] | None = None,
+        self, clusters: list[Cluster], movers: set[LocationAddress]
     ) -> list[Cluster]:
         """Merge clusters until no more merges are possible.
 
