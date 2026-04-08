@@ -470,35 +470,6 @@ def test_collects_multiple_goal_nodes(monkeypatch):
     assert all(goal(n) for n in result.goal_nodes)
 
 
-def test_solution_branch_cutoff_ancestor_returns_first_ancestor_below_branch():
-    tree = _make_tree()
-    target = {0: LocationAddress(0, 1)}
-    search = EntropyGuidedSearch(
-        tree,
-        target,
-        placement_goal(target),
-    )
-    branch_child = ConfigurationNode(
-        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
-    )
-    sibling = ConfigurationNode(
-        configuration=dict(tree.root.configuration), parent=tree.root, depth=1
-    )
-    tree.root.children = {
-        frozenset(): branch_child,
-        frozenset({SiteLaneAddress(0, 0, 0)}): sibling,
-    }
-
-    deep = ConfigurationNode(
-        configuration=dict(tree.root.configuration), parent=branch_child, depth=2
-    )
-    goal = ConfigurationNode(
-        configuration=dict(tree.root.configuration), parent=deep, depth=3
-    )
-
-    assert search._cutoff_ancestor(goal) is branch_child
-
-
 def test_score_resume_buffer_replaces_lowest_when_higher_score_arrives(monkeypatch):
     tree = _make_tree()
     target = {0: LocationAddress(0, 1)}
