@@ -10,6 +10,7 @@ from bloqade.lanes.heuristics.move_synthesis import (
 from bloqade.lanes.layout.encoding import (
     Direction,
     LocationAddress,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -60,7 +61,7 @@ def test_compute_move_layers_cross_word_exact():
     assert len(result) == 1
     assert len(result[0]) == 1
     lane = result[0][0]
-    assert isinstance(lane, WordLaneAddress)
+    assert lane.move_type == MoveType.WORD
     assert lane.word_id == 0
     assert lane.site_id == 0
     assert lane.direction == Direction.FORWARD
@@ -84,7 +85,7 @@ def test_compute_move_layers_word_bus_exact():
     assert len(result) == 1
     assert len(result[0]) == 1
     lane = result[0][0]
-    assert isinstance(lane, WordLaneAddress)
+    assert lane.move_type == MoveType.WORD
     assert lane.word_id == 0
     assert lane.site_id == 0
     assert lane.direction == Direction.FORWARD
