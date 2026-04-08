@@ -76,7 +76,7 @@ class LocationAddress(Encoder):
 
     _inner: _RustLocationAddress
 
-    def __init__(self, zone_id: int, word_id: int, site_id: int):
+    def __init__(self, word_id: int, site_id: int, zone_id: int = 0):
         self._inner = _RustLocationAddress(zone_id, word_id, site_id)
         self.__post_init__()
 
@@ -115,15 +115,15 @@ class LocationAddress(Encoder):
     def replace(
         self,
         *,
-        zone_id: int | None = None,
         word_id: int | None = None,
         site_id: int | None = None,
+        zone_id: int | None = None,
     ) -> Self:
         """Return a copy, optionally replacing fields."""
         return LocationAddress(  # type: ignore[return-value]
-            zone_id if zone_id is not None else self.zone_id,
             word_id if word_id is not None else self.word_id,
             site_id if site_id is not None else self.site_id,
+            zone_id if zone_id is not None else self.zone_id,
         )
 
 
@@ -135,11 +135,11 @@ class LaneAddress(Encoder):
     def __init__(
         self,
         move_type: MoveType,
-        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
         direction: Direction = Direction.FORWARD,
+        zone_id: int = 0,
     ):
         self._inner = _RustLaneAddress(
             move_type,
@@ -194,20 +194,20 @@ class LaneAddress(Encoder):
         self,
         *,
         move_type: MoveType | None = None,
-        zone_id: int | None = None,
         word_id: int | None = None,
         site_id: int | None = None,
         bus_id: int | None = None,
         direction: Direction | None = None,
+        zone_id: int | None = None,
     ) -> Self:
         """Return a copy, optionally replacing fields."""
         return LaneAddress(  # type: ignore[return-value]
             move_type if move_type is not None else self.move_type,
-            zone_id if zone_id is not None else self.zone_id,
             word_id if word_id is not None else self.word_id,
             site_id if site_id is not None else self.site_id,
             bus_id if bus_id is not None else self.bus_id,
             direction if direction is not None else self.direction,
+            zone_id if zone_id is not None else self.zone_id,
         )
 
     def __hash__(self) -> int:
@@ -224,13 +224,15 @@ class SiteLaneAddress(LaneAddress):
 
     def __init__(
         self,
-        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
         direction: Direction = Direction.FORWARD,
+        zone_id: int = 0,
     ):
-        super().__init__(MoveType.SITE, zone_id, word_id, site_id, bus_id, direction)
+        super().__init__(
+            MoveType.SITE, word_id, site_id, bus_id, direction, zone_id
+        )
 
 
 class WordLaneAddress(LaneAddress):
@@ -238,10 +240,12 @@ class WordLaneAddress(LaneAddress):
 
     def __init__(
         self,
-        zone_id: int,
         word_id: int,
         site_id: int,
         bus_id: int,
         direction: Direction = Direction.FORWARD,
+        zone_id: int = 0,
     ):
-        super().__init__(MoveType.WORD, zone_id, word_id, site_id, bus_id, direction)
+        super().__init__(
+            MoveType.WORD, word_id, site_id, bus_id, direction, zone_id
+        )
