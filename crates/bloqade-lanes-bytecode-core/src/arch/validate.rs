@@ -60,19 +60,17 @@ impl ArchSpec {
         check_uniform_word_site_counts(self, &mut errors);
         check_word_site_indices(self, &mut errors);
 
-        // Per-zone bus validation
+        // Per-zone bus and entangling pair validation
         for (zone_idx, zone) in self.zones.iter().enumerate() {
             check_zone_words_with_site_buses(zone_idx, zone, num_words, &mut errors);
             check_zone_sites_with_word_buses(zone_idx, zone, sites_per_word, &mut errors);
             check_zone_site_buses(zone_idx, zone, sites_per_word, &mut errors);
             check_zone_word_buses(zone_idx, zone, num_words, &mut errors);
+            check_zone_entangling_pairs(zone_idx, zone, num_words, &mut errors);
         }
 
         // Inter-zone bus validation
         check_zone_buses(self, num_zones, num_words, &mut errors);
-
-        // Entangling zone pair validation
-        check_entangling_zone_pairs(self, num_zones, &mut errors);
 
         // Mode validation
         check_modes(self, num_zones, num_words, sites_per_word, &mut errors);
@@ -340,31 +338,41 @@ fn check_zone_buses(
     }
 }
 
-// --- Entangling zone pair validation ---
+// --- Per-zone entangling pair validation ---
 
-/// Both zone indices must be valid and no duplicate pairs.
-fn check_entangling_zone_pairs(spec: &ArchSpec, num_zones: usize, errors: &mut Vec<ArchSpecError>) {
+/// Word indices in entangling_pairs must be valid, distinct, and no duplicate pairs.
+fn check_zone_entangling_pairs(
+    zone_idx: usize,
+    zone: &super::types::Zone,
+    num_words: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
     let mut seen: HashSet<[u32; 2]> = HashSet::new();
-    for (idx, pair) in spec.entangling_zone_pairs.iter().enumerate() {
+    for (idx, pair) in zone.entangling_pairs.iter().enumerate() {
         let [a, b] = *pair;
-        if a as usize >= num_zones {
+        if a as usize >= num_words {
             errors.push(ArchSpecError::EntanglingPair(format!(
-                "entangling_zone_pairs[{}]: zone ID {} >= num_zones ({})",
-                idx, a, num_zones
+                "zone[{}].entangling_pairs[{}]: word ID {} >= num_words ({})",
+                zone_idx, idx, a, num_words
             )));
         }
-        if b as usize >= num_zones {
+        if b as usize >= num_words {
             errors.push(ArchSpecError::EntanglingPair(format!(
-                "entangling_zone_pairs[{}]: zone ID {} >= num_zones ({})",
-                idx, b, num_zones
+                "zone[{}].entangling_pairs[{}]: word ID {} >= num_words ({})",
+                zone_idx, idx, b, num_words
             )));
         }
-        // Normalize pair order for duplicate detection
+        if a == b {
+            errors.push(ArchSpecError::EntanglingPair(format!(
+                "zone[{}].entangling_pairs[{}]: word paired with itself ({})",
+                zone_idx, idx, a
+            )));
+        }
         let normalized = if a <= b { [a, b] } else { [b, a] };
         if !seen.insert(normalized) {
             errors.push(ArchSpecError::EntanglingPair(format!(
-                "entangling_zone_pairs[{}]: duplicate pair [{}, {}]",
-                idx, a, b
+                "zone[{}].entangling_pairs[{}]: duplicate pair [{}, {}]",
+                zone_idx, idx, a, b
             )));
         }
     }
@@ -481,6 +489,7 @@ mod tests {
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
                 },
                 Zone {
                     grid: grid1,
@@ -488,6 +497,7 @@ mod tests {
                     word_buses: vec![],
                     words_with_site_buses: vec![],
                     sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
                 },
             ],
             zone_buses: vec![Bus {
@@ -500,7 +510,6 @@ mod tests {
                     word_id: 0,
                 }],
             }],
-            entangling_zone_pairs: vec![[0, 1]],
             modes: vec![Mode {
                 name: "full".to_string(),
                 zones: vec![0, 1],
@@ -562,9 +571,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_entangling_zone_pair_invalid_zone() {
+    fn test_validate_entangling_pair_invalid_word() {
         let mut spec = make_valid_two_zone_spec();
-        spec.entangling_zone_pairs = vec![[0, 99]];
+        spec.zones[0].entangling_pairs = vec![[0, 99]];
         assert!(matches!(
             spec.validate(),
             Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::EntanglingPair(_)))
@@ -745,9 +754,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_entangling_zone_pair_duplicate() {
+    fn test_validate_entangling_pair_duplicate() {
         let mut spec = make_valid_two_zone_spec();
-        spec.entangling_zone_pairs = vec![[0, 1], [1, 0]]; // same pair reversed
+        spec.zones[0].entangling_pairs = vec![[0, 1], [1, 0]]; // same pair reversed
         assert!(matches!(
             spec.validate(),
             Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::EntanglingPair(msg) if msg.contains("duplicate")))
@@ -777,7 +786,7 @@ mod tests {
     fn test_validate_multiple_errors_collected() {
         let mut spec = make_valid_two_zone_spec();
         // Break multiple things
-        spec.entangling_zone_pairs = vec![[0, 99]]; // bad zone
+        spec.zones[0].entangling_pairs = vec![[0, 99]]; // bad word
         spec.zones[0].words_with_site_buses = vec![99]; // bad word
         let errors = spec.validate().unwrap_err();
         assert!(

@@ -58,6 +58,10 @@ pub struct Zone {
     pub words_with_site_buses: Vec<u32>,
     /// Site indices that participate in word-bus transport within this zone.
     pub sites_with_word_buses: Vec<u32>,
+    /// Word pairs within this zone that are at blockade radius for CZ gates.
+    /// A zone with empty `entangling_pairs` is a storage/low-connectivity zone.
+    #[serde(default)]
+    pub entangling_pairs: Vec<[u32; 2]>,
 }
 
 /// A named operational mode for the device.
@@ -92,9 +96,6 @@ pub struct ArchSpec {
     pub zones: Vec<Zone>,
     /// Inter-zone word buses.
     pub zone_buses: Vec<Bus<ZonedWordRef>>,
-    /// Pairs of zone IDs whose words are within blockade radius for
-    /// entangling (CZ) gates.
-    pub entangling_zone_pairs: Vec<[u32; 2]>,
     /// Operational modes (measurement, etc.).
     pub modes: Vec<Mode>,
     /// Optional AOD transport paths.
@@ -127,7 +128,6 @@ impl ArchSpec {
         words: Vec<Word>,
         zones: Vec<Zone>,
         zone_buses: Vec<Bus<ZonedWordRef>>,
-        entangling_zone_pairs: Vec<[u32; 2]>,
         modes: Vec<Mode>,
         paths: Option<Vec<TransportPath>>,
         feed_forward: bool,
@@ -138,7 +138,6 @@ impl ArchSpec {
             words,
             zones,
             zone_buses,
-            entangling_zone_pairs,
             modes,
             paths,
             feed_forward,
@@ -450,7 +449,6 @@ mod tests {
             ],
             zones: vec![],
             zone_buses: vec![],
-            entangling_zone_pairs: vec![],
             modes: vec![],
             paths: None,
             feed_forward: false,
@@ -466,7 +464,6 @@ mod tests {
             words: vec![],
             zones: vec![],
             zone_buses: vec![],
-            entangling_zone_pairs: vec![],
             modes: vec![],
             paths: None,
             feed_forward: false,

@@ -273,7 +273,7 @@ fn test_validate_with_arch_spec() {
             }
         ],
         "zone_buses": [],
-        "entangling_zone_pairs": [],
+
         "modes": [
             { "name": "default", "zones": [0], "bitstring_order": [] }
         ]
@@ -343,7 +343,7 @@ fn test_validate_detects_invalid_arch_addresses() {
             }
         ],
         "zone_buses": [],
-        "entangling_zone_pairs": [],
+
         "modes": [
             { "name": "default", "zones": [0], "bitstring_order": [] }
         ]
@@ -398,7 +398,7 @@ fn test_disassemble_invalid_binary() {
 #[test]
 fn test_arch_pretty_print() {
     let dir = TempDir::new().unwrap();
-    let arch_json = r#"{"version":"2.0","words":[{"sites":[[0,0],[0,1]]}],"zones":[{"grid":{"x_start":1.0,"y_start":2.0,"x_spacing":[],"y_spacing":[2.0]},"site_buses":[],"word_buses":[],"words_with_site_buses":[],"sites_with_word_buses":[]}],"zone_buses":[],"entangling_zone_pairs":[],"modes":[{"name":"default","zones":[0],"bitstring_order":[]}]}"#;
+    let arch_json = r#"{"version":"2.0","words":[{"sites":[[0,0],[0,1]]}],"zones":[{"grid":{"x_start":1.0,"y_start":2.0,"x_spacing":[],"y_spacing":[2.0]},"site_buses":[],"word_buses":[],"words_with_site_buses":[],"sites_with_word_buses":[]}],"zone_buses":[],"modes":[{"name":"default","zones":[0],"bitstring_order":[]}]}"#;
     let arch_path = dir.path().join("arch.json");
     fs::write(&arch_path, arch_json).unwrap();
 
@@ -445,7 +445,7 @@ fn test_validate_arch_spec_valid() {
             }
         ],
         "zone_buses": [],
-        "entangling_zone_pairs": [],
+
         "modes": [
             { "name": "default", "zones": [0], "bitstring_order": [] }
         ]

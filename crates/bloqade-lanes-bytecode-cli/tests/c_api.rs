@@ -301,7 +301,7 @@ fn arch_from_json_valid() {
             "sites_with_word_buses": []
         }],
         "zone_buses": [],
-        "entangling_zone_pairs": [],
+
         "modes": [{ "name": "default", "zones": [0], "bitstring_order": [] }]
     }"#,
     )
@@ -348,7 +348,7 @@ fn validate_addresses_with_arch() {
             "sites_with_word_buses": []
         }],
         "zone_buses": [],
-        "entangling_zone_pairs": [],
+
         "modes": [{ "name": "default", "zones": [0], "bitstring_order": [] }]
     }"#,
     )

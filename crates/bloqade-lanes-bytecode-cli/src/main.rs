@@ -238,7 +238,14 @@ fn print_arch_spec(spec: &ArchSpec) {
             );
         }
     }
-    println!("  entangling_zone_pairs: {:?}", spec.entangling_zone_pairs);
+    for (zone_idx, zone) in spec.zones.iter().enumerate() {
+        if !zone.entangling_pairs.is_empty() {
+            println!(
+                "  Zone {} entangling_pairs: {:?}",
+                zone_idx, zone.entangling_pairs
+            );
+        }
+    }
     println!("  modes: {} mode(s)", spec.modes.len());
     for mode in &spec.modes {
         println!("    {}: zones={:?}", mode.name, mode.zones);

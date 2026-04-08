@@ -666,17 +666,28 @@ pub struct PyZone {
 #[pymethods]
 impl PyZone {
     #[new]
+    #[pyo3(signature = (grid, site_buses, word_buses, words_with_site_buses, sites_with_word_buses, entangling_pairs=None))]
     fn new(
         grid: &PyGrid,
         site_buses: Vec<PyRef<'_, PySiteBus>>,
         word_buses: Vec<PyRef<'_, PyWordBus>>,
         words_with_site_buses: Vec<i64>,
         sites_with_word_buses: Vec<i64>,
+        entangling_pairs: Option<Vec<(i64, i64)>>,
     ) -> PyResult<Self> {
         let words_with_site_buses =
             validate_vec::<u32>("words_with_site_buses", words_with_site_buses)?;
         let sites_with_word_buses =
             validate_vec::<u32>("sites_with_word_buses", sites_with_word_buses)?;
+        let entangling_pairs: Vec<[u32; 2]> = entangling_pairs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(a, b)| {
+                let a = validate_field::<u32>("entangling_pairs word_id", a)?;
+                let b = validate_field::<u32>("entangling_pairs word_id", b)?;
+                Ok([a, b])
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: rs::Zone {
                 grid: grid.inner.clone(),
@@ -684,6 +695,7 @@ impl PyZone {
                 word_buses: word_buses.iter().map(|b| b.inner.clone()).collect(),
                 words_with_site_buses,
                 sites_with_word_buses,
+                entangling_pairs,
             },
         })
     }
@@ -721,6 +733,15 @@ impl PyZone {
     #[getter]
     fn sites_with_word_buses(&self) -> Vec<u32> {
         self.inner.sites_with_word_buses.clone()
+    }
+
+    #[getter]
+    fn entangling_pairs(&self) -> Vec<(u32, u32)> {
+        self.inner
+            .entangling_pairs
+            .iter()
+            .map(|p| (p[0], p[1]))
+            .collect()
     }
 
     fn __repr__(&self) -> String {
@@ -858,34 +879,24 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, words, zones, zone_buses, entangling_zone_pairs, modes, paths=None, feed_forward=false, atom_reloading=false))]
+    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
         words: Vec<PyRef<'_, PyWord>>,
         zones: Vec<PyRef<'_, PyZone>>,
         zone_buses: Vec<PyRef<'_, PyZoneBus>>,
-        entangling_zone_pairs: Vec<(i64, i64)>,
         modes: Vec<PyRef<'_, PyMode>>,
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
         feed_forward: bool,
         atom_reloading: bool,
     ) -> PyResult<Self> {
-        let entangling_zone_pairs: Vec<[u32; 2]> = entangling_zone_pairs
-            .into_iter()
-            .map(|(a, b)| {
-                let a = validate_field::<u32>("entangling_zone_pairs zone_id", a)?;
-                let b = validate_field::<u32>("entangling_zone_pairs zone_id", b)?;
-                Ok([a, b])
-            })
-            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
                 words: words.iter().map(|w| w.inner.clone()).collect(),
                 zones: zones.iter().map(|z| z.inner.clone()).collect(),
                 zone_buses: zone_buses.iter().map(|b| b.inner.clone()).collect(),
-                entangling_zone_pairs,
                 modes: modes.iter().map(|m| m.inner.clone()).collect(),
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
                 feed_forward,
@@ -943,15 +954,6 @@ impl PyArchSpec {
             .zone_buses
             .iter()
             .map(|b| PyZoneBus { inner: b.clone() })
-            .collect()
-    }
-
-    #[getter]
-    fn entangling_zone_pairs(&self) -> Vec<(u32, u32)> {
-        self.inner
-            .entangling_zone_pairs
-            .iter()
-            .map(|p| (p[0], p[1]))
             .collect()
     }
 
@@ -1028,9 +1030,9 @@ impl PyArchSpec {
 
     /// Get the CZ partner for a given location.
     ///
-    /// For a site in zone Z, finds the partner zone from ``entangling_zone_pairs``
-    /// and returns the same (word_id, site_id) in the partner zone.
-    /// Returns None if the zone is not in any entangling pair.
+    /// For a site in a zone, finds the partner word from the zone's
+    /// ``entangling_pairs`` and returns the corresponding location.
+    /// Returns None if the word is not in any entangling pair.
     #[pyo3(text_signature = "(self, loc)")]
     fn get_cz_partner(&self, loc: &PyLocationAddr) -> Option<PyLocationAddr> {
         self.inner

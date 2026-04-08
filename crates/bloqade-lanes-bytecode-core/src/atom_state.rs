@@ -316,6 +316,7 @@ mod tests {
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
                 },
                 Zone {
                     grid: grid1,
@@ -323,6 +324,7 @@ mod tests {
                     word_buses: vec![],
                     words_with_site_buses: vec![],
                     sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
                 },
             ],
             zone_buses: vec![Bus {
@@ -335,7 +337,6 @@ mod tests {
                     word_id: 0,
                 }],
             }],
-            entangling_zone_pairs: vec![[0, 1]],
             modes: vec![Mode {
                 name: "full".to_string(),
                 zones: vec![0, 1],
@@ -760,8 +761,8 @@ mod tests {
     #[test]
     fn get_qubit_pairing_all_unpaired() {
         let spec = make_test_spec();
-        // Entangling pair: zones [0, 1]. CZ partner of (zone=0, w, s) is (zone=1, w, s).
-        // Place qubits only in zone 0 — no matching occupancy in zone 1.
+        // Zone 0 entangling_pairs: [[0, 1]] — word 0 paired with word 1.
+        // Place both qubits in word 0 only — no qubit in word 1, so all unpaired.
         let state = AtomStateData::from_locations(&[
             (
                 0,
@@ -792,9 +793,11 @@ mod tests {
     #[test]
     fn get_qubit_pairing_with_pairs() {
         let spec = make_test_spec();
-        // CZ pairing is between zones: (zone 0, word w, site s) <-> (zone 1, word w, site s).
-        // Place qubit 0 at (zone 0, word 0, site 0) and qubit 1 at (zone 1, word 0, site 0) -> paired.
-        // Also place qubit 2 at (zone 0, word 0, site 1) without partner in zone 1 -> unpaired.
+        // Zone 0 entangling_pairs: [[0, 1]] — word 0 paired with word 1.
+        // Place qubit 0 at (zone 0, word 0, site 0) and qubit 1 at (zone 0, word 1, site 0)
+        // -> paired (same zone, partner words, same site).
+        // Place qubit 2 at (zone 0, word 0, site 1) without partner at (zone 0, word 1, site 1)
+        // -> unpaired.
         let state = AtomStateData::from_locations(&[
             (
                 0,
@@ -807,8 +810,8 @@ mod tests {
             (
                 1,
                 LocationAddr {
-                    zone_id: 1,
-                    word_id: 0,
+                    zone_id: 0,
+                    word_id: 1,
                     site_id: 0,
                 },
             ),
@@ -825,7 +828,7 @@ mod tests {
         let zone = ZoneAddr { zone_id: 0 };
         let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
 
-        // Qubits 0 and 1 should be paired (both at (word 0, site 0) across zones 0 and 1)
+        // Qubits 0 and 1 should be paired (word 0 and word 1 at site 0 in zone 0)
         assert_eq!(controls.len(), 1);
         assert_eq!(targets.len(), 1);
         use std::collections::HashSet;
@@ -833,7 +836,7 @@ mod tests {
         let target_set: HashSet<u32> = targets.iter().copied().collect();
         assert_eq!(control_set, HashSet::from([0]));
         assert_eq!(target_set, HashSet::from([1]));
-        // Qubit 2 is unpaired (zone 0 word 0 site 1, partner zone 1 word 0 site 1 is empty)
+        // Qubit 2 is unpaired (zone 0 word 0 site 1, partner word 1 site 1 is empty)
         assert_eq!(unpaired, vec![2]);
     }
 
@@ -848,8 +851,8 @@ mod tests {
     #[test]
     fn get_qubit_pairing_skips_qubits_outside_zone() {
         let spec = make_test_spec();
-        // Zone 0 is queried. Place a qubit only in zone 0 — it has a CZ partner
-        // zone (zone 1), but no qubit occupies the partner site.
+        // Zone 0 entangling_pairs: [[0, 1]] — word 0 paired with word 1.
+        // Place a qubit only at word 0 — partner word 1 has no qubit.
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
@@ -859,7 +862,7 @@ mod tests {
             },
         )]);
 
-        // Use zone 0 — qubit at (0,0,0) is in zone but has no paired qubit in zone 1
+        // Use zone 0 — qubit at (0,0,0), partner at (0,1,0) is empty
         let zone = ZoneAddr { zone_id: 0 };
         let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
 

@@ -906,9 +906,9 @@ mod tests {
                 word_buses: vec![],
                 words_with_site_buses: vec![0],
                 sites_with_word_buses: vec![],
+                entangling_pairs: vec![],
             }],
             zone_buses: vec![],
-            entangling_zone_pairs: vec![],
             modes: vec![Mode {
                 name: "full".to_string(),
                 zones: vec![0],
@@ -1042,9 +1042,9 @@ mod tests {
                 }],
                 words_with_site_buses: vec![0, 1],
                 sites_with_word_buses: vec![0],
+                entangling_pairs: vec![],
             }],
             zone_buses: vec![],
-            entangling_zone_pairs: vec![],
             modes: vec![Mode {
                 name: "full".to_string(),
                 zones: vec![0],
@@ -1164,9 +1164,9 @@ mod tests {
                 word_buses: vec![],
                 words_with_site_buses: vec![0],
                 sites_with_word_buses: vec![],
+                entangling_pairs: vec![],
             }],
             zone_buses: vec![],
-            entangling_zone_pairs: vec![],
             modes: vec![Mode {
                 name: "full".to_string(),
                 zones: vec![0],

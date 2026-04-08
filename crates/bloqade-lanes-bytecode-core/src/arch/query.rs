@@ -284,22 +284,24 @@ impl ArchSpec {
 
     /// Get the CZ partner for a given location.
     ///
-    /// For a site in zone Z, finds the partner zone from `entangling_zone_pairs`
-    /// and returns the same (word_id, site_id) in the partner zone.
-    /// Returns `None` if the zone is not in any entangling pair.
+    /// Searches `zones[loc.zone_id].entangling_pairs` for a pair containing
+    /// `loc.word_id`. Returns the partner in the **same zone** with the paired
+    /// word_id and same site_id. Returns `None` if the word is not in any
+    /// entangling pair within its zone.
     pub fn get_cz_partner(&self, loc: &LocationAddr) -> Option<LocationAddr> {
-        let partner_zone = self.entangling_zone_pairs.iter().find_map(|pair| {
-            if pair[0] == loc.zone_id {
+        let zone = self.zones.get(loc.zone_id as usize)?;
+        let partner_word = zone.entangling_pairs.iter().find_map(|pair| {
+            if pair[0] == loc.word_id {
                 Some(pair[1])
-            } else if pair[1] == loc.zone_id {
+            } else if pair[1] == loc.word_id {
                 Some(pair[0])
             } else {
                 None
             }
         })?;
         Some(LocationAddr {
-            zone_id: partner_zone,
-            word_id: loc.word_id,
+            zone_id: loc.zone_id,
+            word_id: partner_word,
             site_id: loc.site_id,
         })
     }
@@ -695,6 +697,7 @@ mod tests {
                     }],
                     words_with_site_buses: vec![0, 1],
                     sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
                 },
                 Zone {
                     grid: grid1,
@@ -702,6 +705,7 @@ mod tests {
                     word_buses: vec![],
                     words_with_site_buses: vec![],
                     sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
                 },
             ],
             zone_buses: vec![Bus {
@@ -714,7 +718,6 @@ mod tests {
                     word_id: 0,
                 }],
             }],
-            entangling_zone_pairs: vec![[0, 1]],
             modes: vec![Mode {
                 name: "full".to_string(),
                 zones: vec![0, 1],
@@ -804,6 +807,7 @@ mod tests {
     #[test]
     fn test_get_cz_partner() {
         let spec = make_valid_two_zone_spec();
+        // Zone 0 has entangling_pairs: [[0, 1]] — word 0 paired with word 1
         let partner = spec.get_cz_partner(&LocationAddr {
             zone_id: 0,
             word_id: 0,
@@ -812,8 +816,8 @@ mod tests {
         assert_eq!(
             partner,
             Some(LocationAddr {
-                zone_id: 1,
-                word_id: 0,
+                zone_id: 0, // same zone
+                word_id: 1, // partner word
                 site_id: 0,
             })
         );
@@ -822,9 +826,10 @@ mod tests {
     #[test]
     fn test_get_cz_partner_reverse() {
         let spec = make_valid_two_zone_spec();
+        // word 1 → word 0 (reverse direction within same zone)
         let partner = spec.get_cz_partner(&LocationAddr {
-            zone_id: 1,
-            word_id: 0,
+            zone_id: 0,
+            word_id: 1,
             site_id: 1,
         });
         assert_eq!(
@@ -840,9 +845,9 @@ mod tests {
     #[test]
     fn test_get_cz_partner_no_pair() {
         let mut spec = make_valid_two_zone_spec();
-        spec.entangling_zone_pairs = vec![];
+        // Zone 1 has no entangling pairs
         let partner = spec.get_cz_partner(&LocationAddr {
-            zone_id: 0,
+            zone_id: 1,
             word_id: 0,
             site_id: 0,
         });
