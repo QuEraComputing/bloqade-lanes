@@ -39,6 +39,10 @@ from .decoders import (
     make_shape_only_dem,
     matrix_to_dem,
 )
+from .noise import (
+    DistillationSimNoiseConfig,
+    build_distillation_sim_noise_model,
+)
 
 __all__ = [
     "BasisDataset",
@@ -47,12 +51,14 @@ __all__ = [
     "DEFAULT_TARGET_BLOCH",
     "DecoderAdapter",
     "DecoderKernelBundle",
+    "DistillationSimNoiseConfig",
     "NaiveKernelBundle",
     "bits_to_key",
     "build_decoder_kernel_bundle",
     "build_mld_decoders",
     "build_mle_decoders",
     "build_naive_kernel_bundle",
+    "build_distillation_sim_noise_model",
     "build_shared_mld_postselection_scores",
     "build_task",
     "build_task_map",

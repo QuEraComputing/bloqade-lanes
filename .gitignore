@@ -1,3 +1,6 @@
+# for stdlib code
+demo/msd_utils/noise.py
+
 # misc
 .DS_Store
 .tmp*
