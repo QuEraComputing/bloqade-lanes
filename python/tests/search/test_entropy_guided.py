@@ -89,7 +89,7 @@ def test_max_expansions_limit():
 
 def test_sequential_fallback_triggers_on_max_expansions(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 9)}
+    target = {0: LocationAddress(9, 0)}
     fallback_called = {"value": False}
 
     def fake_fallback(_self, _current_node):  # type: ignore[no-untyped-def]
@@ -197,7 +197,7 @@ def test_max_candidates_enforced():
 
 def test_candidate_cache_keeps_only_top_unique_generated_candidates():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(5, 0)}
     params = SearchParams(max_candidates=2, e_max=4)
     search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
 
@@ -212,10 +212,10 @@ def test_candidate_cache_keeps_only_top_unique_generated_candidates():
         )
     }
 
-    top_candidate = frozenset({SiteLaneAddress(0, 0, 1)})
-    duplicate_top_candidate = frozenset({SiteLaneAddress(0, 0, 1)})
-    second_candidate = frozenset({SiteLaneAddress(0, 0, 2)})
-    lower_ranked_candidate = frozenset({SiteLaneAddress(0, 0, 3)})
+    top_candidate = frozenset({SiteLaneAddress(2, 0, 0)})
+    duplicate_top_candidate = frozenset({SiteLaneAddress(2, 0, 0)})
+    second_candidate = frozenset({SiteLaneAddress(3, 0, 0)})
+    lower_ranked_candidate = frozenset({SiteLaneAddress(4, 0, 0)})
 
     class _StubGenerator:
         def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
@@ -238,14 +238,14 @@ def test_candidate_cache_keeps_only_top_unique_generated_candidates():
 
 def test_candidate_cache_top_k_applies_to_global_rectangle_order():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(5, 0)}
     params = SearchParams(max_candidates=2, e_max=4)
     search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
 
     node = tree.root
     rect_top = frozenset({SiteLaneAddress(0, 0, 0), SiteLaneAddress(1, 0, 0)})
-    rect_second = frozenset({SiteLaneAddress(0, 0, 1), SiteLaneAddress(1, 0, 1)})
-    rect_third = frozenset({SiteLaneAddress(0, 0, 2), SiteLaneAddress(1, 0, 2)})
+    rect_second = frozenset({SiteLaneAddress(2, 0, 0), SiteLaneAddress(3, 0, 0)})
+    rect_third = frozenset({SiteLaneAddress(4, 0, 0), SiteLaneAddress(5, 0, 0)})
 
     class _RectangleStubGenerator:
         def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
@@ -397,7 +397,7 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
 
 def test_ancestor_revisit_maps_to_state_seen_with_real_tree_outcome():
     tree = _make_tree()
-    target = {0: LocationAddress(0, 9)}
+    target = {0: LocationAddress(9, 0)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
     records, record = _make_on_step_recorder()
 
@@ -436,7 +436,7 @@ def test_collects_multiple_goal_nodes(monkeypatch):
     target = {0: LocationAddress(0, 1)}
     goal = placement_goal(target)
     c1 = frozenset({SiteLaneAddress(0, 0, 0)})
-    c2 = frozenset({SiteLaneAddress(0, 0, 1)})
+    c2 = frozenset({SiteLaneAddress(1, 0, 0)})
     candidate_sequence = iter([c1, c2])
 
     def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
@@ -514,13 +514,13 @@ def test_score_resume_buffer_replaces_lowest_when_higher_score_arrives(monkeypat
     c2 = ConfigurationNode(
         configuration=dict(tree.root.configuration),
         parent=tree.root,
-        parent_moves=frozenset({SiteLaneAddress(0, 0, 1)}),
+        parent_moves=frozenset({SiteLaneAddress(1, 0, 0)}),
         depth=1,
     )
     c3 = ConfigurationNode(
         configuration=dict(tree.root.configuration),
         parent=tree.root,
-        parent_moves=frozenset({SiteLaneAddress(0, 0, 2)}),
+        parent_moves=frozenset({SiteLaneAddress(2, 0, 0)}),
         depth=1,
     )
     scores = {id(c1): 1.0, id(c2): 2.0, id(c3): 3.0}
@@ -544,7 +544,7 @@ def test_score_resume_buffer_replaces_lowest_when_higher_score_arrives(monkeypat
 
 def test_score_resume_buffer_does_not_replace_when_not_better(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(5, 0)}
     search = EntropyGuidedSearch(tree, target, placement_goal(target))
     capacity = 2
 
@@ -557,13 +557,13 @@ def test_score_resume_buffer_does_not_replace_when_not_better(monkeypatch):
     c2 = ConfigurationNode(
         configuration=dict(tree.root.configuration),
         parent=tree.root,
-        parent_moves=frozenset({SiteLaneAddress(0, 0, 1)}),
+        parent_moves=frozenset({SiteLaneAddress(1, 0, 0)}),
         depth=1,
     )
     c3 = ConfigurationNode(
         configuration=dict(tree.root.configuration),
         parent=tree.root,
-        parent_moves=frozenset({SiteLaneAddress(0, 0, 2)}),
+        parent_moves=frozenset({SiteLaneAddress(2, 0, 0)}),
         depth=1,
     )
     scores = {id(c1): 3.0, id(c2): 2.0, id(c3): 1.0}
@@ -587,7 +587,7 @@ def test_score_resume_buffer_does_not_replace_when_not_better(monkeypatch):
 
 def test_multi_goal_uses_score_buffer_for_resume(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(5, 0)}
     goal = placement_goal(target)
     search = EntropyGuidedSearch(
         tree,
@@ -597,7 +597,7 @@ def test_multi_goal_uses_score_buffer_for_resume(monkeypatch):
     )
 
     c1 = frozenset({SiteLaneAddress(0, 0, 0)})
-    c2 = frozenset({SiteLaneAddress(0, 0, 1)})
+    c2 = frozenset({SiteLaneAddress(1, 0, 0)})
     candidate_sequence = iter([c1, c2])
 
     def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
@@ -607,7 +607,7 @@ def test_multi_goal_uses_score_buffer_for_resume(monkeypatch):
 
     def fake_try_move_set(node, move_set, strict=True):  # type: ignore[no-untyped-def]
         child = ConfigurationNode(
-            configuration={0: LocationAddress(0, 5), 1: node.configuration[1]},
+            configuration={0: LocationAddress(5, 0), 1: node.configuration[1]},
             parent=node,
             parent_moves=move_set,
             depth=node.depth + 1,

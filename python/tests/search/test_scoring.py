@@ -122,7 +122,7 @@ def test_score_all_qubit_bus_pairs_excludes_blocked_destinations():
 
 
 def test_score_rectangle_bus_candidates_marks_non_movers_invalid():
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(5, 0)}
     scorer, tree = _make_scorer_and_tree(target=target)
     buckets = scorer.score_rectangle_bus_candidates(tree.root, entropy=1, tree=tree)
     assert buckets
@@ -132,9 +132,9 @@ def test_score_rectangle_bus_candidates_marks_non_movers_invalid():
 
 
 def test_score_rectangle_bus_candidates_marks_collision_sources_invalid():
-    target = {0: LocationAddress(0, 5)}
+    target = {0: LocationAddress(5, 0)}
     scorer, base_tree = _make_scorer_and_tree(target=target)
-    blocked = frozenset({LocationAddress(0, 5)})
+    blocked = frozenset({LocationAddress(5, 0)})
     tree = ConfigurationTree(
         arch_spec=base_tree.arch_spec,
         root=base_tree.root,
