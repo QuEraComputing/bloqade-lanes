@@ -140,7 +140,7 @@ def test_exhaustive_generator_no_empty_grids():
     gen = ExhaustiveMoveGenerator()
 
     for ms in gen.generate(tree.root, tree):
-        encoded_sources = {LocationAddress(lane.word_id, lane.site_id, lane.zone_id) for lane in ms}
+        encoded_sources = {lane.src_site() for lane in ms}
         assert any(tree.root.is_occupied(s) for s in encoded_sources)
 
 

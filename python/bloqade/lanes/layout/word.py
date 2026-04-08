@@ -24,7 +24,7 @@ class Word:
 
     @property
     def sites(self) -> tuple[tuple[int, int], ...]:
-        return tuple(tuple(s) for s in self._inner.sites)
+        return tuple((s[0], s[1]) for s in self._inner.sites)
 
     @property
     def site_indices(self) -> tuple[tuple[int, int], ...]:

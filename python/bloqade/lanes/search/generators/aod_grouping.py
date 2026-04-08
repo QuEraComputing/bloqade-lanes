@@ -18,6 +18,7 @@ from bloqade.lanes.layout import (
 )
 
 if TYPE_CHECKING:
+    from bloqade.lanes.bytecode._native import Zone as _RustZone
     from bloqade.lanes.layout.arch import ArchSpec
     from bloqade.lanes.search.tree import ConfigurationTree
 
@@ -76,7 +77,7 @@ class BusContext:
 
         # Aggregate sources across zones (or a single zone if specified)
         src_locs: list[LocationAddress] = []
-        zone_iter: list[tuple[int, object]] = []
+        zone_iter: list[tuple[int, _RustZone]] = []
         if zone_id is not None:
             zone_iter = [(zone_id, arch_spec.zones[zone_id])]
         else:
