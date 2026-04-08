@@ -110,12 +110,10 @@ class BusContext:
         # checks source membership, so collision_srcs must store sources.
         collision: set[LocationAddress] = set()
         for loc in src_locs:
-            lane = LaneAddress(
-                move_type, loc.word_id, loc.site_id, bus_id, direction, loc.zone_id
-            )
+            lane = LaneAddress(move_type, loc.word_id, loc.site_id, bus_id, direction)
             _, dst = arch_spec.get_endpoints(lane)
             if dst in occupied:
-                collision.add(loc)
+                collision.add(dst)
 
         return cls(
             move_type=move_type,
@@ -129,7 +127,10 @@ class BusContext:
     # --- Primitives ---
 
     def is_valid_rect(
-        self, xs: set[float], ys: set[float], movers: set[LocationAddress]
+        self,
+        xs: set[float],
+        ys: set[float],
+        movers: set[LocationAddress] | None = None,
     ) -> bool:
         """Check if every position in the X * Y rectangle is a valid bus
         source with no collision."""
@@ -137,6 +138,8 @@ class BusContext:
             for y in ys:
                 loc = self.pos_to_loc.get((x, y))
                 if loc is None or (loc not in movers or loc in self.collision_srcs):
+                    return False
+                if movers is not None and loc not in movers:
                     return False
         return True
 
@@ -187,7 +190,9 @@ class BusContext:
         return [moveset for xs, ys in solved if (moveset := self.rect_to_lanes(xs, ys))]
 
     def greedy_init(
-        self, entries: dict[int, LaneAddress], movers: set[LocationAddress]
+        self,
+        entries: dict[int, LaneAddress],
+        movers: set[LocationAddress] | None = None,
     ) -> list[Cluster]:
         """Form initial clusters via greedy sequential expansion.
 
@@ -229,7 +234,9 @@ class BusContext:
         return clusters
 
     def merge_clusters(
-        self, clusters: list[Cluster], movers: set[LocationAddress]
+        self,
+        clusters: list[Cluster],
+        movers: set[LocationAddress] | None = None,
     ) -> list[Cluster]:
         """Merge clusters until no more merges are possible.
 
