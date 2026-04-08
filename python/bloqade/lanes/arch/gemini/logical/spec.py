@@ -17,62 +17,140 @@ _ARCH_JSON = r"""
 {
   "version": "2.0",
   "words": [
-    {"sites": [[0, 0], [2, 0]]},
-    {"sites": [[1, 0], [3, 0]]},
-    {"sites": [[0, 1], [2, 1]]},
-    {"sites": [[1, 1], [3, 1]]},
-    {"sites": [[0, 2], [2, 2]]},
-    {"sites": [[1, 2], [3, 2]]},
-    {"sites": [[0, 3], [2, 3]]},
-    {"sites": [[1, 3], [3, 3]]},
-    {"sites": [[0, 4], [2, 4]]},
-    {"sites": [[1, 4], [3, 4]]}
+    {"sites": [[0, 0]]},
+    {"sites": [[0, 1]]},
+    {"sites": [[0, 2]]},
+    {"sites": [[0, 3]]},
+    {"sites": [[0, 4]]},
+    {"sites": [[1, 0]]},
+    {"sites": [[1, 1]]},
+    {"sites": [[1, 2]]},
+    {"sites": [[1, 3]]},
+    {"sites": [[1, 4]]}
   ],
   "zones": [
     {
       "grid": {
         "x_start": 0.0, "y_start": 0.0,
-        "x_spacing": [10.0, 10.0, 10.0],
-        "y_spacing": [20.0, 20.0, 20.0, 20.0]
+        "x_spacing": [10.0],
+        "y_spacing": [10.0, 10.0, 10.0, 10.0]
       },
-      "site_buses": [{"src": [0], "dst": [1]}],
-      "word_buses": [
-        {"src": [0, 2, 4, 6, 8], "dst": [1, 3, 5, 7, 9]},
-        {"src": [0, 2, 4, 6], "dst": [3, 5, 7, 9]},
-        {"src": [0, 2, 4], "dst": [5, 7, 9]},
-        {"src": [0, 2], "dst": [7, 9]},
-        {"src": [0], "dst": [9]},
-        {"src": [8], "dst": [1]},
-        {"src": [6, 8], "dst": [1, 3]},
-        {"src": [4, 6, 8], "dst": [1, 3, 5]},
-        {"src": [2, 4, 6, 8], "dst": [1, 3, 5, 7]}
-      ],
-      "words_with_site_buses": [0, 2, 4, 6, 8],
-      "sites_with_word_buses": [0, 1]
+      "site_buses": [],
+      "word_buses": [],
+      "words_with_site_buses": [],
+      "sites_with_word_buses": []
     },
     {
       "grid": {
-        "x_start": 10.0, "y_start": 0.0,
-        "x_spacing": [10.0, 10.0, 10.0],
-        "y_spacing": [20.0, 20.0, 20.0, 20.0]
+        "x_start": 2.0, "y_start": 0.0,
+        "x_spacing": [10.0],
+        "y_spacing": [10.0, 10.0, 10.0, 10.0]
       },
-      "site_buses": [{"src": [0], "dst": [1]}],
+      "site_buses": [],
       "word_buses": [
-        {"src": [0, 2, 4, 6, 8], "dst": [1, 3, 5, 7, 9]},
-        {"src": [0, 2, 4, 6], "dst": [3, 5, 7, 9]},
-        {"src": [0, 2, 4], "dst": [5, 7, 9]},
-        {"src": [0, 2], "dst": [7, 9]},
-        {"src": [0], "dst": [9]},
-        {"src": [8], "dst": [1]},
-        {"src": [6, 8], "dst": [1, 3]},
-        {"src": [4, 6, 8], "dst": [1, 3, 5]},
-        {"src": [2, 4, 6, 8], "dst": [1, 3, 5, 7]}
+        {"src": [0, 1, 2, 3, 4], "dst": [5, 6, 7, 8, 9]}
       ],
-      "words_with_site_buses": [1, 3, 5, 7, 9],
-      "sites_with_word_buses": [0, 1]
+      "words_with_site_buses": [],
+      "sites_with_word_buses": [0]
     }
   ],
-  "zone_buses": [],
+  "zone_buses": [
+    {"src":[
+        {"zone_id":0,"word_id":0},
+        {"zone_id":0,"word_id":1},
+        {"zone_id":0,"word_id":2},
+        {"zone_id":0,"word_id":3},
+        {"zone_id":0,"word_id":4}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":0},
+        {"zone_id":1,"word_id":1},
+        {"zone_id":1,"word_id":2},
+        {"zone_id":1,"word_id":3},
+        {"zone_id":1,"word_id":4}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":0},
+        {"zone_id":0,"word_id":1},
+        {"zone_id":0,"word_id":2},
+        {"zone_id":0,"word_id":3}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":1},
+        {"zone_id":1,"word_id":2},
+        {"zone_id":1,"word_id":3},
+        {"zone_id":1,"word_id":4}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":0},
+        {"zone_id":0,"word_id":1},
+        {"zone_id":0,"word_id":2}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":2},
+        {"zone_id":1,"word_id":3},
+        {"zone_id":1,"word_id":4}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":0},
+        {"zone_id":0,"word_id":1}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":3},
+        {"zone_id":1,"word_id":4}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":0}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":4}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":4}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":0}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":3},
+        {"zone_id":0,"word_id":4}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":0},
+        {"zone_id":1,"word_id":1}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":2},
+        {"zone_id":0,"word_id":3},
+        {"zone_id":0,"word_id":4}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":0},
+        {"zone_id":1,"word_id":1},
+        {"zone_id":1,"word_id":2}
+    ]
+    },
+    {"src":[
+        {"zone_id":0,"word_id":1},
+        {"zone_id":0,"word_id":2},
+        {"zone_id":0,"word_id":3},
+        {"zone_id":0,"word_id":4}
+    ],
+    "dst": [
+        {"zone_id":1,"word_id":0},
+        {"zone_id":1,"word_id":1},
+        {"zone_id":1,"word_id":2},
+        {"zone_id":1,"word_id":3}
+    ]
+    }
+  ],
   "entangling_zone_pairs": [[0, 1]],
   "modes": [
     {"name": "all", "zones": [0, 1], "bitstring_order": []},
