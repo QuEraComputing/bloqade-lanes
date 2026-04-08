@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import LocationAddress, SiteLaneAddress
+from bloqade.lanes.layout import LocationAddress, SiteLaneAddress, WordLaneAddress
 from bloqade.lanes.search.generators import EntropyNode, HeuristicMoveGenerator
 from bloqade.lanes.search.scoring import CandidateScorer, RectangleBusCandidates
 from bloqade.lanes.search.search_params import SearchParams
@@ -134,7 +134,7 @@ def test_generate_ranks_rectangles_globally_across_buses(monkeypatch):
 
     a1 = SiteLaneAddress(0, 0, 0)
     a2 = SiteLaneAddress(1, 0, 0)
-    b1 = SiteLaneAddress(0, 0, 1)
+    b1 = WordLaneAddress(0, 0, 1)
 
     def fake_bus_candidates(_node, _entropy, _tree):  # type: ignore[no-untyped-def]
         return {

@@ -124,7 +124,7 @@ def test_try_move_set_reports_transposition_for_ancestor_revisit():
     backward_lane = None
     for lane in tree.valid_lanes(first.child, direction=Direction.BACKWARD):
         src, dst = tree.arch_spec.get_endpoints(lane)
-        if src == LocationAddress(0, 5) and dst == LocationAddress(0, 0):
+        if src == LocationAddress(0, 1) and dst == LocationAddress(0, 0):
             backward_lane = lane
             break
     assert backward_lane is not None
