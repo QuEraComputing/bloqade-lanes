@@ -12,6 +12,7 @@ mod atom_state_python;
 pub(crate) mod errors;
 mod instruction_python;
 mod program_python;
+mod search_python;
 pub(crate) mod validation;
 
 #[pymodule]
@@ -41,6 +42,10 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Instruction and Program
     m.add_class::<instruction_python::PyInstruction>()?;
     m.add_class::<program_python::PyProgram>()?;
+
+    // Search / move synthesis
+    m.add_class::<search_python::PyMoveSolver>()?;
+    m.add_class::<search_python::PySolveResult>()?;
 
     Ok(())
 }

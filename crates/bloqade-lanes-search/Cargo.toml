@@ -1,0 +1,11 @@
+[package]
+name = "bloqade-lanes-search"
+version.workspace = true
+edition = "2024"
+
+[lib]
+name = "bloqade_lanes_search"
+
+[dependencies]
+bloqade-lanes-bytecode-core = { path = "../bloqade-lanes-bytecode-core" }
+serde_json = "1"

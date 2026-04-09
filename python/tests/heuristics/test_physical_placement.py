@@ -8,6 +8,7 @@ from bloqade.lanes.heuristics.physical_placement import (
     EntropyPlacementTraversal,
     GreedyPlacementTraversal,
     PhysicalPlacementStrategy,
+    RustPlacementTraversal,
 )
 from bloqade.lanes.search.traversal.goal import SearchResult
 
@@ -141,3 +142,92 @@ def test_cz_placements_passes_idle_occupied_as_blockers(monkeypatch):
     monkeypatch.setattr(PhysicalPlacementStrategy, "_run_search", fake_run_search)
     _ = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert seen_blocked_locations == [state.occupied]
+
+
+# ---------------------------------------------------------------------------
+# Rust MoveSolver integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_rust_traversal_default_params():
+    t = RustPlacementTraversal()
+    assert t.strategy == "astar"
+    assert t.top_c == 3
+    assert t.max_movesets_per_group == 3
+    assert t.max_expansions == 300
+
+
+def test_rust_traversal_dispatches_to_rust_path(monkeypatch):
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+    state = _make_state()
+    calls: list[str] = []
+
+    def fake_cz_placements_rust(self, state, controls, targets):
+        _ = self, state, controls, targets
+        calls.append("rust")
+        return AtomState.bottom()
+
+    monkeypatch.setattr(
+        PhysicalPlacementStrategy, "_cz_placements_rust", fake_cz_placements_rust
+    )
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert calls == ["rust"]
+
+
+def test_rust_solver_is_cached():
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+    solver_a = strategy._get_rust_solver()
+    solver_b = strategy._get_rust_solver()
+    assert solver_a is solver_b
+
+
+def test_cz_placements_rust_returns_execute_cz():
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+    state = _make_state()
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)
+    assert len(out.layout) == len(state.layout)
+
+
+def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+    state = _make_state()
+
+    class _FakeResult:
+        status = "unsolvable"
+
+    class _FakeSolver:
+        def solve(self, *_args, **_kwargs):
+            return _FakeResult()
+
+    monkeypatch.setattr(
+        PhysicalPlacementStrategy,
+        "_get_rust_solver",
+        lambda _self: _FakeSolver(),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert out == AtomState.bottom()
+
+
+def test_cz_placements_rust_with_blocked_locations():
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+    state = ConcreteState(
+        occupied=frozenset({layout.LocationAddress(0, 5)}),
+        layout=(
+            layout.LocationAddress(0, 0),
+            layout.LocationAddress(1, 0),
+        ),
+        move_count=(0, 0),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)

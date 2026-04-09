@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_get_cz_partner_no_pair() {
-        let mut spec = make_valid_two_zone_spec();
+        let spec = make_valid_two_zone_spec();
         // Zone 1 has no entangling pairs
         let partner = spec.get_cz_partner(&LocationAddr {
             zone_id: 1,
