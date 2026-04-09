@@ -138,7 +138,9 @@ impl MoveSolver {
         let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
         let dist_table = DistanceTable::new(&target_locs, &self.index);
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
-        let heuristic_fn = |config: &Config| -> f64 { heuristic.estimate(config) };
+        // Max heuristic (admissible) for A*/Greedy, sum heuristic for IDS/DFS ordering.
+        let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
+        let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
 
         // Build an expander with the given seed and deadlock policy.
         let make_expander = |seed: u64, policy: DeadlockPolicy| {
@@ -173,9 +175,9 @@ impl MoveSolver {
         // Run a single search with the given seed.
         let run_once = |seed: u64| -> Option<SolveResult> {
             if strategy == Strategy::Cascade {
-                // Phase 1: IDS with Skip deadlock policy.
+                // Phase 1: IDS with sum heuristic, Skip deadlock policy.
                 let ids_expander = make_expander(seed, DeadlockPolicy::Skip);
-                let mut ids_f = IdsFrontier::new(heuristic_fn);
+                let mut ids_f = IdsFrontier::new(h_sum);
                 let ids_result = frontier::run_search(
                     root.clone(),
                     goal,
@@ -191,10 +193,10 @@ impl MoveSolver {
                     Some(ids_goal_id) => {
                         let ids_cost = ids_result.graph.g_score(ids_goal_id);
 
-                        // Phase 2: Weighted A* with MoveBlockers deadlock policy.
+                        // Phase 2: Weighted A* with max heuristic, MoveBlockers.
                         let max_depth = Some((ids_cost as u32).saturating_sub(1));
                         let astar_expander = make_expander(seed, DeadlockPolicy::MoveBlockers);
-                        let mut astar_f = PriorityFrontier::astar(heuristic_fn, weight);
+                        let mut astar_f = PriorityFrontier::astar(h_max, weight);
                         let astar_result = frontier::run_search(
                             root.clone(),
                             goal,
@@ -217,15 +219,29 @@ impl MoveSolver {
                     _ => DeadlockPolicy::MoveBlockers,
                 };
                 let expander = make_expander(seed, policy);
-                let result = Self::run_strategy(
-                    strategy,
-                    root.clone(),
-                    goal,
-                    heuristic_fn,
-                    &expander,
-                    max_expansions,
-                    weight,
-                );
+                // IDS/DFS use sum heuristic (better ordering), A*/Greedy use max (admissible).
+                let use_sum = matches!(strategy, Strategy::Ids | Strategy::HeuristicDfs);
+                let result = if use_sum {
+                    Self::run_strategy(
+                        strategy,
+                        root.clone(),
+                        goal,
+                        h_sum,
+                        &expander,
+                        max_expansions,
+                        weight,
+                    )
+                } else {
+                    Self::run_strategy(
+                        strategy,
+                        root.clone(),
+                        goal,
+                        h_max,
+                        &expander,
+                        max_expansions,
+                        weight,
+                    )
+                };
                 extract(result, expander.deadlock_count())
             }
         };
