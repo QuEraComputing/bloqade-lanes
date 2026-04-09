@@ -38,11 +38,14 @@
         }                                                                      \
     } while (0)
 
-/* Minimal valid SST program: two locations, initial_fill, halt. */
+/* Minimal valid SST program: two locations, initial_fill, halt.
+ * LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
+ * zone 0, word 0, site 0 = 0x0000000000000000
+ * zone 0, word 0, site 1 = 0x0000000001000000 */
 static const char *VALID_PROGRAM =
     ".version 1\n"
-    "const_loc 0x00000000\n"
-    "const_loc 0x00000001\n"
+    "const_loc 0x0000000000000000\n"
+    "const_loc 0x0000000001000000\n"
     "initial_fill 2\n"
     "halt\n";
 
@@ -50,7 +53,7 @@ static const char *VALID_PROGRAM =
 static const char *INVALID_STRUCTURE =
     ".version 1\n"
     "halt\n"
-    "const_loc 0x00000000\n"
+    "const_loc 0x0000000000000000\n"
     "initial_fill 1\n";
 
 /* Program that triggers a stack underflow (pop on empty stack). */
@@ -61,7 +64,7 @@ static const char *STACK_UNDERFLOW =
 /* Program with type mismatch: fill expects locations, gets float. */
 static const char *TYPE_MISMATCH =
     ".version 1\n"
-    "const_loc 0x00000000\n"
+    "const_loc 0x0000000000000000\n"
     "initial_fill 1\n"
     "const_float 3.14\n"
     "fill 1\n"
