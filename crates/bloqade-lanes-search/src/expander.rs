@@ -339,7 +339,7 @@ mod tests {
         let index = make_index();
         // Qubit 0 at word 0, site 0. Block site 5 (the forward destination).
         let config = Config::new([(0, loc(0, 0))]);
-        let expander = ExhaustiveExpander::new(&index, [loc(0, 5)].into_iter(), None, None);
+        let expander = ExhaustiveExpander::new(&index, [loc(0, 5)], None, None);
 
         let mut out = Vec::new();
         expander.expand(&config, &mut out);
