@@ -8,10 +8,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from bloqade.lanes.layout import (
-    Direction,
     LaneAddress,
     LocationAddress,
-    MoveType,
 )
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.generators import (
@@ -340,24 +338,10 @@ class EntropyGuidedSearch:
                 continue
 
             has_valid_lane = False
-            for mt in (MoveType.SITE, MoveType.WORD):
-                buses = (
-                    range(len(self.tree.arch_spec.site_buses))
-                    if mt == MoveType.SITE
-                    else range(len(self.tree.arch_spec.word_buses))
-                )
-                for bus_id in buses:
-                    for direction in (Direction.FORWARD, Direction.BACKWARD):
-                        for lane in self.tree.lanes_for(mt, bus_id, direction):
-                            src, dst = self.tree.arch_spec.get_endpoints(lane)
-                            if src == current_loc and dst not in occupied:
-                                has_valid_lane = True
-                                break
-                        if has_valid_lane:
-                            break
-                    if has_valid_lane:
-                        break
-                if has_valid_lane:
+            for lane in self.tree.outgoing_lanes(current_loc):
+                _, dst = self.tree.arch_spec.get_endpoints(lane)
+                if dst not in occupied:
+                    has_valid_lane = True
                     break
 
             if not has_valid_lane:

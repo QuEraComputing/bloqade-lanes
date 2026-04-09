@@ -115,7 +115,16 @@ def test_score_all_qubit_bus_pairs_excludes_blocked_destinations():
     scores = scorer.score_all_qubit_bus_pairs(tree.root, entropy=1, tree=tree)
     for qid, mt, bus_id, direction in scores:
         loc = tree.root.configuration[qid]
-        lane = tree.lane_for_source(mt, bus_id, direction, loc)
+        lane = next(
+            (
+                la
+                for la in tree.outgoing_lanes(loc)
+                if la.move_type == mt
+                and la.bus_id == bus_id
+                and la.direction == direction
+            ),
+            None,
+        )
         assert lane is not None
         _, dst = tree.arch_spec.get_endpoints(lane)
         assert dst not in blocked
