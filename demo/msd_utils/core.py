@@ -274,10 +274,9 @@ def run_task(
     *,
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
-    run_detectors: bool = True,
 ) -> BasisDataset:
     if chunk_size is None or shots <= chunk_size:
-        result = task.run(shots, with_noise=with_noise, run_detectors=run_detectors)
+        result = task.run(shots, with_noise=with_noise, run_detectors=True)
         return BasisDataset(
             detectors=np.asarray(result.detectors, dtype=np.uint8),
             observables=np.asarray(result.observables, dtype=np.uint8),
@@ -288,7 +287,7 @@ def run_task(
     remaining = shots
     while remaining > 0:
         batch = min(chunk_size, remaining)
-        result = task.run(batch, with_noise=with_noise, run_detectors=run_detectors)
+        result = task.run(batch, with_noise=with_noise, run_detectors=True)
         det_chunks.append(np.asarray(result.detectors, dtype=np.uint8))
         obs_chunks.append(np.asarray(result.observables, dtype=np.uint8))
         remaining -= batch
@@ -303,28 +302,10 @@ def split_factory_bits(
     detectors: np.ndarray,
     observables: np.ndarray,
     *,
-    output_logical: int = 0,
-    checks_per_logical: int | None = None,
+    detector_prefix: int = 3,
+    observable_prefix: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if observables.ndim != 2:
-        raise ValueError("observables must be a rank-2 array")
-    if detectors.ndim != 2:
-        raise ValueError("detectors must be a rank-2 array")
-    if checks_per_logical is None:
-        if observables.shape[1] == 0 or detectors.shape[1] % observables.shape[1] != 0:
-            raise ValueError(
-                "Unable to infer checks_per_logical from detector/observable shapes."
-            )
-        checks_per_logical = detectors.shape[1] // observables.shape[1]
-    det_start = output_logical * checks_per_logical
-    det_stop = det_start + checks_per_logical
-    det_indices = np.concatenate(
-        [np.arange(det_start), np.arange(det_stop, detectors.shape[1])]
-    )
-    obs_indices = np.concatenate(
-        [np.arange(output_logical), np.arange(output_logical + 1, observables.shape[1])]
-    )
-    return detectors[:, det_indices], observables[:, obs_indices]
+    return detectors[:, detector_prefix:], observables[:, observable_prefix:]
 
 
 def infer_factory_target(
@@ -333,19 +314,11 @@ def infer_factory_target(
     shots: int = 12_000,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     ideal_factory_acceptance: float = DEFAULT_IDEAL_FACTORY_ACCEPTANCE,
-    output_logical: int = 0,
-    run_detectors: bool = False,
 ) -> np.ndarray:
     counts: Counter[tuple[int, ...]] = Counter()
     for basis in basis_labels:
-        data = run_task(
-            task_map[basis],
-            shots,
-            with_noise=False,
-            run_detectors=run_detectors,
-        )
-        ancilla_obs = np.delete(data.observables, output_logical, axis=1)
-        for row in ancilla_obs:
+        data = run_task(task_map[basis], shots, with_noise=False)
+        for row in data.observables[:, 1:]:
             counts[tuple(map(int, row))] += 1
 
     total = sum(counts.values())
@@ -366,20 +339,12 @@ def infer_distilled_sign_vector(
     shots: int = 12_000,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-    output_logical: int = 0,
-    run_detectors: bool = False,
 ) -> np.ndarray:
     corrected: dict[str, np.ndarray] = {}
     for basis in basis_labels:
-        data = run_task(
-            task_map[basis],
-            shots,
-            with_noise=False,
-            run_detectors=run_detectors,
-        )
-        ancilla_obs = np.delete(data.observables, output_logical, axis=1)
-        mask = np.all(ancilla_obs == factory_target, axis=1)
-        corrected[basis] = data.observables[mask, output_logical].astype(np.uint8)
+        data = run_task(task_map[basis], shots, with_noise=False)
+        mask = np.all(data.observables[:, 1:] == factory_target, axis=1)
+        corrected[basis] = data.observables[mask, 0].astype(np.uint8)
 
     raw_bloch = np.array(
         [
