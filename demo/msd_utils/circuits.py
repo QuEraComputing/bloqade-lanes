@@ -270,6 +270,41 @@ def build_decoder_kernel_bundle(
     )
 
 
+def build_injected_decoder_kernel_map() -> dict[str, Any]:
+    h_theta = 0.5 * 3.141592653589793
+    h_phi = 0.0
+    hs_theta = 0.5 * 3.141592653589793
+    hs_phi = -0.5 * 3.141592653589793
+    lam = 0.0
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def injected_decoder_x():
+        reg = qubit.qalloc(1)
+        squin.u3(h_theta, h_phi, lam, reg[0])
+        squin.h(reg[0])
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def injected_decoder_y():
+        reg = qubit.qalloc(1)
+        squin.u3(hs_theta, hs_phi, lam, reg[0])
+        squin.sqrt_z_adj(reg[0])
+        squin.h(reg[0])
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def injected_decoder_z():
+        reg = qubit.qalloc(1)
+        squin.u3(0.0, 0.0, 0.0, reg[0])
+        return default_post_processing(reg)
+
+    return {
+        "X": injected_decoder_x,
+        "Y": injected_decoder_y,
+        "Z": injected_decoder_z,
+    }
+
+
 def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
     local_r_noise = simulator.noise_model.local_r_noise
     local_rz_noise = simulator.noise_model.local_rz_noise

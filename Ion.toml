@@ -1,5 +1,6 @@
 [skills]
 ion-cli = { type = "local" }
+msd-paper-decoder-alignment = "skills/msd-paper-decoder-alignment"
 receiving-code-review = { source = "obra/superpowers/skills/receiving-code-review" }
 requesting-code-review = { source = "obra/superpowers/skills/requesting-code-review" }
 using-git-worktrees = { source = "obra/superpowers/skills/using-git-worktrees" }
