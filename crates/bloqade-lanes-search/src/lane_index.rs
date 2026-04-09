@@ -16,94 +16,122 @@ use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 #[derive(Debug)]
 pub struct LaneIndex {
     arch_spec: ArchSpec,
-    /// (MoveType, bus_id, Direction) → lanes for that triplet.
-    lanes_by_triplet: HashMap<(MoveType, u32, Direction), Vec<LaneAddr>>,
-    /// (MoveType, bus_id, Direction) → { encoded_src → LaneAddr }.
-    lane_by_src: HashMap<(MoveType, u32, Direction), HashMap<u32, LaneAddr>>,
+    /// (MoveType, bus_id, zone_id, Direction) → lanes for that triplet.
+    lanes_by_triplet: HashMap<(MoveType, u32, u32, Direction), Vec<LaneAddr>>,
+    /// (MoveType, bus_id, zone_id, Direction) → { encoded_src → LaneAddr }.
+    lane_by_src: HashMap<(MoveType, u32, u32, Direction), HashMap<u64, LaneAddr>>,
     /// encoded_src → all outgoing lanes from that location.
-    outgoing_by_src: HashMap<u32, Vec<LaneAddr>>,
+    outgoing_by_src: HashMap<u64, Vec<LaneAddr>>,
     /// encoded LaneAddr (u64) → (src, dst) endpoints.
     endpoints: HashMap<u64, (LocationAddr, LocationAddr)>,
-    /// encoded LocationAddr (u32) → (x, y) physical position.
-    positions: HashMap<u32, (f64, f64)>,
+    /// encoded LocationAddr (u64) → (x, y) physical position.
+    positions: HashMap<u64, (f64, f64)>,
 }
 
 impl LaneIndex {
     /// Build a lane index from an architecture specification.
     ///
-    /// Iterates all buses and directions, computes lane addresses,
-    /// resolves endpoints, and caches positions.
+    /// Iterates all zones and their buses, computes lane addresses,
+    /// resolves endpoints, and lazily caches positions as endpoints
+    /// are discovered.
     pub fn new(arch_spec: ArchSpec) -> Self {
-        let mut lanes_by_triplet: HashMap<(MoveType, u32, Direction), Vec<LaneAddr>> =
+        let mut lanes_by_triplet: HashMap<(MoveType, u32, u32, Direction), Vec<LaneAddr>> =
             HashMap::new();
-        let mut lane_by_src: HashMap<(MoveType, u32, Direction), HashMap<u32, LaneAddr>> =
+        let mut lane_by_src: HashMap<(MoveType, u32, u32, Direction), HashMap<u64, LaneAddr>> =
             HashMap::new();
-        let mut outgoing_by_src: HashMap<u32, Vec<LaneAddr>> = HashMap::new();
+        let mut outgoing_by_src: HashMap<u64, Vec<LaneAddr>> = HashMap::new();
         let mut endpoints: HashMap<u64, (LocationAddr, LocationAddr)> = HashMap::new();
-        let mut positions: HashMap<u32, (f64, f64)> = HashMap::new();
+        let mut positions: HashMap<u64, (f64, f64)> = HashMap::new();
 
-        // Cache all location positions.
-        let num_words = arch_spec.geometry.words.len() as u32;
-        let sites_per_word = arch_spec.geometry.sites_per_word;
-        for word_id in 0..num_words {
-            for site_id in 0..sites_per_word {
-                let loc = LocationAddr { word_id, site_id };
-                if let Some(pos) = arch_spec.location_position(&loc) {
-                    positions.insert(loc.encode(), pos);
+        // Helper: register a lane in all indexes and cache endpoint positions.
+        let mut register_lane = |lane: LaneAddr,
+                                 bus_id: u32,
+                                 zone_id: u32,
+                                 direction: Direction,
+                                 mt: MoveType,
+                                 positions: &mut HashMap<u64, (f64, f64)>,
+                                 arch_spec: &ArchSpec| {
+            if let Some((src, dst)) = arch_spec.lane_endpoints(&lane) {
+                let encoded_lane = lane.encode_u64();
+                endpoints.insert(encoded_lane, (src, dst));
+                let src_enc = src.encode();
+                let key = (mt, bus_id, zone_id, direction);
+                lanes_by_triplet.entry(key).or_default().push(lane);
+                lane_by_src.entry(key).or_default().insert(src_enc, lane);
+                outgoing_by_src.entry(src_enc).or_default().push(lane);
+
+                // Lazily cache positions for discovered endpoints.
+                if let std::collections::hash_map::Entry::Vacant(e) = positions.entry(src.encode())
+                    && let Some(pos) = arch_spec.location_position(&src)
+                {
+                    e.insert(pos);
+                }
+                if let std::collections::hash_map::Entry::Vacant(e) = positions.entry(dst.encode())
+                    && let Some(pos) = arch_spec.location_position(&dst)
+                {
+                    e.insert(pos);
                 }
             }
-        }
+        };
 
-        // Helper: register a lane in all indexes.
-        let mut register_lane =
-            |lane: LaneAddr, bus_id: u32, direction: Direction, mt: MoveType| {
-                if let Some((src, dst)) = arch_spec.lane_endpoints(&lane) {
-                    let encoded_lane = lane.encode_u64();
-                    endpoints.insert(encoded_lane, (src, dst));
-                    let src_enc = src.encode();
-                    let key = (mt, bus_id, direction);
-                    lanes_by_triplet.entry(key).or_default().push(lane);
-                    lane_by_src.entry(key).or_default().insert(src_enc, lane);
-                    outgoing_by_src.entry(src_enc).or_default().push(lane);
-                }
-            };
+        // Iterate zones; each zone owns its grid, site buses, and word buses.
+        for (zone_idx, zone) in arch_spec.zones.iter().enumerate() {
+            let zone_id = zone_idx as u32;
 
-        // Site buses: iterate (bus_id, word_id, site_id).
-        for (bus_id, bus) in arch_spec.buses.site_buses.iter().enumerate() {
-            let bus_word_ids = bus
-                .words
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| arch_spec.words_with_site_buses.clone());
-            for direction in [Direction::Forward, Direction::Backward] {
-                for &word_id in &bus_word_ids {
-                    for &site_id in &bus.src {
-                        let lane = LaneAddr {
-                            move_type: MoveType::SiteBus,
-                            word_id,
-                            site_id,
-                            bus_id: bus_id as u32,
-                            direction,
-                        };
-                        register_lane(lane, bus_id as u32, direction, MoveType::SiteBus);
+            // Site buses: iterate (bus_id, word_id, site_id).
+            for (bus_idx, bus) in zone.site_buses.iter().enumerate() {
+                let bus_id = bus_idx as u32;
+                for direction in [Direction::Forward, Direction::Backward] {
+                    for &word_id in &zone.words_with_site_buses {
+                        for src_ref in &bus.src {
+                            let site_id = src_ref.0 as u32;
+                            let lane = LaneAddr {
+                                move_type: MoveType::SiteBus,
+                                zone_id,
+                                word_id,
+                                site_id,
+                                bus_id,
+                                direction,
+                            };
+                            register_lane(
+                                lane,
+                                bus_id,
+                                zone_id,
+                                direction,
+                                MoveType::SiteBus,
+                                &mut positions,
+                                &arch_spec,
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        // Word buses: iterate (bus_id, word_id from bus.src, site_id from sites_with_word_buses).
-        for (bus_id, bus) in arch_spec.buses.word_buses.iter().enumerate() {
-            for direction in [Direction::Forward, Direction::Backward] {
-                for &word_id in &bus.src {
-                    for &site_id in &arch_spec.sites_with_word_buses {
-                        let lane = LaneAddr {
-                            move_type: MoveType::WordBus,
-                            word_id,
-                            site_id,
-                            bus_id: bus_id as u32,
-                            direction,
-                        };
-                        register_lane(lane, bus_id as u32, direction, MoveType::WordBus);
+            // Word buses: iterate (bus_id, word_id from bus.src, site_id from zone.sites_with_word_buses).
+            for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
+                let bus_id = bus_idx as u32;
+                for direction in [Direction::Forward, Direction::Backward] {
+                    for src_ref in &bus.src {
+                        let word_id = src_ref.0 as u32;
+                        for &site_id in &zone.sites_with_word_buses {
+                            let lane = LaneAddr {
+                                move_type: MoveType::WordBus,
+                                zone_id,
+                                word_id,
+                                site_id,
+                                bus_id,
+                                direction,
+                            };
+                            register_lane(
+                                lane,
+                                bus_id,
+                                zone_id,
+                                direction,
+                                MoveType::WordBus,
+                                &mut positions,
+                                &arch_spec,
+                            );
+                        }
                     }
                 }
             }
@@ -124,10 +152,16 @@ impl LaneIndex {
         &self.arch_spec
     }
 
-    /// Get all lanes for a `(move_type, bus_id, direction)` triplet.
-    pub fn lanes_for(&self, mt: MoveType, bus_id: u32, dir: Direction) -> &[LaneAddr] {
+    /// Get all lanes for a `(move_type, bus_id, zone_id, direction)` triplet.
+    pub fn lanes_for(
+        &self,
+        mt: MoveType,
+        bus_id: u32,
+        zone_id: u32,
+        dir: Direction,
+    ) -> &[LaneAddr] {
         self.lanes_by_triplet
-            .get(&(mt, bus_id, dir))
+            .get(&(mt, bus_id, zone_id, dir))
             .map_or(&[], |v| v.as_slice())
     }
 
@@ -136,11 +170,12 @@ impl LaneIndex {
         &self,
         mt: MoveType,
         bus_id: u32,
+        zone_id: u32,
         dir: Direction,
         src: LocationAddr,
     ) -> Option<LaneAddr> {
         self.lane_by_src
-            .get(&(mt, bus_id, dir))
+            .get(&(mt, bus_id, zone_id, dir))
             .and_then(|m| m.get(&src.encode()).copied())
     }
 
@@ -161,19 +196,15 @@ impl LaneIndex {
         self.positions.get(&loc.encode()).copied()
     }
 
-    /// Iterate all `(move_type, bus_id, direction)` triplets that have lanes.
-    pub fn triplets(&self) -> impl Iterator<Item = (MoveType, u32, Direction)> + '_ {
+    /// Iterate all `(move_type, bus_id, zone_id, direction)` bus groups that have lanes.
+    pub fn bus_groups(&self) -> impl Iterator<Item = (MoveType, u32, u32, Direction)> + '_ {
         self.lanes_by_triplet.keys().copied()
     }
 
-    /// Get the site buses from the architecture.
-    pub fn site_buses(&self) -> &[bloqade_lanes_bytecode_core::arch::types::Bus] {
-        &self.arch_spec.buses.site_buses
-    }
-
-    /// Get the word buses from the architecture.
-    pub fn word_buses(&self) -> &[bloqade_lanes_bytecode_core::arch::types::Bus] {
-        &self.arch_spec.buses.word_buses
+    /// Iterate all bus groups that have lanes.
+    #[deprecated(note = "renamed to bus_groups() — triplets is misleading for 4-tuples")]
+    pub fn triplets(&self) -> impl Iterator<Item = (MoveType, u32, u32, Direction)> + '_ {
+        self.bus_groups()
     }
 }
 
@@ -197,25 +228,26 @@ mod tests {
     #[test]
     fn site_bus_forward_lanes() {
         let index = make_index();
-        // Site bus 0, forward: src=[0,1,2,3,4] in words [0,1] → 5*2=10 lanes
-        let lanes = index.lanes_for(MoveType::SiteBus, 0, Direction::Forward);
+        // Site bus 0, zone 0, forward: src=[0,1,2,3,4] in words [0,1] → 5*2=10 lanes
+        let lanes = index.lanes_for(MoveType::SiteBus, 0, 0, Direction::Forward);
         assert_eq!(lanes.len(), 10);
     }
 
     #[test]
     fn word_bus_forward_lanes() {
         let index = make_index();
-        // Word bus 0, forward: src=[0], sites_with_word_buses=[5,6,7,8,9] → 5 lanes
-        let lanes = index.lanes_for(MoveType::WordBus, 0, Direction::Forward);
+        // Word bus 0, zone 0, forward: src=[0], sites_with_word_buses=[5,6,7,8,9] → 5 lanes
+        let lanes = index.lanes_for(MoveType::WordBus, 0, 0, Direction::Forward);
         assert_eq!(lanes.len(), 5);
     }
 
     #[test]
     fn endpoints_match_arch_spec() {
         let index = make_index();
-        // Site bus 0, forward, word 0, site 0 → should go to site 5
+        // Site bus 0, zone 0, forward, word 0, site 0 → should go to site 5
         let lane = LaneAddr {
             move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -225,6 +257,7 @@ mod tests {
         assert_eq!(
             src,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0
             }
@@ -232,6 +265,7 @@ mod tests {
         assert_eq!(
             dst,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 5
             }
@@ -242,6 +276,7 @@ mod tests {
     fn position_cached() {
         let index = make_index();
         let loc = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
         };
@@ -254,10 +289,11 @@ mod tests {
     fn lane_for_source_found() {
         let index = make_index();
         let src = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
         };
-        let lane = index.lane_for_source(MoveType::SiteBus, 0, Direction::Forward, src);
+        let lane = index.lane_for_source(MoveType::SiteBus, 0, 0, Direction::Forward, src);
         assert!(lane.is_some());
         let lane = lane.unwrap();
         assert_eq!(lane.word_id, 0);
@@ -269,10 +305,11 @@ mod tests {
         let index = make_index();
         // Site 5 is a destination, not a source for forward
         let src = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 5,
         };
-        let lane = index.lane_for_source(MoveType::SiteBus, 0, Direction::Forward, src);
+        let lane = index.lane_for_source(MoveType::SiteBus, 0, 0, Direction::Forward, src);
         assert!(lane.is_none());
     }
 
@@ -281,6 +318,7 @@ mod tests {
         let index = make_index();
         // Site 0 in word 0 is a site bus source (forward) and a backward destination source
         let src = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
         };
@@ -292,6 +330,7 @@ mod tests {
     fn outgoing_lanes_empty_for_nonexistent() {
         let index = make_index();
         let src = LocationAddr {
+            zone_id: 0,
             word_id: 99,
             site_id: 99,
         };
@@ -303,6 +342,7 @@ mod tests {
         let index = make_index();
         let lane = LaneAddr {
             move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 99,
             site_id: 99,
             bus_id: 99,

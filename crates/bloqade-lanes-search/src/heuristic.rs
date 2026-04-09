@@ -23,15 +23,15 @@ use crate::lane_index::LaneIndex;
 #[derive(Debug)]
 pub struct DistanceTable {
     /// encoded_target → { encoded_location → min hops to target }
-    distance_to: HashMap<u32, HashMap<u32, u32>>,
+    distance_to: HashMap<u64, HashMap<u64, u32>>,
 }
 
 impl DistanceTable {
     /// Build a distance table by running BFS from each unique target
     /// location on the reversed lane graph.
-    pub fn new(target_locations: &[u32], index: &LaneIndex) -> Self {
+    pub fn new(target_locations: &[u64], index: &LaneIndex) -> Self {
         // Deduplicate targets.
-        let unique_targets: Vec<u32> = {
+        let unique_targets: Vec<u64> = {
             let mut v = target_locations.to_vec();
             v.sort_unstable();
             v.dedup();
@@ -39,9 +39,9 @@ impl DistanceTable {
         };
 
         // Build reverse adjacency: dst → [src, ...].
-        let mut reverse_adj: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (mt, bus_id, dir) in index.triplets() {
-            for &lane in index.lanes_for(mt, bus_id, dir) {
+        let mut reverse_adj: HashMap<u64, Vec<u64>> = HashMap::new();
+        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
+            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
                 if let Some((src, dst)) = index.endpoints(&lane) {
                     reverse_adj
                         .entry(dst.encode())
@@ -52,10 +52,10 @@ impl DistanceTable {
         }
 
         // BFS from each target on reversed edges.
-        let mut distance_to: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
+        let mut distance_to: HashMap<u64, HashMap<u64, u32>> = HashMap::new();
         for &target_enc in &unique_targets {
-            let mut dist: HashMap<u32, u32> = HashMap::new();
-            let mut queue: VecDeque<u32> = VecDeque::new();
+            let mut dist: HashMap<u64, u32> = HashMap::new();
+            let mut queue: VecDeque<u64> = VecDeque::new();
             dist.insert(target_enc, 0);
             queue.push_back(target_enc);
 
@@ -79,7 +79,7 @@ impl DistanceTable {
     /// O(1) lookup: minimum lane hops from `from_encoded` to `to_target_encoded`.
     ///
     /// Returns `None` if the target is unknown or the source is unreachable.
-    pub fn distance(&self, from_encoded: u32, to_target_encoded: u32) -> Option<u32> {
+    pub fn distance(&self, from_encoded: u64, to_target_encoded: u64) -> Option<u32> {
         self.distance_to
             .get(&to_target_encoded)?
             .get(&from_encoded)
@@ -93,7 +93,7 @@ impl DistanceTable {
 ///
 /// Admissible but provides very weak guidance.
 pub struct MisplacedHeuristic {
-    targets: Vec<(u32, u32)>,
+    targets: Vec<(u32, u64)>,
 }
 
 impl MisplacedHeuristic {
@@ -124,7 +124,7 @@ impl MisplacedHeuristic {
 /// Returns the max hop distance over all qubits — admissible because
 /// the worst-case qubit needs at least that many steps.
 pub struct HopDistanceHeuristic<'a> {
-    targets: Vec<(u32, u32)>,
+    targets: Vec<(u32, u64)>,
     table: &'a DistanceTable,
 }
 
@@ -172,7 +172,7 @@ mod tests {
     }
 
     fn make_table(targets: &[(u32, LocationAddr)], index: &LaneIndex) -> DistanceTable {
-        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         DistanceTable::new(&target_locs, index)
     }
 

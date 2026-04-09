@@ -830,6 +830,18 @@ class ArchSpec:
 # ── Move Solver ──
 
 @final
+class SearchStrategy:
+    """Search strategy for the Rust move solver."""
+
+    ASTAR: SearchStrategy
+    DFS: SearchStrategy
+    BFS: SearchStrategy
+    GREEDY: SearchStrategy
+
+    @property
+    def name(self) -> str: ...
+
+@final
 class SolveResult:
     """Result of a move synthesis solve.
 
@@ -891,7 +903,7 @@ class MoveSolver:
         target: list[tuple[int, int, int]],
         blocked: list[tuple[int, int]],
         max_expansions: Optional[int] = None,
-        strategy: str = "astar",
+        strategy: SearchStrategy = SearchStrategy.ASTAR,
         top_c: int = 3,
         max_movesets_per_group: int = 3,
     ) -> SolveResult:

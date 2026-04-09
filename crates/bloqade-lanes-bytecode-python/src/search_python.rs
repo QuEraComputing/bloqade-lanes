@@ -12,6 +12,53 @@ use bloqade_lanes_search::solve::{MoveSolver, SolveResult, SolveStatus, Strategy
 
 use crate::arch_python::PyArchSpec;
 
+// ── SearchStrategy enum ──
+
+/// Search strategy for the Rust move solver.
+#[pyclass(
+    name = "SearchStrategy",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    module = "bloqade.lanes.bytecode"
+)]
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum PySearchStrategy {
+    #[pyo3(name = "ASTAR")]
+    AStar = 0,
+    #[pyo3(name = "DFS")]
+    HeuristicDfs = 1,
+    #[pyo3(name = "BFS")]
+    Bfs = 2,
+    #[pyo3(name = "GREEDY")]
+    GreedyBestFirst = 3,
+}
+
+#[pymethods]
+impl PySearchStrategy {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            PySearchStrategy::AStar => "ASTAR",
+            PySearchStrategy::HeuristicDfs => "DFS",
+            PySearchStrategy::Bfs => "BFS",
+            PySearchStrategy::GreedyBestFirst => "GREEDY",
+        }
+    }
+}
+
+impl PySearchStrategy {
+    fn to_rs(&self) -> Strategy {
+        match self {
+            PySearchStrategy::AStar => Strategy::AStar,
+            PySearchStrategy::HeuristicDfs => Strategy::HeuristicDfs,
+            PySearchStrategy::Bfs => Strategy::Bfs,
+            PySearchStrategy::GreedyBestFirst => Strategy::GreedyBestFirst,
+        }
+    }
+}
+
 /// Result of a move synthesis solve.
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
@@ -149,13 +196,13 @@ impl PyMoveSolver {
     ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
     ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
-    ///     strategy: Search strategy: "astar" (default), "dfs", "bfs", "greedy".
+    ///     strategy: Search strategy (default: SearchStrategy.ASTAR).
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy=PySearchStrategy::AStar, top_c=3, max_movesets_per_group=3))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -164,7 +211,7 @@ impl PyMoveSolver {
         target: Vec<(u32, u32, u32)>,
         blocked: Vec<(u32, u32)>,
         max_expansions: Option<u32>,
-        strategy: &str,
+        strategy: PySearchStrategy,
         top_c: usize,
         max_movesets_per_group: usize,
     ) -> PyResult<PySolveResult> {
@@ -182,30 +229,42 @@ impl PyMoveSolver {
 
         let initial_pairs: Vec<_> = initial
             .into_iter()
-            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))
+            .map(|(qid, word_id, site_id)| {
+                (
+                    qid,
+                    LocationAddr {
+                        zone_id: 0,
+                        word_id,
+                        site_id,
+                    },
+                )
+            })
             .collect();
 
         let target_pairs: Vec<_> = target
             .into_iter()
-            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))
+            .map(|(qid, word_id, site_id)| {
+                (
+                    qid,
+                    LocationAddr {
+                        zone_id: 0,
+                        word_id,
+                        site_id,
+                    },
+                )
+            })
             .collect();
 
         let blocked_locs: Vec<_> = blocked
             .into_iter()
-            .map(|(word_id, site_id)| LocationAddr { word_id, site_id })
+            .map(|(word_id, site_id)| LocationAddr {
+                zone_id: 0,
+                word_id,
+                site_id,
+            })
             .collect();
 
-        let strat = match strategy {
-            "astar" => Strategy::AStar,
-            "dfs" => Strategy::HeuristicDfs,
-            "bfs" => Strategy::Bfs,
-            "greedy" => Strategy::GreedyBestFirst,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy"
-                )));
-            }
-        };
+        let strat = strategy.to_rs();
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
