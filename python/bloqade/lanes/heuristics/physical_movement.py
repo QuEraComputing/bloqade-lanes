@@ -160,6 +160,7 @@ class RustPlacementTraversal:
     max_expansions: int | None = 300
     weight: float = 1.0
     mobility_weight: float = 0.0
+    restarts: int = 1
 
 
 @dataclass
@@ -328,6 +329,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             max_movesets_per_group=self.traversal.max_movesets_per_group,
             weight=self.traversal.weight,
             mobility_weight=self.traversal.mobility_weight,
+            restarts=self.traversal.restarts,
         )
 
         if result is None:

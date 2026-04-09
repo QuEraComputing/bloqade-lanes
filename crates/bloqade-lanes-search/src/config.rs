@@ -73,6 +73,11 @@ impl Config {
         }
     }
 
+    /// Cached FNV-1a hash of this configuration.
+    pub fn hash_value(&self) -> u64 {
+        self.cached_hash
+    }
+
     /// Number of qubits in this configuration.
     pub fn len(&self) -> usize {
         self.entries.len()

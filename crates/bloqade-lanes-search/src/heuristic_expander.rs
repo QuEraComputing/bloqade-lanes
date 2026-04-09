@@ -7,6 +7,8 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 use crate::astar::Expander;
 use crate::config::Config;
@@ -38,9 +40,12 @@ pub struct HeuristicExpander<'a> {
     max_movesets_per_group: usize,
     /// Weight for mobility bonus in scoring (0.0 = disabled).
     mobility_weight: f64,
+    /// RNG seed for score perturbation (0 = no perturbation).
+    seed: u64,
 }
 
 impl<'a> HeuristicExpander<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         index: &'a LaneIndex,
         blocked: impl IntoIterator<Item = LocationAddr>,
@@ -49,6 +54,7 @@ impl<'a> HeuristicExpander<'a> {
         top_c: usize,
         max_movesets_per_group: usize,
         mobility_weight: f64,
+        seed: u64,
     ) -> Self {
         Self {
             index,
@@ -58,6 +64,7 @@ impl<'a> HeuristicExpander<'a> {
             top_c,
             max_movesets_per_group,
             mobility_weight,
+            seed,
         }
     }
 }
@@ -73,6 +80,13 @@ struct ScoredTriple {
 
 impl Expander for HeuristicExpander<'_> {
     fn expand(&self, config: &Config, out: &mut Vec<(MoveSet, Config, f64)>) {
+        // RNG for score perturbation (seed=0 means no perturbation).
+        let mut rng = if self.seed != 0 {
+            Some(SmallRng::seed_from_u64(self.seed ^ config.hash_value()))
+        } else {
+            None
+        };
+
         // Build occupied set: config qubit locations + blocked.
         // Pre-allocate to avoid rehashing.
         let mut occupied = HashSet::with_capacity(self.blocked.len() + config.len());
@@ -143,7 +157,8 @@ impl Expander for HeuristicExpander<'_> {
                 } else {
                     0.0
                 };
-                let score = base_score + self.mobility_weight * mobility_bonus;
+                let perturbation = rng.as_mut().map_or(0.0, |r| r.gen_range(-0.5..0.5));
+                let score = base_score + self.mobility_weight * mobility_bonus + perturbation;
 
                 let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                 all_scores.push((
@@ -344,7 +359,8 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
 
         let mut heuristic_out = Vec::new();
-        let h_exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let h_exp =
+            HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
         h_exp.expand(&config, &mut heuristic_out);
 
         let mut exhaustive_out = Vec::new();
@@ -368,7 +384,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
         exp.expand(&config, &mut out);
 
         // Best move should place qubit 0 at site 5 (direct site bus forward).
@@ -385,7 +401,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, [loc(0, 5)], targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, [loc(0, 5)], targets, &table, 3, 3, 0.0, 0);
         exp.expand(&config, &mut out);
 
         // No move should place qubit at blocked site 5.
@@ -404,7 +420,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
         exp.expand(&config, &mut out);
 
         // Each moveset should not have two qubits at the same destination.
@@ -428,7 +444,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
         exp.expand(&config, &mut out);
 
         // With max_movesets_per_group=3 and 3 qubits in the same group,
@@ -445,7 +461,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 5))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
         exp.expand(&config, &mut out);
         assert!(out.is_empty());
     }
@@ -461,7 +477,7 @@ mod tests {
 
         let mut out = Vec::new();
         // Block site 0 (the target) so no move reaches it.
-        let exp = HeuristicExpander::new(&index, [loc(0, 0)], targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, [loc(0, 0)], targets, &table, 3, 3, 0.0, 0);
         exp.expand(&config, &mut out);
 
         // Fallback should still produce at least one candidate
@@ -481,7 +497,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
 
         let target_enc = loc(0, 5).encode();
         let result = astar(
@@ -510,7 +526,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
 
         let target_enc = loc(1, 5).encode();
         let result = astar(
@@ -539,7 +555,7 @@ mod tests {
         let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
 
         let mut out = Vec::new();
         exp.expand(&config, &mut out);
@@ -572,7 +588,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
 
         let result = astar(
             config,

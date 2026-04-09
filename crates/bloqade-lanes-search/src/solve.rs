@@ -5,7 +5,9 @@
 //! building indexes) and can then solve multiple placement problems.
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use rayon::prelude::*;
 
+use crate::astar::SearchResult;
 use crate::config::Config;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
@@ -95,6 +97,7 @@ impl MoveSolver {
     /// * `max_movesets_per_group` — Max movesets generated per bus group.
     /// * `weight` — Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     /// * `mobility_weight` — Weight for mobility bonus in expander scoring (0.0 = disabled).
+    /// * `restarts` — Number of parallel restarts with perturbed scoring (1 = no restarts).
     ///
     /// # Returns
     ///
@@ -111,9 +114,11 @@ impl MoveSolver {
         max_movesets_per_group: usize,
         weight: f64,
         mobility_weight: f64,
+        restarts: u32,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
 
         // Build goal predicate.
         let target_encoded: Vec<(u32, u32)> =
@@ -126,46 +131,88 @@ impl MoveSolver {
             })
         };
 
-        // Build distance table (shared between heuristic and expander).
+        // Build distance table and heuristic (shared across restarts).
         let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
         let dist_table = DistanceTable::new(&target_locs, &self.index);
-
-        // Build heuristic.
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
         let heuristic_fn = |config: &Config| -> f64 { heuristic.estimate(config) };
 
-        // Build expander.
-        let expander = HeuristicExpander::new(
-            &self.index,
-            blocked,
-            target_pairs.iter().copied(),
-            &dist_table,
-            top_c,
-            max_movesets_per_group,
-            mobility_weight,
-        );
+        // Run a single search with the given seed.
+        let run_once = |seed: u64| -> Option<SolveResult> {
+            let expander = HeuristicExpander::new(
+                &self.index,
+                blocked_locs.iter().copied(),
+                target_pairs.iter().copied(),
+                &dist_table,
+                top_c,
+                max_movesets_per_group,
+                mobility_weight,
+                seed,
+            );
 
-        // Run search with the chosen strategy.
-        let result = match strategy {
+            let result = Self::run_strategy(
+                strategy,
+                root.clone(),
+                goal,
+                heuristic_fn,
+                &expander,
+                max_expansions,
+                weight,
+            );
+
+            let goal_id = result.goal?;
+            let move_layers = result.solution_path().unwrap_or_default();
+            let goal_config = result.graph.config(goal_id).clone();
+            let cost = result.graph.g_score(goal_id);
+
+            Some(SolveResult {
+                move_layers,
+                goal_config,
+                nodes_expanded: result.nodes_expanded,
+                cost,
+            })
+        };
+
+        if restarts <= 1 {
+            run_once(0)
+        } else {
+            (0..restarts)
+                .into_par_iter()
+                .filter_map(|i| run_once(i as u64 + 1))
+                .min_by(|a, b| a.cost.total_cmp(&b.cost))
+        }
+    }
+
+    /// Dispatch to the appropriate search strategy.
+    fn run_strategy(
+        strategy: Strategy,
+        root: Config,
+        goal: impl Fn(&Config) -> bool + Copy,
+        heuristic_fn: impl Fn(&Config) -> f64 + Copy,
+        expander: &HeuristicExpander<'_>,
+        max_expansions: Option<u32>,
+        weight: f64,
+    ) -> SearchResult {
+        match strategy {
             Strategy::AStar => {
                 let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
             Strategy::HeuristicDfs => {
                 let mut f = DfsFrontier::new(heuristic_fn);
-                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
             Strategy::Bfs => {
                 let mut f = BfsFrontier::new();
-                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
             Strategy::GreedyBestFirst => {
                 let mut f = PriorityFrontier::greedy(heuristic_fn);
-                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
             Strategy::Ids => {
                 let mut f = IdsFrontier::new(heuristic_fn);
-                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
             Strategy::Cascade => {
                 // Phase 1: IDS for a quick solution.
@@ -173,7 +220,7 @@ impl MoveSolver {
                 let ids_result = frontier::run_search(
                     root.clone(),
                     goal,
-                    &expander,
+                    expander,
                     &mut ids_f,
                     max_expansions,
                     None,
@@ -190,7 +237,7 @@ impl MoveSolver {
                         let astar_result = frontier::run_search(
                             root,
                             goal,
-                            &expander,
+                            expander,
                             &mut astar_f,
                             max_expansions,
                             max_depth,
@@ -203,19 +250,7 @@ impl MoveSolver {
                     }
                 }
             }
-        };
-
-        let goal_id = result.goal?;
-        let move_layers = result.solution_path().unwrap_or_default();
-        let goal_config = result.graph.config(goal_id).clone();
-        let cost = result.graph.g_score(goal_id);
-
-        Some(SolveResult {
-            move_layers,
-            goal_config,
-            nodes_expanded: result.nodes_expanded,
-            cost,
-        })
+        }
     }
 }
 
@@ -279,6 +314,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -301,6 +337,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -324,6 +361,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -347,6 +385,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -368,6 +407,7 @@ mod tests {
             3,
             1.0,
             0.0,
+            1,
         );
 
         assert!(result.is_none());
@@ -388,6 +428,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -402,6 +443,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -424,6 +466,7 @@ mod tests {
             3,
             1.0,
             0.0,
+            1,
         );
 
         // Can't reach blocked destination.
@@ -445,6 +488,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -469,6 +513,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 
@@ -483,6 +528,7 @@ mod tests {
                 3,
                 1.0,
                 0.0,
+                1,
             )
             .unwrap();
 

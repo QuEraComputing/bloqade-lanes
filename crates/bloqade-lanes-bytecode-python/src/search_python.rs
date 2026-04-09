@@ -139,7 +139,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -152,6 +152,7 @@ impl PyMoveSolver {
         max_movesets_per_group: usize,
         weight: f64,
         mobility_weight: f64,
+        restarts: u32,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -218,6 +219,7 @@ impl PyMoveSolver {
                 max_movesets_per_group,
                 weight,
                 mobility_weight,
+                restarts,
             )
         });
 
