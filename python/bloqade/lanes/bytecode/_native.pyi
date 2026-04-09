@@ -831,6 +831,7 @@ class MoveSolver:
         weight: float = 1.0,
         mobility_weight: float = 0.0,
         restarts: int = 1,
+        free_riders: str = "off",
     ) -> Optional[SolveResult]:
         """Solve a move synthesis problem.
 
@@ -845,6 +846,7 @@ class MoveSolver:
             weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
             mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
             restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
+            free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
 
         Returns:
             SolveResult if a solution is found, None otherwise.

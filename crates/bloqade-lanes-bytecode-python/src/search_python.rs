@@ -8,6 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use bloqade_lanes_search::heuristic_expander::FreeRiderPolicy;
 use bloqade_lanes_search::solve::{MoveSolver, SolveResult, Strategy};
 
 use crate::arch_python::PyArchSpec;
@@ -146,7 +147,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off"))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -160,6 +161,7 @@ impl PyMoveSolver {
         weight: f64,
         mobility_weight: f64,
         restarts: u32,
+        free_riders: &str,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -214,6 +216,17 @@ impl PyMoveSolver {
             }
         };
 
+        let fr_policy = match free_riders {
+            "off" => FreeRiderPolicy::Off,
+            "unblock" => FreeRiderPolicy::Unblock,
+            "unblock_or_improve" => FreeRiderPolicy::UnblockOrImprove,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown free_riders '{free_riders}', expected: off, unblock, unblock_or_improve"
+                )));
+            }
+        };
+
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py.allow_threads(|| {
             self.inner.solve(
@@ -227,6 +240,7 @@ impl PyMoveSolver {
                 weight,
                 mobility_weight,
                 restarts,
+                fr_policy,
             )
         });
 

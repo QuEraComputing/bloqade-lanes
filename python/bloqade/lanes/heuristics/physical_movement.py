@@ -161,6 +161,7 @@ class RustPlacementTraversal:
     weight: float = 1.0
     mobility_weight: float = 0.0
     restarts: int = 1
+    free_riders: str = "off"
 
 
 @dataclass
@@ -330,6 +331,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             weight=self.traversal.weight,
             mobility_weight=self.traversal.mobility_weight,
             restarts=self.traversal.restarts,
+            free_riders=self.traversal.free_riders,
         )
 
         if result is None:

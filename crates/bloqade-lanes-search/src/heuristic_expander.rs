@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -38,6 +38,17 @@ pub enum DeadlockPolicy {
     AllMoves,
 }
 
+/// Policy for adding free riders to bus movesets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreeRiderPolicy {
+    /// No free riders — current behavior.
+    Off,
+    /// Add free riders that unblock other qubits' improving moves.
+    Unblock,
+    /// Add free riders that unblock OR reduce their own distance.
+    UnblockOrImprove,
+}
+
 /// Typically produces 5-15 candidates per expansion, vs hundreds from
 /// the exhaustive generator.
 pub struct HeuristicExpander<'a> {
@@ -58,6 +69,8 @@ pub struct HeuristicExpander<'a> {
     deadlock_policy: DeadlockPolicy,
     /// Number of deadlocks encountered during search.
     deadlocks: AtomicU32,
+    /// Policy for adding free riders to bus movesets.
+    free_rider_policy: FreeRiderPolicy,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -72,6 +85,7 @@ impl<'a> HeuristicExpander<'a> {
         mobility_weight: f64,
         seed: u64,
         deadlock_policy: DeadlockPolicy,
+        free_rider_policy: FreeRiderPolicy,
     ) -> Self {
         Self {
             index,
@@ -84,6 +98,7 @@ impl<'a> HeuristicExpander<'a> {
             seed,
             deadlock_policy,
             deadlocks: AtomicU32::new(0),
+            free_rider_policy,
         }
     }
 
@@ -260,11 +275,24 @@ impl Expander for HeuristicExpander<'_> {
         // Step 5: per group, generate multiple movesets.
         let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
-        for (_, mut qubits) in groups {
+        for (key, mut qubits) in groups {
             // Sort by score descending.
             qubits.sort_by(|a, b| b.score.total_cmp(&a.score));
 
             let n = qubits.len().min(self.max_movesets_per_group);
+
+            // Decode triplet key for free rider lookups.
+            let (mt_u8, bus_id, dir_u8) = key;
+            let mt = if mt_u8 == 0 {
+                MoveType::SiteBus
+            } else {
+                MoveType::WordBus
+            };
+            let dir = if dir_u8 == 0 {
+                Direction::Forward
+            } else {
+                Direction::Backward
+            };
 
             for start in 0..n {
                 let mut lanes: Vec<u64> = Vec::new();
@@ -292,6 +320,48 @@ impl Expander for HeuristicExpander<'_> {
 
                     let dst = LocationAddr::decode(t.dst_encoded);
                     moves.push((t.qubit_id, dst));
+                }
+
+                // Step 5b: add free riders to the moveset.
+                if self.free_rider_policy != FreeRiderPolicy::Off && !lanes.is_empty() {
+                    for (qid, loc) in config.iter() {
+                        // Skip qubits already in the moveset.
+                        if moves.iter().any(|(q, _)| *q == qid) {
+                            continue;
+                        }
+                        // Check if this qubit has a lane on the same bus.
+                        let Some(lane) = self.index.lane_for_source(mt, bus_id, dir, loc) else {
+                            continue;
+                        };
+                        let Some((_, dst)) = self.index.endpoints(&lane) else {
+                            continue;
+                        };
+                        let dst_enc = dst.encode();
+                        if occupied.contains(&dst_enc) || used_dsts.contains(&dst_enc) {
+                            continue;
+                        }
+                        // Check policy criteria.
+                        let loc_enc = loc.encode();
+                        let is_blocker = blocked_dsts.contains(&loc_enc);
+                        let improves_distance =
+                            if self.free_rider_policy == FreeRiderPolicy::UnblockOrImprove {
+                                self.targets.iter().any(|&(tqid, target_enc)| {
+                                    tqid == qid
+                                        && self
+                                            .dist_table
+                                            .distance(dst_enc, target_enc)
+                                            .zip(self.dist_table.distance(loc_enc, target_enc))
+                                            .is_some_and(|(d_after, d_now)| d_after < d_now)
+                                })
+                            } else {
+                                false
+                            };
+                        if is_blocker || improves_distance {
+                            lanes.push(lane.encode_u64());
+                            used_dsts.insert(dst_enc);
+                            moves.push((qid, dst));
+                        }
+                    }
                 }
 
                 if lanes.is_empty() {
@@ -436,6 +506,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         h_exp.expand(&config, &mut heuristic_out);
 
@@ -470,6 +541,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         exp.expand(&config, &mut out);
 
@@ -497,6 +569,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         exp.expand(&config, &mut out);
 
@@ -526,6 +599,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         exp.expand(&config, &mut out);
 
@@ -560,6 +634,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         exp.expand(&config, &mut out);
 
@@ -587,6 +662,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         exp.expand(&config, &mut out);
         assert!(out.is_empty());
@@ -613,6 +689,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
         exp.expand(&config, &mut out);
 
@@ -643,6 +720,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
 
         let target_enc = loc(0, 5).encode();
@@ -682,6 +760,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
 
         let target_enc = loc(1, 5).encode();
@@ -721,6 +800,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
 
         let mut out = Vec::new();
@@ -764,6 +844,7 @@ mod tests {
             0.0,
             0,
             DeadlockPolicy::AllMoves,
+            FreeRiderPolicy::Off,
         );
 
         let result = astar(

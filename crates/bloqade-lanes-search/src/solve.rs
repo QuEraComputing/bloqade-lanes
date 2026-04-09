@@ -12,8 +12,7 @@ use crate::config::Config;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-use crate::heuristic_expander::DeadlockPolicy;
-use crate::heuristic_expander::HeuristicExpander;
+use crate::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy, HeuristicExpander};
 use crate::lane_index::LaneIndex;
 
 /// Search strategy for the solver.
@@ -118,6 +117,7 @@ impl MoveSolver {
         weight: f64,
         mobility_weight: f64,
         restarts: u32,
+        free_rider_policy: FreeRiderPolicy,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -154,6 +154,7 @@ impl MoveSolver {
                 mobility_weight,
                 seed,
                 policy,
+                free_rider_policy,
             )
         };
 
@@ -355,6 +356,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -378,6 +380,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -402,6 +405,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -426,6 +430,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -448,6 +453,7 @@ mod tests {
             1.0,
             0.0,
             1,
+            FreeRiderPolicy::Off,
         );
 
         assert!(result.is_none());
@@ -469,6 +475,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -484,6 +491,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -507,6 +515,7 @@ mod tests {
             1.0,
             0.0,
             1,
+            FreeRiderPolicy::Off,
         );
 
         // Can't reach blocked destination.
@@ -529,6 +538,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -554,6 +564,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
@@ -569,6 +580,7 @@ mod tests {
                 1.0,
                 0.0,
                 1,
+                FreeRiderPolicy::Off,
             )
             .unwrap();
 
