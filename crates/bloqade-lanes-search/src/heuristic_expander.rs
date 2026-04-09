@@ -31,6 +31,8 @@ use crate::lane_index::LaneIndex;
 pub enum DeadlockPolicy {
     /// No escape moves — dead end, let the search backtrack.
     Skip,
+    /// Generate escape moves only for qubits blocking improving moves.
+    MoveBlockers,
     /// Generate all valid single-lane moves for every qubit.
     AllMoves,
 }
@@ -100,6 +102,19 @@ impl Expander for HeuristicExpander<'_> {
             None
         };
 
+        // Reverse map for blocker identification (only needed for deadlock escape).
+        let loc_to_qubit: HashMap<u32, u32> = if self.deadlock_policy != DeadlockPolicy::Skip {
+            config
+                .iter()
+                .map(|(qid, loc)| (loc.encode(), qid))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
+        // Destinations blocked by occupied qubits that would have been improving.
+        let mut blocked_dsts: HashSet<u32> = HashSet::new();
+
         // Build occupied set: config qubit locations + blocked.
         // Pre-allocate to avoid rehashing.
         let mut occupied = HashSet::with_capacity(self.blocked.len() + config.len());
@@ -148,6 +163,16 @@ impl Expander for HeuristicExpander<'_> {
                 };
                 let dst_enc = dst.encode();
                 if occupied.contains(&dst_enc) {
+                    // Track improving moves blocked by occupied destinations.
+                    if self.deadlock_policy != DeadlockPolicy::Skip {
+                        let d_after = self
+                            .dist_table
+                            .distance(dst_enc, target_enc)
+                            .map_or(f64::MAX, |d| d as f64);
+                        if d_now > d_after {
+                            blocked_dsts.insert(dst_enc);
+                        }
+                    }
                     continue;
                 }
 
@@ -286,8 +311,28 @@ impl Expander for HeuristicExpander<'_> {
         // Step 7: deadlock escape.
         // If no positive-score candidates were produced (deadlock — all
         // improving moves blocked), apply the deadlock policy.
-        if !has_positive && self.deadlock_policy == DeadlockPolicy::AllMoves {
-            for (qid, loc) in config.iter() {
+        if !has_positive && self.deadlock_policy != DeadlockPolicy::Skip {
+            // Determine which qubits to generate escape moves for.
+            let escape_qubits: Vec<(u32, LocationAddr)> = match self.deadlock_policy {
+                DeadlockPolicy::Skip => unreachable!(),
+                DeadlockPolicy::MoveBlockers => {
+                    // Only move qubits that are blocking improving moves.
+                    blocked_dsts
+                        .iter()
+                        .filter_map(|&dst_enc| {
+                            let qid = *loc_to_qubit.get(&dst_enc)?;
+                            let loc = LocationAddr::decode(dst_enc);
+                            Some((qid, loc))
+                        })
+                        .collect()
+                }
+                DeadlockPolicy::AllMoves => {
+                    // Move any qubit.
+                    config.iter().collect()
+                }
+            };
+
+            for (qid, loc) in escape_qubits {
                 for &lane in self.index.outgoing_lanes(loc) {
                     let Some((_, dst)) = self.index.endpoints(&lane) else {
                         continue;

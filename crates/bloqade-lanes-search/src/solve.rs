@@ -187,9 +187,9 @@ impl MoveSolver {
                     Some(ids_goal_id) => {
                         let ids_cost = ids_result.graph.g_score(ids_goal_id);
 
-                        // Phase 2: Weighted A* with AllMoves deadlock policy.
+                        // Phase 2: Weighted A* with MoveBlockers deadlock policy.
                         let max_depth = Some((ids_cost as u32).saturating_sub(1));
-                        let astar_expander = make_expander(seed, DeadlockPolicy::AllMoves);
+                        let astar_expander = make_expander(seed, DeadlockPolicy::MoveBlockers);
                         let mut astar_f = PriorityFrontier::astar(heuristic_fn, weight);
                         let astar_result = frontier::run_search(
                             root.clone(),
@@ -209,7 +209,7 @@ impl MoveSolver {
             } else {
                 let policy = match strategy {
                     Strategy::Ids | Strategy::HeuristicDfs => DeadlockPolicy::Skip,
-                    _ => DeadlockPolicy::AllMoves,
+                    _ => DeadlockPolicy::MoveBlockers,
                 };
                 let expander = make_expander(seed, policy);
                 let result = Self::run_strategy(
