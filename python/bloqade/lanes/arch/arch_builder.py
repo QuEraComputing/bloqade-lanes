@@ -250,14 +250,25 @@ class ZoneBuilder:
         _validate_aod_rectangle(dst_positions, "Word bus dst")
         self._word_buses.append((list(src), list(dst)))
 
-    def add_entangling_pair(self, word_a: int, word_b: int) -> None:
-        """Mark two zone-local words as a CZ pair."""
+    def add_entangling_pairs(
+        self, words_a: Sequence[int], words_b: Sequence[int]
+    ) -> None:
+        """Mark paired zone-local words as CZ pairs.
+
+        ``words_a[i]`` is paired with ``words_b[i]``. The two sequences
+        must have the same length.
+        """
+        if len(words_a) != len(words_b):
+            raise ValueError(
+                f"words_a has {len(words_a)} entries but words_b has " f"{len(words_b)}"
+            )
         n = len(self._words)
-        if word_a < 0 or word_a >= n:
-            raise ValueError(f"word index {word_a} out of range [0, {n})")
-        if word_b < 0 or word_b >= n:
-            raise ValueError(f"word index {word_b} out of range [0, {n})")
-        self._entangling_pairs.append((word_a, word_b))
+        for a, b in zip(words_a, words_b):
+            if a < 0 or a >= n:
+                raise ValueError(f"word index {a} out of range [0, {n})")
+            if b < 0 or b >= n:
+                raise ValueError(f"word index {b} out of range [0, {n})")
+            self._entangling_pairs.append((a, b))
 
     @property
     def words(self) -> _WordGridQuery:

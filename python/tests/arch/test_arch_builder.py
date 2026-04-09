@@ -195,17 +195,17 @@ class TestZoneBuilderBuses:
         with pytest.raises(ValueError, match="out of range"):
             zone.add_word_bus(src=[0], dst=[1])
 
-    def test_add_entangling_pair(self):
+    def test_add_entangling_pairs(self):
         zone = ZoneBuilder("z", _make_grid(4, 1), word_shape=(2, 1))
         zone.add_word(slice(0, 2), [0])
         zone.add_word(slice(2, 4), [0])
-        zone.add_entangling_pair(0, 1)
+        zone.add_entangling_pairs([0], [1])
 
-    def test_add_entangling_pair_out_of_range(self):
+    def test_add_entangling_pairs_out_of_range(self):
         zone = ZoneBuilder("z", _make_grid(4, 1), word_shape=(2, 1))
         zone.add_word(slice(0, 2), [0])
         with pytest.raises(ValueError, match="out of range"):
-            zone.add_entangling_pair(0, 1)
+            zone.add_entangling_pairs([0], [1])
 
 
 # ── ArchBuilder ──
@@ -307,7 +307,7 @@ class TestArchBuilder:
         zone = ZoneBuilder("gate", _make_grid(4, 1), word_shape=(2, 1))
         zone.add_word(slice(0, 2), [0])
         zone.add_word(slice(2, 4), [0])
-        zone.add_entangling_pair(0, 1)
+        zone.add_entangling_pairs([0], [1])
 
         arch = ArchBuilder()
         arch.add_zone(zone)
@@ -324,8 +324,7 @@ class TestArchBuilder:
         zone.add_word(slice(2, 4), [1])
         zone.add_site_bus(src=[0], dst=[1])
         zone.add_word_bus(src=[0, 1], dst=[2, 3])
-        zone.add_entangling_pair(0, 1)
-        zone.add_entangling_pair(2, 3)
+        zone.add_entangling_pairs([0, 2], [1, 3])
 
         arch = ArchBuilder()
         arch.add_zone(zone)

@@ -145,8 +145,11 @@ def build_arch(
         # Entangling pairs.
         if zone_spec.entangling:
             offset = word_grid.word_id_offset
-            for a, b in word_grid.cz_pairs():
-                zone.add_entangling_pair(a - offset, b - offset)
+            pairs = list(word_grid.cz_pairs())
+            zone.add_entangling_pairs(
+                [a - offset for a, _ in pairs],
+                [b - offset for _, b in pairs],
+            )
 
         zone_builders[zone_name] = zone
 
