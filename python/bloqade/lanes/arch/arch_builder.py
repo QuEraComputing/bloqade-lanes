@@ -74,7 +74,9 @@ class _SiteGridQuery:
     def __init__(self, word_shape: tuple[int, int]):
         self._nx, self._ny = word_shape
 
-    def __getitem__(self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]) -> list[int]:  # type: ignore[override]
+    def __getitem__(
+        self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
+    ) -> list[int]:
         x_idx, y_idx = key
         xs = _normalize_index(x_idx, self._nx)
         ys = _normalize_index(y_idx, self._ny)
@@ -87,7 +89,9 @@ class _WordGridQuery:
     def __init__(self, zone: ZoneBuilder):
         self._zone = zone
 
-    def __getitem__(self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]) -> tuple[str, list[int]]:  # type: ignore[override]
+    def __getitem__(
+        self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
+    ) -> tuple[str, list[int]]:
         x_idx, y_idx = key
         xs = _normalize_index(x_idx, self._zone._grid.num_x)
         ys = _normalize_index(y_idx, self._zone._grid.num_y)
@@ -211,9 +215,13 @@ class ZoneBuilder:
         """Add a site bus (intra-word movement).
 
         src/dst are site indices within word_shape (0..sites_per_word).
-        Validates that src and dst positions each form a valid AOD
-        Cartesian product on the word grid.
+        Must have equal length. Validates that src and dst positions each
+        form a valid AOD Cartesian product on the word grid.
         """
+        if len(src) != len(dst):
+            raise ValueError(
+                f"Site bus src has {len(src)} entries but dst has {len(dst)}"
+            )
         total = self.sites_per_word
         nx = self._word_shape[0]
         for s in src:
@@ -232,10 +240,14 @@ class ZoneBuilder:
     def add_word_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a word bus (intra-zone movement).
 
-        src/dst are zone-local word indices. Validates that src and dst
-        word positions each form a valid AOD Cartesian product on the
-        zone grid.
+        src/dst are zone-local word indices. Must have equal length.
+        Validates that src and dst word positions each form a valid AOD
+        Cartesian product on the zone grid.
         """
+        if len(src) != len(dst):
+            raise ValueError(
+                f"Word bus src has {len(src)} entries but dst has {len(dst)}"
+            )
         n = len(self._words)
         for s in src:
             if s < 0 or s >= n:
@@ -389,14 +401,28 @@ class ArchBuilder:
                 all_words.append(Word(tuple(positions)))
 
         # 2. Build Rust Zone objects.
+        # Zone-local word IDs must be translated to global IDs for the Rust
+        # ArchSpec, which uses global word indices everywhere.
         rust_zones: list[_RustZone] = []
-        for zone in self._zones:
+        for zone_idx, zone in enumerate(self._zones):
+            offset = self._word_id_offsets[zone_idx]
             site_buses = [_RustSiteBus(src=s, dst=d) for s, d in zone._site_buses]
-            word_buses = [_RustWordBus(src=s, dst=d) for s, d in zone._word_buses]
-            words_with_site_buses = list(range(zone.num_words)) if site_buses else []
+            word_buses = [
+                _RustWordBus(
+                    src=[offset + w for w in s],
+                    dst=[offset + w for w in d],
+                )
+                for s, d in zone._word_buses
+            ]
+            words_with_site_buses = (
+                [offset + w for w in range(zone.num_words)] if site_buses else []
+            )
             sites_with_word_buses = (
                 list(range(zone.sites_per_word)) if word_buses else []
             )
+            entangling_pairs = [
+                (offset + a, offset + b) for a, b in zone._entangling_pairs
+            ]
             rust_zones.append(
                 _RustZone(
                     name=zone.name,
@@ -405,7 +431,7 @@ class ArchBuilder:
                     word_buses=word_buses,
                     words_with_site_buses=words_with_site_buses,
                     sites_with_word_buses=sites_with_word_buses,
-                    entangling_pairs=zone._entangling_pairs,
+                    entangling_pairs=entangling_pairs,
                 )
             )
 

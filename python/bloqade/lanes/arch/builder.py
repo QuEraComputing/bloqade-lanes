@@ -17,7 +17,7 @@ from bloqade.lanes.layout.arch import ArchSpec
 from .arch_builder import ArchBuilder, ZoneBuilder
 from .topology import InterZoneTopology
 from .word_factory import WordGrid, create_zone_words
-from .zone import ArchBlueprint
+from .zone import ArchBlueprint, DeviceLayout, ZoneSpec
 
 
 @dataclass(frozen=True)
@@ -30,8 +30,8 @@ class ArchResult:
 
 
 def _build_zone_grid(
-    zone_spec: object,
-    layout: object,
+    zone_spec: ZoneSpec,
+    layout: DeviceLayout,
     n: int,
     s: float,
 ) -> _RustGrid:
@@ -40,20 +40,20 @@ def _build_zone_grid(
     The grid must have enough x-positions to cover all interleaved CZ pairs
     and enough y-positions for all rows.
     """
-    num_rows = zone_spec.num_rows  # type: ignore[attr-defined]
-    num_cols = zone_spec.num_cols  # type: ignore[attr-defined]
+    num_rows = zone_spec.num_rows
+    num_cols = zone_spec.num_cols
     pair_width = (2 * n - 1) * s
 
     x_positions: list[float] = []
     num_pairs = num_cols // 2
     for pair_idx in range(num_pairs):
-        pair_x = pair_idx * (pair_width + layout.pair_spacing)  # type: ignore[attr-defined]
+        pair_x = pair_idx * (pair_width + layout.pair_spacing)
         for i in range(n):
             x_positions.append(pair_x + 2.0 * s * i)
             x_positions.append(pair_x + s + 2.0 * s * i)
 
     x_pos_sorted = sorted(set(x_positions))
-    y_positions = [row * layout.row_spacing for row in range(num_rows)]  # type: ignore[attr-defined]
+    y_positions = [row * layout.row_spacing for row in range(num_rows)]
     if not y_positions:
         y_positions = [0.0]
 
@@ -195,11 +195,15 @@ def build_arch(
     )
 
 
-def _word_shape_from_layout(zone_spec: object, layout: object) -> tuple[int, int]:
+def _word_shape_from_layout(
+    zone_spec: ZoneSpec, layout: DeviceLayout
+) -> tuple[int, int]:
     """Derive word_shape from zone spec and layout.
 
     For interleaved CZ pairs, each word occupies ``sites_per_word`` x-positions
-    and 1 y-position (row).
+    and 1 y-position (row). This assumes 1D words; 2D word shapes would require
+    extending ``ZoneSpec`` with a word shape parameter.
     """
-    n = layout.sites_per_word  # type: ignore[attr-defined]
+    _ = zone_spec  # reserved for future 2D word shapes
+    n = layout.sites_per_word
     return (n, 1)

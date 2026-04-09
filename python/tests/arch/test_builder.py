@@ -262,11 +262,12 @@ class TestBuildArchPerBusWords:
         assert len(arch.site_buses) == 8
 
         # Proc is zone 0 with words [0, 1], mem is zone 1 with words [2, 3]
+        # words_with_site_buses uses global IDs
         assert arch.zones[0].words_with_site_buses == [0, 1]
-        assert arch.zones[1].words_with_site_buses == [0, 1]
+        assert arch.zones[1].words_with_site_buses == [2, 3]
 
-        # has_site_buses = union across zones (zone-local indices)
-        assert arch.has_site_buses == frozenset({0, 1})
+        # has_site_buses = union across zones (global IDs)
+        assert arch.has_site_buses == frozenset({0, 1, 2, 3})
 
     def test_single_zone_site_buses_have_words(self) -> None:
         """Single zone with site topology → all words have site buses."""

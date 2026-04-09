@@ -331,3 +331,107 @@ class TestArchBuilder:
         arch.add_mode("all", ["gate"])
         spec = arch.build()
         assert spec is not None
+
+
+class TestArchBuilderMultiZoneOffsets:
+    """Verify global word ID translation for second+ zones."""
+
+    def _make_two_zone_arch(self):
+        proc = ZoneBuilder("proc", _make_grid(4, 2), word_shape=(2, 1))
+        proc.add_word(slice(0, 2), [0])
+        proc.add_word(slice(2, 4), [0])
+        proc.add_word(slice(0, 2), [1])
+        proc.add_word(slice(2, 4), [1])
+        proc.add_word_bus(src=[0, 1], dst=[2, 3])
+        proc.add_site_bus(src=[0], dst=[1])
+        proc.add_entangling_pairs([0, 2], [1, 3])
+
+        mem = ZoneBuilder("mem", _make_grid(4, 2), word_shape=(2, 1))
+        mem.add_word(slice(0, 2), [0])
+        mem.add_word(slice(2, 4), [0])
+        mem.add_word(slice(0, 2), [1])
+        mem.add_word(slice(2, 4), [1])
+        mem.add_word_bus(src=[0, 1], dst=[2, 3])
+        mem.add_entangling_pairs([0, 2], [1, 3])
+
+        arch = ArchBuilder()
+        arch.add_zone(proc)
+        arch.add_zone(mem)
+        arch.connect(src=proc.words[:, :], dst=mem.words[:, :])
+        arch.add_mode("all", ["proc", "mem"])
+        return arch.build()
+
+    def test_second_zone_word_buses_use_global_ids(self):
+        spec = self._make_two_zone_arch()
+        # proc is zone 0 (words 0-3), mem is zone 1 (words 4-7)
+        mem_zone = spec.zones[1]
+        for bus in mem_zone.word_buses:
+            for w in bus.src:
+                assert w >= 4, f"mem word bus src {w} should be >= 4 (global)"
+            for w in bus.dst:
+                assert w >= 4, f"mem word bus dst {w} should be >= 4 (global)"
+
+    def test_second_zone_entangling_pairs_use_global_ids(self):
+        spec = self._make_two_zone_arch()
+        mem_zone = spec.zones[1]
+        for a, b in mem_zone.entangling_pairs:
+            assert a >= 4, f"mem entangling pair word {a} should be >= 4"
+            assert b >= 4, f"mem entangling pair word {b} should be >= 4"
+
+    def test_second_zone_words_with_site_buses_use_global_ids(self):
+        spec = self._make_two_zone_arch()
+        # proc zone has site buses → words_with_site_buses should be [0,1,2,3]
+        assert all(w < 4 for w in spec.zones[0].words_with_site_buses)
+        # mem zone has no site buses → empty
+        assert spec.zones[1].words_with_site_buses == []
+
+    def test_zone_bus_tuples_correct(self):
+        spec = self._make_two_zone_arch()
+        assert len(spec.zone_buses) == 1
+        zb = spec.zone_buses[0]
+        # src should be zone 0, words 0-3
+        for zone_id, word_id in zb.src:
+            assert zone_id == 0
+            assert 0 <= word_id < 4
+        # dst should be zone 1, words 4-7
+        for zone_id, word_id in zb.dst:
+            assert zone_id == 1
+            assert 4 <= word_id < 8
+
+    def test_rust_validation_passes_multi_zone(self):
+        """Multi-zone with buses and entangling pairs on both zones passes Rust validation."""
+        spec = self._make_two_zone_arch()
+        assert spec is not None
+        assert len(spec.zones) == 2
+        assert len(spec.words) == 8
+
+
+class TestBuilderEdgeCases:
+    def test_add_entangling_pairs_length_mismatch(self):
+        zone = ZoneBuilder("z", _make_grid(4, 1), word_shape=(2, 1))
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        with pytest.raises(ValueError, match="entries"):
+            zone.add_entangling_pairs([0], [1, 0])
+
+    def test_site_bus_src_dst_length_mismatch(self):
+        zone = ZoneBuilder("z", _make_grid(4, 2), word_shape=(2, 2))
+        zone.add_word(slice(0, 2), slice(0, 2))
+        with pytest.raises(ValueError, match="entries"):
+            zone.add_site_bus(src=[0, 1], dst=[2])
+
+    def test_word_bus_src_dst_length_mismatch(self):
+        zone = ZoneBuilder("z", _make_grid(4, 2), word_shape=(2, 1))
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        zone.add_word(slice(0, 2), [1])
+        with pytest.raises(ValueError, match="entries"):
+            zone.add_word_bus(src=[0, 1], dst=[2])
+
+    def test_empty_word_query(self):
+        zone = ZoneBuilder("z", _make_grid(4, 2), word_shape=(2, 1))
+        zone.add_word(slice(0, 2), [0])
+        # Query a region with no words
+        name, ids = zone.words[:, 1]
+        assert name == "z"
+        assert ids == []
