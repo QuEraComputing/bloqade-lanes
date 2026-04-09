@@ -270,6 +270,119 @@ def build_decoder_kernel_bundle(
     )
 
 
+def build_paper_decoder_kernel_bundle(
+    theta: float,
+    phi: float,
+    lam: float,
+    *,
+    output_qubit: int = 3,
+) -> DecoderKernelBundle:
+    primitives = _build_primitives(theta, phi, lam, output_qubit=output_qubit)
+    msd_magic_prep = primitives["msd_magic_prep"]
+    msd_forward = primitives["msd_forward"]
+    tomography_x = primitives["tomography_x"]
+    tomography_y = primitives["tomography_y"]
+    tomography_z = primitives["tomography_z"]
+
+    @squin.kernel
+    def prepare_paper_special_common(reg):
+        squin.broadcast.sqrt_x(reg)
+        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[3], reg[4]]))
+        squin.sqrt_x(reg[3])
+        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.sqrt_y_adj(ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.cz(ilist.IList([reg[1], reg[3]]), ilist.IList([reg[2], reg[4]]))
+
+    @squin.kernel
+    def prepare_paper_special_x(reg):
+        squin.h(reg[output_qubit])
+        prepare_paper_special_common(reg)
+
+    @squin.kernel
+    def prepare_paper_special_y(reg):
+        squin.sqrt_x(reg[output_qubit])
+        prepare_paper_special_common(reg)
+
+    @squin.kernel
+    def prepare_paper_special_z(reg):
+        prepare_paper_special_common(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def msd_actual_x():
+        reg = qubit.qalloc(5)
+        msd_magic_prep(reg)
+        msd_forward(reg)
+        tomography_x(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def msd_actual_y():
+        reg = qubit.qalloc(5)
+        msd_magic_prep(reg)
+        msd_forward(reg)
+        tomography_y(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def msd_actual_z():
+        reg = qubit.qalloc(5)
+        msd_magic_prep(reg)
+        msd_forward(reg)
+        tomography_z(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def msd_special_x():
+        reg = qubit.qalloc(5)
+        prepare_paper_special_x(reg)
+        msd_forward(reg)
+        tomography_x(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def msd_special_y():
+        reg = qubit.qalloc(5)
+        prepare_paper_special_y(reg)
+        msd_forward(reg)
+        tomography_y(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def msd_special_z():
+        reg = qubit.qalloc(5)
+        prepare_paper_special_z(reg)
+        msd_forward(reg)
+        tomography_z(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def injected_x():
+        reg = qubit.qalloc(1)
+        squin.u3(theta, phi, lam, reg[0])
+        tomography_x(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def injected_y():
+        reg = qubit.qalloc(1)
+        squin.u3(theta, phi, lam, reg[0])
+        tomography_y(reg)
+        return default_post_processing(reg)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def injected_z():
+        reg = qubit.qalloc(1)
+        squin.u3(theta, phi, lam, reg[0])
+        tomography_z(reg)
+        return default_post_processing(reg)
+
+    return DecoderKernelBundle(
+        actual={"X": msd_actual_x, "Y": msd_actual_y, "Z": msd_actual_z},
+        special={"X": msd_special_x, "Y": msd_special_y, "Z": msd_special_z},
+        injected={"X": injected_x, "Y": injected_y, "Z": injected_z},
+    )
+
+
 def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
     local_r_noise = simulator.noise_model.local_r_noise
     local_rz_noise = simulator.noise_model.local_rz_noise

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -31,6 +32,39 @@ class DecoderAdapter:
     decode_factory: Callable[[str], tuple[tuple[int, ...], float]]
     decode_full: Callable[[str], tuple[int, ...]]
     factory_score_mode: str
+
+
+def _infer_checks_per_logical(num_detectors: int, num_observables: int) -> int:
+    if num_observables <= 0 or num_detectors % num_observables != 0:
+        raise ValueError(
+            "Unable to infer checks_per_logical from detector/observable counts."
+        )
+    return num_detectors // num_observables
+
+
+def _factory_detector_indices(
+    num_detectors: int,
+    num_observables: int,
+    *,
+    output_logical: int,
+    checks_per_logical: int | None = None,
+) -> np.ndarray:
+    checks = checks_per_logical or _infer_checks_per_logical(
+        num_detectors, num_observables
+    )
+    start = output_logical * checks
+    stop = start + checks
+    return np.concatenate([np.arange(start), np.arange(stop, num_detectors)])
+
+
+def _factory_observable_indices(
+    num_observables: int,
+    *,
+    output_logical: int,
+) -> np.ndarray:
+    return np.concatenate(
+        [np.arange(output_logical), np.arange(output_logical + 1, num_observables)]
+    )
 
 
 def make_shape_only_dem(
@@ -74,6 +108,110 @@ def compute_dem_data(task: Any) -> dict[str, np.ndarray]:
         "O": dem_matrix.observables_matrix.toarray().astype(np.int64),
         "priors": np.asarray(dem_matrix.priors, dtype=np.float64),
     }
+
+
+def dem_target_map(
+    target: stim.DemTarget,
+    detector_indices: Sequence[int],
+    observable_indices: Sequence[int],
+) -> stim.DemTarget | None:
+    if stim.DemTarget.is_relative_detector_id(target):
+        det_idx = bisect_left(detector_indices, target.val)
+        if det_idx == len(detector_indices) or detector_indices[det_idx] != target.val:
+            return None
+        return stim.target_relative_detector_id(det_idx)
+    if stim.DemTarget.is_logical_observable_id(target):
+        obs_idx = bisect_left(observable_indices, target.val)
+        if (
+            obs_idx == len(observable_indices)
+            or observable_indices[obs_idx] != target.val
+        ):
+            return None
+        return stim.target_logical_observable_id(obs_idx)
+    return target
+
+
+def sub_detector_error_model(
+    dem: stim.DetectorErrorModel,
+    detector_indices: Sequence[int],
+    observable_indices: Sequence[int],
+) -> stim.DetectorErrorModel:
+    sorted_detectors = sorted(int(value) for value in detector_indices)
+    sorted_observables = sorted(int(value) for value in observable_indices)
+    reduced_dem = stim.DetectorErrorModel()
+    error_probabilities: dict[tuple[stim.DemTarget, ...], float] = {}
+
+    for instruction in dem:
+        targets = instruction.targets_copy()
+        mapped_targets = tuple(
+            mapped
+            for target in targets
+            if (mapped := dem_target_map(target, sorted_detectors, sorted_observables))
+            is not None
+        )
+        if not mapped_targets:
+            continue
+        probability = float(instruction.args_copy()[0])
+        if mapped_targets in error_probabilities:
+            previous = error_probabilities[mapped_targets]
+            error_probabilities[mapped_targets] = (1.0 - previous) * probability + (
+                previous * (1.0 - probability)
+            )
+        else:
+            error_probabilities[mapped_targets] = probability
+
+    for mapped_targets, probability in error_probabilities.items():
+        reduced_dem.append(
+            "error", parens_arguments=probability, targets=list(mapped_targets)
+        )
+    return reduced_dem
+
+
+def partial_detector_observable_counts(
+    det_obs_counts: np.ndarray,
+    num_detectors: int,
+    num_observables: int,
+    detector_indices: Sequence[int],
+    observable_indices: Sequence[int],
+) -> np.ndarray:
+    reshaped = det_obs_counts.reshape([2] * (num_detectors + num_observables))
+    detector_indices = np.asarray(detector_indices, dtype=int)
+    observable_indices = np.asarray(observable_indices, dtype=int)
+    kept_indices = np.concatenate(
+        [detector_indices, observable_indices + num_detectors]
+    )
+    reduced_indices = [
+        index
+        for index in range(num_detectors + num_observables)
+        if index not in kept_indices
+    ]
+    reversed_reduced_indices = (num_detectors + num_observables - 1) - np.asarray(
+        reduced_indices, dtype=int
+    )[::-1]
+    partial = np.sum(reshaped, axis=tuple(reversed_reduced_indices))
+    return partial.reshape(-1)
+
+
+def build_partial_table_decoder(
+    full_decoder: Any,
+    *,
+    detector_indices: Sequence[int],
+    observable_indices: Sequence[int],
+    table_decoder_cls: type,
+) -> Any:
+    partial_counts = partial_detector_observable_counts(
+        full_decoder._det_obs_counts,
+        full_decoder.num_detectors,
+        full_decoder.num_observables,
+        detector_indices,
+        observable_indices,
+    )
+    partial_dem = sub_detector_error_model(
+        full_decoder._dem,
+        detector_indices,
+        observable_indices,
+    )
+    return table_decoder_cls(partial_dem, partial_counts)
 
 
 def build_shared_mld_postselection_scores(
@@ -168,11 +306,9 @@ def build_mld_decoders(
     ancilla_scores: np.ndarray,
     *,
     table_decoder_cls: type,
+    output_logical: int = 0,
+    checks_per_logical: int | None = None,
 ) -> DecoderAdapter:
-    anc_det, anc_obs = split_factory_bits(
-        training_dataset.detectors, training_dataset.observables
-    )
-
     full_decoder = table_decoder_cls.from_det_obs_shots(
         make_shape_only_dem(
             training_dataset.detectors.shape[1], training_dataset.observables.shape[1]
@@ -181,9 +317,25 @@ def build_mld_decoders(
             [training_dataset.detectors, training_dataset.observables], axis=1
         ).astype(bool),
     )
-    factory_decoder = table_decoder_cls.from_det_obs_shots(
-        make_shape_only_dem(anc_det.shape[1], anc_obs.shape[1]),
-        np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
+    factory_decoder = build_partial_table_decoder(
+        full_decoder,
+        detector_indices=_factory_detector_indices(
+            training_dataset.detectors.shape[1],
+            training_dataset.observables.shape[1],
+            output_logical=output_logical,
+            checks_per_logical=checks_per_logical,
+        ),
+        observable_indices=_factory_observable_indices(
+            training_dataset.observables.shape[1],
+            output_logical=output_logical,
+        ),
+        table_decoder_cls=table_decoder_cls,
+    )
+    anc_det, _anc_obs = split_factory_bits(
+        training_dataset.detectors,
+        training_dataset.observables,
+        output_logical=output_logical,
+        checks_per_logical=checks_per_logical,
     )
     if len(ancilla_scores) != (1 << anc_det.shape[1]):
         raise ValueError(
@@ -263,14 +415,28 @@ def build_mle_decoders(
     *,
     gurobi_decoder_cls: type,
     score_mode: str = "best_available",
+    output_logical: int = 0,
+    checks_per_logical: int | None = None,
 ) -> DecoderAdapter:
     if score_mode not in {"best_available", "logical_gap"}:
         raise ValueError("score_mode must be 'best_available' or 'logical_gap'.")
 
     dem_data = compute_dem_data(task)
     full_dem = matrix_to_dem(dem_data["H"], dem_data["O"], dem_data["priors"])
+    factory_detector_indices = _factory_detector_indices(
+        dem_data["H"].shape[0],
+        dem_data["O"].shape[0],
+        output_logical=output_logical,
+        checks_per_logical=checks_per_logical,
+    )
+    factory_observable_indices = _factory_observable_indices(
+        dem_data["O"].shape[0],
+        output_logical=output_logical,
+    )
     factory_dem = matrix_to_dem(
-        dem_data["H"][3:, :], dem_data["O"][1:, :], dem_data["priors"]
+        dem_data["H"][factory_detector_indices, :],
+        dem_data["O"][factory_observable_indices, :],
+        dem_data["priors"],
     )
 
     full_decoder = gurobi_decoder_cls(full_dem)
@@ -320,11 +486,18 @@ def evaluate_curve(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
+    output_logical: int = 0,
+    checks_per_logical: int | None = None,
 ) -> dict[str, np.ndarray]:
     all_scores = []
     for basis in basis_labels:
         dataset = actual_data[basis]
-        anc_det, anc_obs = split_factory_bits(dataset.detectors, dataset.observables)
+        anc_det, anc_obs = split_factory_bits(
+            dataset.detectors,
+            dataset.observables,
+            output_logical=output_logical,
+            checks_per_logical=checks_per_logical,
+        )
         decode_factory = decoder_map[basis].decode_factory
         for a_det, a_obs in zip(anc_det, anc_obs, strict=True):
             anc_flip, score = decode_factory(bits_to_key(a_det))
@@ -350,7 +523,10 @@ def evaluate_curve(
         for basis in basis_labels:
             dataset = actual_data[basis]
             anc_det, anc_obs = split_factory_bits(
-                dataset.detectors, dataset.observables
+                dataset.detectors,
+                dataset.observables,
+                output_logical=output_logical,
+                checks_per_logical=checks_per_logical,
             )
             decode_factory = decoder_map[basis].decode_factory
             decode_full = decoder_map[basis].decode_full
@@ -370,7 +546,9 @@ def evaluate_curve(
                 if score < threshold:
                     continue
                 full_flip = np.asarray(decode_full(bits_to_key(det)), dtype=np.uint8)
-                corrected_bits.append(int(obs[0] ^ full_flip[0]))
+                corrected_bits.append(
+                    int(obs[output_logical] ^ full_flip[output_logical])
+                )
             corrected[basis] = np.asarray(corrected_bits, dtype=np.uint8)
             total_kept += len(corrected[basis])
             total_shots += len(dataset.observables)
@@ -410,25 +588,28 @@ def evaluate_curve(
     }
 
 
-def evaluate_mld_curve(
-    actual_data: Mapping[str, BasisDataset],
+def _collect_mld_pattern_statistics(
+    data_by_basis: Mapping[str, BasisDataset],
     decoder_map: Mapping[str, DecoderAdapter],
     *,
-    posterior_samples: int,
     factory_target: np.ndarray,
-    sign_vector: Sequence[float],
-    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-    min_accepted_per_basis: int = 50,
-) -> dict[str, np.ndarray]:
+    basis_labels: Sequence[str],
+    output_logical: int,
+    checks_per_logical: int | None,
+) -> tuple[dict[str, dict[int, int]], dict[str, dict[int, list[int]]], int]:
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
     corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
     total_shots = 0
 
     for basis in basis_labels:
-        dataset = actual_data[basis]
+        dataset = data_by_basis[basis]
         total_shots += len(dataset.observables)
-        anc_det, anc_obs = split_factory_bits(dataset.detectors, dataset.observables)
+        anc_det, anc_obs = split_factory_bits(
+            dataset.detectors,
+            dataset.observables,
+            output_logical=output_logical,
+            checks_per_logical=checks_per_logical,
+        )
         decode_factory = decoder_map[basis].decode_factory
         decode_full = decoder_map[basis].decode_full
 
@@ -451,19 +632,62 @@ def evaluate_mld_curve(
                 continue
 
             full_flip = np.asarray(decode_full(bits_to_key(det)), dtype=np.uint8)
-            corrected_bits[packed].append(int(obs[0] ^ full_flip[0]))
+            corrected_bits[packed].append(
+                int(obs[output_logical] ^ full_flip[output_logical])
+            )
 
         pattern_counts_by_basis[basis] = dict(pattern_counts)
         corrected_bits_by_basis[basis] = corrected_bits
 
+    return pattern_counts_by_basis, corrected_bits_by_basis, total_shots
+
+
+def evaluate_mld_curve(
+    actual_data: Mapping[str, BasisDataset],
+    decoder_map: Mapping[str, DecoderAdapter],
+    *,
+    posterior_samples: int,
+    factory_target: np.ndarray,
+    sign_vector: Sequence[float],
+    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    min_accepted_per_basis: int = 50,
+    ranking_data: Mapping[str, BasisDataset] | None = None,
+    output_logical: int = 0,
+    checks_per_logical: int | None = None,
+) -> dict[str, np.ndarray]:
+    ranking_source = ranking_data or actual_data
+    (
+        ranking_pattern_counts,
+        ranking_corrected_bits,
+        _ranking_total_shots,
+    ) = _collect_mld_pattern_statistics(
+        ranking_source,
+        decoder_map,
+        factory_target=factory_target,
+        basis_labels=basis_labels,
+        output_logical=output_logical,
+        checks_per_logical=checks_per_logical,
+    )
+    pattern_counts_by_basis, corrected_bits_by_basis, total_shots = (
+        _collect_mld_pattern_statistics(
+            actual_data,
+            decoder_map,
+            factory_target=factory_target,
+            basis_labels=basis_labels,
+            output_logical=output_logical,
+            checks_per_logical=checks_per_logical,
+        )
+    )
+
     all_patterns = sorted(
-        set().union(*(pattern_counts_by_basis[basis].keys() for basis in basis_labels))
+        set().union(*(ranking_pattern_counts[basis].keys() for basis in basis_labels))
     )
     ranked_patterns = []
     for pattern in all_patterns:
         basis_counts = {
             basis: np.asarray(
-                corrected_bits_by_basis[basis].get(pattern, ()), dtype=np.uint8
+                ranking_corrected_bits[basis].get(pattern, ()), dtype=np.uint8
             )
             for basis in basis_labels
         }
@@ -477,7 +701,7 @@ def evaluate_mld_curve(
             target_bloch=target_bloch,
         )
         total_count = sum(
-            pattern_counts_by_basis[basis].get(pattern, 0) for basis in basis_labels
+            ranking_pattern_counts[basis].get(pattern, 0) for basis in basis_labels
         )
         ranked_patterns.append((pattern, mean_score, total_count))
 
@@ -530,20 +754,38 @@ def injected_baseline(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     raw: bool = False,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    training_data_by_basis: Mapping[str, BasisDataset] | None = None,
+    eval_data_by_basis: Mapping[str, BasisDataset] | None = None,
+    run_detectors: bool = False,
 ) -> dict[str, Any]:
     corrected = {}
     for basis in basis_labels:
-        dataset = run_task(task_map[basis], eval_shots, with_noise=True)
+        dataset = (
+            eval_data_by_basis[basis]
+            if eval_data_by_basis is not None
+            else run_task(
+                task_map[basis],
+                eval_shots,
+                with_noise=True,
+                run_detectors=run_detectors,
+            )
+        )
         if raw:
             corrected[basis] = dataset.observables[:, 0].astype(np.uint8)
             continue
+        training_dataset = (
+            training_data_by_basis.get(basis, dataset)
+            if training_data_by_basis is not None
+            else dataset
+        )
         decoder = table_decoder_cls.from_det_obs_shots(
             make_shape_only_dem(
-                dataset.detectors.shape[1], dataset.observables.shape[1]
+                training_dataset.detectors.shape[1],
+                training_dataset.observables.shape[1],
             ),
-            np.concatenate([dataset.detectors, dataset.observables], axis=1).astype(
-                bool
-            ),
+            np.concatenate(
+                [training_dataset.detectors, training_dataset.observables], axis=1
+            ).astype(bool),
         )
         bits = []
         for det, obs in zip(dataset.detectors, dataset.observables, strict=True):
