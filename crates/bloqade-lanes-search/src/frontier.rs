@@ -54,7 +54,6 @@ pub fn run_search(
     frontier: &mut impl Frontier,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
-    use_full_budget: bool,
 ) -> SearchResult {
     // Early check: root is already a goal.
     if goal(&root) {
@@ -78,10 +77,6 @@ pub fn run_search(
     let mut successors: Vec<(MoveSet, Config, f64)> = Vec::new();
     let mut new_children: Vec<NodeId> = Vec::new();
 
-    // Anytime mode: track best solution found so far.
-    let mut best_goal: Option<NodeId> = None;
-    let mut best_g: f64 = f64::MAX;
-
     while let Some(node_id) = frontier.select_next() {
         if let Some(max) = max_expansions
             && nodes_expanded >= max
@@ -102,20 +97,12 @@ pub fn run_search(
 
         // Goal check on pop (A* optimality).
         if frontier.check_goal_on_pop() && goal(graph.config(node_id)) {
-            if !use_full_budget {
-                return SearchResult {
-                    goal: Some(node_id),
-                    nodes_expanded,
-                    max_depth_reached: max_depth_seen,
-                    graph,
-                };
-            }
-            let g = graph.g_score(node_id);
-            if g < best_g {
-                best_g = g;
-                best_goal = Some(node_id);
-            }
-            continue; // Don't expand goal nodes.
+            return SearchResult {
+                goal: Some(node_id),
+                nodes_expanded,
+                max_depth_reached: max_depth_seen,
+                graph,
+            };
         }
 
         // Depth tracking + limit.
@@ -127,14 +114,9 @@ pub fn run_search(
             continue; // Don't expand beyond max depth.
         }
 
-        // Pruning: skip nodes that can't improve on best known solution.
-        let current_g = graph.g_score(node_id);
-        if use_full_budget && current_g >= best_g {
-            continue;
-        }
-
         // Expand.
         nodes_expanded += 1;
+        let current_g = graph.g_score(node_id);
 
         successors.clear();
         expander.expand(graph.config(node_id), &mut successors);
@@ -149,23 +131,14 @@ pub fn run_search(
             let child_closed = child_idx < closed.len() && closed[child_idx];
 
             if is_new && !child_closed {
-                // Goal check on generate (BFS/DFS/IDS).
+                // Goal check on generate (BFS/DFS).
                 if frontier.check_goal_on_generate() && goal(graph.config(child_id)) {
-                    if !use_full_budget {
-                        return SearchResult {
-                            goal: Some(child_id),
-                            nodes_expanded,
-                            max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
-                            graph,
-                        };
-                    }
-                    let g = graph.g_score(child_id);
-                    if g < best_g {
-                        best_g = g;
-                        best_goal = Some(child_id);
-                    }
-                    // Don't push goal nodes to frontier.
-                    continue;
+                    return SearchResult {
+                        goal: Some(child_id),
+                        nodes_expanded,
+                        max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
+                        graph,
+                    };
                 }
                 new_children.push(child_id);
             }
@@ -177,7 +150,7 @@ pub fn run_search(
     }
 
     SearchResult {
-        goal: best_goal,
+        goal: None,
         nodes_expanded,
         max_depth_reached: max_depth_seen,
         graph,
@@ -521,7 +494,6 @@ mod tests {
             &mut f,
             None,
             None,
-            false,
         );
         assert!(result.goal.is_some());
         let path = result.solution_path().unwrap();
@@ -539,7 +511,6 @@ mod tests {
             &mut f,
             None,
             Some(3),
-            false,
         );
         // Goal at depth 5, max_depth 3 → not found.
         assert!(result.goal.is_none());
@@ -585,15 +556,7 @@ mod tests {
 
         let root = Config::new([(0, loc(0, 0))]);
         let mut f = PriorityFrontier::astar(zero_heuristic, 1.0);
-        let result = run_search(
-            root,
-            site_goal(1),
-            &TwoPathExpander,
-            &mut f,
-            None,
-            None,
-            false,
-        );
+        let result = run_search(root, site_goal(1), &TwoPathExpander, &mut f, None, None);
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 2.0);
     }
@@ -609,7 +572,6 @@ mod tests {
             &mut f,
             None,
             None,
-            false,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 3);
@@ -630,7 +592,6 @@ mod tests {
             &mut f,
             None,
             None,
-            false,
         );
         assert!(result.goal.is_some());
     }
@@ -648,7 +609,6 @@ mod tests {
             &mut f,
             None,
             None,
-            false,
         );
         assert!(result.goal.is_some());
         let path = result.solution_path().unwrap();
@@ -666,7 +626,6 @@ mod tests {
             &mut f,
             Some(5),
             None,
-            false,
         );
         assert!(result.goal.is_none());
         assert!(result.nodes_expanded <= 5);
@@ -686,7 +645,6 @@ mod tests {
             &mut dfs,
             None,
             None,
-            false,
         );
 
         let mut bfs = BfsFrontier::new();
@@ -697,7 +655,6 @@ mod tests {
             &mut bfs,
             None,
             None,
-            false,
         );
 
         assert!(dfs_result.goal.is_some());
@@ -719,7 +676,6 @@ mod tests {
             &mut f,
             None,
             None,
-            false,
         );
         assert!(result.goal.is_some());
         let path = result.solution_path().unwrap();
@@ -738,7 +694,6 @@ mod tests {
             &mut ids,
             None,
             None,
-            false,
         );
 
         let mut bfs = BfsFrontier::new();
@@ -749,7 +704,6 @@ mod tests {
             &mut bfs,
             None,
             None,
-            false,
         );
 
         assert!(ids_result.goal.is_some());
@@ -768,7 +722,6 @@ mod tests {
             &mut f,
             Some(5),
             None,
-            false,
         );
         assert!(result.goal.is_none());
         assert!(result.nodes_expanded <= 5);
@@ -784,51 +737,19 @@ mod tests {
         for (name, result) in [
             ("bfs", {
                 let mut f = BfsFrontier::new();
-                run_search(
-                    root.clone(),
-                    site_goal(3),
-                    &expander,
-                    &mut f,
-                    None,
-                    None,
-                    false,
-                )
+                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("astar", {
                 let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
-                run_search(
-                    root.clone(),
-                    site_goal(3),
-                    &expander,
-                    &mut f,
-                    None,
-                    None,
-                    false,
-                )
+                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("dfs", {
                 let mut f = DfsFrontier::new(manhattan(3));
-                run_search(
-                    root.clone(),
-                    site_goal(3),
-                    &expander,
-                    &mut f,
-                    None,
-                    None,
-                    false,
-                )
+                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("ids", {
                 let mut f = IdsFrontier::new(manhattan(3));
-                run_search(
-                    root.clone(),
-                    site_goal(3),
-                    &expander,
-                    &mut f,
-                    None,
-                    None,
-                    false,
-                )
+                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
         ] {
             assert!(result.goal.is_some(), "{name} should find root-is-goal");
@@ -849,7 +770,6 @@ mod tests {
             &mut f,
             None,
             None,
-            false,
         );
         assert!(result.goal.is_some());
         assert!(result.max_depth_reached >= 3);

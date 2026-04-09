@@ -160,7 +160,6 @@ class RustPlacementTraversal:
     max_expansions: int | None = 300
     weight: float = 1.0
     mobility_weight: float = 0.0
-    use_full_budget: bool = False
 
 
 @dataclass
@@ -329,7 +328,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             max_movesets_per_group=self.traversal.max_movesets_per_group,
             weight=self.traversal.weight,
             mobility_weight=self.traversal.mobility_weight,
-            use_full_budget=self.traversal.use_full_budget,
         )
 
         if result is None:

@@ -109,7 +109,6 @@ impl MoveSolver {
         max_movesets_per_group: usize,
         weight: f64,
         mobility_weight: f64,
-        use_full_budget: bool,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -148,63 +147,23 @@ impl MoveSolver {
         let result = match strategy {
             Strategy::AStar => {
                 let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-                frontier::run_search(
-                    root,
-                    goal,
-                    &expander,
-                    &mut f,
-                    max_expansions,
-                    None,
-                    use_full_budget,
-                )
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
             Strategy::HeuristicDfs => {
                 let mut f = DfsFrontier::new(heuristic_fn);
-                frontier::run_search(
-                    root,
-                    goal,
-                    &expander,
-                    &mut f,
-                    max_expansions,
-                    None,
-                    use_full_budget,
-                )
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
             Strategy::Bfs => {
                 let mut f = BfsFrontier::new();
-                frontier::run_search(
-                    root,
-                    goal,
-                    &expander,
-                    &mut f,
-                    max_expansions,
-                    None,
-                    use_full_budget,
-                )
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
             Strategy::GreedyBestFirst => {
                 let mut f = PriorityFrontier::greedy(heuristic_fn);
-                frontier::run_search(
-                    root,
-                    goal,
-                    &expander,
-                    &mut f,
-                    max_expansions,
-                    None,
-                    use_full_budget,
-                )
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
             Strategy::Ids => {
                 let mut f = IdsFrontier::new(heuristic_fn);
-                frontier::run_search(
-                    root,
-                    goal,
-                    &expander,
-                    &mut f,
-                    max_expansions,
-                    None,
-                    use_full_budget,
-                )
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
         };
 
@@ -282,7 +241,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
@@ -305,7 +263,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
@@ -329,7 +286,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
@@ -353,7 +309,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
@@ -375,7 +330,6 @@ mod tests {
             3,
             1.0,
             0.0,
-            false,
         );
 
         assert!(result.is_none());
@@ -396,7 +350,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
@@ -411,7 +364,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
@@ -434,7 +386,6 @@ mod tests {
             3,
             1.0,
             0.0,
-            false,
         );
 
         // Can't reach blocked destination.
@@ -456,7 +407,6 @@ mod tests {
                 3,
                 1.0,
                 0.0,
-                false,
             )
             .unwrap();
 
