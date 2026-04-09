@@ -771,6 +771,92 @@ class ArchSpec:
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
+# ── Move Solver ──
+
+@final
+class SolveResult:
+    """Result of a move synthesis solve.
+
+    Always returned by ``MoveSolver.solve()``. Check ``status`` to determine
+    whether a solution was found.
+    """
+
+    @property
+    def status(self) -> str:
+        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``."""
+        ...
+
+    @property
+    def move_layers(self) -> list[list[tuple[int, int, int, int, int]]]:
+        """Move layers as lists of (direction, move_type, word_id, site_id, bus_id) tuples.
+
+        Empty when ``status`` is not ``"solved"``.
+        """
+        ...
+
+    @property
+    def goal_config(self) -> list[tuple[int, int, int]]:
+        """Goal configuration as (qubit_id, word_id, site_id) tuples.
+
+        Equals the initial configuration when ``status`` is not ``"solved"``.
+        """
+        ...
+
+    @property
+    def nodes_expanded(self) -> int:
+        """Number of nodes expanded during search."""
+        ...
+
+    @property
+    def cost(self) -> float:
+        """Total path cost. 0.0 when ``status`` is not ``"solved"``."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class MoveSolver:
+    """Reusable move synthesis solver.
+
+    Constructed once from an architecture specification. The constructor
+    parses the spec and precomputes lane indexes. Then ``solve()`` can be
+    called multiple times with different placements.
+    """
+
+    def __init__(self, arch_spec_json: str) -> None: ...
+    @staticmethod
+    def from_arch_spec(arch: ArchSpec) -> MoveSolver:
+        """Create a solver from a native ArchSpec object."""
+        ...
+
+    def solve(
+        self,
+        initial: list[tuple[int, int, int]],
+        target: list[tuple[int, int, int]],
+        blocked: list[tuple[int, int]],
+        max_expansions: Optional[int] = None,
+        strategy: str = "astar",
+        top_c: int = 3,
+        max_movesets_per_group: int = 3,
+    ) -> SolveResult:
+        """Solve a move synthesis problem.
+
+        Args:
+            initial: List of (qubit_id, word_id, site_id) starting positions.
+            target: List of (qubit_id, word_id, site_id) desired positions.
+            blocked: List of (word_id, site_id) immovable obstacle locations.
+            max_expansions: Optional limit on node expansions.
+            strategy: Search strategy: "astar", "dfs", "bfs", "greedy".
+            top_c: Top bus options per qubit in the heuristic expander.
+            max_movesets_per_group: Max movesets per bus group.
+
+        Returns:
+            SolveResult with status indicating outcome.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
 # ── AtomStateData ──
 
 @final
