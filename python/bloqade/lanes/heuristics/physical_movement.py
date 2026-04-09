@@ -231,6 +231,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         traversal: PlacementTraversalABC | None = None,
     ) -> SearchResult:
         active_traversal = self.traversal if traversal is None else traversal
+        assert isinstance(active_traversal, PlacementTraversalABC)
         return active_traversal.path_to_target_config(
             tree=tree,
             target=target,
