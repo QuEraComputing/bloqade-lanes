@@ -56,8 +56,16 @@ def test_entangling_pairs():
     # Single zone with adjacent word pairs
     zones = arch._inner.zones
     expected_pairs = [
-        (0, 1), (2, 3), (4, 5), (6, 7), (8, 9),
-        (10, 11), (12, 13), (14, 15), (16, 17), (18, 19),
+        (0, 1),
+        (2, 3),
+        (4, 5),
+        (6, 7),
+        (8, 9),
+        (10, 11),
+        (12, 13),
+        (14, 15),
+        (16, 17),
+        (18, 19),
     ]
     assert zones[0].entangling_pairs == expected_pairs
 
@@ -73,8 +81,12 @@ def test_cz_partner():
 
 def invalid_locations():
     arch_spec = logical.get_arch_spec()
-    yield arch_spec, LocationAddress(99, 0), {"invalid location zone_id=0, word_id=99, site_id=0"}
-    yield arch_spec, LocationAddress(0, 2), {"invalid location zone_id=0, word_id=0, site_id=2"}
+    yield arch_spec, LocationAddress(99, 0), {
+        "invalid location zone_id=0, word_id=99, site_id=0"
+    }
+    yield arch_spec, LocationAddress(0, 2), {
+        "invalid location zone_id=0, word_id=0, site_id=2"
+    }
 
 
 @pytest.mark.parametrize("arch_spec, location_address, message", invalid_locations())

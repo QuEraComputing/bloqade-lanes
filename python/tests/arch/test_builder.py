@@ -57,7 +57,9 @@ class TestBuildArchSingleZone:
         )
         result = build_arch(bp)
         # 2x2 grid → 1 row dim + 1 col dim = 2 word buses
-        assert len(result.arch.word_buses) == 4  # 2 per zone * 2 zones (entangling split)
+        assert (
+            len(result.arch.word_buses) == 4
+        )  # 2 per zone * 2 zones (entangling split)
 
     def test_with_site_topology(self) -> None:
         bp = ArchBlueprint(
@@ -73,7 +75,9 @@ class TestBuildArchSingleZone:
         )
         result = build_arch(bp)
         # 4 sites → log2(4) = 2 site buses
-        assert len(result.arch.site_buses) == 4  # 2 per zone * 2 zones (entangling split)
+        assert (
+            len(result.arch.site_buses) == 4
+        )  # 2 per zone * 2 zones (entangling split)
         assert result.arch.has_site_buses == frozenset({0, 1})
 
 
@@ -84,7 +88,9 @@ class TestBuildArchTwoZones:
         assert len(result.arch.words) == 8  # 4 + 4
         assert result.zone_indices == {"proc": 0, "mem": 2}
         # Only proc has word topology → 2 word buses
-        assert len(result.arch.word_buses) == 4  # 2 per zone * 2 zones (entangling split)
+        assert (
+            len(result.arch.word_buses) == 4
+        )  # 2 per zone * 2 zones (entangling split)
 
     def test_two_zones_with_matching(self) -> None:
         bp = _two_zone_blueprint()

@@ -32,7 +32,10 @@ class ArchResult:
 
 
 def _build_zone_grid(
-    zone_spec, layout, n, s,
+    zone_spec,
+    layout,
+    n,
+    s,
 ):
     """Build a Rust Grid covering all columns and rows in a zone.
 

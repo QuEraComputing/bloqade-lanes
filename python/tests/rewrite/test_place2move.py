@@ -1,4 +1,3 @@
-from bloqade.geometry.dialects import grid
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import py
@@ -10,16 +9,15 @@ from bloqade.lanes.analysis.placement.lattice import (
     ExecuteCZ,
     ExecuteMeasure,
 )
-from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout import word
-from bloqade.lanes.rewrite import place2move
-
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
+    LocationAddress as RustLocAddr,
     Mode as RustMode,
     Zone as RustZone,
 )
-from bloqade.lanes.bytecode._native import LocationAddress as RustLocAddr
+from bloqade.lanes.dialects import move, place
+from bloqade.lanes.layout import word
+from bloqade.lanes.rewrite import place2move
 
 _word = word.Word(sites=((0, 0), (0, 1)))
 _rust_grid = RustGrid.from_positions([0.0], [0.0, 1.0])

@@ -21,10 +21,8 @@ from bloqade.lanes.bytecode._native import (
     SiteBus,
     TransportPath,
     Word,
-    WordBus,
     Zone,
     ZoneAddress,
-    ZoneBus,
 )
 
 # ── Direction / MoveType ──
@@ -233,7 +231,11 @@ class TestSiteBusEqHash:
         assert hash(a) == hash(b)
 
     def test_as_set_member(self):
-        s = {SiteBus(src=[0], dst=[1]), SiteBus(src=[0], dst=[1]), SiteBus(src=[1], dst=[0])}
+        s = {
+            SiteBus(src=[0], dst=[1]),
+            SiteBus(src=[0], dst=[1]),
+            SiteBus(src=[1], dst=[0]),
+        }
         assert len(s) == 2
 
 
@@ -292,9 +294,7 @@ def _minimal_arch_spec(
         entangling_pairs=entangling_pairs,
     )
     bitstring_order = [
-        LocationAddress(0, w, s)
-        for w in range(len(words))
-        for s in range(1)
+        LocationAddress(0, w, s) for w in range(len(words)) for s in range(1)
     ]
     mode = Mode(
         name="all",

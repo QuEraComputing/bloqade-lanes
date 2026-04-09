@@ -90,9 +90,7 @@ class ConfigurationTree:
 
         for zone_id, zone in enumerate(self.arch_spec.zones):
             for mt in (MoveType.SITE, MoveType.WORD):
-                buses = (
-                    zone.site_buses if mt == MoveType.SITE else zone.word_buses
-                )
+                buses = zone.site_buses if mt == MoveType.SITE else zone.word_buses
                 for bus_id, bus in enumerate(buses):
                     for direction in (Direction.FORWARD, Direction.BACKWARD):
                         key = (mt, bus_id, direction)
@@ -245,11 +243,7 @@ class ConfigurationTree:
                 bus_ids = [bus_id]
             else:
                 bus_ids = sorted(
-                    {
-                        bid
-                        for (mtype, bid, _d) in self._lanes_by_triplet
-                        if mtype == mt
-                    }
+                    {bid for (mtype, bid, _d) in self._lanes_by_triplet if mtype == mt}
                 )
 
             for bid in bus_ids:

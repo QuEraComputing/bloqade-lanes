@@ -52,7 +52,10 @@ class TestLocationAddress:
 
 class TestLaneAddress:
     def test_construct_and_getters(self):
-        addr = LaneAddress(move_type=MoveType.SITE, zone_id=0, word_id=0,
+        addr = LaneAddress(
+            move_type=MoveType.SITE,
+            zone_id=0,
+            word_id=0,
             site_id=1,
             bus_id=0,
             direction=Direction.FORWARD,
@@ -64,14 +67,20 @@ class TestLaneAddress:
         assert addr.bus_id == 0
 
     def test_default_direction(self):
-        addr = LaneAddress(move_type=MoveType.SITE, zone_id=0, word_id=0,
+        addr = LaneAddress(
+            move_type=MoveType.SITE,
+            zone_id=0,
+            word_id=0,
             site_id=1,
             bus_id=0,
         )
         assert addr.direction == Direction.FORWARD
 
     def test_encode_decode_round_trip(self):
-        addr = LaneAddress(move_type=MoveType.WORD, zone_id=0, word_id=1,
+        addr = LaneAddress(
+            move_type=MoveType.WORD,
+            zone_id=0,
+            word_id=1,
             site_id=2,
             bus_id=3,
             direction=Direction.BACKWARD,
@@ -89,8 +98,12 @@ class TestLaneAddress:
         assert int(MoveType.WORD) == 1
 
     def test_hash(self):
-        a = LaneAddress(move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0)
-        b = LaneAddress(move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0)
+        a = LaneAddress(
+            move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0
+        )
+        b = LaneAddress(
+            move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0
+        )
         assert hash(a) == hash(b)
         d = {a: "value"}
         assert d[b] == "value"
@@ -137,7 +150,10 @@ class TestInstruction:
         assert inst.opcode == 0x000F  # LaneConst device=0x0F, inst=0x00
 
     def test_const_lane(self):
-        inst = Instruction.const_lane(move_type=MoveType.SITE, zone_id=0, word_id=0,
+        inst = Instruction.const_lane(
+            move_type=MoveType.SITE,
+            zone_id=0,
+            word_id=0,
             site_id=1,
             bus_id=0,
             direction=Direction.FORWARD,
@@ -213,12 +229,14 @@ class TestInstructionAddressValidation:
 
     def test_const_lane_negative(self):
         with pytest.raises(ValueError, match="must be non-negative"):
-            Instruction.const_lane(move_type=MoveType.SITE, zone_id=0, word_id=-1, site_id=0, bus_id=0
+            Instruction.const_lane(
+                move_type=MoveType.SITE, zone_id=0, word_id=-1, site_id=0, bus_id=0
             )
 
     def test_const_lane_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
-            Instruction.const_lane(move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=0, bus_id=0x10000
+            Instruction.const_lane(
+                move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=0, bus_id=0x10000
             )
 
     def test_const_zone_negative(self):
@@ -231,7 +249,12 @@ class TestInstructionAddressValidation:
 
     def test_max_valid_values(self):
         Instruction.const_loc(zone_id=0, word_id=0xFFFF, site_id=0xFFFF)
-        Instruction.const_lane(move_type=MoveType.SITE, zone_id=0, word_id=0xFFFF, site_id=0xFFFF, bus_id=0xFFFF
+        Instruction.const_lane(
+            move_type=MoveType.SITE,
+            zone_id=0,
+            word_id=0xFFFF,
+            site_id=0xFFFF,
+            bus_id=0xFFFF,
         )
         Instruction.const_zone(zone_id=0xFFFF)
 

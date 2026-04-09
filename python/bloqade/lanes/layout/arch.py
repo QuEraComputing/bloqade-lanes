@@ -19,7 +19,6 @@ from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
-    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
     ZoneAddress,
@@ -521,9 +520,7 @@ class ArchSpec:
         dst = LocationAddress(rust_dst.word_id, rust_dst.site_id, rust_dst.zone_id)
         return src, dst
 
-    def get_cz_partner(
-        self, location: LocationAddress
-    ) -> LocationAddress | None:
+    def get_cz_partner(self, location: LocationAddress) -> LocationAddress | None:
         """Get the CZ partner for a given location.
 
         Uses Rust-side get_cz_partner which resolves via the zone's

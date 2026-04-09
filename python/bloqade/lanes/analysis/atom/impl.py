@@ -117,9 +117,7 @@ class Move(interp.MethodTable):
             ):
                 # New collisions: restore collided atoms to pre-move positions
                 # so they remain trackable through CZ + return move patterns.
-                new_data = _restore_collisions_to_pre_move(
-                    current_state.data, new_data
-                )
+                new_data = _restore_collisions_to_pre_move(current_state.data, new_data)
         else:
             new_data = None
 

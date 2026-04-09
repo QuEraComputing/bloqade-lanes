@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import product, starmap
+from itertools import product
 from typing import Callable
 
 import rustworkx as nx

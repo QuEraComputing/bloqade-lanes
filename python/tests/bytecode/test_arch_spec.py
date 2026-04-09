@@ -1,10 +1,5 @@
-import json
-
-import pytest
-
 from bloqade.lanes.bytecode import (
     ArchSpec,
-    ArchSpecError,
     Direction,
     Grid,
     LaneAddress,
@@ -16,7 +11,6 @@ from bloqade.lanes.bytecode import (
     Word,
     WordBus,
     Zone,
-    ZoneBus,
 )
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -63,11 +57,7 @@ def _build_spec_from_python():
     mode = Mode(
         name="all",
         zones=[0],
-        bitstring_order=[
-            LocationAddress(0, w, s)
-            for w in range(2)
-            for s in range(10)
-        ],
+        bitstring_order=[LocationAddress(0, w, s) for w in range(2) for s in range(10)],
     )
     return ArchSpec(
         version=(2, 0),

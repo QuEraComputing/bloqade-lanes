@@ -11,8 +11,6 @@ from bloqade.lanes.layout.encoding import (
     Direction,
     LocationAddress,
     MoveType,
-    SiteLaneAddress,
-    WordLaneAddress,
 )
 
 

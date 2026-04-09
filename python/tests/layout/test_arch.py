@@ -36,10 +36,10 @@ def test_get_blockaded_location_without_pair():
     """Test get_blockaded_location returns None for locations without pairs."""
     from bloqade.lanes.bytecode._native import (
         Grid as RustGrid,
+        LocationAddress as RustLocAddr,
         Mode as RustMode,
         Zone as RustZone,
     )
-    from bloqade.lanes.bytecode._native import LocationAddress as RustLocAddr
 
     word = Word(sites=((0, 0), (1, 0), (2, 0), (3, 0)))
     rust_grid = RustGrid.from_positions([0.0, 5.0, 10.0, 15.0], [0.0])

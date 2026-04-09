@@ -57,7 +57,9 @@ print(f"  Sites per word: {sites_per_word}")
 print(f"  Total sites:    {len(arch.words) * sites_per_word}")
 print(f"  Word buses:     {len(arch.word_buses)}")
 print(f"  Site buses:     {len(arch.site_buses)}")
-print(f"  CZ pairs:       {len(arch.entangling_zones[0]) if arch.entangling_zones else 0}")
+print(
+    f"  CZ pairs:       {len(arch.entangling_zones[0]) if arch.entangling_zones else 0}"
+)
 print()
 
 # %% Section 2: Multi-Zone Architecture (Processing + Memory)
@@ -113,9 +115,12 @@ multi_blueprint = ArchBlueprint(
 )
 
 # Connect the two zones: each proc word maps 1:1 to its mem counterpart
-multi_result = build_arch(multi_blueprint, connections={
-    ("proc", "mem"): MatchingTopology(),
-})
+multi_result = build_arch(
+    multi_blueprint,
+    connections={
+        ("proc", "mem"): MatchingTopology(),
+    },
+)
 
 multi_arch = multi_result.arch
 
@@ -126,30 +131,41 @@ print()
 # Zone summary
 print("Zones:")
 for name, spec in multi_blueprint.zones.items():
-    print(f"  {name}: {spec.num_rows}x{spec.num_cols} grid = {spec.num_words} words, "
-          f"entangling={spec.entangling}")
+    print(
+        f"  {name}: {spec.num_rows}x{spec.num_cols} grid = {spec.num_words} words, "
+        f"entangling={spec.entangling}"
+    )
 print()
 
 # Bus summary — the key difference between zones
 proc_site_bus_count = sum(
-    1 for bus in multi_arch.site_buses
+    1
+    for bus in multi_arch.site_buses
     if bus.words is not None and 0 in bus.words  # word 0 is in proc
 )
 mem_site_bus_count = sum(
-    1 for bus in multi_arch.site_buses
-    if bus.words is not None and multi_result.zone_grids["mem"].word_id_offset in bus.words
+    1
+    for bus in multi_arch.site_buses
+    if bus.words is not None
+    and multi_result.zone_grids["mem"].word_id_offset in bus.words
 )
 
 print("Bus summary:")
 print(f"  Total word buses:  {len(multi_arch.word_buses)}")
 print(f"    Intra-zone (proc hypercube): {len(multi_arch.word_buses) - 1}")
-print(f"    Inter-zone (matching):       1")
+print("    Inter-zone (matching):       1")
 print(f"  Total site buses:  {len(multi_arch.site_buses)}")
-print(f"    proc zone: {proc_site_bus_count} site buses (HypercubeSite, 4 sites -> 2 buses)")
+print(
+    f"    proc zone: {proc_site_bus_count} site buses (HypercubeSite, 4 sites -> 2 buses)"
+)
 print(f"    mem zone:  {mem_site_bus_count} site buses (no site topology)")
 print()
 
 # This is the punchline: proc has rich connectivity, mem has none
 print("Per-zone site bus scoping:")
-print(f"  proc words with site buses: {sorted(multi_arch.has_site_buses & set(multi_result.zone_grids['proc'].all_word_ids))}")
-print(f"  mem words with site buses:  {sorted(multi_arch.has_site_buses & set(multi_result.zone_grids['mem'].all_word_ids))}")
+print(
+    f"  proc words with site buses: {sorted(multi_arch.has_site_buses & set(multi_result.zone_grids['proc'].all_word_ids))}"
+)
+print(
+    f"  mem words with site buses:  {sorted(multi_arch.has_site_buses & set(multi_result.zone_grids['mem'].all_word_ids))}"
+)

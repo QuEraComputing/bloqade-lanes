@@ -230,9 +230,7 @@ class SiteLaneAddress(LaneAddress):
         direction: Direction = Direction.FORWARD,
         zone_id: int = 0,
     ):
-        super().__init__(
-            MoveType.SITE, word_id, site_id, bus_id, direction, zone_id
-        )
+        super().__init__(MoveType.SITE, word_id, site_id, bus_id, direction, zone_id)
 
 
 class WordLaneAddress(LaneAddress):
@@ -246,6 +244,4 @@ class WordLaneAddress(LaneAddress):
         direction: Direction = Direction.FORWARD,
         zone_id: int = 0,
     ):
-        super().__init__(
-            MoveType.WORD, word_id, site_id, bus_id, direction, zone_id
-        )
+        super().__init__(MoveType.WORD, word_id, site_id, bus_id, direction, zone_id)

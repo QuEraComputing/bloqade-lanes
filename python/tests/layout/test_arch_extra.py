@@ -1,16 +1,13 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
+    LocationAddress as RustLocAddr,
     Mode as RustMode,
     SiteBus,
     WordBus,
     Zone as RustZone,
 )
-from bloqade.lanes.bytecode._native import LocationAddress as RustLocAddr
-from bloqade.lanes.bytecode.exceptions import ArchSpecError
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
@@ -35,7 +32,12 @@ rust_zone = RustZone(
 rust_mode = RustMode(
     name="all",
     zones=[0],
-    bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1), RustLocAddr(0, 1, 0), RustLocAddr(0, 1, 1)],
+    bitstring_order=[
+        RustLocAddr(0, 0, 0),
+        RustLocAddr(0, 0, 1),
+        RustLocAddr(0, 1, 0),
+        RustLocAddr(0, 1, 1),
+    ],
 )
 
 arch_spec = ArchSpec.from_components(

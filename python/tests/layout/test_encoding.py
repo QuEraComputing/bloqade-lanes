@@ -24,6 +24,7 @@ def test_locationaddress_encode():
     encoded = la.encode()
     assert encoded != 0
     from bloqade.lanes.bytecode._native import LocationAddress as RustLoc
+
     decoded = RustLoc.decode(encoded)
     assert decoded.zone_id == 0
     assert decoded.word_id == 1

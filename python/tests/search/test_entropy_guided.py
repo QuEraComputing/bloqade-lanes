@@ -1,7 +1,7 @@
 """Tests for entropy_guided_search traversal."""
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import LocationAddress, SiteLaneAddress, WordLaneAddress
+from bloqade.lanes.layout import LocationAddress, WordLaneAddress
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal.entropy_guided import (

@@ -1,7 +1,5 @@
 """Tests for ExecuteCZ.verify() — blockade-radius validation of CZ placements."""
 
-from bloqade.geometry.dialects import grid
-
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
@@ -88,10 +86,10 @@ def test_verify_no_czs():
     """Test archspec w/no cz pairs"""
     from bloqade.lanes.bytecode._native import (
         Grid as RustGrid,
+        LocationAddress as RustLocAddr,
         Mode as RustMode,
         Zone as RustZone,
     )
-    from bloqade.lanes.bytecode._native import LocationAddress as RustLocAddr
 
     word = Word(sites=((0, 0), (1, 0), (2, 0)))
     rust_grid = RustGrid.from_positions([0.0, 1.0, 2.0], [0.0])

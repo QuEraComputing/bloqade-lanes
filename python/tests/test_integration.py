@@ -4,8 +4,12 @@ from collections import Counter
 from typing import Any
 
 import pytest
-from bloqade import qubit, squin, types
 from bloqade.decoders.dialects import annotate
+from bloqade.stim.emit.stim_str import EmitStimMain
+from bloqade.stim.upstream.from_squin import squin_to_stim
+from kirin.dialects import ilist
+
+from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
 from bloqade.lanes import compile
 from bloqade.lanes.arch.gemini import physical
@@ -27,9 +31,6 @@ from bloqade.lanes.upstream import (
     squin_to_move,
 )
 from bloqade.lanes.utils import check_circuit
-from bloqade.stim.emit.stim_str import EmitStimMain
-from bloqade.stim.upstream.from_squin import squin_to_stim
-from kirin.dialects import ilist
 
 
 @gemini_logical.kernel(verify=False)
@@ -66,8 +67,6 @@ def main():
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
-    from bloqade.lanes.arch.gemini import logical
-    from bloqade.lanes.visualize import debugger
 
     logical_noise = generate_logical_noise_model()
     move_mt = squin_to_move(
