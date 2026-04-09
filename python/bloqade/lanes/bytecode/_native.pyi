@@ -846,6 +846,9 @@ class SearchStrategy:
 
     @property
     def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __int__(self) -> int: ...
 
 @final
 class SolveResult:
@@ -1218,7 +1221,7 @@ class Instruction:
         """Push a zone address constant onto the stack.
 
         Args:
-            zone_id (int): Zone identifier (0..255).
+            zone_id (int): Zone identifier (0..65535).
 
         Returns:
             Instruction: The constant instruction.
