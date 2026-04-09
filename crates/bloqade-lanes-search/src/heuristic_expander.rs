@@ -26,6 +26,15 @@ use crate::lane_index::LaneIndex;
 /// 4. Per group: generate multiple movesets by varying the lead qubit.
 /// 5. Sort by total distance improvement.
 ///
+/// Policy for handling deadlocks (no improving moves available).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadlockPolicy {
+    /// No escape moves — dead end, let the search backtrack.
+    Skip,
+    /// Generate all valid single-lane moves for every qubit.
+    AllMoves,
+}
+
 /// Typically produces 5-15 candidates per expansion, vs hundreds from
 /// the exhaustive generator.
 pub struct HeuristicExpander<'a> {
@@ -42,6 +51,8 @@ pub struct HeuristicExpander<'a> {
     mobility_weight: f64,
     /// RNG seed for score perturbation (0 = no perturbation).
     seed: u64,
+    /// How to handle deadlocks (no improving moves).
+    deadlock_policy: DeadlockPolicy,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -55,6 +66,7 @@ impl<'a> HeuristicExpander<'a> {
         max_movesets_per_group: usize,
         mobility_weight: f64,
         seed: u64,
+        deadlock_policy: DeadlockPolicy,
     ) -> Self {
         Self {
             index,
@@ -65,6 +77,7 @@ impl<'a> HeuristicExpander<'a> {
             max_movesets_per_group,
             mobility_weight,
             seed,
+            deadlock_policy,
         }
     }
 }
@@ -272,11 +285,8 @@ impl Expander for HeuristicExpander<'_> {
 
         // Step 7: deadlock escape.
         // If no positive-score candidates were produced (deadlock — all
-        // improving moves blocked), also generate all valid single-lane
-        // moves for EVERY qubit in the config. This includes moving
-        // resolved qubits out of the way to unblock others. A*/DFS will
-        // explore these escape moves and find the path through.
-        if !has_positive {
+        // improving moves blocked), apply the deadlock policy.
+        if !has_positive && self.deadlock_policy == DeadlockPolicy::AllMoves {
             for (qid, loc) in config.iter() {
                 for &lane in self.index.outgoing_lanes(loc) {
                     let Some((_, dst)) = self.index.endpoints(&lane) else {
@@ -359,8 +369,17 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
 
         let mut heuristic_out = Vec::new();
-        let h_exp =
-            HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let h_exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         h_exp.expand(&config, &mut heuristic_out);
 
         let mut exhaustive_out = Vec::new();
@@ -384,7 +403,17 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         exp.expand(&config, &mut out);
 
         // Best move should place qubit 0 at site 5 (direct site bus forward).
@@ -401,7 +430,17 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, [loc(0, 5)], targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            [loc(0, 5)],
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         exp.expand(&config, &mut out);
 
         // No move should place qubit at blocked site 5.
@@ -420,7 +459,17 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         exp.expand(&config, &mut out);
 
         // Each moveset should not have two qubits at the same destination.
@@ -444,7 +493,17 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         exp.expand(&config, &mut out);
 
         // With max_movesets_per_group=3 and 3 qubits in the same group,
@@ -461,7 +520,17 @@ mod tests {
         let config = Config::new([(0, loc(0, 5))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         exp.expand(&config, &mut out);
         assert!(out.is_empty());
     }
@@ -477,7 +546,17 @@ mod tests {
 
         let mut out = Vec::new();
         // Block site 0 (the target) so no move reaches it.
-        let exp = HeuristicExpander::new(&index, [loc(0, 0)], targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            [loc(0, 0)],
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
         exp.expand(&config, &mut out);
 
         // Fallback should still produce at least one candidate
@@ -497,7 +576,17 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
 
         let target_enc = loc(0, 5).encode();
         let result = astar(
@@ -526,7 +615,17 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
 
         let target_enc = loc(1, 5).encode();
         let result = astar(
@@ -555,7 +654,17 @@ mod tests {
         let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
 
         let mut out = Vec::new();
         exp.expand(&config, &mut out);
@@ -588,7 +697,17 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0, 0);
+        let exp = HeuristicExpander::new(
+            &index,
+            std::iter::empty(),
+            targets,
+            &table,
+            3,
+            3,
+            0.0,
+            0,
+            DeadlockPolicy::AllMoves,
+        );
 
         let result = astar(
             config,

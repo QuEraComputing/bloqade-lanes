@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
+use crate::heuristic_expander::DeadlockPolicy;
 use crate::heuristic_expander::HeuristicExpander;
 use crate::lane_index::LaneIndex;
 
@@ -137,9 +138,9 @@ impl MoveSolver {
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
         let heuristic_fn = |config: &Config| -> f64 { heuristic.estimate(config) };
 
-        // Run a single search with the given seed.
-        let run_once = |seed: u64| -> Option<SolveResult> {
-            let expander = HeuristicExpander::new(
+        // Build an expander with the given seed and deadlock policy.
+        let make_expander = |seed: u64, policy: DeadlockPolicy| {
+            HeuristicExpander::new(
                 &self.index,
                 blocked_locs.iter().copied(),
                 target_pairs.iter().copied(),
@@ -148,29 +149,80 @@ impl MoveSolver {
                 max_movesets_per_group,
                 mobility_weight,
                 seed,
-            );
+                policy,
+            )
+        };
 
-            let result = Self::run_strategy(
-                strategy,
-                root.clone(),
-                goal,
-                heuristic_fn,
-                &expander,
-                max_expansions,
-                weight,
-            );
-
+        // Extract a SolveResult from a SearchResult.
+        let extract = |result: SearchResult| -> Option<SolveResult> {
             let goal_id = result.goal?;
             let move_layers = result.solution_path().unwrap_or_default();
             let goal_config = result.graph.config(goal_id).clone();
             let cost = result.graph.g_score(goal_id);
-
             Some(SolveResult {
                 move_layers,
                 goal_config,
                 nodes_expanded: result.nodes_expanded,
                 cost,
             })
+        };
+
+        // Run a single search with the given seed.
+        let run_once = |seed: u64| -> Option<SolveResult> {
+            if strategy == Strategy::Cascade {
+                // Phase 1: IDS with Skip deadlock policy.
+                let ids_expander = make_expander(seed, DeadlockPolicy::Skip);
+                let mut ids_f = IdsFrontier::new(heuristic_fn);
+                let ids_result = frontier::run_search(
+                    root.clone(),
+                    goal,
+                    &ids_expander,
+                    &mut ids_f,
+                    max_expansions,
+                    None,
+                );
+
+                match ids_result.goal {
+                    None => extract(ids_result),
+                    Some(ids_goal_id) => {
+                        let ids_cost = ids_result.graph.g_score(ids_goal_id);
+
+                        // Phase 2: Weighted A* with AllMoves deadlock policy.
+                        let max_depth = Some((ids_cost as u32).saturating_sub(1));
+                        let astar_expander = make_expander(seed, DeadlockPolicy::AllMoves);
+                        let mut astar_f = PriorityFrontier::astar(heuristic_fn, weight);
+                        let astar_result = frontier::run_search(
+                            root.clone(),
+                            goal,
+                            &astar_expander,
+                            &mut astar_f,
+                            max_expansions,
+                            max_depth,
+                        );
+                        if astar_result.goal.is_some() {
+                            extract(astar_result)
+                        } else {
+                            extract(ids_result)
+                        }
+                    }
+                }
+            } else {
+                let policy = match strategy {
+                    Strategy::Ids | Strategy::HeuristicDfs => DeadlockPolicy::Skip,
+                    _ => DeadlockPolicy::AllMoves,
+                };
+                let expander = make_expander(seed, policy);
+                let result = Self::run_strategy(
+                    strategy,
+                    root.clone(),
+                    goal,
+                    heuristic_fn,
+                    &expander,
+                    max_expansions,
+                    weight,
+                );
+                extract(result)
+            }
         };
 
         if restarts <= 1 {
@@ -215,40 +267,7 @@ impl MoveSolver {
                 frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
             Strategy::Cascade => {
-                // Phase 1: IDS for a quick solution.
-                let mut ids_f = IdsFrontier::new(heuristic_fn);
-                let ids_result = frontier::run_search(
-                    root.clone(),
-                    goal,
-                    expander,
-                    &mut ids_f,
-                    max_expansions,
-                    None,
-                );
-
-                match ids_result.goal {
-                    None => ids_result,
-                    Some(ids_goal_id) => {
-                        let ids_cost = ids_result.graph.g_score(ids_goal_id);
-
-                        // Phase 2: Weighted A* bounded by IDS cost.
-                        let max_depth = Some((ids_cost as u32).saturating_sub(1));
-                        let mut astar_f = PriorityFrontier::astar(heuristic_fn, weight);
-                        let astar_result = frontier::run_search(
-                            root,
-                            goal,
-                            expander,
-                            &mut astar_f,
-                            max_expansions,
-                            max_depth,
-                        );
-                        if astar_result.goal.is_some() {
-                            astar_result
-                        } else {
-                            ids_result
-                        }
-                    }
-                }
+                unreachable!("Cascade is handled directly in run_once")
             }
         }
     }
