@@ -724,6 +724,7 @@
   ],
   "zones": [
     {
+      "name": "gate",
       "grid": {
         "x_start": 0.0,
         "y_start": 0.0,

@@ -305,6 +305,7 @@ mod tests {
             ],
             zones: vec![
                 Zone {
+                    name: String::new(),
                     grid: grid0,
                     site_buses: vec![Bus {
                         src: vec![SiteRef(0)],
@@ -319,6 +320,7 @@ mod tests {
                     entangling_pairs: vec![[0, 1]],
                 },
                 Zone {
+                    name: String::new(),
                     grid: grid1,
                     site_buses: vec![],
                     word_buses: vec![],

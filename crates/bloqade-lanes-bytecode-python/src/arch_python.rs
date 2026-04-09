@@ -666,8 +666,9 @@ pub struct PyZone {
 #[pymethods]
 impl PyZone {
     #[new]
-    #[pyo3(signature = (grid, site_buses, word_buses, words_with_site_buses, sites_with_word_buses, entangling_pairs=None))]
+    #[pyo3(signature = (name, grid, site_buses, word_buses, words_with_site_buses, sites_with_word_buses, entangling_pairs=None))]
     fn new(
+        name: String,
         grid: &PyGrid,
         site_buses: Vec<PyRef<'_, PySiteBus>>,
         word_buses: Vec<PyRef<'_, PyWordBus>>,
@@ -690,6 +691,7 @@ impl PyZone {
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: rs::Zone {
+                name,
                 grid: grid.inner.clone(),
                 site_buses: site_buses.iter().map(|b| b.inner.clone()).collect(),
                 word_buses: word_buses.iter().map(|b| b.inner.clone()).collect(),
@@ -698,6 +700,11 @@ impl PyZone {
                 entangling_pairs,
             },
         })
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.inner.name
     }
 
     #[getter]

@@ -170,6 +170,7 @@ def build_arch(
             even_zone_id = len(rust_zones)
             rust_zones.append(
                 _RustZone(
+                    name=f"{zone_name}_even",
                     grid=rust_grid_even,
                     site_buses=site_buses,
                     word_buses=word_buses,
@@ -184,6 +185,7 @@ def build_arch(
             odd_zone_id = len(rust_zones)
             rust_zones.append(
                 _RustZone(
+                    name=f"{zone_name}_odd",
                     grid=rust_grid_odd,
                     site_buses=site_buses,
                     word_buses=word_buses,
@@ -203,6 +205,7 @@ def build_arch(
             zone_id = len(rust_zones)
             rust_zones.append(
                 _RustZone(
+                    name=zone_name,
                     grid=rust_grid,
                     site_buses=site_buses,
                     word_buses=word_buses,

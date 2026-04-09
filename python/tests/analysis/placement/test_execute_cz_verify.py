@@ -94,6 +94,7 @@ def test_verify_no_czs():
     word = Word(sites=((0, 0), (1, 0), (2, 0)))
     rust_grid = RustGrid.from_positions([0.0, 1.0, 2.0], [0.0])
     rust_zone = RustZone(
+        name="test",
         grid=rust_grid,
         site_buses=[],
         word_buses=[],

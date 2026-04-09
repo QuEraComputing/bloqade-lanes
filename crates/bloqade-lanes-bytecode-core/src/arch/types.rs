@@ -48,6 +48,9 @@ pub struct Word {
 /// Each zone owns its grid and the site/word buses that operate within it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
+    /// Human-readable zone name.
+    #[serde(default)]
+    pub name: String,
     /// Coordinate grid for all words in this zone.
     pub grid: Grid,
     /// Site buses that move atoms between sites within words of this zone.

@@ -47,6 +47,7 @@ def _build_spec_from_python():
     site_bus = SiteBus(src=[0, 1, 2, 3, 4], dst=[5, 6, 7, 8, 9])
     word_bus = WordBus(src=[0], dst=[1])
     zone = Zone(
+        name="gate",
         grid=grid,
         site_buses=[site_bus],
         word_buses=[word_bus],
@@ -118,6 +119,7 @@ class TestCapabilityFlags:
         site_bus = SiteBus(src=[0, 1, 2, 3, 4], dst=[5, 6, 7, 8, 9])
         word_bus = WordBus(src=[0], dst=[1])
         zone = Zone(
+            name="gate",
             grid=grid,
             site_buses=[site_bus],
             word_buses=[word_bus],

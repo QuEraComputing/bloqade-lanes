@@ -44,6 +44,7 @@ def test_get_blockaded_location_without_pair():
     word = Word(sites=((0, 0), (1, 0), (2, 0), (3, 0)))
     rust_grid = RustGrid.from_positions([0.0, 5.0, 10.0, 15.0], [0.0])
     rust_zone = RustZone(
+        name="test",
         grid=rust_grid,
         site_buses=[],
         word_buses=[],

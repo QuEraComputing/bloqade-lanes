@@ -53,6 +53,7 @@ _ARCH_JSON = r"""
   ],
   "zones": [
     {
+      "name": "gate",
       "grid": {
         "x_start": 0.0, "y_start": 0.0,
         "x_spacing": [2.0, 8.0, 2.0],

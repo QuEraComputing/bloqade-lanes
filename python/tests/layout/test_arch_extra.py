@@ -22,6 +22,7 @@ word = Word(sites=((0, 0), (1, 0)))
 
 rust_grid = RustGrid.from_positions([0.0, 1.0], [0.0])
 rust_zone = RustZone(
+    name="test",
     grid=rust_grid,
     site_buses=[SiteBus(src=[0], dst=[1])],
     word_buses=[WordBus(src=[0], dst=[1])],
@@ -171,6 +172,7 @@ def test_get_blockaded_location_none():
     word_no_cz = Word(sites=((0, 0), (1, 0)))
     rust_grid_no_cz = RustGrid.from_positions([0.0, 1.0], [0.0])
     rust_zone_no_cz = RustZone(
+        name="test",
         grid=rust_grid_no_cz,
         site_buses=[],
         word_buses=[],

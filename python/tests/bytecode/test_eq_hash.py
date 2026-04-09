@@ -286,6 +286,7 @@ def _minimal_arch_spec(
         # Need a second word for valid entangling pairs
         words = [word, Word(sites=[(0, 0)])]
     zone = Zone(
+        name="gate",
         grid=grid,
         site_buses=[],
         word_buses=[],

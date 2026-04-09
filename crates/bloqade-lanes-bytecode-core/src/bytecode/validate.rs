@@ -898,6 +898,7 @@ mod tests {
                 sites: vec![[0, 0], [1, 0]],
             }],
             zones: vec![Zone {
+                name: String::new(),
                 grid,
                 site_buses: vec![Bus {
                     src: vec![SiteRef(0)],
@@ -1031,6 +1032,7 @@ mod tests {
                 },
             ],
             zones: vec![Zone {
+                name: String::new(),
                 grid: grid0,
                 site_buses: vec![Bus {
                     src: vec![SiteRef(0), SiteRef(1)],
@@ -1156,6 +1158,7 @@ mod tests {
                 },
             ],
             zones: vec![Zone {
+                name: String::new(),
                 grid,
                 site_buses: vec![Bus {
                     src: vec![SiteRef(0)],

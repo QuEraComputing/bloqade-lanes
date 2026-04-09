@@ -483,6 +483,7 @@ class Zone:
 
     def __init__(
         self,
+        name: str,
         grid: Grid,
         site_buses: list[SiteBus],
         word_buses: list[WordBus],
@@ -490,6 +491,11 @@ class Zone:
         sites_with_word_buses: list[int],
         entangling_pairs: Optional[list[tuple[int, int]]] = None,
     ) -> None: ...
+    @property
+    def name(self) -> str:
+        """Human-readable zone name."""
+        ...
+
     @property
     def grid(self) -> Grid:
         """Coordinate grid for this zone."""

@@ -22,6 +22,7 @@ from bloqade.lanes.rewrite import place2move
 _word = word.Word(sites=((0, 0), (0, 1)))
 _rust_grid = RustGrid.from_positions([0.0], [0.0, 1.0])
 _rust_zone = RustZone(
+    name="test",
     grid=_rust_grid,
     site_buses=[],
     word_buses=[],
