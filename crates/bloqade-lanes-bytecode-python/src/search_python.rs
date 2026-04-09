@@ -163,6 +163,18 @@ impl PyMoveSolver {
             }
         }
 
+        // Validate: check for duplicate qubit IDs in target.
+        {
+            let mut seen = std::collections::HashSet::new();
+            for &(qid, _, _) in &target {
+                if !seen.insert(qid) {
+                    return Err(PyValueError::new_err(format!(
+                        "duplicate qubit_id {qid} in target placement"
+                    )));
+                }
+            }
+        }
+
         let initial_pairs: Vec<_> = initial
             .into_iter()
             .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))

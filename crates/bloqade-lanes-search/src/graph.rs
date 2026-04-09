@@ -71,6 +71,7 @@ struct NodeData {
     parent: Option<NodeId>,
     parent_move: Option<MoveSet>,
     g_score: f64,
+    depth: u32,
 }
 
 /// Arena-based search graph with transposition table.
@@ -105,6 +106,7 @@ impl SearchGraph {
             parent: None,
             parent_move: None,
             g_score: 0.0,
+            depth: 0,
         };
         let mut seen = HashMap::new();
         seen.insert(root, NodeId(0));
@@ -129,16 +131,9 @@ impl SearchGraph {
         self.nodes[id.0 as usize].g_score
     }
 
-    /// Get the depth of a node (number of steps from root).
-    /// Walks parent pointers, so O(depth).
+    /// Get the depth of a node (number of steps from root). O(1).
     pub fn depth(&self, id: NodeId) -> u32 {
-        let mut d: u32 = 0;
-        let mut current = id;
-        while let Some(parent_id) = self.nodes[current.0 as usize].parent {
-            d += 1;
-            current = parent_id;
-        }
-        d
+        self.nodes[id.0 as usize].depth
     }
 
     /// Number of nodes in the arena (always >= 1 due to root).
@@ -185,12 +180,14 @@ impl SearchGraph {
             // Re-discovered at lower cost: create new node, update table.
         }
 
+        let parent_depth = self.nodes[parent.0 as usize].depth;
         let new_id = NodeId(self.nodes.len() as u32);
         self.nodes.push(NodeData {
             config: new_config.clone(),
             parent: Some(parent),
             parent_move: Some(move_set),
             g_score: new_g,
+            depth: parent_depth + 1,
         });
         self.seen.insert(new_config, new_id);
         (new_id, true)
