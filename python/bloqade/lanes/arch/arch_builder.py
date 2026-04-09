@@ -7,6 +7,7 @@ The high-level ``build_arch()`` function uses these internally.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from bloqade.lanes.bytecode._native import (
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 # ── Helpers ──
 
 
-def _normalize_index(idx: slice | int | list[int], size: int) -> list[int]:
+def _normalize_index(idx: slice | int | Sequence[int], size: int) -> list[int]:
     """Convert a slice, int, or list to a sorted list of indices."""
     if isinstance(idx, slice):
         return list(range(*idx.indices(size)))
@@ -73,7 +74,7 @@ class _SiteGridQuery:
     def __init__(self, word_shape: tuple[int, int]):
         self._nx, self._ny = word_shape
 
-    def __getitem__(self, key: tuple[slice | int | list[int], slice | int | list[int]]) -> list[int]:  # type: ignore[override]
+    def __getitem__(self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]) -> list[int]:  # type: ignore[override]
         x_idx, y_idx = key
         xs = _normalize_index(x_idx, self._nx)
         ys = _normalize_index(y_idx, self._ny)
@@ -86,7 +87,7 @@ class _WordGridQuery:
     def __init__(self, zone: ZoneBuilder):
         self._zone = zone
 
-    def __getitem__(self, key: tuple[slice | int | list[int], slice | int | list[int]]) -> tuple[str, list[int]]:  # type: ignore[override]
+    def __getitem__(self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]) -> tuple[str, list[int]]:  # type: ignore[override]
         x_idx, y_idx = key
         xs = _normalize_index(x_idx, self._zone._grid.num_x)
         ys = _normalize_index(y_idx, self._zone._grid.num_y)
@@ -149,8 +150,8 @@ class ZoneBuilder:
 
     def add_word(
         self,
-        x_sites: slice | list[int],
-        y_sites: slice | list[int],
+        x_sites: slice | Sequence[int],
+        y_sites: slice | Sequence[int],
     ) -> int:
         """Add a word occupying the given grid positions.
 
@@ -206,7 +207,7 @@ class ZoneBuilder:
             self._position_to_word[pos] = word_id
         return word_id
 
-    def add_site_bus(self, src: list[int], dst: list[int]) -> None:
+    def add_site_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a site bus (intra-word movement).
 
         src/dst are site indices within word_shape (0..sites_per_word).
@@ -228,7 +229,7 @@ class ZoneBuilder:
         _validate_aod_rectangle(dst_positions, "Site bus dst")
         self._site_buses.append((list(src), list(dst)))
 
-    def add_word_bus(self, src: list[int], dst: list[int]) -> None:
+    def add_word_bus(self, src: Sequence[int], dst: Sequence[int]) -> None:
         """Add a word bus (intra-zone movement).
 
         src/dst are zone-local word indices. Validates that src and dst
@@ -294,9 +295,9 @@ class ArchBuilder:
         self._zones: list[ZoneBuilder] = []
         self._zone_name_to_id: dict[str, int] = {}
         self._word_id_offsets: list[int] = []
-        self._connections: list[tuple[tuple[str, list[int]], tuple[str, list[int]]]] = (
-            []
-        )
+        self._connections: list[
+            tuple[tuple[str, Sequence[int]], tuple[str, Sequence[int]]]
+        ] = []
         self._modes: list[tuple[str, list[str]]] = []
         self._total_words: int = 0
 
@@ -324,8 +325,8 @@ class ArchBuilder:
 
     def connect(
         self,
-        src: tuple[str, list[int]],
-        dst: tuple[str, list[int]],
+        src: tuple[str, Sequence[int]],
+        dst: tuple[str, Sequence[int]],
     ) -> None:
         """Add an inter-zone bus (zone_buses).
 
@@ -352,7 +353,7 @@ class ArchBuilder:
 
         self._connections.append((src, dst))
 
-    def add_mode(self, name: str, zones: list[str]) -> None:
+    def add_mode(self, name: str, zones: Sequence[str]) -> None:
         """Add an operational mode.
 
         Args:
