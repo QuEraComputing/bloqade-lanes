@@ -5,6 +5,7 @@
 //! per bus group. Independent of entropy-guided search.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use rand::rngs::SmallRng;
@@ -55,6 +56,8 @@ pub struct HeuristicExpander<'a> {
     seed: u64,
     /// How to handle deadlocks (no improving moves).
     deadlock_policy: DeadlockPolicy,
+    /// Number of deadlocks encountered during search.
+    deadlocks: AtomicU32,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -80,7 +83,13 @@ impl<'a> HeuristicExpander<'a> {
             mobility_weight,
             seed,
             deadlock_policy,
+            deadlocks: AtomicU32::new(0),
         }
+    }
+
+    /// Number of deadlocks encountered during search.
+    pub fn deadlock_count(&self) -> u32 {
+        self.deadlocks.load(Ordering::Relaxed)
     }
 }
 
@@ -311,6 +320,9 @@ impl Expander for HeuristicExpander<'_> {
         // Step 7: deadlock escape.
         // If no positive-score candidates were produced (deadlock — all
         // improving moves blocked), apply the deadlock policy.
+        if !has_positive {
+            self.deadlocks.fetch_add(1, Ordering::Relaxed);
+        }
         if !has_positive && self.deadlock_policy != DeadlockPolicy::Skip {
             // Determine which qubits to generate escape moves for.
             let escape_qubits: Vec<(u32, LocationAddr)> = match self.deadlock_policy {

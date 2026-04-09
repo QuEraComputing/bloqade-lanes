@@ -72,12 +72,19 @@ impl PySolveResult {
         self.inner.cost
     }
 
+    /// Number of deadlocks encountered during search.
+    #[getter]
+    fn deadlocks(&self) -> u32 {
+        self.inner.deadlocks
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "SolveResult(steps={}, cost={}, expanded={})",
+            "SolveResult(steps={}, cost={}, expanded={}, deadlocks={})",
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
+            self.inner.deadlocks,
         )
     }
 }

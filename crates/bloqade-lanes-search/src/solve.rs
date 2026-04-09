@@ -45,6 +45,8 @@ pub struct SolveResult {
     pub nodes_expanded: u32,
     /// Total path cost.
     pub cost: f64,
+    /// Number of deadlocks encountered during search.
+    pub deadlocks: u32,
 }
 
 /// Reusable move synthesis solver.
@@ -154,7 +156,7 @@ impl MoveSolver {
         };
 
         // Extract a SolveResult from a SearchResult.
-        let extract = |result: SearchResult| -> Option<SolveResult> {
+        let extract = |result: SearchResult, deadlocks: u32| -> Option<SolveResult> {
             let goal_id = result.goal?;
             let move_layers = result.solution_path().unwrap_or_default();
             let goal_config = result.graph.config(goal_id).clone();
@@ -164,6 +166,7 @@ impl MoveSolver {
                 goal_config,
                 nodes_expanded: result.nodes_expanded,
                 cost,
+                deadlocks,
             })
         };
 
@@ -181,9 +184,10 @@ impl MoveSolver {
                     max_expansions,
                     None,
                 );
+                let ids_deadlocks = ids_expander.deadlock_count();
 
                 match ids_result.goal {
-                    None => extract(ids_result),
+                    None => extract(ids_result, ids_deadlocks),
                     Some(ids_goal_id) => {
                         let ids_cost = ids_result.graph.g_score(ids_goal_id);
 
@@ -199,10 +203,11 @@ impl MoveSolver {
                             max_expansions,
                             max_depth,
                         );
+                        let total_deadlocks = ids_deadlocks + astar_expander.deadlock_count();
                         if astar_result.goal.is_some() {
-                            extract(astar_result)
+                            extract(astar_result, total_deadlocks)
                         } else {
-                            extract(ids_result)
+                            extract(ids_result, total_deadlocks)
                         }
                     }
                 }
@@ -221,7 +226,7 @@ impl MoveSolver {
                     max_expansions,
                     weight,
                 );
-                extract(result)
+                extract(result, expander.deadlock_count())
             }
         };
 

@@ -797,6 +797,11 @@ class SolveResult:
         """Total path cost."""
         ...
 
+    @property
+    def deadlocks(self) -> int:
+        """Number of deadlocks encountered during search."""
+        ...
+
     def __repr__(self) -> str: ...
 
 @final
