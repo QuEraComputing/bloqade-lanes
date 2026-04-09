@@ -16,7 +16,11 @@ use crate::arch_python::PyArchSpec;
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
 /// and search statistics.
-#[pyclass(name = "SolveResult", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "SolveResult",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 pub struct PySolveResult {
     inner: SolveResult,
 }
@@ -105,7 +109,7 @@ impl PySolveResult {
 /// Then `solve()` can be called multiple times with different placements.
 ///
 /// Works for both physical and logical architectures.
-#[pyclass(name = "MoveSolver", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "MoveSolver", frozen, module = "bloqade.lanes.bytecode._native")]
 pub struct PyMoveSolver {
     inner: MoveSolver,
 }
