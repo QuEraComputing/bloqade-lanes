@@ -14,7 +14,7 @@ use crate::validation::{validate_field, validate_vec};
     eq_int,
     hash,
     frozen,
-    module = "bloqade.lanes.bytecode"
+    module = "bloqade.lanes.bytecode._native"
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyDirection {
@@ -59,7 +59,7 @@ impl PyDirection {
     eq_int,
     hash,
     frozen,
-    module = "bloqade.lanes.bytecode"
+    module = "bloqade.lanes.bytecode._native"
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyMoveType {
@@ -103,7 +103,11 @@ impl PyMoveType {
 
 // ── LocationAddr ──
 
-#[pyclass(name = "LocationAddress", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "LocationAddress",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyLocationAddr {
     pub(crate) inner: rs_addr::LocationAddr,
@@ -169,7 +173,11 @@ impl PyLocationAddr {
 
 // ── LaneAddr ──
 
-#[pyclass(name = "LaneAddress", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "LaneAddress",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyLaneAddr {
     pub(crate) inner: rs_addr::LaneAddr,
@@ -271,7 +279,11 @@ impl PyLaneAddr {
 
 // ── ZoneAddr ──
 
-#[pyclass(name = "ZoneAddress", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "ZoneAddress",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyZoneAddr {
     pub(crate) inner: rs_addr::ZoneAddr,
@@ -318,7 +330,7 @@ impl PyZoneAddr {
 
 // ── Grid ──
 
-#[pyclass(name = "Grid", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Grid", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyGrid {
     pub(crate) inner: rs::Grid,
@@ -430,7 +442,7 @@ impl PyGrid {
 
 // ── Word ──
 
-#[pyclass(name = "Word", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Word", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyWord {
     pub(crate) inner: rs::Word,
@@ -459,7 +471,7 @@ impl PyWord {
 
 // ── SiteBus ──
 
-#[pyclass(name = "SiteBus", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "SiteBus", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PySiteBus {
     pub(crate) inner: rs::Bus<rs_addr::SiteRef>,
@@ -519,7 +531,7 @@ impl PySiteBus {
 
 // ── WordBus ──
 
-#[pyclass(name = "WordBus", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "WordBus", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyWordBus {
     pub(crate) inner: rs::Bus<rs_addr::WordRef>,
@@ -579,7 +591,7 @@ impl PyWordBus {
 
 // ── ZoneBus (inter-zone) ──
 
-#[pyclass(name = "ZoneBus", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "ZoneBus", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyZoneBus {
     pub(crate) inner: rs::Bus<rs_addr::ZonedWordRef>,
@@ -657,7 +669,7 @@ impl PyZoneBus {
 
 // ── Zone ──
 
-#[pyclass(name = "Zone", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Zone", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyZone {
     pub(crate) inner: rs::Zone,
@@ -763,7 +775,7 @@ impl PyZone {
 
 // ── Mode ──
 
-#[pyclass(name = "Mode", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Mode", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyMode {
     pub(crate) inner: rs::Mode,
@@ -816,7 +828,11 @@ impl PyMode {
 
 // ── TransportPath ──
 
-#[pyclass(name = "TransportPath", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(
+    name = "TransportPath",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyTransportPath {
     pub(crate) inner: rs::TransportPath,
@@ -877,7 +893,7 @@ impl PyTransportPath {
 
 // ── ArchSpec ──
 
-#[pyclass(name = "ArchSpec", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "ArchSpec", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyArchSpec {
     pub(crate) inner: rs::ArchSpec,
