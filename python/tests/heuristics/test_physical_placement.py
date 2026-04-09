@@ -201,9 +201,12 @@ def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
     )
     state = _make_state()
 
+    class _FakeResult:
+        status = "unsolvable"
+
     class _FakeSolver:
         def solve(self, *_args, **_kwargs):
-            return None
+            return _FakeResult()
 
     monkeypatch.setattr(
         PhysicalPlacementStrategy,

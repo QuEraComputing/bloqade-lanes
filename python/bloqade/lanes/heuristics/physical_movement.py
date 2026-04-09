@@ -334,7 +334,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             free_riders=self.traversal.free_riders,
         )
 
-        if result is None:
+        if result.status != "solved":
             return AtomState.bottom()
 
         move_layers = tuple(

@@ -5,9 +5,25 @@
 //! Sorting by qubit ID makes the representation canonical (order-independent)
 //! and enables deterministic hashing.
 
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+
+/// Error returned when a [`Config`] cannot be constructed.
+#[derive(Debug, Clone)]
+pub struct ConfigError {
+    /// The qubit ID that appeared more than once.
+    pub duplicate_qubit_id: u32,
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "duplicate qubit_id: {}", self.duplicate_qubit_id)
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 /// Compute a hash for a sorted entries slice.
 ///
@@ -47,10 +63,10 @@ impl Config {
     ///
     /// The pairs may be in any order; they will be sorted by qubit ID.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if any qubit ID appears more than once.
-    pub fn new(pairs: impl IntoIterator<Item = (u32, LocationAddr)>) -> Self {
+    /// Returns [`ConfigError`] if any qubit ID appears more than once.
+    pub fn new(pairs: impl IntoIterator<Item = (u32, LocationAddr)>) -> Result<Self, ConfigError> {
         let mut entries: Vec<(u32, u32)> = pairs
             .into_iter()
             .map(|(qid, loc)| (qid, loc.encode()))
@@ -59,18 +75,18 @@ impl Config {
 
         // Check for duplicates (adjacent after sort).
         for window in entries.windows(2) {
-            assert!(
-                window[0].0 != window[1].0,
-                "duplicate qubit_id: {}",
-                window[0].0
-            );
+            if window[0].0 == window[1].0 {
+                return Err(ConfigError {
+                    duplicate_qubit_id: window[0].0,
+                });
+            }
         }
 
         let cached_hash = hash_entries(&entries);
-        Self {
+        Ok(Self {
             entries,
             cached_hash,
-        }
+        })
     }
 
     /// Cached FNV-1a hash of this configuration.
@@ -175,18 +191,12 @@ impl Hash for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
+    use crate::test_utils::loc;
 
     #[test]
     fn canonical_ordering() {
-        let a = Config::new([(0, loc(0, 1)), (1, loc(0, 2)), (2, loc(1, 0))]);
-        let b = Config::new([(2, loc(1, 0)), (0, loc(0, 1)), (1, loc(0, 2))]);
+        let a = Config::new([(0, loc(0, 1)), (1, loc(0, 2)), (2, loc(1, 0))]).unwrap();
+        let b = Config::new([(2, loc(1, 0)), (0, loc(0, 1)), (1, loc(0, 2))]).unwrap();
         assert_eq!(a, b);
     }
 
@@ -194,8 +204,8 @@ mod tests {
     fn hash_determinism() {
         use std::hash::DefaultHasher;
 
-        let a = Config::new([(0, loc(0, 1)), (1, loc(0, 2))]);
-        let b = Config::new([(1, loc(0, 2)), (0, loc(0, 1))]);
+        let a = Config::new([(0, loc(0, 1)), (1, loc(0, 2))]).unwrap();
+        let b = Config::new([(1, loc(0, 2)), (0, loc(0, 1))]).unwrap();
 
         let hash_of = |c: &Config| {
             let mut h = DefaultHasher::new();
@@ -207,44 +217,44 @@ mod tests {
 
     #[test]
     fn location_of_found() {
-        let c = Config::new([(0, loc(1, 2)), (5, loc(3, 4))]);
+        let c = Config::new([(0, loc(1, 2)), (5, loc(3, 4))]).unwrap();
         assert_eq!(c.location_of(0), Some(loc(1, 2)));
         assert_eq!(c.location_of(5), Some(loc(3, 4)));
     }
 
     #[test]
     fn location_of_not_found() {
-        let c = Config::new([(0, loc(1, 2))]);
+        let c = Config::new([(0, loc(1, 2))]).unwrap();
         assert_eq!(c.location_of(99), None);
     }
 
     #[test]
     fn qubit_at_found() {
-        let c = Config::new([(7, loc(1, 2))]);
+        let c = Config::new([(7, loc(1, 2))]).unwrap();
         assert_eq!(c.qubit_at(loc(1, 2)), Some(7));
     }
 
     #[test]
     fn qubit_at_not_found() {
-        let c = Config::new([(7, loc(1, 2))]);
+        let c = Config::new([(7, loc(1, 2))]).unwrap();
         assert_eq!(c.qubit_at(loc(0, 0)), None);
     }
 
     #[test]
     fn is_occupied_positive() {
-        let c = Config::new([(0, loc(1, 2))]);
+        let c = Config::new([(0, loc(1, 2))]).unwrap();
         assert!(c.is_occupied(loc(1, 2)));
     }
 
     #[test]
     fn is_occupied_negative() {
-        let c = Config::new([(0, loc(1, 2))]);
+        let c = Config::new([(0, loc(1, 2))]).unwrap();
         assert!(!c.is_occupied(loc(0, 0)));
     }
 
     #[test]
     fn with_moves_updates_moved_qubits() {
-        let c = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]);
+        let c = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
         let moved = c.with_moves(&[(1, loc(1, 1))]);
 
         assert_eq!(moved.location_of(0), Some(loc(0, 0))); // unchanged
@@ -254,7 +264,7 @@ mod tests {
 
     #[test]
     fn with_moves_preserves_sorted_invariant() {
-        let c = Config::new([(0, loc(0, 0)), (5, loc(0, 1)), (10, loc(0, 2))]);
+        let c = Config::new([(0, loc(0, 0)), (5, loc(0, 1)), (10, loc(0, 2))]).unwrap();
         let moved = c.with_moves(&[(5, loc(2, 2)), (10, loc(3, 3))]);
 
         let entries = moved.as_entries();
@@ -265,31 +275,31 @@ mod tests {
 
     #[test]
     fn with_moves_ignores_unknown_qubits() {
-        let c = Config::new([(0, loc(0, 0))]);
+        let c = Config::new([(0, loc(0, 0))]).unwrap();
         let moved = c.with_moves(&[(99, loc(1, 1))]);
         assert_eq!(moved, c);
     }
 
     #[test]
-    #[should_panic(expected = "duplicate qubit_id")]
-    fn duplicate_qubit_id_panics() {
-        Config::new([(0, loc(0, 0)), (0, loc(0, 1))]);
+    fn duplicate_qubit_id_returns_error() {
+        let err = Config::new([(0, loc(0, 0)), (0, loc(0, 1))]).unwrap_err();
+        assert_eq!(err.duplicate_qubit_id, 0);
     }
 
     #[test]
     fn len_and_is_empty() {
-        let empty = Config::new(std::iter::empty());
+        let empty = Config::new(std::iter::empty()).unwrap();
         assert!(empty.is_empty());
         assert_eq!(empty.len(), 0);
 
-        let c = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
+        let c = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
         assert!(!c.is_empty());
         assert_eq!(c.len(), 2);
     }
 
     #[test]
     fn iter_yields_decoded_pairs() {
-        let c = Config::new([(2, loc(1, 0)), (0, loc(0, 1))]);
+        let c = Config::new([(2, loc(1, 0)), (0, loc(0, 1))]).unwrap();
         let pairs: Vec<_> = c.iter().collect();
         // Should be in qubit_id order
         assert_eq!(pairs, vec![(0, loc(0, 1)), (2, loc(1, 0))]);

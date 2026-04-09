@@ -69,24 +69,7 @@ pub fn astar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
-
-    fn dummy_lane(id: u32) -> LaneAddr {
-        LaneAddr {
-            direction: Direction::Forward,
-            move_type: MoveType::SiteBus,
-            word_id: 0,
-            site_id: id,
-            bus_id: 0,
-        }
-    }
+    use crate::test_utils::{dummy_lane, loc};
 
     struct LineExpander {
         max_site: u32,
@@ -131,7 +114,7 @@ mod tests {
     #[test]
     fn trivial_one_step() {
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(1),
             manhattan_heuristic(1),
             &LineExpander { max_site: 10 },
@@ -144,7 +127,7 @@ mod tests {
     #[test]
     fn multi_step_optimal() {
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(5),
             manhattan_heuristic(5),
             &LineExpander { max_site: 10 },
@@ -157,7 +140,7 @@ mod tests {
     #[test]
     fn no_path_disconnected() {
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(5),
             manhattan_heuristic(5),
             &LineExpander { max_site: 0 },
@@ -169,7 +152,7 @@ mod tests {
     #[test]
     fn max_expansions_respected() {
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(100),
             manhattan_heuristic(100),
             &LineExpander { max_site: 200 },
@@ -182,7 +165,7 @@ mod tests {
     #[test]
     fn root_is_goal() {
         let result = astar(
-            Config::new([(0, loc(0, 3))]),
+            Config::new([(0, loc(0, 3))]).unwrap(),
             site_goal(3),
             manhattan_heuristic(3),
             &LineExpander { max_site: 10 },
@@ -229,7 +212,7 @@ mod tests {
         }
 
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(1),
             zero,
             &TwoPathExpander,
@@ -243,7 +226,7 @@ mod tests {
     #[test]
     fn closed_set_prevents_reexpansion() {
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(3),
             manhattan_heuristic(3),
             &LineExpander { max_site: 10 },
@@ -296,7 +279,7 @@ mod tests {
         }
 
         let result = astar(
-            Config::new([(0, loc(0, 0))]),
+            Config::new([(0, loc(0, 0))]).unwrap(),
             site_goal(4),
             zero,
             &DiamondExpander,

@@ -12,9 +12,11 @@ pub mod heuristic;
 pub mod heuristic_expander;
 pub mod lane_index;
 pub mod solve;
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 pub use astar::{Expander, SearchResult, astar};
-pub use config::Config;
+pub use config::{Config, ConfigError};
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristic_expander::{DeadlockPolicy, FreeRiderPolicy};
 pub use lane_index::LaneIndex;

@@ -18,6 +18,7 @@ use crate::lane_index::LaneIndex;
 /// For each `(move_type, bus_id, direction)` triplet, enumerates all valid
 /// rectangular subsets of source positions within AOD capacity, and yields
 /// them as move sets.
+#[derive(Debug)]
 pub struct ExhaustiveExpander<'a> {
     index: &'a LaneIndex,
     /// Encoded locations that are blocked (external obstacles).
@@ -235,53 +236,12 @@ fn next_combination(indices: &mut [usize], n: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-
-    fn example_arch_json() -> &'static str {
-        r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 10,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    },
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 12.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [
-                    { "src": [0, 1, 2, 3, 4], "dst": [5, 6, 7, 8, 9] }
-                ],
-                "word_buses": [
-                    { "src": [0], "dst": [1] }
-                ]
-            },
-            "words_with_site_buses": [0, 1],
-            "sites_with_word_buses": [5, 6, 7, 8, 9],
-            "zones": [
-                { "words": [0, 1] }
-            ],
-            "entangling_zones": [[[0, 1]]],
-            "blockade_radius": 2.0,
-            "measurement_mode_zones": [0]
-        }"#
-    }
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
         LaneIndex::new(spec)
-    }
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
     }
 
     #[test]
@@ -315,7 +275,7 @@ mod tests {
     fn expand_produces_moves() {
         let index = make_index();
         // Qubit 0 at word 0, site 0 (a site bus source position).
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
 
         let mut out = Vec::new();
@@ -338,7 +298,7 @@ mod tests {
     fn expand_respects_blocked() {
         let index = make_index();
         // Qubit 0 at word 0, site 0. Block site 5 (the forward destination).
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         let expander = ExhaustiveExpander::new(&index, [loc(0, 5)], None, None);
 
         let mut out = Vec::new();
@@ -355,7 +315,7 @@ mod tests {
     fn expand_no_moves_when_no_atoms() {
         let index = make_index();
         // Empty config → no atoms → no moves.
-        let config = Config::new(std::iter::empty::<(u32, LocationAddr)>());
+        let config = Config::new(std::iter::empty::<(u32, LocationAddr)>()).unwrap();
         let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
 
         let mut out = Vec::new();
@@ -369,7 +329,7 @@ mod tests {
         // Qubit 0 at site 0, qubit 1 at site 5 (destination of site 0 forward).
         // The pre-filter should mark site 0 as invalid for forward moves
         // (src occupied, dst occupied).
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
         let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
 
         let mut out = Vec::new();
@@ -386,7 +346,7 @@ mod tests {
     fn expand_parallel_moves() {
         let index = make_index();
         // Two qubits at site bus source positions in same word.
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
         let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
 
         let mut out = Vec::new();
@@ -410,7 +370,7 @@ mod tests {
 
         let index = make_index();
         // Qubit 0 at word 0 site 0, target: word 0 site 5.
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         let target_loc = loc(0, 5);
 
         let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);

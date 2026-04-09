@@ -8,7 +8,7 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use rayon::prelude::*;
 
 use crate::astar::SearchResult;
-use crate::config::Config;
+use crate::config::{Config, ConfigError};
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
@@ -33,16 +33,35 @@ pub enum Strategy {
     Cascade,
 }
 
-/// Result of a successful solve.
+/// Outcome status of a solve attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolveStatus {
+    /// A solution was found.
+    Solved,
+    /// The search space was fully explored — no solution exists.
+    Unsolvable,
+    /// The expansion budget was exhausted before finding a solution or
+    /// proving unsolvability.
+    BudgetExceeded,
+}
+
+/// Result of a solve attempt.
+///
+/// Always returned (never `None`). Check [`status`](SolveResult::status) to
+/// determine whether a solution was found.
 #[derive(Debug)]
 pub struct SolveResult {
+    /// Whether the solve succeeded, was unsolvable, or ran out of budget.
+    pub status: SolveStatus,
     /// Sequence of parallel move steps from initial to goal configuration.
+    /// Empty when `status` is not `Solved`.
     pub move_layers: Vec<MoveSet>,
     /// Final qubit positions (the goal configuration).
+    /// Equals the initial configuration when `status` is not `Solved`.
     pub goal_config: Config,
     /// Number of nodes expanded during search.
     pub nodes_expanded: u32,
-    /// Total path cost.
+    /// Total path cost. 0.0 when `status` is not `Solved`.
     pub cost: f64,
     /// Number of deadlocks encountered during search.
     pub deadlocks: u32,
@@ -56,6 +75,7 @@ pub struct SolveResult {
 ///
 /// Works for both physical and logical architectures (same interface,
 /// different arch spec JSON).
+#[derive(Debug)]
 pub struct MoveSolver {
     index: LaneIndex,
 }
@@ -103,7 +123,13 @@ impl MoveSolver {
     ///
     /// # Returns
     ///
-    /// `Some(SolveResult)` if a solution is found, `None` otherwise.
+    /// A [`SolveResult`] whose [`status`](SolveResult::status) indicates
+    /// whether a solution was found, the problem is unsolvable, or the
+    /// expansion budget was exceeded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if `initial` contains duplicate qubit IDs.
     #[allow(clippy::too_many_arguments)]
     pub fn solve(
         &self,
@@ -118,8 +144,8 @@ impl MoveSolver {
         mobility_weight: f64,
         restarts: u32,
         free_rider_policy: FreeRiderPolicy,
-    ) -> Option<SolveResult> {
-        let root = Config::new(initial);
+    ) -> Result<SolveResult, ConfigError> {
+        let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
 
@@ -159,22 +185,42 @@ impl MoveSolver {
         };
 
         // Extract a SolveResult from a SearchResult.
-        let extract = |result: SearchResult, deadlocks: u32| -> Option<SolveResult> {
-            let goal_id = result.goal?;
-            let move_layers = result.solution_path().unwrap_or_default();
-            let goal_config = result.graph.config(goal_id).clone();
-            let cost = result.graph.g_score(goal_id);
-            Some(SolveResult {
-                move_layers,
-                goal_config,
-                nodes_expanded: result.nodes_expanded,
-                cost,
-                deadlocks,
-            })
+        let extract = |result: SearchResult, deadlocks: u32, max_exp: Option<u32>| -> SolveResult {
+            match result.goal {
+                Some(goal_id) => {
+                    let move_layers = result.solution_path().unwrap_or_default();
+                    let goal_config = result.graph.config(goal_id).clone();
+                    let cost = result.graph.g_score(goal_id);
+                    SolveResult {
+                        status: SolveStatus::Solved,
+                        move_layers,
+                        goal_config,
+                        nodes_expanded: result.nodes_expanded,
+                        cost,
+                        deadlocks,
+                    }
+                }
+                None => {
+                    let root_config = result.graph.config(result.graph.root()).clone();
+                    let status = if max_exp.is_some_and(|max| result.nodes_expanded >= max) {
+                        SolveStatus::BudgetExceeded
+                    } else {
+                        SolveStatus::Unsolvable
+                    };
+                    SolveResult {
+                        status,
+                        move_layers: Vec::new(),
+                        goal_config: root_config,
+                        nodes_expanded: result.nodes_expanded,
+                        cost: 0.0,
+                        deadlocks,
+                    }
+                }
+            }
         };
 
         // Run a single search with the given seed.
-        let run_once = |seed: u64| -> Option<SolveResult> {
+        let run_once = |seed: u64| -> SolveResult {
             if strategy == Strategy::Cascade {
                 // Phase 1: IDS with sum heuristic, Skip deadlock policy.
                 let ids_expander = make_expander(seed, DeadlockPolicy::Skip);
@@ -190,7 +236,7 @@ impl MoveSolver {
                 let ids_deadlocks = ids_expander.deadlock_count();
 
                 match ids_result.goal {
-                    None => extract(ids_result, ids_deadlocks),
+                    None => extract(ids_result, ids_deadlocks, max_expansions),
                     Some(ids_goal_id) => {
                         let ids_cost = ids_result.graph.g_score(ids_goal_id);
 
@@ -208,9 +254,9 @@ impl MoveSolver {
                         );
                         let total_deadlocks = ids_deadlocks + astar_expander.deadlock_count();
                         if astar_result.goal.is_some() {
-                            extract(astar_result, total_deadlocks)
+                            extract(astar_result, total_deadlocks, max_expansions)
                         } else {
-                            extract(ids_result, total_deadlocks)
+                            extract(ids_result, total_deadlocks, max_expansions)
                         }
                     }
                 }
@@ -243,17 +289,27 @@ impl MoveSolver {
                         weight,
                     )
                 };
-                extract(result, expander.deadlock_count())
+                extract(result, expander.deadlock_count(), max_expansions)
             }
         };
 
         if restarts <= 1 {
-            run_once(0)
+            Ok(run_once(0))
         } else {
-            (0..restarts)
+            let results: Vec<SolveResult> = (0..restarts)
                 .into_par_iter()
-                .filter_map(|i| run_once(i as u64 + 1))
-                .min_by(|a, b| a.cost.total_cmp(&b.cost))
+                .map(|i| run_once(i as u64 + 1))
+                .collect();
+            // Prefer solved results; among those, pick lowest cost.
+            let best = results
+                .into_iter()
+                .min_by(|a, b| {
+                    let a_solved = a.status == SolveStatus::Solved;
+                    let b_solved = b.status == SolveStatus::Solved;
+                    b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
+                })
+                .expect("restarts > 0");
+            Ok(best)
         }
     }
 
@@ -298,48 +354,7 @@ impl MoveSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn example_arch_json() -> &'static str {
-        r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 10,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    },
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 12.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [
-                    { "src": [0, 1, 2, 3, 4], "dst": [5, 6, 7, 8, 9] }
-                ],
-                "word_buses": [
-                    { "src": [0], "dst": [1] }
-                ]
-            },
-            "words_with_site_buses": [0, 1],
-            "sites_with_word_buses": [5, 6, 7, 8, 9],
-            "zones": [
-                { "words": [0, 1] }
-            ],
-            "entangling_zones": [[[0, 1]]],
-            "blockade_radius": 2.0,
-            "measurement_mode_zones": [0]
-        }"#
-    }
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
+    use crate::test_utils::{example_arch_json, loc};
 
     #[test]
     fn solve_simple_one_step() {
@@ -360,6 +375,7 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.cost, 1.0);
         assert_eq!(result.move_layers.len(), 1);
         assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
@@ -384,6 +400,7 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.cost, 0.0);
         assert!(result.move_layers.is_empty());
         assert_eq!(result.nodes_expanded, 0);
@@ -409,6 +426,7 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.cost, 1.0);
         assert_eq!(result.move_layers.len(), 1);
         assert_eq!(result.goal_config.location_of(0), Some(loc(1, 5)));
@@ -434,6 +452,7 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.cost, 2.0);
         assert_eq!(result.move_layers.len(), 2);
     }
@@ -442,21 +461,24 @@ mod tests {
     fn solve_no_solution() {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Target a nonexistent location.
-        let result = solver.solve(
-            [(0, loc(0, 0))],
-            [(0, loc(99, 99))],
-            std::iter::empty(),
-            Some(100),
-            Strategy::AStar,
-            3,
-            3,
-            1.0,
-            0.0,
-            1,
-            FreeRiderPolicy::Off,
-        );
+        let result = solver
+            .solve(
+                [(0, loc(0, 0))],
+                [(0, loc(99, 99))],
+                std::iter::empty(),
+                Some(100),
+                Strategy::AStar,
+                3,
+                3,
+                1.0,
+                0.0,
+                1,
+                FreeRiderPolicy::Off,
+            )
+            .unwrap();
 
-        assert!(result.is_none());
+        assert_ne!(result.status, SolveStatus::Solved);
+        assert!(result.move_layers.is_empty());
     }
 
     #[test]
@@ -504,22 +526,25 @@ mod tests {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Qubit at site 0, target site 5, but site 5 is blocked.
         // Should find no solution (or a longer path if one exists).
-        let result = solver.solve(
-            [(0, loc(0, 0))],
-            [(0, loc(0, 5))],
-            [loc(0, 5)],
-            Some(100),
-            Strategy::AStar,
-            3,
-            3,
-            1.0,
-            0.0,
-            1,
-            FreeRiderPolicy::Off,
-        );
+        let result = solver
+            .solve(
+                [(0, loc(0, 0))],
+                [(0, loc(0, 5))],
+                [loc(0, 5)],
+                Some(100),
+                Strategy::AStar,
+                3,
+                3,
+                1.0,
+                0.0,
+                1,
+                FreeRiderPolicy::Off,
+            )
+            .unwrap();
 
         // Can't reach blocked destination.
-        assert!(result.is_none());
+        assert_ne!(result.status, SolveStatus::Solved);
+        assert!(result.move_layers.is_empty());
     }
 
     #[test]
@@ -543,6 +568,7 @@ mod tests {
             .unwrap();
 
         // Should find the parallel move in 1 step.
+        assert_eq!(result.status, SolveStatus::Solved);
         assert_eq!(result.cost, 1.0);
         assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
         assert_eq!(result.goal_config.location_of(1), Some(loc(0, 6)));
