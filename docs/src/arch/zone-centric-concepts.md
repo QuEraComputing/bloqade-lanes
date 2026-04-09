@@ -213,7 +213,7 @@ The zone-centric redesign shifts structural ownership from words to zones:
   │   └── word_buses[]                   │   ├── sites_with_word_buses
   │                                      │   └── entangling_pairs ◄── per-zone
   ├── zones[]  ◄── afterthought          │
-  │   └── words: [0, 1, 2, 3]           ├── zone_buses[]  ◄── inter-zone
+  │   └── words: [0, 1, 2, 3]            ├── zone_buses[]  ◄── inter-zone
   │                                      │
   ├── entangling_zones                   ├── modes[]  ◄── replaces
   └── measurement_mode_zones             │   ├── name       measurement_mode
@@ -238,24 +238,24 @@ The zone-centric redesign shifts structural ownership from words to zones:
 
 ```
   ┌─────────────────────────────────────────────────────────────────┐
-  │  1. UNIFORM DIMENSIONS                                         │
-  │     All zones share the same global word definitions and       │
-  │     have the same grid dimensions.                             │
+  │  1. UNIFORM DIMENSIONS                                          │
+  │     All zones share the same global word definitions and        │
+  │     have the same grid dimensions.                              │
   │                                                                 │
-  │  2. RECTANGLE CONSTRAINT                                       │
+  │  2. RECTANGLE CONSTRAINT                                        │
   │     Every bus's src and dst positions form complete             │
-  │     rectangular grids with matching dimensions.                │
+  │     rectangular grids with matching dimensions.                 │
   │                                                                 │
-  │  3. ZONE BUS CROSSING                                          │
-  │     Every zone bus entry must cross a zone boundary.           │
+  │  3. ZONE BUS CROSSING                                           │
+  │     Every zone bus entry must cross a zone boundary.            │
   │                                                                 │
-  │  4. ENTANGLING = INTRA-ZONE WORD PAIRS                        │
-  │     Each zone declares its own entangling_pairs (word pairs).  │
-  │     CZ partner is always in the same zone, same site_id.      │
+  │  4. ENTANGLING = INTRA-ZONE WORD PAIRS                          │
+  │     Each zone declares its own entangling_pairs (word pairs).   │
+  │     CZ partner is always in the same zone, same site_id.        │
   │                                                                 │
-  │  5. WORDS ARE TEMPLATES                                        │
-  │     Words define a slicing pattern, not physical positions.    │
-  │     Physical positions come from the parent zone's grid.       │
+  │  5. WORDS ARE TEMPLATES                                         │
+  │     Words define a slicing pattern, not physical positions.     │
+  │     Physical positions come from the parent zone's grid.        │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
