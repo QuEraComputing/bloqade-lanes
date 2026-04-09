@@ -11,6 +11,7 @@ from .encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -97,6 +98,36 @@ class PathFinder:
                         )
                         self.end_points_cache[lane_addr] = (src_site, dst_site)
                         self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
+
+        # Zone buses: inter-zone word movement.
+        for bus_id, zb in enumerate(self.spec.zone_buses):
+            for (src_zone, src_word), (dst_zone, dst_word) in zip(zb.src, zb.dst):
+                for site in range(self.spec.sites_per_word):
+                    src_site = LocationAddress(src_word, site, src_zone)
+                    dst_site = LocationAddress(dst_word, site, dst_zone)
+                    if (
+                        src_site not in self.physical_address_map
+                        or dst_site not in self.physical_address_map
+                    ):
+                        continue
+                    lane_addr = LaneAddress(
+                        MoveType.ZONE,
+                        src_word,
+                        site,
+                        bus_id,
+                        Direction.FORWARD,
+                        src_zone,
+                    )
+                    src_idx = self.physical_address_map[src_site]
+                    dst_idx = self.physical_address_map[dst_site]
+                    self.site_graph.add_edge(src_idx, dst_idx, lane_addr)
+                    self.site_graph.add_edge(
+                        dst_idx,
+                        src_idx,
+                        rev_lane_addr := lane_addr.reverse(),
+                    )
+                    self.end_points_cache[lane_addr] = (src_site, dst_site)
+                    self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
     def extract_lanes_from_path(self, path: list[int]) -> tuple[LaneAddress, ...]:
         """Given a path as node indices, extract the lane addresses."""

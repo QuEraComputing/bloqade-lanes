@@ -339,14 +339,8 @@ class TestPathFinderIntegration:
         # mem word 2, site 0 → site 1: NOT reachable (no site buses, no connections)
         assert pf.find_path(LocationAddress(2, 0), LocationAddress(2, 1)) is None
 
-    @pytest.mark.skip(reason="PathFinder does not traverse zone_buses yet")
     def test_cross_zone_reachable_via_word_bus(self) -> None:
-        """PathFinder can route across zones via inter-zone word buses.
-
-        Currently skipped: zone_buses are correctly separated from
-        intra-zone word_buses, but PathFinder doesn't include zone_bus
-        edges in its graph yet.
-        """
+        """PathFinder can route across zones via inter-zone zone buses."""
         from bloqade.lanes.layout.encoding import LocationAddress
         from bloqade.lanes.layout.path import PathFinder
 
@@ -370,5 +364,13 @@ class TestPathFinderIntegration:
         )
         pf = PathFinder(result.arch)
 
-        # proc word 0 → mem word 2 (same site): reachable via matching word bus
-        assert pf.find_path(LocationAddress(0, 0), LocationAddress(2, 0)) is not None
+        # proc word 0 (zone 0) → mem word 2 (zone 1, same site): reachable via zone bus
+        proc_zone_id = result.zone_indices["proc"]
+        mem_zone_id = result.zone_indices["mem"]
+        assert (
+            pf.find_path(
+                LocationAddress(0, 0, proc_zone_id),
+                LocationAddress(2, 0, mem_zone_id),
+            )
+            is not None
+        )
