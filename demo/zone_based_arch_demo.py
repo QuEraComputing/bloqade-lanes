@@ -57,9 +57,7 @@ print(f"  Sites per word: {sites_per_word}")
 print(f"  Total sites:    {len(arch.words) * sites_per_word}")
 print(f"  Word buses:     {len(arch.word_buses)}")
 print(f"  Site buses:     {len(arch.site_buses)}")
-print(
-    f"  CZ pairs:       {len(arch.entangling_zones[0]) if arch.entangling_zones else 0}"
-)
+print(f"  CZ pairs:       {len(arch.zones[0].entangling_pairs) if arch.zones else 0}")
 print()
 
 # %% Section 2: Multi-Zone Architecture (Processing + Memory)
@@ -138,23 +136,21 @@ for name, spec in multi_blueprint.zones.items():
 print()
 
 # Bus summary — the key difference between zones
-proc_site_bus_count = sum(
-    1
-    for bus in multi_arch.site_buses
-    if bus.words is not None and 0 in bus.words  # word 0 is in proc
-)
-mem_site_bus_count = sum(
-    1
-    for bus in multi_arch.site_buses
-    if bus.words is not None
-    and multi_result.zone_grids["mem"].word_id_offset in bus.words
-)
+# In the zone-centric model, each zone owns its buses directly.
+proc_zone = multi_arch.zones[0]  # "proc"
+mem_zone = multi_arch.zones[1]  # "mem"
+
+proc_site_bus_count = len(proc_zone.site_buses)
+mem_site_bus_count = len(mem_zone.site_buses)
+
+total_word_buses = sum(len(z.word_buses) for z in multi_arch.zones)
+total_site_buses = sum(len(z.site_buses) for z in multi_arch.zones)
 
 print("Bus summary:")
-print(f"  Total word buses:  {len(multi_arch.word_buses)}")
-print(f"    Intra-zone (proc hypercube): {len(multi_arch.word_buses) - 1}")
-print("    Inter-zone (matching):       1")
-print(f"  Total site buses:  {len(multi_arch.site_buses)}")
+print(f"  Total word buses:  {total_word_buses + len(multi_arch.zone_buses)}")
+print(f"    Intra-zone (proc hypercube): {len(proc_zone.word_buses)}")
+print(f"    Inter-zone (matching):       {len(multi_arch.zone_buses)}")
+print(f"  Total site buses:  {total_site_buses}")
 print(
     f"    proc zone: {proc_site_bus_count} site buses (HypercubeSite, 4 sites -> 2 buses)"
 )
