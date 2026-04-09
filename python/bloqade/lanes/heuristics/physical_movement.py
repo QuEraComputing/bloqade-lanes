@@ -326,7 +326,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             max_movesets_per_group=self.traversal.max_movesets_per_group,
         )
 
-        if result is None:
+        if result.status != "solved":
             return AtomState.bottom()
 
         move_layers = tuple(

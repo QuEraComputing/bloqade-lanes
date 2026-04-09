@@ -181,7 +181,8 @@ impl SearchGraph {
         }
 
         let parent_depth = self.nodes[parent.0 as usize].depth;
-        let new_id = NodeId(self.nodes.len() as u32);
+        let new_id =
+            NodeId(u32::try_from(self.nodes.len()).expect("search graph exceeded 2^32 nodes"));
         self.nodes.push(NodeData {
             config: new_config.clone(),
             parent: Some(parent),
@@ -217,28 +218,11 @@ impl SearchGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
-
-    fn lane(word: u32, site: u32, bus: u32) -> LaneAddr {
-        LaneAddr {
-            direction: Direction::Forward,
-            move_type: MoveType::SiteBus,
-            word_id: word,
-            site_id: site,
-            bus_id: bus,
-        }
-    }
+    use crate::test_utils::{lane, loc};
 
     #[test]
     fn root_creation() {
-        let cfg = Config::new([(0, loc(0, 0))]);
+        let cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let graph = SearchGraph::new(cfg.clone());
 
         assert_eq!(graph.len(), 1);
@@ -248,10 +232,10 @@ mod tests {
 
     #[test]
     fn insert_new_config() {
-        let root_cfg = Config::new([(0, loc(0, 0))]);
+        let root_cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let mut graph = SearchGraph::new(root_cfg);
 
-        let child_cfg = Config::new([(0, loc(0, 1))]);
+        let child_cfg = Config::new([(0, loc(0, 1))]).unwrap();
         let ms = MoveSet::new([lane(0, 0, 0)]);
         let (id, is_new) = graph.insert(graph.root(), ms, child_cfg, 1.0);
 
@@ -262,10 +246,10 @@ mod tests {
 
     #[test]
     fn insert_same_config_higher_cost_rejected() {
-        let root_cfg = Config::new([(0, loc(0, 0))]);
+        let root_cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let mut graph = SearchGraph::new(root_cfg);
 
-        let child_cfg = Config::new([(0, loc(0, 1))]);
+        let child_cfg = Config::new([(0, loc(0, 1))]).unwrap();
         let ms1 = MoveSet::new([lane(0, 0, 0)]);
         let (first_id, _) = graph.insert(graph.root(), ms1, child_cfg.clone(), 1.0);
 
@@ -279,10 +263,10 @@ mod tests {
 
     #[test]
     fn insert_same_config_lower_cost_creates_new_node() {
-        let root_cfg = Config::new([(0, loc(0, 0))]);
+        let root_cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let mut graph = SearchGraph::new(root_cfg);
 
-        let child_cfg = Config::new([(0, loc(0, 1))]);
+        let child_cfg = Config::new([(0, loc(0, 1))]).unwrap();
         let ms1 = MoveSet::new([lane(0, 0, 0)]);
         let (first_id, _) = graph.insert(graph.root(), ms1, child_cfg.clone(), 5.0);
 
@@ -301,7 +285,7 @@ mod tests {
 
     #[test]
     fn reconstruct_path_root_is_empty() {
-        let root_cfg = Config::new([(0, loc(0, 0))]);
+        let root_cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let graph = SearchGraph::new(root_cfg);
         let path = graph.reconstruct_path(graph.root());
         assert!(path.is_empty());
@@ -309,19 +293,19 @@ mod tests {
 
     #[test]
     fn reconstruct_path_depth_3() {
-        let cfg0 = Config::new([(0, loc(0, 0))]);
+        let cfg0 = Config::new([(0, loc(0, 0))]).unwrap();
         let mut graph = SearchGraph::new(cfg0);
 
         let ms1 = MoveSet::new([lane(0, 0, 0)]);
-        let cfg1 = Config::new([(0, loc(0, 1))]);
+        let cfg1 = Config::new([(0, loc(0, 1))]).unwrap();
         let (id1, _) = graph.insert(graph.root(), ms1.clone(), cfg1, 1.0);
 
         let ms2 = MoveSet::new([lane(0, 1, 0)]);
-        let cfg2 = Config::new([(0, loc(0, 2))]);
+        let cfg2 = Config::new([(0, loc(0, 2))]).unwrap();
         let (id2, _) = graph.insert(id1, ms2.clone(), cfg2, 2.0);
 
         let ms3 = MoveSet::new([lane(0, 2, 0)]);
-        let cfg3 = Config::new([(0, loc(0, 3))]);
+        let cfg3 = Config::new([(0, loc(0, 3))]).unwrap();
         let (id3, _) = graph.insert(id2, ms3.clone(), cfg3, 3.0);
 
         let path = graph.reconstruct_path(id3);
@@ -358,10 +342,10 @@ mod tests {
 
     #[test]
     fn insert_same_config_equal_cost_rejected() {
-        let root_cfg = Config::new([(0, loc(0, 0))]);
+        let root_cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let mut graph = SearchGraph::new(root_cfg);
 
-        let child_cfg = Config::new([(0, loc(0, 1))]);
+        let child_cfg = Config::new([(0, loc(0, 1))]).unwrap();
         let ms1 = MoveSet::new([lane(0, 0, 0)]);
         let (first_id, _) = graph.insert(graph.root(), ms1, child_cfg.clone(), 1.0);
 

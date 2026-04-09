@@ -775,16 +775,31 @@ class ArchSpec:
 
 @final
 class SolveResult:
-    """Result of a move synthesis solve."""
+    """Result of a move synthesis solve.
+
+    Always returned by ``MoveSolver.solve()``. Check ``status`` to determine
+    whether a solution was found.
+    """
+
+    @property
+    def status(self) -> str:
+        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``."""
+        ...
 
     @property
     def move_layers(self) -> list[list[tuple[int, int, int, int, int]]]:
-        """Move layers as lists of (direction, move_type, word_id, site_id, bus_id) tuples."""
+        """Move layers as lists of (direction, move_type, word_id, site_id, bus_id) tuples.
+
+        Empty when ``status`` is not ``"solved"``.
+        """
         ...
 
     @property
     def goal_config(self) -> list[tuple[int, int, int]]:
-        """Goal configuration as (qubit_id, word_id, site_id) tuples."""
+        """Goal configuration as (qubit_id, word_id, site_id) tuples.
+
+        Equals the initial configuration when ``status`` is not ``"solved"``.
+        """
         ...
 
     @property
@@ -794,7 +809,7 @@ class SolveResult:
 
     @property
     def cost(self) -> float:
-        """Total path cost."""
+        """Total path cost. 0.0 when ``status`` is not ``"solved"``."""
         ...
 
     def __repr__(self) -> str: ...
@@ -823,7 +838,7 @@ class MoveSolver:
         strategy: str = "astar",
         top_c: int = 3,
         max_movesets_per_group: int = 3,
-    ) -> Optional[SolveResult]:
+    ) -> SolveResult:
         """Solve a move synthesis problem.
 
         Args:
@@ -836,7 +851,7 @@ class MoveSolver:
             max_movesets_per_group: Max movesets per bus group.
 
         Returns:
-            SolveResult if a solution is found, None otherwise.
+            SolveResult with status indicating outcome.
         """
         ...
 

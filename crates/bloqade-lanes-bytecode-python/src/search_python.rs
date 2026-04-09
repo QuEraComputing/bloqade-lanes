@@ -8,7 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::solve::{MoveSolver, SolveResult, Strategy};
+use bloqade_lanes_search::solve::{MoveSolver, SolveResult, SolveStatus, Strategy};
 
 use crate::arch_python::PyArchSpec;
 
@@ -23,6 +23,16 @@ pub struct PySolveResult {
 
 #[pymethods]
 impl PySolveResult {
+    /// Status of the solve: "solved", "unsolvable", or "budget_exceeded".
+    #[getter]
+    fn status(&self) -> &'static str {
+        match self.inner.status {
+            SolveStatus::Solved => "solved",
+            SolveStatus::Unsolvable => "unsolvable",
+            SolveStatus::BudgetExceeded => "budget_exceeded",
+        }
+    }
+
     /// Move layers: list of move steps, each a list of lane address tuples.
     ///
     /// Each lane is represented as `(direction, move_type, word_id, site_id, bus_id)`
@@ -73,8 +83,14 @@ impl PySolveResult {
     }
 
     fn __repr__(&self) -> String {
+        let status = match self.inner.status {
+            SolveStatus::Solved => "solved",
+            SolveStatus::Unsolvable => "unsolvable",
+            SolveStatus::BudgetExceeded => "budget_exceeded",
+        };
         format!(
-            "SolveResult(steps={}, cost={}, expanded={})",
+            "SolveResult(status={}, steps={}, cost={}, expanded={})",
+            status,
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
@@ -138,8 +154,9 @@ impl PyMoveSolver {
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
     ///
     /// Returns:
-    ///     SolveResult if a solution is found, None otherwise.
+    ///     SolveResult with status indicating success/failure.
     #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3))]
+    #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
         py: Python<'_>,
@@ -150,19 +167,7 @@ impl PyMoveSolver {
         strategy: &str,
         top_c: usize,
         max_movesets_per_group: usize,
-    ) -> PyResult<Option<PySolveResult>> {
-        // Validate: check for duplicate qubit IDs in initial.
-        {
-            let mut seen = std::collections::HashSet::new();
-            for &(qid, _, _) in &initial {
-                if !seen.insert(qid) {
-                    return Err(PyValueError::new_err(format!(
-                        "duplicate qubit_id {qid} in initial placement"
-                    )));
-                }
-            }
-        }
-
+    ) -> PyResult<PySolveResult> {
         // Validate: check for duplicate qubit IDs in target.
         {
             let mut seen = std::collections::HashSet::new();
@@ -203,19 +208,21 @@ impl PyMoveSolver {
         };
 
         // Release the GIL during search (pure Rust, no Python objects needed).
-        let result = py.allow_threads(|| {
-            self.inner.solve(
-                initial_pairs,
-                target_pairs,
-                blocked_locs,
-                max_expansions,
-                strat,
-                top_c,
-                max_movesets_per_group,
-            )
-        });
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve(
+                    initial_pairs,
+                    target_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    strat,
+                    top_c,
+                    max_movesets_per_group,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        Ok(result.map(|r| PySolveResult { inner: r }))
+        Ok(PySolveResult { inner: result })
     }
 
     fn __repr__(&self) -> String {

@@ -124,6 +124,7 @@ pub fn run_search(
         new_children.clear();
 
         for (move_set, new_config, edge_cost) in successors.drain(..) {
+            debug_assert!(edge_cost.is_finite(), "edge_cost must be finite");
             let new_g = current_g + edge_cost;
             let (child_id, is_new) = graph.insert(node_id, move_set, new_config, new_g);
 
@@ -172,16 +173,19 @@ impl PartialEq for PriorityEntry {
     fn eq(&self, other: &Self) -> bool {
         self.f_score.total_cmp(&other.f_score) == Ordering::Equal
             && self.g_score.total_cmp(&other.g_score) == Ordering::Equal
+            && self.node_id == other.node_id
     }
 }
 
 impl Ord for PriorityEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse for min-heap. Tie-break: prefer higher g (deeper).
+        // Reverse for min-heap. Tie-break: prefer higher g (deeper),
+        // then lower node_id for deterministic ordering.
         other
             .f_score
             .total_cmp(&self.f_score)
             .then(self.g_score.total_cmp(&other.g_score))
+            .then(other.node_id.0.cmp(&self.node_id.0))
     }
 }
 
@@ -323,6 +327,14 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for DfsFrontier<H> {
             self.stack.push(id);
         }
     }
+
+    fn check_goal_on_pop(&self) -> bool {
+        false
+    }
+
+    fn check_goal_on_generate(&self) -> bool {
+        true
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -330,24 +342,7 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for DfsFrontier<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
-
-    fn dummy_lane(id: u32) -> LaneAddr {
-        LaneAddr {
-            direction: Direction::Forward,
-            move_type: MoveType::SiteBus,
-            word_id: 0,
-            site_id: id,
-            bus_id: 0,
-        }
-    }
+    use crate::test_utils::{dummy_lane, loc};
 
     /// 1D line expander: qubit 0 can move left or right on site axis.
     struct LineExpander {
@@ -390,7 +385,7 @@ mod tests {
 
     #[test]
     fn bfs_finds_shallowest() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
         let result = run_search(
             root,
@@ -407,7 +402,7 @@ mod tests {
 
     #[test]
     fn bfs_respects_max_depth() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
         let result = run_search(
             root,
@@ -459,7 +454,7 @@ mod tests {
             0.0
         }
 
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(zero_heuristic);
         let result = run_search(root, site_goal(1), &TwoPathExpander, &mut f, None, None);
         assert!(result.goal.is_some());
@@ -468,7 +463,7 @@ mod tests {
 
     #[test]
     fn astar_with_heuristic() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(manhattan(3));
         let result = run_search(
             root,
@@ -488,7 +483,7 @@ mod tests {
 
     #[test]
     fn greedy_finds_goal() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::greedy(manhattan(5));
         let result = run_search(
             root,
@@ -505,7 +500,7 @@ mod tests {
 
     #[test]
     fn dfs_finds_goal() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = DfsFrontier::new(manhattan(5));
         let result = run_search(
             root,
@@ -522,7 +517,7 @@ mod tests {
 
     #[test]
     fn dfs_respects_max_expansions() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = DfsFrontier::new(manhattan(100));
         let result = run_search(
             root,
@@ -540,7 +535,7 @@ mod tests {
     fn dfs_depth_first_ordering() {
         // DFS with perfect heuristic should go straight to the goal
         // without exploring siblings — fewer expansions than BFS.
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut dfs = DfsFrontier::new(manhattan(5));
         let dfs_result = run_search(
@@ -572,7 +567,7 @@ mod tests {
 
     #[test]
     fn root_is_goal_all_strategies() {
-        let root = Config::new([(0, loc(0, 3))]);
+        let root = Config::new([(0, loc(0, 3))]).unwrap();
         let expander = LineExpander { max_site: 10 };
 
         for (name, result) in [
@@ -598,7 +593,7 @@ mod tests {
 
     #[test]
     fn max_depth_tracked() {
-        let root = Config::new([(0, loc(0, 0))]);
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
         let result = run_search(
             root,

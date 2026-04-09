@@ -20,6 +20,7 @@ use crate::lane_index::LaneIndex;
 ///
 /// Built once via BFS on the reversed lane graph (ignoring occupancy).
 /// Shared between the heuristic and the heuristic move generator.
+#[derive(Debug)]
 pub struct DistanceTable {
     /// encoded_target → { encoded_location → min hops to target }
     distance_to: HashMap<u32, HashMap<u32, u32>>,
@@ -162,49 +163,8 @@ impl<'a> HopDistanceHeuristic<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-
-    fn example_arch_json() -> &'static str {
-        r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 10,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    },
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 12.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [
-                    { "src": [0, 1, 2, 3, 4], "dst": [5, 6, 7, 8, 9] }
-                ],
-                "word_buses": [
-                    { "src": [0], "dst": [1] }
-                ]
-            },
-            "words_with_site_buses": [0, 1],
-            "sites_with_word_buses": [5, 6, 7, 8, 9],
-            "zones": [
-                { "words": [0, 1] }
-            ],
-            "entangling_zones": [[[0, 1]]],
-            "blockade_radius": 2.0,
-            "measurement_mode_zones": [0]
-        }"#
-    }
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -254,21 +214,21 @@ mod tests {
     #[test]
     fn misplaced_all_at_target() {
         let h = MisplacedHeuristic::new([(0, loc(0, 0))]);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), 0.0);
     }
 
     #[test]
     fn misplaced_one_off() {
         let h = MisplacedHeuristic::new([(0, loc(0, 5))]);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), 1.0);
     }
 
     #[test]
     fn misplaced_missing_qubit() {
         let h = MisplacedHeuristic::new([(99, loc(0, 0))]);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), f64::INFINITY);
     }
 
@@ -279,7 +239,7 @@ mod tests {
         let index = make_index();
         let table = make_table(&[(0, loc(0, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(0, 5))], &table);
-        let config = Config::new([(0, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 5))]).unwrap();
         assert_eq!(h.estimate(&config), 0.0);
     }
 
@@ -288,7 +248,7 @@ mod tests {
         let index = make_index();
         let table = make_table(&[(0, loc(0, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(0, 5))], &table);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), 1.0);
     }
 
@@ -297,7 +257,7 @@ mod tests {
         let index = make_index();
         let table = make_table(&[(0, loc(1, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(1, 5))], &table);
-        let config = Config::new([(0, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 5))]).unwrap();
         assert_eq!(h.estimate(&config), 1.0);
     }
 
@@ -306,7 +266,7 @@ mod tests {
         let index = make_index();
         let table = make_table(&[(0, loc(1, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(1, 5))], &table);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), 2.0);
     }
 
@@ -316,7 +276,7 @@ mod tests {
         let targets = [(0, loc(0, 5)), (1, loc(1, 5))];
         let table = make_table(&targets, &index);
         let h = HopDistanceHeuristic::new(targets, &table);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), 2.0);
     }
 
@@ -325,7 +285,7 @@ mod tests {
         let index = make_index();
         let table = make_table(&[(0, loc(99, 99))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(99, 99))], &table);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), f64::INFINITY);
     }
 
@@ -334,7 +294,7 @@ mod tests {
         let index = make_index();
         let table = make_table(&[(0, loc(1, 0))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(1, 0))], &table);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         assert_eq!(h.estimate(&config), 3.0);
     }
 
@@ -347,7 +307,7 @@ mod tests {
         let targets = vec![(0u32, loc(1, 5))];
         let table = make_table(&targets, &index);
         let h = HopDistanceHeuristic::new(targets, &table);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
 
         let estimate = h.estimate(&config);
 

@@ -13,6 +13,7 @@ use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 ///
 /// Built once from an [`ArchSpec`] and reused across multiple searches.
 /// Caches all lane addresses, their endpoints, and location positions.
+#[derive(Debug)]
 pub struct LaneIndex {
     arch_spec: ArchSpec,
     /// (MoveType, bus_id, Direction) → lanes for that triplet.
@@ -179,45 +180,7 @@ impl LaneIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Same JSON as bloqade-lanes-bytecode-core's example_arch_spec.
-    fn example_arch_json() -> &'static str {
-        r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 10,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    },
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 12.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [
-                    { "src": [0, 1, 2, 3, 4], "dst": [5, 6, 7, 8, 9] }
-                ],
-                "word_buses": [
-                    { "src": [0], "dst": [1] }
-                ]
-            },
-            "words_with_site_buses": [0, 1],
-            "sites_with_word_buses": [5, 6, 7, 8, 9],
-            "zones": [
-                { "words": [0, 1] }
-            ],
-            "entangling_zones": [[[0, 1]]],
-            "blockade_radius": 2.0,
-            "measurement_mode_zones": [0],
-            "paths": [
-                {"lane": "0xC000000000000005", "waypoints": [[1.0, 15.0], [1.0, 10.0], [1.0, 5.0]]}
-            ]
-        }"#
-    }
+    use crate::test_utils::example_arch_json;
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();

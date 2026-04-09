@@ -26,6 +26,7 @@ use crate::lane_index::LaneIndex;
 ///
 /// Typically produces 5-15 candidates per expansion, vs hundreds from
 /// the exhaustive generator.
+#[derive(Debug)]
 pub struct HeuristicExpander<'a> {
     index: &'a LaneIndex,
     blocked: HashSet<u32>,
@@ -263,47 +264,8 @@ impl Expander for HeuristicExpander<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-
-    fn example_arch_json() -> &'static str {
-        r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 10,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    },
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 12.5, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [2.5] },
-                        "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]
-                    }
-                ]
-            },
-            "buses": {
-                "site_buses": [
-                    { "src": [0, 1, 2, 3, 4], "dst": [5, 6, 7, 8, 9] }
-                ],
-                "word_buses": [
-                    { "src": [0], "dst": [1] }
-                ]
-            },
-            "words_with_site_buses": [0, 1],
-            "sites_with_word_buses": [5, 6, 7, 8, 9],
-            "zones": [{ "words": [0, 1] }],
-            "entangling_zones": [[[0, 1]]],
-            "blockade_radius": 2.0,
-            "measurement_mode_zones": [0]
-        }"#
-    }
-
-    fn loc(word: u32, site: u32) -> LocationAddr {
-        LocationAddr {
-            word_id: word,
-            site_id: site,
-        }
-    }
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -322,7 +284,7 @@ mod tests {
         let index = make_index();
         let targets = [(0, loc(0, 5)), (1, loc(0, 6))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
         let mut heuristic_out = Vec::new();
         let h_exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
@@ -346,7 +308,7 @@ mod tests {
         let index = make_index();
         let targets = [(0, loc(0, 5))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut out = Vec::new();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
@@ -363,7 +325,7 @@ mod tests {
         let index = make_index();
         let targets = [(0, loc(0, 5))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut out = Vec::new();
         let exp = HeuristicExpander::new(&index, [loc(0, 5)], targets, &table, 3, 3);
@@ -382,7 +344,7 @@ mod tests {
         // Only one can go to site 5 in one step.
         let targets = [(0, loc(0, 5)), (1, loc(0, 5))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
         let mut out = Vec::new();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
@@ -406,7 +368,7 @@ mod tests {
         // 3 qubits at sites 0, 1, 2 all targeting sites 5, 6, 7.
         let targets = [(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(0, 7))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
 
         let mut out = Vec::new();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
@@ -423,7 +385,7 @@ mod tests {
         let index = make_index();
         let targets = [(0, loc(0, 5))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 5))]).unwrap();
 
         let mut out = Vec::new();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
@@ -438,7 +400,7 @@ mod tests {
         // but let's block site 0. The only moves available make things worse.
         let targets = [(0, loc(0, 0))];
         let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 5))]).unwrap();
 
         let mut out = Vec::new();
         // Block site 0 (the target) so no move reaches it.
@@ -461,7 +423,7 @@ mod tests {
         let table = DistanceTable::new(&target_locs, &index);
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
 
         let target_enc = loc(0, 5).encode();
@@ -490,7 +452,7 @@ mod tests {
         let table = DistanceTable::new(&target_locs, &index);
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
-        let config = Config::new([(0, loc(0, 0))]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
 
         let target_enc = loc(1, 5).encode();
@@ -519,7 +481,7 @@ mod tests {
         let targets = vec![(0u32, loc(0, 5)), (1, loc(0, 0))];
         let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
 
         let mut out = Vec::new();
@@ -552,7 +514,7 @@ mod tests {
         let table = DistanceTable::new(&target_locs, &index);
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
 
         let result = astar(
