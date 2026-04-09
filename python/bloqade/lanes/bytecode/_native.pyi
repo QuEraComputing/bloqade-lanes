@@ -809,7 +809,6 @@ class MoveSolver:
     """
 
     def __init__(self, arch_spec_json: str) -> None: ...
-
     @staticmethod
     def from_arch_spec(arch: ArchSpec) -> MoveSolver:
         """Create a solver from a native ArchSpec object."""
