@@ -7,7 +7,7 @@
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
 use crate::config::Config;
-use crate::frontier::{self, BfsFrontier, DfsFrontier, PriorityFrontier};
+use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
 use crate::heuristic_expander::HeuristicExpander;
@@ -16,7 +16,8 @@ use crate::lane_index::LaneIndex;
 /// Search strategy for the solver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strategy {
-    /// A* search: optimal (with admissible heuristic), goal on pop.
+    /// A* / Weighted A* search: `f = g + weight * h`, goal on pop.
+    /// weight=1.0 is standard A* (optimal); weight>1.0 is bounded suboptimal.
     AStar,
     /// Heuristic depth-first search: fast, bounded memory, not optimal.
     HeuristicDfs,
@@ -24,6 +25,8 @@ pub enum Strategy {
     Bfs,
     /// Greedy best-first: fast, uses heuristic only (no path cost).
     GreedyBestFirst,
+    /// Iterative Diving Search: depth-first with heuristic jump-back.
+    Ids,
 }
 
 /// Result of a successful solve.
@@ -88,6 +91,8 @@ impl MoveSolver {
     /// * `strategy` — Search strategy to use.
     /// * `top_c` — Top bus options per qubit in the heuristic expander.
     /// * `max_movesets_per_group` — Max movesets generated per bus group.
+    /// * `weight` — Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
+    /// * `mobility_weight` — Weight for mobility bonus in expander scoring (0.0 = disabled).
     ///
     /// # Returns
     ///
@@ -102,6 +107,8 @@ impl MoveSolver {
         strategy: Strategy,
         top_c: usize,
         max_movesets_per_group: usize,
+        weight: f64,
+        mobility_weight: f64,
     ) -> Option<SolveResult> {
         let root = Config::new(initial);
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -133,12 +140,13 @@ impl MoveSolver {
             &dist_table,
             top_c,
             max_movesets_per_group,
+            mobility_weight,
         );
 
         // Run search with the chosen strategy.
         let result = match strategy {
             Strategy::AStar => {
-                let mut f = PriorityFrontier::astar(heuristic_fn);
+                let mut f = PriorityFrontier::astar(heuristic_fn, weight);
                 frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
             Strategy::HeuristicDfs => {
@@ -151,6 +159,10 @@ impl MoveSolver {
             }
             Strategy::GreedyBestFirst => {
                 let mut f = PriorityFrontier::greedy(heuristic_fn);
+                frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+            }
+            Strategy::Ids => {
+                let mut f = IdsFrontier::new(heuristic_fn);
                 frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
             }
         };
@@ -227,6 +239,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 
@@ -247,6 +261,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 
@@ -268,6 +284,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 
@@ -289,6 +307,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 
@@ -308,6 +328,8 @@ mod tests {
             Strategy::AStar,
             3,
             3,
+            1.0,
+            0.0,
         );
 
         assert!(result.is_none());
@@ -326,6 +348,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 
@@ -338,6 +362,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 
@@ -358,6 +384,8 @@ mod tests {
             Strategy::AStar,
             3,
             3,
+            1.0,
+            0.0,
         );
 
         // Can't reach blocked destination.
@@ -377,6 +405,8 @@ mod tests {
                 Strategy::AStar,
                 3,
                 3,
+                1.0,
+                0.0,
             )
             .unwrap();
 

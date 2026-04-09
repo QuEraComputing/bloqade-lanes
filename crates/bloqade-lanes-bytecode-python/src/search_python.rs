@@ -139,7 +139,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0))]
     fn solve(
         &self,
         py: Python<'_>,
@@ -150,6 +150,8 @@ impl PyMoveSolver {
         strategy: &str,
         top_c: usize,
         max_movesets_per_group: usize,
+        weight: f64,
+        mobility_weight: f64,
     ) -> PyResult<Option<PySolveResult>> {
         // Validate: check for duplicate qubit IDs in initial.
         {
@@ -195,9 +197,10 @@ impl PyMoveSolver {
             "dfs" => Strategy::HeuristicDfs,
             "bfs" => Strategy::Bfs,
             "greedy" => Strategy::GreedyBestFirst,
+            "ids" => Strategy::Ids,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy"
+                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids"
                 )));
             }
         };
@@ -212,6 +215,8 @@ impl PyMoveSolver {
                 strat,
                 top_c,
                 max_movesets_per_group,
+                weight,
+                mobility_weight,
             )
         });
 

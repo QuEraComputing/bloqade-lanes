@@ -823,6 +823,8 @@ class MoveSolver:
         strategy: str = "astar",
         top_c: int = 3,
         max_movesets_per_group: int = 3,
+        weight: float = 1.0,
+        mobility_weight: float = 0.0,
     ) -> Optional[SolveResult]:
         """Solve a move synthesis problem.
 
@@ -831,9 +833,11 @@ class MoveSolver:
             target: List of (qubit_id, word_id, site_id) desired positions.
             blocked: List of (word_id, site_id) immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
-            strategy: Search strategy: "astar", "dfs", "bfs", "greedy".
+            strategy: Search strategy: "astar", "dfs", "bfs", "greedy", "ids".
             top_c: Top bus options per qubit in the heuristic expander.
             max_movesets_per_group: Max movesets per bus group.
+            weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
+            mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
 
         Returns:
             SolveResult if a solution is found, None otherwise.

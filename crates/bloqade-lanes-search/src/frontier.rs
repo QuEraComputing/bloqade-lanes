@@ -200,16 +200,21 @@ pub struct PriorityFrontier<H> {
     heuristic: H,
     use_cost: bool,
     goal_on_pop: bool,
+    weight: f64,
 }
 
 impl<H> PriorityFrontier<H> {
-    /// Create an A* frontier: `f = g + h`, goal on pop.
-    pub fn astar(heuristic: H) -> Self {
+    /// Create an A* frontier: `f = g + weight * h`, goal on pop.
+    ///
+    /// - `weight = 1.0`: standard A* (optimal with admissible heuristic).
+    /// - `weight > 1.0`: weighted A* (bounded suboptimal, cost ≤ weight × optimal).
+    pub fn astar(heuristic: H, weight: f64) -> Self {
         Self {
             heap: BinaryHeap::new(),
             heuristic,
             use_cost: true,
             goal_on_pop: true,
+            weight,
         }
     }
 
@@ -220,6 +225,7 @@ impl<H> PriorityFrontier<H> {
             heuristic,
             use_cost: false,
             goal_on_pop: false,
+            weight: 0.0, // unused — greedy ignores cost
         }
     }
 }
@@ -233,7 +239,11 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for PriorityFrontier<H> {
         for &child_id in children {
             let g = graph.g_score(child_id);
             let h = (self.heuristic)(graph.config(child_id));
-            let f = if self.use_cost { g + h } else { h };
+            let f = if self.use_cost {
+                g + self.weight * h
+            } else {
+                h
+            };
             self.heap.push(PriorityEntry {
                 f_score: f,
                 g_score: g,
@@ -321,6 +331,91 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for DfsFrontier<H> {
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
         for (_, id) in scored {
             self.stack.push(id);
+        }
+    }
+}
+
+// ── IdsFrontier (Iterative Diving Search) ───────────────────────────
+
+/// Priority entry for IDS: depth-first with heuristic jump-back.
+///
+/// Ordering (max-heap): higher depth first, then lower insertion order
+/// (preserves expander ranking), then lower h (best heuristic on jump-back).
+struct IdsEntry {
+    depth: u32,
+    insertion_order: u64,
+    h_score: f64,
+    node_id: NodeId,
+}
+
+impl Eq for IdsEntry {}
+
+impl PartialEq for IdsEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.depth == other.depth
+            && self.insertion_order == other.insertion_order
+            && self.h_score.total_cmp(&other.h_score) == Ordering::Equal
+    }
+}
+
+impl Ord for IdsEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Max-heap: higher depth = higher priority (depth-first dive).
+        self.depth
+            .cmp(&other.depth)
+            // Tie-break: lower insertion_order = higher priority (expander's ranking).
+            .then(other.insertion_order.cmp(&self.insertion_order))
+            // Tie-break: lower h = higher priority (best heuristic on jump-back).
+            .then(other.h_score.total_cmp(&self.h_score))
+    }
+}
+
+impl PartialOrd for IdsEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Priority-queue frontier for Iterative Diving Search.
+///
+/// Normally dives depth-first (highest depth popped first), picking the
+/// expander's best candidate via insertion order. When all nodes at the
+/// current depth are exhausted (dead ends, closed), the heap naturally
+/// pops a shallower node with the best heuristic — the "jump-back".
+///
+/// Inspired by Iterative Diving Search (arxiv:2512.13790).
+pub struct IdsFrontier<H> {
+    heap: BinaryHeap<IdsEntry>,
+    heuristic: H,
+    insertion_counter: u64,
+}
+
+impl<H> IdsFrontier<H> {
+    pub fn new(heuristic: H) -> Self {
+        Self {
+            heap: BinaryHeap::new(),
+            heuristic,
+            insertion_counter: 0,
+        }
+    }
+}
+
+impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for IdsFrontier<H> {
+    fn select_next(&mut self) -> Option<NodeId> {
+        self.heap.pop().map(|e| e.node_id)
+    }
+
+    fn receive_children(&mut self, children: &[NodeId], graph: &SearchGraph) {
+        for &child_id in children {
+            let h = (self.heuristic)(graph.config(child_id));
+            let depth = graph.depth(child_id);
+            self.heap.push(IdsEntry {
+                depth,
+                insertion_order: self.insertion_counter,
+                h_score: h,
+                node_id: child_id,
+            });
+            self.insertion_counter += 1;
         }
     }
 }
@@ -460,7 +555,7 @@ mod tests {
         }
 
         let root = Config::new([(0, loc(0, 0))]);
-        let mut f = PriorityFrontier::astar(zero_heuristic);
+        let mut f = PriorityFrontier::astar(zero_heuristic, 1.0);
         let result = run_search(root, site_goal(1), &TwoPathExpander, &mut f, None, None);
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 2.0);
@@ -469,7 +564,7 @@ mod tests {
     #[test]
     fn astar_with_heuristic() {
         let root = Config::new([(0, loc(0, 0))]);
-        let mut f = PriorityFrontier::astar(manhattan(3));
+        let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
         let result = run_search(
             root,
             site_goal(3),
@@ -568,6 +663,70 @@ mod tests {
         assert!(dfs_result.nodes_expanded <= bfs_result.nodes_expanded);
     }
 
+    // ── IDS ──
+
+    #[test]
+    fn ids_finds_goal() {
+        let root = Config::new([(0, loc(0, 0))]);
+        let mut f = IdsFrontier::new(manhattan(5));
+        let result = run_search(
+            root,
+            site_goal(5),
+            &LineExpander { max_site: 10 },
+            &mut f,
+            None,
+            None,
+        );
+        assert!(result.goal.is_some());
+        let path = result.solution_path().unwrap();
+        assert_eq!(path.len(), 5);
+    }
+
+    #[test]
+    fn ids_dives_depth_first() {
+        let root = Config::new([(0, loc(0, 0))]);
+
+        let mut ids = IdsFrontier::new(manhattan(5));
+        let ids_result = run_search(
+            root.clone(),
+            site_goal(5),
+            &LineExpander { max_site: 10 },
+            &mut ids,
+            None,
+            None,
+        );
+
+        let mut bfs = BfsFrontier::new();
+        let bfs_result = run_search(
+            root,
+            site_goal(5),
+            &LineExpander { max_site: 10 },
+            &mut bfs,
+            None,
+            None,
+        );
+
+        assert!(ids_result.goal.is_some());
+        assert!(bfs_result.goal.is_some());
+        assert!(ids_result.nodes_expanded <= bfs_result.nodes_expanded);
+    }
+
+    #[test]
+    fn ids_respects_max_expansions() {
+        let root = Config::new([(0, loc(0, 0))]);
+        let mut f = IdsFrontier::new(manhattan(100));
+        let result = run_search(
+            root,
+            site_goal(100),
+            &LineExpander { max_site: 200 },
+            &mut f,
+            Some(5),
+            None,
+        );
+        assert!(result.goal.is_none());
+        assert!(result.nodes_expanded <= 5);
+    }
+
     // ── Root is goal ──
 
     #[test]
@@ -581,11 +740,15 @@ mod tests {
                 run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("astar", {
-                let mut f = PriorityFrontier::astar(manhattan(3));
+                let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
                 run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("dfs", {
                 let mut f = DfsFrontier::new(manhattan(3));
+                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
+            }),
+            ("ids", {
+                let mut f = IdsFrontier::new(manhattan(3));
                 run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
         ] {

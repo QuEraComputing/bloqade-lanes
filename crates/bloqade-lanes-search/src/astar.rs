@@ -62,7 +62,7 @@ pub fn astar(
     expander: &impl Expander,
     max_expansions: Option<u32>,
 ) -> SearchResult {
-    let mut f = PriorityFrontier::astar(heuristic);
+    let mut f = PriorityFrontier::astar(heuristic, 1.0);
     frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
 }
 

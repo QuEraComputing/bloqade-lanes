@@ -36,6 +36,8 @@ pub struct HeuristicExpander<'a> {
     top_c: usize,
     /// Max movesets to generate per bus group.
     max_movesets_per_group: usize,
+    /// Weight for mobility bonus in scoring (0.0 = disabled).
+    mobility_weight: f64,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -46,6 +48,7 @@ impl<'a> HeuristicExpander<'a> {
         dist_table: &'a DistanceTable,
         top_c: usize,
         max_movesets_per_group: usize,
+        mobility_weight: f64,
     ) -> Self {
         Self {
             index,
@@ -54,6 +57,7 @@ impl<'a> HeuristicExpander<'a> {
             dist_table,
             top_c,
             max_movesets_per_group,
+            mobility_weight,
         }
     }
 }
@@ -62,7 +66,7 @@ impl<'a> HeuristicExpander<'a> {
 #[derive(Clone)]
 struct ScoredTriple {
     qubit_id: u32,
-    score: i32, // d_now - d_after (can be negative)
+    score: f64, // (d_now - d_after) + mobility_weight * free_lanes
     lane_encoded: u64,
     dst_encoded: u32,
 }
@@ -106,7 +110,7 @@ impl Expander for HeuristicExpander<'_> {
         for &(qid, loc_enc, target_enc) in &unresolved {
             let d_now = self.dist_table.distance(loc_enc, target_enc);
             let d_now = match d_now {
-                Some(d) => d as i32,
+                Some(d) => d as f64,
                 None => continue, // unreachable target
             };
 
@@ -123,8 +127,23 @@ impl Expander for HeuristicExpander<'_> {
                 let d_after = self
                     .dist_table
                     .distance(dst_enc, target_enc)
-                    .map_or(i32::MAX, |d| d as i32);
-                let score = d_now - d_after;
+                    .map_or(f64::MAX, |d| d as f64);
+                let base_score = d_now - d_after;
+
+                let mobility_bonus = if self.mobility_weight != 0.0 {
+                    self.index
+                        .outgoing_lanes(dst)
+                        .iter()
+                        .filter(|next_lane| {
+                            self.index
+                                .endpoints(next_lane)
+                                .is_some_and(|(_, next_dst)| !occupied.contains(&next_dst.encode()))
+                        })
+                        .count() as f64
+                } else {
+                    0.0
+                };
+                let score = base_score + self.mobility_weight * mobility_bonus;
 
                 let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                 all_scores.push((
@@ -151,11 +170,11 @@ impl Expander for HeuristicExpander<'_> {
         let mut has_positive = false;
 
         for (_, entries) in per_qubit.iter_mut() {
-            entries.sort_by(|a, b| b.1.score.cmp(&a.1.score));
+            entries.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
             entries.truncate(self.top_c);
             // Keep only positive scores (or all if none positive — handled below).
             for e in entries.iter() {
-                if e.1.score > 0 {
+                if e.1.score > 0.0 {
                     has_positive = true;
                 }
                 selected.push(e.clone());
@@ -164,10 +183,10 @@ impl Expander for HeuristicExpander<'_> {
 
         // Fallback: if no positive scores, keep only the single best entry.
         if !has_positive {
-            selected.sort_by(|a, b| b.1.score.cmp(&a.1.score));
+            selected.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
             selected.truncate(1);
         } else {
-            selected.retain(|e| e.1.score > 0);
+            selected.retain(|e| e.1.score > 0.0);
         }
 
         // Step 4: group by bus triplet.
@@ -177,11 +196,11 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 5: per group, generate multiple movesets.
-        let mut candidates: Vec<(i32, MoveSet, Config)> = Vec::new();
+        let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
         for (_, mut qubits) in groups {
             // Sort by score descending.
-            qubits.sort_by(|a, b| b.score.cmp(&a.score));
+            qubits.sort_by(|a, b| b.score.total_cmp(&a.score));
 
             let n = qubits.len().min(self.max_movesets_per_group);
 
@@ -189,7 +208,7 @@ impl Expander for HeuristicExpander<'_> {
                 let mut lanes: Vec<u64> = Vec::new();
                 let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
                 let mut used_dsts: HashSet<u32> = HashSet::new();
-                let mut total_score: i32 = 0;
+                let mut total_score: f64 = 0.0;
 
                 // Greedy: start from `start`, then add remaining in order.
                 let order: Vec<usize> = (start..qubits.len()).chain(0..start).collect();
@@ -230,7 +249,7 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 6: sort by total score descending, emit.
-        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
 
         for (_, move_set, new_config) in candidates {
             out.push((move_set, new_config, 1.0));
@@ -325,7 +344,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
 
         let mut heuristic_out = Vec::new();
-        let h_exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let h_exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
         h_exp.expand(&config, &mut heuristic_out);
 
         let mut exhaustive_out = Vec::new();
@@ -349,7 +368,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
         exp.expand(&config, &mut out);
 
         // Best move should place qubit 0 at site 5 (direct site bus forward).
@@ -366,7 +385,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, [loc(0, 5)], targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, [loc(0, 5)], targets, &table, 3, 3, 0.0);
         exp.expand(&config, &mut out);
 
         // No move should place qubit at blocked site 5.
@@ -385,7 +404,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
         exp.expand(&config, &mut out);
 
         // Each moveset should not have two qubits at the same destination.
@@ -409,7 +428,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
         exp.expand(&config, &mut out);
 
         // With max_movesets_per_group=3 and 3 qubits in the same group,
@@ -426,7 +445,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 5))]);
 
         let mut out = Vec::new();
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
         exp.expand(&config, &mut out);
         assert!(out.is_empty());
     }
@@ -442,7 +461,7 @@ mod tests {
 
         let mut out = Vec::new();
         // Block site 0 (the target) so no move reaches it.
-        let exp = HeuristicExpander::new(&index, [loc(0, 0)], targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, [loc(0, 0)], targets, &table, 3, 3, 0.0);
         exp.expand(&config, &mut out);
 
         // Fallback should still produce at least one candidate
@@ -462,7 +481,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
 
         let target_enc = loc(0, 5).encode();
         let result = astar(
@@ -491,7 +510,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
 
         let target_enc = loc(1, 5).encode();
         let result = astar(
@@ -520,7 +539,7 @@ mod tests {
         let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
 
         let mut out = Vec::new();
         exp.expand(&config, &mut out);
@@ -553,7 +572,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]);
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3, 0.0);
 
         let result = astar(
             config,
