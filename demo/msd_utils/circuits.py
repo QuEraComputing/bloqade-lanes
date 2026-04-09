@@ -285,7 +285,21 @@ def build_paper_decoder_kernel_bundle(
     tomography_z = primitives["tomography_z"]
 
     @squin.kernel
-    def prepare_paper_special_common(reg):
+    def injection_tomography_x(reg):
+        squin.h(reg[0])
+
+    @squin.kernel
+    def injection_tomography_y(reg):
+        squin.sqrt_z_adj(reg[0])
+        squin.h(reg[0])
+
+    @squin.kernel
+    def injection_tomography_z(reg):
+        return
+
+    @squin.kernel
+    def prepare_paper_special_x(reg):
+        squin.h(reg[output_qubit])
         squin.broadcast.sqrt_x(reg)
         squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[3], reg[4]]))
         squin.sqrt_x(reg[3])
@@ -294,18 +308,23 @@ def build_paper_decoder_kernel_bundle(
         squin.broadcast.cz(ilist.IList([reg[1], reg[3]]), ilist.IList([reg[2], reg[4]]))
 
     @squin.kernel
-    def prepare_paper_special_x(reg):
-        squin.h(reg[output_qubit])
-        prepare_paper_special_common(reg)
-
-    @squin.kernel
     def prepare_paper_special_y(reg):
         squin.sqrt_x(reg[output_qubit])
-        prepare_paper_special_common(reg)
+        squin.broadcast.sqrt_x(reg)
+        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[3], reg[4]]))
+        squin.sqrt_x(reg[3])
+        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.sqrt_y_adj(ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.cz(ilist.IList([reg[1], reg[3]]), ilist.IList([reg[2], reg[4]]))
 
     @squin.kernel
     def prepare_paper_special_z(reg):
-        prepare_paper_special_common(reg)
+        squin.broadcast.sqrt_x(reg)
+        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[3], reg[4]]))
+        squin.sqrt_x(reg[3])
+        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.sqrt_y_adj(ilist.IList([reg[1], reg[3]]))
+        squin.broadcast.cz(ilist.IList([reg[1], reg[3]]), ilist.IList([reg[2], reg[4]]))
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_x():
@@ -359,21 +378,21 @@ def build_paper_decoder_kernel_bundle(
     def injected_x():
         reg = qubit.qalloc(1)
         squin.u3(theta, phi, lam, reg[0])
-        tomography_x(reg)
+        injection_tomography_x(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_y():
         reg = qubit.qalloc(1)
         squin.u3(theta, phi, lam, reg[0])
-        tomography_y(reg)
+        injection_tomography_y(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_z():
         reg = qubit.qalloc(1)
         squin.u3(theta, phi, lam, reg[0])
-        tomography_z(reg)
+        injection_tomography_z(reg)
         return default_post_processing(reg)
 
     return DecoderKernelBundle(
@@ -434,6 +453,7 @@ def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
         squin.broadcast.sqrt_y(subset)
         local_r_noise(subset, y_axis, quarter_turn)
 
+        # NOTE: in principle, these noise gates do not need to be physically applied as they just correct the Pauli frame.
         squin.x(qubits[3])
         local_r_noise(ilist.IList([qubits[3]]), x_axis, half_turn)
 
