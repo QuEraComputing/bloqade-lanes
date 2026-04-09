@@ -27,6 +27,8 @@ pub enum Strategy {
     GreedyBestFirst,
     /// Iterative Diving Search: depth-first with heuristic jump-back.
     Ids,
+    /// Cascade: IDS first for a quick solution, then weighted A* bounded by IDS cost.
+    Cascade,
 }
 
 /// Result of a successful solve.
@@ -164,6 +166,42 @@ impl MoveSolver {
             Strategy::Ids => {
                 let mut f = IdsFrontier::new(heuristic_fn);
                 frontier::run_search(root, goal, &expander, &mut f, max_expansions, None)
+            }
+            Strategy::Cascade => {
+                // Phase 1: IDS for a quick solution.
+                let mut ids_f = IdsFrontier::new(heuristic_fn);
+                let ids_result = frontier::run_search(
+                    root.clone(),
+                    goal,
+                    &expander,
+                    &mut ids_f,
+                    max_expansions,
+                    None,
+                );
+
+                match ids_result.goal {
+                    None => ids_result,
+                    Some(ids_goal_id) => {
+                        let ids_cost = ids_result.graph.g_score(ids_goal_id);
+
+                        // Phase 2: Weighted A* bounded by IDS cost.
+                        let max_depth = Some((ids_cost as u32).saturating_sub(1));
+                        let mut astar_f = PriorityFrontier::astar(heuristic_fn, weight);
+                        let astar_result = frontier::run_search(
+                            root,
+                            goal,
+                            &expander,
+                            &mut astar_f,
+                            max_expansions,
+                            max_depth,
+                        );
+                        if astar_result.goal.is_some() {
+                            astar_result
+                        } else {
+                            ids_result
+                        }
+                    }
+                }
             }
         };
 
@@ -414,5 +452,40 @@ mod tests {
         assert_eq!(result.cost, 1.0);
         assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
         assert_eq!(result.goal_config.location_of(1), Some(loc(0, 6)));
+    }
+
+    #[test]
+    fn cascade_finds_equal_or_better_than_ids() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        // Multi-step problem: word 0 site 0 → word 1 site 5.
+        let ids_result = solver
+            .solve(
+                [(0, loc(0, 0))],
+                [(0, loc(1, 5))],
+                std::iter::empty(),
+                Some(1000),
+                Strategy::Ids,
+                3,
+                3,
+                1.0,
+                0.0,
+            )
+            .unwrap();
+
+        let cascade_result = solver
+            .solve(
+                [(0, loc(0, 0))],
+                [(0, loc(1, 5))],
+                std::iter::empty(),
+                Some(1000),
+                Strategy::Cascade,
+                3,
+                3,
+                1.0,
+                0.0,
+            )
+            .unwrap();
+
+        assert!(cascade_result.cost <= ids_result.cost);
     }
 }
