@@ -141,9 +141,13 @@ impl PyMoveSolver {
     ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
     ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
-    ///     strategy: Search strategy: "astar" (default), "dfs", "bfs", "greedy".
+    ///     strategy: Search strategy: "astar", "dfs", "bfs", "greedy", "ids", "cascade".
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
+    ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
+    ///     mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
+    ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
+    ///     free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
     ///
     /// Returns:
     ///     SolveResult if a solution is found, None otherwise.
