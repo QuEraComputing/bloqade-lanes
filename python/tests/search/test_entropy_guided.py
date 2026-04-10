@@ -96,7 +96,9 @@ def test_sequential_fallback_triggers_on_max_expansions(monkeypatch):
     tree = _make_tree()
     target = {0: LocationAddress(9, 0)}
     fallback_called = {"value": False}
-    candidate = frozenset({SiteLaneAddress(0, 0, 0)})
+    source_loc = tree.root.configuration[0]
+    first_lane = next(iter(tree.outgoing_lanes(source_loc)))
+    candidate = frozenset({first_lane})
 
     def fake_fallback(_self, _current_node):  # type: ignore[no-untyped-def]
         fallback_called["value"] = True
@@ -458,7 +460,9 @@ def test_ancestor_revisit_maps_to_state_seen_with_real_tree_outcome():
         def generate(self, node, tree):  # type: ignore[no-untyped-def]
             loc = node.configuration[0]
             if loc == LocationAddress(0, 0):
-                yield frozenset({SiteLaneAddress(0, 0, 0)})
+                first_lane = next(iter(tree.outgoing_lanes(loc)), None)
+                if first_lane is not None:
+                    yield frozenset({first_lane})
                 return
             for lane in tree.valid_lanes(node, direction=Direction.BACKWARD):
                 src, dst = tree.arch_spec.get_endpoints(lane)
@@ -620,8 +624,12 @@ def test_multi_goal_uses_score_buffer_for_resume(monkeypatch):
         params=SearchParams(max_goal_candidates=2),
     )
 
-    c1 = frozenset({SiteLaneAddress(0, 0, 0)})
-    c2 = frozenset({SiteLaneAddress(1, 0, 0)})
+    q0_loc = tree.root.configuration[0]
+    q1_loc = tree.root.configuration[1]
+    lane_q0 = next(iter(tree.outgoing_lanes(q0_loc)))
+    lane_q1 = next(iter(tree.outgoing_lanes(q1_loc)))
+    c1 = frozenset({lane_q0})
+    c2 = frozenset({lane_q1})
     candidate_sequence = iter([c1, c2])
 
     def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
