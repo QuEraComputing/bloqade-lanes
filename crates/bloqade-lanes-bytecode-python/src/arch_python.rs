@@ -14,7 +14,7 @@ use crate::validation::{validate_field, validate_vec};
     eq_int,
     hash,
     frozen,
-    module = "bloqade.lanes.bytecode"
+    module = "bloqade.lanes.bytecode._native"
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyDirection {
@@ -59,7 +59,7 @@ impl PyDirection {
     eq_int,
     hash,
     frozen,
-    module = "bloqade.lanes.bytecode"
+    module = "bloqade.lanes.bytecode._native"
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PyMoveType {
@@ -98,7 +98,11 @@ impl PyMoveType {
 
 // ── LocationAddr ──
 
-#[pyclass(name = "LocationAddress", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "LocationAddress",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyLocationAddr {
     pub(crate) inner: rs_addr::LocationAddr,
@@ -154,7 +158,11 @@ impl PyLocationAddr {
 
 // ── LaneAddr ──
 
-#[pyclass(name = "LaneAddress", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "LaneAddress",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyLaneAddr {
     pub(crate) inner: rs_addr::LaneAddr,
@@ -247,7 +255,11 @@ impl PyLaneAddr {
 
 // ── ZoneAddr ──
 
-#[pyclass(name = "ZoneAddress", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "ZoneAddress",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyZoneAddr {
     pub(crate) inner: rs_addr::ZoneAddr,
@@ -294,7 +306,7 @@ impl PyZoneAddr {
 
 // ── Grid ──
 
-#[pyclass(name = "Grid", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Grid", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyGrid {
     pub(crate) inner: rs::Grid,
@@ -406,7 +418,7 @@ impl PyGrid {
 
 // ── Word ──
 
-#[pyclass(name = "Word", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Word", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyWord {
     pub(crate) inner: rs::Word,
@@ -465,7 +477,7 @@ impl PyWord {
 
 // ── Geometry ──
 
-#[pyclass(name = "Geometry", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Geometry", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyGeometry {
     pub(crate) inner: rs::Geometry,
@@ -509,7 +521,7 @@ impl PyGeometry {
 
 // ── Bus ──
 
-#[pyclass(name = "Bus", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Bus", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyBus {
     pub(crate) inner: rs::Bus,
@@ -568,7 +580,7 @@ impl PyBus {
 
 // ── Buses ──
 
-#[pyclass(name = "Buses", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Buses", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyBuses {
     pub(crate) inner: rs::Buses,
@@ -615,7 +627,7 @@ impl PyBuses {
 
 // ── Zone ──
 
-#[pyclass(name = "Zone", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "Zone", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyZone {
     pub(crate) inner: rs::Zone,
@@ -643,7 +655,11 @@ impl PyZone {
 
 // ── TransportPath ──
 
-#[pyclass(name = "TransportPath", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(
+    name = "TransportPath",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyTransportPath {
     pub(crate) inner: rs::TransportPath,
@@ -704,7 +720,7 @@ impl PyTransportPath {
 
 // ── ArchSpec ──
 
-#[pyclass(name = "ArchSpec", frozen, module = "bloqade.lanes.bytecode.arch")]
+#[pyclass(name = "ArchSpec", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyArchSpec {
     pub(crate) inner: rs::ArchSpec,
