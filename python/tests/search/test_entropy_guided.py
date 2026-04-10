@@ -1,7 +1,12 @@
 """Tests for entropy_guided_search traversal."""
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import Direction, LocationAddress, SiteLaneAddress
+from bloqade.lanes.layout import (
+    Direction,
+    LocationAddress,
+    SiteLaneAddress,
+    WordLaneAddress,
+)
 from bloqade.lanes.search.configuration import ConfigurationNode
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.traversal.entropy_guided import (
@@ -183,33 +188,6 @@ def test_sequential_fallback_triggered_on_max_depth():
     )
     assert result.goal_node is not None
     assert result.goal_node.configuration[0] == LocationAddress(1, 0)
-
-
-def test_root_deadlock_does_not_trigger_fallback_without_limits(monkeypatch):
-    tree = _make_tree()
-    target = {0: LocationAddress(0, 9)}
-    fallback_called = {"value": False}
-
-    def fake_fallback(_self, _current_node):  # type: ignore[no-untyped-def]
-        fallback_called["value"] = True
-        return SearchResult(nodes_expanded=0, max_depth_reached=0, goal_nodes=())
-
-    monkeypatch.setattr(EntropyGuidedSearch, "_sequential_fallback", fake_fallback)
-    monkeypatch.setattr(
-        EntropyGuidedSearch,
-        "_get_next_candidate",
-        lambda _self, _sn, _node, _generator: None,
-    )
-
-    result = entropy_guided_search(
-        tree,
-        target,
-        placement_goal(target),
-        params=SearchParams(e_max=2, delta_e=1),
-    )
-
-    assert fallback_called["value"] is False
-    assert result.goal_nodes == ()
 
 
 def test_root_deadlock_does_not_trigger_fallback_without_limits(monkeypatch):
@@ -514,8 +492,8 @@ def test_collects_multiple_goal_nodes(monkeypatch):
     tree = _make_tree()
     target = {0: LocationAddress(1, 0)}
     goal = placement_goal(target)
-    c1 = frozenset({SiteLaneAddress(0, 0, 0)})
-    c2 = frozenset({SiteLaneAddress(1, 0, 0)})
+    c1 = frozenset({WordLaneAddress(0, 0, 0)})
+    c2 = frozenset({WordLaneAddress(0, 0, 1)})
     candidate_sequence = iter([c1, c2])
 
     def fake_next_candidate(_self, _sn, _node, _generator):  # type: ignore[no-untyped-def]
@@ -551,7 +529,7 @@ def test_collects_multiple_goal_nodes(monkeypatch):
 
 def test_score_resume_buffer_replaces_lowest_when_higher_score_arrives(monkeypatch):
     tree = _make_tree()
-    target = {0: LocationAddress(0, 1)}
+    target = {0: LocationAddress(1, 0)}
     search = EntropyGuidedSearch(tree, target, placement_goal(target))
     capacity = 2
 

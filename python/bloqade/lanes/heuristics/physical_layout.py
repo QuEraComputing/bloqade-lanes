@@ -33,24 +33,21 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
 
     KAHIP_MODE_ECO = 1
 
-    def _single_entangling_zone_pairs(self) -> tuple[tuple[int, int], ...]:
-        zones = self.arch_spec.entangling_zones
-        if len(zones) != 1:
+    def _validate_single_zone(self) -> None:
+        if len(self.arch_spec.zones) != 1:
             raise ValueError(
                 "PhysicalLayoutHeuristicGraphPartitionCenterOut expects exactly one "
-                f"entangling zone, got {len(zones)}."
+                f"entangling zone, got {len(self.arch_spec.zones)}."
             )
-        return zones[0]
 
     @property
     def home_word_ids(self) -> tuple[int, ...]:
         """Home words for one-zone physical layout.
 
-        This heuristic is intentionally single-zone: it uses the first element
-        of each entangling pair in that zone as the home words.
+        Uses the arch-level home-word computation from zone entangling pairs.
         """
-        zone_pairs = self._single_entangling_zone_pairs()
-        return tuple(pair[0] for pair in zone_pairs)
+        self._validate_single_zone()
+        return tuple(sorted(self.arch_spec._home_words))
 
     @property
     def sites_per_partition(self) -> int:
@@ -247,6 +244,172 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
 
         return placed
 
+    def _site_distance_matrix(self) -> list[list[int]]:
+        """Site distance weighted toward index similarity and bus proximity."""
+        self._validate_single_zone()
+        n_sites = self.sites_per_partition
+        zone = self.arch_spec.zones[0]
+        adjacency: list[set[int]] = [set() for _ in range(n_sites)]
+        for bus in zone.site_buses:
+            for src, dst in zip(bus.src, bus.dst, strict=True):
+                if 0 <= src < n_sites and 0 <= dst < n_sites:
+                    adjacency[src].add(dst)
+                    adjacency[dst].add(src)
+
+        # Fall back to linear site distance when no site-bus edges exist.
+        if all(len(neighbors) == 0 for neighbors in adjacency):
+            return [
+                [abs(src - dst) for dst in range(n_sites)] for src in range(n_sites)
+            ]
+
+        distance: list[list[int]] = [
+            [n_sites for _ in range(n_sites)] for _ in range(n_sites)
+        ]
+        for src in range(n_sites):
+            distance[src][src] = 0
+            frontier = [src]
+            while frontier:
+                next_frontier: list[int] = []
+                for node in frontier:
+                    d = distance[src][node]
+                    for nbr in adjacency[node]:
+                        if d + 1 < distance[src][nbr]:
+                            distance[src][nbr] = d + 1
+                            next_frontier.append(nbr)
+                frontier = next_frontier
+
+        # Blend a strong site-index term with site-bus shortest-path proximity.
+        # This keeps "same site id across words" as the primary objective while
+        # still preferring closer points in the site-bus graph as a tie-breaker.
+        for src in range(n_sites):
+            for dst in range(n_sites):
+                bus_distance = distance[src][dst]
+                if bus_distance >= n_sites:
+                    bus_distance = abs(src - dst)
+                distance[src][dst] = (100 * abs(src - dst)) + bus_distance
+        return distance
+
+    def _candidate_slots(
+        self, k_words: int, target_sizes: tuple[int, ...]
+    ) -> list[layout.LocationAddress]:
+        home_words = self.home_word_ids
+        slots: list[layout.LocationAddress] = []
+        for word_idx in range(k_words):
+            word_id = home_words[word_idx]
+            for site_id in range(target_sizes[word_idx]):
+                slots.append(layout.LocationAddress(word_id, site_id, 0))
+        return slots
+
+    def _global_site_min_cost_assignment(
+        self,
+        qubits: tuple[int, ...],
+        weighted_edges: dict[tuple[int, int], int],
+        q_to_node: dict[int, int],
+        slots: list[layout.LocationAddress],
+    ) -> dict[int, layout.LocationAddress]:
+        if len(qubits) != len(slots):
+            raise RuntimeError("Qubit count and slot count must match for assignment.")
+
+        site_distance = self._site_distance_matrix()
+        qids = tuple(sorted(qubits))
+        node_to_q = {node: qid for qid, node in q_to_node.items()}
+
+        edge_weight_by_q: dict[int, dict[int, int]] = {qid: {} for qid in qids}
+        for (u, v), weight in weighted_edges.items():
+            q_u = node_to_q[u]
+            q_v = node_to_q[v]
+            edge_weight_by_q[q_u][q_v] = weight
+            edge_weight_by_q[q_v][q_u] = weight
+
+        weighted_degree = {qid: sum(edge_weight_by_q[qid].values()) for qid in qids}
+        unweighted_degree = {qid: len(edge_weight_by_q[qid]) for qid in qids}
+        qubit_order = sorted(
+            qids,
+            key=lambda qid: (
+                weighted_degree[qid],
+                unweighted_degree[qid],
+                -qid,
+            ),
+            reverse=True,
+        )
+
+        slot_centrality = []
+        for i, slot in enumerate(slots):
+            centrality = sum(
+                site_distance[slot.site_id][other.site_id] for other in slots
+            )
+            slot_centrality.append((centrality, slot.site_id, slot.word_id, i))
+        slot_order = [idx for _, _, _, idx in sorted(slot_centrality)]
+
+        q_to_slot_idx: dict[int, int] = {}
+        used_slots: set[int] = set()
+        first_q = qubit_order[0]
+        first_slot = slot_order[0]
+        q_to_slot_idx[first_q] = first_slot
+        used_slots.add(first_slot)
+
+        for qid in qubit_order[1:]:
+            best_slot_idx: int | None = None
+            best_key: tuple[float, int, int, int] | None = None
+            for slot_idx in slot_order:
+                if slot_idx in used_slots:
+                    continue
+                slot = slots[slot_idx]
+                incremental = 0.0
+                for other_qid, other_slot_idx in q_to_slot_idx.items():
+                    w = edge_weight_by_q[qid].get(other_qid, 0)
+                    if w == 0:
+                        continue
+                    other_slot = slots[other_slot_idx]
+                    incremental += w * site_distance[slot.site_id][other_slot.site_id]
+                key = (incremental, slot.site_id, slot.word_id, slot_idx)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_slot_idx = slot_idx
+            assert best_slot_idx is not None
+            q_to_slot_idx[qid] = best_slot_idx
+            used_slots.add(best_slot_idx)
+
+        def swap_delta(qid_a: int, qid_b: int) -> int:
+            slot_a = slots[q_to_slot_idx[qid_a]]
+            slot_b = slots[q_to_slot_idx[qid_b]]
+            delta = 0
+            for other_qid in qids:
+                if other_qid == qid_a or other_qid == qid_b:
+                    continue
+                slot_other = slots[q_to_slot_idx[other_qid]]
+                w_a = edge_weight_by_q[qid_a].get(other_qid, 0)
+                w_b = edge_weight_by_q[qid_b].get(other_qid, 0)
+                if w_a:
+                    delta += w_a * (
+                        site_distance[slot_b.site_id][slot_other.site_id]
+                        - site_distance[slot_a.site_id][slot_other.site_id]
+                    )
+                if w_b:
+                    delta += w_b * (
+                        site_distance[slot_a.site_id][slot_other.site_id]
+                        - site_distance[slot_b.site_id][slot_other.site_id]
+                    )
+            return delta
+
+        # Deterministic hill-climbing over pairwise swaps.
+        max_passes = max(1, len(qids))
+        for _ in range(max_passes):
+            improved = False
+            for i, qid_a in enumerate(qids):
+                for qid_b in qids[i + 1 :]:
+                    delta = swap_delta(qid_a, qid_b)
+                    if delta < 0:
+                        q_to_slot_idx[qid_a], q_to_slot_idx[qid_b] = (
+                            q_to_slot_idx[qid_b],
+                            q_to_slot_idx[qid_a],
+                        )
+                        improved = True
+            if not improved:
+                break
+
+        return {qid: slots[q_to_slot_idx[qid]] for qid in qids}
+
     def _compute_layout_from_cz_layers(
         self,
         qubits: tuple[int, ...],
@@ -255,77 +418,13 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         k_words = self._word_count(len(qubits))
         target_sizes = self._target_block_sizes(len(qubits), k_words)
         q_to_node, weighted_edges = self._build_weighted_graph(qubits, cz_layers)
-
-        q_to_word_raw = self._partition_words(qubits, cz_layers, k_words, target_sizes)
-        q_to_word = self._left_to_right_relabel_words(q_to_word_raw)
-
-        members_by_word: dict[int, list[int]] = defaultdict(list)
-        for qid in sorted(qubits):
-            members_by_word[q_to_word[qid]].append(qid)
-
-        # Enforce exact left-to-right capacities after partition assignment.
-        capacities = {word_id: target_sizes[word_id] for word_id in range(k_words)}
-        for word_id in range(k_words):
-            members_by_word.setdefault(word_id, [])
-
-        # Pass 1: spill any overflow to the right where possible.
-        for src_word in range(k_words):
-            while len(members_by_word[src_word]) > capacities[src_word]:
-                spill_qid = max(members_by_word[src_word])
-                members_by_word[src_word].remove(spill_qid)
-                moved = False
-                for dst_word in range(src_word + 1, k_words):
-                    if len(members_by_word[dst_word]) < capacities[dst_word]:
-                        members_by_word[dst_word].append(spill_qid)
-                        moved = True
-                        break
-                if not moved:
-                    members_by_word[src_word].append(spill_qid)
-                    break
-
-        # Pass 2: backfill underfilled earlier words from later surplus words.
-        for dst_word in range(k_words):
-            while len(members_by_word[dst_word]) < capacities[dst_word]:
-                moved = False
-                for src_word in range(k_words - 1, dst_word, -1):
-                    if len(members_by_word[src_word]) > capacities[src_word]:
-                        spill_qid = max(members_by_word[src_word])
-                        members_by_word[src_word].remove(spill_qid)
-                        members_by_word[dst_word].append(spill_qid)
-                        moved = True
-                        break
-                if not moved:
-                    break
-
-        if any(len(members_by_word[w]) != capacities[w] for w in range(k_words)):
-            raise RuntimeError(
-                "Could not enforce target left-to-right fill capacities for "
-                "physical initial layout."
-            )
-
-        # Map partition indices to physical home word IDs.
-        home_words = self.home_word_ids
-
-        q_to_location: dict[int, layout.LocationAddress] = {}
-        for word_idx in range(k_words):
-            physical_word_id = home_words[word_idx]
-            members = members_by_word[word_idx]
-            is_last_partial_word = (
-                word_idx == (k_words - 1)
-                and capacities[word_idx] < self.sites_per_partition
-            )
-            if is_last_partial_word:
-                sites = self._sites_bottom_up(physical_word_id)
-            else:
-                sites = self._sites_center_out(physical_word_id)
-            assigned = self._within_word_placement(
-                members,
-                q_to_node=q_to_node,
-                weighted_edges=weighted_edges,
-                sites=sites,
-            )
-            q_to_location.update(assigned)
-
+        slots = self._candidate_slots(k_words, target_sizes)
+        q_to_location = self._global_site_min_cost_assignment(
+            qubits=qubits,
+            weighted_edges=weighted_edges,
+            q_to_node=q_to_node,
+            slots=slots,
+        )
         return tuple(q_to_location[qid] for qid in qubits)
 
     def compute_layout(

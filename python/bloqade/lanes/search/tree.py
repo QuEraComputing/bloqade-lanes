@@ -221,17 +221,6 @@ class ConfigurationTree:
             ancestor = ancestor.parent
         return None
 
-    def _ancestor_with_config_key(
-        self, node: ConfigurationNode, target_key: object
-    ) -> ConfigurationNode | None:
-        """Return matching ancestor on this branch for a configuration key."""
-        ancestor: ConfigurationNode | None = node
-        while ancestor is not None:
-            if ancestor.config_key == target_key:
-                return ancestor
-            ancestor = ancestor.parent
-        return None
-
     def valid_lanes(
         self,
         node: ConfigurationNode,
