@@ -225,7 +225,8 @@ def test_generate_qubit_not_in_target_is_ignored():
     for ms in moves:
         for lane in ms:
             src, _ = tree.arch_spec.get_endpoints(lane)
-            assert src == LocationAddress(0, 0)
+            # Only qubit 0 (zone 0, word 0) should be moving
+            assert src.word_id == 0
 
 
 def test_generate_single_atom():
@@ -261,11 +262,12 @@ def test_generate_no_destination_collisions():
 
 
 def test_generate_multiple_atoms_can_merge():
-    """Two atoms in the same word that can share a site bus move should merge."""
-    # Place both atoms in the same word — site bus moves operate within a word
-    # and can merge atoms that share the same bus pattern.
-    placement = {0: LocationAddress(0, 0), 1: LocationAddress(0, 1)}
-    target = {0: LocationAddress(2, 0), 1: LocationAddress(2, 1)}
+    """Two atoms sharing a word bus should merge into a single move set."""
+    # Place atoms at words that are both sources for the same word bus.
+    # Word bus 0 has src=[0,4,...] dst=[1,5,...], so atoms at word 0 and 4
+    # can be moved together to word 1 and 5 respectively.
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(4, 0)}
+    target = {0: LocationAddress(1, 0), 1: LocationAddress(5, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
 

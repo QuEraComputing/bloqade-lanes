@@ -1,9 +1,10 @@
 .version 1
 ; Invalid: word_bus move with site_id not in sites_with_word_buses
+; LaneAddr: data0=[word:16][site:16], data1=[dir:1][mt:2][zone_id:8][pad:5][bus:16]
+; mt=1 (word_bus): data1 = (1 << 29) = 0x20000000
 ; sites_with_word_buses: [5,6,7,8,9] -- site 0 is NOT in the list
-; mt=1 (word_bus) -> bit 30 of data1 -> data1=0x40000000
 
-const_lane 0x4000000000000000   ; fwd, word_bus, word 0, site 0, bus 0
-const_lane 0x4000000000000001   ; fwd, word_bus, word 0, site 1, bus 0
+const_lane 0x2000000000000000   ; fwd, word_bus, zone 0, word 0, site 0, bus 0
+const_lane 0x2000000000000001   ; fwd, word_bus, zone 0, word 0, site 1, bus 0
 move 2
 halt

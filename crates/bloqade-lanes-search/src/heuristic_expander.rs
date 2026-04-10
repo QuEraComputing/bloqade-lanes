@@ -29,9 +29,9 @@ use crate::lane_index::LaneIndex;
 #[derive(Debug)]
 pub struct HeuristicExpander<'a> {
     index: &'a LaneIndex,
-    blocked: HashSet<u32>,
+    blocked: HashSet<u64>,
     /// (qubit_id, encoded_target_location)
-    targets: Vec<(u32, u32)>,
+    targets: Vec<(u32, u64)>,
     dist_table: &'a DistanceTable,
     /// Top bus options to keep per qubit.
     top_c: usize,
@@ -65,7 +65,7 @@ struct ScoredTriple {
     qubit_id: u32,
     score: i32, // d_now - d_after (can be negative)
     lane_encoded: u64,
-    dst_encoded: u32,
+    dst_encoded: u64,
 }
 
 impl Expander for HeuristicExpander<'_> {
@@ -79,7 +79,7 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 1: identify unresolved qubits.
-        let unresolved: Vec<(u32, u32, u32)> = self
+        let unresolved: Vec<(u32, u64, u64)> = self
             .targets
             .iter()
             .filter_map(|&(qid, target_enc)| {
@@ -189,7 +189,7 @@ impl Expander for HeuristicExpander<'_> {
             for start in 0..n {
                 let mut lanes: Vec<u64> = Vec::new();
                 let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
-                let mut used_dsts: HashSet<u32> = HashSet::new();
+                let mut used_dsts: HashSet<u64> = HashSet::new();
                 let mut total_score: i32 = 0;
 
                 // Greedy: start from `start`, then add remaining in order.
@@ -273,7 +273,7 @@ mod tests {
     }
 
     fn make_table(targets: &[(u32, LocationAddr)], index: &LaneIndex) -> DistanceTable {
-        let locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         DistanceTable::new(&locs, index)
     }
 
@@ -419,7 +419,7 @@ mod tests {
 
         let index = make_index();
         let targets = vec![(0u32, loc(0, 5))];
-        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
@@ -448,7 +448,7 @@ mod tests {
         let index = make_index();
         // Word 0 site 0 → word 1 site 5: 2 hops.
         let targets = vec![(0u32, loc(1, 5))];
-        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
@@ -479,7 +479,7 @@ mod tests {
 
         let index = make_index();
         let targets = vec![(0u32, loc(0, 5)), (1, loc(0, 0))];
-        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
@@ -510,7 +510,7 @@ mod tests {
 
         let index = make_index();
         let targets = vec![(0u32, loc(0, 5)), (1, loc(1, 5))];
-        let target_locs: Vec<u32> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 

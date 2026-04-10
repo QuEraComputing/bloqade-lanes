@@ -37,15 +37,10 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
     def home_word_ids(self) -> tuple[int, ...]:
         """Word IDs available for qubit placement (home words of entangling pairs).
 
-        For architectures with inter-word CZ (entangling_zones contains word
-        pairs), returns the first word of each pair — the "home" word.  The
-        second word in each pair is reserved as the CZ partner and is kept
-        empty by the layout.
+        Uses the pre-computed _home_words set which correctly identifies
+        home words from entangling zone pairs.
         """
-        if not self.arch_spec.entangling_zones:
-            return tuple(range(len(self.arch_spec.words)))
-        zone = self.arch_spec.entangling_zones[0]
-        return tuple(pair[0] for pair in zone)
+        return tuple(sorted(self.arch_spec._home_words))
 
     @property
     def sites_per_partition(self) -> int:
@@ -165,8 +160,9 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         return {qid: remap[wid] for qid, wid in q_to_word.items()}
 
     def _sites_center_out(self, word_id: int) -> list[layout.LocationAddress]:
+        # NOTE: assumes single-zone architecture (zone_id=0).
         n = self.sites_per_partition
-        sites = [layout.LocationAddress(word_id, site_id) for site_id in range(n)]
+        sites = [layout.LocationAddress(word_id, site_id, 0) for site_id in range(n)]
         center = (n - 1) / 2.0
         return sorted(
             sites,
@@ -174,8 +170,9 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         )
 
     def _sites_bottom_up(self, word_id: int) -> list[layout.LocationAddress]:
+        # NOTE: assumes single-zone architecture (zone_id=0).
         return [
-            layout.LocationAddress(word_id, site_id)
+            layout.LocationAddress(word_id, site_id, 0)
             for site_id in range(self.sites_per_partition)
         ]
 

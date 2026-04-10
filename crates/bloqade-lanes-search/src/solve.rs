@@ -133,7 +133,7 @@ impl MoveSolver {
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
 
         // Build goal predicate.
-        let target_encoded: Vec<(u32, u32)> =
+        let target_encoded: Vec<(u32, u64)> =
             target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
         let goal = |config: &Config| -> bool {
             target_encoded.iter().all(|&(qid, target_enc)| {
@@ -144,7 +144,7 @@ impl MoveSolver {
         };
 
         // Build distance table (shared between heuristic and expander).
-        let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
         let dist_table = DistanceTable::new(&target_locs, &self.index);
 
         // Build heuristic.

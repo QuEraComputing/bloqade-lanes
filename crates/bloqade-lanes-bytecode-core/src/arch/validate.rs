@@ -15,21 +15,33 @@ use super::types::ArchSpec;
 /// can be collected in a single validation pass.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ArchSpecError {
-    /// Zone configuration error (zone 0 coverage, measurement/entangling zone IDs).
-    #[error("{message}")]
-    Zone { message: String },
+    /// Structural error (grid dimensions, word consistency, minimum counts).
+    #[error("{0}")]
+    Structure(String),
 
-    /// Word geometry error (site counts, grid indices, grid shape, non-finite values).
-    #[error("{message}")]
-    Geometry { message: String },
+    /// Per-zone bus validation error (site/word buses, membership lists).
+    #[error("{0}")]
+    ZoneBus(String),
 
-    /// Bus topology error (site/word bus structure, membership lists).
-    #[error("{message}")]
-    Bus { message: String },
+    /// Inter-zone bus validation error (zone bus entries).
+    #[error("{0}")]
+    InterZoneBus(String),
 
-    /// Transport path error (invalid lanes, waypoint counts, endpoint mismatches).
-    #[error("{message}")]
-    Path { message: String },
+    /// Grid invariant error (bus src/dst not rectangular).
+    #[error("{0}")]
+    GridInvariant(String),
+
+    /// Entangling zone pair validation error.
+    #[error("{0}")]
+    EntanglingPair(String),
+
+    /// Mode validation error.
+    #[error("{0}")]
+    Mode(String),
+
+    /// Transport path validation error.
+    #[error("{0}")]
+    Path(String),
 }
 
 impl ArchSpec {
@@ -38,45 +50,33 @@ impl ArchSpec {
     pub fn validate(&self) -> Result<(), Vec<ArchSpecError>> {
         let mut errors = Vec::new();
 
-        let num_words = self.geometry.words.len() as u32;
-        let num_zones = self.zones.len() as u32;
-        let sites_per_word = self.geometry.sites_per_word;
+        let num_words = self.words.len();
+        let num_zones = self.zones.len();
+        let sites_per_word = self.sites_per_word();
 
-        // Rule 1: Zone 0 must include all words
-        check_zone0_includes_all_words(self, num_words, &mut errors);
+        // Structural invariants
+        check_minimum_counts(self, &mut errors);
+        check_uniform_grid_dimensions(self, &mut errors);
+        check_uniform_word_site_counts(self, &mut errors);
+        check_word_site_indices(self, &mut errors);
 
-        // Rule 2: measurement_mode_zones[0] must be zone 0
-        check_measurement_mode_first_is_zone0(self, &mut errors);
+        // Per-zone bus and entangling pair validation
+        for (zone_idx, zone) in self.zones.iter().enumerate() {
+            check_zone_words_with_site_buses(zone_idx, zone, num_words, &mut errors);
+            check_zone_sites_with_word_buses(zone_idx, zone, sites_per_word, &mut errors);
+            check_zone_site_buses(zone_idx, zone, sites_per_word, &mut errors);
+            check_zone_word_buses(zone_idx, zone, num_words, &mut errors);
+            check_zone_entangling_pairs(zone_idx, zone, num_words, &mut errors);
+        }
 
-        // Rule 3a: Entangling zones word pairs are valid
-        check_entangling_zones_pairs(self, num_words, &mut errors);
+        // Inter-zone bus validation
+        check_zone_buses(self, num_zones, num_words, &mut errors);
 
-        // Rule 3b: All measurement_mode_zones IDs must be valid zone indices
-        check_measurement_mode_zones_valid(self, num_zones, &mut errors);
+        // Mode validation
+        check_modes(self, num_zones, num_words, sites_per_word, &mut errors);
 
-        // Rules 4, 5a, 5b: Word site counts and grid index bounds
-        check_word_sites(self, &mut errors);
-
-        // Rules 6, 7, 8: Site bus validation
-        check_site_buses(self, sites_per_word, num_words, &mut errors);
-
-        // Rules 9, 10: Word bus validation
-        check_word_buses(self, num_words, &mut errors);
-
-        // Rule: All words must have the same grid shape
-        check_consistent_grid_shape(self, &mut errors);
-
-        // Rule 11: words_with_site_buses must be valid word indices
-        check_words_with_site_buses(self, num_words, &mut errors);
-
-        // Rule 12: sites_with_word_buses must be valid site indices
-        check_sites_with_word_buses(self, sites_per_word, &mut errors);
-
-        // Rule: path lane addresses must be valid
-        check_path_lanes(self, &mut errors);
-
-        // Rule: blockade_radius must be finite and non-negative
-        check_blockade_radius(self, &mut errors);
+        // Path validation
+        check_paths(self, num_zones, &mut errors);
 
         if errors.is_empty() {
             Ok(())
@@ -86,711 +86,778 @@ impl ArchSpec {
     }
 }
 
-fn check_zone0_includes_all_words(
-    spec: &ArchSpec,
-    num_words: u32,
+/// At least one zone and one word must exist.
+fn check_minimum_counts(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    if spec.zones.is_empty() {
+        errors.push(ArchSpecError::Structure(
+            "at least one zone must exist".into(),
+        ));
+    }
+    if spec.words.is_empty() {
+        errors.push(ArchSpecError::Structure(
+            "at least one word must exist".into(),
+        ));
+    }
+}
+
+/// All zones must have the same grid dimensions (same num_x and num_y).
+fn check_uniform_grid_dimensions(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    if let Some(first_zone) = spec.zones.first() {
+        let ref_x = first_zone.grid.num_x();
+        let ref_y = first_zone.grid.num_y();
+        for (idx, zone) in spec.zones.iter().enumerate().skip(1) {
+            let zx = zone.grid.num_x();
+            let zy = zone.grid.num_y();
+            if zx != ref_x || zy != ref_y {
+                errors.push(ArchSpecError::Structure(format!(
+                    "zone {} grid dimensions ({}x{}) differ from zone 0 ({}x{})",
+                    idx, zx, zy, ref_x, ref_y
+                )));
+            }
+        }
+    }
+}
+
+/// All words must have the same number of sites.
+fn check_uniform_word_site_counts(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    if let Some(first_word) = spec.words.first() {
+        let ref_count = first_word.sites.len();
+        for (idx, word) in spec.words.iter().enumerate().skip(1) {
+            if word.sites.len() != ref_count {
+                errors.push(ArchSpecError::Structure(format!(
+                    "word {} has {} sites, expected {} (same as word 0)",
+                    idx,
+                    word.sites.len(),
+                    ref_count
+                )));
+            }
+        }
+    }
+}
+
+/// Word site indices must be within the grid dimensions of every zone.
+/// For each site [x, y]: x < grid.num_x() and y < grid.num_y().
+fn check_word_site_indices(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    // Use zone 0's grid as the reference (uniform dimensions already checked).
+    let (grid_x, grid_y) = match spec.zones.first() {
+        Some(z) => (z.grid.num_x(), z.grid.num_y()),
+        None => return, // no zones → nothing to check
+    };
+
+    for (word_idx, word) in spec.words.iter().enumerate() {
+        for (site_idx, site) in word.sites.iter().enumerate() {
+            let x = site[0] as usize;
+            let y = site[1] as usize;
+            if x >= grid_x {
+                errors.push(ArchSpecError::Structure(format!(
+                    "word {}, site {}: x index {} out of range (grid has {} x-positions)",
+                    word_idx, site_idx, site[0], grid_x
+                )));
+            }
+            if y >= grid_y {
+                errors.push(ArchSpecError::Structure(format!(
+                    "word {}, site {}: y index {} out of range (grid has {} y-positions)",
+                    word_idx, site_idx, site[1], grid_y
+                )));
+            }
+        }
+    }
+}
+
+// --- Per-zone bus validation ---
+
+use super::types::Zone;
+
+/// `words_with_site_buses` entries must be < number of words.
+fn check_zone_words_with_site_buses(
+    zone_idx: usize,
+    zone: &Zone,
+    num_words: usize,
     errors: &mut Vec<ArchSpecError>,
 ) {
-    if let Some(zone0) = spec.zones.first() {
-        let zone0_words: HashSet<u32> = zone0.words.iter().copied().collect();
-        let all_word_ids: HashSet<u32> = (0..num_words).collect();
-        let mut missing: Vec<u32> = all_word_ids.difference(&zone0_words).copied().collect();
-        missing.sort_unstable();
-        if !missing.is_empty() {
-            errors.push(ArchSpecError::Zone {
-                message: format!(
-                    "zone 0 must include all words: missing word IDs {:?}",
-                    missing
-                ),
-            });
+    for &wid in &zone.words_with_site_buses {
+        if wid as usize >= num_words {
+            errors.push(ArchSpecError::ZoneBus(format!(
+                "zone {}: words_with_site_buses contains invalid word ID {}",
+                zone_idx, wid
+            )));
         }
     }
 }
 
-fn check_measurement_mode_first_is_zone0(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
-    if spec.measurement_mode_zones.is_empty() {
-        errors.push(ArchSpecError::Zone {
-            message: "measurement_mode_zones must not be empty".into(),
-        });
-        return;
-    }
-    if spec.measurement_mode_zones[0] != 0 {
-        errors.push(ArchSpecError::Zone {
-            message: format!(
-                "measurement_mode_zones[0] must be zone 0, got {}",
-                spec.measurement_mode_zones[0]
-            ),
-        });
-    }
-}
-
-fn check_entangling_zones_pairs(spec: &ArchSpec, num_words: u32, errors: &mut Vec<ArchSpecError>) {
-    let mut seen_words: HashSet<u32> = HashSet::new();
-    for (zone_idx, zone_pairs) in spec.entangling_zones.iter().enumerate() {
-        for pair in zone_pairs {
-            let [w_a, w_b] = *pair;
-            if w_a >= num_words {
-                errors.push(ArchSpecError::Zone {
-                    message: format!("entangling_zones[{}]: invalid word ID {}", zone_idx, w_a),
-                });
-            }
-            if w_b >= num_words {
-                errors.push(ArchSpecError::Zone {
-                    message: format!("entangling_zones[{}]: invalid word ID {}", zone_idx, w_b),
-                });
-            }
-            if !seen_words.insert(w_a) {
-                errors.push(ArchSpecError::Zone {
-                    message: format!(
-                        "entangling_zones[{}]: word {} appears in multiple pairs",
-                        zone_idx, w_a
-                    ),
-                });
-            }
-            if !seen_words.insert(w_b) {
-                errors.push(ArchSpecError::Zone {
-                    message: format!(
-                        "entangling_zones[{}]: word {} appears in multiple pairs",
-                        zone_idx, w_b
-                    ),
-                });
-            }
-        }
-    }
-}
-
-fn check_measurement_mode_zones_valid(
-    spec: &ArchSpec,
-    num_zones: u32,
+/// `sites_with_word_buses` entries must be valid site indices.
+fn check_zone_sites_with_word_buses(
+    zone_idx: usize,
+    zone: &Zone,
+    sites_per_word: usize,
     errors: &mut Vec<ArchSpecError>,
 ) {
-    for &id in &spec.measurement_mode_zones {
-        if id >= num_zones {
-            errors.push(ArchSpecError::Zone {
-                message: format!("measurement_mode_zones contains invalid zone ID {}", id),
-            });
+    for &sid in &zone.sites_with_word_buses {
+        if sid as usize >= sites_per_word {
+            errors.push(ArchSpecError::ZoneBus(format!(
+                "zone {}: sites_with_word_buses contains invalid site index {} (sites_per_word={})",
+                zone_idx, sid, sites_per_word
+            )));
         }
     }
 }
 
-fn check_word_sites(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
-    let sites_per_word = spec.geometry.sites_per_word;
-    for (word_id, word) in spec.geometry.words.iter().enumerate() {
-        let word_id = word_id as u32;
-        if let Err(field) = word.positions.check_finite() {
-            errors.push(ArchSpecError::Geometry {
-                message: format!(
-                    "word {} grid contains non-finite value in {}",
-                    word_id, field
-                ),
-            });
-        }
-        if word.site_indices.len() != sites_per_word as usize {
-            errors.push(ArchSpecError::Geometry {
-                message: format!(
-                    "word {} has {} sites, expected {} (sites_per_word)",
-                    word_id,
-                    word.site_indices.len(),
-                    sites_per_word
-                ),
-            });
-        }
-        let x_len = word.positions.num_x();
-        let y_len = word.positions.num_y();
-        for (site_idx, site) in word.site_indices.iter().enumerate() {
-            let x_idx = site[0];
-            let y_idx = site[1];
-            if x_idx as usize >= x_len {
-                errors.push(ArchSpecError::Geometry {
-                    message: format!(
-                        "word {}, site {}: x_idx {} out of range (grid has num_x={})",
-                        word_id, site_idx, x_idx, x_len
-                    ),
-                });
-            }
-            if y_idx as usize >= y_len {
-                errors.push(ArchSpecError::Geometry {
-                    message: format!(
-                        "word {}, site {}: y_idx {} out of range (grid has num_y={})",
-                        word_id, site_idx, y_idx, y_len
-                    ),
-                });
-            }
-        }
-    }
-}
-
-fn check_site_buses(
-    spec: &ArchSpec,
-    sites_per_word: u32,
-    num_words: u32,
+/// Site bus src/dst must have same length and SiteRef values < sites_per_word.
+fn check_zone_site_buses(
+    zone_idx: usize,
+    zone: &Zone,
+    sites_per_word: usize,
     errors: &mut Vec<ArchSpecError>,
 ) {
-    for (bus_id, bus) in spec.buses.site_buses.iter().enumerate() {
-        let bus_id = bus_id as u32;
+    for (bus_idx, bus) in zone.site_buses.iter().enumerate() {
         if bus.src.len() != bus.dst.len() {
-            errors.push(ArchSpecError::Bus {
-                message: format!(
-                    "site_bus {}: src length ({}) != dst length ({})",
-                    bus_id,
-                    bus.src.len(),
-                    bus.dst.len()
-                ),
-            });
+            errors.push(ArchSpecError::ZoneBus(format!(
+                "zone {}, site_bus {}: src length ({}) != dst length ({})",
+                zone_idx,
+                bus_idx,
+                bus.src.len(),
+                bus.dst.len()
+            )));
         }
-        for &idx in bus.src.iter().chain(bus.dst.iter()) {
-            if idx >= sites_per_word {
-                errors.push(ArchSpecError::Bus {
-                    message: format!(
-                        "site_bus {}: site index {} >= sites_per_word ({})",
-                        bus_id, idx, sites_per_word
-                    ),
-                });
+        for (i, sref) in bus.src.iter().enumerate() {
+            if sref.0 as usize >= sites_per_word {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "zone {}, site_bus {}: src[{}] SiteRef({}) >= sites_per_word ({})",
+                    zone_idx, bus_idx, i, sref.0, sites_per_word
+                )));
             }
         }
-        let src_set: HashSet<u32> = bus.src.iter().copied().collect();
-        for &idx in &bus.dst {
-            if src_set.contains(&idx) {
-                errors.push(ArchSpecError::Bus {
-                    message: format!(
-                        "site_bus {}: src and dst overlap at site index {}",
-                        bus_id, idx
-                    ),
-                });
-            }
-        }
-        if let Some(ref words) = bus.words {
-            for &wid in words {
-                if wid >= num_words {
-                    errors.push(ArchSpecError::Bus {
-                        message: format!(
-                            "site_bus {}: invalid word ID {} in bus.words",
-                            bus_id, wid
-                        ),
-                    });
-                }
+        for (i, sref) in bus.dst.iter().enumerate() {
+            if sref.0 as usize >= sites_per_word {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "zone {}, site_bus {}: dst[{}] SiteRef({}) >= sites_per_word ({})",
+                    zone_idx, bus_idx, i, sref.0, sites_per_word
+                )));
             }
         }
     }
 }
 
-fn check_word_buses(spec: &ArchSpec, num_words: u32, errors: &mut Vec<ArchSpecError>) {
-    for (bus_id, bus) in spec.buses.word_buses.iter().enumerate() {
-        let bus_id = bus_id as u32;
+/// Word bus src/dst must have same length and WordRef values < number of words.
+fn check_zone_word_buses(
+    zone_idx: usize,
+    zone: &Zone,
+    num_words: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    for (bus_idx, bus) in zone.word_buses.iter().enumerate() {
         if bus.src.len() != bus.dst.len() {
-            errors.push(ArchSpecError::Bus {
-                message: format!(
-                    "word_bus {}: src length ({}) != dst length ({})",
-                    bus_id,
-                    bus.src.len(),
-                    bus.dst.len()
-                ),
-            });
+            errors.push(ArchSpecError::ZoneBus(format!(
+                "zone {}, word_bus {}: src length ({}) != dst length ({})",
+                zone_idx,
+                bus_idx,
+                bus.src.len(),
+                bus.dst.len()
+            )));
         }
-        for &wid in bus.src.iter().chain(bus.dst.iter()) {
-            if wid >= num_words {
-                errors.push(ArchSpecError::Bus {
-                    message: format!("word_bus {}: invalid word ID {}", bus_id, wid),
-                });
+        for (i, wref) in bus.src.iter().enumerate() {
+            if wref.0 as usize >= num_words {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "zone {}, word_bus {}: src[{}] WordRef({}) >= num_words ({})",
+                    zone_idx, bus_idx, i, wref.0, num_words
+                )));
+            }
+        }
+        for (i, wref) in bus.dst.iter().enumerate() {
+            if wref.0 as usize >= num_words {
+                errors.push(ArchSpecError::ZoneBus(format!(
+                    "zone {}, word_bus {}: dst[{}] WordRef({}) >= num_words ({})",
+                    zone_idx, bus_idx, i, wref.0, num_words
+                )));
             }
         }
     }
 }
 
-fn check_words_with_site_buses(spec: &ArchSpec, num_words: u32, errors: &mut Vec<ArchSpecError>) {
-    for &wid in &spec.words_with_site_buses {
-        if wid >= num_words {
-            errors.push(ArchSpecError::Bus {
-                message: format!("words_with_site_buses: invalid word ID {}", wid),
-            });
-        }
-    }
-}
+// --- Inter-zone bus validation ---
 
-fn check_consistent_grid_shape(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
-    if let Some(first) = spec.geometry.words.first() {
-        let ref_x_len = first.positions.num_x();
-        let ref_y_len = first.positions.num_y();
-        for (idx, word) in spec.geometry.words.iter().enumerate().skip(1) {
-            let x_len = word.positions.num_x();
-            let y_len = word.positions.num_y();
-            if x_len != ref_x_len || y_len != ref_y_len {
-                errors.push(ArchSpecError::Geometry {
-                    message: format!(
-                        "word {} grid shape ({}x{}) differs from word 0 ({}x{})",
-                        idx, x_len, y_len, ref_x_len, ref_y_len
-                    ),
-                });
+/// Zone bus entries must have valid zone_id and word_id, src/dst same length,
+/// and every pair must cross a zone boundary.
+fn check_zone_buses(
+    spec: &ArchSpec,
+    num_zones: usize,
+    num_words: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    for (bus_idx, bus) in spec.zone_buses.iter().enumerate() {
+        if bus.src.len() != bus.dst.len() {
+            errors.push(ArchSpecError::InterZoneBus(format!(
+                "zone_bus {}: src length ({}) != dst length ({})",
+                bus_idx,
+                bus.src.len(),
+                bus.dst.len()
+            )));
+        }
+
+        // Validate all ZonedWordRef entries
+        for (i, zwr) in bus.src.iter().enumerate() {
+            if zwr.zone_id as usize >= num_zones {
+                errors.push(ArchSpecError::InterZoneBus(format!(
+                    "zone_bus {}: src[{}] zone_id {} >= num_zones ({})",
+                    bus_idx, i, zwr.zone_id, num_zones
+                )));
+            }
+            if zwr.word_id as usize >= num_words {
+                errors.push(ArchSpecError::InterZoneBus(format!(
+                    "zone_bus {}: src[{}] word_id {} >= num_words ({})",
+                    bus_idx, i, zwr.word_id, num_words
+                )));
+            }
+        }
+        for (i, zwr) in bus.dst.iter().enumerate() {
+            if zwr.zone_id as usize >= num_zones {
+                errors.push(ArchSpecError::InterZoneBus(format!(
+                    "zone_bus {}: dst[{}] zone_id {} >= num_zones ({})",
+                    bus_idx, i, zwr.zone_id, num_zones
+                )));
+            }
+            if zwr.word_id as usize >= num_words {
+                errors.push(ArchSpecError::InterZoneBus(format!(
+                    "zone_bus {}: dst[{}] word_id {} >= num_words ({})",
+                    bus_idx, i, zwr.word_id, num_words
+                )));
+            }
+        }
+
+        // Every (src[i], dst[i]) pair must cross a zone boundary
+        let pair_count = bus.src.len().min(bus.dst.len());
+        for i in 0..pair_count {
+            if bus.src[i].zone_id == bus.dst[i].zone_id {
+                errors.push(ArchSpecError::InterZoneBus(format!(
+                    "zone_bus {}: pair {} does not cross a zone boundary \
+                     (src zone_id={}, dst zone_id={})",
+                    bus_idx, i, bus.src[i].zone_id, bus.dst[i].zone_id
+                )));
             }
         }
     }
 }
 
-fn check_path_lanes(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+// --- Per-zone entangling pair validation ---
+
+/// Word indices in entangling_pairs must be valid, distinct, and no duplicate pairs.
+fn check_zone_entangling_pairs(
+    zone_idx: usize,
+    zone: &super::types::Zone,
+    num_words: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    let mut seen: HashSet<[u32; 2]> = HashSet::new();
+    for (idx, pair) in zone.entangling_pairs.iter().enumerate() {
+        let [a, b] = *pair;
+        if a as usize >= num_words {
+            errors.push(ArchSpecError::EntanglingPair(format!(
+                "zone[{}].entangling_pairs[{}]: word ID {} >= num_words ({})",
+                zone_idx, idx, a, num_words
+            )));
+        }
+        if b as usize >= num_words {
+            errors.push(ArchSpecError::EntanglingPair(format!(
+                "zone[{}].entangling_pairs[{}]: word ID {} >= num_words ({})",
+                zone_idx, idx, b, num_words
+            )));
+        }
+        if a == b {
+            errors.push(ArchSpecError::EntanglingPair(format!(
+                "zone[{}].entangling_pairs[{}]: word paired with itself ({})",
+                zone_idx, idx, a
+            )));
+        }
+        let normalized = if a <= b { [a, b] } else { [b, a] };
+        if !seen.insert(normalized) {
+            errors.push(ArchSpecError::EntanglingPair(format!(
+                "zone[{}].entangling_pairs[{}]: duplicate pair [{}, {}]",
+                zone_idx, idx, a, b
+            )));
+        }
+    }
+}
+
+// --- Mode validation ---
+
+/// Zone indices and bitstring_order entries must be valid.
+fn check_modes(
+    spec: &ArchSpec,
+    num_zones: usize,
+    num_words: usize,
+    sites_per_word: usize,
+    errors: &mut Vec<ArchSpecError>,
+) {
+    for (mode_idx, mode) in spec.modes.iter().enumerate() {
+        for &zone_id in &mode.zones {
+            if zone_id as usize >= num_zones {
+                errors.push(ArchSpecError::Mode(format!(
+                    "mode '{}' (index {}): zone ID {} >= num_zones ({})",
+                    mode.name, mode_idx, zone_id, num_zones
+                )));
+            }
+        }
+        for (loc_idx, loc) in mode.bitstring_order.iter().enumerate() {
+            if loc.zone_id as usize >= num_zones {
+                errors.push(ArchSpecError::Mode(format!(
+                    "mode '{}' (index {}): bitstring_order[{}] zone_id {} >= num_zones ({})",
+                    mode.name, mode_idx, loc_idx, loc.zone_id, num_zones
+                )));
+            }
+            if loc.word_id as usize >= num_words {
+                errors.push(ArchSpecError::Mode(format!(
+                    "mode '{}' (index {}): bitstring_order[{}] word_id {} >= num_words ({})",
+                    mode.name, mode_idx, loc_idx, loc.word_id, num_words
+                )));
+            }
+            if loc.site_id as usize >= sites_per_word {
+                errors.push(ArchSpecError::Mode(format!(
+                    "mode '{}' (index {}): bitstring_order[{}] site_id {} >= sites_per_word ({})",
+                    mode.name, mode_idx, loc_idx, loc.site_id, sites_per_word
+                )));
+            }
+        }
+    }
+}
+
+// --- Path validation ---
+
+/// If paths is Some, validate each path's waypoints and lane address.
+fn check_paths(spec: &ArchSpec, num_zones: usize, errors: &mut Vec<ArchSpecError>) {
     if let Some(paths) = &spec.paths {
-        for (index, path) in paths.iter().enumerate() {
+        for (idx, path) in paths.iter().enumerate() {
             if !path.check_finite() {
-                errors.push(ArchSpecError::Path {
-                    message: format!("paths[{}]: waypoint contains non-finite coordinate", index),
-                });
-            }
-            let lane = crate::arch::addr::LaneAddr::decode_u64(path.lane);
-            let lane_errors = spec.check_lane(&lane);
-            for message in lane_errors {
-                errors.push(ArchSpecError::Path {
-                    message: format!(
-                        "paths[{}]: lane 0x{:016X} is invalid: {}",
-                        index, path.lane, message
-                    ),
-                });
+                errors.push(ArchSpecError::Path(format!(
+                    "paths[{}]: waypoint contains non-finite coordinate",
+                    idx
+                )));
             }
 
-            // Check minimum waypoint count
+            // Validate the lane address fields
+            let lane = super::addr::LaneAddr::decode_u64(path.lane);
+            if lane.zone_id as usize >= num_zones {
+                errors.push(ArchSpecError::Path(format!(
+                    "paths[{}]: lane 0x{:016X} has invalid zone_id {} (num_zones={})",
+                    idx, path.lane, lane.zone_id, num_zones
+                )));
+            }
+
             if path.waypoints.len() < 2 {
-                errors.push(ArchSpecError::Path {
-                    message: format!(
-                        "paths[{}]: lane 0x{:016X} has {} waypoint(s), minimum is 2",
-                        index,
-                        path.lane,
-                        path.waypoints.len()
-                    ),
-                });
-                continue; // can't check endpoints with < 2 waypoints
+                errors.push(ArchSpecError::Path(format!(
+                    "paths[{}]: lane 0x{:016X} has {} waypoint(s), minimum is 2",
+                    idx,
+                    path.lane,
+                    path.waypoints.len()
+                )));
             }
-
-            // Check that first/last waypoints match the lane's physical endpoints
-            if let Some((src_loc, dst_loc)) = spec.lane_endpoints(&lane) {
-                if let Some(src_pos) = spec.location_position(&src_loc) {
-                    let first = path.waypoints.first().unwrap();
-                    if first[0] != src_pos.0 || first[1] != src_pos.1 {
-                        errors.push(ArchSpecError::Path {
-                            message: format!(
-                                "paths[{}]: lane 0x{:016X} first waypoint ({}, {}) does not match expected position ({}, {})",
-                                index, path.lane, first[0], first[1], src_pos.0, src_pos.1
-                            ),
-                        });
-                    }
-                }
-                if let Some(dst_pos) = spec.location_position(&dst_loc) {
-                    let last = path.waypoints.last().unwrap();
-                    if last[0] != dst_pos.0 || last[1] != dst_pos.1 {
-                        errors.push(ArchSpecError::Path {
-                            message: format!(
-                                "paths[{}]: lane 0x{:016X} last waypoint ({}, {}) does not match expected position ({}, {})",
-                                index, path.lane, last[0], last[1], dst_pos.0, dst_pos.1
-                            ),
-                        });
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn check_blockade_radius(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
-    if !spec.blockade_radius.is_finite() || spec.blockade_radius < 0.0 {
-        errors.push(ArchSpecError::Geometry {
-            message: format!(
-                "blockade_radius must be finite and non-negative, got {}",
-                spec.blockade_radius
-            ),
-        });
-    }
-}
-
-fn check_sites_with_word_buses(
-    spec: &ArchSpec,
-    sites_per_word: u32,
-    errors: &mut Vec<ArchSpecError>,
-) {
-    for &idx in &spec.sites_with_word_buses {
-        if idx >= sites_per_word {
-            errors.push(ArchSpecError::Bus {
-                message: format!(
-                    "sites_with_word_buses: site index {} >= sites_per_word ({})",
-                    idx, sites_per_word
-                ),
-            });
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::arch::example_arch_spec;
-
     use super::*;
+    use crate::arch::addr::{SiteRef, WordRef, ZonedWordRef};
+    use crate::arch::types::{Bus, Grid, Mode, Word, Zone};
+    use crate::version::Version;
 
-    fn has_error<F: Fn(&ArchSpecError) -> bool>(errors: &[ArchSpecError], predicate: F) -> bool {
-        errors.iter().any(predicate)
+    /// Create a valid two-zone arch spec for testing.
+    fn make_valid_two_zone_spec() -> ArchSpec {
+        let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
+        let grid1 = Grid::from_positions(&[0.0, 7.5, 15.0], &[0.0, 4.0]);
+
+        ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![
+                Word {
+                    sites: vec![[0, 0], [0, 1]],
+                },
+                Word {
+                    sites: vec![[1, 0], [1, 1]],
+                },
+            ],
+            zones: vec![
+                Zone {
+                    name: String::new(),
+                    grid: grid0,
+                    site_buses: vec![Bus {
+                        src: vec![SiteRef(0)],
+                        dst: vec![SiteRef(1)],
+                    }],
+                    word_buses: vec![Bus {
+                        src: vec![WordRef(0)],
+                        dst: vec![WordRef(1)],
+                    }],
+                    words_with_site_buses: vec![0, 1],
+                    sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
+                },
+                Zone {
+                    name: String::new(),
+                    grid: grid1,
+                    site_buses: vec![],
+                    word_buses: vec![],
+                    words_with_site_buses: vec![],
+                    sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
+                },
+            ],
+            zone_buses: vec![Bus {
+                src: vec![ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 0,
+                }],
+                dst: vec![ZonedWordRef {
+                    zone_id: 1,
+                    word_id: 0,
+                }],
+            }],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0, 1],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        }
     }
 
     #[test]
-    fn valid_spec_passes() {
-        let spec = example_arch_spec();
+    fn test_valid_two_zone_spec() {
+        let spec = make_valid_two_zone_spec();
         assert!(spec.validate().is_ok());
     }
 
     #[test]
-    fn test_zone0_missing_words() {
-        let mut spec = example_arch_spec();
-        spec.zones[0].words = vec![0];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("missing word IDs"))
+    fn test_validate_zones_must_have_same_grid_dimensions() {
+        let mut spec = make_valid_two_zone_spec();
+        // 4 x-points vs 3
+        spec.zones[1].grid = Grid::from_positions(&[0.0, 1.0, 2.0, 3.0], &[0.0, 1.0]);
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(_)))
         ));
     }
 
     #[test]
-    fn test_measurement_mode_first_not_zone0() {
-        let mut spec = example_arch_spec();
-        spec.measurement_mode_zones = vec![1];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("must be zone 0"))
+    fn test_validate_site_bus_ref_out_of_range() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].site_buses = vec![Bus {
+            src: vec![SiteRef(0)],
+            dst: vec![SiteRef(999)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::ZoneBus(_)))
         ));
     }
 
     #[test]
-    fn test_invalid_entangling_zone_word_id() {
-        let mut spec = example_arch_spec();
-        spec.entangling_zones.push(vec![[99, 100]]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("invalid word ID 99"))
+    fn test_validate_zone_bus_must_cross_zones() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zone_buses = vec![Bus {
+            src: vec![ZonedWordRef {
+                zone_id: 0,
+                word_id: 0,
+            }],
+            dst: vec![ZonedWordRef {
+                zone_id: 0,
+                word_id: 1,
+            }], // same zone!
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::InterZoneBus(_)))
         ));
     }
 
     #[test]
-    fn test_duplicate_word_in_entangling_pairs() {
-        let mut spec = example_arch_spec();
-        // Word 0 is already in the first zone's pair, add it again
-        spec.entangling_zones.push(vec![[0, 1]]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("appears in multiple pairs"))
+    fn test_validate_entangling_pair_invalid_word() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].entangling_pairs = vec![[0, 99]];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::EntanglingPair(_)))
         ));
     }
 
     #[test]
-    fn test_invalid_measurement_mode_zone() {
-        let mut spec = example_arch_spec();
-        spec.measurement_mode_zones.push(99);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("invalid zone ID 99"))
+    fn test_validate_mode_invalid_zone() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.modes = vec![Mode {
+            name: "bad".to_string(),
+            zones: vec![99],
+            bitstring_order: vec![],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Mode(_)))
         ));
     }
 
     #[test]
-    fn test_wrong_site_count() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[0].site_indices.pop();
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("9 sites, expected 10"))
+    fn test_validate_no_zones() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones = vec![];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("zone")))
         ));
     }
 
     #[test]
-    fn test_site_x_index_out_of_range() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[0].site_indices[0] = [99, 0];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("x_idx 99 out of range"))
+    fn test_validate_no_words() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.words = vec![];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("word")))
         ));
     }
 
     #[test]
-    fn test_site_y_index_out_of_range() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[0].site_indices[0] = [0, 99];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("y_idx 99 out of range"))
+    fn test_validate_word_site_count_mismatch() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.words[1].sites = vec![[0, 0]]; // 1 site vs 2
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("sites")))
         ));
     }
 
     #[test]
-    fn test_site_bus_length_mismatch() {
-        let mut spec = example_arch_spec();
-        spec.buses.site_buses[0].dst.pop();
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("site_bus 0: src length"))
+    fn test_validate_word_site_x_out_of_range() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.words[0].sites[0] = [99, 0]; // x=99 but grid has 3 x-positions
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("x index")))
         ));
     }
 
     #[test]
-    fn test_site_bus_overlap() {
-        let mut spec = example_arch_spec();
-        spec.buses.site_buses[0].src = vec![0, 1];
-        spec.buses.site_buses[0].dst = vec![0, 2];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("overlap at site index 0"))
+    fn test_validate_word_site_y_out_of_range() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.words[0].sites[0] = [0, 99]; // y=99 but grid has 2 y-positions
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("y index")))
         ));
     }
 
     #[test]
-    fn test_site_bus_index_out_of_range() {
-        let mut spec = example_arch_spec();
-        spec.buses.site_buses[0].src[0] = 99;
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("site index 99"))
+    fn test_validate_zone_words_with_site_buses_invalid() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].words_with_site_buses = vec![0, 99];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::ZoneBus(msg) if msg.contains("words_with_site_buses")))
         ));
     }
 
     #[test]
-    fn test_word_bus_length_mismatch() {
-        let mut spec = example_arch_spec();
-        spec.buses.word_buses[0].dst.pop();
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("word_bus 0: src length"))
+    fn test_validate_zone_sites_with_word_buses_invalid() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].sites_with_word_buses = vec![99];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::ZoneBus(msg) if msg.contains("sites_with_word_buses")))
         ));
     }
 
     #[test]
-    fn test_word_bus_invalid_word_id() {
-        let mut spec = example_arch_spec();
-        spec.buses.word_buses[0].src = vec![99];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("invalid word ID 99"))
+    fn test_validate_site_bus_length_mismatch() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].site_buses = vec![Bus {
+            src: vec![SiteRef(0), SiteRef(1)],
+            dst: vec![SiteRef(0)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::ZoneBus(msg) if msg.contains("src length")))
         ));
     }
 
     #[test]
-    fn test_invalid_word_with_site_bus() {
-        let mut spec = example_arch_spec();
-        spec.words_with_site_buses.push(99);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("words_with_site_buses: invalid word ID 99"))
+    fn test_validate_word_bus_invalid_word_ref() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].word_buses = vec![Bus {
+            src: vec![WordRef(0)],
+            dst: vec![WordRef(99)],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::ZoneBus(msg) if msg.contains("WordRef(99)")))
         ));
     }
 
     #[test]
-    fn test_invalid_site_with_word_bus() {
-        let mut spec = example_arch_spec();
-        spec.sites_with_word_buses.push(99);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("site index 99 >= sites_per_word"))
+    fn test_validate_zone_bus_invalid_zone_id() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zone_buses = vec![Bus {
+            src: vec![ZonedWordRef {
+                zone_id: 99,
+                word_id: 0,
+            }],
+            dst: vec![ZonedWordRef {
+                zone_id: 1,
+                word_id: 0,
+            }],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::InterZoneBus(msg) if msg.contains("zone_id 99")))
         ));
     }
 
     #[test]
-    fn test_invalid_path_lane() {
-        let mut spec = example_arch_spec();
-        let bad_lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 0,
-            bus_id: 99,
-        };
-        spec.paths = Some(vec![crate::arch::types::TransportPath {
-            lane: {
-                let (d0, d1) = bad_lane.encode();
-                (d0 as u64) | ((d1 as u64) << 32)
-            },
-            waypoints: vec![[1.0, 2.0]],
-        }]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Path { message } if message.contains("is invalid"))
+    fn test_validate_zone_bus_invalid_word_id() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zone_buses = vec![Bus {
+            src: vec![ZonedWordRef {
+                zone_id: 0,
+                word_id: 99,
+            }],
+            dst: vec![ZonedWordRef {
+                zone_id: 1,
+                word_id: 0,
+            }],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::InterZoneBus(msg) if msg.contains("word_id 99")))
         ));
     }
 
     #[test]
-    fn test_valid_path_lane() {
-        let mut spec = example_arch_spec();
-        let good_lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 0,
-            bus_id: 0,
-        };
-        spec.paths = Some(vec![crate::arch::types::TransportPath {
-            lane: {
-                let (d0, d1) = good_lane.encode();
-                (d0 as u64) | ((d1 as u64) << 32)
-            },
-            waypoints: vec![[1.0, 2.5], [1.0, 5.0]],
-        }]);
-        assert!(spec.validate().is_ok());
-    }
-
-    #[test]
-    fn test_path_too_few_waypoints() {
-        let mut spec = example_arch_spec();
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 0,
-            bus_id: 0,
-        };
-        spec.paths = Some(vec![crate::arch::types::TransportPath {
-            lane: {
-                let (d0, d1) = lane.encode();
-                (d0 as u64) | ((d1 as u64) << 32)
-            },
-            waypoints: vec![[1.0, 2.5]],
-        }]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Path { message } if message.contains("1 waypoint(s), minimum is 2"))
+    fn test_validate_zone_bus_length_mismatch() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zone_buses = vec![Bus {
+            src: vec![
+                ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 0,
+                },
+                ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 1,
+                },
+            ],
+            dst: vec![ZonedWordRef {
+                zone_id: 1,
+                word_id: 0,
+            }],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::InterZoneBus(msg) if msg.contains("src length")))
         ));
     }
 
     #[test]
-    fn test_path_endpoint_mismatch_first() {
-        let mut spec = example_arch_spec();
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 0,
-            bus_id: 0,
-        };
-        spec.paths = Some(vec![crate::arch::types::TransportPath {
-            lane: {
-                let (d0, d1) = lane.encode();
-                (d0 as u64) | ((d1 as u64) << 32)
-            },
-            waypoints: vec![[99.0, 99.0], [1.0, 5.0]],
-        }]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Path { message } if message.contains("first waypoint"))
+    fn test_validate_entangling_pair_duplicate() {
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones[0].entangling_pairs = vec![[0, 1], [1, 0]]; // same pair reversed
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::EntanglingPair(msg) if msg.contains("duplicate")))
         ));
     }
 
     #[test]
-    fn test_path_endpoint_mismatch_last() {
-        let mut spec = example_arch_spec();
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 0,
-            bus_id: 0,
-        };
-        spec.paths = Some(vec![crate::arch::types::TransportPath {
-            lane: {
-                let (d0, d1) = lane.encode();
-                (d0 as u64) | ((d1 as u64) << 32)
-            },
-            waypoints: vec![[1.0, 2.5], [99.0, 99.0]],
-        }]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Path { message } if message.contains("last waypoint"))
+    fn test_validate_mode_bitstring_order_invalid() {
+        use crate::arch::addr::LocationAddr;
+        let mut spec = make_valid_two_zone_spec();
+        spec.modes = vec![Mode {
+            name: "bad_loc".to_string(),
+            zones: vec![0],
+            bitstring_order: vec![LocationAddr {
+                zone_id: 99,
+                word_id: 0,
+                site_id: 0,
+            }],
+        }];
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Mode(msg) if msg.contains("zone_id 99")))
         ));
     }
 
     #[test]
-    fn test_inconsistent_grid_shape() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[1].positions.x_spacing = vec![2.0, 2.0];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("grid shape"))
-        ));
-    }
-
-    #[test]
-    fn test_negative_blockade_radius() {
-        let mut spec = example_arch_spec();
-        spec.blockade_radius = -1.0;
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("blockade_radius"))
-        ));
-    }
-
-    #[test]
-    fn test_nan_blockade_radius() {
-        let mut spec = example_arch_spec();
-        spec.blockade_radius = f64::NAN;
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("blockade_radius"))
-        ));
-    }
-
-    #[test]
-    fn test_empty_measurement_mode_zones() {
-        let mut spec = example_arch_spec();
-        spec.measurement_mode_zones = vec![];
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Zone { message } if message.contains("must not be empty"))
-        ));
-    }
-
-    #[test]
-    fn test_non_finite_word_grid() {
-        let mut spec = example_arch_spec();
-        spec.geometry.words[0].positions.x_start = f64::INFINITY;
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Geometry { message } if message.contains("non-finite"))
-        ));
-    }
-
-    #[test]
-    fn test_site_bus_invalid_word_in_bus_words() {
-        let mut spec = example_arch_spec();
-        spec.buses.site_buses[0].words = Some(vec![0, 99]);
-        let errors = spec.validate().unwrap_err();
-        assert!(has_error(
-            &errors,
-            |e| matches!(e, ArchSpecError::Bus { message } if message.contains("invalid word ID 99 in bus.words"))
-        ));
-    }
-
-    #[test]
-    fn multiple_errors_collected() {
-        let mut spec = example_arch_spec();
-        spec.zones[0].words = vec![0];
-        spec.measurement_mode_zones = vec![1];
-        spec.sites_with_word_buses.push(99);
+    fn test_validate_multiple_errors_collected() {
+        let mut spec = make_valid_two_zone_spec();
+        // Break multiple things
+        spec.zones[0].entangling_pairs = vec![[0, 99]]; // bad word
+        spec.zones[0].words_with_site_buses = vec![99]; // bad word
         let errors = spec.validate().unwrap_err();
         assert!(
-            errors.len() >= 3,
-            "expected at least 3 errors, got {}",
+            errors.len() >= 2,
+            "expected at least 2 errors, got {}",
             errors.len()
         );
+    }
+
+    #[test]
+    fn test_validate_path_non_finite_waypoint() {
+        let mut spec = make_valid_two_zone_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        spec.paths = Some(vec![crate::arch::types::TransportPath {
+            lane: lane.encode_u64(),
+            waypoints: vec![[f64::NAN, 0.0], [1.0, 2.0]],
+        }]);
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Path(msg) if msg.contains("non-finite")))
+        ));
+    }
+
+    #[test]
+    fn test_validate_path_too_few_waypoints() {
+        let mut spec = make_valid_two_zone_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        spec.paths = Some(vec![crate::arch::types::TransportPath {
+            lane: lane.encode_u64(),
+            waypoints: vec![[1.0, 2.0]],
+        }]);
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Path(msg) if msg.contains("minimum is 2")))
+        ));
+    }
+
+    #[test]
+    fn test_validate_path_invalid_zone_id() {
+        let mut spec = make_valid_two_zone_spec();
+        let lane = crate::arch::addr::LaneAddr {
+            direction: crate::arch::addr::Direction::Forward,
+            move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 99,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        spec.paths = Some(vec![crate::arch::types::TransportPath {
+            lane: lane.encode_u64(),
+            waypoints: vec![[0.0, 0.0], [1.0, 2.0]],
+        }]);
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Path(msg) if msg.contains("zone_id")))
+        ));
     }
 }

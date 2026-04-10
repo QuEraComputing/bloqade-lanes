@@ -216,6 +216,6 @@ def test_find_path_respects_per_bus_word_scoping():
 
     # Attempting an intra-word site move in zone B should fail (no site bus)
     b_word = min(zone_b_words)
-    start = LocationAddress(b_word, 0)
-    end = LocationAddress(b_word, 1)
+    start = LocationAddress(b_word, 0, 1)
+    end = LocationAddress(b_word, 1, 1)
     assert arch.get_lane_address(start, end) is None

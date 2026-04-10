@@ -67,6 +67,8 @@ pub enum PyMoveType {
     SiteBus = 0,
     #[pyo3(name = "WORD")]
     WordBus = 1,
+    #[pyo3(name = "ZONE")]
+    ZoneBus = 2,
 }
 
 #[pymethods]
@@ -76,6 +78,7 @@ impl PyMoveType {
         match self {
             PyMoveType::SiteBus => "SITE",
             PyMoveType::WordBus => "WORD",
+            PyMoveType::ZoneBus => "ZONE",
         }
     }
 }
@@ -85,6 +88,7 @@ impl PyMoveType {
         match m {
             rs_addr::MoveType::SiteBus => PyMoveType::SiteBus,
             rs_addr::MoveType::WordBus => PyMoveType::WordBus,
+            rs_addr::MoveType::ZoneBus => PyMoveType::ZoneBus,
         }
     }
 
@@ -92,6 +96,7 @@ impl PyMoveType {
         match self {
             PyMoveType::SiteBus => rs_addr::MoveType::SiteBus,
             PyMoveType::WordBus => rs_addr::MoveType::WordBus,
+            PyMoveType::ZoneBus => rs_addr::MoveType::ZoneBus,
         }
     }
 }
@@ -111,12 +116,22 @@ pub struct PyLocationAddr {
 #[pymethods]
 impl PyLocationAddr {
     #[new]
-    fn new(word_id: i64, site_id: i64) -> PyResult<Self> {
+    fn new(zone_id: i64, word_id: i64, site_id: i64) -> PyResult<Self> {
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let word_id = validate_field::<u16>("word_id", word_id)? as u32;
         let site_id = validate_field::<u16>("site_id", site_id)? as u32;
         Ok(Self {
-            inner: rs_addr::LocationAddr { word_id, site_id },
+            inner: rs_addr::LocationAddr {
+                zone_id,
+                word_id,
+                site_id,
+            },
         })
+    }
+
+    #[getter]
+    fn zone_id(&self) -> u32 {
+        self.inner.zone_id
     }
 
     #[getter]
@@ -129,12 +144,12 @@ impl PyLocationAddr {
         self.inner.site_id
     }
 
-    fn encode(&self) -> u32 {
+    fn encode(&self) -> u64 {
         self.inner.encode()
     }
 
     #[staticmethod]
-    fn decode(bits: u32) -> Self {
+    fn decode(bits: u64) -> Self {
         Self {
             inner: rs_addr::LocationAddr::decode(bits),
         }
@@ -142,8 +157,8 @@ impl PyLocationAddr {
 
     fn __repr__(&self) -> String {
         format!(
-            "LocationAddress(word_id={}, site_id={})",
-            self.inner.word_id, self.inner.site_id
+            "LocationAddress(zone_id={}, word_id={}, site_id={})",
+            self.inner.zone_id, self.inner.word_id, self.inner.site_id
         )
     }
 
@@ -152,7 +167,7 @@ impl PyLocationAddr {
     }
 
     fn __hash__(&self) -> u64 {
-        self.inner.encode() as u64
+        self.inner.encode()
     }
 }
 
@@ -171,14 +186,16 @@ pub struct PyLaneAddr {
 #[pymethods]
 impl PyLaneAddr {
     #[new]
-    #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
+    #[pyo3(signature = (move_type, zone_id, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn new(
         move_type: &PyMoveType,
+        zone_id: i64,
         word_id: i64,
         site_id: i64,
         bus_id: i64,
         direction: PyDirection,
     ) -> PyResult<Self> {
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let word_id = validate_field::<u16>("word_id", word_id)? as u32;
         let site_id = validate_field::<u16>("site_id", site_id)? as u32;
         let bus_id = validate_field::<u16>("bus_id", bus_id)? as u32;
@@ -186,6 +203,7 @@ impl PyLaneAddr {
             inner: rs_addr::LaneAddr {
                 direction: direction.to_rs(),
                 move_type: move_type.to_rs(),
+                zone_id,
                 word_id,
                 site_id,
                 bus_id,
@@ -201,6 +219,11 @@ impl PyLaneAddr {
     #[getter]
     fn move_type(&self) -> PyMoveType {
         PyMoveType::from_rs(self.inner.move_type)
+    }
+
+    #[getter]
+    fn zone_id(&self) -> u32 {
+        self.inner.zone_id
     }
 
     #[getter]
@@ -237,10 +260,11 @@ impl PyLaneAddr {
         let mt = match self.inner.move_type {
             rs_addr::MoveType::SiteBus => "MoveType.SITE",
             rs_addr::MoveType::WordBus => "MoveType.WORD",
+            rs_addr::MoveType::ZoneBus => "MoveType.ZONE",
         };
         format!(
-            "LaneAddress(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
-            mt, self.inner.word_id, self.inner.site_id, self.inner.bus_id, dir
+            "LaneAddress(move_type={}, zone_id={}, word_id={}, site_id={}, bus_id={}, direction={})",
+            mt, self.inner.zone_id, self.inner.word_id, self.inner.site_id, self.inner.bus_id, dir
         )
     }
 
@@ -427,136 +451,70 @@ pub struct PyWord {
 #[pymethods]
 impl PyWord {
     #[new]
-    fn new(positions: &PyGrid, site_indices: Vec<(u32, u32)>) -> Self {
+    fn new(sites: Vec<(u32, u32)>) -> Self {
         Self {
             inner: rs::Word {
-                positions: positions.inner.clone(),
-                site_indices: site_indices.into_iter().map(|(x, y)| [x, y]).collect(),
+                sites: sites.into_iter().map(|(x, y)| [x, y]).collect(),
             },
         }
     }
 
     #[getter]
-    fn positions(&self) -> PyGrid {
-        PyGrid {
-            inner: self.inner.positions.clone(),
+    fn sites(&self) -> Vec<(u32, u32)> {
+        self.inner.sites.iter().map(|s| (s[0], s[1])).collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Word(sites={})", self.inner.sites.len())
+    }
+}
+
+// ── SiteBus ──
+
+#[pyclass(name = "SiteBus", frozen, module = "bloqade.lanes.bytecode._native")]
+#[derive(Clone)]
+pub struct PySiteBus {
+    pub(crate) inner: rs::Bus<rs_addr::SiteRef>,
+}
+
+#[pymethods]
+impl PySiteBus {
+    #[new]
+    fn new(src: Vec<u16>, dst: Vec<u16>) -> Self {
+        Self {
+            inner: rs::Bus {
+                src: src.into_iter().map(rs_addr::SiteRef).collect(),
+                dst: dst.into_iter().map(rs_addr::SiteRef).collect(),
+            },
         }
     }
 
     #[getter]
-    fn site_indices(&self) -> Vec<(u32, u32)> {
-        self.inner
-            .site_indices
-            .iter()
-            .map(|s| (s[0], s[1]))
-            .collect()
-    }
-
-    fn site_position(&self, site_idx: usize) -> Option<(f64, f64)> {
-        self.inner.site_position(site_idx)
-    }
-
-    fn __repr__(&self) -> String {
-        format!("Word(site_indices={})", self.inner.site_indices.len())
-    }
-}
-
-// ── Geometry ──
-
-#[pyclass(name = "Geometry", frozen, module = "bloqade.lanes.bytecode._native")]
-#[derive(Clone)]
-pub struct PyGeometry {
-    pub(crate) inner: rs::Geometry,
-}
-
-#[pymethods]
-impl PyGeometry {
-    #[new]
-    fn new(sites_per_word: i64, words: Vec<PyRef<'_, PyWord>>) -> PyResult<Self> {
-        let sites_per_word = validate_field::<u32>("sites_per_word", sites_per_word)?;
-        Ok(Self {
-            inner: rs::Geometry {
-                sites_per_word,
-                words: words.iter().map(|w| w.inner.clone()).collect(),
-            },
-        })
+    fn src(&self) -> Vec<u16> {
+        self.inner.src.iter().map(|s| s.0).collect()
     }
 
     #[getter]
-    fn sites_per_word(&self) -> u32 {
-        self.inner.sites_per_word
-    }
-
-    #[getter]
-    fn words(&self) -> Vec<PyWord> {
-        self.inner
-            .words
-            .iter()
-            .map(|w| PyWord { inner: w.clone() })
-            .collect()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "Geometry(sites_per_word={}, words={})",
-            self.inner.sites_per_word,
-            self.inner.words.len()
-        )
-    }
-}
-
-// ── Bus ──
-
-#[pyclass(name = "Bus", frozen, module = "bloqade.lanes.bytecode._native")]
-#[derive(Clone)]
-pub struct PyBus {
-    pub(crate) inner: rs::Bus,
-}
-
-#[pymethods]
-impl PyBus {
-    #[new]
-    #[pyo3(signature = (src, dst, words=None))]
-    fn new(src: Vec<i64>, dst: Vec<i64>, words: Option<Vec<i64>>) -> PyResult<Self> {
-        let src = validate_vec::<u32>("src", src)?;
-        let dst = validate_vec::<u32>("dst", dst)?;
-        let words = words.map(|w| validate_vec::<u32>("words", w)).transpose()?;
-        Ok(Self {
-            inner: rs::Bus { src, dst, words },
-        })
-    }
-
-    #[getter]
-    fn src(&self) -> Vec<u32> {
-        self.inner.src.clone()
-    }
-
-    #[getter]
-    fn dst(&self) -> Vec<u32> {
-        self.inner.dst.clone()
-    }
-
-    #[getter]
-    fn words(&self) -> Option<Vec<u32>> {
-        self.inner.words.clone()
+    fn dst(&self) -> Vec<u16> {
+        self.inner.dst.iter().map(|d| d.0).collect()
     }
 
     /// Map a source value to its destination (forward move).
     /// Returns None if not found.
-    fn resolve_forward(&self, src: i64) -> PyResult<Option<u32>> {
-        let src = validate_field::<u32>("src", src)?;
-        Ok(self.inner.resolve_forward(src))
+    fn resolve_forward(&self, src: u16) -> Option<u16> {
+        self.inner.resolve_forward(src)
     }
 
     /// Map a destination value back to its source (backward move).
     /// Returns None if not found.
-    fn resolve_backward(&self, dst: i64) -> PyResult<Option<u32>> {
-        let dst = validate_field::<u32>("dst", dst)?;
-        Ok(self.inner.resolve_backward(dst))
+    fn resolve_backward(&self, dst: u16) -> Option<u16> {
+        self.inner.resolve_backward(dst)
     }
 
     fn __repr__(&self) -> String {
-        format!("Bus(src={:?}, dst={:?})", self.inner.src, self.inner.dst)
+        let src: Vec<u16> = self.inner.src.iter().map(|s| s.0).collect();
+        let dst: Vec<u16> = self.inner.dst.iter().map(|d| d.0).collect();
+        format!("SiteBus(src={:?}, dst={:?})", src, dst)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -571,50 +529,141 @@ impl PyBus {
     }
 }
 
-// ── Buses ──
+// ── WordBus ──
 
-#[pyclass(name = "Buses", frozen, module = "bloqade.lanes.bytecode._native")]
+#[pyclass(name = "WordBus", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
-pub struct PyBuses {
-    pub(crate) inner: rs::Buses,
+pub struct PyWordBus {
+    pub(crate) inner: rs::Bus<rs_addr::WordRef>,
 }
 
 #[pymethods]
-impl PyBuses {
+impl PyWordBus {
     #[new]
-    fn new(site_buses: Vec<PyRef<'_, PyBus>>, word_buses: Vec<PyRef<'_, PyBus>>) -> Self {
+    fn new(src: Vec<u16>, dst: Vec<u16>) -> Self {
         Self {
-            inner: rs::Buses {
-                site_buses: site_buses.iter().map(|b| b.inner.clone()).collect(),
-                word_buses: word_buses.iter().map(|b| b.inner.clone()).collect(),
+            inner: rs::Bus {
+                src: src.into_iter().map(rs_addr::WordRef).collect(),
+                dst: dst.into_iter().map(rs_addr::WordRef).collect(),
             },
         }
     }
 
     #[getter]
-    fn site_buses(&self) -> Vec<PyBus> {
+    fn src(&self) -> Vec<u16> {
+        self.inner.src.iter().map(|s| s.0).collect()
+    }
+
+    #[getter]
+    fn dst(&self) -> Vec<u16> {
+        self.inner.dst.iter().map(|d| d.0).collect()
+    }
+
+    /// Map a source value to its destination (forward move).
+    /// Returns None if not found.
+    fn resolve_forward(&self, src: u16) -> Option<u16> {
+        self.inner.resolve_forward(src)
+    }
+
+    /// Map a destination value back to its source (backward move).
+    /// Returns None if not found.
+    fn resolve_backward(&self, dst: u16) -> Option<u16> {
+        self.inner.resolve_backward(dst)
+    }
+
+    fn __repr__(&self) -> String {
+        let src: Vec<u16> = self.inner.src.iter().map(|s| s.0).collect();
+        let dst: Vec<u16> = self.inner.dst.iter().map(|d| d.0).collect();
+        format!("WordBus(src={:?}, dst={:?})", src, dst)
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+// ── ZoneBus (inter-zone) ──
+
+#[pyclass(name = "ZoneBus", frozen, module = "bloqade.lanes.bytecode._native")]
+#[derive(Clone)]
+pub struct PyZoneBus {
+    pub(crate) inner: rs::Bus<rs_addr::ZonedWordRef>,
+}
+
+#[pymethods]
+impl PyZoneBus {
+    #[new]
+    fn new(src: Vec<(u8, u16)>, dst: Vec<(u8, u16)>) -> Self {
+        Self {
+            inner: rs::Bus {
+                src: src
+                    .into_iter()
+                    .map(|(z, w)| rs_addr::ZonedWordRef {
+                        zone_id: z,
+                        word_id: w,
+                    })
+                    .collect(),
+                dst: dst
+                    .into_iter()
+                    .map(|(z, w)| rs_addr::ZonedWordRef {
+                        zone_id: z,
+                        word_id: w,
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    #[getter]
+    fn src(&self) -> Vec<(u8, u16)> {
         self.inner
-            .site_buses
+            .src
             .iter()
-            .map(|b| PyBus { inner: b.clone() })
+            .map(|s| (s.zone_id, s.word_id))
             .collect()
     }
 
     #[getter]
-    fn word_buses(&self) -> Vec<PyBus> {
+    fn dst(&self) -> Vec<(u8, u16)> {
         self.inner
-            .word_buses
+            .dst
             .iter()
-            .map(|b| PyBus { inner: b.clone() })
+            .map(|d| (d.zone_id, d.word_id))
             .collect()
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "Buses(site_buses={}, word_buses={})",
-            self.inner.site_buses.len(),
-            self.inner.word_buses.len()
-        )
+        let src: Vec<(u8, u16)> = self
+            .inner
+            .src
+            .iter()
+            .map(|s| (s.zone_id, s.word_id))
+            .collect();
+        let dst: Vec<(u8, u16)> = self
+            .inner
+            .dst
+            .iter()
+            .map(|d| (d.zone_id, d.word_id))
+            .collect();
+        format!("ZoneBus(src={:?}, dst={:?})", src, dst)
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -629,20 +678,151 @@ pub struct PyZone {
 #[pymethods]
 impl PyZone {
     #[new]
-    fn new(words: Vec<i64>) -> PyResult<Self> {
-        let words = validate_vec::<u32>("words", words)?;
+    #[pyo3(signature = (name, grid, site_buses, word_buses, words_with_site_buses, sites_with_word_buses, entangling_pairs=None))]
+    fn new(
+        name: String,
+        grid: &PyGrid,
+        site_buses: Vec<PyRef<'_, PySiteBus>>,
+        word_buses: Vec<PyRef<'_, PyWordBus>>,
+        words_with_site_buses: Vec<i64>,
+        sites_with_word_buses: Vec<i64>,
+        entangling_pairs: Option<Vec<(i64, i64)>>,
+    ) -> PyResult<Self> {
+        let words_with_site_buses =
+            validate_vec::<u32>("words_with_site_buses", words_with_site_buses)?;
+        let sites_with_word_buses =
+            validate_vec::<u32>("sites_with_word_buses", sites_with_word_buses)?;
+        let entangling_pairs: Vec<[u32; 2]> = entangling_pairs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(a, b)| {
+                let a = validate_field::<u32>("entangling_pairs word_id", a)?;
+                let b = validate_field::<u32>("entangling_pairs word_id", b)?;
+                Ok([a, b])
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
-            inner: rs::Zone { words },
+            inner: rs::Zone {
+                name,
+                grid: grid.inner.clone(),
+                site_buses: site_buses.iter().map(|b| b.inner.clone()).collect(),
+                word_buses: word_buses.iter().map(|b| b.inner.clone()).collect(),
+                words_with_site_buses,
+                sites_with_word_buses,
+                entangling_pairs,
+            },
         })
     }
 
     #[getter]
-    fn words(&self) -> Vec<u32> {
-        self.inner.words.clone()
+    fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    #[getter]
+    fn grid(&self) -> PyGrid {
+        PyGrid {
+            inner: self.inner.grid.clone(),
+        }
+    }
+
+    #[getter]
+    fn site_buses(&self) -> Vec<PySiteBus> {
+        self.inner
+            .site_buses
+            .iter()
+            .map(|b| PySiteBus { inner: b.clone() })
+            .collect()
+    }
+
+    #[getter]
+    fn word_buses(&self) -> Vec<PyWordBus> {
+        self.inner
+            .word_buses
+            .iter()
+            .map(|b| PyWordBus { inner: b.clone() })
+            .collect()
+    }
+
+    #[getter]
+    fn words_with_site_buses(&self) -> Vec<u32> {
+        self.inner.words_with_site_buses.clone()
+    }
+
+    #[getter]
+    fn sites_with_word_buses(&self) -> Vec<u32> {
+        self.inner.sites_with_word_buses.clone()
+    }
+
+    #[getter]
+    fn entangling_pairs(&self) -> Vec<(u32, u32)> {
+        self.inner
+            .entangling_pairs
+            .iter()
+            .map(|p| (p[0], p[1]))
+            .collect()
     }
 
     fn __repr__(&self) -> String {
-        format!("Zone(words={:?})", self.inner.words)
+        format!(
+            "Zone(grid={:?}, site_buses={}, word_buses={})",
+            self.inner.grid,
+            self.inner.site_buses.len(),
+            self.inner.word_buses.len()
+        )
+    }
+}
+
+// ── Mode ──
+
+#[pyclass(name = "Mode", frozen, module = "bloqade.lanes.bytecode._native")]
+#[derive(Clone)]
+pub struct PyMode {
+    pub(crate) inner: rs::Mode,
+}
+
+#[pymethods]
+impl PyMode {
+    #[new]
+    fn new(
+        name: String,
+        zones: Vec<i64>,
+        bitstring_order: Vec<PyRef<'_, PyLocationAddr>>,
+    ) -> PyResult<Self> {
+        let zones = validate_vec::<u32>("zones", zones)?;
+        Ok(Self {
+            inner: rs::Mode {
+                name,
+                zones,
+                bitstring_order: bitstring_order.iter().map(|l| l.inner).collect(),
+            },
+        })
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    #[getter]
+    fn zones(&self) -> Vec<u32> {
+        self.inner.zones.clone()
+    }
+
+    #[getter]
+    fn bitstring_order(&self) -> Vec<PyLocationAddr> {
+        self.inner
+            .bitstring_order
+            .iter()
+            .map(|l| PyLocationAddr { inner: *l })
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Mode(name='{}', zones={:?})",
+            self.inner.name, self.inner.zones
+        )
     }
 }
 
@@ -693,7 +873,7 @@ impl PyTransportPath {
 
     fn __repr__(&self) -> String {
         format!(
-            "TransportPath(lane=0x{:08X}, waypoints={})",
+            "TransportPath(lane=0x{:016X}, waypoints={})",
             self.inner.lane,
             self.inner.waypoints.len()
         )
@@ -722,52 +902,25 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, geometry, buses, words_with_site_buses, sites_with_word_buses, zones, entangling_zones, measurement_mode_zones, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=2.0))]
+    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
-        geometry: &PyGeometry,
-        buses: &PyBuses,
-        words_with_site_buses: Vec<i64>,
-        sites_with_word_buses: Vec<i64>,
+        words: Vec<PyRef<'_, PyWord>>,
         zones: Vec<PyRef<'_, PyZone>>,
-        entangling_zones: Vec<Vec<(i64, i64)>>,
-        measurement_mode_zones: Vec<i64>,
+        zone_buses: Vec<PyRef<'_, PyZoneBus>>,
+        modes: Vec<PyRef<'_, PyMode>>,
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
         feed_forward: bool,
         atom_reloading: bool,
-        blockade_radius: f64,
     ) -> PyResult<Self> {
-        let words_with_site_buses =
-            validate_vec::<u32>("words_with_site_buses", words_with_site_buses)?;
-        let sites_with_word_buses =
-            validate_vec::<u32>("sites_with_word_buses", sites_with_word_buses)?;
-        let measurement_mode_zones =
-            validate_vec::<u32>("measurement_mode_zones", measurement_mode_zones)?;
-        let entangling_zones: Vec<Vec<[u32; 2]>> = entangling_zones
-            .into_iter()
-            .map(|zone_pairs| {
-                zone_pairs
-                    .into_iter()
-                    .map(|(a, b)| {
-                        let a = validate_field::<u32>("entangling_zones word_id", a)?;
-                        let b = validate_field::<u32>("entangling_zones word_id", b)?;
-                        Ok([a, b])
-                    })
-                    .collect::<PyResult<Vec<_>>>()
-            })
-            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
             inner: rs::ArchSpec {
                 version: Version::new(version.0, version.1),
-                geometry: geometry.inner.clone(),
-                buses: buses.inner.clone(),
-                words_with_site_buses,
-                sites_with_word_buses,
+                words: words.iter().map(|w| w.inner.clone()).collect(),
                 zones: zones.iter().map(|z| z.inner.clone()).collect(),
-                entangling_zones,
-                blockade_radius,
-                measurement_mode_zones,
+                zone_buses: zone_buses.iter().map(|b| b.inner.clone()).collect(),
+                modes: modes.iter().map(|m| m.inner.clone()).collect(),
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
                 feed_forward,
                 atom_reloading,
@@ -801,27 +954,12 @@ impl PyArchSpec {
     }
 
     #[getter]
-    fn geometry(&self) -> PyGeometry {
-        PyGeometry {
-            inner: self.inner.geometry.clone(),
-        }
-    }
-
-    #[getter]
-    fn buses(&self) -> PyBuses {
-        PyBuses {
-            inner: self.inner.buses.clone(),
-        }
-    }
-
-    #[getter]
-    fn words_with_site_buses(&self) -> Vec<u32> {
-        self.inner.words_with_site_buses.clone()
-    }
-
-    #[getter]
-    fn sites_with_word_buses(&self) -> Vec<u32> {
-        self.inner.sites_with_word_buses.clone()
+    fn words(&self) -> Vec<PyWord> {
+        self.inner
+            .words
+            .iter()
+            .map(|w| PyWord { inner: w.clone() })
+            .collect()
     }
 
     #[getter]
@@ -834,22 +972,26 @@ impl PyArchSpec {
     }
 
     #[getter]
-    fn entangling_zones(&self) -> Vec<Vec<(u32, u32)>> {
+    fn zone_buses(&self) -> Vec<PyZoneBus> {
         self.inner
-            .entangling_zones
+            .zone_buses
             .iter()
-            .map(|zone| zone.iter().map(|p| (p[0], p[1])).collect())
+            .map(|b| PyZoneBus { inner: b.clone() })
             .collect()
     }
 
     #[getter]
-    fn blockade_radius(&self) -> f64 {
-        self.inner.blockade_radius
+    fn modes(&self) -> Vec<PyMode> {
+        self.inner
+            .modes
+            .iter()
+            .map(|m| PyMode { inner: m.clone() })
+            .collect()
     }
 
     #[getter]
-    fn measurement_mode_zones(&self) -> Vec<u32> {
-        self.inner.measurement_mode_zones.clone()
+    fn sites_per_word(&self) -> usize {
+        self.inner.sites_per_word()
     }
 
     #[getter]
@@ -887,27 +1029,9 @@ impl PyArchSpec {
             .map(|z| PyZone { inner: z.clone() }))
     }
 
-    /// Look up a site bus by its identifier. Returns None if not found.
-    fn site_bus_by_id(&self, id: i64) -> PyResult<Option<PyBus>> {
-        let id = validate_field::<u32>("id", id)?;
-        Ok(self
-            .inner
-            .site_bus_by_id(id)
-            .map(|b| PyBus { inner: b.clone() }))
-    }
-
-    /// Look up a word bus by its identifier. Returns None if not found.
-    fn word_bus_by_id(&self, id: i64) -> PyResult<Option<PyBus>> {
-        let id = validate_field::<u32>("id", id)?;
-        Ok(self
-            .inner
-            .word_bus_by_id(id)
-            .map(|b| PyBus { inner: b.clone() }))
-    }
-
     /// Resolve a location address to its physical (x, y) coordinates.
     ///
-    /// Returns None if the word or site is not found in the geometry.
+    /// Returns None if the zone, word, or site is not found.
     #[pyo3(text_signature = "(self, loc)")]
     fn location_position(&self, loc: &PyLocationAddr) -> Option<(f64, f64)> {
         self.inner.location_position(&loc.inner)
@@ -916,8 +1040,8 @@ impl PyArchSpec {
     /// Resolve a lane address to its source and destination location addresses.
     ///
     /// Given a ``LaneAddr``, determines which two ``LocationAddr`` endpoints the
-    /// lane connects by tracing through the appropriate bus (site bus or word bus)
-    /// in the specified direction (forward or backward).
+    /// lane connects by tracing through the appropriate bus (site bus, word bus,
+    /// or zone bus) in the specified direction (forward or backward).
     ///
     /// Returns a ``(src, dst)`` tuple of ``LocationAddr``, or None if the lane
     /// references an invalid bus, word, or site.
@@ -925,6 +1049,18 @@ impl PyArchSpec {
     fn lane_endpoints(&self, lane: &PyLaneAddr) -> Option<(PyLocationAddr, PyLocationAddr)> {
         let (src, dst) = self.inner.lane_endpoints(&lane.inner)?;
         Some((PyLocationAddr { inner: src }, PyLocationAddr { inner: dst }))
+    }
+
+    /// Get the CZ partner for a given location.
+    ///
+    /// For a site in a zone, finds the partner word from the zone's
+    /// ``entangling_pairs`` and returns the corresponding location.
+    /// Returns None if the word is not in any entangling pair.
+    #[pyo3(text_signature = "(self, loc)")]
+    fn get_cz_partner(&self, loc: &PyLocationAddr) -> Option<PyLocationAddr> {
+        self.inner
+            .get_cz_partner(&loc.inner)
+            .map(|l| PyLocationAddr { inner: l })
     }
 
     fn check_zone(&self, addr: &PyZoneAddr) -> Option<String> {
@@ -964,12 +1100,5 @@ impl PyArchSpec {
 
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
-    }
-
-    fn __hash__(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.inner.hash(&mut hasher);
-        hasher.finish()
     }
 }

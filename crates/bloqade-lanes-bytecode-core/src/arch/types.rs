@@ -2,6 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::addr::{LocationAddr, SiteRef, WordRef, ZonedWordRef};
 use crate::version::Version;
 
 /// Normalize -0.0 to 0.0 for consistent hashing (since -0.0 == 0.0
@@ -15,39 +16,93 @@ fn canonical_f64_bits(v: f64) -> u64 {
     }
 }
 
+/// A transport bus that maps source positions to destination positions.
+///
+/// The `src` and `dst` lists are parallel arrays: `src[i]` maps to `dst[i]`.
+/// The type parameter `T` determines the address type used for bus entries:
+/// - `Bus<SiteRef>` — site buses within a zone
+/// - `Bus<WordRef>` — word buses within a zone
+/// - `Bus<ZonedWordRef>` — inter-zone word buses
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(bound = "T: Serialize + for<'de2> Deserialize<'de2>")]
+pub struct Bus<T> {
+    /// Source indices.
+    pub src: Vec<T>,
+    /// Destination indices (same length as `src`).
+    pub dst: Vec<T>,
+}
+
+/// A group of atom sites that share a coordinate grid.
+///
+/// Each word contains a fixed number of sites. Sites are positioned on the
+/// parent zone's grid via `[x_idx, y_idx]` index pairs.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Word {
+    /// Each entry is `[x_idx, y_idx]` indexing into the parent zone's grid
+    /// x and y coordinate arrays.
+    pub sites: Vec<[u32; 2]>,
+}
+
+/// A logical zone grouping words with a shared coordinate grid and buses.
+///
+/// Each zone owns its grid and the site/word buses that operate within it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Zone {
+    /// Human-readable zone name.
+    #[serde(default)]
+    pub name: String,
+    /// Coordinate grid for all words in this zone.
+    pub grid: Grid,
+    /// Site buses that move atoms between sites within words of this zone.
+    pub site_buses: Vec<Bus<SiteRef>>,
+    /// Word buses that move atoms between words within this zone.
+    pub word_buses: Vec<Bus<WordRef>>,
+    /// Word IDs (within this zone) that have site-bus transport capability.
+    pub words_with_site_buses: Vec<u32>,
+    /// Site indices that participate in word-bus transport within this zone.
+    pub sites_with_word_buses: Vec<u32>,
+    /// Word pairs within this zone that are at blockade radius for CZ gates.
+    /// A zone with empty `entangling_pairs` is a storage/low-connectivity zone.
+    #[serde(default)]
+    pub entangling_pairs: Vec<[u32; 2]>,
+}
+
+/// A named operational mode for the device.
+///
+/// Modes define subsets of zones and the bitstring ordering used for
+/// measurement results.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mode {
+    /// Human-readable mode name.
+    pub name: String,
+    /// Zone IDs active in this mode.
+    pub zones: Vec<u32>,
+    /// Bit-to-location mapping for measurement results.
+    pub bitstring_order: Vec<LocationAddr>,
+}
+
 /// Architecture specification for a quantum device.
 ///
-/// Describes the full hardware topology: geometry (words, sites, grids),
-/// bus connectivity, zones, and operational constraints. Can be loaded
-/// from JSON via [`from_json`](ArchSpec::from_json) /
+/// Describes the full hardware topology: words, zones (each owning a grid
+/// and intra-zone buses), inter-zone buses, entangling pairs, operational
+/// modes, and device capabilities. Can be loaded from JSON via
+/// [`from_json`](ArchSpec::from_json) /
 /// [`from_json_validated`](ArchSpec::from_json_validated),
 /// or constructed programmatically.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArchSpec {
     /// Spec format version.
     pub version: Version,
-    /// Device geometry (words and their site layouts).
-    pub geometry: Geometry,
-    /// Transport bus definitions (site buses and word buses).
-    pub buses: Buses,
-    /// Word IDs that have site-bus transport capability.
-    pub words_with_site_buses: Vec<u32>,
-    /// Site indices that participate in word-bus transport.
-    pub sites_with_word_buses: Vec<u32>,
-    /// Logical zones grouping words for execution phases.
+    /// Word definitions. A word's ID is its index in this list.
+    pub words: Vec<Word>,
+    /// Logical zones, each owning a grid and intra-zone buses.
     pub zones: Vec<Zone>,
-    /// Entangling zones, each defined as a list of word-ID pairs.
-    /// Within a zone, `[w_a, w_b]` means sites at matching indices in
-    /// `w_a` and `w_b` are within blockade radius for CZ gates.
-    pub entangling_zones: Vec<Vec<[u32; 2]>>,
-    /// Rydberg blockade radius in micrometers.
-    #[serde(default = "default_blockade_radius")]
-    pub blockade_radius: f64,
-    /// Zone IDs that support measurement mode. Must not be empty;
-    /// the first entry must be zone 0.
-    pub measurement_mode_zones: Vec<u32>,
+    /// Inter-zone word buses.
+    pub zone_buses: Vec<Bus<ZonedWordRef>>,
+    /// Operational modes (measurement, etc.).
+    pub modes: Vec<Mode>,
     /// Optional AOD transport paths.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<TransportPath>>,
     /// Whether the device supports mid-circuit measurement with classical feedback.
     /// Defaults to `false` when absent in JSON.
@@ -59,22 +114,40 @@ pub struct ArchSpec {
     pub atom_reloading: bool,
 }
 
-impl Eq for ArchSpec {}
+impl ArchSpec {
+    /// Number of sites in each word. Returns 0 if there are no words.
+    pub fn sites_per_word(&self) -> usize {
+        self.words.first().map_or(0, |w| w.sites.len())
+    }
 
-impl std::hash::Hash for ArchSpec {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.version.hash(state);
-        self.geometry.hash(state);
-        self.buses.hash(state);
-        self.words_with_site_buses.hash(state);
-        self.sites_with_word_buses.hash(state);
-        self.zones.hash(state);
-        self.entangling_zones.hash(state);
-        canonical_f64_bits(self.blockade_radius).hash(state);
-        self.measurement_mode_zones.hash(state);
-        self.paths.hash(state);
-        self.feed_forward.hash(state);
-        self.atom_reloading.hash(state);
+    /// Construct an ArchSpec from all components, validating on creation.
+    ///
+    /// Returns the validated ArchSpec, or a list of validation errors.
+    /// This is the primary construction path — prefer this over building
+    /// the struct directly to ensure invariants hold.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_components(
+        version: Version,
+        words: Vec<Word>,
+        zones: Vec<Zone>,
+        zone_buses: Vec<Bus<ZonedWordRef>>,
+        modes: Vec<Mode>,
+        paths: Option<Vec<TransportPath>>,
+        feed_forward: bool,
+        atom_reloading: bool,
+    ) -> Result<Self, Vec<super::validate::ArchSpecError>> {
+        let spec = Self {
+            version,
+            words,
+            zones,
+            zone_buses,
+            modes,
+            paths,
+            feed_forward,
+            atom_reloading,
+        };
+        spec.validate()?;
+        Ok(spec)
     }
 }
 
@@ -137,33 +210,6 @@ fn deserialize_lane_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u6
         )));
     }
     u64::from_str_radix(hex, 16).map_err(serde::de::Error::custom)
-}
-
-/// Device geometry: the set of words and their site layout.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Geometry {
-    /// Number of atom sites in each word. Every word must have exactly this many sites.
-    pub sites_per_word: u32,
-    /// Word definitions. A word's ID is its index in this list.
-    pub words: Vec<Word>,
-}
-
-/// A group of atom sites that share a coordinate grid.
-///
-/// Each word contains a fixed number of sites (determined by
-/// [`Geometry::sites_per_word`]). Sites are positioned on the word's
-/// grid via `[x_idx, y_idx]` index pairs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Word {
-    /// Coordinate grid for this word's sites.
-    pub positions: Grid,
-    /// Each entry is `[x_idx, y_idx]` indexing into the grid's x and y
-    /// coordinate arrays.
-    pub site_indices: Vec<[u32; 2]>,
-}
-
-fn default_blockade_radius() -> f64 {
-    2.0
 }
 
 /// A 2D coordinate grid for positioning atom sites within a word.
@@ -292,120 +338,37 @@ impl Grid {
     }
 }
 
-/// Container for all transport bus definitions in an architecture.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Buses {
-    /// Site buses move atoms between sites within the same word.
-    pub site_buses: Vec<Bus>,
-    /// Word buses move atoms between different words.
-    pub word_buses: Vec<Bus>,
-}
-
-/// A transport bus that maps source positions to destination positions.
-///
-/// The `src` and `dst` lists are parallel arrays: `src[i]` maps to `dst[i]`.
-/// For site buses, values are site indices within a word. For word buses,
-/// values are word IDs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Bus {
-    /// Source indices.
-    pub src: Vec<u32>,
-    /// Destination indices (same length as `src`).
-    pub dst: Vec<u32>,
-    /// Optional list of word IDs this bus applies to (site buses only).
-    /// When `Some`, only these words can use this bus. When `None`,
-    /// falls back to the global `words_with_site_buses` list.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub words: Option<Vec<u32>>,
-}
-
-/// A logical zone grouping words for execution phases.
-///
-/// Zone 0 is special and must contain all word IDs. A zone's ID is its
-/// index in the [`ArchSpec::zones`] list.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Zone {
-    /// Word IDs belonging to this zone.
-    pub words: Vec<u32>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::example_arch_spec;
 
     #[test]
-    fn serde_round_trip() {
-        let spec = example_arch_spec();
-        let json = serde_json::to_string(&spec).unwrap();
-        let deserialized: ArchSpec = serde_json::from_str(&json).unwrap();
-        assert_eq!(spec, deserialized);
+    fn test_site_bus_serde() {
+        let bus: Bus<SiteRef> = Bus {
+            src: vec![SiteRef(0), SiteRef(1)],
+            dst: vec![SiteRef(3), SiteRef(4)],
+        };
+        let json = serde_json::to_string(&bus).unwrap();
+        let deserialized: Bus<SiteRef> = serde_json::from_str(&json).unwrap();
+        assert_eq!(bus.src, deserialized.src);
+        assert_eq!(bus.dst, deserialized.dst);
     }
 
     #[test]
-    fn optional_fields_absent() {
-        let json = r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 2,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                        "site_indices": [[0, 0], [0, 1]]
-                    }
-                ]
-            },
-            "buses": { "site_buses": [], "word_buses": [] },
-            "words_with_site_buses": [],
-            "sites_with_word_buses": [],
-            "zones": [{ "words": [0] }],
-            "entangling_zones": [],
-            "measurement_mode_zones": [0]
-        }"#;
-        let spec: ArchSpec = serde_json::from_str(json).unwrap();
-        assert!(spec.paths.is_none());
-        assert!(!spec.feed_forward);
-        assert!(!spec.atom_reloading);
-        assert_eq!(spec.blockade_radius, 2.0); // default
-    }
-
-    #[test]
-    fn capability_fields_present() {
-        let json = r#"{
-            "version": "2.0",
-            "geometry": {
-                "sites_per_word": 2,
-                "words": [
-                    {
-                        "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                        "site_indices": [[0, 0], [0, 1]]
-                    }
-                ]
-            },
-            "buses": { "site_buses": [], "word_buses": [] },
-            "words_with_site_buses": [],
-            "sites_with_word_buses": [],
-            "zones": [{ "words": [0] }],
-            "entangling_zones": [],
-            "measurement_mode_zones": [0],
-            "feed_forward": true,
-            "atom_reloading": true
-        }"#;
-        let spec: ArchSpec = serde_json::from_str(json).unwrap();
-        assert!(spec.feed_forward);
-        assert!(spec.atom_reloading);
-    }
-
-    #[test]
-    fn capability_fields_round_trip() {
-        let mut spec = example_arch_spec();
-        spec.feed_forward = true;
-        spec.atom_reloading = true;
-        let json = serde_json::to_string(&spec).unwrap();
-        let deserialized: ArchSpec = serde_json::from_str(&json).unwrap();
-        assert!(deserialized.feed_forward);
-        assert!(deserialized.atom_reloading);
-        assert_eq!(spec, deserialized);
+    fn test_zone_bus_serde() {
+        let bus: Bus<ZonedWordRef> = Bus {
+            src: vec![ZonedWordRef {
+                zone_id: 0,
+                word_id: 1,
+            }],
+            dst: vec![ZonedWordRef {
+                zone_id: 1,
+                word_id: 1,
+            }],
+        };
+        let json = serde_json::to_string(&bus).unwrap();
+        let deserialized: Bus<ZonedWordRef> = serde_json::from_str(&json).unwrap();
+        assert_eq!(bus.src, deserialized.src);
     }
 
     #[test]
@@ -466,39 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn hash_consistency() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let spec1 = example_arch_spec();
-        let spec2 = example_arch_spec();
-        let mut h1 = DefaultHasher::new();
-        let mut h2 = DefaultHasher::new();
-        spec1.hash(&mut h1);
-        spec2.hash(&mut h2);
-        assert_eq!(h1.finish(), h2.finish());
-    }
-
-    #[test]
-    fn hash_negative_zero_equals_positive_zero() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut spec1 = example_arch_spec();
-        let mut spec2 = example_arch_spec();
-        spec1.blockade_radius = 0.0;
-        spec2.blockade_radius = -0.0;
-        // PartialEq treats 0.0 == -0.0
-        assert_eq!(spec1, spec2);
-        // Hash must also agree
-        let mut h1 = DefaultHasher::new();
-        let mut h2 = DefaultHasher::new();
-        spec1.hash(&mut h1);
-        spec2.hash(&mut h2);
-        assert_eq!(h1.finish(), h2.finish());
-    }
-
-    #[test]
     fn lane_hex_missing_prefix_rejected() {
         let json = r#"{"lane": "00000001", "waypoints": []}"#;
         let err = serde_json::from_str::<TransportPath>(json).unwrap_err();
@@ -506,5 +436,42 @@ mod tests {
             err.to_string()
                 .contains("expected hex string starting with '0x'")
         );
+    }
+
+    #[test]
+    fn test_sites_per_word() {
+        let spec = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![
+                Word {
+                    sites: vec![[0, 0], [1, 0]],
+                },
+                Word {
+                    sites: vec![[0, 0], [1, 0]],
+                },
+            ],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        };
+        assert_eq!(spec.sites_per_word(), 2);
+    }
+
+    #[test]
+    fn test_sites_per_word_empty() {
+        let spec = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        };
+        assert_eq!(spec.sites_per_word(), 0);
     }
 }

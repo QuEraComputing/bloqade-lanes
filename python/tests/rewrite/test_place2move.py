@@ -1,4 +1,3 @@
-from bloqade.geometry.dialects import grid
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import py
@@ -10,24 +9,35 @@ from bloqade.lanes.analysis.placement.lattice import (
     ExecuteCZ,
     ExecuteMeasure,
 )
+from bloqade.lanes.bytecode._native import (
+    Grid as RustGrid,
+    LocationAddress as RustLocAddr,
+    Mode as RustMode,
+    Zone as RustZone,
+)
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout import word
 from bloqade.lanes.rewrite import place2move
 
+_word = word.Word(sites=((0, 0), (0, 1)))
+_rust_grid = RustGrid.from_positions([0.0], [0.0, 1.0])
+_rust_zone = RustZone(
+    name="test",
+    grid=_rust_grid,
+    site_buses=[],
+    word_buses=[],
+    words_with_site_buses=[],
+    sites_with_word_buses=[],
+)
+_rust_mode = RustMode(
+    name="all",
+    zones=[0],
+    bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1)],
+)
 ARCH_SPEC = layout.ArchSpec.from_components(
-    (
-        word.Word(
-            positions=grid.Grid.from_positions([0], [0, 1]),
-            site_indices=((0, 0), (0, 1)),
-        ),
-    ),
-    ((0,),),
-    (0,),
-    [],
-    frozenset(),
-    frozenset(),
-    (),
-    (),
+    words=(_word,),
+    zones=(_rust_zone,),
+    modes=[_rust_mode],
 )
 
 
@@ -60,7 +70,7 @@ def test_insert_move():
 
     lane_group = (
         layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(1, 0, 0, layout.Direction.FORWARD),
     )
 
     placement_analysis: dict[ir.SSAValue, AtomState] = {
@@ -92,11 +102,11 @@ def test_insert_move():
 def test_insert_palindrom_moves():
     lane_group = (
         layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(0, 1, 0, layout.Direction.FORWARD),
+        layout.SiteLaneAddress(1, 0, 0, layout.Direction.FORWARD),
     )
     reverse_moves = (
         layout.SiteLaneAddress(0, 0, 0, layout.Direction.BACKWARD),
-        layout.SiteLaneAddress(0, 1, 0, layout.Direction.BACKWARD),
+        layout.SiteLaneAddress(1, 0, 0, layout.Direction.BACKWARD),
     )
 
     state_before = ir.TestValue()

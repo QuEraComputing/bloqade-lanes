@@ -14,7 +14,7 @@ from bloqade.lanes.analysis.placement import (
     PlacementStrategyABC,
 )
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
 from bloqade.lanes.layout import (
     Direction,
     LaneAddress,
@@ -154,7 +154,7 @@ class BFSPlacementTraversal(PlacementTraversalABC):
 class RustPlacementTraversal:
     """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
 
-    strategy: str = "astar"
+    strategy: SearchStrategy = SearchStrategy.ASTAR
     top_c: int = 3
     max_movesets_per_group: int = 3
     max_expansions: int | None = 300
@@ -311,9 +311,14 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
 
-        initial = [(qid, loc.word_id, loc.site_id) for qid, loc in placement.items()]
-        target_tuples = [(qid, loc.word_id, loc.site_id) for qid, loc in target.items()]
-        blocked = [(loc.word_id, loc.site_id) for loc in state.occupied]
+        initial = [
+            (qid, loc.zone_id, loc.word_id, loc.site_id)
+            for qid, loc in placement.items()
+        ]
+        target_tuples = [
+            (qid, loc.zone_id, loc.word_id, loc.site_id) for qid, loc in target.items()
+        ]
+        blocked = [(loc.zone_id, loc.word_id, loc.site_id) for loc in state.occupied]
 
         solver = self._get_rust_solver()
         result = solver.solve(
@@ -331,13 +336,15 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
         move_layers = tuple(
             tuple(
-                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d])
-                for d, mt, word, site, bus in step
+                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d], zone)
+                for d, mt, zone, word, site, bus in step
             )
             for step in result.move_layers
         )
 
-        goal_map = {qid: LocationAddress(w, s) for qid, w, s in result.goal_config}
+        goal_map = {
+            qid: LocationAddress(w, s, z) for qid, z, w, s in result.goal_config
+        }
         goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
 
         move_count = tuple(

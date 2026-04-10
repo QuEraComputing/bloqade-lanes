@@ -22,7 +22,7 @@ use crate::lane_index::LaneIndex;
 pub struct ExhaustiveExpander<'a> {
     index: &'a LaneIndex,
     /// Encoded locations that are blocked (external obstacles).
-    blocked: HashSet<u32>,
+    blocked: HashSet<u64>,
     /// Maximum AOD X capacity (None = unlimited).
     max_x_capacity: Option<usize>,
     /// Maximum AOD Y capacity (None = unlimited).
@@ -46,7 +46,7 @@ impl<'a> ExhaustiveExpander<'a> {
     }
 
     /// Build the set of all occupied encoded locations (config qubits + blocked).
-    fn occupied_set(&self, config: &Config) -> HashSet<u32> {
+    fn occupied_set(&self, config: &Config) -> HashSet<u64> {
         let mut occupied = self.blocked.clone();
         for (_, loc) in config.iter() {
             occupied.insert(loc.encode());
@@ -66,8 +66,8 @@ impl Expander for ExhaustiveExpander<'_> {
             max_y_capacity: self.max_y_capacity,
         };
 
-        for (mt, bus_id, dir) in self.index.triplets() {
-            let lanes = self.index.lanes_for(mt, bus_id, dir);
+        for (mt, bus_id, zone_id, dir) in self.index.bus_groups() {
+            let lanes = self.index.lanes_for(mt, bus_id, zone_id, dir);
             if lanes.is_empty() {
                 continue;
             }
@@ -79,8 +79,8 @@ impl Expander for ExhaustiveExpander<'_> {
 
 /// Shared context for rectangle enumeration, built once per `expand()` call.
 struct ExpandContext<'a> {
-    occupied: HashSet<u32>,
-    loc_to_qubit: HashMap<u32, u32>,
+    occupied: HashSet<u64>,
+    loc_to_qubit: HashMap<u64, u32>,
     config: &'a Config,
     index: &'a LaneIndex,
     max_x_capacity: Option<usize>,
@@ -90,7 +90,7 @@ struct ExpandContext<'a> {
 /// Per-triplet data built during rectangle enumeration.
 struct TripletData {
     pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)>,
-    invalid_locs: HashSet<u32>,
+    invalid_locs: HashSet<u64>,
 }
 
 /// Enumerate all valid AOD rectangles for a set of lanes and push results.
@@ -104,7 +104,7 @@ fn rectangles_to_move_sets(
     let mut pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)> = HashMap::new();
     let mut unique_x: BTreeSet<u64> = BTreeSet::new();
     let mut unique_y: BTreeSet<u64> = BTreeSet::new();
-    let mut invalid_locs: HashSet<u32> = HashSet::new();
+    let mut invalid_locs: HashSet<u64> = HashSet::new();
 
     for &lane in lanes {
         let (src, dst) = match ctx.index.endpoints(&lane) {

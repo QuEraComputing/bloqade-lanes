@@ -41,7 +41,7 @@ class TestBuildArchSingleZone:
         assert isinstance(result, ArchResult)
         assert len(result.arch.words) == 2
         assert "proc" in result.zone_grids
-        assert result.zone_indices == {"proc": 1}
+        assert result.zone_indices == {"proc": 0}
 
     def test_with_word_topology(self) -> None:
         bp = ArchBlueprint(
@@ -56,7 +56,7 @@ class TestBuildArchSingleZone:
             layout=DeviceLayout(sites_per_word=4),
         )
         result = build_arch(bp)
-        # 2x2 grid → 1 row dim + 1 col dim = 2 word buses
+        # 2x2 grid → 1 row dim + 1 col dim = 2 word buses (1 zone, no split)
         assert len(result.arch.word_buses) == 2
 
     def test_with_site_topology(self) -> None:
@@ -72,7 +72,7 @@ class TestBuildArchSingleZone:
             layout=DeviceLayout(sites_per_word=4),
         )
         result = build_arch(bp)
-        # 4 sites → log2(4) = 2 site buses
+        # 4 sites → log2(4) = 2 site buses (1 zone, no split)
         assert len(result.arch.site_buses) == 2
         assert result.arch.has_site_buses == frozenset({0, 1})
 
@@ -82,8 +82,8 @@ class TestBuildArchTwoZones:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
         assert len(result.arch.words) == 8  # 4 + 4
-        assert result.zone_indices == {"proc": 1, "mem": 2}
-        # Only proc has word topology → 2 word buses
+        assert result.zone_indices == {"proc": 0, "mem": 1}
+        # Only proc has word topology → 2 word buses (1 zone, no split)
         assert len(result.arch.word_buses) == 2
 
     def test_two_zones_with_matching(self) -> None:
@@ -94,8 +94,10 @@ class TestBuildArchTwoZones:
                 ("proc", "mem"): MatchingTopology(),
             },
         )
-        # 2 intra-zone (proc hypercube) + 1 inter-zone (matching) = 3
-        assert len(result.arch.word_buses) == 3
+        # Proc zone: 2 hypercube word buses (no split, 1 zone)
+        # Inter-zone connections go to zone_buses, not word_buses
+        assert len(result.arch.word_buses) == 2
+        assert len(result.arch.zone_buses) == 1
 
     def test_zone_grids_correct(self) -> None:
         bp = _two_zone_blueprint()
@@ -107,19 +109,30 @@ class TestBuildArchTwoZones:
         assert proc_grid.num_rows == 2
         assert mem_grid.num_rows == 2
 
-    def test_entangling_zones(self) -> None:
+    def test_entangling_pairs(self) -> None:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
-        # Proc zone (2x2 grid) has 2 CZ pairs: (0,1) and (2,3)
-        assert len(result.arch.entangling_zones) == 1
-        assert result.arch.entangling_zones[0] == ((0, 1), (2, 3))
+        # Proc is 1 zone with entangling pairs, mem is 1 zone without
+        zones = result.arch._inner.zones
+        assert len(zones) == 2
+        assert len(zones[0].entangling_pairs) == 2
+        assert zones[0].entangling_pairs == [(0, 1), (2, 3)]
+        assert zones[1].entangling_pairs == []
 
     def test_measurement_zones(self) -> None:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
-        # Both zones have measurement=True (default)
-        # measurement_mode_zones = (0, 1, 2) — zone 0 (all) + proc + mem
-        assert result.arch.measurement_mode_zones == (0, 1, 2)
+        # Both blueprint zones have measurement=True (default).
+        # 1:1 mapping: proc=zone 0, mem=zone 1.
+        # Modes: "all" (zones [0,1]), "proc" (zones [0]), "mem" (zones [1])
+        modes = result.arch.modes
+        assert len(modes) == 3
+        assert modes[0].name == "all"
+        assert modes[0].zones == [0, 1]
+        assert modes[1].name == "proc"
+        assert modes[1].zones == [0]
+        assert modes[2].name == "mem"
+        assert modes[2].zones == [1]
 
     def test_has_word_buses_all_sites(self) -> None:
         bp = _two_zone_blueprint()
@@ -156,9 +169,12 @@ class TestBuildArchThreeZones:
             },
         )
         assert len(result.arch.words) == 12
-        assert result.zone_indices == {"proc": 1, "buffer": 2, "mem": 3}
-        # 2 intra (proc) + 2 inter = 4 word buses
-        assert len(result.arch.word_buses) == 4
+        # 1:1 mapping: proc=0, buffer=1, mem=2
+        assert result.zone_indices == {"proc": 0, "buffer": 1, "mem": 2}
+        # Proc: 2 hypercube word buses (no split)
+        # Inter-zone connections go to zone_buses
+        assert len(result.arch.word_buses) == 2
+        assert len(result.arch.zone_buses) == 2
 
 
 class TestBuildArchValidation:
@@ -201,7 +217,7 @@ class TestBuildArchValidation:
         assert result.arch.has_site_buses == frozenset()
 
     def test_non_measurement_zone(self) -> None:
-        """Zone with measurement=False is excluded from measurement_mode_zones."""
+        """Zone with measurement=False is excluded from per-zone modes."""
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(num_rows=1, num_cols=2, entangling=True),
@@ -210,8 +226,11 @@ class TestBuildArchValidation:
             layout=DeviceLayout(sites_per_word=4),
         )
         result = build_arch(bp)
-        # Zone 0 (all) + proc (1), buffer excluded
-        assert result.arch.measurement_mode_zones == (0, 1)
+        # Modes: "all" (zones [0,1,2]) + "proc" (zones [0,1]), buffer excluded
+        modes = result.arch.modes
+        assert len(modes) == 2
+        assert modes[0].name == "all"
+        assert modes[1].name == "proc"
 
 
 class TestBuildArchPerBusWords:
@@ -238,22 +257,20 @@ class TestBuildArchPerBusWords:
         result = build_arch(bp)
         arch = result.arch
 
-        # Hypercube(4 sites) = 2 buses, AllToAll(4 sites) = 6 buses → 8 total
+        # Hypercube(4 sites) = 2 buses (1 zone, no split)
+        # AllToAll(4 sites) = 6 buses for mem → 8 total
         assert len(arch.site_buses) == 8
 
-        # First 2 buses (proc) have words=[0, 1]
-        for i in range(2):
-            assert arch.site_buses[i].words == [0, 1]
+        # Proc is zone 0 with words [0, 1], mem is zone 1 with words [2, 3]
+        # words_with_site_buses uses global IDs
+        assert arch.zones[0].words_with_site_buses == [0, 1]
+        assert arch.zones[1].words_with_site_buses == [2, 3]
 
-        # Last 6 buses (mem) have words=[2, 3]
-        for i in range(2, 8):
-            assert arch.site_buses[i].words == [2, 3]
-
-        # has_site_buses = union of all
+        # has_site_buses = union across zones (global IDs)
         assert arch.has_site_buses == frozenset({0, 1, 2, 3})
 
     def test_single_zone_site_buses_have_words(self) -> None:
-        """Even single-zone site buses get words set."""
+        """Single zone with site topology → all words have site buses."""
         bp = ArchBlueprint(
             zones={
                 "proc": ZoneSpec(
@@ -266,8 +283,9 @@ class TestBuildArchPerBusWords:
             layout=DeviceLayout(sites_per_word=4),
         )
         result = build_arch(bp)
-        for bus in result.arch.site_buses:
-            assert bus.words == [0, 1]
+        # 1 zone, both words have site buses
+        assert len(result.arch.zones) == 1
+        assert result.arch.zones[0].words_with_site_buses == [0, 1]
 
     def test_zone_without_site_topology_excluded(self) -> None:
         """Zones without site_topology don't contribute to site buses."""
@@ -284,11 +302,13 @@ class TestBuildArchPerBusWords:
             layout=DeviceLayout(sites_per_word=4),
         )
         result = build_arch(bp)
-        # Only proc buses, mem has no site topology
+        # Only proc has site buses (2 from hypercube on 4 sites), mem has none
         assert len(result.arch.site_buses) == 2
-        for bus in result.arch.site_buses:
-            assert bus.words == [0, 1]
-        # has_site_buses = only proc words
+        # Proc zone has both words
+        assert result.arch.zones[0].words_with_site_buses == [0, 1]
+        # Mem zone has no site buses
+        assert result.arch.zones[1].words_with_site_buses == []
+        # has_site_buses = only proc words (zone-local)
         assert result.arch.has_site_buses == frozenset({0, 1})
 
 
@@ -321,7 +341,7 @@ class TestPathFinderIntegration:
         assert pf.find_path(LocationAddress(2, 0), LocationAddress(2, 1)) is None
 
     def test_cross_zone_reachable_via_word_bus(self) -> None:
-        """PathFinder can route across zones via inter-zone word buses."""
+        """PathFinder can route across zones via inter-zone zone buses."""
         from bloqade.lanes.layout.encoding import LocationAddress
         from bloqade.lanes.layout.path import PathFinder
 
@@ -345,5 +365,13 @@ class TestPathFinderIntegration:
         )
         pf = PathFinder(result.arch)
 
-        # proc word 0 → mem word 2 (same site): reachable via matching word bus
-        assert pf.find_path(LocationAddress(0, 0), LocationAddress(2, 0)) is not None
+        # proc word 0 (zone 0) → mem word 2 (zone 1, same site): reachable via zone bus
+        proc_zone_id = result.zone_indices["proc"]
+        mem_zone_id = result.zone_indices["mem"]
+        assert (
+            pf.find_path(
+                LocationAddress(0, 0, proc_zone_id),
+                LocationAddress(2, 0, mem_zone_id),
+            )
+            is not None
+        )

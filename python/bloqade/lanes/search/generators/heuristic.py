@@ -94,7 +94,14 @@ class HeuristicMoveGenerator:
 
             for qid, _ in qubit_scores:
                 loc = node.configuration[qid]
-                lane = tree.lane_for_source(mt, bid, d, loc)
+                lane = next(
+                    (
+                        la
+                        for la in tree.outgoing_lanes(loc)
+                        if la.move_type == mt and la.bus_id == bid and la.direction == d
+                    ),
+                    None,
+                )
                 if lane is None:
                     continue
                 _, dst = tree.arch_spec.get_endpoints(lane)

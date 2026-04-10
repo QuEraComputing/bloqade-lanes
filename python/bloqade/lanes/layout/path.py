@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import product, starmap
+from itertools import product
 from typing import Callable
 
 import rustworkx as nx
@@ -11,6 +11,7 @@ from .encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
 )
@@ -24,73 +25,105 @@ class PathFinder:
     site_graph: nx.PyDiGraph = field(init=False, default_factory=nx.PyDiGraph)
     """Graph representing all sites and edges as lanes."""
     physical_addresses: list[LocationAddress] = field(init=False, default_factory=list)
-    """Map from graph node index to (word_id, site_id) tuple."""
+    """Map from graph node index to (zone_id, word_id, site_id) tuple."""
     physical_address_map: dict[LocationAddress, int] = field(
         init=False, default_factory=dict
     )
-    """Map from (word_id, site_id) tuple to graph node index."""
+    """Map from (zone_id, word_id, site_id) tuple to graph node index."""
     end_points_cache: dict[LaneAddress, tuple[LocationAddress, LocationAddress]] = (
         field(init=False, default_factory=dict)
     )
 
     def __post_init__(self):
         object.__setattr__(self, "metrics", MoveMetricCalculator(arch_spec=self.spec))
-        word_ids = range(len(self.spec.words))
-        site_ids = range(len(self.spec.words[0].site_indices))
-        self.physical_addresses.extend(
-            starmap(LocationAddress, product(word_ids, site_ids))
-        )
-        self.physical_address_map.update(
-            {site: i for i, site in enumerate(self.physical_addresses)}
-        )
+
+        # Build physical addresses for all zone/word/site combos.
+        # Use zone 0 as default for constructing the graph.
+        for zone_id, zone in enumerate(self.spec._inner.zones):
+            word_ids = range(len(self.spec.words))
+            site_ids = range(self.spec.sites_per_word)
+            for word_id, site_id in product(word_ids, site_ids):
+                addr = LocationAddress(word_id, site_id, zone_id)
+                if addr not in self.physical_address_map:
+                    idx = len(self.physical_addresses)
+                    self.physical_addresses.append(addr)
+                    self.physical_address_map[addr] = idx
+
         self.site_graph.add_nodes_from(range(len(self.physical_addresses)))
 
-        for bus_id, bus in enumerate(self.spec.site_buses):
-            bus_word_ids = (
-                bus.words if bus.words is not None else self.spec.has_site_buses
-            )
-            for word_id in bus_word_ids:
-                for src, dst in zip(bus.src, bus.dst):
-                    src_site = LocationAddress(word_id, src)
-                    dst_site = LocationAddress(word_id, dst)
-                    lane_addr = SiteLaneAddress(
-                        word_id,
-                        src,
-                        bus_id,
-                        Direction.FORWARD,
-                    )
-                    self.site_graph.add_edge(
-                        self.physical_address_map[src_site],
-                        self.physical_address_map[dst_site],
-                        lane_addr,
-                    )
-                    self.site_graph.add_edge(
-                        self.physical_address_map[dst_site],
-                        self.physical_address_map[src_site],
-                        rev_lane_addr := lane_addr.reverse(),
-                    )
-                    self.end_points_cache[lane_addr] = (src_site, dst_site)
-                    self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
+        for zone_id, zone in enumerate(self.spec._inner.zones):
+            for bus_id, bus in enumerate(zone.site_buses):
+                bus_word_ids = zone.words_with_site_buses
+                for word_id in bus_word_ids:
+                    for src, dst in zip(bus.src, bus.dst):
+                        src_site = LocationAddress(word_id, src, zone_id)
+                        dst_site = LocationAddress(word_id, dst, zone_id)
+                        lane_addr = SiteLaneAddress(
+                            word_id,
+                            src,
+                            bus_id,
+                            Direction.FORWARD,
+                            zone_id,
+                        )
+                        src_idx = self.physical_address_map[src_site]
+                        dst_idx = self.physical_address_map[dst_site]
+                        self.site_graph.add_edge(src_idx, dst_idx, lane_addr)
+                        self.site_graph.add_edge(
+                            dst_idx,
+                            src_idx,
+                            rev_lane_addr := lane_addr.reverse(),
+                        )
+                        self.end_points_cache[lane_addr] = (src_site, dst_site)
+                        self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
 
-        for bus_id, bus in enumerate(self.spec.word_buses):
-            for src_word, dst_word in zip(bus.src, bus.dst):
-                for site in self.spec.has_word_buses:
-                    src_site = LocationAddress(src_word, site)
-                    dst_site = LocationAddress(dst_word, site)
-                    lane_addr = WordLaneAddress(
+            for bus_id, bus in enumerate(zone.word_buses):
+                for src_word, dst_word in zip(bus.src, bus.dst):
+                    for site in zone.sites_with_word_buses:
+                        src_site = LocationAddress(src_word, site, zone_id)
+                        dst_site = LocationAddress(dst_word, site, zone_id)
+                        lane_addr = WordLaneAddress(
+                            src_word,
+                            site,
+                            bus_id,
+                            Direction.FORWARD,
+                            zone_id,
+                        )
+                        src_idx = self.physical_address_map[src_site]
+                        dst_idx = self.physical_address_map[dst_site]
+                        self.site_graph.add_edge(src_idx, dst_idx, lane_addr)
+                        self.site_graph.add_edge(
+                            dst_idx,
+                            src_idx,
+                            rev_lane_addr := lane_addr.reverse(),
+                        )
+                        self.end_points_cache[lane_addr] = (src_site, dst_site)
+                        self.end_points_cache[rev_lane_addr] = (dst_site, src_site)
+
+        # Zone buses: inter-zone word movement.
+        for bus_id, zb in enumerate(self.spec.zone_buses):
+            for (src_zone, src_word), (dst_zone, dst_word) in zip(zb.src, zb.dst):
+                for site in range(self.spec.sites_per_word):
+                    src_site = LocationAddress(src_word, site, src_zone)
+                    dst_site = LocationAddress(dst_word, site, dst_zone)
+                    if (
+                        src_site not in self.physical_address_map
+                        or dst_site not in self.physical_address_map
+                    ):
+                        continue
+                    lane_addr = LaneAddress(
+                        MoveType.ZONE,
                         src_word,
                         site,
                         bus_id,
                         Direction.FORWARD,
+                        src_zone,
                     )
+                    src_idx = self.physical_address_map[src_site]
+                    dst_idx = self.physical_address_map[dst_site]
+                    self.site_graph.add_edge(src_idx, dst_idx, lane_addr)
                     self.site_graph.add_edge(
-                        self.physical_address_map[src_site],
-                        self.physical_address_map[dst_site],
-                        lane_addr,
-                    )
-                    self.site_graph.add_edge(
-                        self.physical_address_map[dst_site],
-                        self.physical_address_map[src_site],
+                        dst_idx,
+                        src_idx,
                         rev_lane_addr := lane_addr.reverse(),
                     )
                     self.end_points_cache[lane_addr] = (src_site, dst_site)
@@ -120,8 +153,10 @@ class PathFinder:
         self, start: LocationAddress, end: LocationAddress
     ) -> LaneAddress | None:
         """Get the LaneAddress connecting two LocationAddress sites."""
-        start_node = self.physical_address_map[start]
-        end_node = self.physical_address_map[end]
+        start_node = self.physical_address_map.get(start)
+        end_node = self.physical_address_map.get(end)
+        if start_node is None or end_node is None:
+            return None
         edge_data = self.site_graph.get_edge_data(start_node, end_node)
         if edge_data is None:
             return None
@@ -161,8 +196,10 @@ class PathFinder:
                 - The same path as `LocationAddress` values (including start and end).
             Returns `None` when no valid path exists.
         """
-        start_node = self.physical_address_map[start]
-        end_node = self.physical_address_map[end]
+        start_node = self.physical_address_map.get(start)
+        end_node = self.physical_address_map.get(end)
+        if start_node is None or end_node is None:
+            return None
         if start == end:
             return (), (start,)
 

@@ -141,7 +141,7 @@ def zone_goal(zone_id: int, arch_spec: ArchSpec) -> GoalPredicate:
     Returns:
         A GoalPredicate that returns True when all qubits are in the zone.
     """
-    zone_words = set(arch_spec.zones[zone_id])
+    zone_words = set(arch_spec._zone_word_ids(zone_id))
 
     def goal(node: ConfigurationNode) -> bool:
         return all(loc.word_id in zone_words for loc in node.configuration.values())
