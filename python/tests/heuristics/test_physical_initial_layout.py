@@ -248,14 +248,14 @@ def test_relabel_words_fill_left_to_right():
 
 
 def test_fixed_baseline_fill_order():
-    """Fixed layout fills word 0 sequentially, then word 1."""
+    """Fixed layout fills left words of each entangling pair."""
     strategy = PhysicalLayoutHeuristicFixed(
         arch_spec=_make_arch(),
     )
     qubits = tuple(range(10))
     out = strategy.compute_layout(qubits, _weighted_stages({}))
     coords = tuple((addr.word_id, addr.site_id) for addr in out)
-    # Fills word 0 sites 0-7 (left half), then word 1 site 0-1
+    # Fills word 0 sites 0-9 (full home-word capacity).
     assert coords == (
         (0, 0),
         (0, 1),
@@ -265,6 +265,35 @@ def test_fixed_baseline_fill_order():
         (0, 5),
         (0, 6),
         (0, 7),
-        (1, 0),
-        (1, 1),
+        (0, 8),
+        (0, 9),
     )
+
+
+def test_single_zone_assumption_is_explicit():
+    bp = ArchBlueprint(
+        zones={
+            "zone_a": ZoneSpec(
+                num_rows=2,
+                num_cols=2,
+                entangling=True,
+                word_topology=DiagonalWordTopology(),
+                site_topology=HypercubeSiteTopology(),
+            ),
+            "zone_b": ZoneSpec(
+                num_rows=2,
+                num_cols=2,
+                entangling=True,
+                word_topology=DiagonalWordTopology(),
+                site_topology=HypercubeSiteTopology(),
+            ),
+        },
+        layout=DeviceLayout(sites_per_word=16),
+    )
+    arch = build_arch(bp).arch
+
+    with pytest.raises(ValueError, match="expects exactly one entangling zone"):
+        _ = PhysicalLayoutHeuristicGraphPartitionCenterOut(arch_spec=arch).home_word_ids
+
+    with pytest.raises(ValueError, match="expects exactly one entangling zone"):
+        _ = PhysicalLayoutHeuristicFixed(arch_spec=arch).home_word_ids
