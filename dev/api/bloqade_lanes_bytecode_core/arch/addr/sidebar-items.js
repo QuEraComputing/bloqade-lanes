@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Direction","MoveType"],"struct":["LaneAddr","LocationAddr","ZoneAddr"]};
+window.SIDEBAR_ITEMS = {"enum":["Direction","MoveType"],"struct":["LaneAddr","LocationAddr","SiteRef","WordRef","ZoneAddr","ZonedWordRef"]};

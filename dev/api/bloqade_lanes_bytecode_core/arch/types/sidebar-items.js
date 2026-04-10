@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ArchSpec","Bus","Buses","Geometry","Grid","TransportPath","Word","Zone"]};
+window.SIDEBAR_ITEMS = {"struct":["ArchSpec","Bus","Grid","Mode","TransportPath","Word","Zone"]};

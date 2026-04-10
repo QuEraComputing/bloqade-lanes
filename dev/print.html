@@ -90,7 +90,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">2.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">3.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">4.</strong> CLI Reference</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="bytecode/inst-quick-ref.html"><strong aria-hidden="true">3.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="bytecode/inst-spec.html"><strong aria-hidden="true">4.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="bytecode/cli.html"><strong aria-hidden="true">5.</strong> CLI Reference</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -435,6 +435,251 @@
 }
 </code></pre>
 <p>A fuller example with multiple words, CZ pairs, and word buses is available at <a href="arch/../../examples/arch/full.json"><code>examples/arch/full.json</code></a>.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="zone-centric-architecture--visual-guide"><a class="header" href="#zone-centric-architecture--visual-guide">Zone-Centric Architecture — Visual Guide</a></h1>
+<p>This guide explains the zone-centric ArchSpec model using diagrams and
+examples. The audience is hardware engineers and architects validating that the
+spec correctly models the physical device. For the formal specification, see
+<a href="arch/archspec.html">Architecture Specification</a>.</p>
+<hr />
+<h2 id="zones--the-primary-unit"><a class="header" href="#zones--the-primary-unit">Zones — The Primary Unit</a></h2>
+<p>The processor is organized into <strong>zones</strong> — physically distinct regions of the
+trap array. Each zone owns its own coordinate grid of trap sites. Zones differ
+in purpose and connectivity:</p>
+<ul>
+<li><strong>Gate zones</strong> — contain entangling word pairs; high internal connectivity
+(many site and word buses)</li>
+<li><strong>Memory zones</strong> — atom storage; no entangling pairs; lower connectivity</li>
+</ul>
+<pre><code>  Zone 0 (Gate)                          Zone 1 (Memory)
+  ┌──────────────────────┐               ┌──────────────────────┐
+  │  ●──●    ●──●        │               │  ●   ●   ●   ●       │
+  │  ╠══╣    ╠══╣  dense │               │                loose │
+  │  ●──●    ●──●        │               │  ●   ●   ●   ●       │
+  │                      │               │                      │
+  │  entangling_pairs:   │               │  entangling_pairs:   │
+  │    word 0 ↔ word 1   │               │    (none)            │
+  │    word 2 ↔ word 3   │               │                      │
+  └──────────────────────┘               └──────────────────────┘
+        ◄──── zone buses ────►
+</code></pre>
+<p>All zones share the same global word definitions and have the same grid
+dimensions (<strong>uniform zone dimension constraint</strong>). What differs is the
+physical spacing and the connectivity. This uniformity is what makes uniform
+addressing work — <code>(zone, word, site)</code> addresses the same logical position in
+any zone.</p>
+<hr />
+<h2 id="words--the-shared-template"><a class="header" href="#words--the-shared-template">Words — The Shared Template</a></h2>
+<p>A <strong>word</strong> groups grid sites into a logical register. Words are a <strong>global
+template</strong> — the same slicing pattern applied identically across every zone. A
+word references index pairs into the parent zone's grid; the physical
+coordinates come from the zone.</p>
+<pre><code>  Word template (global):
+
+    Word 0 = sites (0,0), (1,0)      ┌──────────┐
+    Word 1 = sites (2,0), (3,0)      │  w0   w1 │  ← row 0
+    Word 2 = sites (0,1), (1,1)      │  w2   w3 │  ← row 1
+    Word 3 = sites (2,1), (3,1)      └──────────┘
+
+  Applied to each zone:
+
+    Zone 0 (Gate)              Zone 1 (Memory)
+    ┌─────────┐                ┌─────────┐
+    │ w0 │ w1 │                │ w0 │ w1 │        same word IDs
+    │────┼────│                │────┼────│        same site IDs
+    │ w2 │ w3 │                │ w2 │ w3 │        different physical positions
+    └─────────┘                └─────────┘
+</code></pre>
+<p>A zone bus moving an atom from <code>(zone:0, word:0)</code> to <code>(zone:1, word:0)</code> moves
+it from the gate zone's Word 0 to the memory zone's Word 0. The uniform
+template means the same word ID refers to the same logical slot across zones —
+this is what makes cross-zone transport well-defined.</p>
+<hr />
+<h2 id="entangling-word-pairs"><a class="header" href="#entangling-word-pairs">Entangling Word Pairs</a></h2>
+<p>Each zone declares its own <code>entangling_pairs</code> — pairs of word IDs within that
+zone whose sites are physically close enough for CZ gates. A gate zone has
+entangling pairs; a memory zone has none.</p>
+<pre><code>  Zone 0 (Gate) — entangling pairs: [0,1] and [2,3]
+
+    Word 0         Word 1
+    ┌────┐  CZ ↔  ┌────┐
+    │ s0 │────────│ s0 │     site 0 ↔ site 0
+    │ s1 │────────│ s1 │     site 1 ↔ site 1
+    └────┘        └────┘
+
+    Word 2         Word 3
+    ┌────┐  CZ ↔  ┌────┐
+    │ s0 │────────│ s0 │
+    │ s1 │────────│ s1 │
+    └────┘        └────┘
+
+  CZ partner of (zone=0, word=0, site=1)
+              is (zone=0, word=1, site=1)
+              — always same zone, same site ID
+</code></pre>
+<p>Zone 1 (Memory) has <code>entangling_pairs: []</code> — no CZ capability. The presence
+of pairs is the signal; there is no separate flag. A zone with entangling
+pairs is a gate zone; a zone without is a storage zone.</p>
+<hr />
+<h2 id="transport--how-atoms-move"><a class="header" href="#transport--how-atoms-move">Transport — How Atoms Move</a></h2>
+<p>Atoms move via AOD transport buses at three scopes. Gate zones have more buses
+(high connectivity); memory zones have fewer (lower connectivity).</p>
+<h3 id="within-a-word--site-buses"><a class="header" href="#within-a-word--site-buses">Within a word — Site Buses</a></h3>
+<p>Zone-owned buses that move atoms between sites within words. A site bus
+applies simultaneously to all words listed in <code>words_with_site_buses</code>
+(lockstep, reflecting AOD beam physics).</p>
+<pre><code>  Site bus: move atoms between sites within a word
+
+    Word 0:   s0 ──► s1
+    Word 1:   s0 ──► s1       all words in words_with_site_buses
+    Word 2:   s0 ──► s1       move in lockstep (AOD beam)
+    Word 3:   s0 ──► s1
+</code></pre>
+<h3 id="within-a-zone--word-buses"><a class="header" href="#within-a-zone--word-buses">Within a zone — Word Buses</a></h3>
+<p>Zone-owned buses that move atoms between different words in the same zone.
+Only sites listed in <code>sites_with_word_buses</code> participate as landing pads.</p>
+<pre><code>  Word bus: move atoms between words within a zone
+
+    Zone 0:
+      Word 0  ●───●
+              │     ╲
+              │      ╲        atom moves Word 0 → Word 2
+              │       ▼
+      Word 2  ●───●
+</code></pre>
+<h3 id="across-zones--zone-buses"><a class="header" href="#across-zones--zone-buses">Across zones — Zone Buses</a></h3>
+<p>ArchSpec-owned buses that move atoms between words in different zones. Every
+entry must cross a zone boundary.</p>
+<pre><code>  Zone bus: move atoms between zones
+
+    Zone 0 (Gate)              Zone 1 (Memory)
+    ┌────────────┐             ┌──────────────┐
+    │ Word 0 ●●──│────────────►│──►●● Word 0  │
+    │ Word 1 ●●  │             │   ●● Word 1  │
+    └────────────┘             └──────────────┘
+</code></pre>
+<h3 id="rectangle-constraint"><a class="header" href="#rectangle-constraint">Rectangle Constraint</a></h3>
+<p>For all bus types, the source and destination positions must each form a
+<strong>complete rectangular grid</strong> (Cartesian product of x and y values), and both
+rectangles must have the same dimensions. This reflects the AOD hardware —
+beams move entire rows or columns, so every move operates on a rectangle.</p>
+<h3 id="summary"><a class="header" href="#summary">Summary</a></h3>
+<pre><code>  ┌────────────┬──────────────┬───────────┐
+  │ Bus Type   │ Scope        │ Owned By  │
+  ├────────────┼──────────────┼───────────┤
+  │ Site bus   │ Within word  │ Zone      │
+  │ Word bus   │ Within zone  │ Zone      │
+  │ Zone bus   │ Across zones │ ArchSpec  │
+  └────────────┴──────────────┴───────────┘
+</code></pre>
+<hr />
+<h2 id="measurement-modes"><a class="header" href="#measurement-modes">Measurement Modes</a></h2>
+<p>A <strong>Mode</strong> names a subset of zones and provides an explicit bit-position-to-site
+mapping for measurement results.</p>
+<pre><code>  Mode &quot;all_zones&quot;:  zones = [0, 1]     all sites, explicit ordering
+  Mode &quot;subset&quot;:     zones = [0]        gate zone sites only
+</code></pre>
+<p>Each mode's <code>bitstring_order</code> maps bit positions to <code>(zone, word, site)</code>
+addresses — no implicit conventions or special zone IDs. The mode names and
+zone subsets are user-defined; the examples above are illustrative, not
+canonical.</p>
+<hr />
+<h2 id="old-model-vs-new-model"><a class="header" href="#old-model-vs-new-model">Old Model vs. New Model</a></h2>
+<p>The zone-centric redesign shifts structural ownership from words to zones:</p>
+<pre><code>  OLD MODEL                              NEW MODEL
+  ─────────                              ─────────
+
+  ArchSpec                               ArchSpec
+  ├── geometry                           ├── version: 2.0
+  │   └── words[]                        ├── words[]  ◄── global template
+  │       ├── positions: Grid  ◄─ each   │   └── sites: [(x_idx, y_idx)]
+  │       │   word owns a grid           │
+  │       ├── site_indices               ├── zones[]  ◄── primary unit
+  │       └── has_cz  ◄─ CZ per word     │   ├── grid  ◄── zone owns grid
+  │                                      │   ├── site_buses
+  ├── buses  ◄── global flat lists       │   ├── word_buses
+  │   ├── site_buses[]                   │   ├── words_with_site_buses
+  │   └── word_buses[]                   │   ├── sites_with_word_buses
+  │                                      │   └── entangling_pairs ◄── per-zone
+  ├── zones[]  ◄── afterthought          │
+  │   └── words: [0, 1, 2, 3]            ├── zone_buses[]  ◄── inter-zone
+  │                                      │
+  ├── entangling_zones                   ├── modes[]  ◄── replaces
+  └── measurement_mode_zones             │   ├── name       measurement_mode
+                                         │   ├── zones      _zones
+                                         │   └── bitstring_order
+                                         │
+                                         ├── feed_forward
+                                         └── atom_reloading
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Aspect</th><th>Old</th><th>New</th></tr></thead><tbody>
+<tr><td>Grid ownership</td><td>Each word owns a Grid</td><td>Each zone owns a Grid</td></tr>
+<tr><td>Bus ownership</td><td>Global flat lists</td><td>Per-zone (site + word) + ArchSpec (zone)</td></tr>
+<tr><td>CZ declaration</td><td><code>Word.has_cz</code> (intra-word)</td><td><code>Zone.entangling_pairs</code> (intra-zone word pairs)</td></tr>
+<tr><td>Measurement</td><td><code>measurement_mode_zones: [int]</code></td><td><code>modes: [{ name, zones, bitstring_order }]</code></td></tr>
+<tr><td>Zone role</td><td>Grouping of word IDs</td><td>Primary structural unit</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="key-invariants-quick-reference"><a class="header" href="#key-invariants-quick-reference">Key Invariants (Quick Reference)</a></h2>
+<pre><code>  ┌─────────────────────────────────────────────────────────────────┐
+  │  1. UNIFORM DIMENSIONS                                          │
+  │     All zones share the same global word definitions and        │
+  │     have the same grid dimensions.                              │
+  │                                                                 │
+  │  2. RECTANGLE CONSTRAINT                                        │
+  │     Every bus's src and dst positions form complete             │
+  │     rectangular grids with matching dimensions.                 │
+  │                                                                 │
+  │  3. ZONE BUS CROSSING                                           │
+  │     Every zone bus entry must cross a zone boundary.            │
+  │                                                                 │
+  │  4. ENTANGLING = INTRA-ZONE WORD PAIRS                          │
+  │     Each zone declares its own entangling_pairs (word pairs).   │
+  │     CZ partner is always in the same zone, same site_id.        │
+  │                                                                 │
+  │  5. WORDS ARE TEMPLATES                                         │
+  │     Words define a slicing pattern, not physical positions.     │
+  │     Physical positions come from the parent zone's grid.        │
+  └─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr />
+<h2 id="full-data-model-optional-reading"><a class="header" href="#full-data-model-optional-reading">Full Data Model (Optional Reading)</a></h2>
+<p>Complete ArchSpec field tree for reference. Sites are addressed as
+<code>(zone_id, word_id, site_id)</code>, encoded into 64-bit addresses for bytecode —
+see <a href="arch/archspec.html">Architecture Specification</a> for encoding details.</p>
+<pre><code>ArchSpec
+│
+├── version: Version
+│
+├── words: [Word]                          global template
+│   └── sites: [(x_idx, y_idx)]           index pairs into parent zone's grid
+│
+├── zones: [Zone]                          primary structural unit
+│   ├── grid: Grid                         zone's coordinate system
+│   │   ├── x_start, y_start              origin
+│   │   ├── x_spacing: [f64]              cumulative spacing
+│   │   └── y_spacing: [f64]
+│   ├── site_buses: [Bus&lt;SiteRef&gt;]         intra-word transport
+│   ├── word_buses: [Bus&lt;WordRef&gt;]         intra-zone transport
+│   ├── words_with_site_buses: [u32]       which words participate in site buses
+│   ├── sites_with_word_buses: [u32]       which sites are word-bus landing pads
+│   └── entangling_pairs: [[u32; 2]]       word pairs for CZ gates (empty = storage zone)
+│
+├── zone_buses: [Bus&lt;ZonedWordRef&gt;]        inter-zone transport
+│   └── Bus { src: [ZonedWordRef], dst: [ZonedWordRef] }
+│       └── ZonedWordRef { zone_id: u8, word_id: u16 }
+│
+├── modes: [Mode]                          measurement configurations
+│   ├── name: String
+│   ├── zones: [u32]                       which zones are imaged
+│   └── bitstring_order: [LocationAddr]    bit-to-site mapping
+│
+├── paths: Option&lt;[TransportPath]&gt;         optional AOD transport paths
+│   └── TransportPath { lane: u64, waypoints: [[f64; 2]] }
+│
+├── feed_forward: bool                     mid-circuit measurement + classical feedback
+└── atom_reloading: bool                   atom reload after initial fill
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-quick-reference"><a class="header" href="#instruction-quick-reference">Instruction Quick Reference</a></h1>
 <p>A compact summary of all 24 bytecode instructions. See the <a href="bytecode/inst-spec.html">Instruction Set</a> for full encoding details.</p>
 <h2 id="cpu-0x00"><a class="header" href="#cpu-0x00">Cpu (<code>0x00</code>)</a></h2>
