@@ -14,6 +14,14 @@ from bloqade.lanes.analysis.placement import (
     PlacementStrategyABC,
 )
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
+from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
+from bloqade.lanes.layout import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    ZoneAddress,
+)
 from bloqade.lanes.search import (
     BFSTraversal,
     CandidateScorer,
@@ -142,12 +150,24 @@ class BFSPlacementTraversal(PlacementTraversalABC):
         )
 
 
+@dataclass(frozen=True)
+class RustPlacementTraversal:
+    """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
+
+    strategy: SearchStrategy = SearchStrategy.ASTAR
+    top_c: int = 3
+    max_movesets_per_group: int = 3
+    max_expansions: int | None = 300
+
+
 @dataclass
 class PhysicalPlacementStrategy(PlacementStrategyABC):
     """Physical placement strategy backed by configuration-tree search."""
 
     arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
-    traversal: PlacementTraversalABC = field(default_factory=EntropyPlacementTraversal)
+    traversal: PlacementTraversalABC | RustPlacementTraversal = field(
+        default_factory=EntropyPlacementTraversal
+    )
 
     _cz_counter: int = field(default=0, init=False, repr=False)
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
@@ -155,6 +175,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _traced_target: dict[int, layout.LocationAddress] = field(
         default_factory=dict, init=False, repr=False
     )
+    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
     @property
     def traced_tree(self) -> ConfigurationTree | None:
@@ -173,10 +194,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         self._trace_cz_index = value
 
     def __post_init__(self) -> None:
-        if not isinstance(self.traversal, PlacementTraversalABC):
+        if not isinstance(
+            self.traversal, (PlacementTraversalABC, RustPlacementTraversal)
+        ):
             raise TypeError(
-                "traversal must implement PlacementTraversalABC "
-                "(e.g., EntropyPlacementTraversal())"
+                "traversal must implement PlacementTraversalABC or be a "
+                "RustPlacementTraversal instance"
             )
 
     def validate_initial_layout(
@@ -208,6 +231,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         traversal: PlacementTraversalABC | None = None,
     ) -> SearchResult:
         active_traversal = self.traversal if traversal is None else traversal
+        assert isinstance(active_traversal, PlacementTraversalABC)
         return active_traversal.path_to_target_config(
             tree=tree,
             target=target,
@@ -225,6 +249,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             return AtomState.bottom()
         if not isinstance(state, ConcreteState):
             return AtomState.top()
+
+        if isinstance(self.traversal, RustPlacementTraversal):
+            return self._cz_placements_rust(state, controls, targets)
 
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
@@ -264,6 +291,73 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             move_count=move_count,
             active_cz_zones=frozenset([layout.ZoneAddress(0)]),
             move_layers=move_program,
+        )
+
+    def _get_rust_solver(self) -> MoveSolver:
+        if self._rust_solver is None:
+            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
+        return self._rust_solver
+
+    _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
+    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD}
+
+    def _cz_placements_rust(
+        self,
+        state: ConcreteState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+    ) -> AtomState:
+        assert isinstance(self.traversal, RustPlacementTraversal)
+        placement = {qid: loc for qid, loc in enumerate(state.layout)}
+        target = self._target_from_stage_controls_only(placement, controls, targets)
+
+        initial = [
+            (qid, loc.zone_id, loc.word_id, loc.site_id)
+            for qid, loc in placement.items()
+        ]
+        target_tuples = [
+            (qid, loc.zone_id, loc.word_id, loc.site_id) for qid, loc in target.items()
+        ]
+        blocked = [(loc.zone_id, loc.word_id, loc.site_id) for loc in state.occupied]
+
+        solver = self._get_rust_solver()
+        result = solver.solve(
+            initial,
+            target_tuples,
+            blocked,
+            self.traversal.max_expansions,
+            strategy=self.traversal.strategy,
+            top_c=self.traversal.top_c,
+            max_movesets_per_group=self.traversal.max_movesets_per_group,
+        )
+
+        if result.status != "solved":
+            return AtomState.bottom()
+
+        move_layers = tuple(
+            tuple(
+                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d], zone)
+                for d, mt, zone, word, site, bus in step
+            )
+            for step in result.move_layers
+        )
+
+        goal_map = {
+            qid: LocationAddress(w, s, z) for qid, z, w, s in result.goal_config
+        }
+        goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
+
+        move_count = tuple(
+            mc + int(src != dst)
+            for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
+        )
+
+        return ExecuteCZ(
+            occupied=state.occupied,
+            layout=goal_layout,
+            move_count=move_count,
+            active_cz_zones=frozenset([ZoneAddress(0)]),
+            move_layers=move_layers,
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:

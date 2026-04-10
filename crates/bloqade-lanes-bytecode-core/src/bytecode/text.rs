@@ -115,7 +115,7 @@ fn parse_instruction<'a>(
         }
         "const_loc" => {
             let val = require_operand(operands, line, mnemonic)?;
-            let n = parse_hex_u32(val, line)?;
+            let n = parse_hex_u64(val, line)?;
             Ok(Instruction::LaneConst(LaneConstInstruction::ConstLoc(n)))
         }
         "const_lane" => {

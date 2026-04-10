@@ -119,35 +119,26 @@ class CandidateScorer:
         d_after_cache: dict[tuple[int, LocationAddress], float] = {}
         m_after_cache: dict[LocationAddress, int] = {}
         raw_scores: dict[tuple[int, MoveType, int, Direction], tuple[float, float]] = {}
-        for mt in (MoveType.SITE, MoveType.WORD):
-            buses = (
-                tree.arch_spec.site_buses
-                if mt == MoveType.SITE
-                else tree.arch_spec.word_buses
-            )
-            for bus_id in range(len(buses)):
-                for direction in (Direction.FORWARD, Direction.BACKWARD):
-                    for qid, loc in unresolved.items():
-                        lane = tree.lane_for_source(mt, bus_id, direction, loc)
-                        if lane is None:
-                            continue
-                        _, dst = tree.arch_spec.get_endpoints(lane)
-                        if dst in occupied:
-                            continue
-                        d_key = (qid, dst)
-                        d_after = d_after_cache.get(d_key)
-                        if d_after is None:
-                            d_after = self._distance_to_target(
-                                dst, self.target[qid], tree
-                            )
-                            d_after_cache[d_key] = d_after
-                        m_after = m_after_cache.get(dst)
-                        if m_after is None:
-                            m_after = self._mobility_at(dst, occupied, tree)
-                            m_after_cache[dst] = m_after
-                        delta_d = d_now[qid] - d_after
-                        delta_m = m_after - m_now[qid]
-                        raw_scores[(qid, mt, bus_id, direction)] = (delta_d, delta_m)
+        for qid, loc in unresolved.items():
+            for lane in tree.outgoing_lanes(loc):
+                mt = lane.move_type
+                bus_id = lane.bus_id
+                direction = lane.direction
+                _, dst = tree.arch_spec.get_endpoints(lane)
+                if dst in occupied:
+                    continue
+                d_key = (qid, dst)
+                d_after = d_after_cache.get(d_key)
+                if d_after is None:
+                    d_after = self._distance_to_target(dst, self.target[qid], tree)
+                    d_after_cache[d_key] = d_after
+                m_after = m_after_cache.get(dst)
+                if m_after is None:
+                    m_after = self._mobility_at(dst, occupied, tree)
+                    m_after_cache[dst] = m_after
+                delta_d = d_now[qid] - d_after
+                delta_m = m_after - m_now[qid]
+                raw_scores[(qid, mt, bus_id, direction)] = (delta_d, delta_m)
 
         if not raw_scores:
             return {}

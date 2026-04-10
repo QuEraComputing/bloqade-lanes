@@ -88,10 +88,10 @@ def test_partial_placement_goal_none_means_all():
 
 def test_zone_goal_all_in_zone():
     arch_spec = logical.get_arch_spec()
-    # Zone 0 contains words [0, 1] in the logical arch
+    # Zone 0 contains even-col words [0, 2, 4, 6, 8] in the logical arch
     goal = zone_goal(0, arch_spec)
 
-    node = _make_node({0: LocationAddress(0, 0), 1: LocationAddress(1, 0)})
+    node = _make_node({0: LocationAddress(0, 0), 1: LocationAddress(2, 0)})
     assert goal(node) is True
 
 

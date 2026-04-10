@@ -26,25 +26,25 @@ from bloqade.lanes.bytecode.exceptions import (
 
 class TestLocationAddress:
     def test_construct_and_getters(self):
-        addr = LocationAddress(word_id=1, site_id=2)
+        addr = LocationAddress(zone_id=0, word_id=1, site_id=2)
         assert addr.word_id == 1
         assert addr.site_id == 2
 
     def test_encode_decode_round_trip(self):
-        addr = LocationAddress(word_id=3, site_id=7)
+        addr = LocationAddress(zone_id=0, word_id=3, site_id=7)
         bits = addr.encode()
         decoded = LocationAddress.decode(bits)
         assert decoded == addr
 
     def test_repr(self):
-        addr = LocationAddress(word_id=0, site_id=1)
+        addr = LocationAddress(zone_id=0, word_id=0, site_id=1)
         assert "LocationAddress" in repr(addr)
         assert "word_id=0" in repr(addr)
         assert "site_id=1" in repr(addr)
 
     def test_hash(self):
-        a = LocationAddress(word_id=0, site_id=1)
-        b = LocationAddress(word_id=0, site_id=1)
+        a = LocationAddress(zone_id=0, word_id=0, site_id=1)
+        b = LocationAddress(zone_id=0, word_id=0, site_id=1)
         assert hash(a) == hash(b)
         d = {a: "value"}
         assert d[b] == "value"
@@ -54,6 +54,7 @@ class TestLaneAddress:
     def test_construct_and_getters(self):
         addr = LaneAddress(
             move_type=MoveType.SITE,
+            zone_id=0,
             word_id=0,
             site_id=1,
             bus_id=0,
@@ -68,6 +69,7 @@ class TestLaneAddress:
     def test_default_direction(self):
         addr = LaneAddress(
             move_type=MoveType.SITE,
+            zone_id=0,
             word_id=0,
             site_id=1,
             bus_id=0,
@@ -77,6 +79,7 @@ class TestLaneAddress:
     def test_encode_decode_round_trip(self):
         addr = LaneAddress(
             move_type=MoveType.WORD,
+            zone_id=0,
             word_id=1,
             site_id=2,
             bus_id=3,
@@ -95,8 +98,12 @@ class TestLaneAddress:
         assert int(MoveType.WORD) == 1
 
     def test_hash(self):
-        a = LaneAddress(move_type=MoveType.SITE, word_id=0, site_id=1, bus_id=0)
-        b = LaneAddress(move_type=MoveType.SITE, word_id=0, site_id=1, bus_id=0)
+        a = LaneAddress(
+            move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0
+        )
+        b = LaneAddress(
+            move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0
+        )
         assert hash(a) == hash(b)
         d = {a: "value"}
         assert d[b] == "value"
@@ -139,12 +146,13 @@ class TestInstruction:
         assert inst.opcode == 0x0200  # Cpu device=0x00, inst=0x02
 
     def test_const_loc(self):
-        inst = Instruction.const_loc(word_id=0, site_id=1)
+        inst = Instruction.const_loc(zone_id=0, word_id=0, site_id=1)
         assert inst.opcode == 0x000F  # LaneConst device=0x0F, inst=0x00
 
     def test_const_lane(self):
         inst = Instruction.const_lane(
             move_type=MoveType.SITE,
+            zone_id=0,
             word_id=0,
             site_id=1,
             bus_id=0,
@@ -209,26 +217,26 @@ class TestInstructionAddressValidation:
 
     def test_const_loc_negative_word_id(self):
         with pytest.raises(ValueError, match="must be non-negative"):
-            Instruction.const_loc(word_id=-1, site_id=0)
+            Instruction.const_loc(zone_id=0, word_id=-1, site_id=0)
 
     def test_const_loc_negative_site_id(self):
         with pytest.raises(ValueError, match="must be non-negative"):
-            Instruction.const_loc(word_id=0, site_id=-1)
+            Instruction.const_loc(zone_id=0, word_id=0, site_id=-1)
 
     def test_const_loc_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
-            Instruction.const_loc(word_id=0x10000, site_id=0)
+            Instruction.const_loc(zone_id=0, word_id=0x10000, site_id=0)
 
     def test_const_lane_negative(self):
         with pytest.raises(ValueError, match="must be non-negative"):
             Instruction.const_lane(
-                move_type=MoveType.SITE, word_id=-1, site_id=0, bus_id=0
+                move_type=MoveType.SITE, zone_id=0, word_id=-1, site_id=0, bus_id=0
             )
 
     def test_const_lane_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
             Instruction.const_lane(
-                move_type=MoveType.SITE, word_id=0, site_id=0, bus_id=0x10000
+                move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=0, bus_id=0x10000
             )
 
     def test_const_zone_negative(self):
@@ -240,9 +248,13 @@ class TestInstructionAddressValidation:
             Instruction.const_zone(zone_id=0x10000)
 
     def test_max_valid_values(self):
-        Instruction.const_loc(word_id=0xFFFF, site_id=0xFFFF)
+        Instruction.const_loc(zone_id=0, word_id=0xFFFF, site_id=0xFFFF)
         Instruction.const_lane(
-            move_type=MoveType.SITE, word_id=0xFFFF, site_id=0xFFFF, bus_id=0xFFFF
+            move_type=MoveType.SITE,
+            zone_id=0,
+            word_id=0xFFFF,
+            site_id=0xFFFF,
+            bus_id=0xFFFF,
         )
         Instruction.const_zone(zone_id=0xFFFF)
 
@@ -288,7 +300,7 @@ class TestProgramConstruction:
         program = Program(
             version=(1, 0),
             instructions=[
-                Instruction.const_loc(word_id=0, site_id=0),
+                Instruction.const_loc(zone_id=0, word_id=0, site_id=0),
                 Instruction.initial_fill(1),
                 Instruction.halt(),
             ],
@@ -410,20 +422,26 @@ initial_fill 1
 
 
 MINIMAL_ARCH_JSON = """{
-    "version": "1.0",
-    "geometry": {
-        "sites_per_word": 2,
-        "words": [{
-            "positions": {"x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0], "y_spacing": []},
-            "site_indices": [[0, 0], [1, 0]]
-        }]
-    },
-    "buses": {"site_buses": [], "word_buses": []},
-    "words_with_site_buses": [],
-    "sites_with_word_buses": [],
-    "zones": [{"words": [0]}],
-    "entangling_zones": [],
-    "measurement_mode_zones": [0]
+    "version": "2.0",
+    "words": [
+        {"sites": [[0, 0], [1, 0]]}
+    ],
+    "zones": [
+        {
+            "grid": {
+                "x_start": 0.0, "y_start": 0.0,
+                "x_spacing": [1.0], "y_spacing": []
+            },
+            "site_buses": [],
+            "word_buses": [],
+            "words_with_site_buses": [],
+            "sites_with_word_buses": []
+        }
+    ],
+    "zone_buses": [],
+    "modes": [
+        {"name": "default", "zones": [0], "bitstring_order": []}
+    ]
 }"""
 
 

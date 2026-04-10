@@ -1,14 +1,15 @@
 .version 1
 ; Fill instruction — requires atom_reloading capability.
 ; Should fail when arch spec has atom_reloading = false (default).
+; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
-const_loc 0x00000000
-const_loc 0x00000001
+const_loc 0x0000000000000000    ; zone 0, word 0, site 0
+const_loc 0x0000000001000000    ; zone 0, word 0, site 1
 initial_fill 2
 
 ; Fill (not initial_fill) requires atom_reloading
-const_loc 0x00000002
-const_loc 0x00000003
+const_loc 0x0000000002000000    ; zone 0, word 0, site 2
+const_loc 0x0000000003000000    ; zone 0, word 0, site 3
 fill 2
 
 halt

@@ -53,9 +53,10 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
                 f"Number of qubits in circuit ({len(all_qubits)}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
             )
 
+        # NOTE: assumes single-zone architecture (zone_id=0).
         available_addresses = set(
             [
-                layout.LocationAddress(word_id, site_id)
+                layout.LocationAddress(word_id, site_id, 0)
                 for word_id in self.arch_spec._home_words
                 for site_id in range(len(self.arch_spec.words[word_id].site_indices))
             ]

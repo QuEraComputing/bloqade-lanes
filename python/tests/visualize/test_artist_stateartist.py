@@ -34,7 +34,7 @@ def make_arch_spec():
 def make_atom_state():
     # Use a real AtomState with minimal valid data and correct types
     # Use SiteLaneAddress for LaneAddress
-    lane_addr = SiteLaneAddress(word_id=0, site_id=0, bus_id=0)
+    lane_addr = SiteLaneAddress(zone_id=0, word_id=0, site_id=0, bus_id=0)
     loc_addr = LocationAddress(0, 0)
     data = AtomStateData.from_fields(
         prev_lanes={0: lane_addr},
@@ -45,7 +45,7 @@ def make_atom_state():
 
 
 def make_atom_state_with_stationary():
-    lane_addr = SiteLaneAddress(word_id=0, site_id=0, bus_id=0)
+    lane_addr = SiteLaneAddress(zone_id=0, word_id=0, site_id=0, bus_id=0)
     moving_loc = LocationAddress(0, 0)
     stationary_loc = LocationAddress(0, 1)
     data = AtomStateData.from_fields(

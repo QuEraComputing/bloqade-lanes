@@ -53,6 +53,7 @@ def test_gate_rewrite_cz():
         1: (one := ir.TestValue()),
     }
     arch_spec = get_arch_spec()
+    # CZ partners: word 0 ↔ word 1 (entangling pair within zone 0)
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {

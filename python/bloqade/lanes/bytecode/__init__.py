@@ -9,18 +9,18 @@ Core types:
     - :class:`ArchSpec` -- device architecture specification
 
 Address types:
-    - :class:`LocationAddress` -- bit-packed atom location (word + site)
-    - :class:`LaneAddress` -- bit-packed lane address (direction, move type, word, site, bus)
+    - :class:`LocationAddress` -- bit-packed atom location (zone + word + site)
+    - :class:`LaneAddress` -- bit-packed lane address (direction, move type, zone, word, site, bus)
     - :class:`ZoneAddress` -- bit-packed zone address
 
 Architecture building blocks:
-    - :class:`Geometry`, :class:`Word`, :class:`Grid`
-    - :class:`Buses`, :class:`Bus`
-    - :class:`Zone`, :class:`TransportPath`
+    - :class:`Word`, :class:`Grid`
+    - :class:`SiteBus`, :class:`WordBus`, :class:`ZoneBus`
+    - :class:`Zone`, :class:`Mode`, :class:`TransportPath`
 
 Enums:
     - :class:`Direction` -- FORWARD / BACKWARD
-    - :class:`MoveType` -- SITE / WORD
+    - :class:`MoveType` -- SITE / WORD / ZONE
 
 C library helpers:
     - :func:`has_clib`, :func:`include_dir`, :func:`lib_dir`, :func:`lib_path`
@@ -42,20 +42,24 @@ from bloqade.lanes.bytecode._clib_path import (
 from bloqade.lanes.bytecode._native import (
     ArchSpec as ArchSpec,
     AtomStateData as AtomStateData,
-    Bus as Bus,
-    Buses as Buses,
     Direction as Direction,
-    Geometry as Geometry,
     Grid as Grid,
     Instruction as Instruction,
     LaneAddress as LaneAddress,
     LocationAddress as LocationAddress,
+    Mode as Mode,
+    MoveSolver as MoveSolver,
     MoveType as MoveType,
     Program as Program,
+    SearchStrategy as SearchStrategy,
+    SiteBus as SiteBus,
+    SolveResult as SolveResult,
     TransportPath as TransportPath,
     Word as Word,
+    WordBus as WordBus,
     Zone as Zone,
     ZoneAddress as ZoneAddress,
+    ZoneBus as ZoneBus,
 )
 from bloqade.lanes.bytecode.exceptions import (
     ArchSpecError as ArchSpecError,

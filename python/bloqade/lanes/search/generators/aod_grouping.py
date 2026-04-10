@@ -18,6 +18,7 @@ from bloqade.lanes.layout import (
 )
 
 if TYPE_CHECKING:
+    from bloqade.lanes.bytecode._native import Zone as _RustZone
     from bloqade.lanes.layout.arch import ArchSpec
     from bloqade.lanes.search.tree import ConfigurationTree
 
@@ -60,21 +61,45 @@ class BusContext:
         move_type: MoveType,
         bus_id: int,
         direction: Direction,
+        zone_id: int | None = None,
     ) -> BusContext:
-        """Build a BusContext from a ConfigurationTree and occupied set."""
-        arch_spec = tree.arch_spec
-        bus = (
-            arch_spec.site_buses if move_type == MoveType.SITE else arch_spec.word_buses
-        )[bus_id]
+        """Build a BusContext from a ConfigurationTree and occupied set.
 
-        if move_type == MoveType.SITE:
-            src_locs = [
-                LocationAddress(w, s) for w in arch_spec.has_site_buses for s in bus.src
-            ]
+        Args:
+            tree: The configuration tree.
+            occupied: Set of occupied locations.
+            move_type: Type of move (SITE or WORD).
+            bus_id: Bus index.
+            direction: Move direction.
+            zone_id: If provided, restrict sources to this zone only.
+        """
+        arch_spec = tree.arch_spec
+
+        # Aggregate sources across zones (or a single zone if specified)
+        src_locs: list[LocationAddress] = []
+        zone_iter: list[tuple[int, _RustZone]] = []
+        if zone_id is not None:
+            zone_iter = [(zone_id, arch_spec.zones[zone_id])]
         else:
-            src_locs = [
-                LocationAddress(w, s) for w in bus.src for s in arch_spec.has_word_buses
-            ]
+            zone_iter = list(enumerate(arch_spec.zones))
+
+        for zid, zone in zone_iter:
+            if move_type == MoveType.SITE:
+                if bus_id < len(zone.site_buses):
+                    bus = zone.site_buses[bus_id]
+                    src_locs.extend(
+                        LocationAddress(w, s, zid)
+                        for w in zone.words_with_site_buses
+                        for s in bus.src
+                    )
+            else:
+                if bus_id < len(zone.word_buses):
+                    bus = zone.word_buses[bus_id]
+                    src_locs.extend(
+                        LocationAddress(w, s, zid)
+                        for w in bus.src
+                        for s in zone.sites_with_word_buses
+                    )
 
         pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
         for loc in src_locs:
@@ -126,6 +151,7 @@ class BusContext:
                             loc.site_id,
                             self.bus_id,
                             self.direction,
+                            loc.zone_id,
                         )
                     )
         return frozenset(lanes)

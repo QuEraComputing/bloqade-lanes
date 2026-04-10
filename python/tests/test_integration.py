@@ -67,6 +67,7 @@ def main():
 
 
 def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
+
     logical_noise = generate_logical_noise_model()
     move_mt = squin_to_move(
         mt,
@@ -76,6 +77,7 @@ def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
         merge_heuristic=merge_heuristic,
     )
     move_mt = transversal_rewrites(move_mt)
+    # debugger(move_mt, physical.get_arch_spec())
     transformer = MoveToSquinLogical(
         arch_spec=physical.get_arch_spec(),
         noise_model=logical_noise,
@@ -144,7 +146,6 @@ def test_logical_compilation():
         squin.broadcast.sqrt_y_adj(reg)
 
     logical_move = compile_squin_to_move(main, no_raise=False)
-
     decompiled_squin = MoveToSquinPhysical(get_arch_spec()).emit(logical_move)
 
     AggressiveUnroll(main.dialects).fixpoint(main)
