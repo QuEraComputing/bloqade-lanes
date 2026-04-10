@@ -209,7 +209,16 @@ jobs:
             });
 
             if (errors.length) {
-              throw new Error(`Backport failed for: ${errors.map(e => e.branch).join(', ')}. See PR #${prNum} for details.`);
+              // Open an issue so the failure is visible outside the PR
+              const failedBranches = errors.map(e => e.branch).join(', ');
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Backport failed: PR #${prNum} → ${failedBranches}`,
+                body: `Automated backport of PR #${prNum} failed for the following branches:\n\n${errors.map(e => `- \`${e.branch}\`: ${e.reason}`).join('\n')}\n\nTo resolve manually:\n\`\`\`bash\ngit fetch origin <release-branch>\ngit checkout -b backport-pr${prNum} origin/<release-branch>\ngit cherry-pick ${commit}\n# resolve conflicts, then push and open a PR\n\`\`\`\n\nWorkflow run: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+                labels: ['A-Lane']
+              });
+              throw new Error(`Backport failed for: ${failedBranches}. See PR #${prNum} for details.`);
             }
         env:
           VERSIONS: ${{ steps.versions.outputs.versions }}
