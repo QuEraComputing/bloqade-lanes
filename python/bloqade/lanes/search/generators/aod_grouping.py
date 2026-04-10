@@ -52,6 +52,9 @@ class BusContext:
     arch_spec: ArchSpec
     pos_to_loc: dict[tuple[float, float], LocationAddress] = field(repr=False)
     collision_srcs: frozenset[LocationAddress] = field(repr=False)
+    src_to_lane: dict[LocationAddress, LaneAddress] = field(
+        repr=False, default_factory=dict
+    )
 
     @classmethod
     def from_tree(
@@ -75,8 +78,9 @@ class BusContext:
         """
         arch_spec = tree.arch_spec
 
-        # Aggregate sources across zones (or a single zone if specified)
+        # Aggregate executable source locations by evaluating lane endpoints.
         src_locs: list[LocationAddress] = []
+        src_to_lane: dict[LocationAddress, LaneAddress] = {}
         zone_iter: list[tuple[int, _RustZone]] = []
         if zone_id is not None:
             zone_iter = [(zone_id, arch_spec.zones[zone_id])]
@@ -87,19 +91,21 @@ class BusContext:
             if move_type == MoveType.SITE:
                 if bus_id < len(zone.site_buses):
                     bus = zone.site_buses[bus_id]
-                    src_locs.extend(
-                        LocationAddress(w, s, zid)
-                        for w in zone.words_with_site_buses
-                        for s in bus.src
-                    )
+                    for w in zone.words_with_site_buses:
+                        for s in bus.src:
+                            lane = LaneAddress(move_type, w, s, bus_id, direction, zid)
+                            src, _ = arch_spec.get_endpoints(lane)
+                            src_locs.append(src)
+                            src_to_lane[src] = lane
             else:
                 if bus_id < len(zone.word_buses):
                     bus = zone.word_buses[bus_id]
-                    src_locs.extend(
-                        LocationAddress(w, s, zid)
-                        for w in bus.src
-                        for s in zone.sites_with_word_buses
-                    )
+                    for w in bus.src:
+                        for s in zone.sites_with_word_buses:
+                            lane = LaneAddress(move_type, w, s, bus_id, direction, zid)
+                            src, _ = arch_spec.get_endpoints(lane)
+                            src_locs.append(src)
+                            src_to_lane[src] = lane
 
         pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
         for loc in src_locs:
@@ -110,9 +116,9 @@ class BusContext:
         # checks source membership, so collision_srcs must store sources.
         collision: set[LocationAddress] = set()
         for loc in src_locs:
-            lane = LaneAddress(
-                move_type, loc.word_id, loc.site_id, bus_id, direction, loc.zone_id
-            )
+            lane = src_to_lane.get(loc)
+            if lane is None:
+                continue
             _, dst = arch_spec.get_endpoints(lane)
             if dst in occupied:
                 collision.add(loc)
@@ -123,6 +129,7 @@ class BusContext:
             direction=direction,
             arch_spec=arch_spec,
             pos_to_loc=pos_to_loc,
+            src_to_lane=src_to_lane,
             collision_srcs=frozenset(collision),
         )
 
@@ -147,8 +154,9 @@ class BusContext:
             for y in ys:
                 loc = self.pos_to_loc.get((x, y))
                 if loc is not None:
-                    lanes.append(
-                        LaneAddress(
+                    lane = self.src_to_lane.get(loc)
+                    if lane is None:
+                        lane = LaneAddress(
                             self.move_type,
                             loc.word_id,
                             loc.site_id,
@@ -156,7 +164,7 @@ class BusContext:
                             self.direction,
                             loc.zone_id,
                         )
-                    )
+                    lanes.append(lane)
         return frozenset(lanes)
 
     def lane_position(self, lane: LaneAddress) -> tuple[float, float]:

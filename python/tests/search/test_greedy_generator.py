@@ -50,6 +50,7 @@ def _make_bus_context(
         direction=Direction.FORWARD,
         arch_spec=arch_spec,
         pos_to_loc=pos_to_loc,
+        src_to_lane={},
         collision_srcs=collision_srcs,
     )
 
@@ -118,6 +119,27 @@ def test_from_tree_collision_sources_store_sources_not_destinations():
     destination = LocationAddress(1, 0)
     assert source in ctx.collision_srcs
     assert destination not in ctx.collision_srcs
+
+
+def test_from_tree_backward_word_bus_uses_backward_sources():
+    """Backward bus contexts should map positions for backward source words."""
+    _gen, tree = _make_setup(
+        placement={0: LocationAddress(3, 0), 1: LocationAddress(7, 0)}
+    )
+    occupied = tree.root.occupied_locations | tree.blocked_locations
+
+    ctx = BusContext.from_tree(
+        tree=tree,
+        occupied=occupied,
+        move_type=MoveType.WORD,
+        bus_id=9,
+        direction=Direction.BACKWARD,
+        zone_id=0,
+    )
+
+    # These are backward-source words for word bus 9 in logical Gemini.
+    assert tree.arch_spec.get_position(LocationAddress(3, 0)) in ctx.pos_to_loc
+    assert tree.arch_spec.get_position(LocationAddress(7, 0)) in ctx.pos_to_loc
 
 
 # --- BusContext.rect_to_lanes ---
