@@ -195,7 +195,7 @@ class ZoneAddress:
     Layout: ``[pad:24][zone_id:8]``
 
     Args:
-        zone_id (int): Zone identifier (0..65535).
+        zone_id (int): Zone identifier (0..255).
     """
 
     def __init__(self, zone_id: int) -> None: ...
@@ -1221,7 +1221,7 @@ class Instruction:
         """Push a zone address constant onto the stack.
 
         Args:
-            zone_id (int): Zone identifier (0..65535).
+            zone_id (int): Zone identifier (0..255).
 
         Returns:
             Instruction: The constant instruction.

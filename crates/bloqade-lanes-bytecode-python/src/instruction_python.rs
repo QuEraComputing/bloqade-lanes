@@ -79,7 +79,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn const_zone(zone_id: i64) -> PyResult<Self> {
-        let zone_id = validate_field::<u16>("zone_id", zone_id)? as u32;
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let addr = rs_addr::ZoneAddr { zone_id };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(addr.encode())),

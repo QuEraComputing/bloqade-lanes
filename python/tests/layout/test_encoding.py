@@ -62,8 +62,8 @@ class TestRangeValidation:
     """IDs outside valid range are rejected at construction with ValueError."""
 
     def test_zone_address_overflow(self):
-        with pytest.raises(ValueError, match="zone_id=65536 exceeds maximum"):
-            encoding.ZoneAddress(zone_id=0x10000)
+        with pytest.raises(ValueError, match="zone_id=256 exceeds maximum"):
+            encoding.ZoneAddress(zone_id=0x100)
 
     def test_location_address_word_id_overflow(self):
         with pytest.raises(ValueError, match="word_id=65536 exceeds maximum"):
@@ -87,7 +87,7 @@ class TestRangeValidation:
 
     def test_max_valid_values_accepted(self):
         """Maximum valid values are accepted."""
-        encoding.ZoneAddress(zone_id=0xFFFF)
+        encoding.ZoneAddress(zone_id=0xFF)
         encoding.LocationAddress(zone_id=0xFF, word_id=0xFFFF, site_id=0xFFFF)
         encoding.LaneAddress(
             encoding.MoveType.SITE, 0xFFFF, 0xFFFF, 0xFFFF, zone_id=0xFF
