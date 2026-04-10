@@ -33,7 +33,7 @@ class SearchParams:
 
     w_d: float = 1.0
     w_m: float = 0.3
-    alpha: float = 1.0
+    alpha: float = 100.0
     beta: float = 2.0
     gamma: float = 0.5
     top_c: int = 3

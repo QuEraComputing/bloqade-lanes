@@ -54,12 +54,19 @@ class ConfigurationTree:
     (directed acyclic graph) where nodes can have multiple parents.
     This enables backward propagation of deadlock information — when a
     subtree is exhausted, all parents are notified and can prune early.
+
+    Transposition behavior is branch-local by design: only ancestor-chain
+    revisits are treated as TRANSPOSITION_SEEN. Equivalent configurations
+    reached through different branches are intentionally explored as distinct
+    nodes to preserve path diversity.
     """
 
     arch_spec: ArchSpec
     root: ConfigurationNode
     blocked_locations: frozenset[LocationAddress] = frozenset()
     path_finder: PathFinder = field(init=False, repr=False)
+    # Registry of allocated nodes keyed by object identity.
+    # This intentionally does NOT deduplicate by configuration key.
     seen: dict[int, ConfigurationNode] = field(
         default_factory=dict, init=False, repr=False
     )
