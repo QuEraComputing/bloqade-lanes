@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::heuristic_expander::FreeRiderPolicy;
-use bloqade_lanes_search::solve::{MoveSolver, SolveResult, SolveStatus, Strategy};
+use bloqade_lanes_search::solve::{InnerStrategy, MoveSolver, SolveResult, SolveStatus, Strategy};
 
 use crate::arch_python::PyArchSpec;
 
@@ -217,11 +217,19 @@ impl PyMoveSolver {
             "bfs" => Strategy::Bfs,
             "greedy" => Strategy::GreedyBestFirst,
             "ids" => Strategy::Ids,
-            "cascade" => Strategy::Cascade,
+            "cascade" | "cascade-ids" => Strategy::Cascade {
+                inner: InnerStrategy::Ids,
+            },
+            "cascade-dfs" => Strategy::Cascade {
+                inner: InnerStrategy::Dfs,
+            },
+            "cascade-entropy" => Strategy::Cascade {
+                inner: InnerStrategy::Entropy,
+            },
             "entropy" => Strategy::Entropy,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, entropy"
+                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
                 )));
             }
         };

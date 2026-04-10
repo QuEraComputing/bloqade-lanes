@@ -15,6 +15,17 @@ use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
 use crate::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy, HeuristicExpander};
 use crate::lane_index::LaneIndex;
 
+/// Inner strategy for the cascade's Phase 1 (fast feasibility search).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InnerStrategy {
+    /// Iterative Diving Search.
+    Ids,
+    /// Heuristic depth-first search.
+    Dfs,
+    /// Entropy-guided search.
+    Entropy,
+}
+
 /// Search strategy for the solver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strategy {
@@ -29,8 +40,9 @@ pub enum Strategy {
     GreedyBestFirst,
     /// Iterative Diving Search: depth-first with heuristic jump-back.
     Ids,
-    /// Cascade: IDS first for a quick solution, then weighted A* bounded by IDS cost.
-    Cascade,
+    /// Cascade: fast inner strategy first, then weighted A* bounded by inner cost.
+    /// Restarts apply to the inner phase only; A* runs once with the tightest bound.
+    Cascade { inner: InnerStrategy },
     /// Entropy-guided search: single-path DFS with entropy-based backtracking.
     Entropy,
 }
@@ -225,88 +237,127 @@ impl MoveSolver {
         let blocked_encoded: std::collections::HashSet<u32> =
             blocked_locs.iter().map(|l| l.encode()).collect();
 
-        // Run a single search with the given seed.
-        let run_once = |seed: u64| -> SolveResult {
-            if strategy == Strategy::Entropy {
-                let entropy_params = crate::entropy::EntropyParams {
-                    top_c,
-                    max_movesets_per_group,
-                    ..crate::entropy::EntropyParams::default()
-                };
-                let result = crate::entropy::entropy_search(
-                    root.clone(),
-                    goal,
-                    &entropy_params,
-                    &self.index,
-                    &dist_table,
-                    &target_encoded,
-                    &blocked_encoded,
-                    max_expansions,
-                    None,
-                    seed,
-                );
-                return extract(result, 0, max_expansions);
-            }
+        // Helper: pick best result (prefer solved, then lowest cost).
+        let pick_best = |results: Vec<SolveResult>| -> SolveResult {
+            results
+                .into_iter()
+                .min_by(|a, b| {
+                    let a_solved = a.status == SolveStatus::Solved;
+                    let b_solved = b.status == SolveStatus::Solved;
+                    b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
+                })
+                .expect("non-empty results")
+        };
 
-            if strategy == Strategy::Cascade {
-                // Phase 1: IDS with sum heuristic, Skip deadlock policy.
-                let ids_expander = make_expander(seed, DeadlockPolicy::Skip);
-                let mut ids_f = IdsFrontier::new(h_sum);
-                let ids_result = frontier::run_search(
-                    root.clone(),
-                    goal,
-                    &ids_expander,
-                    &mut ids_f,
-                    max_expansions,
-                    None,
-                );
-                let ids_deadlocks = ids_expander.deadlock_count();
-
-                match ids_result.goal {
-                    None => extract(ids_result, ids_deadlocks, max_expansions),
-                    Some(ids_goal_id) => {
-                        let ids_cost = ids_result.graph.g_score(ids_goal_id);
-
-                        // Phase 2: Weighted A* with max heuristic, MoveBlockers.
-                        let max_depth = Some((ids_cost as u32).saturating_sub(1));
-                        let astar_expander = make_expander(seed, DeadlockPolicy::MoveBlockers);
-                        let mut astar_f = PriorityFrontier::astar(h_max, weight);
-                        let astar_result = frontier::run_search(
-                            root.clone(),
-                            goal,
-                            &astar_expander,
-                            &mut astar_f,
-                            max_expansions,
-                            max_depth,
-                        );
-                        let total_deadlocks = ids_deadlocks + astar_expander.deadlock_count();
-                        if astar_result.goal.is_some() {
-                            extract(astar_result, total_deadlocks, max_expansions)
-                        } else {
-                            extract(ids_result, total_deadlocks, max_expansions)
-                        }
-                    }
-                }
-            } else {
-                let policy = match strategy {
-                    Strategy::Ids | Strategy::HeuristicDfs => DeadlockPolicy::Skip,
-                    _ => DeadlockPolicy::MoveBlockers,
-                };
-                let expander = make_expander(seed, policy);
-                // IDS/DFS use sum heuristic (better ordering), A*/Greedy use max (admissible).
-                let use_sum = matches!(strategy, Strategy::Ids | Strategy::HeuristicDfs);
-                let result = if use_sum {
-                    Self::run_strategy(
-                        strategy,
+        // Helper: run a single inner strategy with the given seed.
+        let run_inner = |inner: InnerStrategy, seed: u64| -> SolveResult {
+            match inner {
+                InnerStrategy::Ids => {
+                    let expander = make_expander(seed, DeadlockPolicy::Skip);
+                    let mut f = IdsFrontier::new(h_sum);
+                    let result = frontier::run_search(
                         root.clone(),
                         goal,
-                        h_sum,
                         &expander,
+                        &mut f,
                         max_expansions,
-                        weight,
-                    )
-                } else {
-                    Self::run_strategy(
+                        None,
+                    );
+                    extract(result, expander.deadlock_count(), max_expansions)
+                }
+                InnerStrategy::Dfs => {
+                    let expander = make_expander(seed, DeadlockPolicy::Skip);
+                    let mut f = DfsFrontier::new(h_sum);
+                    let result = frontier::run_search(
+                        root.clone(),
+                        goal,
+                        &expander,
+                        &mut f,
+                        max_expansions,
+                        None,
+                    );
+                    extract(result, expander.deadlock_count(), max_expansions)
+                }
+                InnerStrategy::Entropy => {
+                    let entropy_params = crate::entropy::EntropyParams {
+                        top_c,
+                        max_movesets_per_group,
+                        ..crate::entropy::EntropyParams::default()
+                    };
+                    let result = crate::entropy::entropy_search(
+                        root.clone(),
+                        goal,
+                        &entropy_params,
+                        &self.index,
+                        &dist_table,
+                        &target_encoded,
+                        &blocked_encoded,
+                        max_expansions,
+                        None,
+                        seed,
+                    );
+                    extract(result, 0, max_expansions)
+                }
+            }
+        };
+
+        // Helper: run inner strategy with parallel restarts, return best.
+        let run_inner_with_restarts = |inner: InnerStrategy| -> SolveResult {
+            if restarts <= 1 {
+                run_inner(inner, 0)
+            } else {
+                let results: Vec<SolveResult> = (0..restarts)
+                    .into_par_iter()
+                    .map(|i| run_inner(inner, i as u64 + 1))
+                    .collect();
+                pick_best(results)
+            }
+        };
+
+        // ── Cascade: inner restarts + single A* refinement ─────────
+        if let Strategy::Cascade { inner } = strategy {
+            // Phase 1: run inner strategy with restarts.
+            let inner_result = run_inner_with_restarts(inner);
+
+            if inner_result.status != SolveStatus::Solved {
+                return Ok(inner_result);
+            }
+
+            // Phase 2: single weighted A* bounded by inner cost.
+            let max_depth = Some((inner_result.cost as u32).saturating_sub(1));
+            let astar_expander = make_expander(0, DeadlockPolicy::MoveBlockers);
+            let mut astar_f = PriorityFrontier::astar(h_max, weight);
+            let astar_result = frontier::run_search(
+                root.clone(),
+                goal,
+                &astar_expander,
+                &mut astar_f,
+                max_expansions,
+                max_depth,
+            );
+            let astar_solve = extract(
+                astar_result,
+                astar_expander.deadlock_count(),
+                max_expansions,
+            );
+
+            if astar_solve.status == SolveStatus::Solved {
+                return Ok(pick_best(vec![inner_result, astar_solve]));
+            }
+            return Ok(inner_result);
+        }
+
+        // ── Non-cascade strategies ─────────────────────────────────
+
+        // Run a single search with the given seed.
+        let run_once = |seed: u64| -> SolveResult {
+            match strategy {
+                Strategy::Entropy => run_inner(InnerStrategy::Entropy, seed),
+                Strategy::Ids => run_inner(InnerStrategy::Ids, seed),
+                Strategy::HeuristicDfs => run_inner(InnerStrategy::Dfs, seed),
+                _ => {
+                    let expander = make_expander(seed, DeadlockPolicy::MoveBlockers);
+                    let result = Self::run_strategy(
                         strategy,
                         root.clone(),
                         goal,
@@ -314,9 +365,9 @@ impl MoveSolver {
                         &expander,
                         max_expansions,
                         weight,
-                    )
-                };
-                extract(result, expander.deadlock_count(), max_expansions)
+                    );
+                    extract(result, expander.deadlock_count(), max_expansions)
+                }
             }
         };
 
@@ -327,16 +378,7 @@ impl MoveSolver {
                 .into_par_iter()
                 .map(|i| run_once(i as u64 + 1))
                 .collect();
-            // Prefer solved results; among those, pick lowest cost.
-            let best = results
-                .into_iter()
-                .min_by(|a, b| {
-                    let a_solved = a.status == SolveStatus::Solved;
-                    let b_solved = b.status == SolveStatus::Solved;
-                    b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
-                })
-                .expect("restarts > 0");
-            Ok(best)
+            Ok(pick_best(results))
         }
     }
 
@@ -355,10 +397,6 @@ impl MoveSolver {
                 let mut f = PriorityFrontier::astar(heuristic_fn, weight);
                 frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
-            Strategy::HeuristicDfs => {
-                let mut f = DfsFrontier::new(heuristic_fn);
-                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
-            }
             Strategy::Bfs => {
                 let mut f = BfsFrontier::new();
                 frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
@@ -367,12 +405,8 @@ impl MoveSolver {
                 let mut f = PriorityFrontier::greedy(heuristic_fn);
                 frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
-            Strategy::Ids => {
-                let mut f = IdsFrontier::new(heuristic_fn);
-                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
-            }
-            Strategy::Cascade | Strategy::Entropy => {
-                unreachable!("Cascade/Entropy are handled before run_strategy")
+            _ => {
+                unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy")
             }
         }
     }
@@ -627,7 +661,9 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
-                Strategy::Cascade,
+                Strategy::Cascade {
+                    inner: InnerStrategy::Ids,
+                },
                 3,
                 3,
                 1.0,
