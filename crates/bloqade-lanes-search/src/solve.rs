@@ -31,6 +31,8 @@ pub enum Strategy {
     Ids,
     /// Cascade: IDS first for a quick solution, then weighted A* bounded by IDS cost.
     Cascade,
+    /// Entropy-guided search: single-path DFS with entropy-based backtracking.
+    Entropy,
 }
 
 /// Outcome status of a solve attempt.
@@ -145,6 +147,22 @@ impl MoveSolver {
         restarts: u32,
         free_rider_policy: FreeRiderPolicy,
     ) -> Result<SolveResult, ConfigError> {
+        // Entropy strategy has its own self-contained solve path.
+        if strategy == Strategy::Entropy {
+            return crate::entropy::solve(
+                &self.index,
+                initial,
+                target,
+                blocked,
+                max_expansions,
+                &crate::entropy::EntropyParams {
+                    top_c,
+                    max_movesets_per_group,
+                    ..crate::entropy::EntropyParams::default()
+                },
+            );
+        }
+
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -344,8 +362,8 @@ impl MoveSolver {
                 let mut f = IdsFrontier::new(heuristic_fn);
                 frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
             }
-            Strategy::Cascade => {
-                unreachable!("Cascade is handled directly in run_once")
+            Strategy::Cascade | Strategy::Entropy => {
+                unreachable!("Cascade/Entropy are handled before run_strategy")
             }
         }
     }

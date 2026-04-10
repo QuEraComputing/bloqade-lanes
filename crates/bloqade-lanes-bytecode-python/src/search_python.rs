@@ -218,9 +218,10 @@ impl PyMoveSolver {
             "greedy" => Strategy::GreedyBestFirst,
             "ids" => Strategy::Ids,
             "cascade" => Strategy::Cascade,
+            "entropy" => Strategy::Entropy,
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade"
+                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, entropy"
                 )));
             }
         };

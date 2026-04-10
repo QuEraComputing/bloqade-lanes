@@ -5,6 +5,7 @@
 
 pub mod astar;
 pub mod config;
+pub mod entropy;
 pub mod expander;
 pub mod frontier;
 pub mod graph;

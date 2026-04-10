@@ -1,0 +1,932 @@
+//! Entropy-guided search for move synthesis.
+//!
+//! Port of the Python `EntropyGuidedSearch` algorithm. Walks a single path
+//! down the search tree, using per-node entropy to shift scoring from
+//! distance-focused (low entropy) to mobility-focused (high entropy).
+//! Backtracks by walking parent pointers when entropy exceeds a threshold,
+//! and falls back to greedy single-qubit routing when fully stuck.
+//!
+//! Self-contained module: provides its own [`solve`] entry point that builds
+//! all required infrastructure internally. Can be removed by deleting this
+//! file and the one-line references in `lib.rs`, `solve.rs`, and the Python
+//! bindings.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use rayon::prelude::*;
+
+use crate::config::{Config, ConfigError};
+use crate::graph::{MoveSet, NodeId, SearchGraph};
+use crate::heuristic::DistanceTable;
+use crate::lane_index::LaneIndex;
+use crate::solve::{SolveResult, SolveStatus};
+
+// ── Parameters ─────────────────────────────────────────────────────
+
+/// Tunable parameters for entropy-guided search.
+/// Mirrors the Python `SearchParams` dataclass.
+#[derive(Debug, Clone)]
+pub struct EntropyParams {
+    // Per-qubit-bus scoring.
+    pub w_d: f64,
+    pub w_m: f64,
+    // Moveset scoring.
+    pub alpha: f64,
+    pub beta: f64,
+    pub gamma: f64,
+    // Search control.
+    pub top_c: usize,
+    pub max_candidates: usize,
+    pub reversion_steps: u32,
+    pub delta_e: u32,
+    pub e_max: u32,
+    pub max_goal_candidates: usize,
+    // Expander settings.
+    pub max_movesets_per_group: usize,
+}
+
+impl Default for EntropyParams {
+    fn default() -> Self {
+        Self {
+            w_d: 1.0,
+            w_m: 0.1,
+            alpha: 1.0,
+            beta: 2.0,
+            gamma: 0.5,
+            top_c: 3,
+            max_candidates: 2,
+            reversion_steps: 1,
+            delta_e: 1,
+            e_max: 4,
+            max_goal_candidates: 1,
+            max_movesets_per_group: 3,
+        }
+    }
+}
+
+// ── Per-node state ─────────────────────────────────────────────────
+
+#[derive(Debug)]
+struct EntropyState {
+    entropy: u32,
+    candidates_tried: usize,
+    candidate_cache: Vec<(MoveSet, Config, f64)>,
+    /// Encoded lane vecs of movesets already attempted from this node.
+    tried_moves: HashSet<Vec<u64>>,
+    /// Number of actually-created children (is_new=true from graph.insert).
+    n_children: usize,
+}
+
+impl Default for EntropyState {
+    fn default() -> Self {
+        Self {
+            entropy: 1,
+            candidates_tried: 0,
+            candidate_cache: Vec::new(),
+            tried_moves: HashSet::new(),
+            n_children: 0,
+        }
+    }
+}
+
+// ── Candidate generation (entropy-weighted) ────────────────────────
+
+/// Score and generate ranked candidate movesets with entropy-weighted scoring.
+///
+/// Mirrors the Python `HeuristicMoveGenerator.generate()` + `CandidateScorer`.
+fn generate_candidates(
+    config: &Config,
+    entropy: u32,
+    params: &EntropyParams,
+    index: &LaneIndex,
+    dist_table: &DistanceTable,
+    targets: &[(u32, u32)], // (qid, encoded_target)
+    blocked: &HashSet<u32>,
+    seed: u64,
+) -> Vec<(MoveSet, Config, f64)> {
+    let mut rng = if seed != 0 {
+        Some(SmallRng::seed_from_u64(seed ^ config.hash_value()))
+    } else {
+        None
+    };
+    let e_eff = entropy.min(params.e_max) as f64;
+
+    // Build occupied set.
+    let mut occupied = HashSet::with_capacity(blocked.len() + config.len());
+    occupied.extend(blocked);
+    for (_, loc) in config.iter() {
+        occupied.insert(loc.encode());
+    }
+
+    // Step 1: identify unresolved qubits.
+    let unresolved: Vec<(u32, u32, u32)> = targets
+        .iter()
+        .filter_map(|&(qid, target_enc)| {
+            let loc = config.location_of(qid)?;
+            let loc_enc = loc.encode();
+            if loc_enc == target_enc {
+                None
+            } else {
+                Some((qid, loc_enc, target_enc))
+            }
+        })
+        .collect();
+
+    if unresolved.is_empty() {
+        return Vec::new();
+    }
+
+    // Step 2: score (qubit, bus triplet) pairs with entropy weighting.
+    type TripletKey = (u8, u32, u8);
+
+    struct ScoredEntry {
+        qubit_id: u32,
+        score: f64,
+        lane_encoded: u64,
+        dst_encoded: u32,
+    }
+
+    let mut raw_deltas: Vec<(TripletKey, u32, f64, f64, u64, u32)> = Vec::new();
+    // Collect (triplet, qid, delta_d, delta_m, lane_enc, dst_enc).
+
+    for &(qid, loc_enc, target_enc) in &unresolved {
+        let d_now = match dist_table.distance(loc_enc, target_enc) {
+            Some(d) => d as f64,
+            None => continue,
+        };
+        let m_now = {
+            let loc = LocationAddr::decode(loc_enc);
+            index
+                .outgoing_lanes(loc)
+                .iter()
+                .filter(|lane| {
+                    index
+                        .endpoints(lane)
+                        .is_some_and(|(_, dst)| !occupied.contains(&dst.encode()))
+                })
+                .count() as f64
+        };
+
+        let loc = LocationAddr::decode(loc_enc);
+        for &lane in index.outgoing_lanes(loc) {
+            let Some((_, dst)) = index.endpoints(&lane) else {
+                continue;
+            };
+            let dst_enc = dst.encode();
+            if occupied.contains(&dst_enc) {
+                continue;
+            }
+            let d_after = dist_table
+                .distance(dst_enc, target_enc)
+                .map_or(f64::MAX, |d| d as f64);
+            let delta_d = d_now - d_after;
+
+            let m_after = index
+                .outgoing_lanes(dst)
+                .iter()
+                .filter(|next_lane| {
+                    index
+                        .endpoints(next_lane)
+                        .is_some_and(|(_, next_dst)| !occupied.contains(&next_dst.encode()))
+                })
+                .count() as f64;
+            let delta_m = m_after - m_now;
+
+            let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+            raw_deltas.push((
+                triplet_key,
+                qid,
+                delta_d,
+                delta_m,
+                lane.encode_u64(),
+                dst_enc,
+            ));
+        }
+    }
+
+    if raw_deltas.is_empty() {
+        return Vec::new();
+    }
+
+    // Normalize deltas.
+    let d_ref = raw_deltas
+        .iter()
+        .map(|(_, _, dd, _, _, _)| dd.abs())
+        .fold(1.0_f64, f64::max);
+    let m_ref = raw_deltas
+        .iter()
+        .map(|(_, _, _, dm, _, _)| dm.abs())
+        .fold(1.0_f64, f64::max);
+
+    // Apply entropy-weighted formula and build scored entries.
+    let all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
+        .into_iter()
+        .map(|(key, qid, delta_d, delta_m, lane_enc, dst_enc)| {
+            let d_hat = delta_d / d_ref;
+            let m_hat = delta_m / m_ref;
+            let perturbation = rng.as_mut().map_or(0.0, |r| r.gen_range(-0.5..0.5));
+            let score =
+                (params.w_d / e_eff) * d_hat + params.w_m * e_eff * m_hat + perturbation;
+            (
+                key,
+                ScoredEntry {
+                    qubit_id: qid,
+                    score,
+                    lane_encoded: lane_enc,
+                    dst_encoded: dst_enc,
+                },
+            )
+        })
+        .collect();
+
+    // Step 3: per qubit, keep top C.
+    let mut per_qubit: HashMap<u32, Vec<(TripletKey, ScoredEntry)>> = HashMap::new();
+    for entry in all_scores.drain(..) {
+        per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
+    }
+
+    let mut selected: Vec<(TripletKey, ScoredEntry)> = Vec::new();
+    let mut has_positive = false;
+
+    for entries in per_qubit.values_mut() {
+        entries.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        entries.truncate(params.top_c);
+        for e in entries.drain(..) {
+            if e.1.score > 0.0 {
+                has_positive = true;
+            }
+            selected.push(e);
+        }
+    }
+
+    if !has_positive {
+        selected.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        selected.truncate(1);
+    } else {
+        selected.retain(|e| e.1.score > 0.0);
+    }
+
+    // Step 4: group by bus triplet.
+    let mut groups: HashMap<TripletKey, Vec<ScoredEntry>> = HashMap::new();
+    for (key, entry) in selected {
+        groups.entry(key).or_default().push(entry);
+    }
+
+    // Step 5: per group, generate movesets (greedy by score, rotating start).
+    let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
+
+    for (_key, mut qubits) in groups {
+        qubits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        let n = qubits.len().min(params.max_movesets_per_group);
+
+        for start in 0..n {
+            let mut lanes: Vec<u64> = Vec::new();
+            let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
+            let mut used_dsts: HashSet<u32> = HashSet::new();
+            let mut total_score: f64 = 0.0;
+
+            let order: Vec<usize> = (start..qubits.len()).chain(0..start).collect();
+            for &idx in &order {
+                let t = &qubits[idx];
+                if used_dsts.contains(&t.dst_encoded) || occupied.contains(&t.dst_encoded) {
+                    continue;
+                }
+                lanes.push(t.lane_encoded);
+                used_dsts.insert(t.dst_encoded);
+                total_score += t.score;
+                moves.push((t.qubit_id, LocationAddr::decode(t.dst_encoded)));
+            }
+
+            if lanes.is_empty() {
+                continue;
+            }
+
+            let move_set = MoveSet::from_encoded(lanes);
+            if candidates.iter().any(|(_, ms, _)| *ms == move_set) {
+                continue;
+            }
+            let new_config = config.with_moves(&moves);
+            candidates.push((total_score, move_set, new_config));
+        }
+    }
+
+    // Step 6: score each moveset with alpha/beta/gamma, sort descending.
+    let mut scored: Vec<(f64, MoveSet, Config)> = candidates
+        .into_iter()
+        .map(|(_raw_score, ms, new_cfg)| {
+            let ms_score = score_moveset(
+                config, &new_cfg, targets, dist_table, &occupied, blocked, index, params,
+            );
+            (ms_score, ms, new_cfg)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+    scored
+        .into_iter()
+        .map(|(_, ms, cfg)| (ms, cfg, 1.0))
+        .collect()
+}
+
+/// Score a moveset: `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
+#[allow(clippy::too_many_arguments)]
+fn score_moveset(
+    old_config: &Config,
+    new_config: &Config,
+    targets: &[(u32, u32)],
+    dist_table: &DistanceTable,
+    occupied: &HashSet<u32>,
+    blocked: &HashSet<u32>,
+    index: &LaneIndex,
+    params: &EntropyParams,
+) -> f64 {
+    let mut new_occupied: HashSet<u32> = new_config.iter().map(|(_, loc)| loc.encode()).collect();
+    new_occupied.extend(blocked);
+
+    let mut distance_progress = 0.0_f64;
+    let mut arrived = 0.0_f64;
+    let mut mobility_before = 0.0_f64;
+    let mut mobility_after = 0.0_f64;
+
+    for &(qid, target_enc) in targets {
+        let Some(old_loc) = old_config.location_of(qid) else {
+            continue;
+        };
+        let Some(new_loc) = new_config.location_of(qid) else {
+            continue;
+        };
+        if old_loc == new_loc {
+            continue; // didn't move
+        }
+
+        let d_before = dist_table
+            .distance(old_loc.encode(), target_enc)
+            .map_or(0.0, |d| d as f64);
+        let d_after = dist_table
+            .distance(new_loc.encode(), target_enc)
+            .map_or(0.0, |d| d as f64);
+        distance_progress += (d_before - d_after).max(0.0);
+
+        if new_loc.encode() == target_enc {
+            arrived += 1.0;
+        }
+
+        mobility_before += index
+            .outgoing_lanes(old_loc)
+            .iter()
+            .filter(|l| {
+                index
+                    .endpoints(l)
+                    .is_some_and(|(_, d)| !occupied.contains(&d.encode()))
+            })
+            .count() as f64;
+        mobility_after += index
+            .outgoing_lanes(new_loc)
+            .iter()
+            .filter(|l| {
+                index
+                    .endpoints(l)
+                    .is_some_and(|(_, d)| !new_occupied.contains(&d.encode()))
+            })
+            .count() as f64;
+    }
+
+    params.alpha * distance_progress
+        + params.beta * arrived
+        + params.gamma * (mobility_after - mobility_before)
+}
+
+// ── BFS path-finding with occupancy ────────────────────────────────
+
+/// Find shortest lane path from `from` to `to`, avoiding `occupied` locations.
+fn find_path_occupied(
+    from: LocationAddr,
+    to: LocationAddr,
+    occupied: &HashSet<u32>,
+    index: &LaneIndex,
+) -> Option<Vec<LaneAddr>> {
+    let from_enc = from.encode();
+    let to_enc = to.encode();
+    if from_enc == to_enc {
+        return Some(Vec::new());
+    }
+
+    let mut visited: HashSet<u32> = HashSet::new();
+    visited.insert(from_enc);
+
+    // BFS: queue of (current_encoded, lane_path).
+    let mut queue: VecDeque<(u32, Vec<LaneAddr>)> = VecDeque::new();
+    queue.push_back((from_enc, Vec::new()));
+
+    while let Some((current_enc, path)) = queue.pop_front() {
+        let current = LocationAddr::decode(current_enc);
+        for &lane in index.outgoing_lanes(current) {
+            let Some((_, dst)) = index.endpoints(&lane) else {
+                continue;
+            };
+            let dst_enc = dst.encode();
+            if occupied.contains(&dst_enc) || visited.contains(&dst_enc) {
+                continue;
+            }
+            if dst_enc == to_enc {
+                let mut full_path = path;
+                full_path.push(lane);
+                return Some(full_path);
+            }
+            visited.insert(dst_enc);
+            let mut new_path = path.clone();
+            new_path.push(lane);
+            queue.push_back((dst_enc, new_path));
+        }
+    }
+
+    None // no path found
+}
+
+// ── Sequential fallback ────────────────────────────────────────────
+
+/// Greedy sequential fallback: move each unresolved qubit along its shortest path.
+fn sequential_fallback(
+    graph: &mut SearchGraph,
+    start: NodeId,
+    targets: &[(u32, u32)],
+    index: &LaneIndex,
+    blocked: &HashSet<u32>,
+    goal: &impl Fn(&Config) -> bool,
+) -> (Option<NodeId>, u32) {
+    let mut current = start;
+    let mut nodes_expanded: u32 = 0;
+
+    // Identify unresolved qubits.
+    let config = graph.config(current).clone();
+    let unresolved: Vec<(u32, u32)> = targets
+        .iter()
+        .filter_map(|&(qid, target_enc)| {
+            let loc = config.location_of(qid)?;
+            if loc.encode() == target_enc {
+                None
+            } else {
+                Some((qid, target_enc))
+            }
+        })
+        .collect();
+
+    for (qid, target_enc) in unresolved {
+        let cfg = graph.config(current).clone();
+        let Some(current_loc) = cfg.location_of(qid) else {
+            continue;
+        };
+        let target_loc = LocationAddr::decode(target_enc);
+
+        if current_loc == target_loc {
+            continue;
+        }
+
+        // Build occupied set: all other qubits + blocked.
+        let mut occ = blocked.clone();
+        for (other_qid, loc) in cfg.iter() {
+            if other_qid != qid {
+                occ.insert(loc.encode());
+            }
+        }
+
+        let Some(path) = find_path_occupied(current_loc, target_loc, &occ, index) else {
+            return (None, nodes_expanded);
+        };
+
+        for lane in path {
+            let Some((src, dst)) = index.endpoints(&lane) else {
+                return (None, nodes_expanded);
+            };
+            let move_set = MoveSet::new([lane]);
+            let cur_config = graph.config(current).clone();
+
+            // Find which qubit is at src.
+            let Some(moving_qid) = cur_config.qubit_at(src) else {
+                return (None, nodes_expanded);
+            };
+
+            let new_config = cur_config.with_moves(&[(moving_qid, dst)]);
+            let new_g = graph.g_score(current) + 1.0;
+            let (child_id, _) = graph.insert(current, move_set, new_config, new_g);
+            nodes_expanded += 1;
+            current = child_id;
+        }
+    }
+
+    if goal(graph.config(current)) {
+        (Some(current), nodes_expanded)
+    } else {
+        (None, nodes_expanded)
+    }
+}
+
+// ── Main search loop ───────────────────────────────────────────────
+
+/// Run entropy-guided search.
+///
+/// This is a single-path DFS with entropy-based backtracking, NOT a
+/// standard frontier-based search. See module docs for algorithm details.
+#[allow(clippy::too_many_arguments)]
+fn entropy_search(
+    root: Config,
+    goal: impl Fn(&Config) -> bool,
+    params: &EntropyParams,
+    index: &LaneIndex,
+    dist_table: &DistanceTable,
+    targets: &[(u32, u32)],
+    blocked: &HashSet<u32>,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+    seed: u64,
+) -> (SearchGraph, Option<NodeId>, u32) {
+    // Early check.
+    if goal(&root) {
+        let graph = SearchGraph::new(root);
+        let root_id = graph.root();
+        return (graph, Some(root_id), 0);
+    }
+
+    let mut graph = SearchGraph::new(root);
+    let root_id = graph.root();
+    let mut entropy_map: HashMap<NodeId, EntropyState> = HashMap::new();
+    let mut current = root_id;
+    let mut nodes_expanded: u32 = 0;
+    let mut found_goals: Vec<NodeId> = Vec::new();
+
+    loop {
+        if let Some(max) = max_expansions
+            && nodes_expanded >= max
+        {
+            break;
+        }
+
+        let es = entropy_map.entry(current).or_default();
+
+        // Force entropy at depth limit.
+        if let Some(max_d) = max_depth
+            && graph.depth(current) >= max_d
+        {
+            es.entropy = params.e_max;
+        }
+
+        // REVERSION: entropy too high.
+        if es.entropy >= params.e_max {
+            let mut ancestor = current;
+            for _ in 0..params.reversion_steps {
+                if let Some(parent) = graph.parent(ancestor) {
+                    ancestor = parent;
+                } else {
+                    break;
+                }
+            }
+
+            let ancestor_es = entropy_map.entry(ancestor).or_default();
+            if ancestor == root_id && ancestor_es.entropy >= params.e_max {
+                // Sequential fallback from root.
+                let (goal_id, fb_expanded) =
+                    sequential_fallback(&mut graph, root_id, targets, index, blocked, &goal);
+                nodes_expanded += fb_expanded;
+                if let Some(gid) = goal_id {
+                    found_goals.push(gid);
+                }
+                break;
+            }
+
+            ancestor_es.entropy += params.delta_e;
+            current = ancestor;
+            continue;
+        }
+
+        // CANDIDATE SELECTION.
+        let candidate = get_next_candidate(
+            &mut entropy_map,
+            current,
+            params,
+            index,
+            dist_table,
+            targets,
+            blocked,
+            &graph,
+            seed,
+        );
+
+        let Some((move_set, new_config, cost)) = candidate else {
+            // No candidates available — bump entropy.
+            entropy_map.entry(current).or_default().entropy += params.delta_e;
+            continue;
+        };
+
+        // Record as tried.
+        let es = entropy_map.entry(current).or_default();
+        let move_key = move_set.encoded_lanes();
+        es.tried_moves.insert(move_key);
+        es.candidates_tried += 1;
+
+        // Insert into graph.
+        let new_g = graph.g_score(current) + cost;
+        let (child_id, is_new) = graph.insert(current, move_set, new_config, new_g);
+
+        if !is_new {
+            // Transposition: config seen at equal or better cost.
+            entropy_map.entry(current).or_default().entropy += params.delta_e;
+            continue;
+        }
+
+        // Track that a new child was created from this node.
+        entropy_map.entry(current).or_default().n_children += 1;
+        nodes_expanded += 1;
+
+        if goal(graph.config(child_id)) {
+            found_goals.push(child_id);
+            if found_goals.len() >= params.max_goal_candidates {
+                break;
+            }
+            // cutoff_ancestor: walk up to first branching node.
+            current = cutoff_ancestor(child_id, &graph, &entropy_map);
+            continue;
+        }
+
+        current = child_id; // descend
+    }
+
+    // Return shallowest goal.
+    let best = found_goals.into_iter().min_by_key(|&id| graph.depth(id));
+    (graph, best, nodes_expanded)
+}
+
+/// Get the next untried candidate from the cache, regenerating if needed.
+#[allow(clippy::too_many_arguments)]
+fn get_next_candidate(
+    entropy_map: &mut HashMap<NodeId, EntropyState>,
+    node_id: NodeId,
+    params: &EntropyParams,
+    index: &LaneIndex,
+    dist_table: &DistanceTable,
+    targets: &[(u32, u32)],
+    blocked: &HashSet<u32>,
+    graph: &SearchGraph,
+) -> Option<(MoveSet, Config, f64)> {
+    let config = graph.config(node_id);
+    let es = entropy_map.entry(node_id).or_default();
+
+    // Regenerate if we've exhausted max_candidates from current cache.
+    if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
+        es.candidate_cache = generate_candidates(
+            config, es.entropy, params, index, dist_table, targets, blocked,
+        );
+        es.candidates_tried = 0;
+    }
+
+    // Find first untried candidate.
+    while es.candidates_tried < es.candidate_cache.len() {
+        let (ref ms, ref cfg, cost) = es.candidate_cache[es.candidates_tried];
+        let move_key = ms.encoded_lanes();
+        if !es.tried_moves.contains(&move_key) {
+            let result = (ms.clone(), cfg.clone(), cost);
+            return Some(result);
+        }
+        es.candidates_tried += 1;
+    }
+
+    // All cached candidates already tried — regenerate and try again.
+    es.candidate_cache = generate_candidates(
+        config, es.entropy, params, index, dist_table, targets, blocked,
+    );
+    es.candidates_tried = 0;
+
+    while es.candidates_tried < es.candidate_cache.len() {
+        let (ref ms, ref cfg, cost) = es.candidate_cache[es.candidates_tried];
+        let move_key = ms.encoded_lanes();
+        if !es.tried_moves.contains(&move_key) {
+            let result = (ms.clone(), cfg.clone(), cost);
+            return Some(result);
+        }
+        es.candidates_tried += 1;
+    }
+
+    None // all candidates exhausted
+}
+
+/// Walk up from goal to find the first branching ancestor.
+///
+/// Matches Python's `_cutoff_ancestor`: walks up and stops at the first
+/// node whose parent has more than one child (branch point).
+fn cutoff_ancestor(
+    goal_id: NodeId,
+    graph: &SearchGraph,
+    entropy_map: &HashMap<NodeId, EntropyState>,
+) -> NodeId {
+    let mut ancestor = goal_id;
+    while let Some(parent) = graph.parent(ancestor) {
+        let parent_children = entropy_map.get(&parent).map_or(0, |es| es.n_children);
+        if parent_children > 1 {
+            return ancestor;
+        }
+        ancestor = parent;
+    }
+    ancestor
+}
+
+// ── Public solve entry point ───────────────────────────────────────
+
+/// Solve a move synthesis problem using entropy-guided search.
+///
+/// Self-contained: builds all required infrastructure (distance table,
+/// goal predicate, etc.) internally.
+pub fn solve(
+    index: &LaneIndex,
+    initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+    target: impl IntoIterator<Item = (u32, LocationAddr)>,
+    blocked: impl IntoIterator<Item = LocationAddr>,
+    max_expansions: Option<u32>,
+    params: &EntropyParams,
+) -> Result<SolveResult, ConfigError> {
+    let root = Config::new(initial)?;
+    let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
+    let blocked_set: HashSet<u32> = blocked.into_iter().map(|l| l.encode()).collect();
+
+    // Build goal predicate.
+    let target_encoded: Vec<(u32, u32)> =
+        target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
+    let goal = |config: &Config| -> bool {
+        target_encoded.iter().all(|&(qid, target_enc)| {
+            config
+                .location_of(qid)
+                .is_some_and(|l| l.encode() == target_enc)
+        })
+    };
+
+    // Build distance table.
+    let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
+    let dist_table = DistanceTable::new(&target_locs, index);
+
+    // Run search.
+    let (graph, goal_id, nodes_expanded) = entropy_search(
+        root,
+        goal,
+        params,
+        index,
+        &dist_table,
+        &target_encoded,
+        &blocked_set,
+        max_expansions,
+        None,
+    );
+
+    match goal_id {
+        Some(gid) => {
+            let move_layers = graph.reconstruct_path(gid);
+            let goal_config = graph.config(gid).clone();
+            let cost = graph.g_score(gid);
+            Ok(SolveResult {
+                status: SolveStatus::Solved,
+                move_layers,
+                goal_config,
+                nodes_expanded,
+                cost,
+                deadlocks: 0,
+            })
+        }
+        None => {
+            let root_config = graph.config(graph.root()).clone();
+            let status = if max_expansions.is_some_and(|max| nodes_expanded >= max) {
+                SolveStatus::BudgetExceeded
+            } else {
+                SolveStatus::Unsolvable
+            };
+            Ok(SolveResult {
+                status,
+                move_layers: Vec::new(),
+                goal_config: root_config,
+                nodes_expanded,
+                cost: 0.0,
+                deadlocks: 0,
+            })
+        }
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{example_arch_json, loc};
+
+    fn make_index() -> LaneIndex {
+        let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+            serde_json::from_str(example_arch_json()).unwrap();
+        LaneIndex::new(spec)
+    }
+
+    #[test]
+    fn solve_simple_one_step() {
+        let index = make_index();
+        let params = EntropyParams::default();
+        let result = solve(
+            &index,
+            [(0, loc(0, 0))],
+            [(0, loc(0, 5))],
+            std::iter::empty(),
+            Some(100),
+            &params,
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
+    }
+
+    #[test]
+    fn solve_already_at_target() {
+        let index = make_index();
+        let params = EntropyParams::default();
+        let result = solve(
+            &index,
+            [(0, loc(0, 5))],
+            [(0, loc(0, 5))],
+            std::iter::empty(),
+            Some(100),
+            &params,
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert!(result.move_layers.is_empty());
+        assert_eq!(result.nodes_expanded, 0);
+    }
+
+    #[test]
+    fn solve_cross_word() {
+        let index = make_index();
+        let params = EntropyParams::default();
+        let result = solve(
+            &index,
+            [(0, loc(0, 5))],
+            [(0, loc(1, 5))],
+            std::iter::empty(),
+            Some(100),
+            &params,
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.goal_config.location_of(0), Some(loc(1, 5)));
+    }
+
+    #[test]
+    fn solve_multi_step() {
+        let index = make_index();
+        let params = EntropyParams::default();
+        let result = solve(
+            &index,
+            [(0, loc(0, 0))],
+            [(0, loc(1, 5))],
+            std::iter::empty(),
+            Some(1000),
+            &params,
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert!(result.move_layers.len() >= 2);
+    }
+
+    #[test]
+    fn solve_budget_exceeded() {
+        let index = make_index();
+        let params = EntropyParams::default();
+        let result = solve(
+            &index,
+            [(0, loc(0, 0))],
+            [(0, loc(99, 99))],
+            std::iter::empty(),
+            Some(10),
+            &params,
+        )
+        .unwrap();
+
+        assert_ne!(result.status, SolveStatus::Solved);
+    }
+
+    #[test]
+    fn find_path_occupied_basic() {
+        let index = make_index();
+        let path = find_path_occupied(loc(0, 0), loc(0, 5), &HashSet::new(), &index);
+        assert!(path.is_some());
+        assert!(!path.unwrap().is_empty());
+    }
+
+    #[test]
+    fn find_path_occupied_respects_blocked() {
+        let index = make_index();
+        // Block the destination itself — BFS cannot reach it.
+        let blocked: HashSet<u32> = [loc(0, 5).encode()].into_iter().collect();
+        let path = find_path_occupied(loc(0, 0), loc(0, 5), &blocked, &index);
+        assert!(path.is_none());
+    }
+}
