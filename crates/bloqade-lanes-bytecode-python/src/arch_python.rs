@@ -293,7 +293,7 @@ pub struct PyZoneAddr {
 impl PyZoneAddr {
     #[new]
     fn new(zone_id: i64) -> PyResult<Self> {
-        let zone_id = validate_field::<u16>("zone_id", zone_id)? as u32;
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         Ok(Self {
             inner: rs_addr::ZoneAddr { zone_id },
         })
