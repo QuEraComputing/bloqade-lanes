@@ -66,6 +66,15 @@ class _SearchNode:
         self.last_state_seen_node_id = state_seen_node_id
 
 
+@dataclass
+class _ScoredResumeState:
+    """Candidate resume point ranked by incoming move score."""
+
+    node: ConfigurationNode
+    score: float
+    order: int
+
+
 def _print_node_transition(
     prefix: str,
     node: ConfigurationNode,
@@ -276,6 +285,8 @@ class EntropyGuidedSearch:
         self.debug = _DebugEmitter(scorer=self.scorer, tree=tree, on_step=on_step)
         self.nodes_expanded = 0
         self.max_depth_reached = 0
+        self._resume_buffer: list[_ScoredResumeState] = []
+        self._resume_insert_counter = 0
 
     def _get_or_create_search_node(self, config_node: ConfigurationNode) -> _SearchNode:
         node_id = id(config_node)
@@ -284,6 +295,26 @@ class EntropyGuidedSearch:
             sn = _SearchNode(config_node=config_node)
             self.search_nodes[node_id] = sn
         return sn
+
+    def _refresh_candidate_cache(
+        self,
+        sn: _SearchNode,
+        node: ConfigurationNode,
+        generator: MoveGenerator,
+    ) -> None:
+        """Populate cache with top unique generated candidates up to max_candidates."""
+        max_candidates = self.params.max_candidates
+        filtered: list[frozenset[LaneAddress]] = []
+        seen: set[frozenset[LaneAddress]] = set()
+        for candidate in generator.generate(node, self.tree):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            filtered.append(candidate)
+            if len(filtered) >= max_candidates:
+                break
+        sn.candidate_cache = filtered
+        sn.candidates_tried = 0
 
     def _get_next_candidate(
         self,
@@ -298,16 +329,7 @@ class EntropyGuidedSearch:
         (failed generation).
         """
         if sn.candidates_tried >= self.params.max_candidates:
-            new_candidates = list(generator.generate(node, self.tree))
-            sn.candidate_cache = new_candidates
-            sn.candidates_tried = 0
-
-            while sn.candidates_tried < len(sn.candidate_cache):
-                candidate = sn.candidate_cache[sn.candidates_tried]
-                if candidate not in node.children:
-                    return candidate
-                sn.candidates_tried += 1
-            return None
+            self._refresh_candidate_cache(sn, node, generator)
 
         while sn.candidates_tried < len(sn.candidate_cache):
             candidate = sn.candidate_cache[sn.candidates_tried]
@@ -315,10 +337,7 @@ class EntropyGuidedSearch:
                 return candidate
             sn.candidates_tried += 1
 
-        new_candidates = list(generator.generate(node, self.tree))
-        sn.candidate_cache = new_candidates
-        sn.candidates_tried = 0
-
+        self._refresh_candidate_cache(sn, node, generator)
         while sn.candidates_tried < len(sn.candidate_cache):
             candidate = sn.candidate_cache[sn.candidates_tried]
             if candidate not in node.children:
@@ -359,19 +378,59 @@ class EntropyGuidedSearch:
         )
         return (node.depth, encoded_program)
 
-    def _cutoff_ancestor(self, goal_node: ConfigurationNode) -> ConfigurationNode:
-        """Return the first ancestor whose parent has multiple children.
+    def _state_move_score(self, node: ConfigurationNode) -> float | None:
+        """Return the incoming move score for a state."""
+        if node.parent is None or node.parent_moves is None:
+            return None
+        return self.scorer.score_moveset(node.parent_moves, node.parent, self.tree)
 
-        Walk upward from the goal branch and stop at the first node where its
-        parent is an actual branch point (2+ children). If no branch point
-        exists on the path, cut back to the root.
-        """
-        ancestor = goal_node
-        while ancestor.parent is not None:
-            if len(ancestor.parent.children) > 1:
-                return ancestor
-            ancestor = ancestor.parent
-        return ancestor
+    @staticmethod
+    def _resume_sort_key(entry: _ScoredResumeState) -> tuple[float, int, int]:
+        # Higher score first; deeper nodes first; latest insertion first.
+        return (entry.score, entry.node.depth, entry.order)
+
+    def _buffer_insert(self, node: ConfigurationNode, *, capacity: int) -> None:
+        """Insert state into bounded resume buffer by move score."""
+        if capacity < 1:
+            return
+
+        score = self._state_move_score(node)
+        if score is None:
+            return
+
+        self._buffer_discard(node)
+        candidate = _ScoredResumeState(
+            node=node,
+            score=score,
+            order=self._resume_insert_counter,
+        )
+        self._resume_insert_counter += 1
+
+        if len(self._resume_buffer) < capacity:
+            self._resume_buffer.append(candidate)
+            return
+
+        lowest = min(self._resume_buffer, key=self._resume_sort_key)
+        if self._resume_sort_key(candidate) <= self._resume_sort_key(lowest):
+            return
+
+        self._resume_buffer.remove(lowest)
+        self._resume_buffer.append(candidate)
+
+    def _buffer_discard(self, node: ConfigurationNode) -> None:
+        """Remove a node from the resume buffer, if present."""
+        self._resume_buffer = [
+            entry for entry in self._resume_buffer if entry.node is not node
+        ]
+
+    def _buffer_pop_best(self) -> ConfigurationNode | None:
+        """Pop and return the highest-scoring buffered resume state."""
+        if not self._resume_buffer:
+            return None
+
+        best = max(self._resume_buffer, key=self._resume_sort_key)
+        self._resume_buffer.remove(best)
+        return best.node
 
     def _make_result(
         self,
@@ -460,6 +519,7 @@ class EntropyGuidedSearch:
     def run(self, generator: MoveGenerator) -> SearchResult:
         """Execute the entropy-guided search and return the result."""
         found_goals: list[ConfigurationNode] = []
+        hit_max_depth = False
         if self.goal(self.tree.root):
             self.debug.goal(self.tree.root, entropy=0)
             return SearchResult(
@@ -473,6 +533,7 @@ class EntropyGuidedSearch:
         while self.max_expansions is None or self.nodes_expanded < self.max_expansions:
             sn = self._get_or_create_search_node(current_node)
             if self.max_depth is not None and current_node.depth >= self.max_depth:
+                hit_max_depth = True
                 sn.force_entropy(self.params.e_max)
 
             if sn.entropy >= self.params.e_max:
@@ -484,9 +545,7 @@ class EntropyGuidedSearch:
 
                 ancestor_sn = self._get_or_create_search_node(ancestor)
                 if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
-                    fallback_result = self._sequential_fallback(self.tree.root)
-                    combined_goals = found_goals + list(fallback_result.goal_nodes)
-                    return self._make_result(goal_nodes=tuple(combined_goals))
+                    break
 
                 ancestor_sn.bump_entropy(self.params.delta_e)
                 self.debug.revert(ancestor, ancestor_sn, sn)
@@ -540,16 +599,31 @@ class EntropyGuidedSearch:
             self.nodes_expanded += 1
             self.max_depth_reached = max(self.max_depth_reached, child.depth)
             self.debug.descend(child, sn, candidate, current_node)
+            if self.params.max_goal_candidates > 1:
+                self._buffer_insert(child, capacity=self.params.max_goal_candidates)
 
             if self.goal(child):
                 self.debug.goal(child, entropy=sn.entropy)
                 found_goals.append(child)
                 if len(found_goals) >= self.params.max_goal_candidates:
                     return self._make_result(goal_nodes=tuple(found_goals))
-                current_node = self._cutoff_ancestor(child)
+                self._buffer_discard(child)
+                current_node = self._buffer_pop_best() or self.tree.root
                 continue
 
             current_node = child
+
+        if (
+            self.max_expansions is not None
+            and self.nodes_expanded >= self.max_expansions
+        ) or hit_max_depth:
+            nodes_before_fallback = self.nodes_expanded
+            depth_before_fallback = self.max_depth_reached
+            fallback_result = self._sequential_fallback(self.tree.root)
+            combined_goals = found_goals + list(fallback_result.goal_nodes)
+            self.nodes_expanded = nodes_before_fallback
+            self.max_depth_reached = depth_before_fallback
+            return self._make_result(goal_nodes=tuple(combined_goals))
 
         return self._make_result(goal_nodes=tuple(found_goals))
 

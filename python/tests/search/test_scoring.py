@@ -1,7 +1,7 @@
 """Tests for CandidateScorer."""
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout import LocationAddress
+from bloqade.lanes.layout import Direction, LocationAddress, MoveType
 from bloqade.lanes.search.scoring import CandidateScorer
 from bloqade.lanes.search.search_params import SearchParams
 from bloqade.lanes.search.tree import ConfigurationTree
@@ -128,3 +128,62 @@ def test_score_all_qubit_bus_pairs_excludes_blocked_destinations():
         assert lane is not None
         _, dst = tree.arch_spec.get_endpoints(lane)
         assert dst not in blocked
+
+
+def test_score_rectangle_bus_candidates_marks_non_movers_invalid():
+    target = {0: LocationAddress(5, 0)}
+    scorer, tree = _make_scorer_and_tree(target=target)
+    buckets = scorer.score_rectangle_bus_candidates(tree.root, entropy=1, tree=tree)
+    assert buckets
+
+    non_mover_src = tree.root.configuration[1]
+    assert any(non_mover_src in bucket.invalid_sources for bucket in buckets.values())
+
+
+def test_score_rectangle_bus_candidates_marks_collision_sources_invalid():
+    target = {0: LocationAddress(5, 0)}
+    scorer, base_tree = _make_scorer_and_tree(target=target)
+    blocked = frozenset({LocationAddress(5, 0)})
+    tree = ConfigurationTree(
+        arch_spec=base_tree.arch_spec,
+        root=base_tree.root,
+        blocked_locations=blocked,
+    )
+    buckets = scorer.score_rectangle_bus_candidates(tree.root, entropy=1, tree=tree)
+
+    mover_src = tree.root.configuration[0]
+    assert any(mover_src in bucket.invalid_sources for bucket in buckets.values())
+
+
+def test_score_rectangle_bus_candidates_negative_scores_become_invalid(monkeypatch):
+    target = {0: LocationAddress(0, 5)}
+    scorer, tree = _make_scorer_and_tree(target=target)
+    mover_loc = tree.root.configuration[0]
+
+    chosen_key: tuple[int, MoveType, int, Direction] | None = None
+    for mt in (MoveType.SITE, MoveType.WORD):
+        buses = (
+            range(len(tree.arch_spec.site_buses))
+            if mt == MoveType.SITE
+            else range(len(tree.arch_spec.word_buses))
+        )
+        for bus_id in buses:
+            for direction in (Direction.FORWARD, Direction.BACKWARD):
+                lane = tree.lane_for_source(mt, bus_id, direction, mover_loc)
+                if lane is not None:
+                    chosen_key = (0, mt, bus_id, direction)
+                    break
+            if chosen_key is not None:
+                break
+        if chosen_key is not None:
+            break
+
+    assert chosen_key is not None
+
+    monkeypatch.setattr(
+        scorer,
+        "score_all_qubit_bus_pairs",
+        lambda _node, _entropy, _tree: {chosen_key: -1.0},
+    )
+    buckets = scorer.score_rectangle_bus_candidates(tree.root, entropy=1, tree=tree)
+    assert any(mover_loc in bucket.invalid_sources for bucket in buckets.values())

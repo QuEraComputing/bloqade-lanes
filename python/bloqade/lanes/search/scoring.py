@@ -1,8 +1,8 @@
 """Candidate scoring for entropy-guided search.
 
 Two-level scoring:
-1. Per-qubit-bus: s(q, b, d; E) — entropy-weighted distance/mobility heuristic
-2. Per-moveset: score[M] — alpha*distance + beta*arrived + gamma*mobility
+1. Per-qubit-lane context used to prepare legal rectangle candidates.
+2. Per-moveset: score[M] — alpha*distance + beta*arrived + gamma*mobility.
 """
 
 from __future__ import annotations
@@ -18,6 +18,24 @@ if TYPE_CHECKING:
     from bloqade.lanes.search.tree import ConfigurationTree
 
 
+@dataclass(frozen=True)
+class RectangleBusCandidates:
+    """Rectangle candidate prep for one (move_type, bus_id, direction) group.
+
+    Attributes:
+        valid_entries: Positive-scoring unresolved movers for this bus context.
+            Mapping is qid -> lane from that qubit's source.
+        invalid_sources: Occupied sources that must invalidate any rectangle
+            containing them (non-movers, collision-risk movers, or non-positive
+            scoring movers for this bus context).
+        qubit_scores: Score for each qubit in valid_entries.
+    """
+
+    valid_entries: dict[int, LaneAddress]
+    invalid_sources: frozenset[LocationAddress]
+    qubit_scores: dict[int, float]
+
+
 @dataclass
 class CandidateScorer:
     """Scores qubit-bus pairs and movesets for entropy-guided search."""
@@ -31,9 +49,11 @@ class CandidateScorer:
         target_loc: LocationAddress,
         tree: ConfigurationTree,
     ) -> float:
-        """Weighted shortest path cost from current to target.
+        """Shortest path length in number of lanes (hops) from current to target.
 
-        Uses MoveMetricCalculator.get_lane_duration_us as edge weight.
+        Uses uniform edge weight so the path minimizes hop count, not wall-clock
+        move time. That keeps scoring aligned with “how many moves remain” and
+        avoids underweighting short but slow lanes relative to mobility.
         Does not pass an occupied set — paths are computed over the full
         graph, which is appropriate for a heuristic distance estimate.
         Returns float('inf') if no path.
@@ -41,14 +61,12 @@ class CandidateScorer:
         result = tree.path_finder.find_path(
             current,
             target_loc,
-            edge_weight=tree.path_finder.metrics.get_lane_duration_us,
+            edge_weight=lambda _lane: 1.0,
         )
         if result is None:
             return float("inf")
         lanes, _ = result
-        return sum(
-            tree.path_finder.metrics.get_lane_duration_us(lane) for lane in lanes
-        )
+        return float(len(lanes))
 
     def _mobility_at(
         self,
@@ -136,6 +154,72 @@ class CandidateScorer:
             m_hat = delta_m / m_ref
             score = (self.params.w_d / e_eff) * d_hat + self.params.w_m * e_eff * m_hat
             result[key] = score
+
+        return result
+
+    def score_rectangle_bus_candidates(
+        self,
+        node: ConfigurationNode,
+        entropy: int,
+        tree: ConfigurationTree,
+    ) -> dict[tuple[MoveType, int, Direction], RectangleBusCandidates]:
+        """Prepare per-bus rectangle seeds and invalid source buckets.
+
+        The moving set is unresolved target qubits only. For each bus context,
+        any occupied source is placed into ``invalid_sources`` when:
+        - the source qubit is not in the moving set,
+        - the move collides with occupied/blocked destination, or
+        - the qubit's score for this bus context is non-positive.
+        """
+        occupied = node.occupied_locations | tree.blocked_locations
+        moving_qubits = {
+            qid
+            for qid, loc in node.configuration.items()
+            if qid in self.target and loc != self.target[qid]
+        }
+        if not moving_qubits:
+            return {}
+
+        per_qubit_scores = self.score_all_qubit_bus_pairs(node, entropy, tree)
+        result: dict[tuple[MoveType, int, Direction], RectangleBusCandidates] = {}
+
+        for mt in (MoveType.SITE, MoveType.WORD):
+            buses = (
+                tree.arch_spec.site_buses
+                if mt == MoveType.SITE
+                else tree.arch_spec.word_buses
+            )
+            for bus_id in range(len(buses)):
+                for direction in (Direction.FORWARD, Direction.BACKWARD):
+                    valid_entries: dict[int, LaneAddress] = {}
+                    valid_scores: dict[int, float] = {}
+                    invalid_sources: set[LocationAddress] = set()
+
+                    for lane in tree.lanes_for(mt, bus_id, direction):
+                        src, dst = tree.arch_spec.get_endpoints(lane)
+                        qid = node.get_qubit_at(src)
+                        if qid is None:
+                            continue
+
+                        if qid not in moving_qubits:
+                            invalid_sources.add(src)
+                            continue
+
+                        score_key = (qid, mt, bus_id, direction)
+                        score = per_qubit_scores.get(score_key)
+                        if score is None or dst in occupied or score <= 0.0:
+                            invalid_sources.add(src)
+                            continue
+
+                        valid_entries[qid] = lane
+                        valid_scores[qid] = score
+
+                    if valid_entries or invalid_sources:
+                        result[(mt, bus_id, direction)] = RectangleBusCandidates(
+                            valid_entries=valid_entries,
+                            invalid_sources=frozenset(invalid_sources),
+                            qubit_scores=valid_scores,
+                        )
 
         return result
 
