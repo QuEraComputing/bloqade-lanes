@@ -864,16 +864,16 @@ class SolveResult:
         ...
 
     @property
-    def move_layers(self) -> list[list[tuple[int, int, int, int, int]]]:
-        """Move layers as lists of (direction, move_type, word_id, site_id, bus_id) tuples.
+    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+        """Move layers as lists of (direction, move_type, zone_id, word_id, site_id, bus_id) tuples.
 
         Empty when ``status`` is not ``"solved"``.
         """
         ...
 
     @property
-    def goal_config(self) -> list[tuple[int, int, int]]:
-        """Goal configuration as (qubit_id, word_id, site_id) tuples.
+    def goal_config(self) -> list[tuple[int, int, int, int]]:
+        """Goal configuration as (qubit_id, zone_id, word_id, site_id) tuples.
 
         Equals the initial configuration when ``status`` is not ``"solved"``.
         """
@@ -908,9 +908,9 @@ class MoveSolver:
 
     def solve(
         self,
-        initial: list[tuple[int, int, int]],
-        target: list[tuple[int, int, int]],
-        blocked: list[tuple[int, int]],
+        initial: list[tuple[int, int, int, int]],
+        target: list[tuple[int, int, int, int]],
+        blocked: list[tuple[int, int, int]],
         max_expansions: Optional[int] = None,
         strategy: SearchStrategy = SearchStrategy.ASTAR,
         top_c: int = 3,

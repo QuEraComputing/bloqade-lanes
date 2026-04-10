@@ -86,11 +86,11 @@ impl PySolveResult {
 
     /// Move layers: list of move steps, each a list of lane address tuples.
     ///
-    /// Each lane is represented as `(direction, move_type, word_id, site_id, bus_id)`
-    /// where direction is 0=Forward/1=Backward and move_type is 0=SiteBus/1=WordBus.
+    /// Each lane is represented as `(direction, move_type, zone_id, word_id, site_id, bus_id)`
+    /// where direction is 0=Forward/1=Backward and move_type is 0=SiteBus/1=WordBus/2=ZoneBus.
     #[getter]
     #[allow(clippy::type_complexity)]
-    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32)>> {
+    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
         self.inner
             .move_layers
             .iter()
@@ -101,6 +101,7 @@ impl PySolveResult {
                         (
                             lane.direction as u8,
                             lane.move_type as u8,
+                            lane.zone_id,
                             lane.word_id,
                             lane.site_id,
                             lane.bus_id,
@@ -111,13 +112,13 @@ impl PySolveResult {
             .collect()
     }
 
-    /// Goal configuration: list of (qubit_id, word_id, site_id) tuples.
+    /// Goal configuration: list of (qubit_id, zone_id, word_id, site_id) tuples.
     #[getter]
-    fn goal_config(&self) -> Vec<(u32, u32, u32)> {
+    fn goal_config(&self) -> Vec<(u32, u32, u32, u32)> {
         self.inner
             .goal_config
             .iter()
-            .map(|(qid, loc)| (qid, loc.word_id, loc.site_id))
+            .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
             .collect()
     }
 
@@ -196,9 +197,9 @@ impl PyMoveSolver {
     /// qubits from initial to target placement, avoiding blocked locations.
     ///
     /// Args:
-    ///     initial: List of (qubit_id, word_id, site_id) tuples for starting positions.
-    ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
-    ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
+    ///     initial: List of (qubit_id, zone_id, word_id, site_id) tuples for starting positions.
+    ///     target: List of (qubit_id, zone_id, word_id, site_id) tuples for desired positions.
+    ///     blocked: List of (zone_id, word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
     ///     strategy: Search strategy (default: SearchStrategy.ASTAR).
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
@@ -211,9 +212,9 @@ impl PyMoveSolver {
     fn solve(
         &self,
         py: Python<'_>,
-        initial: Vec<(u32, u32, u32)>,
-        target: Vec<(u32, u32, u32)>,
-        blocked: Vec<(u32, u32)>,
+        initial: Vec<(u32, u32, u32, u32)>,
+        target: Vec<(u32, u32, u32, u32)>,
+        blocked: Vec<(u32, u32, u32)>,
         max_expansions: Option<u32>,
         strategy: PySearchStrategy,
         top_c: usize,
@@ -222,7 +223,7 @@ impl PyMoveSolver {
         // Validate: check for duplicate qubit IDs in target.
         {
             let mut seen = std::collections::HashSet::new();
-            for &(qid, _, _) in &target {
+            for &(qid, _, _, _) in &target {
                 if !seen.insert(qid) {
                     return Err(PyValueError::new_err(format!(
                         "duplicate qubit_id {qid} in target placement"
@@ -233,11 +234,11 @@ impl PyMoveSolver {
 
         let initial_pairs: Vec<_> = initial
             .into_iter()
-            .map(|(qid, word_id, site_id)| {
+            .map(|(qid, zone_id, word_id, site_id)| {
                 (
                     qid,
                     LocationAddr {
-                        zone_id: 0,
+                        zone_id,
                         word_id,
                         site_id,
                     },
@@ -247,11 +248,11 @@ impl PyMoveSolver {
 
         let target_pairs: Vec<_> = target
             .into_iter()
-            .map(|(qid, word_id, site_id)| {
+            .map(|(qid, zone_id, word_id, site_id)| {
                 (
                     qid,
                     LocationAddr {
-                        zone_id: 0,
+                        zone_id,
                         word_id,
                         site_id,
                     },
@@ -261,8 +262,8 @@ impl PyMoveSolver {
 
         let blocked_locs: Vec<_> = blocked
             .into_iter()
-            .map(|(word_id, site_id)| LocationAddr {
-                zone_id: 0,
+            .map(|(zone_id, word_id, site_id)| LocationAddr {
+                zone_id,
                 word_id,
                 site_id,
             })

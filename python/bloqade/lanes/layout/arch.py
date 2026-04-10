@@ -154,7 +154,12 @@ class ArchSpec:
 
     @cached_property
     def site_buses(self) -> tuple[SiteBus, ...]:
-        """Aggregate all site buses across all zones."""
+        """Aggregate all site buses across all zones.
+
+        Note: indices in this flat list do NOT correspond to per-zone
+        bus_id values in LaneAddress. Prefer iterating zones directly
+        via ``self.zones[i].site_buses``.
+        """
         result: list[SiteBus] = []
         for zone in self._inner.zones:
             result.extend(zone.site_buses)
@@ -162,7 +167,12 @@ class ArchSpec:
 
     @cached_property
     def word_buses(self) -> tuple[WordBus, ...]:
-        """Aggregate all word buses across all zones."""
+        """Aggregate all word buses across all zones.
+
+        Note: indices in this flat list do NOT correspond to per-zone
+        bus_id values in LaneAddress. Prefer iterating zones directly
+        via ``self.zones[i].word_buses``.
+        """
         result: list[WordBus] = []
         for zone in self._inner.zones:
             result.extend(zone.word_buses)
@@ -171,20 +181,6 @@ class ArchSpec:
     @cached_property
     def zone_buses(self) -> tuple[ZoneBus, ...]:
         return tuple(self._inner.zone_buses)
-
-    @cached_property
-    def _site_bus_dst_by_src(self) -> tuple[dict[int, int], ...]:
-        return tuple(
-            {src: dst for src, dst in zip(bus.src, bus.dst, strict=True)}
-            for bus in self.site_buses
-        )
-
-    @cached_property
-    def _word_bus_dst_by_src(self) -> tuple[dict[int, int], ...]:
-        return tuple(
-            {src: dst for src, dst in zip(bus.src, bus.dst, strict=True)}
-            for bus in self.word_buses
-        )
 
     # ── Constructor classmethod ──
 
@@ -321,11 +317,13 @@ class ArchSpec:
     def x_bounds(self) -> tuple[float, float]:
         x_min = float("inf")
         x_max = float("-inf")
-        for word_id in range(len(self.words)):
-            for site_id in range(len(self.words[word_id].site_indices)):
-                pos = self.get_position(LocationAddress(word_id, site_id))
-                x_min = min(x_min, pos[0])
-                x_max = max(x_max, pos[0])
+        for zone_id in range(len(self.zones)):
+            for word_id in range(len(self.words)):
+                for site_id in range(len(self.words[word_id].site_indices)):
+                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
+                    if pos is not None:
+                        x_min = min(x_min, pos[0])
+                        x_max = max(x_max, pos[0])
 
         if x_min == float("inf"):
             x_min = -1.0
@@ -339,11 +337,13 @@ class ArchSpec:
     def y_bounds(self) -> tuple[float, float]:
         y_min = float("inf")
         y_max = float("-inf")
-        for word_id in range(len(self.words)):
-            for site_id in range(len(self.words[word_id].site_indices)):
-                pos = self.get_position(LocationAddress(word_id, site_id))
-                y_min = min(y_min, pos[1])
-                y_max = max(y_max, pos[1])
+        for zone_id in range(len(self.zones)):
+            for word_id in range(len(self.words)):
+                for site_id in range(len(self.words[word_id].site_indices)):
+                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
+                    if pos is not None:
+                        y_min = min(y_min, pos[1])
+                        y_max = max(y_max, pos[1])
 
         if y_min == float("inf"):
             y_min = -1.0
@@ -414,14 +414,20 @@ class ArchSpec:
 
         for word_id in show_words:
             word = self.words[word_id]
-            # Plot sites using their positions from the arch spec
-            positions = [
-                self.get_position(LocationAddress(word_id, site_id))
-                for site_id in range(len(word.site_indices))
-            ]
-            x_positions = [p[0] for p in positions]
-            y_positions = [p[1] for p in positions]
-            ax.scatter(x_positions, y_positions, **scatter_kwargs)
+            # Plot sites using their positions from the arch spec.
+            # Try each zone to find valid positions for this word.
+            positions = []
+            for zone_id in range(len(self.zones)):
+                for site_id in range(len(word.site_indices)):
+                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
+                    if pos is not None:
+                        positions.append(pos)
+                if positions:
+                    break
+            if positions:
+                x_positions = [p[0] for p in positions]
+                y_positions = [p[1] for p in positions]
+                ax.scatter(x_positions, y_positions, **scatter_kwargs)
 
         site_paths = self._get_site_bus_paths(show_words, show_site_bus)
         for path in site_paths:
