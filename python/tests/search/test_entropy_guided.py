@@ -91,6 +91,7 @@ def test_sequential_fallback_triggers_on_max_expansions(monkeypatch):
     tree = _make_tree()
     target = {0: LocationAddress(9, 0)}
     fallback_called = {"value": False}
+    candidate = frozenset({SiteLaneAddress(0, 0, 0)})
 
     def fake_fallback(_self, _current_node):  # type: ignore[no-untyped-def]
         fallback_called["value"] = True
@@ -100,7 +101,21 @@ def test_sequential_fallback_triggers_on_max_expansions(monkeypatch):
     monkeypatch.setattr(
         EntropyGuidedSearch,
         "_get_next_candidate",
-        lambda _self, _sn, _node, _generator: None,
+        lambda _self, _sn, _node, _generator: candidate,
+    )
+    monkeypatch.setattr(
+        tree,
+        "try_move_set",
+        lambda node, move_set, strict=True: ExpansionOutcome(
+            move_set=move_set,
+            status=ExpansionStatus.CREATED_CHILD,
+            child=ConfigurationNode(
+                configuration=dict(node.configuration),
+                parent=node,
+                parent_moves=move_set,
+                depth=node.depth + 1,
+            ),
+        ),
     )
 
     entropy_guided_search(
@@ -153,13 +168,46 @@ def test_reversion_expands_more_than_depth():
     assert result.nodes_expanded > 0
 
 
-def test_sequential_fallback_triggered():
+def test_sequential_fallback_triggered_on_max_depth():
     tree = _make_tree()
     target = {0: LocationAddress(0, 1)}
     params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
-    result = entropy_guided_search(tree, target, placement_goal(target), params=params)
+    result = entropy_guided_search(
+        tree,
+        target,
+        placement_goal(target),
+        params=params,
+        max_depth=1,
+    )
     assert result.goal_node is not None
     assert result.goal_node.configuration[0] == LocationAddress(0, 1)
+
+
+def test_root_deadlock_does_not_trigger_fallback_without_limits(monkeypatch):
+    tree = _make_tree()
+    target = {0: LocationAddress(0, 9)}
+    fallback_called = {"value": False}
+
+    def fake_fallback(_self, _current_node):  # type: ignore[no-untyped-def]
+        fallback_called["value"] = True
+        return SearchResult(nodes_expanded=0, max_depth_reached=0, goal_nodes=())
+
+    monkeypatch.setattr(EntropyGuidedSearch, "_sequential_fallback", fake_fallback)
+    monkeypatch.setattr(
+        EntropyGuidedSearch,
+        "_get_next_candidate",
+        lambda _self, _sn, _node, _generator: None,
+    )
+
+    result = entropy_guided_search(
+        tree,
+        target,
+        placement_goal(target),
+        params=SearchParams(e_max=2, delta_e=1),
+    )
+
+    assert fallback_called["value"] is False
+    assert result.goal_nodes == ()
 
 
 def test_sequential_fallback_direct():

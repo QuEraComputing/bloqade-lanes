@@ -70,7 +70,7 @@ class EntropyPlacementTraversal(PlacementTraversalABC):
 
     search_params: SearchParams = field(default_factory=SearchParams)
     max_depth: int | None = None
-    max_expansions: int | None = 500
+    max_expansions: int | None = 2
     on_search_step: OnSearchStep | None = None
 
     def path_to_target_config(

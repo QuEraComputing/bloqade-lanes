@@ -49,9 +49,11 @@ class CandidateScorer:
         target_loc: LocationAddress,
         tree: ConfigurationTree,
     ) -> float:
-        """Weighted shortest path cost from current to target.
+        """Shortest path length in number of lanes (hops) from current to target.
 
-        Uses MoveMetricCalculator.get_lane_duration_us as edge weight.
+        Uses uniform edge weight so the path minimizes hop count, not wall-clock
+        move time. That keeps scoring aligned with “how many moves remain” and
+        avoids underweighting short but slow lanes relative to mobility.
         Does not pass an occupied set — paths are computed over the full
         graph, which is appropriate for a heuristic distance estimate.
         Returns float('inf') if no path.
@@ -59,14 +61,12 @@ class CandidateScorer:
         result = tree.path_finder.find_path(
             current,
             target_loc,
-            edge_weight=tree.path_finder.metrics.get_lane_duration_us,
+            edge_weight=lambda _lane: 1.0,
         )
         if result is None:
             return float("inf")
         lanes, _ = result
-        return sum(
-            tree.path_finder.metrics.get_lane_duration_us(lane) for lane in lanes
-        )
+        return float(len(lanes))
 
     def _mobility_at(
         self,

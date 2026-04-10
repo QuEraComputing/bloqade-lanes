@@ -535,6 +535,7 @@ class EntropyGuidedSearch:
     def run(self, generator: MoveGenerator) -> SearchResult:
         """Execute the entropy-guided search and return the result."""
         found_goals: list[ConfigurationNode] = []
+        hit_max_depth = False
         if self.goal(self.tree.root):
             self.debug.goal(self.tree.root, entropy=0)
             return SearchResult(
@@ -548,6 +549,7 @@ class EntropyGuidedSearch:
         while self.max_expansions is None or self.nodes_expanded < self.max_expansions:
             sn = self._get_or_create_search_node(current_node)
             if self.max_depth is not None and current_node.depth >= self.max_depth:
+                hit_max_depth = True
                 sn.force_entropy(self.params.e_max)
 
             if sn.entropy >= self.params.e_max:
@@ -559,9 +561,6 @@ class EntropyGuidedSearch:
 
                 ancestor_sn = self._get_or_create_search_node(ancestor)
                 if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
-                    if self.max_expansions is None:
-                        return self._make_result(goal_nodes=tuple(found_goals))
-                    self.nodes_expanded = self.max_expansions
                     break
 
                 ancestor_sn.bump_entropy(self.params.delta_e)
@@ -633,7 +632,7 @@ class EntropyGuidedSearch:
         if (
             self.max_expansions is not None
             and self.nodes_expanded >= self.max_expansions
-        ):
+        ) or hit_max_depth:
             nodes_before_fallback = self.nodes_expanded
             depth_before_fallback = self.max_depth_reached
             fallback_result = self._sequential_fallback(self.tree.root)
