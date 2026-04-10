@@ -147,22 +147,6 @@ impl MoveSolver {
         restarts: u32,
         free_rider_policy: FreeRiderPolicy,
     ) -> Result<SolveResult, ConfigError> {
-        // Entropy strategy has its own self-contained solve path.
-        if strategy == Strategy::Entropy {
-            return crate::entropy::solve(
-                &self.index,
-                initial,
-                target,
-                blocked,
-                max_expansions,
-                &crate::entropy::EntropyParams {
-                    top_c,
-                    max_movesets_per_group,
-                    ..crate::entropy::EntropyParams::default()
-                },
-            );
-        }
-
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -237,8 +221,33 @@ impl MoveSolver {
             }
         };
 
+        // Pre-compute blocked set for entropy (avoids per-restart allocation).
+        let blocked_encoded: std::collections::HashSet<u32> =
+            blocked_locs.iter().map(|l| l.encode()).collect();
+
         // Run a single search with the given seed.
         let run_once = |seed: u64| -> SolveResult {
+            if strategy == Strategy::Entropy {
+                let entropy_params = crate::entropy::EntropyParams {
+                    top_c,
+                    max_movesets_per_group,
+                    ..crate::entropy::EntropyParams::default()
+                };
+                let result = crate::entropy::entropy_search(
+                    root.clone(),
+                    goal,
+                    &entropy_params,
+                    &self.index,
+                    &dist_table,
+                    &target_encoded,
+                    &blocked_encoded,
+                    max_expansions,
+                    None,
+                    seed,
+                );
+                return extract(result, 0, max_expansions);
+            }
+
             if strategy == Strategy::Cascade {
                 // Phase 1: IDS with sum heuristic, Skip deadlock policy.
                 let ids_expander = make_expander(seed, DeadlockPolicy::Skip);

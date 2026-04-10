@@ -16,13 +16,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
-use rayon::prelude::*;
 
-use crate::config::{Config, ConfigError};
+use crate::astar::SearchResult;
+use crate::config::Config;
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
-use crate::solve::{SolveResult, SolveStatus};
 
 // ── Parameters ─────────────────────────────────────────────────────
 
@@ -57,7 +56,7 @@ impl Default for EntropyParams {
             beta: 2.0,
             gamma: 0.5,
             top_c: 3,
-            max_candidates: 2,
+            max_candidates: 20,
             reversion_steps: 1,
             delta_e: 1,
             e_max: 4,
@@ -97,6 +96,7 @@ impl Default for EntropyState {
 /// Score and generate ranked candidate movesets with entropy-weighted scoring.
 ///
 /// Mirrors the Python `HeuristicMoveGenerator.generate()` + `CandidateScorer`.
+#[allow(clippy::too_many_arguments)]
 fn generate_candidates(
     config: &Config,
     entropy: u32,
@@ -108,7 +108,9 @@ fn generate_candidates(
     seed: u64,
 ) -> Vec<(MoveSet, Config, f64)> {
     let mut rng = if seed != 0 {
-        Some(SmallRng::seed_from_u64(seed ^ config.hash_value()))
+        Some(SmallRng::seed_from_u64(
+            seed ^ config.hash_value() ^ (entropy as u64),
+        ))
     } else {
         None
     };
@@ -222,14 +224,13 @@ fn generate_candidates(
         .fold(1.0_f64, f64::max);
 
     // Apply entropy-weighted formula and build scored entries.
-    let all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
+    let mut all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
         .into_iter()
         .map(|(key, qid, delta_d, delta_m, lane_enc, dst_enc)| {
             let d_hat = delta_d / d_ref;
             let m_hat = delta_m / m_ref;
             let perturbation = rng.as_mut().map_or(0.0, |r| r.gen_range(-0.5..0.5));
-            let score =
-                (params.w_d / e_eff) * d_hat + params.w_m * e_eff * m_hat + perturbation;
+            let score = (params.w_d / e_eff) * d_hat + params.w_m * e_eff * m_hat + perturbation;
             (
                 key,
                 ScoredEntry {
@@ -313,14 +314,15 @@ fn generate_candidates(
         }
     }
 
-    // Step 6: score each moveset with alpha/beta/gamma, sort descending.
+    // Step 6: score each moveset with alpha/beta/gamma + perturbation, sort descending.
     let mut scored: Vec<(f64, MoveSet, Config)> = candidates
         .into_iter()
         .map(|(_raw_score, ms, new_cfg)| {
             let ms_score = score_moveset(
                 config, &new_cfg, targets, dist_table, &occupied, blocked, index, params,
             );
-            (ms_score, ms, new_cfg)
+            let ms_perturbation = rng.as_mut().map_or(0.0, |r| r.gen_range(-0.5..0.5));
+            (ms_score + ms_perturbation, ms, new_cfg)
         })
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -531,7 +533,7 @@ fn sequential_fallback(
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
 #[allow(clippy::too_many_arguments)]
-fn entropy_search(
+pub fn entropy_search(
     root: Config,
     goal: impl Fn(&Config) -> bool,
     params: &EntropyParams,
@@ -542,12 +544,16 @@ fn entropy_search(
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
     seed: u64,
-) -> (SearchGraph, Option<NodeId>, u32) {
+) -> SearchResult {
     // Early check.
     if goal(&root) {
         let graph = SearchGraph::new(root);
-        let root_id = graph.root();
-        return (graph, Some(root_id), 0);
+        return SearchResult {
+            goal: Some(graph.root()),
+            nodes_expanded: 0,
+            max_depth_reached: 0,
+            graph,
+        };
     }
 
     let mut graph = SearchGraph::new(root);
@@ -555,6 +561,7 @@ fn entropy_search(
     let mut entropy_map: HashMap<NodeId, EntropyState> = HashMap::new();
     let mut current = root_id;
     let mut nodes_expanded: u32 = 0;
+    let mut max_depth_seen: u32 = 0;
     let mut found_goals: Vec<NodeId> = Vec::new();
 
     loop {
@@ -639,6 +646,7 @@ fn entropy_search(
         // Track that a new child was created from this node.
         entropy_map.entry(current).or_default().n_children += 1;
         nodes_expanded += 1;
+        max_depth_seen = max_depth_seen.max(graph.depth(child_id));
 
         if goal(graph.config(child_id)) {
             found_goals.push(child_id);
@@ -655,7 +663,12 @@ fn entropy_search(
 
     // Return shallowest goal.
     let best = found_goals.into_iter().min_by_key(|&id| graph.depth(id));
-    (graph, best, nodes_expanded)
+    SearchResult {
+        goal: best,
+        nodes_expanded,
+        max_depth_reached: max_depth_seen,
+        graph,
+    }
 }
 
 /// Get the next untried candidate from the cache, regenerating if needed.
@@ -669,6 +682,7 @@ fn get_next_candidate(
     targets: &[(u32, u32)],
     blocked: &HashSet<u32>,
     graph: &SearchGraph,
+    seed: u64,
 ) -> Option<(MoveSet, Config, f64)> {
     let config = graph.config(node_id);
     let es = entropy_map.entry(node_id).or_default();
@@ -676,7 +690,7 @@ fn get_next_candidate(
     // Regenerate if we've exhausted max_candidates from current cache.
     if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
         es.candidate_cache = generate_candidates(
-            config, es.entropy, params, index, dist_table, targets, blocked,
+            config, es.entropy, params, index, dist_table, targets, blocked, seed,
         );
         es.candidates_tried = 0;
     }
@@ -694,7 +708,7 @@ fn get_next_candidate(
 
     // All cached candidates already tried — regenerate and try again.
     es.candidate_cache = generate_candidates(
-        config, es.entropy, params, index, dist_table, targets, blocked,
+        config, es.entropy, params, index, dist_table, targets, blocked, seed,
     );
     es.candidates_tried = 0;
 
@@ -731,85 +745,6 @@ fn cutoff_ancestor(
     ancestor
 }
 
-// ── Public solve entry point ───────────────────────────────────────
-
-/// Solve a move synthesis problem using entropy-guided search.
-///
-/// Self-contained: builds all required infrastructure (distance table,
-/// goal predicate, etc.) internally.
-pub fn solve(
-    index: &LaneIndex,
-    initial: impl IntoIterator<Item = (u32, LocationAddr)>,
-    target: impl IntoIterator<Item = (u32, LocationAddr)>,
-    blocked: impl IntoIterator<Item = LocationAddr>,
-    max_expansions: Option<u32>,
-    params: &EntropyParams,
-) -> Result<SolveResult, ConfigError> {
-    let root = Config::new(initial)?;
-    let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
-    let blocked_set: HashSet<u32> = blocked.into_iter().map(|l| l.encode()).collect();
-
-    // Build goal predicate.
-    let target_encoded: Vec<(u32, u32)> =
-        target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
-    let goal = |config: &Config| -> bool {
-        target_encoded.iter().all(|&(qid, target_enc)| {
-            config
-                .location_of(qid)
-                .is_some_and(|l| l.encode() == target_enc)
-        })
-    };
-
-    // Build distance table.
-    let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
-    let dist_table = DistanceTable::new(&target_locs, index);
-
-    // Run search.
-    let (graph, goal_id, nodes_expanded) = entropy_search(
-        root,
-        goal,
-        params,
-        index,
-        &dist_table,
-        &target_encoded,
-        &blocked_set,
-        max_expansions,
-        None,
-    );
-
-    match goal_id {
-        Some(gid) => {
-            let move_layers = graph.reconstruct_path(gid);
-            let goal_config = graph.config(gid).clone();
-            let cost = graph.g_score(gid);
-            Ok(SolveResult {
-                status: SolveStatus::Solved,
-                move_layers,
-                goal_config,
-                nodes_expanded,
-                cost,
-                deadlocks: 0,
-            })
-        }
-        None => {
-            let root_config = graph.config(graph.root()).clone();
-            let status = if max_expansions.is_some_and(|max| nodes_expanded >= max) {
-                SolveStatus::BudgetExceeded
-            } else {
-                SolveStatus::Unsolvable
-            };
-            Ok(SolveResult {
-                status,
-                move_layers: Vec::new(),
-                goal_config: root_config,
-                nodes_expanded,
-                cost: 0.0,
-                deadlocks: 0,
-            })
-        }
-    }
-}
-
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -823,94 +758,76 @@ mod tests {
         LaneIndex::new(spec)
     }
 
+    /// Helper: run entropy search with minimal setup.
+    fn run_entropy(
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        target: impl IntoIterator<Item = (u32, LocationAddr)>,
+        max_expansions: Option<u32>,
+    ) -> SearchResult {
+        let index = make_index();
+        let root = Config::new(initial).unwrap();
+        let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
+        let target_encoded: Vec<(u32, u32)> =
+            target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let target_locs: Vec<u32> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let goal = |config: &Config| -> bool {
+            target_encoded
+                .iter()
+                .all(|&(qid, t)| config.location_of(qid).is_some_and(|l| l.encode() == t))
+        };
+        entropy_search(
+            root,
+            goal,
+            &EntropyParams::default(),
+            &index,
+            &dist_table,
+            &target_encoded,
+            &HashSet::new(),
+            max_expansions,
+            None,
+            0,
+        )
+    }
+
     #[test]
     fn solve_simple_one_step() {
-        let index = make_index();
-        let params = EntropyParams::default();
-        let result = solve(
-            &index,
-            [(0, loc(0, 0))],
-            [(0, loc(0, 5))],
-            std::iter::empty(),
-            Some(100),
-            &params,
-        )
-        .unwrap();
-
-        assert_eq!(result.status, SolveStatus::Solved);
-        assert_eq!(result.goal_config.location_of(0), Some(loc(0, 5)));
+        let r = run_entropy([(0, loc(0, 0))], [(0, loc(0, 5))], Some(100));
+        assert!(r.goal.is_some());
+        assert_eq!(
+            r.graph.config(r.goal.unwrap()).location_of(0),
+            Some(loc(0, 5))
+        );
     }
 
     #[test]
     fn solve_already_at_target() {
-        let index = make_index();
-        let params = EntropyParams::default();
-        let result = solve(
-            &index,
-            [(0, loc(0, 5))],
-            [(0, loc(0, 5))],
-            std::iter::empty(),
-            Some(100),
-            &params,
-        )
-        .unwrap();
-
-        assert_eq!(result.status, SolveStatus::Solved);
-        assert!(result.move_layers.is_empty());
-        assert_eq!(result.nodes_expanded, 0);
+        let r = run_entropy([(0, loc(0, 5))], [(0, loc(0, 5))], Some(100));
+        assert!(r.goal.is_some());
+        assert_eq!(r.nodes_expanded, 0);
     }
 
     #[test]
     fn solve_cross_word() {
-        let index = make_index();
-        let params = EntropyParams::default();
-        let result = solve(
-            &index,
-            [(0, loc(0, 5))],
-            [(0, loc(1, 5))],
-            std::iter::empty(),
-            Some(100),
-            &params,
-        )
-        .unwrap();
-
-        assert_eq!(result.status, SolveStatus::Solved);
-        assert_eq!(result.goal_config.location_of(0), Some(loc(1, 5)));
+        let r = run_entropy([(0, loc(0, 5))], [(0, loc(1, 5))], Some(100));
+        assert!(r.goal.is_some());
+        assert_eq!(
+            r.graph.config(r.goal.unwrap()).location_of(0),
+            Some(loc(1, 5))
+        );
     }
 
     #[test]
     fn solve_multi_step() {
-        let index = make_index();
-        let params = EntropyParams::default();
-        let result = solve(
-            &index,
-            [(0, loc(0, 0))],
-            [(0, loc(1, 5))],
-            std::iter::empty(),
-            Some(1000),
-            &params,
-        )
-        .unwrap();
-
-        assert_eq!(result.status, SolveStatus::Solved);
-        assert!(result.move_layers.len() >= 2);
+        let r = run_entropy([(0, loc(0, 0))], [(0, loc(1, 5))], Some(1000));
+        assert!(r.goal.is_some());
+        assert!(r.solution_path().unwrap().len() >= 2);
     }
 
     #[test]
-    fn solve_budget_exceeded() {
-        let index = make_index();
-        let params = EntropyParams::default();
-        let result = solve(
-            &index,
-            [(0, loc(0, 0))],
-            [(0, loc(99, 99))],
-            std::iter::empty(),
-            Some(10),
-            &params,
-        )
-        .unwrap();
-
-        assert_ne!(result.status, SolveStatus::Solved);
+    fn budget_exceeded_returns_no_goal() {
+        let r = run_entropy([(0, loc(0, 0))], [(0, loc(99, 99))], Some(10));
+        assert!(r.goal.is_none());
     }
 
     #[test]
@@ -924,7 +841,6 @@ mod tests {
     #[test]
     fn find_path_occupied_respects_blocked() {
         let index = make_index();
-        // Block the destination itself — BFS cannot reach it.
         let blocked: HashSet<u32> = [loc(0, 5).encode()].into_iter().collect();
         let path = find_path_occupied(loc(0, 0), loc(0, 5), &blocked, &index);
         assert!(path.is_none());
