@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["encode","instruction","opcode","program","text","validate","value"]};
