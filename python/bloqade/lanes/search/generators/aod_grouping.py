@@ -106,13 +106,16 @@ class BusContext:
             pos = arch_spec.get_position(loc)
             pos_to_loc[pos] = loc
 
-        # Bus src and dst are disjoint, so follow-moves cannot occur.
+        # Track source locations whose destination is occupied. `is_valid_rect`
+        # checks source membership, so collision_srcs must store sources.
         collision: set[LocationAddress] = set()
         for loc in src_locs:
-            lane = LaneAddress(move_type, loc.word_id, loc.site_id, bus_id, direction)
+            lane = LaneAddress(
+                move_type, loc.word_id, loc.site_id, bus_id, direction, loc.zone_id
+            )
             _, dst = arch_spec.get_endpoints(lane)
             if dst in occupied:
-                collision.add(dst)
+                collision.add(loc)
 
         return cls(
             move_type=move_type,
