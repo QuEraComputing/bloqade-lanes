@@ -16,7 +16,7 @@ use crate::validation::{validate_i64_key_map, validate_i64_kv_map, validate_i64_
 /// Immutable value type: mutation methods return new instances. Backed by a
 /// Rust implementation for performance. Used by the IR analysis pipeline to
 /// simulate atom movement, detect collisions, and identify CZ gate pairings.
-#[pyclass(name = "AtomStateData", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "AtomStateData", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyAtomStateData {
     pub(crate) inner: AtomStateData,

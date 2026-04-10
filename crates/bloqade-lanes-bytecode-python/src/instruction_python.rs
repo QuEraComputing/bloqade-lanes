@@ -6,7 +6,7 @@ use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 use crate::arch_python::{PyDirection, PyMoveType};
 use crate::validation::validate_field;
 
-#[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode._native")]
 #[derive(Clone)]
 pub struct PyInstruction {
     pub(crate) inner: rs::Instruction,
