@@ -245,7 +245,7 @@ class TestInstructionAddressValidation:
 
     def test_const_zone_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
-            Instruction.const_zone(zone_id=0x10000)
+            Instruction.const_zone(zone_id=0x100)
 
     def test_max_valid_values(self):
         Instruction.const_loc(zone_id=0, word_id=0xFFFF, site_id=0xFFFF)
@@ -256,7 +256,7 @@ class TestInstructionAddressValidation:
             site_id=0xFFFF,
             bus_id=0xFFFF,
         )
-        Instruction.const_zone(zone_id=0xFFFF)
+        Instruction.const_zone(zone_id=0xFF)
 
 
 class TestInstructionArityValidation:
