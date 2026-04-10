@@ -134,6 +134,9 @@ impl MoveSolver {
     /// * `weight` — Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     /// * `mobility_weight` — Weight for mobility bonus in expander scoring (0.0 = disabled).
     /// * `restarts` — Number of parallel restarts with perturbed scoring (1 = no restarts).
+    /// * `deadlock_policy` — How to handle deadlocks (no improving moves). Applied to
+    ///   IDS/DFS inner strategies and cascade inner phase. Cascade outer A* always uses
+    ///   `MoveBlockers`; standalone A*/BFS/Greedy always use `MoveBlockers`.
     ///
     /// # Returns
     ///
@@ -159,6 +162,7 @@ impl MoveSolver {
         restarts: u32,
         free_rider_policy: FreeRiderPolicy,
         lookahead: bool,
+        deadlock_policy: DeadlockPolicy,
     ) -> Result<SolveResult, ConfigError> {
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -255,7 +259,7 @@ impl MoveSolver {
         let run_inner = |inner: InnerStrategy, seed: u64| -> SolveResult {
             match inner {
                 InnerStrategy::Ids => {
-                    let expander = make_expander(seed, DeadlockPolicy::Skip);
+                    let expander = make_expander(seed, deadlock_policy);
                     let mut f = IdsFrontier::new(h_sum);
                     let result = frontier::run_search(
                         root.clone(),
@@ -268,7 +272,7 @@ impl MoveSolver {
                     extract(result, expander.deadlock_count(), max_expansions)
                 }
                 InnerStrategy::Dfs => {
-                    let expander = make_expander(seed, DeadlockPolicy::Skip);
+                    let expander = make_expander(seed, deadlock_policy);
                     let mut f = DfsFrontier::new(h_sum);
                     let result = frontier::run_search(
                         root.clone(),
@@ -437,6 +441,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -463,6 +468,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -490,6 +496,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -517,6 +524,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -543,6 +551,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -568,6 +577,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -585,6 +595,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -611,6 +622,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -637,6 +649,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -665,6 +678,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 
@@ -684,6 +698,7 @@ mod tests {
                 1,
                 FreeRiderPolicy::Off,
                 false,
+                DeadlockPolicy::Skip,
             )
             .unwrap();
 

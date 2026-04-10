@@ -848,6 +848,7 @@ class MoveSolver:
         restarts: int = 1,
         free_riders: str = "off",
         lookahead: bool = False,
+        deadlock_policy: str = "skip",
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
@@ -863,6 +864,7 @@ class MoveSolver:
             mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
             restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
             free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
+            deadlock_policy: Deadlock handling: "skip" (backtrack) or "move_blockers" (escape moves for blockers).
 
         Returns:
             SolveResult with status indicating outcome.

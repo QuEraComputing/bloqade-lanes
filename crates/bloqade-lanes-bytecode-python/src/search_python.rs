@@ -8,7 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::heuristic_expander::FreeRiderPolicy;
+use bloqade_lanes_search::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy};
 use bloqade_lanes_search::solve::{InnerStrategy, MoveSolver, SolveResult, SolveStatus, Strategy};
 
 use crate::arch_python::PyArchSpec;
@@ -167,7 +167,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off", lookahead=false))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip"))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -184,6 +184,7 @@ impl PyMoveSolver {
         restarts: u32,
         free_riders: &str,
         lookahead: bool,
+        deadlock_policy: &str,
     ) -> PyResult<PySolveResult> {
         // Validate: check for duplicate qubit IDs in target.
         {
@@ -246,6 +247,16 @@ impl PyMoveSolver {
             }
         };
 
+        let dl_policy = match deadlock_policy {
+            "skip" => DeadlockPolicy::Skip,
+            "move_blockers" => DeadlockPolicy::MoveBlockers,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown deadlock_policy '{deadlock_policy}', expected: skip, move_blockers"
+                )));
+            }
+        };
+
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
             .allow_threads(|| {
@@ -262,6 +273,7 @@ impl PyMoveSolver {
                     restarts,
                     fr_policy,
                     lookahead,
+                    dl_policy,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
