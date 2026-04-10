@@ -33,7 +33,7 @@ class SearchParams:
 
     w_d: float = 1.0
     w_m: float = 0.3
-    alpha: float = 100.0
+    alpha: float = 1.0
     beta: float = 2.0
     gamma: float = 0.5
     top_c: int = 3
@@ -41,7 +41,7 @@ class SearchParams:
     reversion_steps: int = 1
     delta_e: int = 1
     e_max: int = 4
-    max_goal_candidates: int = 1
+    max_goal_candidates: int = 2
 
     def __post_init__(self) -> None:
         if self.delta_e < self.MIN_DELTA_E:
