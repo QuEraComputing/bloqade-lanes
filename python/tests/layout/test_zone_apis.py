@@ -67,12 +67,12 @@ class TestGetZoneGrid:
 
     def test_invalid_zone_id_raises(self):
         arch = _single_zone_arch()
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError):
             arch.get_zone_grid(99)
 
     def test_negative_zone_id_raises(self):
         arch = _single_zone_arch()
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError):
             arch.get_zone_grid(-1)
 
     def test_two_zone_different_grids(self):
@@ -107,8 +107,8 @@ class TestGetAllSites:
     def test_two_zone_includes_both(self):
         arch = _two_zone_arch()
         sites = arch.get_all_sites()
-        # Each zone resolves all 8 words × 4 sites = 32, 2 zones = 64
-        assert len(sites) == 64
+        # Each zone has 8 x-positions × 2 y-positions = 16, 2 zones = 32
+        assert len(sites) == 32
 
 
 # ── get_available_buses ──
@@ -142,7 +142,7 @@ class TestGetAvailableBuses:
 
     def test_invalid_zone_raises(self):
         arch = _single_zone_arch()
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError):
             arch.get_available_buses(99)
 
     def test_zone_without_buses(self):
@@ -181,12 +181,12 @@ class TestGetGridEndpoints:
 
     def test_invalid_zone_raises(self):
         arch = _single_zone_arch()
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError):
             arch.get_grid_endpoints(99, 0, MoveType.SITE, Direction.FORWARD)
 
     def test_invalid_bus_id_raises(self):
         arch = _single_zone_arch()
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError):
             arch.get_grid_endpoints(0, 99, MoveType.SITE, Direction.FORWARD)
 
     def test_backward_swaps_endpoints(self):

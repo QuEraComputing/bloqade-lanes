@@ -386,12 +386,12 @@ class ArchSpec:
             x and y positions.
 
         Raises:
-            IndexError: If zone_id is out of range.
+            ValueError: If zone_id is out of range.
         """
         from bloqade.geometry.dialects.grid import Grid as GeoGrid
 
         if zone_id < 0 or zone_id >= len(self._inner.zones):
-            raise IndexError(
+            raise ValueError(
                 f"zone_id {zone_id} out of range [0, {len(self._inner.zones)})"
             )
         zone = self._inner.zones[zone_id]
@@ -402,18 +402,15 @@ class ArchSpec:
     def get_all_sites(self) -> list[tuple[float, float]]:
         """Get all site positions across all zones in canonical order.
 
-        Returns positions in zone-major, word-major, site-major order.
+        Returns positions in zone-major order, with each zone flattened
+        in column-major grid order (``x`` outer, ``y`` inner).
         Each position is an ``(x, y)`` tuple.
         """
         sites: list[tuple[float, float]] = []
-        for zone_id in range(len(self._inner.zones)):
-            for word_id in range(len(self.words)):
-                word = self.words[word_id]
-                for site_id in range(len(word.site_indices)):
-                    loc = LocationAddress(word_id, site_id, zone_id)
-                    pos = self._inner.location_position(loc._inner)
-                    if pos is not None:
-                        sites.append(pos)
+        for zone in self._inner.zones:
+            for x in zone.grid.x_positions:
+                for y in zone.grid.y_positions:
+                    sites.append((x, y))
         return sites
 
     def get_available_buses(self, zone_id: int) -> list[BusDescriptor]:
@@ -427,10 +424,10 @@ class ArchSpec:
             combination that has at least one lane in this zone.
 
         Raises:
-            IndexError: If zone_id is out of range.
+            ValueError: If zone_id is out of range.
         """
         if zone_id < 0 or zone_id >= len(self._inner.zones):
-            raise IndexError(
+            raise ValueError(
                 f"zone_id {zone_id} out of range [0, {len(self._inner.zones)})"
             )
         zone = self._inner.zones[zone_id]
@@ -486,13 +483,13 @@ class ArchSpec:
             positions of all source/destination sites for this bus.
 
         Raises:
-            IndexError: If zone_id or bus_id is out of range.
-            ValueError: If move_type is not SITE or WORD.
+            ValueError: If zone_id or bus_id is out of range, or
+                move_type is not SITE or WORD.
         """
         from bloqade.geometry.dialects.grid import Grid as GeoGrid
 
         if zone_id < 0 or zone_id >= len(self._inner.zones):
-            raise IndexError(
+            raise ValueError(
                 f"zone_id {zone_id} out of range [0, {len(self._inner.zones)})"
             )
         zone = self._inner.zones[zone_id]
@@ -502,7 +499,7 @@ class ArchSpec:
 
         if move_type == MoveType.SITE:
             if bus_id < 0 or bus_id >= len(zone.site_buses):
-                raise IndexError(
+                raise ValueError(
                     f"site bus_id {bus_id} out of range [0, {len(zone.site_buses)})"
                 )
             bus = zone.site_buses[bus_id]
@@ -521,7 +518,7 @@ class ArchSpec:
                             dst_positions.append(dst_pos)
         elif move_type == MoveType.WORD:
             if bus_id < 0 or bus_id >= len(zone.word_buses):
-                raise IndexError(
+                raise ValueError(
                     f"word bus_id {bus_id} out of range [0, {len(zone.word_buses)})"
                 )
             bus = zone.word_buses[bus_id]
