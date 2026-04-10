@@ -45,6 +45,8 @@ pub struct EntropyParams {
     pub max_goal_candidates: usize,
     // Expander settings.
     pub max_movesets_per_group: usize,
+    /// Enable 2-step lookahead scoring.
+    pub lookahead: bool,
 }
 
 impl Default for EntropyParams {
@@ -62,6 +64,7 @@ impl Default for EntropyParams {
             e_max: 4,
             max_goal_candidates: 1,
             max_movesets_per_group: 3,
+            lookahead: false,
         }
     }
 }
@@ -184,17 +187,27 @@ fn generate_candidates(
             let d_after = dist_table
                 .distance(dst_enc, target_enc)
                 .map_or(f64::MAX, |d| d as f64);
-            let delta_d = d_now - d_after;
 
-            let m_after = index
-                .outgoing_lanes(dst)
-                .iter()
-                .filter(|next_lane| {
-                    index
-                        .endpoints(next_lane)
-                        .is_some_and(|(_, next_dst)| !occupied.contains(&next_dst.encode()))
-                })
-                .count() as f64;
+            // Combined lookahead + mobility in a single outgoing-lanes pass.
+            let mut best_d2 = d_after;
+            let mut m_after = 0.0_f64;
+            for &next_lane in index.outgoing_lanes(dst) {
+                let Some((_, next_dst)) = index.endpoints(&next_lane) else {
+                    continue;
+                };
+                let enc = next_dst.encode();
+                if occupied.contains(&enc) {
+                    continue;
+                }
+                m_after += 1.0;
+                if params.lookahead
+                    && let Some(d) = dist_table.distance(enc, target_enc)
+                {
+                    best_d2 = best_d2.min(d as f64);
+                }
+            }
+            let effective_d_after = if params.lookahead { best_d2 } else { d_after };
+            let delta_d = d_now - effective_d_after;
             let delta_m = m_after - m_now;
 
             let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);

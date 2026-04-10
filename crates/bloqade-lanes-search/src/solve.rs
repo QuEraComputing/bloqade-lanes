@@ -158,6 +158,7 @@ impl MoveSolver {
         mobility_weight: f64,
         restarts: u32,
         free_rider_policy: FreeRiderPolicy,
+        lookahead: bool,
     ) -> Result<SolveResult, ConfigError> {
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -195,6 +196,7 @@ impl MoveSolver {
                 seed,
                 policy,
                 free_rider_policy,
+                lookahead,
             )
         };
 
@@ -282,6 +284,7 @@ impl MoveSolver {
                     let entropy_params = crate::entropy::EntropyParams {
                         top_c,
                         max_movesets_per_group,
+                        lookahead,
                         ..crate::entropy::EntropyParams::default()
                     };
                     let result = crate::entropy::entropy_search(
@@ -433,6 +436,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -458,6 +462,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -484,6 +489,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -510,6 +516,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -535,6 +542,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -559,6 +567,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -575,6 +584,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -600,6 +610,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -625,6 +636,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -652,6 +664,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 
@@ -670,6 +683,7 @@ mod tests {
                 0.0,
                 1,
                 FreeRiderPolicy::Off,
+                false,
             )
             .unwrap();
 

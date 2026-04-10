@@ -72,6 +72,8 @@ pub struct HeuristicExpander<'a> {
     deadlocks: AtomicU32,
     /// Policy for adding free riders to bus movesets.
     free_rider_policy: FreeRiderPolicy,
+    /// Enable 2-step lookahead scoring.
+    lookahead: bool,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -87,6 +89,7 @@ impl<'a> HeuristicExpander<'a> {
         seed: u64,
         deadlock_policy: DeadlockPolicy,
         free_rider_policy: FreeRiderPolicy,
+        lookahead: bool,
     ) -> Self {
         Self {
             index,
@@ -100,6 +103,7 @@ impl<'a> HeuristicExpander<'a> {
             deadlock_policy,
             deadlocks: AtomicU32::new(0),
             free_rider_policy,
+            lookahead,
         }
     }
 
@@ -205,23 +209,36 @@ impl Expander for HeuristicExpander<'_> {
                     .dist_table
                     .distance(dst_enc, target_enc)
                     .map_or(f64::MAX, |d| d as f64);
-                let base_score = d_now - d_after;
 
-                let mobility_bonus = if self.mobility_weight != 0.0 {
-                    self.index
-                        .outgoing_lanes(dst)
-                        .iter()
-                        .filter(|next_lane| {
-                            self.index
-                                .endpoints(next_lane)
-                                .is_some_and(|(_, next_dst)| !occupied.contains(&next_dst.encode()))
-                        })
-                        .count() as f64
-                } else {
-                    0.0
-                };
+                // Combined lookahead + mobility in a single outgoing-lanes pass.
+                let (effective_d_after, mobility_bonus) =
+                    if self.lookahead || self.mobility_weight != 0.0 {
+                        let mut best_d2 = d_after;
+                        let mut free_lanes = 0u32;
+                        for &next_lane in self.index.outgoing_lanes(dst) {
+                            let Some((_, next_dst)) = self.index.endpoints(&next_lane) else {
+                                continue;
+                            };
+                            let enc = next_dst.encode();
+                            if occupied.contains(&enc) {
+                                continue;
+                            }
+                            free_lanes += 1;
+                            if self.lookahead
+                                && let Some(d) = self.dist_table.distance(enc, target_enc)
+                            {
+                                best_d2 = best_d2.min(d as f64);
+                            }
+                        }
+                        (best_d2, free_lanes as f64)
+                    } else {
+                        (d_after, 0.0)
+                    };
+
                 let perturbation = rng.as_mut().map_or(0.0, |r| r.gen_range(-0.5..0.5));
-                let score = base_score + self.mobility_weight * mobility_bonus + perturbation;
+                let score = (d_now - effective_d_after)
+                    + self.mobility_weight * mobility_bonus
+                    + perturbation;
 
                 let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                 all_scores.push((
@@ -469,6 +486,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         h_exp.expand(&config, &mut heuristic_out);
 
@@ -504,6 +522,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         exp.expand(&config, &mut out);
 
@@ -532,6 +551,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         exp.expand(&config, &mut out);
 
@@ -562,6 +582,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         exp.expand(&config, &mut out);
 
@@ -597,6 +618,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         exp.expand(&config, &mut out);
 
@@ -625,6 +647,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         exp.expand(&config, &mut out);
         assert!(out.is_empty());
@@ -652,6 +675,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
         exp.expand(&config, &mut out);
 
@@ -683,6 +707,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
 
         let target_enc = loc(0, 5).encode();
@@ -723,6 +748,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
 
         let target_enc = loc(1, 5).encode();
@@ -763,6 +789,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
 
         let mut out = Vec::new();
@@ -807,6 +834,7 @@ mod tests {
             0,
             DeadlockPolicy::AllMoves,
             FreeRiderPolicy::Off,
+            false,
         );
 
         let result = astar(

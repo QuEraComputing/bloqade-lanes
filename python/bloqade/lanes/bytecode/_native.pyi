@@ -847,6 +847,7 @@ class MoveSolver:
         mobility_weight: float = 0.0,
         restarts: int = 1,
         free_riders: str = "off",
+        lookahead: bool = False,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
