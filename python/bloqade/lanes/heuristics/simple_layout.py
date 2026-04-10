@@ -11,17 +11,19 @@ from bloqade.lanes.arch.gemini.physical import (
 class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_physical_layout_arch_spec)
 
-    def _validate_single_zone(self) -> None:
-        if len(self.arch_spec.zones) != 1:
+    def _single_entangling_zone_pairs(self) -> tuple[tuple[int, int], ...]:
+        zones = self.arch_spec.entangling_zones
+        if len(zones) != 1:
             raise ValueError(
                 "PhysicalLayoutHeuristicFixed expects exactly one entangling "
-                f"zone, got {len(self.arch_spec.zones)}."
+                f"zone, got {len(zones)}."
             )
+        return zones[0]
 
     @property
     def home_word_ids(self) -> tuple[int, ...]:
-        self._validate_single_zone()
-        return tuple(sorted(self.arch_spec._home_words))
+        zone_pairs = self._single_entangling_zone_pairs()
+        return tuple(pair[0] for pair in zone_pairs)
 
     @property
     def sites_per_home_word(self) -> int:

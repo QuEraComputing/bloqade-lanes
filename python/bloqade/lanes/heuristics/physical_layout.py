@@ -33,22 +33,24 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
 
     KAHIP_MODE_ECO = 1
 
-    def _validate_single_zone(self) -> None:
-        if len(self.arch_spec.zones) != 1:
+    def _single_entangling_zone_pairs(self) -> tuple[tuple[int, int], ...]:
+        zones = self.arch_spec.entangling_zones
+        if len(zones) != 1:
             raise ValueError(
                 "PhysicalLayoutHeuristicGraphPartitionCenterOut expects exactly one "
-                f"entangling zone, got {len(self.arch_spec.zones)}."
+                f"entangling zone, got {len(zones)}."
             )
+        return zones[0]
 
     @property
     def home_word_ids(self) -> tuple[int, ...]:
         """Home words for one-zone physical layout.
 
-        Uses the pre-computed _home_words set which correctly identifies
-        home words from entangling zone pairs.
+        This heuristic is intentionally single-zone: it uses the first element
+        of each entangling pair in that zone as the home words.
         """
-        self._validate_single_zone()
-        return tuple(sorted(self.arch_spec._home_words))
+        zone_pairs = self._single_entangling_zone_pairs()
+        return tuple(pair[0] for pair in zone_pairs)
 
     @property
     def sites_per_partition(self) -> int:
