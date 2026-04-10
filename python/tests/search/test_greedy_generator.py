@@ -64,7 +64,13 @@ def test_is_valid_rect_all_present():
             (1.0, 1.0): LocationAddress(1, 1),
         }
     )
-    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is True
+    movers = {
+        LocationAddress(0, 0),
+        LocationAddress(0, 1),
+        LocationAddress(1, 0),
+        LocationAddress(1, 1),
+    }
+    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}, movers) is True
 
 
 def test_is_valid_rect_missing_position():
@@ -77,14 +83,41 @@ def test_is_valid_rect_missing_position():
             (1.0, 1.0): LocationAddress(1, 1),
         }
     )
-    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is False
+    movers = {
+        LocationAddress(0, 0),
+        LocationAddress(1, 0),
+        LocationAddress(1, 1),
+    }
+    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}, movers) is False
 
 
 def test_is_valid_rect_collision():
     """Returns False when a position is a collision source."""
     loc = LocationAddress(0, 0)
     ctx = _make_bus_context({(0.0, 0.0): loc}, frozenset({loc}))
-    assert ctx.is_valid_rect({0.0}, {0.0}) is False
+    assert ctx.is_valid_rect({0.0}, {0.0}, {loc}) is False
+
+
+def test_from_tree_collision_sources_store_sources_not_destinations():
+    """Collision filtering should mark blocked sources, not occupied destinations."""
+    _gen, tree = _make_setup(
+        placement={0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
+    )
+    occupied = tree.root.occupied_locations | tree.blocked_locations
+
+    ctx = BusContext.from_tree(
+        tree=tree,
+        occupied=occupied,
+        move_type=MoveType.WORD,
+        bus_id=0,
+        direction=Direction.FORWARD,
+        zone_id=0,
+    )
+
+    source = LocationAddress(0, 0)
+    destination = LocationAddress(1, 0)
+    assert source in ctx.collision_srcs
+    assert destination not in ctx.collision_srcs
 
 
 # --- BusContext.rect_to_lanes ---
@@ -124,7 +157,7 @@ def test_merge_clusters_merges_compatible():
         ({0.0}, {0.0}),
         ({0.0}, {1.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, {loc_a, loc_b})
     assert len(solved) == 1
     xs, ys = solved[0]
     assert xs == {0.0}
@@ -141,7 +174,7 @@ def test_merge_clusters_incompatible_stay_separate():
         ({0.0}, {0.0}),
         ({1.0}, {1.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, {loc_a, loc_b})
     assert len(solved) == 2
 
 
@@ -163,7 +196,7 @@ def test_merge_clusters_solves_non_participants():
         ({0.0}, {1.0}),
         ({2.0}, {0.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, {loc_a, loc_b, loc_c})
     # a+b merged, c stays separate
     assert len(solved) == 2
 

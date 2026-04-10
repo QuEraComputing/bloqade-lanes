@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.path import PathFinder
-from bloqade.lanes.search.configuration import Configuration, ConfigurationNode
+from bloqade.lanes.search.configuration import ConfigurationNode
 
 if TYPE_CHECKING:
     from bloqade.lanes.search.generators import MoveGenerator
@@ -46,23 +46,28 @@ class ExpansionOutcome:
 class ConfigurationTree:
     """Tree that explores the space of valid atom configurations.
 
-    Starting from an initial placement, the tree manages the transposition
-    table and validates move sets. Move generation and node expansion are
+    Starting from an initial placement, the tree tracks created nodes and
+    validates move sets. Move generation and node expansion are
     delegated to MoveGenerator implementations.
 
     NOTE: If deadlock density is high, consider refactoring to a DAG
     (directed acyclic graph) where nodes can have multiple parents.
     This enables backward propagation of deadlock information — when a
     subtree is exhausted, all parents are notified and can prune early.
-    Currently the transposition table prevents re-expanding seen
-    configurations, but does not propagate deadlock status upstream.
+
+    Transposition behavior is branch-local by design: only ancestor-chain
+    revisits are treated as TRANSPOSITION_SEEN. Equivalent configurations
+    reached through different branches are intentionally explored as distinct
+    nodes to preserve path diversity.
     """
 
     arch_spec: ArchSpec
     root: ConfigurationNode
     blocked_locations: frozenset[LocationAddress] = frozenset()
     path_finder: PathFinder = field(init=False, repr=False)
-    seen: dict[Configuration, ConfigurationNode] = field(
+    # Registry of allocated nodes keyed by object identity.
+    # This intentionally does NOT deduplicate by configuration key.
+    seen: dict[int, ConfigurationNode] = field(
         default_factory=dict, init=False, repr=False
     )
     _lanes_by_triplet: dict[
@@ -74,7 +79,7 @@ class ConfigurationTree:
 
     def __post_init__(self) -> None:
         self.path_finder = PathFinder(self.arch_spec)
-        self.seen[self.root.config_key] = self.root
+        self.seen[id(self.root)] = self.root
         self._build_lane_indexes()
 
     def _build_lane_indexes(self) -> None:
@@ -162,6 +167,60 @@ class ConfigurationTree:
         """Return all precomputed outgoing lanes from source."""
         return self._outgoing_lanes_by_src.get(source, ())
 
+    def lanes_for(
+        self,
+        move_type: MoveType,
+        bus_id: int,
+        direction: Direction,
+        zone_id: int | None = None,
+    ) -> tuple[LaneAddress, ...]:
+        """Return precomputed lanes for a bus context.
+
+        If zone_id is None, returns lanes across all zones for the given
+        (move_type, bus_id, direction). Otherwise scopes to one zone.
+        """
+        if zone_id is not None:
+            return self._lanes_by_triplet.get(
+                (move_type, zone_id, bus_id, direction), ()
+            )
+
+        lanes: list[LaneAddress] = []
+        for zid in range(len(self.arch_spec.zones)):
+            lanes.extend(
+                self._lanes_by_triplet.get((move_type, zid, bus_id, direction), ())
+            )
+        return tuple(lanes)
+
+    def lane_for_source(
+        self,
+        move_type: MoveType,
+        bus_id: int,
+        direction: Direction,
+        source: LocationAddress,
+    ) -> LaneAddress | None:
+        """Return lane matching source for a bus context, if any."""
+        for lane in self.lanes_for(
+            move_type=move_type,
+            bus_id=bus_id,
+            direction=direction,
+            zone_id=source.zone_id,
+        ):
+            src, _ = self.arch_spec.get_endpoints(lane)
+            if src == source:
+                return lane
+        return None
+
+    def _ancestor_with_config_key(
+        self, node: ConfigurationNode, target_key: object
+    ) -> ConfigurationNode | None:
+        """Return matching ancestor on this branch for a configuration key."""
+        ancestor: ConfigurationNode | None = node
+        while ancestor is not None:
+            if ancestor.config_key == target_key:
+                return ancestor
+            ancestor = ancestor.parent
+        return None
+
     def valid_lanes(
         self,
         node: ConfigurationNode,
@@ -226,10 +285,8 @@ class ConfigurationTree:
                 None for invalid moves.
 
         Returns:
-            A new ConfigurationNode, or None if:
-            - The move is invalid and strict=False
-            - The configuration was already reached via a different
-              branch at equal-or-lesser depth (transposition table)
+            A new ConfigurationNode, or None if the move is invalid and
+            strict=False.
 
         Raises:
             AssertionError: If the move set fails lane-group validation
@@ -316,7 +373,6 @@ class ConfigurationTree:
 
             new_config[qid] = dst
 
-        # Check transposition table
         new_node = ConfigurationNode(
             configuration=new_config,
             parent=node,
@@ -324,19 +380,17 @@ class ConfigurationTree:
             depth=node.depth + 1,
             external_occupied=node.external_occupied,
         )
-        key = new_node.config_key
+        matching_ancestor = self._ancestor_with_config_key(node, new_node.config_key)
+        if matching_ancestor is not None:
+            return ExpansionOutcome(
+                move_set=move_set,
+                status=ExpansionStatus.TRANSPOSITION_SEEN,
+                existing_node=matching_ancestor,
+            )
 
-        if key in self.seen:
-            existing = self.seen[key]
-            if existing.depth <= new_node.depth:
-                return ExpansionOutcome(
-                    move_set=move_set,
-                    status=ExpansionStatus.TRANSPOSITION_SEEN,
-                    existing_node=existing,
-                )
-
-        # Register in transposition table and add as child
-        self.seen[key] = new_node
+        # Register by object identity so equivalent configurations reached
+        # through different histories are still explored independently.
+        self.seen[id(new_node)] = new_node
         node.children[move_set] = new_node
         return ExpansionOutcome(
             move_set=move_set,
@@ -362,9 +416,8 @@ class ConfigurationTree:
     ) -> list[ConfigurationNode]:
         """Expand a node using the given generator.
 
-        Generates candidate move sets, validates each (collision checks,
-        transposition table), and creates child nodes. Nodes already
-        seen at equal-or-lesser depth are skipped.
+        Generates candidate move sets, validates each (collision checks),
+        and creates child nodes.
 
         Args:
             node: The node to expand.

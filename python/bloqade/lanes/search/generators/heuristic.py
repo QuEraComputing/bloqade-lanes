@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator
 
 from bloqade.lanes.layout import (
-    Direction,
     LaneAddress,
     LocationAddress,
-    MoveType,
 )
+from bloqade.lanes.search.generators.aod_grouping import BusContext
 from bloqade.lanes.search.generators.base import EntropyNode
 
 if TYPE_CHECKING:
@@ -22,7 +21,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class HeuristicMoveGenerator:
-    """Generates ranked candidate movesets using entropy-weighted scoring.
+    """Generates globally-ranked rectangle candidates from entropy scoring.
 
     Implements the MoveGenerator protocol. The traversal sets
     ``search_nodes`` before the search loop begins so the generator
@@ -39,95 +38,98 @@ class HeuristicMoveGenerator:
         node: ConfigurationNode,
         tree: ConfigurationTree,
     ) -> Iterator[frozenset[LaneAddress]]:
-        """Yield candidate movesets ranked by moveset score (descending).
+        """Yield globally-ranked legal rectangle movesets.
 
-        Steps:
-        1. Get entropy from traversal metadata node.
-        2. Score all (qubit, move_type, bus_id, direction) pairs.
-        3. Per-qubit: keep top C triples.
-        4. Group by (move_type, bus_id, direction), collect positive-score qubits.
-        5. Resolve conflicts within each group (greedy by score).
-        6. Build moveset per group, score with score_moveset, sort descending.
+        For each bus-direction context, positive-scoring unresolved movers
+        seed candidate AOD grids. Any rectangle that includes a source in the
+        context invalid bucket (non-mover, collision-risk, or non-positive
+        score mover) is rejected.
         """
         search_node = self.search_nodes.get(id(node))
         entropy = search_node.entropy if search_node is not None else 1
 
-        scores = self.scorer.score_all_qubit_bus_pairs(node, entropy, tree)
-        if not scores:
-            return
+        bus_candidates = self.scorer.score_rectangle_bus_candidates(node, entropy, tree)
 
-        # Per-qubit: keep top C (move_type, bus_id, direction) triples
-        qubit_top: dict[int, list[tuple[MoveType, int, Direction, float]]] = {}
-        for (qid, mt, bid, d), score in scores.items():
-            qubit_top.setdefault(qid, []).append((mt, bid, d, score))
-
-        for qid in qubit_top:
-            qubit_top[qid].sort(key=lambda x: x[3], reverse=True)
-            qubit_top[qid] = qubit_top[qid][: self.params.top_c]
-
-        # Group by (move_type, bus_id, direction): collect positive-scoring qubits
-        groups: dict[
-            tuple[MoveType, int, Direction],
-            list[tuple[int, float]],
-        ] = {}
-        for qid, top_triples in qubit_top.items():
-            for mt, bid, d, score in top_triples:
-                if score > 0:
-                    groups.setdefault((mt, bid, d), []).append((qid, score))
-
-        # Fallback: if no group has positive-scoring qubits, use best single entry
-        if not groups:
-            best_key = max(scores, key=lambda key: scores[key])
-            qid, mt, bid, d = best_key
-            groups[(mt, bid, d)] = [(qid, scores[best_key])]
-
-        # Build one moveset per group with conflict resolution
         occupied = node.occupied_locations | tree.blocked_locations
-        candidates: list[tuple[float, frozenset[LaneAddress]]] = []
+        scored_candidates: dict[frozenset[LaneAddress], float] = {}
 
-        for (mt, bid, d), qubit_scores in groups.items():
-            # Sort qubits by score descending for greedy conflict resolution
-            qubit_scores.sort(key=lambda x: x[1], reverse=True)
-
-            lanes: list[LaneAddress] = []
-            used_dsts: set[LocationAddress] = set()
-
-            for qid, _ in qubit_scores:
-                loc = node.configuration[qid]
-                lane = next(
-                    (
-                        la
-                        for la in tree.outgoing_lanes(loc)
-                        if la.move_type == mt and la.bus_id == bid and la.direction == d
-                    ),
-                    None,
-                )
-                if lane is None:
-                    continue
-                _, dst = tree.arch_spec.get_endpoints(lane)
-                if dst in occupied:
-                    continue
-                # Destination conflict: another qubit in this group targets same dst
-                if dst in used_dsts:
-                    continue
-                # Lane compatibility check with existing lanes in this group
-                if lanes and not all(
-                    tree.arch_spec.compatible_lanes(lane, existing)
-                    for existing in lanes
-                ):
-                    continue
-                lanes.append(lane)
-                used_dsts.add(dst)
-
-            if not lanes:
+        for (mt, bus_id, direction), bucket in bus_candidates.items():
+            if not bucket.valid_entries:
                 continue
 
-            moveset = frozenset(lanes)
-            ms_score = self.scorer.score_moveset(moveset, node, tree)
-            candidates.append((ms_score, moveset))
+            context = BusContext.from_tree(
+                tree=tree,
+                occupied=occupied,
+                move_type=mt,
+                bus_id=bus_id,
+                direction=direction,
+            )
+            for moveset in context.build_aod_grids(bucket.valid_entries):
+                if not self._is_valid_rectangle_candidate(
+                    moveset=moveset,
+                    node=node,
+                    tree=tree,
+                    invalid_sources=bucket.invalid_sources,
+                ):
+                    continue
+                ms_score = self.scorer.score_moveset(moveset, node, tree)
+                best = scored_candidates.get(moveset)
+                if best is None or ms_score > best:
+                    scored_candidates[moveset] = ms_score
 
-        # Sort by moveset score descending
-        candidates.sort(key=lambda x: x[0], reverse=True)
-
-        for _, moveset in candidates:
+        for moveset, _ in sorted(
+            scored_candidates.items(), key=lambda item: item[1], reverse=True
+        ):
             yield moveset
+        if not scored_candidates:
+            fallback = self._best_singleton_fallback(node, tree, entropy)
+            if fallback is not None:
+                yield fallback
+
+    def _is_valid_rectangle_candidate(
+        self,
+        moveset: frozenset[LaneAddress],
+        node: ConfigurationNode,
+        tree: ConfigurationTree,
+        invalid_sources: frozenset[LocationAddress],
+    ) -> bool:
+        """Reject rectangles that include any invalid occupied source."""
+        for lane in moveset:
+            src, _ = tree.arch_spec.get_endpoints(lane)
+            if src in invalid_sources:
+                return False
+            qid = node.get_qubit_at(src)
+            if qid is None:
+                continue
+            if qid not in self.scorer.target:
+                return False
+            if node.configuration[qid] == self.scorer.target[qid]:
+                return False
+        return True
+
+    def _best_singleton_fallback(
+        self,
+        node: ConfigurationNode,
+        tree: ConfigurationTree,
+        entropy: int,
+    ) -> frozenset[LaneAddress] | None:
+        """Return best unresolved singleton lane when no rectangles survive."""
+        scores = self.scorer.score_all_qubit_bus_pairs(node, entropy, tree)
+        if not scores:
+            return None
+
+        qid, mt, bus_id, direction = max(scores, key=scores.__getitem__)
+        current = node.configuration.get(qid)
+        if current is None:
+            return None
+        if qid not in self.scorer.target or current == self.scorer.target[qid]:
+            return None
+
+        lane = tree.lane_for_source(mt, bus_id, direction, current)
+        if lane is None:
+            return None
+        _, dst = tree.arch_spec.get_endpoints(lane)
+        occupied = node.occupied_locations | tree.blocked_locations
+        if dst in occupied:
+            return None
+        return frozenset({lane})

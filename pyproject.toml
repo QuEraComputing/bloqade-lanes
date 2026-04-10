@@ -71,6 +71,7 @@ dev = [
     "pytest>=8.3.3",
     "ruff>=0.7.3",
     "rust-just>=1.36.0",
+    "ipykernel>=7.2.0",
 ]
 
 [tool.isort]

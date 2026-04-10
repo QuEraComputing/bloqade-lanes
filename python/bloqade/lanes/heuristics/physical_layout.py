@@ -33,19 +33,27 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
 
     KAHIP_MODE_ECO = 1
 
+    def _validate_single_zone(self) -> None:
+        if len(self.arch_spec.zones) != 1:
+            raise ValueError(
+                "PhysicalLayoutHeuristicGraphPartitionCenterOut expects exactly one "
+                f"entangling zone, got {len(self.arch_spec.zones)}."
+            )
+
     @property
     def home_word_ids(self) -> tuple[int, ...]:
-        """Word IDs available for qubit placement (home words of entangling pairs).
+        """Home words for one-zone physical layout.
 
         Uses the pre-computed _home_words set which correctly identifies
         home words from entangling zone pairs.
         """
+        self._validate_single_zone()
         return tuple(sorted(self.arch_spec._home_words))
 
     @property
     def sites_per_partition(self) -> int:
         """Maximum number of qubits placed per home word."""
-        return len(self.arch_spec.words[0].site_indices) // 2
+        return len(self.arch_spec.words[0].site_indices)
 
     def _effective_fill(self) -> int:
         return self.sites_per_partition

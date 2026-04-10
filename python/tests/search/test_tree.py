@@ -34,7 +34,7 @@ def test_from_initial_placement():
     assert tree.root.depth == 0
     assert tree.root.parent is None
     assert len(tree.root.configuration) == 2
-    assert tree.root.config_key in tree.seen
+    assert id(tree.root) in tree.seen
 
 
 def test_apply_move_set_valid():
@@ -109,8 +109,52 @@ def test_transposition_table_deduplication():
     child = tree.apply_move_set(tree.root, frozenset({lane_fwd}), strict=False)
     assert child is not None
 
-    assert tree.root.config_key in tree.seen
-    assert tree.seen[tree.root.config_key].depth == 0
+    assert id(tree.root) in tree.seen
+    assert tree.seen[id(tree.root)].depth == 0
+
+
+def test_try_move_set_reports_transposition_for_ancestor_revisit():
+    tree = _make_tree()
+    forward = frozenset({WordLaneAddress(0, 0, 0)})
+
+    first = tree.try_move_set(tree.root, forward, strict=False)
+    assert first.status == ExpansionStatus.CREATED_CHILD
+    assert first.child is not None
+
+    backward_lane = None
+    for lane in tree.valid_lanes(first.child, direction=Direction.BACKWARD):
+        src, dst = tree.arch_spec.get_endpoints(lane)
+        if src == LocationAddress(1, 0) and dst == LocationAddress(0, 0):
+            backward_lane = lane
+            break
+    assert backward_lane is not None
+
+    backward = frozenset({backward_lane})
+    backtrack = tree.try_move_set(first.child, backward, strict=False)
+    assert backtrack.status == ExpansionStatus.TRANSPOSITION_SEEN
+    assert backtrack.existing_node is tree.root
+    assert backtrack.child is None
+
+
+def test_try_move_set_allows_same_config_from_different_branch():
+    tree = _make_tree()
+    q0_forward = frozenset({WordLaneAddress(0, 0, 0)})
+    q1_forward = frozenset({WordLaneAddress(4, 0, 0)})
+
+    a1 = tree.try_move_set(tree.root, q0_forward, strict=False)
+    assert a1.status == ExpansionStatus.CREATED_CHILD
+    assert a1.child is not None
+    a2 = tree.try_move_set(a1.child, q1_forward, strict=False)
+    assert a2.status == ExpansionStatus.CREATED_CHILD
+    assert a2.child is not None
+
+    b1 = tree.try_move_set(tree.root, q1_forward, strict=False)
+    assert b1.status == ExpansionStatus.CREATED_CHILD
+    assert b1.child is not None
+    b2 = tree.try_move_set(b1.child, q0_forward, strict=False)
+    assert b2.status == ExpansionStatus.CREATED_CHILD
+    assert b2.child is not None
+    assert b2.child.configuration == a2.child.configuration
 
 
 def test_exhaustive_generator_yields_move_sets():
@@ -196,7 +240,7 @@ def test_try_move_set_reports_already_child():
     assert second.child is first.child
 
 
-def test_try_move_set_reports_transposition_seen():
+def test_try_move_set_reports_transposition_for_same_configuration():
     tree = _make_tree()
     outcome = tree.try_move_set(tree.root, frozenset(), strict=False)
     assert outcome.status == ExpansionStatus.TRANSPOSITION_SEEN
