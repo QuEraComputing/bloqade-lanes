@@ -31,6 +31,7 @@ class StaticDebuggerController(DebuggerController):
         self.waiting = False
         if not self.updated:
             self.step_index = min(self.step_index + 1, self.num_steps - 1)
+            self.sync_slider(self.step_index)
             self.ax.cla()
             self.updated = True
 
@@ -38,8 +39,18 @@ class StaticDebuggerController(DebuggerController):
         self.waiting = False
         if not self.updated:
             self.step_index = max(self.step_index - 1, 0)
+            self.sync_slider(self.step_index)
             self.ax.cla()
             self.updated = True
+
+    def on_slider_change(self, value):
+        new_index = max(0, min(int(value), self.num_steps - 1))
+        if new_index == self.step_index:
+            return
+        self.step_index = new_index
+        self.ax.cla()
+        self.updated = True
+        self.waiting = False
 
     def on_key(self, event):
         match event.key:
@@ -52,6 +63,7 @@ class StaticDebuggerController(DebuggerController):
 
     def reset(self):
         self.step_index = 0
+        self.sync_slider(0)
         self.running = True
         self.waiting = True
         self.updated = False
@@ -89,6 +101,7 @@ class AnimatorController(DebuggerController):
             self.waiting = False
             if not self.updated:
                 self.step_index = min(self.step_index + 1, self.num_steps - 1)
+                self.sync_slider(self.step_index)
                 self.ax.cla()
                 self.updated = True
         else:
@@ -99,13 +112,26 @@ class AnimatorController(DebuggerController):
             self.waiting = False
             if not self.updated:
                 self.step_index = max(self.step_index - 1, 0)
+                self.sync_slider(self.step_index)
                 self.ax.cla()
                 self.updated = True
         else:
             self.animation_step = -1
 
+    def on_slider_change(self, value):
+        new_index = max(0, min(int(value), self.num_steps - 1))
+        if new_index == self.step_index:
+            return
+        self.step_index = new_index
+        # Slider jumps go forward into the new step's animation.
+        self.animation_step = 1
+        self.ax.cla()
+        self.updated = True
+        self.waiting = False
+
     def reset(self):
         self.step_index = 0
+        self.sync_slider(0)
         self.animation_step = 1
         self.running = True
         self.waiting = True

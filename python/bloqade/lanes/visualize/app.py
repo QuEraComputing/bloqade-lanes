@@ -1,10 +1,16 @@
 from abc import ABC
 
 from matplotlib import axes, figure, pyplot as plt
-from matplotlib.widgets import Button
+from matplotlib.widgets import Button, Slider
 
 
 class DebuggerController(ABC):
+    #: Slider attached to this controller, or None if no slider was created.
+    #: Set by :meth:`run_mpl_event_loop` and consulted by subclasses to
+    #: keep the slider visual in sync when ``step_index`` changes via
+    #: button or keyboard events.
+    slider: Slider | None = None
+
     def run(self):
         raise NotImplementedError
 
@@ -17,6 +23,11 @@ class DebuggerController(ABC):
     def on_prev(self, event):
         raise NotImplementedError
 
+    def on_slider_change(self, value):
+        """Handle a slider drag/click event. Default is a no-op so legacy
+        controllers without slider support continue to work."""
+        _ = value
+
     def on_key(self, event):
         match event.key:
             case "left":
@@ -28,6 +39,21 @@ class DebuggerController(ABC):
 
     def reset(self):
         raise NotImplementedError
+
+    def sync_slider(self, step_index: int) -> None:
+        """Update the slider's displayed value to ``step_index`` without
+        re-triggering :meth:`on_slider_change` (avoids infinite recursion
+        when buttons/keys move the step). Safe to call when no slider was
+        created."""
+        slider = self.slider
+        if slider is None:
+            return
+        previous = slider.eventson
+        slider.eventson = False
+        try:
+            slider.set_val(step_index)
+        finally:
+            slider.eventson = previous
 
     def run_mpl_event_loop(
         self,
@@ -46,6 +72,26 @@ class DebuggerController(ABC):
         next_button.on_clicked(self.on_next)
         prev_button.on_clicked(self.on_prev)
         exit_button.on_clicked(self.on_exit)
+
+        # Add a slider for jumping to any step directly when there are
+        # multiple steps to navigate. The slider sits above the row of
+        # buttons inside the bottom controls area reserved by the caller
+        # via ``fig.subplots_adjust(bottom=0.2)``.
+        num_steps = getattr(self, "num_steps", 1)
+        if num_steps > 1:
+            slider_ax = fig.add_axes((0.1, 0.12, 0.8, 0.04))
+            initial_step = getattr(self, "step_index", 0)
+            self.slider = Slider(
+                ax=slider_ax,
+                label="Step",
+                valmin=0,
+                valmax=num_steps - 1,
+                valinit=initial_step,
+                valstep=1,
+                valfmt="%d",
+            )
+            self.slider.on_changed(self.on_slider_change)
+
         fig.canvas.mpl_connect("key_press_event", self.on_key)
         self.reset()
         self.run()

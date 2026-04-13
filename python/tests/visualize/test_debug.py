@@ -97,6 +97,74 @@ def test_animator_controller_reset(dummy_ax, dummy_get_renderer):
     assert not ctrl.updated
 
 
+def test_static_debugger_on_slider_change_jumps_to_step(dummy_ax, dummy_draw):
+    ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
+    ctrl.on_slider_change(3)
+    assert ctrl.step_index == 3
+    assert dummy_ax.cla.called
+    assert ctrl.updated
+    assert not ctrl.waiting
+
+
+def test_static_debugger_on_slider_change_clamps_out_of_range(dummy_ax, dummy_draw):
+    ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
+    ctrl.on_slider_change(99)
+    assert ctrl.step_index == 4  # clamped to num_steps - 1
+    ctrl.updated = False  # allow the next change
+    ctrl.on_slider_change(-7)
+    assert ctrl.step_index == 0  # clamped to 0
+
+
+def test_static_debugger_on_slider_change_noop_on_same_value(dummy_ax, dummy_draw):
+    """Idempotent: clicking the current step should not redraw or break out
+    of the wait loop, otherwise the renderer flickers."""
+    ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
+    ctrl.step_index = 2
+    dummy_ax.cla.reset_mock()
+    ctrl.on_slider_change(2)
+    assert ctrl.step_index == 2
+    assert not dummy_ax.cla.called
+    assert not ctrl.updated
+
+
+def test_static_debugger_on_next_calls_sync_slider(dummy_ax, dummy_draw):
+    """Buttons / keys must keep the slider visual in sync."""
+    ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
+    sync_calls: list[int] = []
+    ctrl.sync_slider = lambda step_index: sync_calls.append(step_index)
+    ctrl.on_next(MagicMock())
+    assert sync_calls == [1]
+    ctrl.updated = False
+    ctrl.on_prev(MagicMock())
+    assert sync_calls == [1, 0]
+
+
+def test_animator_controller_on_slider_change(dummy_ax, dummy_get_renderer):
+    ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
+    ctrl.animation_step = -1  # opposite direction
+    ctrl.on_slider_change(2)
+    assert ctrl.step_index == 2
+    # Slider jumps reset the play direction to forward.
+    assert ctrl.animation_step == 1
+    assert dummy_ax.cla.called
+    assert ctrl.updated
+    assert not ctrl.waiting
+
+
+def test_animator_controller_on_next_prev_calls_sync_slider(
+    dummy_ax, dummy_get_renderer
+):
+    """Animator's on_next/on_prev should also sync the slider when the step
+    actually advances (i.e. the second click in the same direction)."""
+    ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
+    sync_calls: list[int] = []
+    ctrl.sync_slider = lambda step_index: sync_calls.append(step_index)
+    # First click sets direction; second click advances.
+    ctrl.on_next(MagicMock())
+    ctrl.on_next(MagicMock())
+    assert sync_calls == [1]
+
+
 def test_animator_controller_on_key_dispatch(dummy_ax, dummy_get_renderer):
     ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
 
