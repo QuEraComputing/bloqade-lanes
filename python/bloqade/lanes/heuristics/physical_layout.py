@@ -167,9 +167,11 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         return {qid: remap[wid] for qid, wid in q_to_word.items()}
 
     def _sites_center_out(self, word_id: int) -> list[layout.LocationAddress]:
-        # NOTE: assumes single-zone architecture (zone_id=0).
+        zone_id = self.arch_spec.word_zone_map[word_id]
         n = self.sites_per_partition
-        sites = [layout.LocationAddress(word_id, site_id, 0) for site_id in range(n)]
+        sites = [
+            layout.LocationAddress(word_id, site_id, zone_id) for site_id in range(n)
+        ]
         center = (n - 1) / 2.0
         return sorted(
             sites,
@@ -177,9 +179,9 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         )
 
     def _sites_bottom_up(self, word_id: int) -> list[layout.LocationAddress]:
-        # NOTE: assumes single-zone architecture (zone_id=0).
+        zone_id = self.arch_spec.word_zone_map[word_id]
         return [
-            layout.LocationAddress(word_id, site_id, 0)
+            layout.LocationAddress(word_id, site_id, zone_id)
             for site_id in range(self.sites_per_partition)
         ]
 
@@ -293,11 +295,13 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         self, k_words: int, target_sizes: tuple[int, ...]
     ) -> list[layout.LocationAddress]:
         home_words = self.home_word_ids
+        word_zone = self.arch_spec.word_zone_map
         slots: list[layout.LocationAddress] = []
         for word_idx in range(k_words):
             word_id = home_words[word_idx]
+            zone_id = word_zone[word_id]
             for site_id in range(target_sizes[word_idx]):
-                slots.append(layout.LocationAddress(word_id, site_id, 0))
+                slots.append(layout.LocationAddress(word_id, site_id, zone_id))
         return slots
 
     def _global_site_min_cost_assignment(
