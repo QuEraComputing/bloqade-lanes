@@ -1,5 +1,7 @@
 """Tests for GreedyMoveGenerator."""
 
+import pytest
+
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.search.generators import (
@@ -41,15 +43,27 @@ def test_satisfies_protocol():
 def _make_bus_context(
     pos_to_loc: dict[tuple[float, float], LocationAddress],
     collision_srcs: frozenset[LocationAddress] = frozenset(),
+    include_lane_map: bool = True,
 ) -> BusContext:
     """Create a minimal BusContext for unit tests."""
     arch_spec = logical.get_arch_spec()
+    src_to_lane = (
+        {
+            loc: LaneAddress(
+                MoveType.SITE, loc.word_id, loc.site_id, 0, Direction.FORWARD
+            )
+            for loc in pos_to_loc.values()
+        }
+        if include_lane_map
+        else {}
+    )
     return BusContext(
         move_type=MoveType.SITE,
         bus_id=0,
         direction=Direction.FORWARD,
         arch_spec=arch_spec,
         pos_to_loc=pos_to_loc,
+        src_to_lane=src_to_lane,
         collision_srcs=collision_srcs,
     )
 
@@ -120,6 +134,27 @@ def test_from_tree_collision_sources_store_sources_not_destinations():
     assert destination not in ctx.collision_srcs
 
 
+def test_from_tree_backward_word_bus_uses_backward_sources():
+    """Backward bus contexts should map positions for backward source words."""
+    _gen, tree = _make_setup(
+        placement={0: LocationAddress(3, 0), 1: LocationAddress(7, 0)}
+    )
+    occupied = tree.root.occupied_locations | tree.blocked_locations
+
+    ctx = BusContext.from_tree(
+        tree=tree,
+        occupied=occupied,
+        move_type=MoveType.WORD,
+        bus_id=9,
+        direction=Direction.BACKWARD,
+        zone_id=0,
+    )
+
+    # These are backward-source words for word bus 9 in logical Gemini.
+    assert tree.arch_spec.get_position(LocationAddress(3, 0)) in ctx.pos_to_loc
+    assert tree.arch_spec.get_position(LocationAddress(7, 0)) in ctx.pos_to_loc
+
+
 # --- BusContext.rect_to_lanes ---
 
 
@@ -143,6 +178,16 @@ def test_rect_to_lanes_skips_missing_positions():
     ctx = _make_bus_context({(0.0, 0.0): LocationAddress(0, 0)})
     lanes = ctx.rect_to_lanes({0.0, 1.0}, {0.0})
     assert len(lanes) == 1
+
+
+def test_rect_to_lanes_asserts_when_source_lane_missing():
+    """BusContext should fail fast when src_to_lane is inconsistent."""
+    ctx = _make_bus_context(
+        {(0.0, 0.0): LocationAddress(0, 0)},
+        include_lane_map=False,
+    )
+    with pytest.raises(AssertionError):
+        ctx.rect_to_lanes({0.0}, {0.0})
 
 
 # --- merge_clusters ---
