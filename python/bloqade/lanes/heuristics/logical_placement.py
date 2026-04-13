@@ -217,12 +217,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return sig_maxcost
 
     def _home_sites(self) -> set[layout.LocationAddress]:
-        # NOTE: assumes single-zone architecture (zone_id=0).
-        return {
-            layout.LocationAddress(word_id, site_id, 0)
-            for word_id in self.arch_spec._home_words
-            for site_id in range(len(self.arch_spec.words[word_id].site_indices))
-        }
+        return set(self.arch_spec.home_sites)
 
     def _distance_key(
         self,
@@ -690,7 +685,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             occupied=state_after.occupied,
             layout=state_after.layout,
             move_count=state_after.move_count,
-            active_cz_zones=frozenset([layout.ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=(left_move_layers + final_move_layers),
         )
 
@@ -716,5 +711,5 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(0) for _ in qubits),
+            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
         )

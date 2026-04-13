@@ -84,9 +84,7 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
                     state.move_count, state.layout, desired_state.layout
                 )
             ),
-            active_cz_zones=frozenset(
-                [ZoneAddress(0)]
-            ),  # Assuming single zone with address 0
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_layers,
         )
 
@@ -114,7 +112,5 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(
-                ZoneAddress(0) for _ in qubits
-            ),  # Assuming single zone with address 0
+            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )

@@ -20,7 +20,6 @@ from bloqade.lanes.layout import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    ZoneAddress,
 )
 from bloqade.lanes.search import (
     BFSTraversal,
@@ -289,7 +288,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
-            active_cz_zones=frozenset([layout.ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_program,
         )
 
@@ -356,7 +355,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
-            active_cz_zones=frozenset([ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_layers,
         )
 
@@ -383,5 +382,5 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(0) for _ in qubits),
+            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
         )
