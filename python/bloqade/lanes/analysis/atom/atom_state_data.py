@@ -17,10 +17,30 @@ class AtomStateData(RustWrapper[_RustAtomStateData]):
     All accessors delegate to the underlying Rust object; address-typed
     fields are wrapped via :meth:`LocationAddress.from_inner` /
     :meth:`LaneAddress.from_inner` to avoid re-allocating the Rust addresses.
+
+    Wrapper instances are treated as immutable: ``self._inner`` is set
+    once during construction (or via :meth:`from_inner`) and cannot be
+    rebound afterward. ``cached_property`` results live in ``__dict__``
+    and are unaffected by the guard.
     """
 
     def __init__(self, inner: _RustAtomStateData | None = None) -> None:
-        self._inner = inner if inner is not None else _RustAtomStateData()
+        # Bypass the immutability guard for the initial _inner assignment.
+        object.__setattr__(
+            self, "_inner", inner if inner is not None else _RustAtomStateData()
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "_inner" and "_inner" in self.__dict__:
+            raise AttributeError(
+                f"Cannot reassign '_inner' on {type(self).__name__}: wrappers "
+                "are immutable; construct a new instance via from_inner() "
+                "instead."
+            )
+        object.__setattr__(self, name, value)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
 
     @classmethod
     def from_fields(
