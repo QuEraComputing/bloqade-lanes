@@ -25,3 +25,11 @@ class TestSearchParams:
     def test_reversion_steps_minimum_enforced(self):
         with pytest.raises(ValueError, match="reversion_steps"):
             SearchParams(reversion_steps=SearchParams.MIN_REVERSION_STEPS - 1)
+
+    def test_w_t_minimum_enforced(self):
+        with pytest.raises(ValueError, match="w_t"):
+            SearchParams(w_t=SearchParams.MIN_W_T - 0.01)
+
+    def test_w_t_maximum_enforced(self):
+        with pytest.raises(ValueError, match="w_t"):
+            SearchParams(w_t=SearchParams.MAX_W_T + 0.01)
