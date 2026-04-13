@@ -1,45 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
 
 from kirin.interp import InterpreterError
 
+from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode import AtomStateData as _RustAtomStateData
-from bloqade.lanes.bytecode._native import (
-    LaneAddress as _RustLaneAddress,
-    LocationAddress as _RustLocationAddress,
-)
 from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.layout.arch import ArchSpec
 
 
-def _from_rust_loc(rust_loc: _RustLocationAddress) -> LocationAddress:
-    """Convert a Rust LocationAddress to a Python LocationAddress."""
-    return LocationAddress(rust_loc.word_id, rust_loc.site_id, rust_loc.zone_id)
+class AtomStateData(RustWrapper[_RustAtomStateData]):
+    """Atom-state lattice payload backed by a Rust ``AtomStateData``.
 
+    All accessors delegate to the underlying Rust object; address-typed
+    fields are wrapped via :meth:`LocationAddress.from_inner` /
+    :meth:`LaneAddress.from_inner` to avoid re-allocating the Rust addresses.
 
-def _from_rust_lane(rust_lane: _RustLaneAddress) -> LaneAddress:
-    """Convert a Rust LaneAddress to a Python LaneAddress."""
-    return LaneAddress(
-        rust_lane.move_type,
-        rust_lane.word_id,
-        rust_lane.site_id,
-        rust_lane.bus_id,
-        rust_lane.direction,
-        rust_lane.zone_id,
-    )
+    Wrapper instances are treated as immutable: ``self._inner`` is set
+    once during construction (or via :meth:`from_inner`) and cannot be
+    rebound afterward. ``cached_property`` results live in ``__dict__``
+    and are unaffected by the guard.
+    """
 
+    def __init__(self, inner: _RustAtomStateData | None = None) -> None:
+        # Bypass the immutability guard for the initial _inner assignment.
+        object.__setattr__(
+            self, "_inner", inner if inner is not None else _RustAtomStateData()
+        )
 
-def _from_rust_state(rust_state: _RustAtomStateData) -> AtomStateData:
-    """Convert a Rust AtomStateData to a Python AtomStateData."""
-    return AtomStateData(_inner=rust_state)
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "_inner" and "_inner" in self.__dict__:
+            raise AttributeError(
+                f"Cannot reassign '_inner' on {type(self).__name__}: wrappers "
+                "are immutable; construct a new instance via from_inner() "
+                "instead."
+            )
+        object.__setattr__(self, name, value)
 
-
-@dataclass(frozen=True)
-class AtomStateData:
-    _inner: _RustAtomStateData = field(default_factory=_RustAtomStateData, repr=False)
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
 
     @classmethod
     def from_fields(
@@ -70,7 +71,7 @@ class AtomStateData:
             ),
             move_count=move_count,
         )
-        return cls(_inner=rust_state)
+        return cls.from_inner(rust_state)
 
     @classmethod
     def new(cls, locations: dict[int, LocationAddress] | list[LocationAddress]):
@@ -80,14 +81,14 @@ class AtomStateData:
         rust_state = _RustAtomStateData.from_qubit_locations(
             {qid: loc._inner for qid, loc in locations.items()}
         )
-        return cls(_inner=rust_state)
+        return cls.from_inner(rust_state)
 
     @cached_property
     def locations_to_qubit(self) -> MappingProxyType[LocationAddress, int]:
         """Mapping from location to qubit id (read-only)."""
         return MappingProxyType(
             {
-                _from_rust_loc(loc): qid
+                LocationAddress.from_inner(loc): qid
                 for loc, qid in self._inner.locations_to_qubit.items()
             }
         )
@@ -97,7 +98,7 @@ class AtomStateData:
         """Mapping from qubit id to its current location (read-only)."""
         return MappingProxyType(
             {
-                qid: _from_rust_loc(loc)
+                qid: LocationAddress.from_inner(loc)
                 for qid, loc in self._inner.qubit_to_locations.items()
             }
         )
@@ -111,7 +112,10 @@ class AtomStateData:
     def prev_lanes(self) -> MappingProxyType[int, LaneAddress]:
         """Mapping from qubit id to the lane it took to reach this state (read-only)."""
         return MappingProxyType(
-            {qid: _from_rust_lane(lane) for qid, lane in self._inner.prev_lanes.items()}
+            {
+                qid: LaneAddress.from_inner(lane)
+                for qid, lane in self._inner.prev_lanes.items()
+            }
         )
 
     @cached_property
@@ -119,32 +123,24 @@ class AtomStateData:
         """Mapping from qubit id to number of moves it has had (read-only)."""
         return MappingProxyType(dict(self._inner.move_count))
 
-    def __hash__(self):
-        return self._inner.__hash__()
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, AtomStateData):
-            return NotImplemented
-        return self._inner == other._inner
-
-    def add_atoms(self, locations: dict[int, LocationAddress]):
+    def add_atoms(self, locations: dict[int, LocationAddress]) -> AtomStateData:
         rust_locs = {qid: loc._inner for qid, loc in locations.items()}
         try:
             result = self._inner.add_atoms(rust_locs)
         except (RuntimeError, ValueError) as e:
             raise InterpreterError(str(e)) from e
-        return _from_rust_state(result)
+        return AtomStateData.from_inner(result)
 
     def apply_moves(
         self,
         lanes: tuple[LaneAddress, ...],
         arch_spec: ArchSpec,
-    ):
+    ) -> AtomStateData | None:
         rust_lanes = [lane._inner for lane in lanes]
         result = self._inner.apply_moves(rust_lanes, arch_spec._inner)
         if result is None:
             return None
-        return _from_rust_state(result)
+        return AtomStateData.from_inner(result)
 
     def get_qubit(self, location: LocationAddress):
         return self._inner.get_qubit(location._inner)
@@ -157,5 +153,5 @@ class AtomStateData:
             )
         return result
 
-    def copy(self):
-        return _from_rust_state(self._inner.copy())
+    def copy(self) -> AtomStateData:
+        return AtomStateData.from_inner(self._inner.copy())
