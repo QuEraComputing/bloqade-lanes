@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from kirin.dialects import ilist
+from kirin.dialects import func, ilist
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
@@ -30,6 +30,91 @@ class DecoderKernelBundle:
     actual: dict[str, Any]
     special: dict[str, Any]
     injected: dict[str, Any]
+
+
+def _build_special_prefix_kernel(
+    prepare_kernel: Any,
+    initializer_kernel: Any,
+):
+    @squin.kernel
+    def prefix(q):
+        q0 = q[0:7]
+        q1 = q[7:14]
+        q2 = q[14:21]
+        q3 = q[21:28]
+        q4 = q[28:35]
+        inputs = [q0[6], q1[6], q2[6], q3[6], q4[6]]
+
+        prepare_kernel(inputs)
+        initializer_kernel(0.0, 0.0, 0.0, q0)
+        initializer_kernel(0.0, 0.0, 0.0, q1)
+        initializer_kernel(0.0, 0.0, 0.0, q2)
+        initializer_kernel(0.0, 0.0, 0.0, q3)
+        initializer_kernel(0.0, 0.0, 0.0, q4)
+
+    return prefix
+
+
+def _count_initializer_invokes(
+    method: Any,
+    *,
+    initializer_name: str,
+) -> int:
+    block = method.code.body.blocks[0]
+    count = 0
+    for stmt in block.stmts:
+        if not isinstance(stmt, func.Invoke):
+            continue
+        callee = getattr(stmt, "callee", None)
+        callee_name = (
+            getattr(callee, "sym_name", None) or getattr(callee, "name", None) or ""
+        )
+        if initializer_name in str(callee_name):
+            count += 1
+    return count
+
+
+def _splice_noiseless_prefix_into_compiled_kernel(
+    compiled_kernel: Any,
+    prefix_kernel: Any,
+    *,
+    initializer_name: str,
+):
+    mt = compiled_kernel.similar()
+    block = mt.code.body.blocks[0]
+    stmts = list(block.stmts)
+
+    qubit_new_stmts = [
+        stmt for stmt in stmts if "qubit.new" in stmt.name or stmt.name == "new"
+    ]
+    if len(qubit_new_stmts) < 35:
+        raise RuntimeError(
+            f"Expected at least 35 qubit allocations, got {len(qubit_new_stmts)}"
+        )
+
+    init_invokes = []
+    for stmt in stmts:
+        if not isinstance(stmt, func.Invoke):
+            continue
+        callee = getattr(stmt, "callee", None)
+        callee_name = (
+            getattr(callee, "sym_name", None) or getattr(callee, "name", None) or ""
+        )
+        if initializer_name in str(callee_name):
+            init_invokes.append(stmt)
+
+    if len(init_invokes) != 5:
+        raise RuntimeError(f"Expected 5 initializer invokes, got {len(init_invokes)}")
+
+    anchor = init_invokes[0]
+    full_reg = ilist.New(tuple(stmt.result for stmt in qubit_new_stmts[:35]))
+    full_reg.insert_before(anchor)
+    func.Invoke((full_reg.result,), callee=prefix_kernel).insert_before(anchor)
+
+    for stmt in reversed(init_invokes):
+        stmt.delete(safe=False)
+
+    return mt
 
 
 def _build_primitives(theta: float, phi: float, lam: float, *, output_qubit: int):
@@ -181,19 +266,19 @@ def build_decoder_kernel_bundle(
     tomography_z_inv = primitives["tomography_z_inv"]
 
     @squin.kernel
-    def prepare_special_x(reg):
-        tomography_x_inv(reg)
-        msd_inverse(reg)
+    def prepare_special_x(inputs):
+        tomography_x_inv(inputs)
+        msd_inverse(inputs)
 
     @squin.kernel
-    def prepare_special_y(reg):
-        tomography_y_inv(reg)
-        msd_inverse(reg)
+    def prepare_special_y(inputs):
+        tomography_y_inv(inputs)
+        msd_inverse(inputs)
 
     @squin.kernel
-    def prepare_special_z(reg):
-        tomography_z_inv(reg)
-        msd_inverse(reg)
+    def prepare_special_z(inputs):
+        tomography_z_inv(inputs)
+        msd_inverse(inputs)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_x():
@@ -222,7 +307,6 @@ def build_decoder_kernel_bundle(
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_x():
         reg = qubit.qalloc(5)
-        prepare_special_x(reg)
         msd_forward(reg)
         tomography_x(reg)
         return default_post_processing(reg)
@@ -230,7 +314,6 @@ def build_decoder_kernel_bundle(
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_y():
         reg = qubit.qalloc(5)
-        prepare_special_y(reg)
         msd_forward(reg)
         tomography_y(reg)
         return default_post_processing(reg)
@@ -238,10 +321,13 @@ def build_decoder_kernel_bundle(
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_z():
         reg = qubit.qalloc(5)
-        prepare_special_z(reg)
         msd_forward(reg)
         tomography_z(reg)
         return default_post_processing(reg)
+
+    msd_special_x.__dict__["_msd_special_prepare_kernel"] = prepare_special_x
+    msd_special_y.__dict__["_msd_special_prepare_kernel"] = prepare_special_y
+    msd_special_z.__dict__["_msd_special_prepare_kernel"] = prepare_special_z
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_x():
@@ -378,6 +464,8 @@ def build_task(
     physical_hypercube_dims: int = 4,
     transversal_rewrite: bool = True,
 ) -> GeminiLogicalSimulatorTask:
+    from bloqade.lanes.arch.gemini.logical import steane7_initialize
+
     logical_kernel = kernel.similar()
     if append_measurements:
         append_measurements_and_annotations(logical_kernel, m2dets, m2obs)
@@ -406,6 +494,29 @@ def build_task(
             logical_initialization=noisy_initializer,
             noise_model=simulator.noise_model,
         ).emit(physical_move_kernel)
+
+    # TODO: this should get replaced with a RewriteRule; "splice" is kind of hacky just to get it working
+    if (
+        prepare_kernel := kernel.__dict__.get("_msd_special_prepare_kernel")
+    ) is not None:
+        initializer_kernel = noisy_initializer or steane7_initialize
+        initializer_name = (
+            getattr(initializer_kernel, "sym_name", None)
+            or getattr(initializer_kernel, "name", None)
+            or initializer_kernel.__name__
+        )
+
+        compiled_kernel = task.__dict__.get(
+            "physical_squin_kernel", task.physical_squin_kernel
+        )
+        prefix_kernel = _build_special_prefix_kernel(prepare_kernel, initializer_kernel)
+        task.__dict__["physical_squin_kernel"] = (
+            _splice_noiseless_prefix_into_compiled_kernel(
+                compiled_kernel,
+                prefix_kernel,
+                initializer_name=str(initializer_name),
+            )
+        )
 
     return task
 
