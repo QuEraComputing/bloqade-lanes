@@ -167,6 +167,22 @@ def test_get_lane_address_roundtrip():
                         assert looked_up == lane
 
 
+def test_arch_spec_value_equality_is_value_based():
+    """Two independently constructed ArchSpecs from the same factory must
+    compare equal. ArchSpec.__eq__ delegates to ``self.words == other.words``,
+    which in turn relies on Word equality being value-based — a regression
+    happened during the #466 wrapper refactor when Word lost its explicit
+    ``__eq__``/``__hash__`` (the underlying Rust Word has no value-based
+    equality yet).
+    """
+    a = logical.get_arch_spec()
+    b = logical.get_arch_spec()
+    assert a == b
+    # Word value-equality is the underlying piece that broke.
+    assert a.words == b.words
+    assert all(wa == wb for wa, wb in zip(a.words, b.words))
+
+
 # ── Tests for derived zone helpers (#421) ──
 
 

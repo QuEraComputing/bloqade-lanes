@@ -11,7 +11,10 @@ re-allocation fast path for converting a Rust result into a wrapper:
 
 * :class:`RustWrapper` — minimal Python adapter with a fast
   :meth:`from_inner` classmethod and equality / hashing delegated to the
-  underlying Rust object. No Kirin dependency.
+  underlying Rust object. The class itself has no semantic dependency on
+  Kirin; subclasses can be used outside an IR context. (The module still
+  imports :mod:`kirin` because :class:`KirinRustWrapper` is defined here
+  and needs :class:`kirin.ir.Data` as a base class at definition time.)
 * :class:`KirinRustWrapper` — extends :class:`RustWrapper` and additionally
   implements the :class:`kirin.ir.Data` contract (``type`` attribute,
   :meth:`unwrap`, :meth:`encode`, :meth:`print_impl`).
@@ -36,7 +39,10 @@ class RustWrapper(Generic[R]):
     Subclasses set ``self._inner`` in ``__init__`` (typically by constructing
     the underlying Rust type) and may add Python-specific properties or
     methods. Hash and equality delegate to the Rust object so wrappers behave
-    consistently with Rust semantics.
+    consistently with Rust semantics — provided the Rust type implements
+    ``__eq__`` / ``__hash__``. If it does not, the subclass should override
+    these dunders explicitly (and ideally have the missing dunders pushed
+    into the Rust core as a follow-up).
 
     The :meth:`from_inner` classmethod wraps an existing Rust object without
     re-allocating. Use it whenever the Rust object already exists — for
