@@ -13,6 +13,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteMeasure,
     PlacementStrategyABC,
 )
+from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
 from bloqade.lanes.layout import (
@@ -193,6 +194,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         self._trace_cz_index = value
 
     def __post_init__(self) -> None:
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
         if not isinstance(
             self.traversal, (PlacementTraversalABC, RustPlacementTraversal)
         ):

@@ -13,7 +13,10 @@ from bloqade.lanes.analysis.placement import (
     SingleZonePlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
-from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
+from bloqade.lanes.analysis.placement.strategy import (
+    PlacementStrategyABC,
+    assert_single_cz_zone,
+)
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 from bloqade.lanes.layout.path import PathFinder
@@ -185,6 +188,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
         self._path_finder = PathFinder(self.arch_spec)
 
     def _lane_sig(
