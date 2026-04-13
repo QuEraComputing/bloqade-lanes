@@ -529,24 +529,37 @@ def injected_baseline(
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     raw: bool = False,
+    training_task_map: Mapping[str, Any] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
 ) -> dict[str, Any]:
     corrected = {}
     for basis in basis_labels:
-        dataset = run_task(task_map[basis], eval_shots, with_noise=True)
+        evaluation_dataset = run_task(task_map[basis], eval_shots, with_noise=True)
         if raw:
-            corrected[basis] = dataset.observables[:, 0].astype(np.uint8)
+            corrected[basis] = evaluation_dataset.observables[:, 0].astype(np.uint8)
             continue
+
+        training_dataset = evaluation_dataset
+        if training_task_map is not None:
+            training_dataset = run_task(
+                training_task_map[basis], eval_shots, with_noise=True
+            )
+
         decoder = table_decoder_cls.from_det_obs_shots(
             make_shape_only_dem(
-                dataset.detectors.shape[1], dataset.observables.shape[1]
+                training_dataset.detectors.shape[1],
+                training_dataset.observables.shape[1],
             ),
-            np.concatenate([dataset.detectors, dataset.observables], axis=1).astype(
-                bool
-            ),
+            np.concatenate(
+                [training_dataset.detectors, training_dataset.observables], axis=1
+            ).astype(bool),
         )
         bits = []
-        for det, obs in zip(dataset.detectors, dataset.observables, strict=True):
+        for det, obs in zip(
+            evaluation_dataset.detectors,
+            evaluation_dataset.observables,
+            strict=True,
+        ):
             flip = np.asarray(decoder.decode(det.astype(bool)), dtype=np.uint8)
             bits.append(int(obs[0] ^ flip[0]))
         corrected[basis] = np.asarray(bits, dtype=np.uint8)

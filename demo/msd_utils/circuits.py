@@ -33,6 +33,7 @@ class DecoderKernelBundle:
 
 
 def _build_primitives(theta: float, phi: float, lam: float, *, output_qubit: int):
+    # NOTE: this fn seems OK
     @squin.kernel
     def msd_magic_prep(reg):
         squin.broadcast.u3(theta, phi, lam, reg)
