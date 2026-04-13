@@ -43,9 +43,47 @@ def test_distance_to_target_positive_when_not_at_target():
 def test_mobility_at_position():
     scorer, tree = _make_scorer_and_tree()
     occupied = tree.root.occupied_locations
-    mob = scorer._mobility_at(LocationAddress(0, 0), occupied, tree)
-    assert isinstance(mob, int)
+    mob = scorer._mobility_at(
+        LocationAddress(0, 0),
+        LocationAddress(7, 0),
+        occupied,
+        tree,
+    )
+    assert isinstance(mob, float)
     assert mob >= 0
+
+
+def test_mobility_at_weights_legal_lanes_by_post_lane_distance(monkeypatch):
+    scorer, tree = _make_scorer_and_tree()
+    position = LocationAddress(0, 0)
+    target = LocationAddress(7, 0)
+    occupied = tree.root.occupied_locations
+
+    legal_dsts: list[LocationAddress] = []
+    for lane in tree.outgoing_lanes(position):
+        _, dst = tree.arch_spec.get_endpoints(lane)
+        if dst not in occupied:
+            legal_dsts.append(dst)
+
+    assert len(legal_dsts) >= 2
+
+    distance_by_dst: dict[LocationAddress, float] = {}
+    for idx, dst in enumerate(legal_dsts):
+        distance_by_dst[dst] = float(idx + 1)
+
+    def fake_distance(
+        current: LocationAddress,
+        target_loc: LocationAddress,
+        _tree: ConfigurationTree,
+    ) -> float:
+        assert target_loc == target
+        return distance_by_dst[current]
+
+    monkeypatch.setattr(scorer, "_distance_to_target", fake_distance)
+    mobility = scorer._mobility_at(position, target, occupied, tree)
+    expected = sum(1.0 / (1.0 + distance_by_dst[dst]) for dst in legal_dsts)
+
+    assert mobility == expected
 
 
 def test_score_all_qubit_bus_pairs_returns_dict():
