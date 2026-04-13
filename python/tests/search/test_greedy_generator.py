@@ -1,5 +1,7 @@
 """Tests for GreedyMoveGenerator."""
 
+import pytest
+
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.search.generators import (
@@ -41,16 +43,27 @@ def test_satisfies_protocol():
 def _make_bus_context(
     pos_to_loc: dict[tuple[float, float], LocationAddress],
     collision_srcs: frozenset[LocationAddress] = frozenset(),
+    include_lane_map: bool = True,
 ) -> BusContext:
     """Create a minimal BusContext for unit tests."""
     arch_spec = logical.get_arch_spec()
+    src_to_lane = (
+        {
+            loc: LaneAddress(
+                MoveType.SITE, loc.word_id, loc.site_id, 0, Direction.FORWARD
+            )
+            for loc in pos_to_loc.values()
+        }
+        if include_lane_map
+        else {}
+    )
     return BusContext(
         move_type=MoveType.SITE,
         bus_id=0,
         direction=Direction.FORWARD,
         arch_spec=arch_spec,
         pos_to_loc=pos_to_loc,
-        src_to_lane={},
+        src_to_lane=src_to_lane,
         collision_srcs=collision_srcs,
     )
 
@@ -165,6 +178,16 @@ def test_rect_to_lanes_skips_missing_positions():
     ctx = _make_bus_context({(0.0, 0.0): LocationAddress(0, 0)})
     lanes = ctx.rect_to_lanes({0.0, 1.0}, {0.0})
     assert len(lanes) == 1
+
+
+def test_rect_to_lanes_asserts_when_source_lane_missing():
+    """BusContext should fail fast when src_to_lane is inconsistent."""
+    ctx = _make_bus_context(
+        {(0.0, 0.0): LocationAddress(0, 0)},
+        include_lane_map=False,
+    )
+    with pytest.raises(AssertionError):
+        ctx.rect_to_lanes({0.0}, {0.0})
 
 
 # --- merge_clusters ---

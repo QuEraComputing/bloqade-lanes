@@ -155,15 +155,7 @@ class BusContext:
                 loc = self.pos_to_loc.get((x, y))
                 if loc is not None:
                     lane = self.src_to_lane.get(loc)
-                    if lane is None:
-                        lane = LaneAddress(
-                            self.move_type,
-                            loc.word_id,
-                            loc.site_id,
-                            self.bus_id,
-                            self.direction,
-                            loc.zone_id,
-                        )
+                    assert lane is not None
                     lanes.append(lane)
         return frozenset(lanes)
 
