@@ -13,6 +13,8 @@ class SearchParams:
     Attributes:
         w_d: Distance weight in per-qubit lane scoring.
         w_m: Mobility weight in per-qubit lane scoring.
+        w_t: Time-distance blend weight for distance computation.
+            0.0 => hop-count only, 1.0 => approximate move-time only.
         alpha: Distance weight in moveset scoring.
         beta: Arrived-gain weight in moveset scoring.
         gamma: Mobility weight in moveset scoring.
@@ -30,9 +32,12 @@ class SearchParams:
     MIN_MAX_CANDIDATES: ClassVar[int] = 1
     MIN_REVERSION_STEPS: ClassVar[int] = 1
     MIN_MAX_GOAL_CANDIDATES: ClassVar[int] = 1
+    MIN_W_T: ClassVar[float] = 0.0
+    MAX_W_T: ClassVar[float] = 1.0
 
     w_d: float = 1.0
     w_m: float = 0.3
+    w_t: float = 0.05
     alpha: float = 100.0
     beta: float = 2.0
     gamma: float = 0.5
@@ -60,3 +65,5 @@ class SearchParams:
             raise ValueError(
                 f"max_goal_candidates must be >= {self.MIN_MAX_GOAL_CANDIDATES}"
             )
+        if not (self.MIN_W_T <= self.w_t <= self.MAX_W_T):
+            raise ValueError(f"w_t must be in [{self.MIN_W_T}, {self.MAX_W_T}]")
