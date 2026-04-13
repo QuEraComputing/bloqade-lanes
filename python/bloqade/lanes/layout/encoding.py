@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-import abc
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from kirin import ir, types
-from kirin.print import Printer
-
-if TYPE_CHECKING:
-    from typing_extensions import Self
-
+from bloqade.lanes._wrapper import KirinRustWrapper
 from bloqade.lanes.bytecode._native import (
     Direction as Direction,
     LaneAddress as _RustLaneAddress,
@@ -18,33 +11,12 @@ from bloqade.lanes.bytecode._native import (
     ZoneAddress as _RustZoneAddress,
 )
 
-
-@dataclass()
-class Encoder(ir.Data):
-    """Base class of all encodable entities."""
-
-    def __post_init__(self):
-        self.type = types.PyClass(type(self))
-
-    @abc.abstractmethod
-    def encode(self) -> int:
-        """Return the bit-packed encoded address as an integer."""
-        ...
-
-    def unwrap(self):
-        return self
-
-    def print_impl(self, printer: Printer):
-        printer.plain_print(f"0x{self.encode():016x}")
-
-    def __repr__(self) -> str:
-        return f"0x{self.encode():016x}"
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 
-class ZoneAddress(Encoder):
+class ZoneAddress(KirinRustWrapper[_RustZoneAddress]):
     """Address identifying a zone in the architecture."""
-
-    _inner: _RustZoneAddress
 
     def __init__(self, zone_id: int):
         self._inner = _RustZoneAddress(zone_id)
@@ -54,27 +26,14 @@ class ZoneAddress(Encoder):
     def zone_id(self) -> int:
         return self._inner.zone_id
 
-    def encode(self) -> int:
-        return self._inner.encode()
-
-    def __hash__(self) -> int:
-        return self._inner.encode()
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ZoneAddress):
-            return NotImplemented
-        return self._inner == other._inner
-
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, ZoneAddress):
             return NotImplemented
         return self.zone_id < other.zone_id
 
 
-class LocationAddress(Encoder):
+class LocationAddress(KirinRustWrapper[_RustLocationAddress]):
     """Address identifying a physical atom location (zone + word + site)."""
-
-    _inner: _RustLocationAddress
 
     def __init__(self, word_id: int, site_id: int, zone_id: int = 0):
         self._inner = _RustLocationAddress(zone_id, word_id, site_id)
@@ -91,17 +50,6 @@ class LocationAddress(Encoder):
     @property
     def site_id(self) -> int:
         return self._inner.site_id
-
-    def encode(self) -> int:
-        return self._inner.encode()
-
-    def __hash__(self) -> int:
-        return self._inner.encode()
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, LocationAddress):
-            return NotImplemented
-        return self._inner == other._inner
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, LocationAddress):
@@ -127,10 +75,8 @@ class LocationAddress(Encoder):
         )
 
 
-class LaneAddress(Encoder):
+class LaneAddress(KirinRustWrapper[_RustLaneAddress]):
     """Address identifying a transport lane."""
-
-    _inner: _RustLaneAddress
 
     def __init__(
         self,
@@ -183,9 +129,6 @@ class LaneAddress(Encoder):
         )
         return self.replace(direction=new_direction)
 
-    def encode(self) -> int:
-        return self._inner.encode()
-
     def src_site(self) -> LocationAddress:
         """Get the source site as a LocationAddress."""
         return LocationAddress(self.word_id, self.site_id, self.zone_id)
@@ -209,14 +152,6 @@ class LaneAddress(Encoder):
             direction if direction is not None else self.direction,
             zone_id if zone_id is not None else self.zone_id,
         )
-
-    def __hash__(self) -> int:
-        return self._inner.encode()
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, LaneAddress):
-            return NotImplemented
-        return self._inner == other._inner
 
 
 class SiteLaneAddress(LaneAddress):
