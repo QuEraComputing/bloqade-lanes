@@ -338,6 +338,12 @@ impl Grid {
     }
 
     /// Compute the bounding box as `(x_min, x_max, y_min, y_max)`.
+    ///
+    /// Assumes all spacing values are non-negative (positions are
+    /// monotonically increasing from the start). This invariant is
+    /// enforced by the ArchSpec validator. If spacings could be negative,
+    /// callers should use `x_positions()`/`y_positions()` with min/max
+    /// instead.
     pub fn bounding_box(&self) -> (f64, f64, f64, f64) {
         let x_end = self.x_start + self.x_spacing.iter().sum::<f64>();
         let y_end = self.y_start + self.y_spacing.iter().sum::<f64>();

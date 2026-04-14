@@ -278,59 +278,111 @@ impl ArchSpec {
     /// Reverse-lookup: given (src, dst) location pair, find the LaneAddr
     /// that connects them (if any).
     ///
-    /// Enumerates all lanes in all zones and checks whether the lane's
-    /// endpoints match the requested pair. Returns the first match.
+    /// Searches SiteBus, WordBus, and ZoneBus lanes. The search is
+    /// narrowed by exploiting the LaneAddr encoding: the
+    /// `(zone_id, word_id, site_id)` in a lane address correspond to the
+    /// move's source location (Forward) or destination location (Backward).
+    /// So given `(src, dst)` we only iterate over `bus_id × move_type`
+    /// for each direction — typically <20 candidates total — rather than
+    /// enumerating every lane in the architecture.
+    ///
+    /// Membership lists (`words_with_site_buses`, `sites_with_word_buses`)
+    /// further prune: if the candidate word/site isn't in the relevant
+    /// list, that move type is skipped entirely.
     pub fn lane_for_endpoints(&self, src: &LocationAddr, dst: &LocationAddr) -> Option<LaneAddr> {
-        for (zone_id, zone) in self.zones.iter().enumerate() {
-            let zid = zone_id as u32;
-            // Site buses
-            for (bus_id, bus) in zone.site_buses.iter().enumerate() {
-                for &wid in &zone.words_with_site_buses {
-                    for &src_site in &bus.src {
-                        for &dir in &[Direction::Forward, Direction::Backward] {
-                            let lane = LaneAddr {
-                                move_type: MoveType::SiteBus,
-                                zone_id: zid,
-                                word_id: wid,
-                                site_id: src_site.0 as u32,
-                                bus_id: bus_id as u32,
-                                direction: dir,
-                            };
-                            if let Some((s, d)) = self.lane_endpoints(&lane)
-                                && s == *src
-                                && d == *dst
-                            {
-                                return Some(lane);
-                            }
-                        }
-                    }
-                }
-            }
-            // Word buses
-            for (bus_id, bus) in zone.word_buses.iter().enumerate() {
-                for &sid in &zone.sites_with_word_buses {
-                    for &wref in &bus.src {
-                        for &dir in &[Direction::Forward, Direction::Backward] {
-                            let lane = LaneAddr {
-                                move_type: MoveType::WordBus,
-                                zone_id: zid,
-                                word_id: wref.0 as u32,
-                                site_id: sid,
-                                bus_id: bus_id as u32,
-                                direction: dir,
-                            };
-                            if let Some((s, d)) = self.lane_endpoints(&lane)
-                                && s == *src
-                                && d == *dst
-                            {
-                                return Some(lane);
-                            }
-                        }
-                    }
+        // Try Forward: lane address fields come from src.
+        if let Some(lane) = self.try_lane_from_location(src, dst, Direction::Forward) {
+            return Some(lane);
+        }
+        // Try Backward: lane address fields come from dst.
+        self.try_lane_from_location(dst, src, Direction::Backward)
+    }
+
+    /// Helper for `lane_for_endpoints`: given the location that defines
+    /// the lane address fields (`origin`) and the expected other endpoint
+    /// (`target`), try each bus_id × move_type combination.
+    fn try_lane_from_location(
+        &self,
+        origin: &LocationAddr,
+        target: &LocationAddr,
+        direction: Direction,
+    ) -> Option<LaneAddr> {
+        let zone = self.zones.get(origin.zone_id as usize)?;
+
+        // SiteBus: only if origin's word is in words_with_site_buses.
+        if zone.words_with_site_buses.contains(&origin.word_id) {
+            for bus_id in 0..zone.site_buses.len() {
+                if let Some(lane) = self.check_lane_candidate(
+                    MoveType::SiteBus,
+                    origin,
+                    target,
+                    bus_id as u32,
+                    direction,
+                ) {
+                    return Some(lane);
                 }
             }
         }
+
+        // WordBus: only if origin's site is in sites_with_word_buses.
+        if zone.sites_with_word_buses.contains(&origin.site_id) {
+            for bus_id in 0..zone.word_buses.len() {
+                if let Some(lane) = self.check_lane_candidate(
+                    MoveType::WordBus,
+                    origin,
+                    target,
+                    bus_id as u32,
+                    direction,
+                ) {
+                    return Some(lane);
+                }
+            }
+        }
+
+        // ZoneBus: buses live on self (not per-zone).
+        for bus_id in 0..self.zone_buses.len() {
+            if let Some(lane) = self.check_lane_candidate(
+                MoveType::ZoneBus,
+                origin,
+                target,
+                bus_id as u32,
+                direction,
+            ) {
+                return Some(lane);
+            }
+        }
+
         None
+    }
+
+    /// Construct a candidate `LaneAddr` from the origin location and
+    /// check whether its resolved endpoints match `(origin, target)`.
+    fn check_lane_candidate(
+        &self,
+        move_type: MoveType,
+        origin: &LocationAddr,
+        target: &LocationAddr,
+        bus_id: u32,
+        direction: Direction,
+    ) -> Option<LaneAddr> {
+        let lane = LaneAddr {
+            move_type,
+            zone_id: origin.zone_id,
+            word_id: origin.word_id,
+            site_id: origin.site_id,
+            bus_id,
+            direction,
+        };
+        let (s, d) = self.lane_endpoints(&lane)?;
+        let (expected_src, expected_dst) = match direction {
+            Direction::Forward => (s, d),
+            Direction::Backward => (d, s),
+        };
+        if expected_src == *origin && expected_dst == *target {
+            Some(lane)
+        } else {
+            None
+        }
     }
 
     // -- Position resolution --

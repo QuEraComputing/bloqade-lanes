@@ -56,6 +56,7 @@ impl ArchSpec {
 
         // Structural invariants
         check_minimum_counts(self, &mut errors);
+        check_non_negative_grid_spacings(self, &mut errors);
         check_uniform_grid_dimensions(self, &mut errors);
         check_uniform_word_site_counts(self, &mut errors);
         check_word_site_indices(self, &mut errors);
@@ -100,6 +101,26 @@ fn check_minimum_counts(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
         errors.push(ArchSpecError::Structure(
             "at least one word must exist".into(),
         ));
+    }
+}
+
+/// All grid spacings must be non-negative. Negative spacings would produce
+/// non-monotonic positions, breaking the `Grid::bounding_box()` invariant
+/// and making position lookups ambiguous.
+fn check_non_negative_grid_spacings(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    for (idx, zone) in spec.zones.iter().enumerate() {
+        if let Some(pos) = zone.grid.x_spacing.iter().position(|&v| v < 0.0) {
+            errors.push(ArchSpecError::Structure(format!(
+                "zone {} grid x_spacing[{}] is negative ({:.6})",
+                idx, pos, zone.grid.x_spacing[pos]
+            )));
+        }
+        if let Some(pos) = zone.grid.y_spacing.iter().position(|&v| v < 0.0) {
+            errors.push(ArchSpecError::Structure(format!(
+                "zone {} grid y_spacing[{}] is negative ({:.6})",
+                idx, pos, zone.grid.y_spacing[pos]
+            )));
+        }
     }
 }
 
@@ -928,9 +949,9 @@ mod tests {
     }
 
     #[test]
-    fn test_y_only_overlap_rejected() {
+    fn test_shared_x_range_with_y_overlap_rejected() {
         let mut spec = make_valid_two_zone_spec();
-        // Same x range, overlapping y range.
+        // Zones share an x range and have overlapping y ranges.
         spec.zones[1].grid = Grid::from_positions(&[0.0, 7.5, 15.0], &[1.0, 5.0]);
         // Zone 0: x=[0,10], y=[0,3]; Zone 1: x=[0,15], y=[1,5] → both axes overlap.
         assert!(matches!(
