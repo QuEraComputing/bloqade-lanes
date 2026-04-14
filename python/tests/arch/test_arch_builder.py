@@ -11,10 +11,10 @@ from bloqade.lanes.arch.arch_builder import (
 from bloqade.lanes.bytecode._native import Grid
 
 
-def _make_grid(nx: int, ny: int) -> Grid:
+def _make_grid(nx: int, ny: int, *, y_offset: float = 0.0) -> Grid:
     """Create a simple grid with unit spacing."""
     xs = [float(i) for i in range(nx)]
-    ys = [float(j) for j in range(ny)]
+    ys = [y_offset + float(j) for j in range(ny)]
     return Grid.from_positions(xs, ys)
 
 
@@ -258,7 +258,7 @@ class TestArchBuilder:
         proc = ZoneBuilder("proc", _make_grid(4, 2), word_shape=(2, 1))
         proc.add_word(slice(0, 2), [0])
         proc.add_word(slice(2, 4), [0])
-        mem = ZoneBuilder("mem", _make_grid(4, 2), word_shape=(2, 1))
+        mem = ZoneBuilder("mem", _make_grid(4, 2, y_offset=10.0), word_shape=(2, 1))
         mem.add_word(slice(0, 2), [0])
         mem.add_word(slice(2, 4), [0])
 
@@ -292,7 +292,7 @@ class TestArchBuilder:
         z1 = ZoneBuilder("a", _make_grid(4, 1), word_shape=(2, 1))
         z1.add_word(slice(0, 2), [0])
         z1.add_word(slice(2, 4), [0])
-        z2 = ZoneBuilder("b", _make_grid(4, 1), word_shape=(2, 1))
+        z2 = ZoneBuilder("b", _make_grid(4, 1, y_offset=10.0), word_shape=(2, 1))
         z2.add_word(slice(0, 2), [0])
         z2.add_word(slice(2, 4), [0])
 
@@ -346,7 +346,7 @@ class TestArchBuilderMultiZoneOffsets:
         proc.add_site_bus(src=[0], dst=[1])
         proc.add_entangling_pairs([0, 2], [1, 3])
 
-        mem = ZoneBuilder("mem", _make_grid(4, 2), word_shape=(2, 1))
+        mem = ZoneBuilder("mem", _make_grid(4, 2, y_offset=10.0), word_shape=(2, 1))
         mem.add_word(slice(0, 2), [0])
         mem.add_word(slice(2, 4), [0])
         mem.add_word(slice(0, 2), [1])
