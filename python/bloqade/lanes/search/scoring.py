@@ -118,18 +118,26 @@ class CandidateScorer:
     def _mobility_at(
         self,
         position: LocationAddress,
+        target_loc: LocationAddress,
         occupied: frozenset[LocationAddress],
         tree: ConfigurationTree,
-    ) -> int:
-        """Count distinct legal lane addresses from a position.
+    ) -> float:
+        """Sum distance-weighted legal lane mobility from a position.
 
-        A lane is legal if its destination is not occupied.
+        A lane is legal if its destination is not occupied. Each legal lane
+        contributes a weight inversely proportional to the post-lane distance
+        to the qubit's target location, so closer destinations count more.
         """
-        return sum(
-            1
-            for lane in tree.outgoing_lanes(position)
-            if tree.arch_spec.get_endpoints(lane)[1] not in occupied
-        )
+        mobility = 0.0
+        for lane in tree.outgoing_lanes(position):
+            _, dst = tree.arch_spec.get_endpoints(lane)
+            if dst in occupied:
+                continue
+            d_after = self._distance_to_target(dst, target_loc, tree)
+            if d_after == float("inf"):
+                continue
+            mobility += 1.0 / (1.0 + d_after)
+        return mobility
 
     def score_all_qubit_bus_pairs(
         self,
@@ -157,14 +165,14 @@ class CandidateScorer:
 
         # Cache d_now and m_now per qubit (same across all buses)
         d_now: dict[int, float] = {}
-        m_now: dict[int, int] = {}
+        m_now: dict[int, float] = {}
         for qid, loc in unresolved.items():
             d_now[qid] = self._distance_to_target(loc, self.target[qid], tree)
-            m_now[qid] = self._mobility_at(loc, occupied, tree)
+            m_now[qid] = self._mobility_at(loc, self.target[qid], occupied, tree)
 
         # Compute raw deltas for all legal (qubit, move_type, bus_id, direction)
         d_after_cache: dict[tuple[int, LocationAddress], float] = {}
-        m_after_cache: dict[LocationAddress, int] = {}
+        m_after_cache: dict[tuple[int, LocationAddress], float] = {}
         raw_scores: dict[tuple[int, MoveType, int, Direction], tuple[float, float]] = {}
         for qid, loc in unresolved.items():
             for lane in tree.outgoing_lanes(loc):
@@ -179,10 +187,11 @@ class CandidateScorer:
                 if d_after is None:
                     d_after = self._distance_to_target(dst, self.target[qid], tree)
                     d_after_cache[d_key] = d_after
-                m_after = m_after_cache.get(dst)
+                m_key = (qid, dst)
+                m_after = m_after_cache.get(m_key)
                 if m_after is None:
-                    m_after = self._mobility_at(dst, occupied, tree)
-                    m_after_cache[dst] = m_after
+                    m_after = self._mobility_at(dst, self.target[qid], occupied, tree)
+                    m_after_cache[m_key] = m_after
                 delta_d = d_now[qid] - d_after
                 delta_m = m_after - m_now[qid]
                 raw_scores[(qid, mt, bus_id, direction)] = (delta_d, delta_m)
@@ -308,8 +317,10 @@ class CandidateScorer:
             distance_moved += max(0.0, d_before - d_after)
             if dst == self.target[qid]:
                 arrived_gain += 1
-            mobility_before += self._mobility_at(src, occupied, tree)
-            mobility_after += self._mobility_at(dst, new_occupied, tree)
+            mobility_before += self._mobility_at(src, self.target[qid], occupied, tree)
+            mobility_after += self._mobility_at(
+                dst, self.target[qid], new_occupied, tree
+            )
 
         mobility_gain = mobility_after - mobility_before
 
