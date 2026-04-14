@@ -761,9 +761,10 @@ class ArchSpec:
         if result is None:
             raise ValueError(f"Invalid lane address: {lane_address!r}")
         rust_src, rust_dst = result
-        src = LocationAddress(rust_src.word_id, rust_src.site_id, rust_src.zone_id)
-        dst = LocationAddress(rust_dst.word_id, rust_dst.site_id, rust_dst.zone_id)
-        return src, dst
+        return (
+            LocationAddress.from_inner(rust_src),
+            LocationAddress.from_inner(rust_dst),
+        )
 
     def get_cz_partner(self, location: LocationAddress) -> LocationAddress | None:
         """Get the CZ partner for a given location.
@@ -774,7 +775,7 @@ class ArchSpec:
         result = self._inner.get_cz_partner(location._inner)
         if result is None:
             return None
-        return LocationAddress(result.word_id, result.site_id, result.zone_id)
+        return LocationAddress.from_inner(result)
 
     def get_blockaded_location(
         self, location: LocationAddress
