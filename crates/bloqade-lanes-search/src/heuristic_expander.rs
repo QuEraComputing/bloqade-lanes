@@ -163,7 +163,7 @@ impl<'a> HeuristicExpander<'a> {
                 .dist_table
                 .distance(dst2_enc, target_enc)
                 .map_or(i32::MAX, |d| d as i32);
-            let step2_score = d_after_1 - d_after_2;
+            let step2_score = d_after_1.saturating_sub(d_after_2);
             best_step2 = best_step2.max(step2_score);
         }
 
@@ -680,7 +680,7 @@ mod tests {
         let result = astar(
             config,
             |cfg| cfg.location_of(0).is_some_and(|l| l.encode() == target_enc),
-            |cfg| h.estimate(cfg),
+            |cfg| h.estimate_max(cfg),
             &exp,
             Some(100),
         );
@@ -708,7 +708,7 @@ mod tests {
         let result = astar(
             config,
             |cfg| cfg.location_of(0).is_some_and(|l| l.encode() == target_enc),
-            |cfg| h.estimate(cfg),
+            |cfg| h.estimate_max(cfg),
             &exp,
             Some(1000),
         );
@@ -761,7 +761,7 @@ mod tests {
                         .location_of(1)
                         .is_some_and(|l| l.encode() == loc(1, 5).encode())
             },
-            |cfg| h.estimate(cfg),
+            |cfg| h.estimate_max(cfg),
             &exp,
             Some(500),
         );
@@ -884,11 +884,11 @@ mod tests {
         let result_no_la = astar(
             config.clone(),
             is_goal,
-            |cfg| h.estimate(cfg),
+            |cfg| h.estimate_max(cfg),
             &exp_no_la,
             Some(1000),
         );
-        let result_la = astar(config, is_goal, |cfg| h.estimate(cfg), &exp_la, Some(1000));
+        let result_la = astar(config, is_goal, |cfg| h.estimate_max(cfg), &exp_la, Some(1000));
 
         assert!(result_no_la.goal.is_some());
         assert!(result_la.goal.is_some());

@@ -300,6 +300,7 @@ impl<'a> HopDistanceHeuristic<'a> {
     }
 
     /// Alias for [`estimate_max`] — backward compatibility.
+    #[deprecated(note = "use estimate_max() or estimate_sum() directly")]
     pub fn estimate(&self, config: &Config) -> f64 {
         self.estimate_max(config)
     }
@@ -385,7 +386,7 @@ mod tests {
         let table = make_table(&[(0, loc(0, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(0, 5))], &table);
         let config = Config::new([(0, loc(0, 5))]).unwrap();
-        assert_eq!(h.estimate(&config), 0.0);
+        assert_eq!(h.estimate_max(&config), 0.0);
     }
 
     #[test]
@@ -394,7 +395,7 @@ mod tests {
         let table = make_table(&[(0, loc(0, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(0, 5))], &table);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        assert_eq!(h.estimate(&config), 1.0);
+        assert_eq!(h.estimate_max(&config), 1.0);
     }
 
     #[test]
@@ -403,7 +404,7 @@ mod tests {
         let table = make_table(&[(0, loc(1, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(1, 5))], &table);
         let config = Config::new([(0, loc(0, 5))]).unwrap();
-        assert_eq!(h.estimate(&config), 1.0);
+        assert_eq!(h.estimate_max(&config), 1.0);
     }
 
     #[test]
@@ -412,7 +413,7 @@ mod tests {
         let table = make_table(&[(0, loc(1, 5))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(1, 5))], &table);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        assert_eq!(h.estimate(&config), 2.0);
+        assert_eq!(h.estimate_max(&config), 2.0);
     }
 
     #[test]
@@ -422,7 +423,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let h = HopDistanceHeuristic::new(targets, &table);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 0))]).unwrap();
-        assert_eq!(h.estimate(&config), 2.0);
+        assert_eq!(h.estimate_max(&config), 2.0);
     }
 
     #[test]
@@ -431,7 +432,7 @@ mod tests {
         let table = make_table(&[(0, loc(99, 99))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(99, 99))], &table);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        assert_eq!(h.estimate(&config), f64::INFINITY);
+        assert_eq!(h.estimate_max(&config), f64::INFINITY);
     }
 
     #[test]
@@ -440,7 +441,7 @@ mod tests {
         let table = make_table(&[(0, loc(1, 0))], &index);
         let h = HopDistanceHeuristic::new([(0, loc(1, 0))], &table);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        assert_eq!(h.estimate(&config), 3.0);
+        assert_eq!(h.estimate_max(&config), 3.0);
     }
 
     #[test]
@@ -454,14 +455,14 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets, &table);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
 
-        let estimate = h.estimate(&config);
+        let estimate = h.estimate_max(&config);
 
         let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
         let target_enc = loc(1, 5).encode();
         let result = astar(
             config,
             |cfg| cfg.location_of(0).is_some_and(|l| l.encode() == target_enc),
-            |cfg| h.estimate(cfg),
+            |cfg| h.estimate_max(cfg),
             &expander,
             Some(1000),
         );

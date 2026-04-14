@@ -158,7 +158,7 @@ impl MoveSolver {
         top_c: usize,
         max_movesets_per_group: usize,
         weight: f64,
-        _mobility_weight: f64,
+        _mobility_weight: f64, // reserved — will be used for expander mobility scoring
         restarts: u32,
         free_rider_policy: FreeRiderPolicy,
         lookahead: bool,
@@ -336,7 +336,7 @@ impl MoveSolver {
             }
 
             // Phase 2: single weighted A* bounded by inner cost.
-            let max_depth = Some((inner_result.cost as u32).saturating_sub(1));
+            let max_depth = Some(inner_result.cost.ceil() as u32);
             let astar_expander = make_expander(0, DeadlockPolicy::MoveBlockers);
             let mut astar_f = PriorityFrontier::astar(h_max, weight);
             let astar_result = frontier::run_search(
@@ -718,6 +718,8 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(ids_result.status, SolveStatus::Solved);
+        assert_eq!(cascade_result.status, SolveStatus::Solved);
         assert!(cascade_result.cost <= ids_result.cost);
     }
 }

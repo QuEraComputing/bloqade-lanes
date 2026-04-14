@@ -9,7 +9,6 @@ from bloqade.lanes.heuristics.physical_placement import (
     GreedyPlacementTraversal,
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
-    SearchStrategy,
 )
 from bloqade.lanes.search.traversal.goal import SearchResult
 
@@ -152,7 +151,7 @@ def test_cz_placements_passes_idle_occupied_as_blockers(monkeypatch):
 
 def test_rust_traversal_default_params():
     t = RustPlacementTraversal()
-    assert t.strategy == SearchStrategy.ASTAR
+    assert t.strategy == "astar"
     assert t.top_c == 3
     assert t.max_movesets_per_group == 3
     assert t.max_expansions == 300

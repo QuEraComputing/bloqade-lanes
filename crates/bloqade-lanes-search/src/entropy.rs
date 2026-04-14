@@ -273,6 +273,9 @@ fn generate_candidates(
         .map(|(_, _, _, dm, _, _)| dm.abs())
         .fold(1.0_f64, f64::max);
 
+    debug_assert!(d_ref >= 1.0, "d_ref must be >= 1.0 (fold seed)");
+    debug_assert!(m_ref >= 1.0, "m_ref must be >= 1.0 (fold seed)");
+
     // Apply entropy-weighted formula and build scored entries.
     let mut all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
         .into_iter()
