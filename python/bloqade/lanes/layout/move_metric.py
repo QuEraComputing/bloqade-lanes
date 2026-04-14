@@ -71,7 +71,7 @@ class MoveMetricCalculator:
         return duration_us
 
     def _iter_lane_addresses(self) -> tuple[Any, ...]:
-        return tuple(self.arch_spec._lane_map.values())
+        return tuple(self.arch_spec.iter_all_lanes())
 
     def _max_lane_duration_us(self, *, amplitude_delta: float = 1.0) -> float:
         normalized_amp = abs(float(amplitude_delta))
