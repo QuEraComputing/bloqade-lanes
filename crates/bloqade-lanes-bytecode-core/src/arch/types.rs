@@ -336,6 +336,18 @@ impl Grid {
         }
         positions
     }
+
+    /// Compute the bounding box as `(x_min, x_max, y_min, y_max)`.
+    pub fn bounding_box(&self) -> (f64, f64, f64, f64) {
+        let x_end = self.x_start + self.x_spacing.iter().sum::<f64>();
+        let y_end = self.y_start + self.y_spacing.iter().sum::<f64>();
+        (
+            self.x_start.min(x_end),
+            self.x_start.max(x_end),
+            self.y_start.min(y_end),
+            self.y_start.max(y_end),
+        )
+    }
 }
 
 #[cfg(test)]

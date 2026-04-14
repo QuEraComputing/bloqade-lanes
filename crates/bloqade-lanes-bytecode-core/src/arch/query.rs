@@ -672,7 +672,8 @@ mod tests {
     /// Mirrors the helper in validate.rs tests.
     fn make_valid_two_zone_spec() -> ArchSpec {
         let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
-        let grid1 = Grid::from_positions(&[0.0, 7.5, 15.0], &[0.0, 4.0]);
+        // Zone 1 grid must not overlap zone 0 (x=[0,10], y=[0,3]).
+        let grid1 = Grid::from_positions(&[20.0, 27.5, 35.0], &[0.0, 4.0]);
 
         ArchSpec {
             version: Version::new(2, 0),
@@ -761,14 +762,14 @@ mod tests {
     #[test]
     fn test_location_position_zone1() {
         let spec = make_valid_two_zone_spec();
-        // Zone 1 grid: x=[0.0, 7.5, 15.0] y=[0.0, 4.0]
-        // Word 1: sites=[(1,0), (1,1)] -> site 0 at grid x[1]=7.5, y[0]=0.0
+        // Zone 1 grid: x=[20.0, 27.5, 35.0] y=[0.0, 4.0]
+        // Word 1: sites=[(1,0), (1,1)] -> site 0 at grid x[1]=27.5, y[0]=0.0
         let pos = spec.location_position(&LocationAddr {
             zone_id: 1,
             word_id: 1,
             site_id: 0,
         });
-        assert_eq!(pos, Some((7.5, 0.0)));
+        assert_eq!(pos, Some((27.5, 0.0)));
     }
 
     #[test]

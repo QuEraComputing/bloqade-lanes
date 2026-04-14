@@ -78,6 +78,9 @@ impl ArchSpec {
         // Path validation
         check_paths(self, num_zones, &mut errors);
 
+        // Zone physical-space overlap
+        check_zone_overlap(self, &mut errors);
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -454,6 +457,39 @@ fn check_paths(spec: &ArchSpec, num_zones: usize, errors: &mut Vec<ArchSpecError
     }
 }
 
+/// Verify that no two zones have overlapping bounding boxes in physical
+/// (x, y) space. Overlap would produce ambiguous site positions and make
+/// inter-zone path generation impossible (#463).
+fn check_zone_overlap(spec: &ArchSpec, errors: &mut Vec<ArchSpecError>) {
+    let boxes: Vec<(usize, (f64, f64, f64, f64))> = spec
+        .zones
+        .iter()
+        .enumerate()
+        .map(|(i, z)| (i, z.grid.bounding_box()))
+        .collect();
+
+    for i in 0..boxes.len() {
+        for j in (i + 1)..boxes.len() {
+            let (zi, (ax_min, ax_max, ay_min, ay_max)) = boxes[i];
+            let (zj, (bx_min, bx_max, by_min, by_max)) = boxes[j];
+
+            // Two axis-aligned rectangles overlap iff they overlap on
+            // both axes independently.
+            let x_overlap = ax_min < bx_max && bx_min < ax_max;
+            let y_overlap = ay_min < by_max && by_min < ay_max;
+
+            if x_overlap && y_overlap {
+                errors.push(ArchSpecError::Structure(format!(
+                    "zone {} and zone {} have overlapping bounding boxes: \
+                     zone {} spans x=[{:.6}, {:.6}] y=[{:.6}, {:.6}], \
+                     zone {} spans x=[{:.6}, {:.6}] y=[{:.6}, {:.6}]",
+                    zi, zj, zi, ax_min, ax_max, ay_min, ay_max, zj, bx_min, bx_max, by_min, by_max,
+                )));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,7 +500,8 @@ mod tests {
     /// Create a valid two-zone arch spec for testing.
     fn make_valid_two_zone_spec() -> ArchSpec {
         let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
-        let grid1 = Grid::from_positions(&[0.0, 7.5, 15.0], &[0.0, 4.0]);
+        // Zone 1 grid must not overlap zone 0 (x=[0,10], y=[0,3]).
+        let grid1 = Grid::from_positions(&[20.0, 27.5, 35.0], &[0.0, 4.0]);
 
         ArchSpec {
             version: Version::new(2, 0),
@@ -859,5 +896,56 @@ mod tests {
             spec.validate(),
             Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Path(msg) if msg.contains("zone_id")))
         ));
+    }
+
+    // ── Zone overlap tests (#463) ──
+
+    #[test]
+    fn test_non_overlapping_zones_pass() {
+        // The default fixture has non-overlapping zones (zone 0 at x=[0,10],
+        // zone 1 at x=[20,35]).
+        let spec = make_valid_two_zone_spec();
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn test_overlapping_zones_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        // Move zone 1's grid to overlap zone 0 (x=[0,10], y=[0,3]).
+        spec.zones[1].grid = Grid::from_positions(&[5.0, 12.5, 20.0], &[0.0, 4.0]);
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("overlapping bounding boxes")))
+        ));
+    }
+
+    #[test]
+    fn test_adjacent_zones_not_overlapping() {
+        let mut spec = make_valid_two_zone_spec();
+        // Zone 1 starts exactly where zone 0 ends (touching but not overlapping).
+        spec.zones[1].grid = Grid::from_positions(&[10.0, 17.5, 25.0], &[0.0, 4.0]);
+        assert!(spec.validate().is_ok());
+    }
+
+    #[test]
+    fn test_y_only_overlap_rejected() {
+        let mut spec = make_valid_two_zone_spec();
+        // Same x range, overlapping y range.
+        spec.zones[1].grid = Grid::from_positions(&[0.0, 7.5, 15.0], &[1.0, 5.0]);
+        // Zone 0: x=[0,10], y=[0,3]; Zone 1: x=[0,15], y=[1,5] → both axes overlap.
+        assert!(matches!(
+            spec.validate(),
+            Err(ref errs) if errs.iter().any(|e| matches!(e, ArchSpecError::Structure(msg) if msg.contains("overlapping")))
+        ));
+    }
+
+    #[test]
+    fn test_single_zone_no_overlap_check() {
+        // With a single zone, there's nothing to compare.
+        let mut spec = make_valid_two_zone_spec();
+        spec.zones.pop();
+        spec.zone_buses.clear();
+        spec.modes[0].zones = vec![0];
+        assert!(spec.validate().is_ok());
     }
 }
