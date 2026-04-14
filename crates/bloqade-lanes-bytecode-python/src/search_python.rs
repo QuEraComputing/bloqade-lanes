@@ -197,20 +197,38 @@ impl PyMoveSolver {
         let initial_pairs: Vec<_> = initial
             .into_iter()
             .map(|(qid, zone_id, word_id, site_id)| {
-                (qid, LocationAddr { zone_id, word_id, site_id })
+                (
+                    qid,
+                    LocationAddr {
+                        zone_id,
+                        word_id,
+                        site_id,
+                    },
+                )
             })
             .collect();
 
         let target_pairs: Vec<_> = target
             .into_iter()
             .map(|(qid, zone_id, word_id, site_id)| {
-                (qid, LocationAddr { zone_id, word_id, site_id })
+                (
+                    qid,
+                    LocationAddr {
+                        zone_id,
+                        word_id,
+                        site_id,
+                    },
+                )
             })
             .collect();
 
         let blocked_locs: Vec<_> = blocked
             .into_iter()
-            .map(|(zone_id, word_id, site_id)| LocationAddr { zone_id, word_id, site_id })
+            .map(|(zone_id, word_id, site_id)| LocationAddr {
+                zone_id,
+                word_id,
+                site_id,
+            })
             .collect();
 
         let strat = match strategy {

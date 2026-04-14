@@ -420,12 +420,24 @@ fn score_moveset(
         let d_before = dist_table
             .distance(old_loc.encode(), target_enc)
             .map_or(0.0, |d| {
-                blended_distance(d as f64, old_loc.encode(), target_enc, params.w_t, dist_table)
+                blended_distance(
+                    d as f64,
+                    old_loc.encode(),
+                    target_enc,
+                    params.w_t,
+                    dist_table,
+                )
             });
         let d_after = dist_table
             .distance(new_loc.encode(), target_enc)
             .map_or(0.0, |d| {
-                blended_distance(d as f64, new_loc.encode(), target_enc, params.w_t, dist_table)
+                blended_distance(
+                    d as f64,
+                    new_loc.encode(),
+                    target_enc,
+                    params.w_t,
+                    dist_table,
+                )
             });
         distance_progress += (d_before - d_after).max(0.0);
 

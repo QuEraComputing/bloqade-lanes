@@ -888,7 +888,13 @@ mod tests {
             &exp_no_la,
             Some(1000),
         );
-        let result_la = astar(config, is_goal, |cfg| h.estimate_max(cfg), &exp_la, Some(1000));
+        let result_la = astar(
+            config,
+            is_goal,
+            |cfg| h.estimate_max(cfg),
+            &exp_la,
+            Some(1000),
+        );
 
         assert!(result_no_la.goal.is_some());
         assert!(result_la.goal.is_some());
