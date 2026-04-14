@@ -21,7 +21,7 @@ jobs:
 
       - name: Find PR number for commit
         id: prnum
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const commitSha = process.env.GITHUB_SHA;
@@ -63,7 +63,7 @@ jobs:
       - name: Get backport versions from PR labels
         if: steps.prnum.outputs.pr_num != ''
         id: versions
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const prNum = process.env.PR_NUM;
@@ -96,7 +96,7 @@ jobs:
           PR_NUM: ${{ steps.prnum.outputs.pr_num }}
       - name: Cherry-pick and create PRs
         if: steps.versions.outputs.versions != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { execSync } = require('child_process');

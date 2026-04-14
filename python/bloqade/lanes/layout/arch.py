@@ -140,6 +140,56 @@ class ArchSpec:
         """True if this address is at a home (non-CZ-staging) word."""
         return addr.word_id in self._home_words
 
+    @cached_property
+    def word_zone_map(self) -> dict[int, int]:
+        """Map each word_id to the zone_id it belongs to.
+
+        Derived from each zone's entangling_pairs, word_buses, and
+        words_with_site_buses. A word may only appear in one zone; if
+        multiple zones claim the same word the first match wins.
+        """
+        mapping: dict[int, int] = {}
+        for zone_id, zone in enumerate(self._inner.zones):
+            for w_a, w_b in zone.entangling_pairs:
+                mapping.setdefault(w_a, zone_id)
+                mapping.setdefault(w_b, zone_id)
+            for bus in zone.word_buses:
+                for w in bus.src:
+                    mapping.setdefault(w, zone_id)
+                for w in bus.dst:
+                    mapping.setdefault(w, zone_id)
+            for w in zone.words_with_site_buses:
+                mapping.setdefault(w, zone_id)
+        # Any unreferenced word is (conservatively) assigned to zone 0.
+        for word_id in range(len(self.words)):
+            mapping.setdefault(word_id, 0)
+        return mapping
+
+    @cached_property
+    def home_sites(self) -> frozenset[LocationAddress]:
+        """All home LocationAddresses with correct zone_id per word.
+
+        A home site is ``(zone_id, word_id, site_id)`` where ``word_id`` is
+        a home word (lower word_id in each entangling pair, or unpaired)
+        and ``zone_id`` is the zone that word belongs to.
+        """
+        sites: set[LocationAddress] = set()
+        word_zone = self.word_zone_map
+        for word_id in self._home_words:
+            zone_id = word_zone[word_id]
+            for site_id in range(len(self.words[word_id].site_indices)):
+                sites.add(LocationAddress(word_id, site_id, zone_id))
+        return frozenset(sites)
+
+    @cached_property
+    def cz_zone_addresses(self) -> frozenset[ZoneAddress]:
+        """Zones that host CZ entangling operations (have entangling_pairs)."""
+        return frozenset(
+            ZoneAddress(zone_id)
+            for zone_id, zone in enumerate(self._inner.zones)
+            if zone.entangling_pairs
+        )
+
     @property
     def feed_forward(self) -> bool:
         """Whether the device supports mid-circuit measurement with classical feedback."""
@@ -711,9 +761,10 @@ class ArchSpec:
         if result is None:
             raise ValueError(f"Invalid lane address: {lane_address!r}")
         rust_src, rust_dst = result
-        src = LocationAddress(rust_src.word_id, rust_src.site_id, rust_src.zone_id)
-        dst = LocationAddress(rust_dst.word_id, rust_dst.site_id, rust_dst.zone_id)
-        return src, dst
+        return (
+            LocationAddress.from_inner(rust_src),
+            LocationAddress.from_inner(rust_dst),
+        )
 
     def get_cz_partner(self, location: LocationAddress) -> LocationAddress | None:
         """Get the CZ partner for a given location.
@@ -724,7 +775,7 @@ class ArchSpec:
         result = self._inner.get_cz_partner(location._inner)
         if result is None:
             return None
-        return LocationAddress(result.word_id, result.site_id, result.zone_id)
+        return LocationAddress.from_inner(result)
 
     def get_blockaded_location(
         self, location: LocationAddress

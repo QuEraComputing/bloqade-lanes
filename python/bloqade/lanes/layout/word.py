@@ -1,26 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import Word as _RustWord
 
-if TYPE_CHECKING:
-    pass
 
-
-class Word:
+class Word(RustWrapper[_RustWord]):
     """A group of atom sites positioned via grid index pairs."""
-
-    _inner: _RustWord
 
     def __init__(
         self,
         sites: tuple[tuple[int, int], ...],
     ):
-        self._inner = _RustWord(
-            sites=list(sites),
-        )
+        self._inner = _RustWord(sites=list(sites))
 
     @property
     def sites(self) -> tuple[tuple[int, int], ...]:
@@ -39,6 +32,13 @@ class Word:
     def __getitem__(self, index: int) -> WordSite:
         return WordSite(word=self, site_index=index)
 
+    # NOTE: the underlying Rust ``_native.Word`` does not yet implement
+    # value-based ``__eq__``/``__hash__`` (it falls back to identity), so we
+    # cannot rely on ``RustWrapper``'s delegation here. Override with a
+    # ``sites``-based comparison to preserve the legacy semantic that
+    # ``ArchSpec.__eq__`` relies on (it does ``self.words == other.words``).
+    # Tracked in #476 — drop these overrides once Word/Mode/Zone get
+    # value-based dunders on the Rust side.
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Word):
             return NotImplemented
