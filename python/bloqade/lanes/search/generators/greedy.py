@@ -68,13 +68,13 @@ class GreedyMoveGenerator:
             return
 
         groups: dict[
-            tuple[MoveType, int, Direction],
+            tuple[MoveType, int, int, Direction],
             dict[int, LaneAddress],
         ] = {}
         for qid, lane in first_lanes.items():
-            key = (lane.move_type, lane.bus_id, lane.direction)
+            key = (lane.move_type, lane.zone_id, lane.bus_id, lane.direction)
             groups.setdefault(key, {})[qid] = lane
 
-        for (mt, bid, d), entries in groups.items():
-            ctx = BusContext.from_tree(tree, occupied, mt, bid, d)
+        for (mt, zid, bid, d), entries in groups.items():
+            ctx = BusContext.from_tree(tree, occupied, mt, bid, d, zone_id=zid)
             yield from ctx.build_aod_grids(entries)

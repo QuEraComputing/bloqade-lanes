@@ -1,84 +1,57 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from bloqade.geometry.dialects import grid
-
+from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import Word as _RustWord
-from bloqade.lanes.bytecode.arch import grid_to_rust
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 
-class Word:
-    """A group of atom sites that share a coordinate grid."""
-
-    _inner: _RustWord
-    positions: grid.Grid
+class Word(RustWrapper[_RustWord]):
+    """A group of atom sites positioned via grid index pairs."""
 
     def __init__(
         self,
-        positions: grid.Grid,
-        site_indices: tuple[tuple[int, int], ...],
+        sites: tuple[tuple[int, int], ...],
     ):
-        self.positions = positions
+        self._inner = _RustWord(sites=list(sites))
 
-        if len(self.positions.positions) != len(site_indices):
-            raise ValueError("Number of positions must match number of site indices")
-
-        self._inner = _RustWord(
-            positions=grid_to_rust(positions),
-            site_indices=list(site_indices),
-        )
+    @property
+    def sites(self) -> tuple[tuple[int, int], ...]:
+        return tuple((s[0], s[1]) for s in self._inner.sites)
 
     @property
     def site_indices(self) -> tuple[tuple[int, int], ...]:
-        return tuple(self._inner.site_indices)
+        """Alias for sites, for backward compatibility."""
+        return self.sites
 
     @property
-    def n_rows(self) -> int:
-        """Number of sites along the y-axis of this word's grid."""
-        return int(self.positions.shape[1])
+    def n_sites(self) -> int:
+        """Number of sites in this word."""
+        return len(self._inner.sites)
 
     def __getitem__(self, index: int) -> WordSite:
         return WordSite(word=self, site_index=index)
 
-    def site_position(self, site_index: int) -> tuple[float, float]:
-        return self.positions.get(self.site_indices[site_index])
-
-    def all_positions(self) -> Iterator[tuple[float, float]]:
-        yield from map(self.site_position, range(len(self.site_indices)))
-
-    def plot(self, ax=None, **scatter_kwargs):  # type: ignore[no-untyped-def]
-        import matplotlib.pyplot as plt  # pyright: ignore[reportMissingModuleSource]
-
-        if ax is None:
-            ax = plt.gca()
-        x_positions, y_positions = zip(*self.all_positions())
-        ax.scatter(x_positions, y_positions, **scatter_kwargs)
-        return ax
-
+    # NOTE: the underlying Rust ``_native.Word`` does not yet implement
+    # value-based ``__eq__``/``__hash__`` (it falls back to identity), so we
+    # cannot rely on ``RustWrapper``'s delegation here. Override with a
+    # ``sites``-based comparison to preserve the legacy semantic that
+    # ``ArchSpec.__eq__`` relies on (it does ``self.words == other.words``).
+    # Tracked in #476 — drop these overrides once Word/Mode/Zone get
+    # value-based dunders on the Rust side.
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Word):
             return NotImplemented
-        return (
-            self.site_indices == other.site_indices
-            and self._inner.positions == other._inner.positions
-        )
+        return self.sites == other.sites
 
     def __hash__(self) -> int:
-        return hash((self._inner.positions, self.site_indices))
+        return hash(self.sites)
 
     def __repr__(self) -> str:
-        return f"Word(n_sites={len(self.site_indices)})"
+        return f"Word(n_sites={self.n_sites})"
 
 
 @dataclass(frozen=True)
 class WordSite:
     word: Word
     site_index: int
-
-    def position(self) -> tuple[float, float]:
-        return self.word.site_position(self.site_index)

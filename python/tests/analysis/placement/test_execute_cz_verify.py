@@ -1,7 +1,5 @@
 """Tests for ExecuteCZ.verify() — blockade-radius validation of CZ placements."""
 
-from bloqade.geometry.dialects import grid
-
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
@@ -86,21 +84,32 @@ def test_verify_multi_word():
 
 def test_verify_no_czs():
     """Test archspec w/no cz pairs"""
-    word_grid = grid.Grid.from_positions([0.0, 1.0, 2.0], [0.0])
-    word = Word(
-        word_grid,
-        ((0, 0), (1, 0), (2, 0)),
+    from bloqade.lanes.bytecode._native import (
+        Grid as RustGrid,
+        LocationAddress as RustLocAddr,
+        Mode as RustMode,
+        Zone as RustZone,
     )
 
+    word = Word(sites=((0, 0), (1, 0), (2, 0)))
+    rust_grid = RustGrid.from_positions([0.0, 1.0, 2.0], [0.0])
+    rust_zone = RustZone(
+        name="test",
+        grid=rust_grid,
+        site_buses=[],
+        word_buses=[],
+        words_with_site_buses=[],
+        sites_with_word_buses=[],
+    )
+    rust_mode = RustMode(
+        name="all",
+        zones=[0],
+        bitstring_order=[RustLocAddr(0, 0, s) for s in range(3)],
+    )
     arch_spec = layout.ArchSpec.from_components(
-        (word,),
-        ((0,),),
-        (0,),
-        [],
-        frozenset(),
-        frozenset(),
-        (),
-        (),
+        words=(word,),
+        zones=(rust_zone,),
+        modes=[rust_mode],
     )
 
     state = _make_execute_cz(
@@ -112,28 +121,26 @@ def test_verify_no_czs():
 
 
 def test_verify_custom_large_arch():
-    """Verify works with multiword ArchSpec where site 0<->2 and 1<->3."""
-    word_grid = grid.Grid.from_positions([0.0, 2.0], [0.0, 10.0])
-    words = tuple(
-        Word(
-            word_grid.shift(10.0 * ix, 0.0),
-            ((0, 0), (0, 1), (1, 0), (1, 1)),
-        )
-        for ix in range(4)
-    )
-    # Entangling pairs: word 0 <-> word 1, word 2 <-> word 3
-    arch_spec = layout.ArchSpec.from_components(
-        words,
-        (tuple(range(4)),),
-        (0,),
-        [[(0, 1), (2, 3)]],
-        frozenset(),
-        frozenset(),
-        (),
-        (),
-    )
+    """Verify works with multiword ArchSpec using the builder."""
+    from bloqade.lanes.arch.builder import build_arch
+    from bloqade.lanes.arch.topology import HypercubeSiteTopology, HypercubeWordTopology
+    from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 
-    # Place qubits at paired locations: word 0 <-> word 1, word 2 <-> word 3
+    bp = ArchBlueprint(
+        zones={
+            "gate": ZoneSpec(
+                num_rows=2,
+                num_cols=2,
+                entangling=True,
+                word_topology=HypercubeWordTopology(),
+                site_topology=HypercubeSiteTopology(),
+            )
+        },
+        layout=DeviceLayout(sites_per_word=4),
+    )
+    arch_spec = build_arch(bp).arch
+
+    # Place qubits at paired locations
     state = _make_execute_cz(
         (
             layout.LocationAddress(0, 0),

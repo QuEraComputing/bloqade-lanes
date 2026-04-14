@@ -1,7 +1,7 @@
 //! Compact, canonical configuration of qubit positions.
 //!
 //! A [`Config`] maps qubit IDs to physical locations. It is stored as a
-//! sorted `Vec<(u32, u32)>` where each entry is `(qubit_id, encoded_location)`.
+//! sorted `Vec<(u32, u64)>` where each entry is `(qubit_id, encoded_location)`.
 //! Sorting by qubit ID makes the representation canonical (order-independent)
 //! and enables deterministic hashing.
 
@@ -28,12 +28,12 @@ impl std::error::Error for ConfigError {}
 /// Compute a hash for a sorted entries slice.
 ///
 /// Uses FNV-1a for speed (entries are pre-sorted, so no ordering concern).
-fn hash_entries(entries: &[(u32, u32)]) -> u64 {
+fn hash_entries(entries: &[(u32, u64)]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
     for &(qid, loc) in entries {
         h ^= qid as u64;
         h = h.wrapping_mul(0x100000001b3); // FNV prime
-        h ^= loc as u64;
+        h ^= loc;
         h = h.wrapping_mul(0x100000001b3);
     }
     h
@@ -42,7 +42,7 @@ fn hash_entries(entries: &[(u32, u32)]) -> u64 {
 /// Compact, canonical configuration of qubit positions.
 ///
 /// Internally stored as a `Vec<(qubit_id, encoded_location)>` sorted by
-/// `qubit_id`. For 20 qubits this is 160 bytes — far smaller than a
+/// `qubit_id`. For 20 qubits this is 240 bytes — far smaller than a
 /// `HashMap<u32, LocationAddr>`.
 ///
 /// The hash is cached at construction time to avoid re-hashing on every
@@ -53,7 +53,7 @@ fn hash_entries(entries: &[(u32, u32)]) -> u64 {
 #[derive(Debug, Clone, Eq)]
 pub struct Config {
     /// Sorted by qubit_id. Invariant: no duplicate qubit_ids.
-    entries: Vec<(u32, u32)>,
+    entries: Vec<(u32, u64)>,
     /// Cached hash of `entries`, computed once at construction.
     cached_hash: u64,
 }
@@ -67,7 +67,7 @@ impl Config {
     ///
     /// Returns [`ConfigError`] if any qubit ID appears more than once.
     pub fn new(pairs: impl IntoIterator<Item = (u32, LocationAddr)>) -> Result<Self, ConfigError> {
-        let mut entries: Vec<(u32, u32)> = pairs
+        let mut entries: Vec<(u32, u64)> = pairs
             .into_iter()
             .map(|(qid, loc)| (qid, loc.encode()))
             .collect();
@@ -87,11 +87,6 @@ impl Config {
             entries,
             cached_hash,
         })
-    }
-
-    /// Cached FNV-1a hash of this configuration.
-    pub fn hash_value(&self) -> u64 {
-        self.cached_hash
     }
 
     /// Number of qubits in this configuration.
@@ -131,7 +126,7 @@ impl Config {
     ///
     /// Use this when you need many `qubit_at` lookups on the same config
     /// (e.g., in the expander inner loop) to avoid O(n) per lookup.
-    pub fn location_to_qubit_map(&self) -> std::collections::HashMap<u32, u32> {
+    pub fn location_to_qubit_map(&self) -> std::collections::HashMap<u64, u32> {
         self.entries
             .iter()
             .map(|&(qid, eloc)| (eloc, qid))
@@ -171,7 +166,7 @@ impl Config {
     }
 
     /// Borrow the raw sorted entries for direct inspection.
-    pub fn as_entries(&self) -> &[(u32, u32)] {
+    pub fn as_entries(&self) -> &[(u32, u64)] {
         &self.entries
     }
 }

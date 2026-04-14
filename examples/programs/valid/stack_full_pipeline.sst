@@ -1,86 +1,89 @@
 .version 1
 ; Full pipeline exercising every instruction type.
 ; Uses full.json arch spec: 3 words, 10 sites each, site_bus 0, zone 0.
+; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
+; LaneAddr: data0=[word:16][site:16], data1=[dir:1][mt:2][zone_id:8][pad:5][bus:16]
 
 ; --- Initial fill: load 2 sites into word 0 ---
-const_loc 0x00000000    ; word 0, site 0
-const_loc 0x00000001    ; word 0, site 1
+const_loc 0x0000000000000000    ; zone 0, word 0, site 0
+const_loc 0x0000000001000000    ; zone 0, word 0, site 1
 initial_fill 2
 
-; --- Move: forward site_bus, word 0, sites 0 and 1, bus 0 ---
-const_lane 0x0000000000000000   ; fwd, site_bus, w0, s0, bus 0
-const_lane 0x0000000000000001   ; fwd, site_bus, w0, s1, bus 0
+; --- Move: forward site_bus, zone 0, word 0, sites 0 and 1, bus 0 ---
+; mt=0 (site_bus): data1 = 0x00000000
+const_lane 0x0000000000000000   ; fwd, site_bus, z0, w0, s0, bus 0
+const_lane 0x0000000000000001   ; fwd, site_bus, z0, w0, s1, bus 0
 move 2
 
 ; --- Fill: reload sites after move ---
-const_loc 0x00000005    ; word 0, site 5
-const_loc 0x00000006    ; word 0, site 6
+const_loc 0x0000000005000000    ; zone 0, word 0, site 5
+const_loc 0x0000000006000000    ; zone 0, word 0, site 6
 fill 2
 
 ; --- Local R rotation: push locations, then rotation_angle, then axis_angle ---
-const_loc 0x00000000    ; word 0, site 0
-const_float 3.14159       ; rotation_angle
-const_float 1.5708        ; axis_angle
-local_r 1               ; pops axis_angle, rotation_angle (2 floats), then 1 location
+const_loc 0x0000000000000000    ; zone 0, word 0, site 0
+const_float 3.14159               ; rotation_angle
+const_float 1.5708                ; axis_angle
+local_r 1                       ; pops axis_angle, rotation_angle (2 floats), then 1 location
 
 ; --- Local Rz rotation: push locations, then rotation_angle ---
-const_loc 0x00000001    ; word 0, site 1
-const_float 0.7854        ; rotation_angle
-local_rz 1              ; pops rotation_angle (1 float), then 1 location
+const_loc 0x0000000001000000    ; zone 0, word 0, site 1
+const_float 0.7854                ; rotation_angle
+local_rz 1                      ; pops rotation_angle (1 float), then 1 location
 
 ; --- Global R rotation: push rotation_angle, then axis_angle ---
-const_float 3.14159       ; rotation_angle
-const_float 1.5708        ; axis_angle
-global_r                ; pops axis_angle, rotation_angle (2 floats)
+const_float 3.14159               ; rotation_angle
+const_float 1.5708                ; axis_angle
+global_r                        ; pops axis_angle, rotation_angle (2 floats)
 
 ; --- Global Rz rotation: push rotation_angle ---
-const_float 0.7854        ; rotation_angle
-global_rz               ; pops rotation_angle (1 float)
+const_float 0.7854                ; rotation_angle
+global_rz                       ; pops rotation_angle (1 float)
 
 ; --- CZ gate ---
-const_zone 0x00000000   ; zone 0
+const_zone 0x00000000           ; zone 0
 cz
 
 ; --- Measure and await ---
-const_zone 0x00000000   ; zone 0
+const_zone 0x00000000           ; zone 0
 measure 1
-await_measure            ; pops future, pushes array_ref
+await_measure                    ; pops future, pushes array_ref
 
 ; --- Stack manipulation: dup, swap, pop ---
 const_float 3.0
-dup                      ; [array_ref, 3.0, 3.0]
-swap                     ; [array_ref, 3.0, 3.0]
-pop                      ; [array_ref, 3.0]
-pop                      ; [array_ref]
+dup                              ; [array_ref, 3.0, 3.0]
+swap                             ; [array_ref, 3.0, 3.0]
+pop                              ; [array_ref, 3.0]
+pop                              ; [array_ref]
 
 ; --- Array operations ---
 ; Build a 1D array of 3 floats
 const_float 1.0
 const_float 2.0
 const_float 3.0
-new_array 1 3            ; type_tag=1 (float), dim0=3 -> pops 3, pushes array_ref
+new_array 1 3                    ; type_tag=1 (float), dim0=3 -> pops 3, pushes array_ref
 
 ; Get item from array using index
-const_int 0              ; index
-get_item 1               ; ndims=1 -> pops u32 + array_ref, pushes float
+const_int 0                      ; index
+get_item 1                       ; ndims=1 -> pops u32 + array_ref, pushes float
 
 ; Clean up the float and first array_ref
-pop                      ; discard float from get_item
-pop                      ; discard first array_ref from await_measure
+pop                              ; discard float from get_item
+pop                              ; discard first array_ref from await_measure
 
 ; --- Set detector ---
 const_zone 0x00000000
 measure 1
-await_measure            ; pushes array_ref
-set_detector             ; pops array_ref, pushes detector_ref
+await_measure                    ; pushes array_ref
+set_detector                     ; pops array_ref, pushes detector_ref
 
 ; --- Set observable ---
 const_zone 0x00000000
 measure 1
-await_measure            ; pushes array_ref
-set_observable           ; pops array_ref, pushes observable_ref
+await_measure                    ; pushes array_ref
+set_observable                   ; pops array_ref, pushes observable_ref
 
 ; --- Return one value ---
-return                   ; pops observable_ref
-pop                      ; discard detector_ref
+return                           ; pops observable_ref
+pop                              ; discard detector_ref
 halt

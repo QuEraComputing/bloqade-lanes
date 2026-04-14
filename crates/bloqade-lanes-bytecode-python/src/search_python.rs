@@ -8,16 +8,66 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy};
-use bloqade_lanes_search::solve::{InnerStrategy, MoveSolver, SolveResult, SolveStatus, Strategy};
+use bloqade_lanes_search::solve::{MoveSolver, SolveResult, SolveStatus, Strategy};
 
 use crate::arch_python::PyArchSpec;
+
+// ── SearchStrategy enum ──
+
+/// Search strategy for the Rust move solver.
+#[pyclass(
+    name = "SearchStrategy",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum PySearchStrategy {
+    #[pyo3(name = "ASTAR")]
+    AStar = 0,
+    #[pyo3(name = "DFS")]
+    HeuristicDfs = 1,
+    #[pyo3(name = "BFS")]
+    Bfs = 2,
+    #[pyo3(name = "GREEDY")]
+    GreedyBestFirst = 3,
+}
+
+#[pymethods]
+impl PySearchStrategy {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            PySearchStrategy::AStar => "ASTAR",
+            PySearchStrategy::HeuristicDfs => "DFS",
+            PySearchStrategy::Bfs => "BFS",
+            PySearchStrategy::GreedyBestFirst => "GREEDY",
+        }
+    }
+}
+
+impl PySearchStrategy {
+    fn to_rs(&self) -> Strategy {
+        match self {
+            PySearchStrategy::AStar => Strategy::AStar,
+            PySearchStrategy::HeuristicDfs => Strategy::HeuristicDfs,
+            PySearchStrategy::Bfs => Strategy::Bfs,
+            PySearchStrategy::GreedyBestFirst => Strategy::GreedyBestFirst,
+        }
+    }
+}
 
 /// Result of a move synthesis solve.
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
 /// and search statistics.
-#[pyclass(name = "SolveResult", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "SolveResult",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 pub struct PySolveResult {
     inner: SolveResult,
 }
@@ -36,11 +86,11 @@ impl PySolveResult {
 
     /// Move layers: list of move steps, each a list of lane address tuples.
     ///
-    /// Each lane is represented as `(direction, move_type, word_id, site_id, bus_id)`
-    /// where direction is 0=Forward/1=Backward and move_type is 0=SiteBus/1=WordBus.
+    /// Each lane is represented as `(direction, move_type, zone_id, word_id, site_id, bus_id)`
+    /// where direction is 0=Forward/1=Backward and move_type is 0=SiteBus/1=WordBus/2=ZoneBus.
     #[getter]
     #[allow(clippy::type_complexity)]
-    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32)>> {
+    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
         self.inner
             .move_layers
             .iter()
@@ -51,6 +101,7 @@ impl PySolveResult {
                         (
                             lane.direction as u8,
                             lane.move_type as u8,
+                            lane.zone_id,
                             lane.word_id,
                             lane.site_id,
                             lane.bus_id,
@@ -61,13 +112,13 @@ impl PySolveResult {
             .collect()
     }
 
-    /// Goal configuration: list of (qubit_id, word_id, site_id) tuples.
+    /// Goal configuration: list of (qubit_id, zone_id, word_id, site_id) tuples.
     #[getter]
-    fn goal_config(&self) -> Vec<(u32, u32, u32)> {
+    fn goal_config(&self) -> Vec<(u32, u32, u32, u32)> {
         self.inner
             .goal_config
             .iter()
-            .map(|(qid, loc)| (qid, loc.word_id, loc.site_id))
+            .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
             .collect()
     }
 
@@ -83,12 +134,6 @@ impl PySolveResult {
         self.inner.cost
     }
 
-    /// Number of deadlocks encountered during search.
-    #[getter]
-    fn deadlocks(&self) -> u32 {
-        self.inner.deadlocks
-    }
-
     fn __repr__(&self) -> String {
         let status = match self.inner.status {
             SolveStatus::Solved => "solved",
@@ -96,12 +141,11 @@ impl PySolveResult {
             SolveStatus::BudgetExceeded => "budget_exceeded",
         };
         format!(
-            "SolveResult(status={}, steps={}, cost={}, expanded={}, deadlocks={})",
+            "SolveResult(status={}, steps={}, cost={}, expanded={})",
             status,
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
-            self.inner.deadlocks,
         )
     }
 }
@@ -113,7 +157,7 @@ impl PySolveResult {
 /// Then `solve()` can be called multiple times with different placements.
 ///
 /// Works for both physical and logical architectures.
-#[pyclass(name = "MoveSolver", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(name = "MoveSolver", frozen, module = "bloqade.lanes.bytecode._native")]
 pub struct PyMoveSolver {
     inner: MoveSolver,
 }
@@ -153,43 +197,33 @@ impl PyMoveSolver {
     /// qubits from initial to target placement, avoiding blocked locations.
     ///
     /// Args:
-    ///     initial: List of (qubit_id, word_id, site_id) tuples for starting positions.
-    ///     target: List of (qubit_id, word_id, site_id) tuples for desired positions.
-    ///     blocked: List of (word_id, site_id) tuples for immovable obstacle locations.
+    ///     initial: List of (qubit_id, zone_id, word_id, site_id) tuples for starting positions.
+    ///     target: List of (qubit_id, zone_id, word_id, site_id) tuples for desired positions.
+    ///     blocked: List of (zone_id, word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
-    ///     strategy: Search strategy: "astar", "dfs", "bfs", "greedy", "ids", "cascade".
+    ///     strategy: Search strategy (default: SearchStrategy.ASTAR).
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
-    ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-    ///     mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
-    ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
-    ///     free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip"))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy=PySearchStrategy::AStar, top_c=3, max_movesets_per_group=3))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
         py: Python<'_>,
-        initial: Vec<(u32, u32, u32)>,
-        target: Vec<(u32, u32, u32)>,
-        blocked: Vec<(u32, u32)>,
+        initial: Vec<(u32, u32, u32, u32)>,
+        target: Vec<(u32, u32, u32, u32)>,
+        blocked: Vec<(u32, u32, u32)>,
         max_expansions: Option<u32>,
-        strategy: &str,
+        strategy: PySearchStrategy,
         top_c: usize,
         max_movesets_per_group: usize,
-        weight: f64,
-        mobility_weight: f64,
-        restarts: u32,
-        free_riders: &str,
-        lookahead: bool,
-        deadlock_policy: &str,
     ) -> PyResult<PySolveResult> {
         // Validate: check for duplicate qubit IDs in target.
         {
             let mut seen = std::collections::HashSet::new();
-            for &(qid, _, _) in &target {
+            for &(qid, _, _, _) in &target {
                 if !seen.insert(qid) {
                     return Err(PyValueError::new_err(format!(
                         "duplicate qubit_id {qid} in target placement"
@@ -200,62 +234,42 @@ impl PyMoveSolver {
 
         let initial_pairs: Vec<_> = initial
             .into_iter()
-            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))
+            .map(|(qid, zone_id, word_id, site_id)| {
+                (
+                    qid,
+                    LocationAddr {
+                        zone_id,
+                        word_id,
+                        site_id,
+                    },
+                )
+            })
             .collect();
 
         let target_pairs: Vec<_> = target
             .into_iter()
-            .map(|(qid, word_id, site_id)| (qid, LocationAddr { word_id, site_id }))
+            .map(|(qid, zone_id, word_id, site_id)| {
+                (
+                    qid,
+                    LocationAddr {
+                        zone_id,
+                        word_id,
+                        site_id,
+                    },
+                )
+            })
             .collect();
 
         let blocked_locs: Vec<_> = blocked
             .into_iter()
-            .map(|(word_id, site_id)| LocationAddr { word_id, site_id })
+            .map(|(zone_id, word_id, site_id)| LocationAddr {
+                zone_id,
+                word_id,
+                site_id,
+            })
             .collect();
 
-        let strat = match strategy {
-            "astar" => Strategy::AStar,
-            "dfs" => Strategy::HeuristicDfs,
-            "bfs" => Strategy::Bfs,
-            "greedy" => Strategy::GreedyBestFirst,
-            "ids" => Strategy::Ids,
-            "cascade" | "cascade-ids" => Strategy::Cascade {
-                inner: InnerStrategy::Ids,
-            },
-            "cascade-dfs" => Strategy::Cascade {
-                inner: InnerStrategy::Dfs,
-            },
-            "cascade-entropy" => Strategy::Cascade {
-                inner: InnerStrategy::Entropy,
-            },
-            "entropy" => Strategy::Entropy,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
-                )));
-            }
-        };
-
-        let fr_policy = match free_riders {
-            "off" => FreeRiderPolicy::Off,
-            "unblock" => FreeRiderPolicy::Unblock,
-            "unblock_or_improve" => FreeRiderPolicy::UnblockOrImprove,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown free_riders '{free_riders}', expected: off, unblock, unblock_or_improve"
-                )));
-            }
-        };
-
-        let dl_policy = match deadlock_policy {
-            "skip" => DeadlockPolicy::Skip,
-            "move_blockers" => DeadlockPolicy::MoveBlockers,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown deadlock_policy '{deadlock_policy}', expected: skip, move_blockers"
-                )));
-            }
-        };
+        let strat = strategy.to_rs();
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -268,12 +282,6 @@ impl PyMoveSolver {
                     strat,
                     top_c,
                     max_movesets_per_group,
-                    weight,
-                    mobility_weight,
-                    restarts,
-                    fr_policy,
-                    lookahead,
-                    dl_policy,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;

@@ -6,7 +6,11 @@ use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 use crate::arch_python::{PyDirection, PyMoveType};
 use crate::validation::validate_field;
 
-#[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "Instruction",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyInstruction {
     pub(crate) inner: rs::Instruction,
@@ -31,30 +35,38 @@ impl PyInstruction {
     }
 
     #[staticmethod]
-    fn const_loc(word_id: i64, site_id: i64) -> PyResult<Self> {
+    fn const_loc(zone_id: i64, word_id: i64, site_id: i64) -> PyResult<Self> {
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let word_id = validate_field::<u16>("word_id", word_id)? as u32;
         let site_id = validate_field::<u16>("site_id", site_id)? as u32;
-        let addr = rs_addr::LocationAddr { word_id, site_id };
+        let addr = rs_addr::LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(addr.encode())),
         })
     }
 
     #[staticmethod]
-    #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
+    #[pyo3(signature = (move_type, zone_id, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn const_lane(
         move_type: &PyMoveType,
+        zone_id: i64,
         word_id: i64,
         site_id: i64,
         bus_id: i64,
         direction: PyDirection,
     ) -> PyResult<Self> {
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let word_id = validate_field::<u16>("word_id", word_id)? as u32;
         let site_id = validate_field::<u16>("site_id", site_id)? as u32;
         let bus_id = validate_field::<u16>("bus_id", bus_id)? as u32;
         let addr = rs_addr::LaneAddr {
             direction: direction.to_rs(),
             move_type: move_type.to_rs(),
+            zone_id,
             word_id,
             site_id,
             bus_id,
@@ -67,7 +79,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn const_zone(zone_id: i64) -> PyResult<Self> {
-        let zone_id = validate_field::<u16>("zone_id", zone_id)? as u32;
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let addr = rs_addr::ZoneAddr { zone_id };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(addr.encode())),
@@ -275,8 +287,8 @@ fn format_instruction(instr: &rs::Instruction) -> String {
             rs::LaneConstInstruction::ConstLoc(bits) => {
                 let addr = rs_addr::LocationAddr::decode(*bits);
                 format!(
-                    "Instruction.const_loc(word_id={}, site_id={})",
-                    addr.word_id, addr.site_id
+                    "Instruction.const_loc(zone_id={}, word_id={}, site_id={})",
+                    addr.zone_id, addr.word_id, addr.site_id
                 )
             }
             rs::LaneConstInstruction::ConstLane(d0, d1) => {
@@ -288,10 +300,11 @@ fn format_instruction(instr: &rs::Instruction) -> String {
                 let mt = match addr.move_type {
                     rs_addr::MoveType::SiteBus => "MoveType.SITE",
                     rs_addr::MoveType::WordBus => "MoveType.WORD",
+                    rs_addr::MoveType::ZoneBus => "MoveType.ZONE",
                 };
                 format!(
-                    "Instruction.const_lane(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
-                    mt, addr.word_id, addr.site_id, addr.bus_id, dir
+                    "Instruction.const_lane(move_type={}, zone_id={}, word_id={}, site_id={}, bus_id={}, direction={})",
+                    mt, addr.zone_id, addr.word_id, addr.site_id, addr.bus_id, dir
                 )
             }
             rs::LaneConstInstruction::ConstZone(bits) => {

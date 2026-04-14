@@ -5,7 +5,7 @@ from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import SiteLaneAddress
+from bloqade.lanes.layout.encoding import WordLaneAddress
 
 kernel = kernel.add(annotate)
 
@@ -30,12 +30,12 @@ def test_atom_interpreter_simple():
             location_addresses=(move.LocationAddress(0, 0),),
         )
 
-        state4 = move.move(state3, lanes=(SiteLaneAddress(0, 0, 0),))
+        state4 = move.move(state3, lanes=(WordLaneAddress(0, 0, 0),))
         future = move.end_measure(state4, zone_addresses=(move.ZoneAddress(0),))
         results = move.get_future_result(
             future,
             zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 1),
+            location_address=move.LocationAddress(1, 0),
         )
 
         return results
@@ -54,14 +54,14 @@ def test_get_post_processing():
             state0,
             location_addresses=(
                 move.LocationAddress(0, 0),
-                move.LocationAddress(0, 1),
+                move.LocationAddress(1, 0),
             ),
         )
         future = move.end_measure(state1, zone_addresses=(move.ZoneAddress(0),))
         results_1 = move.get_future_result(
             future,
             zone_address=move.ZoneAddress(0),
-            location_address=move.LocationAddress(0, 1),
+            location_address=move.LocationAddress(1, 0),
         )
         results_2 = move.get_future_result(
             future,

@@ -524,7 +524,7 @@ class StateArtist:
 
     def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
         positions = list(
-            self.arch_spec.words[location.word_id].site_position(location.site_id)
+            self.arch_spec.get_position(location)
             for location in stmt.location_addresses
         )
         x_pos, y_pos = zip(*positions) if len(positions) > 0 else ([], [])
@@ -562,18 +562,21 @@ class StateArtist:
         self._show_global(stmt, color=self.plot_params.global_rz_color)
 
     def show_cz(self, stmt: move.CZ):
-        words = tuple(
-            self.arch_spec.words[word_id]
-            for word_id in self.arch_spec.zones[stmt.zone_address.zone_id]
-        )
+        zone_id = stmt.zone_address.zone_id
 
         y_min = float("inf")
         y_max = float("-inf")
 
-        for word in words:
-            for _, y_pos in word.all_positions():
-                y_min = min(y_min, y_pos)
-                y_max = max(y_max, y_pos)
+        for word_id in range(len(self.arch_spec.words)):
+            word = self.arch_spec.words[word_id]
+            for site_id in range(len(word.site_indices)):
+                from bloqade.lanes.layout.encoding import LocationAddress
+
+                pos = self.arch_spec.get_position(
+                    LocationAddress(word_id, site_id, zone_id)
+                )
+                y_min = min(y_min, pos[1])
+                y_max = max(y_max, pos[1])
 
         x_min, x_max = self.arch_spec.x_bounds
         y_width = y_max - y_min

@@ -18,6 +18,7 @@ from bloqade.lanes.layout import (
 )
 
 if TYPE_CHECKING:
+    from bloqade.lanes.bytecode._native import Zone as _RustZone
     from bloqade.lanes.layout.arch import ArchSpec
     from bloqade.lanes.search.tree import ConfigurationTree
 
@@ -51,6 +52,9 @@ class BusContext:
     arch_spec: ArchSpec
     pos_to_loc: dict[tuple[float, float], LocationAddress] = field(repr=False)
     collision_srcs: frozenset[LocationAddress] = field(repr=False)
+    src_to_lane: dict[LocationAddress, LaneAddress] = field(
+        repr=False, default_factory=dict
+    )
 
     @classmethod
     def from_tree(
@@ -60,37 +64,64 @@ class BusContext:
         move_type: MoveType,
         bus_id: int,
         direction: Direction,
+        zone_id: int | None = None,
     ) -> BusContext:
-        """Build a BusContext from a ConfigurationTree and occupied set."""
-        arch_spec = tree.arch_spec
-        bus = (
-            arch_spec.site_buses if move_type == MoveType.SITE else arch_spec.word_buses
-        )[bus_id]
+        """Build a BusContext from a ConfigurationTree and occupied set.
 
-        if move_type == MoveType.SITE:
-            src_locs = [
-                LocationAddress(w, s) for w in arch_spec.has_site_buses for s in bus.src
-            ]
+        Args:
+            tree: The configuration tree.
+            occupied: Set of occupied locations.
+            move_type: Type of move (SITE or WORD).
+            bus_id: Bus index.
+            direction: Move direction.
+            zone_id: If provided, restrict sources to this zone only.
+        """
+        arch_spec = tree.arch_spec
+
+        # Aggregate executable source locations by evaluating lane endpoints.
+        src_locs: list[LocationAddress] = []
+        src_to_lane: dict[LocationAddress, LaneAddress] = {}
+        zone_iter: list[tuple[int, _RustZone]] = []
+        if zone_id is not None:
+            zone_iter = [(zone_id, arch_spec.zones[zone_id])]
         else:
-            src_locs = [
-                LocationAddress(w, s) for w in bus.src for s in arch_spec.has_word_buses
-            ]
+            zone_iter = list(enumerate(arch_spec.zones))
+
+        for zid, zone in zone_iter:
+            if move_type == MoveType.SITE:
+                if bus_id < len(zone.site_buses):
+                    bus = zone.site_buses[bus_id]
+                    for w in zone.words_with_site_buses:
+                        for s in bus.src:
+                            lane = LaneAddress(move_type, w, s, bus_id, direction, zid)
+                            src, _ = arch_spec.get_endpoints(lane)
+                            src_locs.append(src)
+                            src_to_lane[src] = lane
+            else:
+                if bus_id < len(zone.word_buses):
+                    bus = zone.word_buses[bus_id]
+                    for w in bus.src:
+                        for s in zone.sites_with_word_buses:
+                            lane = LaneAddress(move_type, w, s, bus_id, direction, zid)
+                            src, _ = arch_spec.get_endpoints(lane)
+                            src_locs.append(src)
+                            src_to_lane[src] = lane
 
         pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
         for loc in src_locs:
             pos = arch_spec.get_position(loc)
             pos_to_loc[pos] = loc
 
-        # Bus src and dst are disjoint, so follow-moves cannot occur.
+        # Track source locations whose destination is occupied. `is_valid_rect`
+        # checks source membership, so collision_srcs must store sources.
         collision: set[LocationAddress] = set()
         for loc in src_locs:
-            if loc in occupied:
-                lane = LaneAddress(
-                    move_type, loc.word_id, loc.site_id, bus_id, direction
-                )
-                _, dst = arch_spec.get_endpoints(lane)
-                if dst in occupied:
-                    collision.add(loc)
+            lane = src_to_lane.get(loc)
+            if lane is None:
+                continue
+            _, dst = arch_spec.get_endpoints(lane)
+            if dst in occupied:
+                collision.add(loc)
 
         return cls(
             move_type=move_type,
@@ -98,18 +129,21 @@ class BusContext:
             direction=direction,
             arch_spec=arch_spec,
             pos_to_loc=pos_to_loc,
+            src_to_lane=src_to_lane,
             collision_srcs=frozenset(collision),
         )
 
     # --- Primitives ---
 
-    def is_valid_rect(self, xs: set[float], ys: set[float]) -> bool:
+    def is_valid_rect(
+        self, xs: set[float], ys: set[float], movers: set[LocationAddress]
+    ) -> bool:
         """Check if every position in the X * Y rectangle is a valid bus
         source with no collision."""
         for x in xs:
             for y in ys:
                 loc = self.pos_to_loc.get((x, y))
-                if loc is None or loc in self.collision_srcs:
+                if loc is None or (loc not in movers or loc in self.collision_srcs):
                     return False
         return True
 
@@ -120,15 +154,9 @@ class BusContext:
             for y in ys:
                 loc = self.pos_to_loc.get((x, y))
                 if loc is not None:
-                    lanes.append(
-                        LaneAddress(
-                            self.move_type,
-                            loc.word_id,
-                            loc.site_id,
-                            self.bus_id,
-                            self.direction,
-                        )
-                    )
+                    lane = self.src_to_lane.get(loc)
+                    assert lane is not None
+                    lanes.append(lane)
         return frozenset(lanes)
 
     def lane_position(self, lane: LaneAddress) -> tuple[float, float]:
@@ -150,14 +178,16 @@ class BusContext:
            Clusters that cannot merge are marked solved and removed from
            the active set so they don't slow down later rounds.
         """
-        clusters = self.greedy_init(entries)
-        solved = self.merge_clusters(clusters)
+        movers = set(
+            src for src, _ in map(self.arch_spec.get_endpoints, entries.values())
+        )
+        clusters = self.greedy_init(entries, movers)
+        solved = self.merge_clusters(clusters, movers)
 
         return [moveset for xs, ys in solved if (moveset := self.rect_to_lanes(xs, ys))]
 
     def greedy_init(
-        self,
-        entries: dict[int, LaneAddress],
+        self, entries: dict[int, LaneAddress], movers: set[LocationAddress]
     ) -> list[Cluster]:
         """Form initial clusters via greedy sequential expansion.
 
@@ -167,6 +197,7 @@ class BusContext:
         """
         clusters: list[Cluster] = []
         remaining = dict(entries)
+        # movers: get all source locations for every lande address in entries
 
         while remaining:
             xs: set[float] = set()
@@ -182,7 +213,7 @@ class BusContext:
                 new_xs = xs | {x}
                 new_ys = ys | {y}
 
-                if self.is_valid_rect(new_xs, new_ys):
+                if self.is_valid_rect(new_xs, new_ys, movers):
                     xs = new_xs
                     ys = new_ys
                 else:
@@ -198,8 +229,7 @@ class BusContext:
         return clusters
 
     def merge_clusters(
-        self,
-        clusters: list[Cluster],
+        self, clusters: list[Cluster], movers: set[LocationAddress]
     ) -> list[Cluster]:
         """Merge clusters until no more merges are possible.
 
@@ -224,7 +254,7 @@ class BusContext:
                         continue
                     merged_xs = clusters[i][0] | clusters[j][0]
                     merged_ys = clusters[i][1] | clusters[j][1]
-                    if self.is_valid_rect(merged_xs, merged_ys):
+                    if self.is_valid_rect(merged_xs, merged_ys, movers):
                         clusters[i] = (merged_xs, merged_ys)
                         consumed.add(j)
                         merged_flags[i] = True

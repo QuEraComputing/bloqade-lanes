@@ -13,14 +13,14 @@ from bloqade.lanes.analysis.placement import (
     ExecuteMeasure,
     PlacementStrategyABC,
 )
+from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
 from bloqade.lanes.layout import (
     Direction,
     LaneAddress,
     LocationAddress,
     MoveType,
-    ZoneAddress,
 )
 from bloqade.lanes.search import (
     BFSTraversal,
@@ -78,7 +78,7 @@ class EntropyPlacementTraversal(PlacementTraversalABC):
 
     search_params: SearchParams = field(default_factory=SearchParams)
     max_depth: int | None = None
-    max_expansions: int | None = 300
+    max_expansions: int | None = 1000
     on_search_step: OnSearchStep | None = None
 
     def path_to_target_config(
@@ -154,14 +154,10 @@ class BFSPlacementTraversal(PlacementTraversalABC):
 class RustPlacementTraversal:
     """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
 
-    strategy: str = "astar"
+    strategy: SearchStrategy = SearchStrategy.ASTAR
     top_c: int = 3
     max_movesets_per_group: int = 3
     max_expansions: int | None = 300
-    weight: float = 1.0
-    mobility_weight: float = 0.0
-    restarts: int = 1
-    free_riders: str = "off"
 
 
 @dataclass
@@ -198,6 +194,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         self._trace_cz_index = value
 
     def __post_init__(self) -> None:
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
         if not isinstance(
             self.traversal, (PlacementTraversalABC, RustPlacementTraversal)
         ):
@@ -293,7 +290,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
-            active_cz_zones=frozenset([layout.ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_program,
         )
 
@@ -315,9 +312,14 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
 
-        initial = [(qid, loc.word_id, loc.site_id) for qid, loc in placement.items()]
-        target_tuples = [(qid, loc.word_id, loc.site_id) for qid, loc in target.items()]
-        blocked = [(loc.word_id, loc.site_id) for loc in state.occupied]
+        initial = [
+            (qid, loc.zone_id, loc.word_id, loc.site_id)
+            for qid, loc in placement.items()
+        ]
+        target_tuples = [
+            (qid, loc.zone_id, loc.word_id, loc.site_id) for qid, loc in target.items()
+        ]
+        blocked = [(loc.zone_id, loc.word_id, loc.site_id) for loc in state.occupied]
 
         solver = self._get_rust_solver()
         result = solver.solve(
@@ -328,10 +330,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             strategy=self.traversal.strategy,
             top_c=self.traversal.top_c,
             max_movesets_per_group=self.traversal.max_movesets_per_group,
-            weight=self.traversal.weight,
-            mobility_weight=self.traversal.mobility_weight,
-            restarts=self.traversal.restarts,
-            free_riders=self.traversal.free_riders,
         )
 
         if result.status != "solved":
@@ -339,13 +337,15 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
         move_layers = tuple(
             tuple(
-                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d])
-                for d, mt, word, site, bus in step
+                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d], zone)
+                for d, mt, zone, word, site, bus in step
             )
             for step in result.move_layers
         )
 
-        goal_map = {qid: LocationAddress(w, s) for qid, w, s in result.goal_config}
+        goal_map = {
+            qid: LocationAddress(w, s, z) for qid, z, w, s in result.goal_config
+        }
         goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
 
         move_count = tuple(
@@ -357,7 +357,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
-            active_cz_zones=frozenset([ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_layers,
         )
 
@@ -384,5 +384,5 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(0) for _ in qubits),
+            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
         )

@@ -53,13 +53,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
                 f"Number of qubits in circuit ({len(all_qubits)}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
             )
 
-        available_addresses = set(
-            [
-                layout.LocationAddress(word_id, site_id)
-                for word_id in self.arch_spec._home_words
-                for site_id in range(len(self.arch_spec.words[word_id].site_indices))
-            ]
-        )
+        available_addresses = set(self.arch_spec.home_sites)
 
         qubit_map: dict[int, layout.LocationAddress] = {}
         layout_map: dict[layout.LocationAddress, int] = {}

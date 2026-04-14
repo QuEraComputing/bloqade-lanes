@@ -8,6 +8,9 @@ for lane lookup instead of hardcoded bus arithmetic.
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
 from bloqade.lanes.layout.path import PathFinder
+from bloqade.lanes.search import ConfigurationNode, ConfigurationTree
+
+from .physical_placement import EntropyPlacementTraversal
 
 
 def _intra_word_moves(
@@ -49,98 +52,23 @@ def _compute_move_layers(
     destination. Single-hop moves (direct bus connection) are batched
     by bus_id. Multi-hop moves are sequenced individually using PathFinder.
     """
-    diffs = [
-        (src, dst)
-        for src, dst in zip(state_before.layout, state_after.layout)
+    target = {
+        atom_id: dst
+        for (atom_id, src), dst in zip(
+            enumerate(state_before.layout), state_after.layout
+        )
         if src != dst
-    ]
+    }
+    root_node = ConfigurationNode(
+        dict(enumerate(state_before.layout)), external_occupied=state_before.occupied
+    )
+    tree = ConfigurationTree(arch_spec, root_node, state_before.occupied)
 
-    # Group by same-word vs cross-word
-    same_word: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
-    cross_word: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
-    for src, dst in diffs:
-        if src.word_id == dst.word_id:
-            same_word.append((src, dst))
-        else:
-            cross_word.append((src, dst))
+    traversal = EntropyPlacementTraversal()
+    result = traversal.path_to_target_config(tree=tree, target=target)
 
-    moves: list[tuple[layout.LaneAddress, ...]] = []
-
-    if cross_word:
-        # Try direct single-hop word bus first, fall back to PathFinder
-        site_adjustments: list[
-            tuple[layout.LocationAddress, layout.LocationAddress]
-        ] = []
-        word_bus_lanes: dict[int, list[layout.LaneAddress]] = {}
-        multi_hop: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
-
-        for src, dst in cross_word:
-            # Try direct word bus — prefer source site (no adjustment needed),
-            # then destination site, then any available site
-            candidate_sites = [src.site_id]
-            if dst.site_id != src.site_id:
-                candidate_sites.append(dst.site_id)
-            candidate_sites.extend(
-                s for s in sorted(arch_spec.has_word_buses) if s not in candidate_sites
-            )
-            for wb_site in candidate_sites:
-                if wb_site not in arch_spec.has_word_buses:
-                    continue
-                wb_src = layout.LocationAddress(src.word_id, wb_site)
-                wb_dst = layout.LocationAddress(dst.word_id, wb_site)
-                lane = arch_spec.get_lane_address(wb_src, wb_dst)
-                if lane is not None:
-                    # Site adjustment before word bus if needed
-                    if src.site_id != wb_site:
-                        site_adjustments.append(
-                            (src, layout.LocationAddress(src.word_id, wb_site))
-                        )
-                    word_bus_lanes.setdefault(lane.bus_id, []).append(lane)
-                    # Site adjustment after word bus if needed
-                    if wb_site != dst.site_id:
-                        same_word.append(
-                            (layout.LocationAddress(dst.word_id, wb_site), dst)
-                        )
-                    break
-            else:
-                # No direct word bus — need multi-hop
-                multi_hop.append((src, dst))
-
-        # Execute site adjustments first
-        if site_adjustments:
-            for word_id in {s.word_id for s, _ in site_adjustments}:
-                word_diffs = [
-                    (s, d) for s, d in site_adjustments if s.word_id == word_id
-                ]
-                moves.extend(_intra_word_moves(arch_spec, word_diffs))
-
-        # Then single-hop word bus moves (batched by bus)
-        for lanes in word_bus_lanes.values():
-            moves.append(tuple(lanes))
-
-        # Then multi-hop moves (sequenced individually via PathFinder)
-        if multi_hop:
-            # Collect all occupied positions (qubit layouts + external obstacles)
-            all_positions = (
-                set(state_before.layout)
-                | set(state_after.layout)
-                | set(state_before.occupied)
-            )
-            path_finder = PathFinder(arch_spec)
-            for src, dst in multi_hop:
-                occupied = frozenset(all_positions - {src, dst})
-                result = path_finder.find_path(src, dst, occupied=occupied)
-                assert result is not None, f"No path from {src} to {dst}"
-                lanes, _ = result
-                for lane in lanes:
-                    moves.append((lane,))
-
-    # Same-word moves: site bus only
-    for word_id in {s.word_id for s, _ in same_word}:
-        word_diffs = [(s, d) for s, d in same_word if s.word_id == word_id]
-        moves.extend(_intra_word_moves(arch_spec, word_diffs))
-
-    return tuple(moves)
+    assert result.goal_node, "no solution found"
+    return result.goal_nodes[0].to_move_program()
 
 
 # Public API

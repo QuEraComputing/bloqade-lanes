@@ -6,8 +6,8 @@ use std::fmt;
 
 use thiserror::Error;
 
-use super::addr::{LaneAddr, LocationAddr, MoveType};
-use super::types::{ArchSpec, Bus, Word};
+use super::addr::{Direction, LaneAddr, LocationAddr, MoveType, SiteRef, WordRef, ZonedWordRef};
+use super::types::{ArchSpec, Bus, Word, Zone};
 use super::validate::ArchSpecError;
 
 /// Error returned when loading an arch spec from JSON fails.
@@ -31,9 +31,13 @@ impl From<Vec<ArchSpecError>> for ArchSpecLoadError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocationGroupError {
     /// A location address appears more than once in the group.
-    DuplicateAddress { address: u32 },
+    DuplicateAddress { address: u64 },
     /// A location address is invalid per the arch spec.
-    InvalidAddress { word_id: u32, site_id: u32 },
+    InvalidAddress {
+        zone_id: u32,
+        word_id: u32,
+        site_id: u32,
+    },
 }
 
 impl fmt::Display for LocationGroupError {
@@ -43,15 +47,19 @@ impl fmt::Display for LocationGroupError {
                 let addr = LocationAddr::decode(*address);
                 write!(
                     f,
-                    "duplicate location address word_id={}, site_id={}",
-                    addr.word_id, addr.site_id
+                    "duplicate location address zone_id={}, word_id={}, site_id={}",
+                    addr.zone_id, addr.word_id, addr.site_id
                 )
             }
-            LocationGroupError::InvalidAddress { word_id, site_id } => {
+            LocationGroupError::InvalidAddress {
+                zone_id,
+                word_id,
+                site_id,
+            } => {
                 write!(
                     f,
-                    "invalid location word_id={}, site_id={}",
-                    word_id, site_id
+                    "invalid location zone_id={}, word_id={}, site_id={}",
+                    zone_id, word_id, site_id
                 )
             }
         }
@@ -66,12 +74,12 @@ pub enum LaneGroupError {
     DuplicateAddress { address: (u32, u32) },
     /// A lane address is invalid per the arch spec.
     InvalidLane { message: String },
-    /// Lanes have inconsistent bus_id, move_type, or direction.
+    /// Lanes have inconsistent bus_id, move_type, direction, or zone_id.
     Inconsistent { message: String },
-    /// Lane word_id not in words_with_site_buses.
-    WordNotInSiteBusList { word_id: u32 },
-    /// Lane site_id not in sites_with_word_buses.
-    SiteNotInWordBusList { site_id: u32 },
+    /// Lane word_id not in zone's words_with_site_buses.
+    WordNotInSiteBusList { zone_id: u32, word_id: u32 },
+    /// Lane site_id not in zone's sites_with_word_buses.
+    SiteNotInWordBusList { zone_id: u32, site_id: u32 },
     /// Lane group violates AOD grid constraint (e.g. not a complete grid).
     AODConstraintViolation { message: String },
 }
@@ -89,11 +97,19 @@ impl fmt::Display for LaneGroupError {
             LaneGroupError::Inconsistent { message } => {
                 write!(f, "lane group inconsistent: {}", message)
             }
-            LaneGroupError::WordNotInSiteBusList { word_id } => {
-                write!(f, "word_id {} not in words_with_site_buses", word_id)
+            LaneGroupError::WordNotInSiteBusList { zone_id, word_id } => {
+                write!(
+                    f,
+                    "zone {}: word_id {} not in words_with_site_buses",
+                    zone_id, word_id
+                )
             }
-            LaneGroupError::SiteNotInWordBusList { site_id } => {
-                write!(f, "site_id {} not in sites_with_word_buses", site_id)
+            LaneGroupError::SiteNotInWordBusList { zone_id, site_id } => {
+                write!(
+                    f,
+                    "zone {}: site_id {} not in sites_with_word_buses",
+                    zone_id, site_id
+                )
             }
             LaneGroupError::AODConstraintViolation { message } => {
                 write!(f, "AOD constraint violation: {}", message)
@@ -104,39 +120,59 @@ impl fmt::Display for LaneGroupError {
 
 impl std::error::Error for LaneGroupError {}
 
-// --- Bus methods ---
+// --- Bus resolve methods ---
 
-impl Bus {
-    /// Given a source value, return the destination value (forward move).
-    /// For site buses, this maps source site → destination site.
-    /// For word buses, this maps source word → destination word.
-    pub fn resolve_forward(&self, src: u32) -> Option<u32> {
+impl Bus<SiteRef> {
+    /// Given a source site, return the destination site (forward move).
+    pub fn resolve_forward(&self, src: u16) -> Option<u16> {
         self.src
             .iter()
-            .position(|&s| s == src)
-            .and_then(|i| self.dst.get(i).copied())
+            .position(|s| s.0 == src)
+            .and_then(|i| self.dst.get(i).map(|d| d.0))
     }
 
-    /// Given a destination value, return the source value (backward move).
-    /// For site buses, this maps destination site → source site.
-    /// For word buses, this maps destination word → source word.
-    pub fn resolve_backward(&self, dst: u32) -> Option<u32> {
+    /// Given a destination site, return the source site (backward move).
+    pub fn resolve_backward(&self, dst: u16) -> Option<u16> {
         self.dst
             .iter()
-            .position(|&d| d == dst)
-            .and_then(|i| self.src.get(i).copied())
+            .position(|d| d.0 == dst)
+            .and_then(|i| self.src.get(i).map(|s| s.0))
     }
 }
 
-// --- Word methods ---
+impl Bus<WordRef> {
+    /// Given a source word, return the destination word (forward move).
+    pub fn resolve_forward(&self, src: u16) -> Option<u16> {
+        self.src
+            .iter()
+            .position(|s| s.0 == src)
+            .and_then(|i| self.dst.get(i).map(|d| d.0))
+    }
 
-impl Word {
-    /// Resolve a site's grid indices to physical (x, y) coordinates.
-    pub fn site_position(&self, site_idx: usize) -> Option<(f64, f64)> {
-        let pair = self.site_indices.get(site_idx)?;
-        let x = self.positions.x_position(pair[0] as usize)?;
-        let y = self.positions.y_position(pair[1] as usize)?;
-        Some((x, y))
+    /// Given a destination word, return the source word (backward move).
+    pub fn resolve_backward(&self, dst: u16) -> Option<u16> {
+        self.dst
+            .iter()
+            .position(|d| d.0 == dst)
+            .and_then(|i| self.src.get(i).map(|s| s.0))
+    }
+}
+
+impl Bus<ZonedWordRef> {
+    /// Given a source ZonedWordRef, return the destination (forward move).
+    pub fn resolve_forward(&self, src: &ZonedWordRef) -> Option<&ZonedWordRef> {
+        self.src
+            .iter()
+            .position(|s| s == src)
+            .and_then(|i| self.dst.get(i))
+    }
+
+    /// Given a destination ZonedWordRef, return the source (backward move).
+    pub fn resolve_backward(&self, dst: &ZonedWordRef) -> Option<&ZonedWordRef> {
+        self.dst
+            .iter()
+            .position(|d| d == dst)
+            .and_then(|i| self.src.get(i))
     }
 }
 
@@ -159,68 +195,82 @@ impl ArchSpec {
 
     // -- Lookup helpers --
 
+    /// Look up a word by its index.
     pub fn word_by_id(&self, id: u32) -> Option<&Word> {
-        self.geometry.words.get(id as usize)
+        self.words.get(id as usize)
     }
 
-    pub fn zone_by_id(&self, id: u32) -> Option<&super::types::Zone> {
+    /// Look up a zone by its index.
+    pub fn zone_by_id(&self, id: u32) -> Option<&Zone> {
         self.zones.get(id as usize)
-    }
-
-    pub fn site_bus_by_id(&self, id: u32) -> Option<&Bus> {
-        self.buses.site_buses.get(id as usize)
-    }
-
-    pub fn word_bus_by_id(&self, id: u32) -> Option<&Bus> {
-        self.buses.word_buses.get(id as usize)
     }
 
     // -- Position resolution --
 
     /// Resolve a LocationAddr to physical (x, y) coordinates.
-    pub fn location_position(&self, loc: &crate::arch::addr::LocationAddr) -> Option<(f64, f64)> {
-        let word = self.word_by_id(loc.word_id)?;
-        word.site_position(loc.site_id as usize)
+    ///
+    /// Uses the zone's grid and the word's site index pair to compute
+    /// the physical position.
+    pub fn location_position(&self, loc: &LocationAddr) -> Option<(f64, f64)> {
+        let zone = self.zones.get(loc.zone_id as usize)?;
+        let word = self.words.get(loc.word_id as usize)?;
+        let site = word.sites.get(loc.site_id as usize)?;
+        let x = zone.grid.x_position(site[0] as usize)?;
+        let y = zone.grid.y_position(site[1] as usize)?;
+        Some((x, y))
     }
 
     /// Resolve a `LaneAddr` to its source and destination `LocationAddr` pair.
     ///
     /// Returns `Some((src, dst))` if the lane can be resolved through the bus,
-    /// or `None` if the lane references invalid words, sites, or buses.
-    pub fn lane_endpoints(
-        &self,
-        lane: &crate::arch::addr::LaneAddr,
-    ) -> Option<(LocationAddr, LocationAddr)> {
-        use crate::arch::addr::{Direction, MoveType};
-
+    /// or `None` if the lane references invalid zones, words, sites, or buses.
+    pub fn lane_endpoints(&self, lane: &LaneAddr) -> Option<(LocationAddr, LocationAddr)> {
         // Validate the lane address up front so callers always get None
-        // for invalid lanes (e.g. out-of-range word_id or site_id).
+        // for invalid lanes (e.g. out-of-range zone_id, word_id, or site_id).
         if !self.check_lane(lane).is_empty() {
             return None;
         }
+
+        let zone = self.zone_by_id(lane.zone_id)?;
 
         // In the lane address convention, site_id and word_id always encode
         // the forward-direction source. The direction field only controls
         // which endpoint is returned as src vs dst.
         let fwd_src = LocationAddr {
+            zone_id: lane.zone_id,
             word_id: lane.word_id,
             site_id: lane.site_id,
         };
 
         let fwd_dst = match lane.move_type {
             MoveType::SiteBus => {
-                let bus = self.site_bus_by_id(lane.bus_id)?;
-                let dst_site = bus.resolve_forward(lane.site_id)?;
+                let bus = zone.site_buses.get(lane.bus_id as usize)?;
+                let dst_site = bus.resolve_forward(lane.site_id as u16)?;
                 LocationAddr {
+                    zone_id: lane.zone_id,
                     word_id: lane.word_id,
-                    site_id: dst_site,
+                    site_id: dst_site as u32,
                 }
             }
             MoveType::WordBus => {
-                let bus = self.word_bus_by_id(lane.bus_id)?;
-                let dst_word = bus.resolve_forward(lane.word_id)?;
+                let bus = zone.word_buses.get(lane.bus_id as usize)?;
+                let dst_word = bus.resolve_forward(lane.word_id as u16)?;
                 LocationAddr {
-                    word_id: dst_word,
+                    zone_id: lane.zone_id,
+                    word_id: dst_word as u32,
+                    site_id: lane.site_id,
+                }
+            }
+            MoveType::ZoneBus => {
+                let bus = self.zone_buses.get(lane.bus_id as usize)?;
+                let src_ref = ZonedWordRef {
+                    zone_id: lane.zone_id as u8,
+                    word_id: lane.word_id as u16,
+                };
+                let dst_ref = bus.resolve_forward(&src_ref)?;
+                LocationAddr {
+                    zone_id: dst_ref.zone_id as u32,
+                    word_id: dst_ref.word_id as u32,
                     site_id: lane.site_id,
                 }
             }
@@ -232,14 +282,15 @@ impl ArchSpec {
         }
     }
 
-    /// Get the CZ pair (blockaded location) for a given location.
+    /// Get the CZ partner for a given location.
     ///
-    /// Derives the partner from `entangling_zones` word pairs: if word `w_a`
-    /// is paired with `w_b`, then site `i` in `w_a` maps to site `i` in `w_b`.
-    /// Returns `None` for words not in any entangling pair.
-    pub fn get_blockaded_location(&self, loc: &LocationAddr) -> Option<LocationAddr> {
-        // Find partner word from entangling_zones pairs
-        let partner_word = self.entangling_zones.iter().flatten().find_map(|pair| {
+    /// Searches `zones[loc.zone_id].entangling_pairs` for a pair containing
+    /// `loc.word_id`. Returns the partner in the **same zone** with the paired
+    /// word_id and same site_id. Returns `None` if the word is not in any
+    /// entangling pair within its zone.
+    pub fn get_cz_partner(&self, loc: &LocationAddr) -> Option<LocationAddr> {
+        let zone = self.zones.get(loc.zone_id as usize)?;
+        let partner_word = zone.entangling_pairs.iter().find_map(|pair| {
             if pair[0] == loc.word_id {
                 Some(pair[1])
             } else if pair[1] == loc.word_id {
@@ -249,6 +300,7 @@ impl ArchSpec {
             }
         })?;
         Some(LocationAddr {
+            zone_id: loc.zone_id,
             word_id: partner_word,
             site_id: loc.site_id,
         })
@@ -256,31 +308,55 @@ impl ArchSpec {
 
     // -- Address validation --
 
-    /// Check whether a location address (word_id, site_id) is valid.
-    pub fn check_location(&self, loc: &crate::arch::addr::LocationAddr) -> Option<String> {
-        let num_words = self.geometry.words.len() as u32;
-        let sites_per_word = self.geometry.sites_per_word;
-        if loc.word_id >= num_words || loc.site_id >= sites_per_word {
-            Some(format!(
-                "invalid location word_id={}, site_id={}",
-                loc.word_id, loc.site_id
-            ))
-        } else {
-            None
+    /// Check whether a location address (zone_id, word_id, site_id) is valid.
+    pub fn check_location(&self, loc: &LocationAddr) -> Option<String> {
+        let num_zones = self.zones.len() as u32;
+        let num_words = self.words.len() as u32;
+        let sites_per_word = self.sites_per_word() as u32;
+
+        if loc.zone_id >= num_zones {
+            return Some(format!(
+                "invalid location zone_id={} (num_zones={})",
+                loc.zone_id, num_zones
+            ));
         }
+        if loc.word_id >= num_words {
+            return Some(format!(
+                "invalid location word_id={} (num_words={})",
+                loc.word_id, num_words
+            ));
+        }
+        if loc.site_id >= sites_per_word {
+            return Some(format!(
+                "invalid location site_id={} (sites_per_word={})",
+                loc.site_id, sites_per_word
+            ));
+        }
+        None
     }
 
     /// Check whether a lane address is valid.
     ///
-    /// Validates that the bus exists, word/site are in range, and the
-    /// site/word is a valid forward source for the bus. In the lane address
-    /// convention, `site_id` and `word_id` always encode the forward-direction
-    /// source — the `direction` field only controls which endpoint is src vs
-    /// dst, not which site/word is encoded.
+    /// Validates that the zone and bus exist, word/site are in range, and the
+    /// site/word is a valid forward source for the bus. For SiteBus/WordBus,
+    /// buses are looked up from the zone. For ZoneBus, buses are looked up
+    /// from `self.zone_buses`.
     pub fn check_lane(&self, addr: &LaneAddr) -> Vec<String> {
-        let num_words = self.geometry.words.len() as u32;
-        let sites_per_word = self.geometry.sites_per_word;
+        let num_zones = self.zones.len() as u32;
+        let num_words = self.words.len() as u32;
+        let sites_per_word = self.sites_per_word() as u32;
         let mut errors = Vec::new();
+
+        // Validate zone_id first since other checks depend on it
+        if addr.zone_id >= num_zones {
+            errors.push(format!(
+                "zone_id {} out of range (num_zones={})",
+                addr.zone_id, num_zones
+            ));
+            return errors;
+        }
+
+        let zone = &self.zones[addr.zone_id as usize];
 
         match addr.move_type {
             MoveType::SiteBus => {
@@ -290,31 +366,26 @@ impl ArchSpec {
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
                 }
-                if let Some(bus) = self.site_bus_by_id(addr.bus_id) {
-                    // Per-bus words take precedence over global words_with_site_buses
-                    if addr.word_id < num_words {
-                        if let Some(ref bus_words) = bus.words {
-                            if !bus_words.contains(&addr.word_id) {
-                                errors.push(format!(
-                                    "word_id {} not in site_bus {} words list",
-                                    addr.word_id, addr.bus_id
-                                ));
-                            }
-                        } else if !self.words_with_site_buses.contains(&addr.word_id) {
-                            errors.push(format!(
-                                "word_id {} not in words_with_site_buses",
-                                addr.word_id
-                            ));
-                        }
-                    }
-                    if errors.is_empty() && bus.resolve_forward(addr.site_id).is_none() {
+                if let Some(bus) = zone.site_buses.get(addr.bus_id as usize) {
+                    if addr.word_id < num_words
+                        && !zone.words_with_site_buses.contains(&addr.word_id)
+                    {
                         errors.push(format!(
-                            "site_id {} is not a valid source for site_bus {}",
-                            addr.site_id, addr.bus_id
+                            "word_id {} not in zone {} words_with_site_buses",
+                            addr.word_id, addr.zone_id
+                        ));
+                    }
+                    if errors.is_empty() && bus.resolve_forward(addr.site_id as u16).is_none() {
+                        errors.push(format!(
+                            "site_id {} is not a valid source for zone {} site_bus {}",
+                            addr.site_id, addr.zone_id, addr.bus_id
                         ));
                     }
                 } else {
-                    errors.push(format!("unknown site_bus id {}", addr.bus_id));
+                    errors.push(format!(
+                        "unknown site_bus id {} in zone {}",
+                        addr.bus_id, addr.zone_id
+                    ));
                 }
             }
             MoveType::WordBus => {
@@ -323,21 +394,46 @@ impl ArchSpec {
                 }
                 if addr.site_id >= sites_per_word {
                     errors.push(format!("site_id {} out of range", addr.site_id));
-                } else if !self.sites_with_word_buses.contains(&addr.site_id) {
+                } else if !zone.sites_with_word_buses.contains(&addr.site_id) {
                     errors.push(format!(
-                        "site_id {} not in sites_with_word_buses",
-                        addr.site_id
+                        "site_id {} not in zone {} sites_with_word_buses",
+                        addr.site_id, addr.zone_id
                     ));
                 }
-                if let Some(bus) = self.word_bus_by_id(addr.bus_id) {
-                    if errors.is_empty() && bus.resolve_forward(addr.word_id).is_none() {
+                if let Some(bus) = zone.word_buses.get(addr.bus_id as usize) {
+                    if errors.is_empty() && bus.resolve_forward(addr.word_id as u16).is_none() {
                         errors.push(format!(
-                            "word_id {} is not a valid source for word_bus {}",
-                            addr.word_id, addr.bus_id
+                            "word_id {} is not a valid source for zone {} word_bus {}",
+                            addr.word_id, addr.zone_id, addr.bus_id
                         ));
                     }
                 } else {
-                    errors.push(format!("unknown word_bus id {}", addr.bus_id));
+                    errors.push(format!(
+                        "unknown word_bus id {} in zone {}",
+                        addr.bus_id, addr.zone_id
+                    ));
+                }
+            }
+            MoveType::ZoneBus => {
+                if addr.word_id >= num_words {
+                    errors.push(format!("word_id {} out of range", addr.word_id));
+                }
+                if addr.site_id >= sites_per_word {
+                    errors.push(format!("site_id {} out of range", addr.site_id));
+                }
+                if let Some(bus) = self.zone_buses.get(addr.bus_id as usize) {
+                    let src_ref = ZonedWordRef {
+                        zone_id: addr.zone_id as u8,
+                        word_id: addr.word_id as u16,
+                    };
+                    if errors.is_empty() && bus.resolve_forward(&src_ref).is_none() {
+                        errors.push(format!(
+                            "zone_id={}, word_id={} is not a valid source for zone_bus {}",
+                            addr.zone_id, addr.word_id, addr.bus_id
+                        ));
+                    }
+                } else {
+                    errors.push(format!("unknown zone_bus id {}", addr.bus_id));
                 }
             }
         }
@@ -345,7 +441,7 @@ impl ArchSpec {
     }
 
     /// Check whether a zone address is valid.
-    pub fn check_zone(&self, zone: &crate::arch::addr::ZoneAddr) -> Option<String> {
+    pub fn check_zone(&self, zone: &super::addr::ZoneAddr) -> Option<String> {
         if self.zone_by_id(zone.zone_id).is_none() {
             Some(format!("invalid zone_id={}", zone.zone_id))
         } else {
@@ -355,7 +451,7 @@ impl ArchSpec {
 
     // -- Group validation --
 
-    /// Check that a group of lanes share consistent bus_id, move_type, and direction.
+    /// Check that a group of lanes share consistent bus_id, move_type, direction, and zone_id.
     pub fn check_lane_group_consistency(&self, lanes: &[LaneAddr]) -> Vec<String> {
         if lanes.is_empty() {
             return vec![];
@@ -364,6 +460,12 @@ impl ArchSpec {
         let mut errors = Vec::new();
 
         for lane in &lanes[1..] {
+            if lane.zone_id != first.zone_id {
+                errors.push(format!(
+                    "zone_id mismatch: expected {}, got {}",
+                    first.zone_id, lane.zone_id
+                ));
+            }
             if lane.bus_id != first.bus_id {
                 errors.push(format!(
                     "bus_id mismatch: expected {}, got {}",
@@ -387,7 +489,12 @@ impl ArchSpec {
         errors
     }
 
-    /// Check that each lane's word/site belongs to the correct bus membership list.
+    /// Check that each lane's word/site belongs to the correct zone's bus membership list.
+    ///
+    /// For SiteBus, checks zone's `words_with_site_buses`.
+    /// For WordBus, checks zone's `sites_with_word_buses`.
+    /// ZoneBus has no membership list (zone buses are global).
+    ///
     /// Returns unique `(word_ids_not_in_site_bus_list, site_ids_not_in_word_bus_list)`.
     pub fn check_lane_group_membership(&self, lanes: &[LaneAddr]) -> (Vec<u32>, Vec<u32>) {
         use std::collections::BTreeSet;
@@ -396,21 +503,24 @@ impl ArchSpec {
         let mut bad_sites = BTreeSet::new();
 
         for lane in lanes {
+            let zone = match self.zones.get(lane.zone_id as usize) {
+                Some(z) => z,
+                None => continue, // zone validation handled elsewhere
+            };
+
             match lane.move_type {
                 MoveType::SiteBus => {
-                    let allowed = self
-                        .site_bus_by_id(lane.bus_id)
-                        .and_then(|bus| bus.words.as_ref())
-                        .map(|words| words.contains(&lane.word_id))
-                        .unwrap_or_else(|| self.words_with_site_buses.contains(&lane.word_id));
-                    if !allowed {
+                    if !zone.words_with_site_buses.contains(&lane.word_id) {
                         bad_words.insert(lane.word_id);
                     }
                 }
                 MoveType::WordBus => {
-                    if !self.sites_with_word_buses.contains(&lane.site_id) {
+                    if !zone.sites_with_word_buses.contains(&lane.site_id) {
                         bad_sites.insert(lane.site_id);
                     }
+                }
+                MoveType::ZoneBus => {
+                    // Zone buses are global; no per-zone membership list.
                 }
             }
         }
@@ -432,6 +542,7 @@ impl ArchSpec {
             let bits = loc.encode();
             if checked.insert(bits) && self.check_location(loc).is_some() {
                 errors.push(LocationGroupError::InvalidAddress {
+                    zone_id: loc.zone_id,
                     word_id: loc.word_id,
                     site_id: loc.site_id,
                 });
@@ -484,11 +595,13 @@ impl ArchSpec {
                 errors.push(LaneGroupError::Inconsistent { message: msg });
             }
             let (bad_words, bad_sites) = self.check_lane_group_membership(lanes);
+            // Use the first lane's zone_id for error context (consistency already checked)
+            let zone_id = lanes[0].zone_id;
             for word_id in bad_words {
-                errors.push(LaneGroupError::WordNotInSiteBusList { word_id });
+                errors.push(LaneGroupError::WordNotInSiteBusList { zone_id, word_id });
             }
             for site_id in bad_sites {
-                errors.push(LaneGroupError::SiteNotInWordBusList { site_id });
+                errors.push(LaneGroupError::SiteNotInWordBusList { zone_id, site_id });
             }
             for msg in self.check_lane_group_geometry(lanes) {
                 errors.push(LaneGroupError::AODConstraintViolation { message: msg });
@@ -506,7 +619,8 @@ impl ArchSpec {
         let positions: Vec<(f64, f64)> = lanes
             .iter()
             .filter_map(|lane| {
-                let loc = crate::arch::addr::LocationAddr {
+                let loc = LocationAddr {
+                    zone_id: lane.zone_id,
                     word_id: lane.word_id,
                     site_id: lane.site_id,
                 };
@@ -533,7 +647,7 @@ impl ArchSpec {
 
         if actual != expected {
             vec![format!(
-                "lanes do not form a complete grid: expected {} positions ({}x × {}y), got {} unique positions",
+                "lanes do not form a complete grid: expected {} positions ({}x * {}y), got {} unique positions",
                 expected.len(),
                 unique_x.len(),
                 unique_y.len(),
@@ -547,295 +661,334 @@ impl ArchSpec {
 
 #[cfg(test)]
 mod tests {
-    use crate::arch::example_arch_spec;
+    use super::*;
+    use crate::arch::addr::{
+        Direction, LaneAddr, LocationAddr, MoveType, SiteRef, WordRef, ZoneAddr, ZonedWordRef,
+    };
+    use crate::arch::types::{Grid, Mode};
+    use crate::version::Version;
 
-    #[test]
-    fn word_by_id_found() {
-        let spec = example_arch_spec();
-        let word = spec.word_by_id(0).unwrap();
-        assert_eq!(word.site_indices.len(), 10);
+    /// Create a valid two-zone arch spec for testing.
+    /// Mirrors the helper in validate.rs tests.
+    fn make_valid_two_zone_spec() -> ArchSpec {
+        let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
+        let grid1 = Grid::from_positions(&[0.0, 7.5, 15.0], &[0.0, 4.0]);
+
+        ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![
+                Word {
+                    sites: vec![[0, 0], [0, 1]],
+                },
+                Word {
+                    sites: vec![[1, 0], [1, 1]],
+                },
+            ],
+            zones: vec![
+                Zone {
+                    name: String::new(),
+                    grid: grid0,
+                    site_buses: vec![Bus {
+                        src: vec![SiteRef(0)],
+                        dst: vec![SiteRef(1)],
+                    }],
+                    word_buses: vec![Bus {
+                        src: vec![WordRef(0)],
+                        dst: vec![WordRef(1)],
+                    }],
+                    words_with_site_buses: vec![0, 1],
+                    sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
+                },
+                Zone {
+                    name: String::new(),
+                    grid: grid1,
+                    site_buses: vec![],
+                    word_buses: vec![],
+                    words_with_site_buses: vec![],
+                    sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
+                },
+            ],
+            zone_buses: vec![Bus {
+                src: vec![ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 0,
+                }],
+                dst: vec![ZonedWordRef {
+                    zone_id: 1,
+                    word_id: 0,
+                }],
+            }],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0, 1],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+        }
     }
 
-    #[test]
-    fn word_by_id_not_found() {
-        let spec = example_arch_spec();
-        assert!(spec.word_by_id(99).is_none());
-    }
+    // ── location_position tests ──
 
     #[test]
-    fn zone_by_id_found() {
-        let spec = example_arch_spec();
-        let zone = spec.zone_by_id(0).unwrap();
-        assert_eq!(zone.words, vec![0, 1]);
-    }
-
-    #[test]
-    fn zone_by_id_not_found() {
-        let spec = example_arch_spec();
-        assert!(spec.zone_by_id(99).is_none());
-    }
-
-    #[test]
-    fn site_bus_by_id_found() {
-        let spec = example_arch_spec();
-        let bus = spec.site_bus_by_id(0).unwrap();
-        assert_eq!(bus.src, vec![0, 1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn site_bus_by_id_not_found() {
-        let spec = example_arch_spec();
-        assert!(spec.site_bus_by_id(99).is_none());
-    }
-
-    #[test]
-    fn word_bus_by_id_found() {
-        let spec = example_arch_spec();
-        let bus = spec.word_bus_by_id(0).unwrap();
-        assert_eq!(bus.src, vec![0]);
-        assert_eq!(bus.dst, vec![1]);
-    }
-
-    #[test]
-    fn word_bus_by_id_not_found() {
-        let spec = example_arch_spec();
-        assert!(spec.word_bus_by_id(99).is_none());
-    }
-
-    #[test]
-    fn site_bus_resolve_forward() {
-        let spec = example_arch_spec();
-        let bus = spec.site_bus_by_id(0).unwrap();
-        assert_eq!(bus.resolve_forward(0), Some(5));
-        assert_eq!(bus.resolve_forward(4), Some(9));
-        assert_eq!(bus.resolve_forward(99), None);
-    }
-
-    #[test]
-    fn site_bus_resolve_backward() {
-        let spec = example_arch_spec();
-        let bus = spec.site_bus_by_id(0).unwrap();
-        assert_eq!(bus.resolve_backward(5), Some(0));
-        assert_eq!(bus.resolve_backward(9), Some(4));
-        assert_eq!(bus.resolve_backward(99), None);
-    }
-
-    #[test]
-    fn word_bus_resolve_forward() {
-        let spec = example_arch_spec();
-        let bus = spec.word_bus_by_id(0).unwrap();
-        assert_eq!(bus.resolve_forward(0), Some(1));
-        assert_eq!(bus.resolve_forward(99), None);
-    }
-
-    #[test]
-    fn word_bus_resolve_backward() {
-        let spec = example_arch_spec();
-        let bus = spec.word_bus_by_id(0).unwrap();
-        assert_eq!(bus.resolve_backward(1), Some(0));
-        assert_eq!(bus.resolve_backward(99), None);
-    }
-
-    #[test]
-    fn site_position_valid() {
-        let spec = example_arch_spec();
-        let word = spec.word_by_id(0).unwrap();
-        // Site 0 is [0, 0] -> x_positions[0]=1.0, y_positions[0]=2.5
-        assert_eq!(word.site_position(0), Some((1.0, 2.5)));
-        // Site 5 is [0, 1] -> x_positions[0]=1.0, y_positions[1]=5.0
-        assert_eq!(word.site_position(5), Some((1.0, 5.0)));
-        // Site 4 is [4, 0] -> x_positions[4]=9.0, y_positions[0]=2.5
-        assert_eq!(word.site_position(4), Some((9.0, 2.5)));
-    }
-
-    #[test]
-    fn site_position_out_of_range() {
-        let spec = example_arch_spec();
-        let word = spec.word_by_id(0).unwrap();
-        assert!(word.site_position(99).is_none());
-    }
-
-    #[test]
-    fn location_position_valid() {
-        let spec = example_arch_spec();
-        let loc = crate::arch::addr::LocationAddr {
+    fn test_location_position_zone0() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 0 grid: x=[0.0, 5.0, 10.0] y=[0.0, 3.0]
+        // Word 0: sites=[(0,0), (0,1)] -> site 0 at grid[0][0] = (0.0, 0.0)
+        let pos = spec.location_position(&LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
-        };
-        assert_eq!(spec.location_position(&loc), Some((1.0, 2.5)));
+        });
+        assert_eq!(pos, Some((0.0, 0.0)));
     }
 
     #[test]
-    fn location_position_invalid_word() {
-        let spec = example_arch_spec();
-        let loc = crate::arch::addr::LocationAddr {
+    fn test_location_position_zone0_site1() {
+        let spec = make_valid_two_zone_spec();
+        // Word 0: sites=[(0,0), (0,1)] -> site 1 at grid x[0]=0.0, y[1]=3.0
+        let pos = spec.location_position(&LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 1,
+        });
+        assert_eq!(pos, Some((0.0, 3.0)));
+    }
+
+    #[test]
+    fn test_location_position_zone1() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 1 grid: x=[0.0, 7.5, 15.0] y=[0.0, 4.0]
+        // Word 1: sites=[(1,0), (1,1)] -> site 0 at grid x[1]=7.5, y[0]=0.0
+        let pos = spec.location_position(&LocationAddr {
+            zone_id: 1,
+            word_id: 1,
+            site_id: 0,
+        });
+        assert_eq!(pos, Some((7.5, 0.0)));
+    }
+
+    #[test]
+    fn test_location_position_invalid_zone() {
+        let spec = make_valid_two_zone_spec();
+        let pos = spec.location_position(&LocationAddr {
+            zone_id: 99,
+            word_id: 0,
+            site_id: 0,
+        });
+        assert!(pos.is_none());
+    }
+
+    #[test]
+    fn test_location_position_invalid_word() {
+        let spec = make_valid_two_zone_spec();
+        let pos = spec.location_position(&LocationAddr {
+            zone_id: 0,
             word_id: 99,
             site_id: 0,
-        };
-        assert!(spec.location_position(&loc).is_none());
+        });
+        assert!(pos.is_none());
     }
 
     #[test]
-    fn location_position_invalid_site() {
-        let spec = example_arch_spec();
-        let loc = crate::arch::addr::LocationAddr {
+    fn test_location_position_invalid_site() {
+        let spec = make_valid_two_zone_spec();
+        let pos = spec.location_position(&LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 99,
-        };
-        assert!(spec.location_position(&loc).is_none());
+        });
+        assert!(pos.is_none());
     }
 
-    #[test]
-    fn from_json_valid() {
-        let json = serde_json::to_string(&example_arch_spec()).unwrap();
-        let spec = super::super::ArchSpec::from_json(&json).unwrap();
-        assert_eq!(spec.version, crate::version::Version::new(2, 0));
-    }
+    // ── get_cz_partner tests ──
 
     #[test]
-    fn from_json_validated_valid() {
-        let json = serde_json::to_string(&example_arch_spec()).unwrap();
-        let spec = super::super::ArchSpec::from_json_validated(&json).unwrap();
-        assert_eq!(spec.version, crate::version::Version::new(2, 0));
-    }
-
-    #[test]
-    fn check_lane_group_consistency_empty() {
-        let spec = example_arch_spec();
-        assert!(spec.check_lane_group_consistency(&[]).is_empty());
-    }
-
-    #[test]
-    fn from_json_validated_invalid() {
-        // Missing required fields
-        let json = r#"{"version": "1.0"}"#;
-        let result = super::super::ArchSpec::from_json_validated(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn get_blockaded_location_valid() {
-        let spec = example_arch_spec();
-        // Word 0 is paired with word 1 (from entangling_zones)
-        // Site i in word 0 maps to site i in word 1
-        let loc = crate::arch::addr::LocationAddr {
+    fn test_get_cz_partner() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 0 has entangling_pairs: [[0, 1]] — word 0 paired with word 1
+        let partner = spec.get_cz_partner(&LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
-        };
-        let pair = spec.get_blockaded_location(&loc).unwrap();
-        assert_eq!(pair.word_id, 1);
-        assert_eq!(pair.site_id, 0);
+        });
+        assert_eq!(
+            partner,
+            Some(LocationAddr {
+                zone_id: 0, // same zone
+                word_id: 1, // partner word
+                site_id: 0,
+            })
+        );
     }
 
     #[test]
-    fn get_blockaded_location_reverse() {
-        let spec = example_arch_spec();
-        // Word 1 paired with word 0 (reverse direction)
-        let loc = crate::arch::addr::LocationAddr {
+    fn test_get_cz_partner_reverse() {
+        let spec = make_valid_two_zone_spec();
+        // word 1 → word 0 (reverse direction within same zone)
+        let partner = spec.get_cz_partner(&LocationAddr {
+            zone_id: 0,
             word_id: 1,
-            site_id: 3,
-        };
-        let pair = spec.get_blockaded_location(&loc).unwrap();
-        assert_eq!(pair.word_id, 0);
-        assert_eq!(pair.site_id, 3);
+            site_id: 1,
+        });
+        assert_eq!(
+            partner,
+            Some(LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 1,
+            })
+        );
     }
 
     #[test]
-    fn get_blockaded_location_unpaired_word() {
-        // Build a spec with word 0 paired but add an unpaired word
-        let mut spec = example_arch_spec();
-        // The example has 2 words, both paired. There's no unpaired word to test.
-        // Instead, create a spec where entangling_zones is empty
-        spec.entangling_zones = vec![];
-        let loc = crate::arch::addr::LocationAddr {
+    fn test_get_cz_partner_no_pair() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 1 has no entangling pairs
+        let partner = spec.get_cz_partner(&LocationAddr {
+            zone_id: 1,
             word_id: 0,
             site_id: 0,
-        };
-        assert!(spec.get_blockaded_location(&loc).is_none());
+        });
+        assert!(partner.is_none());
     }
 
     // ── lane_endpoints tests ──
 
     #[test]
-    fn lane_endpoints_site_bus_forward() {
-        let spec = example_arch_spec();
-        // Site bus 0: src=[0,1,2,3,4] dst=[5,6,7,8,9]
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_lane_endpoints_site_bus() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 0 has site_bus: src=[SiteRef(0)] dst=[SiteRef(1)]
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
         };
         let (src, dst) = spec.lane_endpoints(&lane).unwrap();
-        assert_eq!(src.word_id, 0);
-        assert_eq!(src.site_id, 0);
-        assert_eq!(dst.word_id, 0);
-        assert_eq!(dst.site_id, 5);
+        assert_eq!(
+            src,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            }
+        );
+        assert_eq!(
+            dst,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 1,
+            }
+        );
     }
 
     #[test]
-    fn lane_endpoints_site_bus_backward() {
-        let spec = example_arch_spec();
-        // Backward: same site_id (forward source), but endpoints are swapped
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Backward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_lane_endpoints_site_bus_backward() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Backward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
         };
         let (src, dst) = spec.lane_endpoints(&lane).unwrap();
-        // Backward swaps: src is the forward dst, dst is the forward src
-        assert_eq!(src.word_id, 0);
-        assert_eq!(src.site_id, 5);
-        assert_eq!(dst.word_id, 0);
-        assert_eq!(dst.site_id, 0);
+        // Backward swaps: src is forward dst, dst is forward src
+        assert_eq!(
+            src,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 1,
+            }
+        );
+        assert_eq!(
+            dst,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            }
+        );
     }
 
     #[test]
-    fn lane_endpoints_word_bus_forward() {
-        let spec = example_arch_spec();
-        // Word bus 0: src=[0] dst=[1]; site_id must be in sites_with_word_buses
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::WordBus,
+    fn test_lane_endpoints_word_bus() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 0 has word_bus: src=[WordRef(0)] dst=[WordRef(1)]
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::WordBus,
+            zone_id: 0,
             word_id: 0,
-            site_id: 5,
+            site_id: 0,
             bus_id: 0,
         };
         let (src, dst) = spec.lane_endpoints(&lane).unwrap();
-        assert_eq!(src.word_id, 0);
-        assert_eq!(src.site_id, 5);
-        assert_eq!(dst.word_id, 1);
-        assert_eq!(dst.site_id, 5);
+        assert_eq!(
+            src,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            }
+        );
+        assert_eq!(
+            dst,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 1,
+                site_id: 0,
+            }
+        );
     }
 
     #[test]
-    fn lane_endpoints_word_bus_backward() {
-        let spec = example_arch_spec();
-        // site_id must be in sites_with_word_buses
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Backward,
-            move_type: crate::arch::addr::MoveType::WordBus,
+    fn test_lane_endpoints_zone_bus() {
+        let spec = make_valid_two_zone_spec();
+        // zone_bus: src=[ZWR(0,0)] dst=[ZWR(1,0)]
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::ZoneBus,
+            zone_id: 0,
             word_id: 0,
-            site_id: 5,
+            site_id: 0,
             bus_id: 0,
         };
         let (src, dst) = spec.lane_endpoints(&lane).unwrap();
-        // Backward swaps endpoints
-        assert_eq!(src.word_id, 1);
-        assert_eq!(src.site_id, 5);
-        assert_eq!(dst.word_id, 0);
-        assert_eq!(dst.site_id, 5);
+        assert_eq!(
+            src,
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            }
+        );
+        assert_eq!(
+            dst,
+            LocationAddr {
+                zone_id: 1,
+                word_id: 0,
+                site_id: 0,
+            }
+        );
     }
 
     #[test]
-    fn lane_endpoints_invalid_bus_returns_none() {
-        let spec = example_arch_spec();
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_lane_endpoints_invalid_bus_returns_none() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 99,
@@ -843,28 +996,156 @@ mod tests {
         assert!(spec.lane_endpoints(&lane).is_none());
     }
 
+    // ── JSON round-trip tests ──
+
     #[test]
-    fn lane_endpoints_invalid_site_not_in_bus_returns_none() {
-        let spec = example_arch_spec();
-        // Site 5 is a destination, not a source for forward resolution
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_json_round_trip() {
+        let spec = make_valid_two_zone_spec();
+        let json = serde_json::to_string_pretty(&spec).unwrap();
+        let deserialized = ArchSpec::from_json(&json).unwrap();
+        assert_eq!(spec, deserialized);
+    }
+
+    #[test]
+    fn test_from_json_validated() {
+        let spec = make_valid_two_zone_spec();
+        let json = serde_json::to_string(&spec).unwrap();
+        let validated = ArchSpec::from_json_validated(&json).unwrap();
+        assert_eq!(spec, validated);
+    }
+
+    #[test]
+    fn test_from_json_validated_invalid() {
+        let json = r#"{"version": "1.0"}"#;
+        let result = ArchSpec::from_json_validated(json);
+        assert!(result.is_err());
+    }
+
+    // ── word/zone lookup tests ──
+
+    #[test]
+    fn test_word_by_id_found() {
+        let spec = make_valid_two_zone_spec();
+        let word = spec.word_by_id(0).unwrap();
+        assert_eq!(word.sites.len(), 2);
+    }
+
+    #[test]
+    fn test_word_by_id_not_found() {
+        let spec = make_valid_two_zone_spec();
+        assert!(spec.word_by_id(99).is_none());
+    }
+
+    #[test]
+    fn test_zone_by_id_found() {
+        let spec = make_valid_two_zone_spec();
+        let zone = spec.zone_by_id(0).unwrap();
+        assert_eq!(zone.site_buses.len(), 1);
+    }
+
+    #[test]
+    fn test_zone_by_id_not_found() {
+        let spec = make_valid_two_zone_spec();
+        assert!(spec.zone_by_id(99).is_none());
+    }
+
+    // ── Bus resolve tests ──
+
+    #[test]
+    fn test_site_bus_resolve_forward() {
+        let spec = make_valid_two_zone_spec();
+        let bus = &spec.zones[0].site_buses[0];
+        assert_eq!(bus.resolve_forward(0), Some(1));
+        assert_eq!(bus.resolve_forward(99), None);
+    }
+
+    #[test]
+    fn test_site_bus_resolve_backward() {
+        let spec = make_valid_two_zone_spec();
+        let bus = &spec.zones[0].site_buses[0];
+        assert_eq!(bus.resolve_backward(1), Some(0));
+        assert_eq!(bus.resolve_backward(99), None);
+    }
+
+    #[test]
+    fn test_word_bus_resolve_forward() {
+        let spec = make_valid_two_zone_spec();
+        let bus = &spec.zones[0].word_buses[0];
+        assert_eq!(bus.resolve_forward(0), Some(1));
+        assert_eq!(bus.resolve_forward(99), None);
+    }
+
+    #[test]
+    fn test_word_bus_resolve_backward() {
+        let spec = make_valid_two_zone_spec();
+        let bus = &spec.zones[0].word_buses[0];
+        assert_eq!(bus.resolve_backward(1), Some(0));
+        assert_eq!(bus.resolve_backward(99), None);
+    }
+
+    #[test]
+    fn test_zone_bus_resolve_forward() {
+        let spec = make_valid_two_zone_spec();
+        let bus = &spec.zone_buses[0];
+        let src = ZonedWordRef {
+            zone_id: 0,
             word_id: 0,
-            site_id: 5,
-            bus_id: 0,
         };
-        assert!(spec.lane_endpoints(&lane).is_none());
+        let dst = bus.resolve_forward(&src).unwrap();
+        assert_eq!(dst.zone_id, 1);
+        assert_eq!(dst.word_id, 0);
+    }
+
+    #[test]
+    fn test_zone_bus_resolve_backward() {
+        let spec = make_valid_two_zone_spec();
+        let bus = &spec.zone_buses[0];
+        let dst = ZonedWordRef {
+            zone_id: 1,
+            word_id: 0,
+        };
+        let src = bus.resolve_backward(&dst).unwrap();
+        assert_eq!(src.zone_id, 0);
+        assert_eq!(src.word_id, 0);
+    }
+
+    // ── check_location tests ──
+
+    #[test]
+    fn test_check_location_valid() {
+        let spec = make_valid_two_zone_spec();
+        assert!(
+            spec.check_location(&LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_check_location_invalid_zone() {
+        let spec = make_valid_two_zone_spec();
+        let err = spec
+            .check_location(&LocationAddr {
+                zone_id: 99,
+                word_id: 0,
+                site_id: 0,
+            })
+            .unwrap();
+        assert!(err.contains("zone_id"));
     }
 
     // ── check_lane tests ──
 
     #[test]
-    fn check_lane_valid_forward() {
-        let spec = example_arch_spec();
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_check_lane_valid_site_bus() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -873,57 +1154,28 @@ mod tests {
     }
 
     #[test]
-    fn check_lane_valid_backward() {
-        let spec = example_arch_spec();
-        // Backward with forward source site_id=0 should be valid
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Backward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_check_lane_invalid_zone() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 99,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
         };
-        assert!(spec.check_lane(&lane).is_empty());
-    }
-
-    #[test]
-    fn check_lane_destination_site_rejected() {
-        let spec = example_arch_spec();
-        // Site 5 is a destination, not a forward source
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 5,
-            bus_id: 0,
-        };
         let errors = spec.check_lane(&lane);
         assert!(!errors.is_empty());
-        assert!(errors[0].contains("not a valid source"));
+        assert!(errors[0].contains("zone_id"));
     }
 
     #[test]
-    fn check_lane_destination_site_backward_also_rejected() {
-        let spec = example_arch_spec();
-        // Site 5 with backward direction — still not a forward source
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Backward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
-            word_id: 0,
-            site_id: 5,
-            bus_id: 0,
-        };
-        let errors = spec.check_lane(&lane);
-        assert!(!errors.is_empty());
-        assert!(errors[0].contains("not a valid source"));
-    }
-
-    #[test]
-    fn check_lane_invalid_bus() {
-        let spec = example_arch_spec();
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_check_lane_invalid_bus() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 99,
@@ -933,35 +1185,139 @@ mod tests {
     }
 
     #[test]
-    fn check_lane_word_not_in_site_bus_list() {
-        let mut spec = example_arch_spec();
-        // Remove word 0 from words_with_site_buses
-        spec.words_with_site_buses.retain(|&w| w != 0);
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::SiteBus,
+    fn test_check_lane_zone_bus_valid() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::ZoneBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
         };
-        let errors = spec.check_lane(&lane);
-        assert!(!errors.is_empty());
-        assert!(errors[0].contains("words_with_site_buses"));
+        assert!(spec.check_lane(&lane).is_empty());
     }
 
     #[test]
-    fn check_lane_site_not_in_word_bus_list() {
-        let spec = example_arch_spec();
-        // sites_with_word_buses is [5,6,7,8,9]; site 0 is not in the list
-        let lane = crate::arch::addr::LaneAddr {
-            direction: crate::arch::addr::Direction::Forward,
-            move_type: crate::arch::addr::MoveType::WordBus,
+    fn test_check_lane_zone_bus_invalid_bus() {
+        let spec = make_valid_two_zone_spec();
+        let lane = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::ZoneBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
-            bus_id: 0,
+            bus_id: 99,
         };
         let errors = spec.check_lane(&lane);
         assert!(!errors.is_empty());
-        assert!(errors[0].contains("sites_with_word_buses"));
+        assert!(errors[0].contains("zone_bus"));
+    }
+
+    // ── check_zone tests ──
+
+    #[test]
+    fn test_check_zone_valid() {
+        let spec = make_valid_two_zone_spec();
+        assert!(spec.check_zone(&ZoneAddr { zone_id: 0 }).is_none());
+    }
+
+    #[test]
+    fn test_check_zone_invalid() {
+        let spec = make_valid_two_zone_spec();
+        assert!(spec.check_zone(&ZoneAddr { zone_id: 99 }).is_some());
+    }
+
+    // ── check_lane_group_consistency tests ──
+
+    #[test]
+    fn test_check_lane_group_consistency_empty() {
+        let spec = make_valid_two_zone_spec();
+        assert!(spec.check_lane_group_consistency(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_check_lane_group_consistency_zone_mismatch() {
+        let spec = make_valid_two_zone_spec();
+        let lanes = vec![
+            LaneAddr {
+                direction: Direction::Forward,
+                move_type: MoveType::SiteBus,
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+                bus_id: 0,
+            },
+            LaneAddr {
+                direction: Direction::Forward,
+                move_type: MoveType::SiteBus,
+                zone_id: 1,
+                word_id: 0,
+                site_id: 0,
+                bus_id: 0,
+            },
+        ];
+        let errors = spec.check_lane_group_consistency(&lanes);
+        assert!(!errors.is_empty());
+        assert!(errors[0].contains("zone_id mismatch"));
+    }
+
+    // ── check_locations tests ──
+
+    #[test]
+    fn test_check_locations_valid() {
+        let spec = make_valid_two_zone_spec();
+        let locs = vec![
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            },
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 1,
+            },
+        ];
+        assert!(spec.check_locations(&locs).is_empty());
+    }
+
+    #[test]
+    fn test_check_locations_duplicate() {
+        let spec = make_valid_two_zone_spec();
+        let locs = vec![
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            },
+            LocationAddr {
+                zone_id: 0,
+                word_id: 0,
+                site_id: 0,
+            },
+        ];
+        let errors = spec.check_locations(&locs);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, LocationGroupError::DuplicateAddress { .. }))
+        );
+    }
+
+    #[test]
+    fn test_check_locations_invalid() {
+        let spec = make_valid_two_zone_spec();
+        let locs = vec![LocationAddr {
+            zone_id: 99,
+            word_id: 0,
+            site_id: 0,
+        }];
+        let errors = spec.check_locations(&locs);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, LocationGroupError::InvalidAddress { .. }))
+        );
     }
 }

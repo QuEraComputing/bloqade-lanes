@@ -1,5 +1,7 @@
 """Tests for GreedyMoveGenerator."""
 
+import pytest
+
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.layout import Direction, LaneAddress, LocationAddress, MoveType
 from bloqade.lanes.search.generators import (
@@ -41,15 +43,27 @@ def test_satisfies_protocol():
 def _make_bus_context(
     pos_to_loc: dict[tuple[float, float], LocationAddress],
     collision_srcs: frozenset[LocationAddress] = frozenset(),
+    include_lane_map: bool = True,
 ) -> BusContext:
     """Create a minimal BusContext for unit tests."""
     arch_spec = logical.get_arch_spec()
+    src_to_lane = (
+        {
+            loc: LaneAddress(
+                MoveType.SITE, loc.word_id, loc.site_id, 0, Direction.FORWARD
+            )
+            for loc in pos_to_loc.values()
+        }
+        if include_lane_map
+        else {}
+    )
     return BusContext(
         move_type=MoveType.SITE,
         bus_id=0,
         direction=Direction.FORWARD,
         arch_spec=arch_spec,
         pos_to_loc=pos_to_loc,
+        src_to_lane=src_to_lane,
         collision_srcs=collision_srcs,
     )
 
@@ -64,7 +78,13 @@ def test_is_valid_rect_all_present():
             (1.0, 1.0): LocationAddress(1, 1),
         }
     )
-    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is True
+    movers = {
+        LocationAddress(0, 0),
+        LocationAddress(0, 1),
+        LocationAddress(1, 0),
+        LocationAddress(1, 1),
+    }
+    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}, movers) is True
 
 
 def test_is_valid_rect_missing_position():
@@ -77,14 +97,62 @@ def test_is_valid_rect_missing_position():
             (1.0, 1.0): LocationAddress(1, 1),
         }
     )
-    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}) is False
+    movers = {
+        LocationAddress(0, 0),
+        LocationAddress(1, 0),
+        LocationAddress(1, 1),
+    }
+    assert ctx.is_valid_rect({0.0, 1.0}, {0.0, 1.0}, movers) is False
 
 
 def test_is_valid_rect_collision():
     """Returns False when a position is a collision source."""
     loc = LocationAddress(0, 0)
     ctx = _make_bus_context({(0.0, 0.0): loc}, frozenset({loc}))
-    assert ctx.is_valid_rect({0.0}, {0.0}) is False
+    assert ctx.is_valid_rect({0.0}, {0.0}, {loc}) is False
+
+
+def test_from_tree_collision_sources_store_sources_not_destinations():
+    """Collision filtering should mark blocked sources, not occupied destinations."""
+    _gen, tree = _make_setup(
+        placement={0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
+    )
+    occupied = tree.root.occupied_locations | tree.blocked_locations
+
+    ctx = BusContext.from_tree(
+        tree=tree,
+        occupied=occupied,
+        move_type=MoveType.WORD,
+        bus_id=0,
+        direction=Direction.FORWARD,
+        zone_id=0,
+    )
+
+    source = LocationAddress(0, 0)
+    destination = LocationAddress(1, 0)
+    assert source in ctx.collision_srcs
+    assert destination not in ctx.collision_srcs
+
+
+def test_from_tree_backward_word_bus_uses_backward_sources():
+    """Backward bus contexts should map positions for backward source words."""
+    _gen, tree = _make_setup(
+        placement={0: LocationAddress(3, 0), 1: LocationAddress(7, 0)}
+    )
+    occupied = tree.root.occupied_locations | tree.blocked_locations
+
+    ctx = BusContext.from_tree(
+        tree=tree,
+        occupied=occupied,
+        move_type=MoveType.WORD,
+        bus_id=9,
+        direction=Direction.BACKWARD,
+        zone_id=0,
+    )
+
+    # These are backward-source words for word bus 9 in logical Gemini.
+    assert tree.arch_spec.get_position(LocationAddress(3, 0)) in ctx.pos_to_loc
+    assert tree.arch_spec.get_position(LocationAddress(7, 0)) in ctx.pos_to_loc
 
 
 # --- BusContext.rect_to_lanes ---
@@ -112,6 +180,16 @@ def test_rect_to_lanes_skips_missing_positions():
     assert len(lanes) == 1
 
 
+def test_rect_to_lanes_asserts_when_source_lane_missing():
+    """BusContext should fail fast when src_to_lane is inconsistent."""
+    ctx = _make_bus_context(
+        {(0.0, 0.0): LocationAddress(0, 0)},
+        include_lane_map=False,
+    )
+    with pytest.raises(AssertionError):
+        ctx.rect_to_lanes({0.0}, {0.0})
+
+
 # --- merge_clusters ---
 
 
@@ -124,7 +202,7 @@ def test_merge_clusters_merges_compatible():
         ({0.0}, {0.0}),
         ({0.0}, {1.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, {loc_a, loc_b})
     assert len(solved) == 1
     xs, ys = solved[0]
     assert xs == {0.0}
@@ -141,7 +219,7 @@ def test_merge_clusters_incompatible_stay_separate():
         ({0.0}, {0.0}),
         ({1.0}, {1.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, {loc_a, loc_b})
     assert len(solved) == 2
 
 
@@ -163,7 +241,7 @@ def test_merge_clusters_solves_non_participants():
         ({0.0}, {1.0}),
         ({2.0}, {0.0}),
     ]
-    solved = ctx.merge_clusters(clusters)
+    solved = ctx.merge_clusters(clusters, {loc_a, loc_b, loc_c})
     # a+b merged, c stays separate
     assert len(solved) == 2
 
@@ -225,7 +303,8 @@ def test_generate_qubit_not_in_target_is_ignored():
     for ms in moves:
         for lane in ms:
             src, _ = tree.arch_spec.get_endpoints(lane)
-            assert src == LocationAddress(0, 0)
+            # Only qubit 0 (zone 0, word 0) should be moving
+            assert src.word_id == 0
 
 
 def test_generate_single_atom():
@@ -261,11 +340,12 @@ def test_generate_no_destination_collisions():
 
 
 def test_generate_multiple_atoms_can_merge():
-    """Two atoms in the same word that can share a site bus move should merge."""
-    # Place both atoms in the same word — site bus moves operate within a word
-    # and can merge atoms that share the same bus pattern.
-    placement = {0: LocationAddress(0, 0), 1: LocationAddress(0, 1)}
-    target = {0: LocationAddress(2, 0), 1: LocationAddress(2, 1)}
+    """Two atoms sharing a word bus should merge into a single move set."""
+    # Place atoms at words that are both sources for the same word bus.
+    # Word bus 0 has src=[0,4,...] dst=[1,5,...], so atoms at word 0 and 4
+    # can be moved together to word 1 and 5 respectively.
+    placement = {0: LocationAddress(0, 0), 1: LocationAddress(4, 0)}
+    target = {0: LocationAddress(1, 0), 1: LocationAddress(5, 0)}
     gen, tree = _make_setup(placement=placement, target=target)
     moves = list(gen.generate(tree.root, tree))
 

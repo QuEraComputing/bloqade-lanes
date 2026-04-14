@@ -20,12 +20,13 @@ pub(crate) mod validation;
 fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Arch spec types
     m.add_class::<arch_python::PyArchSpec>()?;
-    m.add_class::<arch_python::PyGeometry>()?;
     m.add_class::<arch_python::PyWord>()?;
     m.add_class::<arch_python::PyGrid>()?;
-    m.add_class::<arch_python::PyBuses>()?;
-    m.add_class::<arch_python::PyBus>()?;
+    m.add_class::<arch_python::PySiteBus>()?;
+    m.add_class::<arch_python::PyWordBus>()?;
+    m.add_class::<arch_python::PyZoneBus>()?;
     m.add_class::<arch_python::PyZone>()?;
+    m.add_class::<arch_python::PyMode>()?;
     m.add_class::<arch_python::PyTransportPath>()?;
 
     // Address types and enums
@@ -43,6 +44,7 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<program_python::PyProgram>()?;
 
     // Search / move synthesis
+    m.add_class::<search_python::PySearchStrategy>()?;
     m.add_class::<search_python::PyMoveSolver>()?;
     m.add_class::<search_python::PySolveResult>()?;
 

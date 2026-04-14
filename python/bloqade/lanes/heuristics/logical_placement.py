@@ -13,7 +13,10 @@ from bloqade.lanes.analysis.placement import (
     SingleZonePlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
-from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
+from bloqade.lanes.analysis.placement.strategy import (
+    PlacementStrategyABC,
+    assert_single_cz_zone,
+)
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
 from bloqade.lanes.layout.path import PathFinder
@@ -185,6 +188,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
         self._path_finder = PathFinder(self.arch_spec)
 
     def _lane_sig(
@@ -217,11 +221,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return sig_maxcost
 
     def _home_sites(self) -> set[layout.LocationAddress]:
-        return {
-            layout.LocationAddress(word_id, site_id)
-            for word_id in self.arch_spec._home_words
-            for site_id in range(len(self.arch_spec.words[word_id].site_indices))
-        }
+        return set(self.arch_spec.home_sites)
 
     def _distance_key(
         self,
@@ -689,7 +689,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             occupied=state_after.occupied,
             layout=state_after.layout,
             move_count=state_after.move_count,
-            active_cz_zones=frozenset([layout.ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=(left_move_layers + final_move_layers),
         )
 
@@ -715,5 +715,5 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(0) for _ in qubits),
+            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
         )

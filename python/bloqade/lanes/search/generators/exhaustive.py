@@ -47,32 +47,43 @@ class ExhaustiveMoveGenerator:
     ) -> Iterator[frozenset[LaneAddress]]:
         occupied = node.occupied_locations | tree.blocked_locations
 
-        # Enumerate site buses
-        for bus_id, bus in enumerate(tree.arch_spec.site_buses):
-            for direction in (Direction.FORWARD, Direction.BACKWARD):
-                bus_word_ids = (
-                    bus.words
-                    if bus.words is not None
-                    else tree.arch_spec.has_site_buses
-                )
-                src_locs = [
-                    LocationAddress(w, s) for w in bus_word_ids for s in bus.src
-                ]
-                yield from self._rectangles_to_move_sets(
-                    src_locs, occupied, MoveType.SITE, bus_id, direction, tree
-                )
+        # Enumerate site buses per zone
+        for zone_id, zone in enumerate(tree.arch_spec.zones):
+            for bus_id, bus in enumerate(zone.site_buses):
+                for direction in (Direction.FORWARD, Direction.BACKWARD):
+                    bus_word_ids = zone.words_with_site_buses
+                    src_locs = [
+                        LocationAddress(w, s, zone_id)
+                        for w in bus_word_ids
+                        for s in bus.src
+                    ]
+                    yield from self._rectangles_to_move_sets(
+                        src_locs,
+                        occupied,
+                        MoveType.SITE,
+                        bus_id,
+                        direction,
+                        tree,
+                        zone_id,
+                    )
 
-        # Enumerate word buses
-        for bus_id, bus in enumerate(tree.arch_spec.word_buses):
-            for direction in (Direction.FORWARD, Direction.BACKWARD):
-                src_locs = [
-                    LocationAddress(w, s)
-                    for w in bus.src
-                    for s in tree.arch_spec.has_word_buses
-                ]
-                yield from self._rectangles_to_move_sets(
-                    src_locs, occupied, MoveType.WORD, bus_id, direction, tree
-                )
+            # Enumerate word buses per zone
+            for bus_id, bus in enumerate(zone.word_buses):
+                for direction in (Direction.FORWARD, Direction.BACKWARD):
+                    src_locs = [
+                        LocationAddress(w, s, zone_id)
+                        for w in bus.src
+                        for s in zone.sites_with_word_buses
+                    ]
+                    yield from self._rectangles_to_move_sets(
+                        src_locs,
+                        occupied,
+                        MoveType.WORD,
+                        bus_id,
+                        direction,
+                        tree,
+                        zone_id,
+                    )
 
     def _rectangles_to_move_sets(
         self,
@@ -82,6 +93,7 @@ class ExhaustiveMoveGenerator:
         bus_id: int,
         direction: Direction,
         tree: ConfigurationTree,
+        zone_id: int = 0,
     ) -> Iterator[frozenset[LaneAddress]]:
         if not src_locs:
             return
@@ -106,7 +118,9 @@ class ExhaustiveMoveGenerator:
         loc_to_lane: dict[LocationAddress, LaneAddress] = {}
         invalid_locs: set[LocationAddress] = set()
         for loc in src_locs:
-            lane = LaneAddress(move_type, loc.word_id, loc.site_id, bus_id, direction)
+            lane = LaneAddress(
+                move_type, loc.word_id, loc.site_id, bus_id, direction, zone_id
+            )
             loc_to_lane[loc] = lane
 
             if loc in occupied:

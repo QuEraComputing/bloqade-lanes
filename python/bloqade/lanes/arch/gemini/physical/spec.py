@@ -1,51 +1,40 @@
-from bloqade.lanes.arch.builder import build_arch
-from bloqade.lanes.arch.topology import (
-    AllToAllSiteTopology,
-    DiagonalWordTopology,
-    HypercubeSiteTopology,
-    TransversalSiteTopology,
-)
-from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+import importlib.resources
+
+from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.layout.word import Word
+
+# Physical arch spec: 20 words x 8 sites, 1 zone, 32x5 grid.
+#
+# Same word/row structure as logical (4 words per row, 5 rows).
+# Each word has 8 sites interleaved with its CZ partner along x.
+# Grid: x=[0,2,10,12,20,22,...] (alternating 2/8 spacing), y=[0,10,20,30,40]
+#
+# Site buses: 3D hypercube on 8 sites (3 buses)
+# Word buses: 9 merged column-pair shifts + 1 cross-gap (10 buses)
+# Entangling pairs: [[0,1],[2,3],...,[18,19]]
+
+
+def _load_spec_json() -> str:
+    ref = importlib.resources.files(__package__) / "_physical_spec.json"
+    return ref.read_text(encoding="utf-8")
 
 
 def get_arch_spec() -> ArchSpec:
     """Physical arch spec for logical compilation (transversal Steane code)."""
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=5,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=TransversalSiteTopology(
-                    logical_topology=HypercubeSiteTopology(),
-                    code_distance=7,
-                    intra_group_topology=AllToAllSiteTopology(),
-                ),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=16),
-    )
-    return build_arch(bp).arch
+    rust_spec = _RustArchSpec.from_json(_load_spec_json())
+    py_words = []
+    for rw in rust_spec.words:
+        w = Word.__new__(Word)
+        w._inner = rw
+        py_words.append(w)
+    return ArchSpec(inner=rust_spec, words=tuple(py_words))
 
 
 def get_physical_layout_arch_spec() -> ArchSpec:
     """Physical arch spec for direct physical qubit placement.
 
-    Uses hypercube site topology (no transversal expansion) so that
-    qubits can be individually routed between sites.
+    Same as get_arch_spec() — in the zone-centric model, the site topology
+    is encoded in the site buses directly.
     """
-    bp = ArchBlueprint(
-        zones={
-            "gate": ZoneSpec(
-                num_rows=5,
-                num_cols=2,
-                entangling=True,
-                word_topology=DiagonalWordTopology(),
-                site_topology=HypercubeSiteTopology(),
-            )
-        },
-        layout=DeviceLayout(sites_per_word=16),
-    )
-    return build_arch(bp).arch
+    return get_arch_spec()
