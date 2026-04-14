@@ -10,6 +10,7 @@ import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, cast
 
 import cirq
 import numpy as np
@@ -21,6 +22,7 @@ U3_RE = re.compile(
     r"^\s*squin\.u3\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*q\[(\d+)\]\s*\)\s*$"
 )
 CZ_RE = re.compile(r"^\s*squin\.cz\(\s*q\[(\d+)\]\s*,\s*q\[(\d+)\]\s*\)\s*$")
+BARRIER_RE = re.compile(r"^\s*barrier(?:\s+[^;]+)?\s*;\s*$", re.IGNORECASE)
 
 
 @dataclass
@@ -41,12 +43,12 @@ def _format_float(value: float) -> str:
     return f"{value:.12g}"
 
 
-def _qubit_sort_key(qubit: cirq.Qid) -> tuple[int, str]:
+def _qubit_sort_key(qubit: cirq.Qid) -> tuple[int, int, int, str]:
     if isinstance(qubit, cirq.LineQubit):
-        return (0, str(qubit.x))
+        return (0, qubit.x, 0, "")
     if isinstance(qubit, cirq.GridQubit):
-        return (1, f"{qubit.row},{qubit.col}")
-    return (2, str(qubit))
+        return (1, qubit.row, qubit.col, "")
+    return (2, 0, 0, str(qubit))
 
 
 def _normalize_kernel_name(name: str) -> str:
@@ -105,11 +107,31 @@ def _strip_qasm_barriers(qasm_text: str) -> tuple[str, int]:
     dropped = 0
     for line in qasm_text.splitlines():
         stripped = line.strip()
-        if stripped.lower().startswith("barrier ") and stripped.endswith(";"):
+        if BARRIER_RE.match(stripped):
             dropped += 1
             continue
         kept_lines.append(line)
     return "\n".join(kept_lines) + "\n", dropped
+
+
+def _load_qasm_circuit(qasm_text: str) -> tuple[cirq.Circuit, int]:
+    """Load OpenQASM with Cirq's native parser and compatibility fallback."""
+    from_qasm = getattr(cirq.Circuit, "from_qasm", None)
+    if callable(from_qasm):
+        try:
+            parser = cast(Callable[[str], cirq.Circuit], from_qasm)
+            return parser(qasm_text), 0
+        except Exception:
+            pass
+
+    qasm_without_barriers, dropped = _strip_qasm_barriers(qasm_text)
+    try:
+        return circuit_from_qasm(qasm_without_barriers), dropped
+    except Exception as fallback_error:
+        raise ValueError(
+            "Unable to parse OpenQASM with either cirq.Circuit.from_qasm or "
+            "cirq.contrib.qasm_import.circuit_from_qasm."
+        ) from fallback_error
 
 
 def circuit_to_squin_decorator_source(circuit: cirq.Circuit, kernel_name: str) -> str:
@@ -125,52 +147,59 @@ def circuit_to_squin_decorator_source(circuit: cirq.Circuit, kernel_name: str) -
         f"    q = squin.qalloc({len(qubits)})",
     ]
 
-    for op in circuit.all_operations():
+    def _operation_sort_key(op: cirq.Operation) -> tuple[int, str, tuple[int, ...]]:
         gate = op.gate
-        if gate is None:
-            raise ValueError(f"Unsupported gate-less operation: {op!r}")
+        gate_name = type(gate).__name__ if gate is not None else ""
+        normalized_qubits = tuple(sorted(index_by_qubit[qb] for qb in op.qubits))
+        return (len(op.qubits), gate_name, normalized_qubits)
 
-        if cirq.is_measurement(op):
+    for moment in circuit:
+        ordered_ops = sorted(moment.operations, key=_operation_sort_key)
+        for op in ordered_ops:
+            gate = op.gate
+            if gate is None:
+                raise ValueError(f"Unsupported gate-less operation: {op!r}")
+
+            if cirq.is_measurement(op):
+                raise ValueError(
+                    "Measurement operations are not supported in SQUIN kernels."
+                )
+
+            if len(op.qubits) == 1:
+                mat = cirq.unitary(op, default=None)
+                if mat is None:
+                    raise ValueError(f"Unsupported single-qubit operation: {op!r}")
+
+                z0, y, z1 = deconstruct_single_qubit_matrix_into_angles(mat)
+                # Cirq returns ZYZ angles in order (z0, y, z1) such that
+                # U = Rz(z1) @ Ry(y) @ Rz(z0). SQUIN u3(theta, phi, lam) follows
+                # the Rz(phi) @ Ry(theta) @ Rz(lam) convention.
+                theta = y
+                phi = z1
+                lamb = z0
+                qidx = index_by_qubit[op.qubits[0]]
+                lines.append(
+                    "    squin.u3("
+                    f"{_format_float(float(theta))}, "
+                    f"{_format_float(float(phi))}, "
+                    f"{_format_float(float(lamb))}, "
+                    f"q[{qidx}])"
+                )
+                continue
+
+            if isinstance(gate, cirq.CZPowGate):
+                if len(op.qubits) != 2:
+                    raise ValueError(f"Unexpected CZ arity: {op!r}")
+                if gate.exponent != 1 or gate.global_shift != 0:
+                    raise ValueError(f"Only plain CZ is supported, got: {op!r}")
+
+                q0, q1 = sorted(index_by_qubit[qb] for qb in op.qubits)
+                lines.append(f"    squin.cz(q[{q0}], q[{q1}])")
+                continue
+
             raise ValueError(
-                "Measurement operations are not supported in SQUIN kernels."
+                f"Unsupported gate type in circuit: {type(gate).__name__} ({op!r})"
             )
-
-        if len(op.qubits) == 1:
-            mat = cirq.unitary(op, default=None)
-            if mat is None:
-                raise ValueError(f"Unsupported single-qubit operation: {op!r}")
-
-            z0, y, z1 = deconstruct_single_qubit_matrix_into_angles(mat)
-            # Cirq returns ZYZ angles in order (z0, y, z1) such that
-            # U = Rz(z1) @ Ry(y) @ Rz(z0). SQUIN u3(theta, phi, lam) follows
-            # the Rz(phi) @ Ry(theta) @ Rz(lam) convention.
-            theta = y
-            phi = z1
-            lamb = z0
-            qidx = index_by_qubit[op.qubits[0]]
-            lines.append(
-                "    squin.u3("
-                f"{_format_float(float(theta))}, "
-                f"{_format_float(float(phi))}, "
-                f"{_format_float(float(lamb))}, "
-                f"q[{qidx}])"
-            )
-            continue
-
-        if isinstance(gate, cirq.CZPowGate):
-            if len(op.qubits) != 2:
-                raise ValueError(f"Unexpected CZ arity: {op!r}")
-            if gate.exponent != 1 or gate.global_shift != 0:
-                raise ValueError(f"Only plain CZ is supported, got: {op!r}")
-
-            q0 = index_by_qubit[op.qubits[0]]
-            q1 = index_by_qubit[op.qubits[1]]
-            lines.append(f"    squin.cz(q[{q0}], q[{q1}])")
-            continue
-
-        raise ValueError(
-            f"Unsupported gate type in circuit: {type(gate).__name__} ({op!r})"
-        )
 
     return "\n".join(lines)
 
@@ -360,7 +389,7 @@ def _statevectors_close(
     lhs_aligned = lhs.copy()
     rhs_aligned = rhs.copy()
     overlap = np.vdot(lhs_aligned, rhs_aligned)
-    if np.abs(overlap) > 0:
+    if np.abs(overlap) > 1e-12:
         rhs_aligned *= np.exp(-1j * np.angle(overlap))
 
     diff = np.abs(lhs_aligned - rhs_aligned)
@@ -445,8 +474,7 @@ def main() -> int:
     kernel_name = _normalize_kernel_name(kernel_name)
 
     qasm_text = qasm_path.read_text(encoding="utf-8")
-    qasm_text, dropped_barriers = _strip_qasm_barriers(qasm_text)
-    circuit = circuit_from_qasm(qasm_text)
+    circuit, dropped_barriers = _load_qasm_circuit(qasm_text)
     unitary_circuit, dropped_measurements = _strip_terminal_measurements(circuit)
     parallelized = parallelize(unitary_circuit)
     squin_source = circuit_to_squin_decorator_source(parallelized, kernel_name)
