@@ -51,7 +51,6 @@ from bloqade.lanes.bytecode._native import (
     MoveSolver as MoveSolver,
     MoveType as MoveType,
     Program as Program,
-    SearchStrategy as SearchStrategy,
     SiteBus as SiteBus,
     SolveResult as SolveResult,
     TransportPath as TransportPath,

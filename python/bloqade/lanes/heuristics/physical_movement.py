@@ -15,7 +15,7 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
+from bloqade.lanes.bytecode._native import MoveSolver
 from bloqade.lanes.layout import (
     Direction,
     LaneAddress,
@@ -154,7 +154,7 @@ class BFSPlacementTraversal(PlacementTraversalABC):
 class RustPlacementTraversal:
     """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
 
-    strategy: SearchStrategy = SearchStrategy.ASTAR
+    strategy: str = "astar"
     top_c: int = 3
     max_movesets_per_group: int = 3
     max_expansions: int | None = 300
