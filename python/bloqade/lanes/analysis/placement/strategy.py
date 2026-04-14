@@ -6,6 +6,27 @@ from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAdd
 from .lattice import AtomState, ConcreteState, ExecuteCZ, ExecuteMeasure
 
 
+def assert_single_cz_zone(arch_spec: ArchSpec, strategy_name: str) -> None:
+    """Validate that the arch has exactly one CZ-capable zone.
+
+    The current placement strategies emit CZ pulses in every zone with
+    ``entangling_pairs`` (via ``ArchSpec.cz_zone_addresses``), which is
+    correct only when there is one such zone. Multi-zone CZ scheduling
+    requires deriving the active zones from the specific (controls,
+    targets) of each CZ layer and is not yet implemented; until then we
+    fail loudly at construction time so callers don't silently get extra
+    CZ pulses on unrelated zones.
+    """
+    cz_zones = arch_spec.cz_zone_addresses
+    if len(cz_zones) != 1:
+        zone_ids = sorted(z.zone_id for z in cz_zones)
+        raise ValueError(
+            f"{strategy_name} requires exactly one CZ-capable zone, "
+            f"found {len(cz_zones)} (zone ids: {zone_ids}). "
+            "Multi-zone CZ scheduling is not yet supported by this strategy."
+        )
+
+
 @dataclass
 class PlacementStrategyABC(abc.ABC):
 
@@ -42,6 +63,9 @@ class PlacementStrategyABC(abc.ABC):
 
 
 class SingleZonePlacementStrategyABC(PlacementStrategyABC):
+
+    def __post_init__(self) -> None:
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
 
     @abc.abstractmethod
     def compute_moves(
@@ -84,9 +108,7 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
                     state.move_count, state.layout, desired_state.layout
                 )
             ),
-            active_cz_zones=frozenset(
-                [ZoneAddress(0)]
-            ),  # Assuming single zone with address 0
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_layers,
         )
 
@@ -114,7 +136,5 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(
-                ZoneAddress(0) for _ in qubits
-            ),  # Assuming single zone with address 0
+            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )

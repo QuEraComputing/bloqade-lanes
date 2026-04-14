@@ -32,6 +32,9 @@ from bloqade.lanes.search.traversal.step_info import (
 )
 from bloqade.lanes.search.tree import ConfigurationTree, ExpansionStatus
 
+DEFAULT_ENTROPY_INCREMENT = 1
+DEFAULT_REVERSION_STEPS = 1
+
 
 @dataclass
 class _SearchNode:
@@ -41,6 +44,7 @@ class _SearchNode:
     entropy: int = 1
     candidate_cache: list[frozenset[LaneAddress]] = field(default_factory=list)
     candidates_tried: int = 0
+    failed_candidates: set[frozenset[LaneAddress]] = field(default_factory=set)
     last_entropy_bump_reason: str = "entropy"
     last_no_valid_moves_qubit: int | None = None
     last_state_seen_node_id: int | None = None
@@ -170,7 +174,7 @@ class _DebugEmitter:
             RevertStepInfo(
                 entropy=ancestor_sn.entropy,
                 unresolved_count=self._unresolved_count(ancestor),
-                reversion_steps=self.scorer.params.reversion_steps,
+                reversion_steps=DEFAULT_REVERSION_STEPS,
                 ancestor_depth=ancestor.depth,
                 reason=reason,
                 state_seen_node_id=seen_node_id,
@@ -310,6 +314,8 @@ class EntropyGuidedSearch:
             if candidate in seen:
                 continue
             seen.add(candidate)
+            if candidate in node.children or candidate in sn.failed_candidates:
+                continue
             filtered.append(candidate)
             if len(filtered) >= max_candidates:
                 break
@@ -333,16 +339,18 @@ class EntropyGuidedSearch:
 
         while sn.candidates_tried < len(sn.candidate_cache):
             candidate = sn.candidate_cache[sn.candidates_tried]
-            if candidate not in node.children:
-                return candidate
-            sn.candidates_tried += 1
+            if candidate in node.children or candidate in sn.failed_candidates:
+                sn.candidates_tried += 1
+                continue
+            return candidate
 
         self._refresh_candidate_cache(sn, node, generator)
         while sn.candidates_tried < len(sn.candidate_cache):
             candidate = sn.candidate_cache[sn.candidates_tried]
-            if candidate not in node.children:
-                return candidate
-            sn.candidates_tried += 1
+            if candidate in node.children or candidate in sn.failed_candidates:
+                sn.candidates_tried += 1
+                continue
+            return candidate
 
         return None
 
@@ -538,7 +546,7 @@ class EntropyGuidedSearch:
 
             if sn.entropy >= self.params.e_max:
                 ancestor = current_node
-                for _ in range(self.params.reversion_steps):
+                for _ in range(DEFAULT_REVERSION_STEPS):
                     if ancestor.parent is None:
                         break
                     ancestor = ancestor.parent
@@ -547,7 +555,7 @@ class EntropyGuidedSearch:
                 if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
                     break
 
-                ancestor_sn.bump_entropy(self.params.delta_e)
+                ancestor_sn.bump_entropy(DEFAULT_ENTROPY_INCREMENT)
                 self.debug.revert(ancestor, ancestor_sn, sn)
                 current_node = ancestor
                 continue
@@ -559,7 +567,7 @@ class EntropyGuidedSearch:
                     current_node
                 )
                 sn.bump_entropy(
-                    self.params.delta_e,
+                    DEFAULT_ENTROPY_INCREMENT,
                     "no-valid-moves",
                     no_valid_moves_qubit=no_valid_qid,
                 )
@@ -570,6 +578,7 @@ class EntropyGuidedSearch:
             sn.candidates_tried += 1
 
             if outcome.status != ExpansionStatus.CREATED_CHILD:
+                sn.failed_candidates.add(candidate)
                 if outcome.status == ExpansionStatus.TRANSPOSITION_SEEN:
                     reason = "state-seen"
                     seen_node_id = (
@@ -586,7 +595,7 @@ class EntropyGuidedSearch:
                     )
 
                 sn.bump_entropy(
-                    self.params.delta_e,
+                    DEFAULT_ENTROPY_INCREMENT,
                     reason,
                     no_valid_moves_qubit=no_valid_qid,
                     state_seen_node_id=seen_node_id,

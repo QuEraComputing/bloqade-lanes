@@ -48,25 +48,9 @@ arch_spec = ArchSpec.from_components(
 )
 
 
-def test__get_site_bus_paths():
-    # Should yield at least one path for valid word and bus
-    paths = list(arch_spec._get_site_bus_paths([0], [0]))
-    assert paths, "No site bus paths yielded"
-    for path in paths:
-        assert isinstance(path, tuple)
-        assert all(isinstance(coord, tuple) and len(coord) == 2 for coord in path)
-
-
-def test__get_word_bus_paths():
-    # Should yield at least one path for valid bus
-    paths = list(arch_spec._get_word_bus_paths([0]))
-    assert paths, "No word bus paths yielded"
-    for path in paths:
-        assert isinstance(path, tuple)
-        assert all(isinstance(coord, tuple) and len(coord) == 2 for coord in path)
-
-
 def test_show_with_mocked_pyplot():
+    """``ArchSpec.show`` delegates to ``ArchVisualizer.show``; the existing
+    API must still drive matplotlib and call ``plt.show``."""
     with (
         patch("matplotlib.pyplot.gca") as mock_gca,
         patch("matplotlib.pyplot.show") as mock_show,

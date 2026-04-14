@@ -13,6 +13,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteMeasure,
     PlacementStrategyABC,
 )
+from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
 from bloqade.lanes.layout import (
@@ -20,7 +21,6 @@ from bloqade.lanes.layout import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    ZoneAddress,
 )
 from bloqade.lanes.search import (
     BFSTraversal,
@@ -194,6 +194,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         self._trace_cz_index = value
 
     def __post_init__(self) -> None:
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
         if not isinstance(
             self.traversal, (PlacementTraversalABC, RustPlacementTraversal)
         ):
@@ -289,7 +290,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
-            active_cz_zones=frozenset([layout.ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_program,
         )
 
@@ -356,7 +357,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=goal_layout,
             move_count=move_count,
-            active_cz_zones=frozenset([ZoneAddress(0)]),
+            active_cz_zones=self.arch_spec.cz_zone_addresses,
             move_layers=move_layers,
         )
 
@@ -383,5 +384,5 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(0) for _ in qubits),
+            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
         )
