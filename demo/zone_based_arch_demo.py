@@ -158,10 +158,13 @@ print(f"    mem zone:  {mem_site_bus_count} site buses (no site topology)")
 print()
 
 # This is the punchline: proc has rich connectivity, mem has none
+all_site_bus_words = frozenset(
+    w for z in multi_arch.zones for w in z.words_with_site_buses
+)
 print("Per-zone site bus scoping:")
 print(
-    f"  proc words with site buses: {sorted(multi_arch.has_site_buses & set(multi_result.zone_grids['proc'].all_word_ids))}"
+    f"  proc words with site buses: {sorted(all_site_bus_words & set(multi_result.zone_grids['proc'].all_word_ids))}"
 )
 print(
-    f"  mem words with site buses:  {sorted(multi_arch.has_site_buses & set(multi_result.zone_grids['mem'].all_word_ids))}"
+    f"  mem words with site buses:  {sorted(all_site_bus_words & set(multi_result.zone_grids['mem'].all_word_ids))}"
 )

@@ -211,8 +211,11 @@ def test_find_path_respects_per_bus_word_scoping():
 
     # Zone B words should not have site bus moves
     zone_b_words = set(result.zone_grids["b"].all_word_ids)
+    all_site_bus_words = frozenset(
+        w for z in arch.zones for w in z.words_with_site_buses
+    )
     for word_id in zone_b_words:
-        assert word_id not in arch.has_site_buses
+        assert word_id not in all_site_bus_words
 
     # Attempting an intra-word site move in zone B should fail (no site bus)
     b_word = min(zone_b_words)
