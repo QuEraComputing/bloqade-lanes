@@ -129,7 +129,7 @@ def test_sequential_fallback_triggers_on_max_expansions(monkeypatch):
         tree,
         target,
         placement_goal(target),
-        params=SearchParams(e_max=2, delta_e=1),
+        params=SearchParams(e_max=2),
         max_expansions=1,
     )
     assert fallback_called["value"] is True
@@ -168,7 +168,7 @@ def test_two_qubit_goal():
 def test_reversion_expands_more_than_depth():
     tree = _make_tree()
     target = {0: LocationAddress(1, 0), 1: LocationAddress(5, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     result = entropy_guided_search(
         tree, target, placement_goal(target), params=params, max_expansions=200
     )
@@ -178,7 +178,7 @@ def test_reversion_expands_more_than_depth():
 def test_sequential_fallback_triggered_on_max_depth():
     tree = _make_tree()
     target = {0: LocationAddress(1, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     result = entropy_guided_search(
         tree,
         target,
@@ -210,7 +210,7 @@ def test_root_deadlock_does_not_trigger_fallback_without_limits(monkeypatch):
         tree,
         target,
         placement_goal(target),
-        params=SearchParams(e_max=2, delta_e=1),
+        params=SearchParams(e_max=2),
     )
 
     assert fallback_called["value"] is False
@@ -288,7 +288,32 @@ def test_candidate_cache_keeps_only_top_unique_generated_candidates():
     next_candidate = search._get_next_candidate(sn, node, _StubGenerator())
 
     assert next_candidate == top_candidate
-    assert sn.candidate_cache == [existing_child_moveset, top_candidate]
+    assert sn.candidate_cache == [top_candidate, second_candidate]
+
+
+def test_candidate_cache_skips_previously_failed_candidates_on_refresh():
+    tree = _make_tree()
+    target = {0: LocationAddress(5, 0)}
+    params = SearchParams(max_candidates=1, e_max=4)
+    search = EntropyGuidedSearch(tree, target, placement_goal(target), params=params)
+    node = tree.root
+
+    first_candidate = frozenset({SiteLaneAddress(0, 0, 0)})
+    second_candidate = frozenset({SiteLaneAddress(1, 0, 0)})
+
+    class _StubGenerator:
+        def generate(self, node, tree):  # type: ignore[no-untyped-def,unused-argument]
+            return iter([first_candidate, second_candidate])
+
+    sn = search._get_or_create_search_node(node)
+
+    first = search._get_next_candidate(sn, node, _StubGenerator())
+    assert first == first_candidate
+
+    sn.candidates_tried += 1
+    sn.failed_candidates.add(first_candidate)
+    second = search._get_next_candidate(sn, node, _StubGenerator())
+    assert second == second_candidate
 
 
 def test_candidate_cache_top_k_applies_to_global_rectangle_order():
@@ -335,7 +360,7 @@ def test_on_step_none_is_noop():
 def test_on_step_records_revert():
     tree = _make_tree()
     target = {0: LocationAddress(1, 0), 1: LocationAddress(5, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     records, record = _make_on_step_recorder()
     entropy_guided_search(
         tree,
@@ -371,7 +396,7 @@ def test_on_step_records_revert():
 def test_on_step_fallback_events():
     tree = _make_tree()
     target = {0: LocationAddress(1, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     records, record = _make_on_step_recorder()
     entropy_guided_search(
         tree, target, placement_goal(target), params=params, on_step=record
@@ -383,7 +408,7 @@ def test_on_step_fallback_events():
 def test_outcome_transposition_maps_to_state_seen(monkeypatch):
     tree = _make_tree()
     target = {0: LocationAddress(1, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     records, record = _make_on_step_recorder()
     candidate = frozenset({WordLaneAddress(0, 0, 0)})
 
@@ -415,7 +440,7 @@ def test_outcome_transposition_maps_to_state_seen(monkeypatch):
 def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
     tree = _make_tree()
     target = {0: LocationAddress(1, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     records, record = _make_on_step_recorder()
     candidate = frozenset({WordLaneAddress(0, 0, 0)})
 
@@ -453,7 +478,7 @@ def test_outcome_collision_maps_to_no_valid_moves(monkeypatch):
 def test_ancestor_revisit_maps_to_state_seen_with_real_tree_outcome():
     tree = _make_tree()
     target = {0: LocationAddress(9, 0)}
-    params = SearchParams(e_max=2, delta_e=1, max_candidates=1)
+    params = SearchParams(e_max=2, max_candidates=1)
     records, record = _make_on_step_recorder()
 
     class _BacktrackGenerator:
