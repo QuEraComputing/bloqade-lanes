@@ -1,7 +1,7 @@
 //! Arch spec queries: JSON loading, position lookup, lane resolution,
 //! and group-level address validation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use thiserror::Error;
@@ -203,6 +203,186 @@ impl ArchSpec {
     /// Look up a zone by its index.
     pub fn zone_by_id(&self, id: u32) -> Option<&Zone> {
         self.zones.get(id as usize)
+    }
+
+    // -- Derived topology queries --
+
+    /// Build a bidirectional word-partner map from all zones' entangling pairs.
+    ///
+    /// For each `[w_a, w_b]` pair in any zone, the map contains both
+    /// `w_a -> w_b` and `w_b -> w_a`. Words not appearing in any pair
+    /// are absent from the map.
+    pub fn word_partner_map(&self) -> HashMap<u32, u32> {
+        let mut map = HashMap::new();
+        for zone in &self.zones {
+            for &[w_a, w_b] in &zone.entangling_pairs {
+                map.insert(w_a, w_b);
+                map.insert(w_b, w_a);
+            }
+        }
+        map
+    }
+
+    /// Map each word to the zone that owns it.
+    ///
+    /// Derived from each zone's `entangling_pairs`, `word_buses`, and
+    /// `words_with_site_buses`. First match wins. Words not referenced
+    /// by any zone default to zone 0.
+    pub fn word_zone_map(&self) -> HashMap<u32, u32> {
+        let mut map = HashMap::new();
+        for (zone_id, zone) in self.zones.iter().enumerate() {
+            let zid = zone_id as u32;
+            for &[w_a, w_b] in &zone.entangling_pairs {
+                map.entry(w_a).or_insert(zid);
+                map.entry(w_b).or_insert(zid);
+            }
+            for bus in &zone.word_buses {
+                for wref in &bus.src {
+                    map.entry(wref.0 as u32).or_insert(zid);
+                }
+                for wref in &bus.dst {
+                    map.entry(wref.0 as u32).or_insert(zid);
+                }
+            }
+            for &wid in &zone.words_with_site_buses {
+                map.entry(wid).or_insert(zid);
+            }
+        }
+        for wid in 0..self.words.len() as u32 {
+            map.entry(wid).or_insert(0);
+        }
+        map
+    }
+
+    /// Return the set of "home" word IDs — the lower word in each entangling
+    /// pair, plus any word not appearing in any pair.
+    pub fn left_cz_word_ids(&self) -> Vec<u32> {
+        let partner = self.word_partner_map();
+        let mut paired: HashSet<u32> = HashSet::new();
+        let mut home: HashSet<u32> = HashSet::new();
+        for (&w_a, &w_b) in &partner {
+            paired.insert(w_a);
+            paired.insert(w_b);
+            home.insert(w_a.min(w_b));
+        }
+        for wid in 0..self.words.len() as u32 {
+            if !paired.contains(&wid) {
+                home.insert(wid);
+            }
+        }
+        let mut result: Vec<u32> = home.into_iter().collect();
+        result.sort();
+        result
+    }
+
+    /// Reverse-lookup: given (src, dst) location pair, find the LaneAddr
+    /// that connects them (if any).
+    ///
+    /// Searches SiteBus, WordBus, and ZoneBus lanes. The search is
+    /// narrowed by exploiting the LaneAddr encoding: the
+    /// `(zone_id, word_id, site_id)` in a lane address correspond to the
+    /// move's source location (Forward) or destination location (Backward).
+    /// So given `(src, dst)` we only iterate over `bus_id × move_type`
+    /// for each direction — typically <20 candidates total — rather than
+    /// enumerating every lane in the architecture.
+    ///
+    /// Membership lists (`words_with_site_buses`, `sites_with_word_buses`)
+    /// further prune: if the candidate word/site isn't in the relevant
+    /// list, that move type is skipped entirely.
+    pub fn lane_for_endpoints(&self, src: &LocationAddr, dst: &LocationAddr) -> Option<LaneAddr> {
+        // Try Forward: lane address fields come from src.
+        if let Some(lane) = self.try_lane_from_location(src, dst, Direction::Forward) {
+            return Some(lane);
+        }
+        // Try Backward: lane address fields come from dst.
+        self.try_lane_from_location(dst, src, Direction::Backward)
+    }
+
+    /// Helper for `lane_for_endpoints`: given the location that defines
+    /// the lane address fields (`origin`) and the expected other endpoint
+    /// (`target`), try each bus_id × move_type combination.
+    fn try_lane_from_location(
+        &self,
+        origin: &LocationAddr,
+        target: &LocationAddr,
+        direction: Direction,
+    ) -> Option<LaneAddr> {
+        let zone = self.zones.get(origin.zone_id as usize)?;
+
+        // SiteBus: only if origin's word is in words_with_site_buses.
+        if zone.words_with_site_buses.contains(&origin.word_id) {
+            for bus_id in 0..zone.site_buses.len() {
+                if let Some(lane) = self.check_lane_candidate(
+                    MoveType::SiteBus,
+                    origin,
+                    target,
+                    bus_id as u32,
+                    direction,
+                ) {
+                    return Some(lane);
+                }
+            }
+        }
+
+        // WordBus: only if origin's site is in sites_with_word_buses.
+        if zone.sites_with_word_buses.contains(&origin.site_id) {
+            for bus_id in 0..zone.word_buses.len() {
+                if let Some(lane) = self.check_lane_candidate(
+                    MoveType::WordBus,
+                    origin,
+                    target,
+                    bus_id as u32,
+                    direction,
+                ) {
+                    return Some(lane);
+                }
+            }
+        }
+
+        // ZoneBus: buses live on self (not per-zone).
+        for bus_id in 0..self.zone_buses.len() {
+            if let Some(lane) = self.check_lane_candidate(
+                MoveType::ZoneBus,
+                origin,
+                target,
+                bus_id as u32,
+                direction,
+            ) {
+                return Some(lane);
+            }
+        }
+
+        None
+    }
+
+    /// Construct a candidate `LaneAddr` from the origin location and
+    /// check whether its resolved endpoints match `(origin, target)`.
+    fn check_lane_candidate(
+        &self,
+        move_type: MoveType,
+        origin: &LocationAddr,
+        target: &LocationAddr,
+        bus_id: u32,
+        direction: Direction,
+    ) -> Option<LaneAddr> {
+        let lane = LaneAddr {
+            move_type,
+            zone_id: origin.zone_id,
+            word_id: origin.word_id,
+            site_id: origin.site_id,
+            bus_id,
+            direction,
+        };
+        let (s, d) = self.lane_endpoints(&lane)?;
+        let (expected_src, expected_dst) = match direction {
+            Direction::Forward => (s, d),
+            Direction::Backward => (d, s),
+        };
+        if expected_src == *origin && expected_dst == *target {
+            Some(lane)
+        } else {
+            None
+        }
     }
 
     // -- Position resolution --
@@ -672,7 +852,8 @@ mod tests {
     /// Mirrors the helper in validate.rs tests.
     fn make_valid_two_zone_spec() -> ArchSpec {
         let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
-        let grid1 = Grid::from_positions(&[0.0, 7.5, 15.0], &[0.0, 4.0]);
+        // Zone 1 grid must not overlap zone 0 (x=[0,10], y=[0,3]).
+        let grid1 = Grid::from_positions(&[20.0, 27.5, 35.0], &[0.0, 4.0]);
 
         ArchSpec {
             version: Version::new(2, 0),
@@ -761,14 +942,14 @@ mod tests {
     #[test]
     fn test_location_position_zone1() {
         let spec = make_valid_two_zone_spec();
-        // Zone 1 grid: x=[0.0, 7.5, 15.0] y=[0.0, 4.0]
-        // Word 1: sites=[(1,0), (1,1)] -> site 0 at grid x[1]=7.5, y[0]=0.0
+        // Zone 1 grid: x=[20.0, 27.5, 35.0] y=[0.0, 4.0]
+        // Word 1: sites=[(1,0), (1,1)] -> site 0 at grid x[1]=27.5, y[0]=0.0
         let pos = spec.location_position(&LocationAddr {
             zone_id: 1,
             word_id: 1,
             site_id: 0,
         });
-        assert_eq!(pos, Some((7.5, 0.0)));
+        assert_eq!(pos, Some((27.5, 0.0)));
     }
 
     #[test]
@@ -1319,5 +1500,97 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, LocationGroupError::InvalidAddress { .. }))
         );
+    }
+
+    // ── Derived topology query tests (#464 phase 2) ──
+
+    #[test]
+    fn test_word_partner_map() {
+        let spec = make_valid_two_zone_spec();
+        let map = spec.word_partner_map();
+        // Zone 0 has entangling_pairs=[[0, 1]], zone 1 has none.
+        assert_eq!(map.get(&0), Some(&1));
+        assert_eq!(map.get(&1), Some(&0));
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_word_zone_map() {
+        let spec = make_valid_two_zone_spec();
+        let map = spec.word_zone_map();
+        // Words 0 and 1 are referenced by zone 0 (entangling_pairs + buses).
+        assert_eq!(map.get(&0), Some(&0));
+        assert_eq!(map.get(&1), Some(&0));
+        assert_eq!(map.len(), 2); // exactly 2 words
+    }
+
+    #[test]
+    fn test_left_cz_word_ids() {
+        let spec = make_valid_two_zone_spec();
+        let home = spec.left_cz_word_ids();
+        // Pair [0, 1] -> home word is 0. Word 1 is the staging word.
+        // But there are only 2 words and they're all paired, so home = [0].
+        assert_eq!(home, vec![0]);
+    }
+
+    #[test]
+    fn test_lane_for_endpoints_site_bus() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 0 has site_bus: src=[SiteRef(0)] dst=[SiteRef(1)], words_with_site_buses=[0,1].
+        // For word 0, site bus maps site 0 -> site 1.
+        let src = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let dst = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 1,
+        };
+        let lane = spec.lane_for_endpoints(&src, &dst);
+        assert!(lane.is_some(), "should find a lane for (src, dst)");
+        let l = lane.unwrap();
+        assert_eq!(l.move_type, MoveType::SiteBus);
+        assert_eq!(l.direction, Direction::Forward);
+    }
+
+    #[test]
+    fn test_lane_for_endpoints_word_bus() {
+        let spec = make_valid_two_zone_spec();
+        // Zone 0 word_bus: src=[WordRef(0)] dst=[WordRef(1)], sites_with_word_buses=[0].
+        let src = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let dst = LocationAddr {
+            zone_id: 0,
+            word_id: 1,
+            site_id: 0,
+        };
+        let lane = spec.lane_for_endpoints(&src, &dst);
+        assert!(lane.is_some(), "should find a word-bus lane");
+        let l = lane.unwrap();
+        assert_eq!(l.move_type, MoveType::WordBus);
+        assert_eq!(l.direction, Direction::Forward);
+    }
+
+    #[test]
+    fn test_lane_for_endpoints_not_found() {
+        let spec = make_valid_two_zone_spec();
+        // No lane connects word 0 site 0 to word 1 site 1 (different site ids
+        // across a word bus move).
+        let src = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let dst = LocationAddr {
+            zone_id: 0,
+            word_id: 1,
+            site_id: 1,
+        };
+        assert!(spec.lane_for_endpoints(&src, &dst).is_none());
     }
 }
