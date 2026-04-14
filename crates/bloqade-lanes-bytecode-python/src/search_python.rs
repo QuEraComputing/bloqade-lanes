@@ -162,7 +162,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip"))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip", w_t=0.05))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -180,6 +180,7 @@ impl PyMoveSolver {
         free_riders: &str,
         lookahead: bool,
         deadlock_policy: &str,
+        w_t: f64,
     ) -> PyResult<PySolveResult> {
         // Validate: check for duplicate qubit IDs in target.
         {
@@ -273,6 +274,7 @@ impl PyMoveSolver {
                     fr_policy,
                     lookahead,
                     dl_policy,
+                    w_t,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;

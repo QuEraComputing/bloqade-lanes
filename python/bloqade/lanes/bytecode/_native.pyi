@@ -928,6 +928,7 @@ class MoveSolver:
             free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
             lookahead: Enable 2-step lookahead scoring.
             deadlock_policy: Deadlock handling: "skip" or "move_blockers".
+            w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
 
         Returns:
             SolveResult with status indicating outcome.

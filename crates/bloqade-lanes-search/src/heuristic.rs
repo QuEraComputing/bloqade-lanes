@@ -6,7 +6,8 @@
 //! [`MisplacedHeuristic`] is a simple count-based heuristic.
 //! [`HopDistanceHeuristic`] uses the distance table for a tighter bound.
 
-use std::collections::{HashMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
@@ -24,6 +25,10 @@ use crate::lane_index::LaneIndex;
 pub struct DistanceTable {
     /// encoded_target → { encoded_location → min hops to target }
     distance_to: HashMap<u64, HashMap<u64, u32>>,
+    /// Optional time-weighted distances: encoded_target → { encoded_location → min time (µs) }
+    time_distance_to: Option<HashMap<u64, HashMap<u64, f64>>>,
+    /// Fastest lane duration across all lanes (for normalization).
+    fastest_lane_us: Option<f64>,
 }
 
 impl DistanceTable {
@@ -73,7 +78,73 @@ impl DistanceTable {
             distance_to.insert(target_enc, dist);
         }
 
-        Self { distance_to }
+        Self {
+            distance_to,
+            time_distance_to: None,
+            fastest_lane_us: None,
+        }
+    }
+
+    /// Also compute time-weighted distances using Dijkstra with lane durations.
+    ///
+    /// Only call when `w_t > 0`. Skips if the index has no lane duration data.
+    pub fn with_time_distances(mut self, index: &LaneIndex) -> Self {
+        let fastest = match index.fastest_lane_duration_us() {
+            Some(f) => f,
+            None => return self, // no path data — fall back to hop-count only
+        };
+        self.fastest_lane_us = Some(fastest);
+
+        // Build reverse weighted adjacency: dst_enc → [(src_enc, duration_us)]
+        let mut reverse_adj: HashMap<u64, Vec<(u64, f64)>> = HashMap::new();
+        for (mt, bus_id, zone_id, dir) in index.bus_groups() {
+            for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
+                if let Some((src, dst)) = index.endpoints(&lane)
+                    && let Some(dur) = index.lane_duration_us(&lane)
+                {
+                    reverse_adj
+                        .entry(dst.encode())
+                        .or_default()
+                        .push((src.encode(), dur));
+                }
+            }
+        }
+
+        // Dijkstra from each target on reversed weighted edges.
+        let targets: Vec<u64> = self.distance_to.keys().copied().collect();
+        let mut time_dist_to: HashMap<u64, HashMap<u64, f64>> = HashMap::new();
+
+        for target_enc in targets {
+            let mut dist: HashMap<u64, f64> = HashMap::new();
+            let mut heap = BinaryHeap::new();
+            dist.insert(target_enc, 0.0);
+            heap.push(DijkstraEntry {
+                cost: 0.0,
+                node: target_enc,
+            });
+
+            while let Some(entry) = heap.pop() {
+                if entry.cost > *dist.get(&entry.node).unwrap_or(&f64::MAX) {
+                    continue;
+                }
+                if let Some(preds) = reverse_adj.get(&entry.node) {
+                    for &(pred, dur) in preds {
+                        let new_cost = entry.cost + dur;
+                        if new_cost < *dist.get(&pred).unwrap_or(&f64::MAX) {
+                            dist.insert(pred, new_cost);
+                            heap.push(DijkstraEntry {
+                                cost: new_cost,
+                                node: pred,
+                            });
+                        }
+                    }
+                }
+            }
+            time_dist_to.insert(target_enc, dist);
+        }
+
+        self.time_distance_to = Some(time_dist_to);
+        self
     }
 
     /// O(1) lookup: minimum lane hops from `from_encoded` to `to_target_encoded`.
@@ -84,6 +155,49 @@ impl DistanceTable {
             .get(&to_target_encoded)?
             .get(&from_encoded)
             .copied()
+    }
+
+    /// O(1) lookup: minimum time (µs) from `from_encoded` to `to_target_encoded`.
+    ///
+    /// Returns `None` if time distances weren't computed or location is unreachable.
+    pub fn time_distance(&self, from_encoded: u64, to_target_encoded: u64) -> Option<f64> {
+        self.time_distance_to
+            .as_ref()?
+            .get(&to_target_encoded)?
+            .get(&from_encoded)
+            .copied()
+    }
+
+    /// Fastest lane duration for normalization. `None` if no time data.
+    pub fn fastest_lane_us(&self) -> Option<f64> {
+        self.fastest_lane_us
+    }
+}
+
+/// Dijkstra priority queue entry (min-heap by cost).
+struct DijkstraEntry {
+    cost: f64,
+    node: u64,
+}
+
+impl PartialEq for DijkstraEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cost.total_cmp(&other.cost) == Ordering::Equal
+    }
+}
+
+impl Eq for DijkstraEntry {}
+
+impl Ord for DijkstraEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse for min-heap.
+        other.cost.total_cmp(&self.cost)
+    }
+}
+
+impl PartialOrd for DijkstraEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

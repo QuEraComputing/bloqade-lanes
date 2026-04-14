@@ -163,6 +163,7 @@ impl MoveSolver {
         free_rider_policy: FreeRiderPolicy,
         lookahead: bool,
         deadlock_policy: DeadlockPolicy,
+        w_t: f64,
     ) -> Result<SolveResult, ConfigError> {
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -181,7 +182,11 @@ impl MoveSolver {
 
         // Build distance table and heuristic (shared across restarts).
         let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
-        let dist_table = DistanceTable::new(&target_locs, &self.index);
+        let dist_table = if w_t > 0.0 {
+            DistanceTable::new(&target_locs, &self.index).with_time_distances(&self.index)
+        } else {
+            DistanceTable::new(&target_locs, &self.index)
+        };
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
         // Max heuristic (admissible) for A*/Greedy, sum heuristic for IDS/DFS ordering.
         let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
@@ -288,6 +293,7 @@ impl MoveSolver {
                         top_c,
                         max_movesets_per_group,
                         lookahead,
+                        w_t,
                         ..crate::entropy::EntropyParams::default()
                     };
                     let result = crate::entropy::entropy_search(
@@ -441,6 +447,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -468,6 +475,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -496,6 +504,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -524,6 +533,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -551,6 +561,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -577,6 +588,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -595,6 +607,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -622,6 +635,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -649,6 +663,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -678,6 +693,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 
@@ -698,6 +714,7 @@ mod tests {
                 FreeRiderPolicy::Off,
                 false,
                 DeadlockPolicy::Skip,
+                0.0, // w_t
             )
             .unwrap();
 

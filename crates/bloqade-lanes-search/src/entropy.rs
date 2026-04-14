@@ -48,6 +48,8 @@ pub struct EntropyParams {
     pub max_movesets_per_group: usize,
     /// Enable 2-step lookahead scoring.
     pub lookahead: bool,
+    /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
+    pub w_t: f64,
 }
 
 impl Default for EntropyParams {
@@ -66,6 +68,7 @@ impl Default for EntropyParams {
             max_goal_candidates: 1,
             max_movesets_per_group: 3,
             lookahead: false,
+            w_t: 0.05,
         }
     }
 }
@@ -100,6 +103,31 @@ impl Default for EntropyState {
 /// Score and generate ranked candidate movesets with entropy-weighted scoring.
 ///
 /// Mirrors the Python `HeuristicMoveGenerator.generate()` + `CandidateScorer`.
+#[allow(clippy::too_many_arguments)]
+/// Blend hop-count and time-weighted distance.
+///
+/// Returns `(1 - w_t) * hop_dist + w_t * (time_dist / fastest_lane)`.
+/// Falls back to hop-count if time data is unavailable.
+fn blended_distance(
+    hop_dist: f64,
+    from_enc: u64,
+    target_enc: u64,
+    w_t: f64,
+    dist_table: &DistanceTable,
+) -> f64 {
+    if w_t <= 0.0 {
+        return hop_dist;
+    }
+    let Some(time_d) = dist_table.time_distance(from_enc, target_enc) else {
+        return hop_dist;
+    };
+    let Some(fastest) = dist_table.fastest_lane_us() else {
+        return hop_dist;
+    };
+    let normalized_time_d = time_d / fastest;
+    (1.0 - w_t) * hop_dist + w_t * normalized_time_d
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate_candidates(
     config: &Config,
@@ -164,7 +192,7 @@ fn generate_candidates(
 
     for &(qid, loc_enc, target_enc) in &unresolved {
         let d_now = match dist_table.distance(loc_enc, target_enc) {
-            Some(d) => d as f64,
+            Some(d) => blended_distance(d as f64, loc_enc, target_enc, params.w_t, dist_table),
             None => continue,
         };
         let m_now = {
@@ -191,7 +219,9 @@ fn generate_candidates(
             }
             let d_after = dist_table
                 .distance(dst_enc, target_enc)
-                .map_or(f64::MAX, |d| d as f64);
+                .map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
+                });
 
             // Combined lookahead + mobility in a single outgoing-lanes pass.
             let mut best_d2 = d_after;
@@ -208,7 +238,9 @@ fn generate_candidates(
                 if params.lookahead
                     && let Some(d) = dist_table.distance(enc, target_enc)
                 {
-                    best_d2 = best_d2.min(d as f64);
+                    let d_blended =
+                        blended_distance(d as f64, enc, target_enc, params.w_t, dist_table);
+                    best_d2 = best_d2.min(d_blended);
                 }
             }
             let effective_d_after = if params.lookahead { best_d2 } else { d_after };
@@ -384,10 +416,14 @@ fn score_moveset(
 
         let d_before = dist_table
             .distance(old_loc.encode(), target_enc)
-            .map_or(0.0, |d| d as f64);
+            .map_or(0.0, |d| {
+                blended_distance(d as f64, old_loc.encode(), target_enc, params.w_t, dist_table)
+            });
         let d_after = dist_table
             .distance(new_loc.encode(), target_enc)
-            .map_or(0.0, |d| d as f64);
+            .map_or(0.0, |d| {
+                blended_distance(d as f64, new_loc.encode(), target_enc, params.w_t, dist_table)
+            });
         distance_progress += (d_before - d_after).max(0.0);
 
         if new_loc.encode() == target_enc {

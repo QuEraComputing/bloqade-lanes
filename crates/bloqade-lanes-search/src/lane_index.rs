@@ -26,6 +26,10 @@ pub struct LaneIndex {
     endpoints: HashMap<u64, (LocationAddr, LocationAddr)>,
     /// encoded LocationAddr (u64) → (x, y) physical position.
     positions: HashMap<u64, (f64, f64)>,
+    /// encoded LaneAddr (u64) → duration in microseconds (from transport paths).
+    lane_durations: HashMap<u64, f64>,
+    /// Fastest lane duration across all lanes with paths. `None` if no paths.
+    fastest_lane_duration: Option<f64>,
 }
 
 impl LaneIndex {
@@ -137,6 +141,19 @@ impl LaneIndex {
             }
         }
 
+        // Build lane duration cache from transport paths.
+        let mut lane_durations: HashMap<u64, f64> = HashMap::new();
+        let mut fastest: Option<f64> = None;
+        if let Some(paths) = &arch_spec.paths {
+            for tp in paths {
+                let duration = compute_lane_duration_us(&tp.waypoints);
+                if duration > 0.0 {
+                    lane_durations.insert(tp.lane, duration);
+                    fastest = Some(fastest.map_or(duration, |f: f64| f.min(duration)));
+                }
+            }
+        }
+
         Self {
             arch_spec,
             lanes_by_triplet,
@@ -144,6 +161,8 @@ impl LaneIndex {
             outgoing_by_src,
             endpoints,
             positions,
+            lane_durations,
+            fastest_lane_duration: fastest,
         }
     }
 
@@ -206,6 +225,67 @@ impl LaneIndex {
     pub fn triplets(&self) -> impl Iterator<Item = (MoveType, u32, u32, Direction)> + '_ {
         self.bus_groups()
     }
+
+    /// Get cached lane duration in microseconds. Returns `None` if the lane
+    /// has no transport path data.
+    pub fn lane_duration_us(&self, lane: &LaneAddr) -> Option<f64> {
+        self.lane_durations.get(&lane.encode_u64()).copied()
+    }
+
+    /// Get the fastest (minimum) lane duration across all lanes with paths.
+    /// Returns `None` if no lanes have path data.
+    pub fn fastest_lane_duration_us(&self) -> Option<f64> {
+        self.fastest_lane_duration
+    }
+}
+
+// ── FLAIR timing model ────────────────────────────────────────────
+
+/// Constants from bloqade-flair's constant-jerk motion model.
+const FLAIR_MAX_RAMP_US: f64 = 0.2;
+const FLAIR_MAX_JERK_UM_PER_US3: f64 = 0.0004;
+const FLAIR_MAX_ACCEL_UM_PER_US2: f64 = 0.0015;
+
+/// Minimum duration (µs) for a constant-jerk move over `max_dist_um`.
+///
+/// Port of Python `MoveMetricCalculator._const_jerk_min_duration_us`.
+fn const_jerk_min_duration_us(max_dist_um: f64) -> f64 {
+    let max_dist_um = max_dist_um.abs();
+    if max_dist_um < 1e-8 {
+        return 0.0;
+    }
+
+    let t1 = FLAIR_MAX_ACCEL_UM_PER_US2 / FLAIR_MAX_JERK_UM_PER_US3;
+    let a = FLAIR_MAX_JERK_UM_PER_US3 * t1;
+    let b = 3.0 * FLAIR_MAX_JERK_UM_PER_US3 * t1 * t1;
+    let c = 2.0 * FLAIR_MAX_JERK_UM_PER_US3 * t1 * t1 * t1 - max_dist_um;
+
+    if c >= 0.0 {
+        let t1_jerk = (max_dist_um / (2.0 * FLAIR_MAX_JERK_UM_PER_US3)).cbrt();
+        return 4.0 * t1_jerk;
+    }
+
+    let discriminant = b * b - 4.0 * a * c;
+    let t2 = (-b + discriminant.sqrt()) / (2.0 * a);
+    4.0 * t1 + 2.0 * t2
+}
+
+/// Compute lane duration from waypoints: ramp + sum(segment durations) + ramp.
+fn compute_lane_duration_us(waypoints: &[[f64; 2]]) -> f64 {
+    if waypoints.len() <= 1 {
+        return 0.0;
+    }
+    let ramp = 1.0 / FLAIR_MAX_RAMP_US; // normalized_amp=1.0
+    let segment_sum: f64 = waypoints
+        .windows(2)
+        .map(|w| {
+            let dx = w[1][0] - w[0][0];
+            let dy = w[1][1] - w[0][1];
+            let dist = (dx * dx + dy * dy).sqrt();
+            const_jerk_min_duration_us(dist)
+        })
+        .sum();
+    ramp + segment_sum + ramp
 }
 
 #[cfg(test)]
