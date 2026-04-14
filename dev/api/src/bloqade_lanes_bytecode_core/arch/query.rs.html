@@ -256,7 +256,7 @@
 <a href=#256 id=256 data-nosnippet>256</a>
 <a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Return the set of "home" word IDs — the lower word in each entangling
 <a href=#258 id=258 data-nosnippet>258</a>    /// pair, plus any word not appearing in any pair.
-<a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">pub fn </span>home_word_ids(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u32&gt; {
+<a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">pub fn </span>left_cz_word_ids(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u32&gt; {
 <a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">let </span>partner = <span class="self">self</span>.word_partner_map();
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span><span class="kw-2">mut </span>paired: HashSet&lt;u32&gt; = HashSet::new();
 <a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span><span class="kw-2">mut </span>home: HashSet&lt;u32&gt; = HashSet::new();
@@ -1525,9 +1525,9 @@
 <a href=#1525 id=1525 data-nosnippet>1525</a>    </span>}
 <a href=#1526 id=1526 data-nosnippet>1526</a>
 <a href=#1527 id=1527 data-nosnippet>1527</a>    <span class="attr">#[test]
-<a href=#1528 id=1528 data-nosnippet>1528</a>    </span><span class="kw">fn </span>test_home_word_ids() {
+<a href=#1528 id=1528 data-nosnippet>1528</a>    </span><span class="kw">fn </span>test_left_cz_word_ids() {
 <a href=#1529 id=1529 data-nosnippet>1529</a>        <span class="kw">let </span>spec = make_valid_two_zone_spec();
-<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="kw">let </span>home = spec.home_word_ids();
+<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="kw">let </span>home = spec.left_cz_word_ids();
 <a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="comment">// Pair [0, 1] -&gt; home word is 0. Word 1 is the staging word.
 <a href=#1532 id=1532 data-nosnippet>1532</a>        // But there are only 2 words and they're all paired, so home = [0].
 <a href=#1533 id=1533 data-nosnippet>1533</a>        </span><span class="macro">assert_eq!</span>(home, <span class="macro">vec!</span>[<span class="number">0</span>]);
