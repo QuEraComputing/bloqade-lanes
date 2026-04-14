@@ -141,7 +141,10 @@ impl<'a> HopDistanceHeuristic<'a> {
     }
 
     /// Estimate cost-to-go: max hop distance over all qubits.
-    pub fn estimate(&self, config: &Config) -> f64 {
+    ///
+    /// Admissible — the worst-case qubit needs at least this many steps.
+    /// Use for A* where admissibility matters.
+    pub fn estimate_max(&self, config: &Config) -> f64 {
         let mut max_dist: u32 = 0;
         for &(qid, target_enc) in &self.targets {
             let Some(loc) = config.location_of(qid) else {
@@ -157,6 +160,34 @@ impl<'a> HopDistanceHeuristic<'a> {
             max_dist = max_dist.max(d);
         }
         max_dist as f64
+    }
+
+    /// Estimate cost-to-go: sum of hop distances over all qubits.
+    ///
+    /// Not admissible (overestimates because of bus parallelism), but gives
+    /// much better ordering for IDS/DFS — distinguishes "1 qubit far, rest done"
+    /// from "many qubits all far".
+    pub fn estimate_sum(&self, config: &Config) -> f64 {
+        let mut total: u32 = 0;
+        for &(qid, target_enc) in &self.targets {
+            let Some(loc) = config.location_of(qid) else {
+                return f64::INFINITY;
+            };
+            let loc_enc = loc.encode();
+            if loc_enc == target_enc {
+                continue;
+            }
+            let Some(d) = self.table.distance(loc_enc, target_enc) else {
+                return f64::INFINITY;
+            };
+            total += d;
+        }
+        total as f64
+    }
+
+    /// Alias for [`estimate_max`] — backward compatibility.
+    pub fn estimate(&self, config: &Config) -> f64 {
+        self.estimate_max(config)
     }
 }
 

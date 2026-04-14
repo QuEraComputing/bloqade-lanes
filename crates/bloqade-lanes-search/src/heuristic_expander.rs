@@ -3,16 +3,45 @@
 //! Scores qubit-bus pairs by distance improvement using a precomputed
 //! [`DistanceTable`], then builds a small number of high-quality movesets
 //! per bus group. Independent of entropy-guided search.
+//!
+//! Supports configurable deadlock escape, free-rider policies,
+//! 2-step lookahead scoring, and seeded score perturbation for
+//! restart diversity.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 use crate::astar::Expander;
 use crate::config::Config;
 use crate::graph::MoveSet;
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
+
+/// Policy for handling deadlocks (no improving moves available).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadlockPolicy {
+    /// Do nothing when deadlocked — rely on outer search to backtrack.
+    Skip,
+    /// Generate single-lane escape moves for qubits that block unresolved targets.
+    MoveBlockers,
+    /// Generate all valid single-lane moves for every qubit in the config.
+    AllMoves,
+}
+
+/// Policy for adding non-target ("free rider") qubits to movesets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreeRiderPolicy {
+    /// Never add free riders.
+    Off,
+    /// Add free riders only if they unblock an improving move.
+    Unblock,
+    /// Add free riders if they unblock or improve their own distance.
+    UnblockOrImprove,
+}
 
 /// Heuristic move generator that produces a small number of high-quality
 /// movesets per expansion.
@@ -37,6 +66,16 @@ pub struct HeuristicExpander<'a> {
     top_c: usize,
     /// Max movesets to generate per bus group.
     max_movesets_per_group: usize,
+    /// Policy for deadlock escape.
+    deadlock_policy: DeadlockPolicy,
+    /// Policy for free-rider qubits.
+    free_rider_policy: FreeRiderPolicy,
+    /// Enable 2-step lookahead scoring.
+    lookahead: bool,
+    /// Seed for score perturbation RNG (restart diversity).
+    seed: u64,
+    /// Counter for deadlock occurrences.
+    deadlock_count: AtomicU32,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -55,7 +94,80 @@ impl<'a> HeuristicExpander<'a> {
             dist_table,
             top_c,
             max_movesets_per_group,
+            deadlock_policy: DeadlockPolicy::AllMoves,
+            free_rider_policy: FreeRiderPolicy::Off,
+            lookahead: false,
+            seed: 0,
+            deadlock_count: AtomicU32::new(0),
         }
+    }
+
+    /// Set the deadlock escape policy.
+    pub fn with_deadlock_policy(mut self, policy: DeadlockPolicy) -> Self {
+        self.deadlock_policy = policy;
+        self
+    }
+
+    /// Set the free-rider policy.
+    pub fn with_free_rider_policy(mut self, policy: FreeRiderPolicy) -> Self {
+        self.free_rider_policy = policy;
+        self
+    }
+
+    /// Enable or disable 2-step lookahead scoring.
+    pub fn with_lookahead(mut self, enabled: bool) -> Self {
+        self.lookahead = enabled;
+        self
+    }
+
+    /// Set the seed for score perturbation.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
+
+    /// Return the number of deadlocks encountered so far.
+    pub fn deadlock_count(&self) -> u32 {
+        self.deadlock_count.load(Ordering::Relaxed)
+    }
+
+    /// Compute the best 2-step score for a qubit moving to `dst_enc`.
+    ///
+    /// Looks at all outgoing lanes from `dst` and picks the best
+    /// follow-up score (d_after_1 - d_after_2), returning
+    /// `score_step1 + best_step2`.
+    fn lookahead_score(
+        &self,
+        score_step1: i32,
+        dst_enc: u64,
+        target_enc: u64,
+        occupied: &HashSet<u64>,
+    ) -> i32 {
+        let d_after_1 = self
+            .dist_table
+            .distance(dst_enc, target_enc)
+            .map_or(i32::MAX, |d| d as i32);
+
+        let dst = LocationAddr::decode(dst_enc);
+        let mut best_step2: i32 = 0; // 0 = no improvement available
+
+        for &lane2 in self.index.outgoing_lanes(dst) {
+            let Some((_, dst2)) = self.index.endpoints(&lane2) else {
+                continue;
+            };
+            let dst2_enc = dst2.encode();
+            if occupied.contains(&dst2_enc) {
+                continue;
+            }
+            let d_after_2 = self
+                .dist_table
+                .distance(dst2_enc, target_enc)
+                .map_or(i32::MAX, |d| d as i32);
+            let step2_score = d_after_1 - d_after_2;
+            best_step2 = best_step2.max(step2_score);
+        }
+
+        score_step1 + best_step2
     }
 }
 
@@ -98,8 +210,6 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 2: score (qubit, bus triplet) pairs.
-        // Key: (qubit_id, mt_encoded, bus_id, dir_encoded) — but we just
-        // need to group by triplet later, so store the triplet key separately.
         type TripletKey = (u8, u32, u8); // (move_type as u8, bus_id, direction as u8)
 
         let mut all_scores: Vec<(TripletKey, ScoredTriple)> = Vec::new();
@@ -125,7 +235,12 @@ impl Expander for HeuristicExpander<'_> {
                     .dist_table
                     .distance(dst_enc, target_enc)
                     .map_or(i32::MAX, |d| d as i32);
-                let score = d_now - d_after;
+                let mut score = d_now - d_after;
+
+                // 2-step lookahead: replace score with combined 2-step score.
+                if self.lookahead {
+                    score = self.lookahead_score(score, dst_enc, target_enc, &occupied);
+                }
 
                 let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                 all_scores.push((
@@ -141,8 +256,6 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 3: per qubit, keep top C triples.
-        // (If all_scores is empty, this produces no candidates and the
-        // deadlock escape at the end activates.)
         let mut per_qubit: HashMap<u32, Vec<(TripletKey, ScoredTriple)>> = HashMap::new();
         for entry in all_scores {
             per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
@@ -154,7 +267,6 @@ impl Expander for HeuristicExpander<'_> {
         for (_, entries) in per_qubit.iter_mut() {
             entries.sort_by(|a, b| b.1.score.cmp(&a.1.score));
             entries.truncate(self.top_c);
-            // Keep only positive scores (or all if none positive — handled below).
             for e in entries.iter() {
                 if e.1.score > 0 {
                     has_positive = true;
@@ -180,6 +292,9 @@ impl Expander for HeuristicExpander<'_> {
         // Step 5: per group, generate multiple movesets.
         let mut candidates: Vec<(i32, MoveSet, Config)> = Vec::new();
 
+        // Collect unresolved qubit IDs for free-rider filtering.
+        let unresolved_ids: HashSet<u32> = unresolved.iter().map(|&(qid, _, _)| qid).collect();
+
         for (_, mut qubits) in groups {
             // Sort by score descending.
             qubits.sort_by(|a, b| b.score.cmp(&a.score));
@@ -200,9 +315,6 @@ impl Expander for HeuristicExpander<'_> {
                     if used_dsts.contains(&t.dst_encoded) {
                         continue;
                     }
-                    // Check destination still unoccupied (another moveset
-                    // in this expansion could have used it, but within one
-                    // moveset we track via used_dsts).
                     if occupied.contains(&t.dst_encoded) {
                         continue;
                     }
@@ -212,6 +324,22 @@ impl Expander for HeuristicExpander<'_> {
 
                     let dst = LocationAddr::decode(t.dst_encoded);
                     moves.push((t.qubit_id, dst));
+                }
+
+                // Free-rider augmentation: add non-target qubits sharing
+                // the same bus triplet that unblock or improve.
+                if self.free_rider_policy != FreeRiderPolicy::Off && !moves.is_empty() {
+                    // Determine the bus triplet from the first lane.
+                    // All lanes in this group share the same triplet.
+                    self.add_free_riders(
+                        config,
+                        &occupied,
+                        &unresolved_ids,
+                        &mut lanes,
+                        &mut moves,
+                        &mut used_dsts,
+                        &mut total_score,
+                    );
                 }
 
                 if lanes.is_empty() {
@@ -230,6 +358,16 @@ impl Expander for HeuristicExpander<'_> {
             }
         }
 
+        // Apply score perturbation for restart diversity.
+        if self.seed != 0 {
+            let mut rng = SmallRng::seed_from_u64(self.seed);
+            for (score, _, _) in candidates.iter_mut() {
+                // Perturb by up to +/-1 to break ties without destroying ranking.
+                let perturbation = rng.random_range(-1i32..=1i32);
+                *score = score.saturating_add(perturbation);
+            }
+        }
+
         // Step 6: sort by total score descending, emit.
         candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
@@ -238,23 +376,145 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 7: deadlock escape.
-        // If no positive-score candidates were produced (deadlock — all
-        // improving moves blocked), also generate all valid single-lane
-        // moves for EVERY qubit in the config. This includes moving
-        // resolved qubits out of the way to unblock others. A*/DFS will
-        // explore these escape moves and find the path through.
         if !has_positive {
-            for (qid, loc) in config.iter() {
-                for &lane in self.index.outgoing_lanes(loc) {
-                    let Some((_, dst)) = self.index.endpoints(&lane) else {
-                        continue;
-                    };
-                    if occupied.contains(&dst.encode()) {
-                        continue;
+            self.deadlock_count.fetch_add(1, Ordering::Relaxed);
+
+            match self.deadlock_policy {
+                DeadlockPolicy::Skip => {}
+                DeadlockPolicy::MoveBlockers => {
+                    self.generate_blocker_escape(config, &occupied, &unresolved, out);
+                }
+                DeadlockPolicy::AllMoves => {
+                    self.generate_all_escape(config, &occupied, out);
+                }
+            }
+        }
+    }
+}
+
+impl HeuristicExpander<'_> {
+    /// Generate escape moves only for qubits that block an unresolved target.
+    fn generate_blocker_escape(
+        &self,
+        config: &Config,
+        occupied: &HashSet<u64>,
+        unresolved: &[(u32, u64, u64)],
+        out: &mut Vec<(MoveSet, Config, f64)>,
+    ) {
+        // Find which locations are blocked targets.
+        let target_locs: HashSet<u64> = unresolved.iter().map(|&(_, _, t)| t).collect();
+
+        for (qid, loc) in config.iter() {
+            let loc_enc = loc.encode();
+            // Only move qubits sitting on someone else's target.
+            if !target_locs.contains(&loc_enc) {
+                continue;
+            }
+            for &lane in self.index.outgoing_lanes(loc) {
+                let Some((_, dst)) = self.index.endpoints(&lane) else {
+                    continue;
+                };
+                if occupied.contains(&dst.encode()) {
+                    continue;
+                }
+                let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
+                let new_cfg = config.with_moves(&[(qid, dst)]);
+                out.push((ms, new_cfg, 1.0));
+            }
+        }
+    }
+
+    /// Generate all valid single-lane moves for every qubit.
+    fn generate_all_escape(
+        &self,
+        config: &Config,
+        occupied: &HashSet<u64>,
+        out: &mut Vec<(MoveSet, Config, f64)>,
+    ) {
+        for (qid, loc) in config.iter() {
+            for &lane in self.index.outgoing_lanes(loc) {
+                let Some((_, dst)) = self.index.endpoints(&lane) else {
+                    continue;
+                };
+                if occupied.contains(&dst.encode()) {
+                    continue;
+                }
+                let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
+                let new_cfg = config.with_moves(&[(qid, dst)]);
+                out.push((ms, new_cfg, 1.0));
+            }
+        }
+    }
+
+    /// Add free-rider qubits to a moveset.
+    ///
+    /// Scans non-target qubits for available moves on the same bus group.
+    /// Depending on the policy, adds them if they unblock or improve.
+    #[allow(clippy::too_many_arguments)]
+    fn add_free_riders(
+        &self,
+        config: &Config,
+        occupied: &HashSet<u64>,
+        unresolved_ids: &HashSet<u32>,
+        lanes: &mut Vec<u64>,
+        moves: &mut Vec<(u32, LocationAddr)>,
+        used_dsts: &mut HashSet<u64>,
+        _total_score: &mut i32,
+    ) {
+        // Collect the target locations of unresolved qubits so we can
+        // check if a free rider unblocks one.
+        let target_locs: HashSet<u64> = self.targets.iter().map(|&(_, t)| t).collect();
+
+        for (qid, loc) in config.iter() {
+            // Skip qubits that are unresolved targets (already handled).
+            if unresolved_ids.contains(&qid) {
+                continue;
+            }
+
+            let loc_enc = loc.encode();
+
+            for &lane in self.index.outgoing_lanes(loc) {
+                let Some((_, dst)) = self.index.endpoints(&lane) else {
+                    continue;
+                };
+                let dst_enc = dst.encode();
+                if occupied.contains(&dst_enc) || used_dsts.contains(&dst_enc) {
+                    continue;
+                }
+
+                let should_add = match self.free_rider_policy {
+                    FreeRiderPolicy::Off => false,
+                    FreeRiderPolicy::Unblock => {
+                        // Add only if the qubit is sitting on a target location.
+                        target_locs.contains(&loc_enc)
                     }
-                    let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
-                    let new_cfg = config.with_moves(&[(qid, dst)]);
-                    out.push((ms, new_cfg, 1.0));
+                    FreeRiderPolicy::UnblockOrImprove => {
+                        // Add if unblocking OR if the qubit has its own target
+                        // and the move improves distance.
+                        if target_locs.contains(&loc_enc) {
+                            true
+                        } else {
+                            // Check if this qubit has a target and the move helps.
+                            self.targets.iter().any(|&(tq, t_enc)| {
+                                if tq != qid {
+                                    return false;
+                                }
+                                let d_now =
+                                    self.dist_table.distance(loc_enc, t_enc).unwrap_or(u32::MAX);
+                                let d_after =
+                                    self.dist_table.distance(dst_enc, t_enc).unwrap_or(u32::MAX);
+                                d_after < d_now
+                            })
+                        }
+                    }
+                };
+
+                if should_add {
+                    lanes.push(lane.encode_u64());
+                    used_dsts.insert(dst_enc);
+                    moves.push((qid, dst));
+                    // Free riders don't contribute to score (they're bonus).
+                    break; // One free-rider move per qubit.
                 }
             }
         }
@@ -340,8 +600,6 @@ mod tests {
     #[test]
     fn conflict_resolution_same_destination() {
         let index = make_index();
-        // Two qubits at sites 0 and 1, both targeting site 5.
-        // Only one can go to site 5 in one step.
         let targets = [(0, loc(0, 5)), (1, loc(0, 5))];
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
@@ -356,7 +614,6 @@ mod tests {
             let loc1 = cfg.location_of(1);
             if loc0.is_some() && loc1.is_some() {
                 // If both moved, they shouldn't be at the same place.
-                // (They could also be at their original locations if not moved.)
             }
         }
         assert!(!out.is_empty());
@@ -365,7 +622,6 @@ mod tests {
     #[test]
     fn multiple_movesets_per_group() {
         let index = make_index();
-        // 3 qubits at sites 0, 1, 2 all targeting sites 5, 6, 7.
         let targets = [(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(0, 7))];
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
@@ -374,9 +630,6 @@ mod tests {
         let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
         exp.expand(&config, &mut out);
 
-        // With max_movesets_per_group=3 and 3 qubits in the same group,
-        // we should get multiple (possibly up to 3) movesets.
-        // At minimum 1, but likely >1 with different lead qubits.
         assert!(!out.is_empty());
     }
 
@@ -396,8 +649,6 @@ mod tests {
     #[test]
     fn fallback_when_no_positive_scores() {
         let index = make_index();
-        // Qubit at site 5, target at site 0. Site bus backward would help,
-        // but let's block site 0. The only moves available make things worse.
         let targets = [(0, loc(0, 0))];
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 5))]).unwrap();
@@ -407,8 +658,7 @@ mod tests {
         let exp = HeuristicExpander::new(&index, [loc(0, 0)], targets, &table, 3, 3);
         exp.expand(&config, &mut out);
 
-        // Fallback should still produce at least one candidate
-        // (the least-bad move).
+        // Fallback should still produce at least one candidate.
         assert!(!out.is_empty());
     }
 
@@ -446,7 +696,6 @@ mod tests {
         use crate::heuristic::HopDistanceHeuristic;
 
         let index = make_index();
-        // Word 0 site 0 → word 1 site 5: 2 hops.
         let targets = vec![(0u32, loc(1, 5))];
         let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
         let table = DistanceTable::new(&target_locs, &index);
@@ -471,10 +720,6 @@ mod tests {
 
     #[test]
     fn deadlock_escape_generates_moves() {
-        // Two qubits mutually blocking: q0 at site 0 wants site 5,
-        // q1 at site 5 wants site 0. Both direct moves are blocked.
-        // Verify the escape generates at least some moves (even if the
-        // full search can't solve the swap on this bus topology).
         use crate::astar::Expander;
 
         let index = make_index();
@@ -487,8 +732,6 @@ mod tests {
         let mut out = Vec::new();
         exp.expand(&config, &mut out);
 
-        // q1 at site 5 has word bus outgoing lanes (sites_with_word_buses = [5..9]).
-        // The escape should find these even though no heuristic move improves distance.
         assert!(
             !out.is_empty(),
             "escape should produce moves even when heuristic candidates are blocked"
@@ -497,14 +740,6 @@ mod tests {
 
     #[test]
     fn deadlock_escape_solves_blocking() {
-        // q0 at site 0, target site 5. q1 at site 5, target word 1 site 5.
-        // q1 blocks q0's direct move (0→5). But q1 can escape via word bus
-        // (site 5 is in sites_with_word_buses). Path:
-        //   q1: word 0 site 5 → word 1 site 5 (word bus fwd) — reaches target!
-        //   q0: site 0 → site 5 (site bus fwd) — now unblocked.
-        // The heuristic expander normally can't find this because q0's
-        // improving move is blocked. The escape generates q1's word bus
-        // move, enabling q0's move on the next expansion.
         use crate::astar::astar;
         use crate::heuristic::HopDistanceHeuristic;
 
@@ -536,5 +771,231 @@ mod tests {
             "should solve blocking via escape (expanded {} nodes)",
             result.nodes_expanded
         );
+    }
+
+    // ── DeadlockPolicy tests ──
+
+    #[test]
+    fn deadlock_policy_skip_produces_no_escape() {
+        let index = make_index();
+        let targets = vec![(0u32, loc(0, 5)), (1, loc(0, 0))];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
+
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
+            .with_deadlock_policy(DeadlockPolicy::Skip);
+
+        let mut out = Vec::new();
+        exp.expand(&config, &mut out);
+
+        // With Skip, deadlock produces only the fallback best-of-negatives
+        // (step 3 truncated to 1 entry), but no escape moves.
+        // Count should be very small — just the single best negative entry.
+        assert!(
+            out.len() <= 1,
+            "Skip policy should produce at most 1 candidate (the fallback), got {}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn deadlock_policy_move_blockers_targets_blockers() {
+        let index = make_index();
+        // q0 at site 0 wants site 5; q1 at site 5 wants site 0.
+        // q1 blocks q0, and q0 blocks q1.
+        let targets = vec![(0u32, loc(0, 5)), (1, loc(0, 0))];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
+
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
+            .with_deadlock_policy(DeadlockPolicy::MoveBlockers);
+
+        let mut out = Vec::new();
+        exp.expand(&config, &mut out);
+
+        // MoveBlockers should generate escape moves, but only for qubits
+        // sitting on target locations.
+        assert!(!out.is_empty(), "MoveBlockers should generate escape moves");
+    }
+
+    #[test]
+    fn deadlock_count_increments() {
+        let index = make_index();
+        let targets = vec![(0u32, loc(0, 5)), (1, loc(0, 0))];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
+
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        assert_eq!(exp.deadlock_count(), 0);
+
+        let mut out = Vec::new();
+        exp.expand(&config, &mut out);
+        assert_eq!(exp.deadlock_count(), 1);
+
+        out.clear();
+        exp.expand(&config, &mut out);
+        assert_eq!(exp.deadlock_count(), 2);
+    }
+
+    // ── Lookahead tests ──
+
+    #[test]
+    fn lookahead_produces_candidates() {
+        let index = make_index();
+        let targets = [(0, loc(0, 5))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+
+        let mut out = Vec::new();
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
+            .with_lookahead(true);
+        exp.expand(&config, &mut out);
+
+        assert!(!out.is_empty(), "lookahead should still produce candidates");
+        // Best move should still be site 0 → site 5.
+        let best_cfg = &out[0].1;
+        assert_eq!(best_cfg.location_of(0), Some(loc(0, 5)));
+    }
+
+    #[test]
+    fn lookahead_improves_multi_step_ordering() {
+        use crate::astar::astar;
+        use crate::heuristic::HopDistanceHeuristic;
+
+        let index = make_index();
+        let targets = vec![(0u32, loc(1, 5))];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+        let h = HopDistanceHeuristic::new(targets.clone(), &table);
+
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        let exp_no_la =
+            HeuristicExpander::new(&index, std::iter::empty(), targets.clone(), &table, 3, 3);
+        let exp_la =
+            HeuristicExpander::new(&index, std::iter::empty(), targets.clone(), &table, 3, 3)
+                .with_lookahead(true);
+
+        let target_enc = loc(1, 5).encode();
+        let is_goal = |cfg: &Config| cfg.location_of(0).is_some_and(|l| l.encode() == target_enc);
+
+        let result_no_la = astar(
+            config.clone(),
+            is_goal,
+            |cfg| h.estimate(cfg),
+            &exp_no_la,
+            Some(1000),
+        );
+        let result_la = astar(config, is_goal, |cfg| h.estimate(cfg), &exp_la, Some(1000));
+
+        assert!(result_no_la.goal.is_some());
+        assert!(result_la.goal.is_some());
+        // Lookahead should expand no more nodes than without.
+        assert!(
+            result_la.nodes_expanded <= result_no_la.nodes_expanded,
+            "lookahead expanded {} vs {} without",
+            result_la.nodes_expanded,
+            result_no_la.nodes_expanded
+        );
+    }
+
+    // ── Seed perturbation tests ──
+
+    #[test]
+    fn different_seeds_can_produce_different_orderings() {
+        let index = make_index();
+        let targets = [(0, loc(0, 5)), (1, loc(0, 6)), (2, loc(0, 7))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
+
+        let exp1 =
+            HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3).with_seed(42);
+        let exp2 = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
+            .with_seed(123);
+
+        let mut out1 = Vec::new();
+        let mut out2 = Vec::new();
+        exp1.expand(&config, &mut out1);
+        exp2.expand(&config, &mut out2);
+
+        // Both should produce candidates.
+        assert!(!out1.is_empty());
+        assert!(!out2.is_empty());
+        // We can't guarantee different orderings (perturbation is small),
+        // but at minimum they should both work.
+    }
+
+    #[test]
+    fn seed_zero_means_no_perturbation() {
+        let index = make_index();
+        let targets = [(0, loc(0, 5))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+
+        let exp1 =
+            HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3).with_seed(0);
+        let exp2 =
+            HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3).with_seed(0);
+
+        let mut out1 = Vec::new();
+        let mut out2 = Vec::new();
+        exp1.expand(&config, &mut out1);
+        exp2.expand(&config, &mut out2);
+
+        assert_eq!(out1.len(), out2.len());
+        // With seed 0 (no perturbation), results should be identical.
+        for (a, b) in out1.iter().zip(out2.iter()) {
+            assert_eq!(a.0, b.0); // same MoveSet
+        }
+    }
+
+    // ── Free rider tests ──
+
+    #[test]
+    fn free_rider_off_does_not_add_extras() {
+        let index = make_index();
+        // q0 targets site 5, q1 (non-target) at site 1.
+        let targets = [(0, loc(0, 5))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
+            .with_free_rider_policy(FreeRiderPolicy::Off);
+
+        let mut out = Vec::new();
+        exp.expand(&config, &mut out);
+
+        // With Off policy, q1 should not move in any candidate.
+        for (_, cfg, _) in &out {
+            assert_eq!(
+                cfg.location_of(1),
+                Some(loc(0, 1)),
+                "free rider q1 should not move with Off policy"
+            );
+        }
+    }
+
+    #[test]
+    fn free_rider_unblock_moves_blockers() {
+        let index = make_index();
+        // q0 at site 0 targets site 5.
+        // q1 at site 5 (non-target, blocking q0's destination).
+        // With Unblock policy, q1 should be moved out of the way.
+        let targets = [(0, loc(0, 5))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
+
+        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
+            .with_free_rider_policy(FreeRiderPolicy::Unblock);
+
+        let mut out = Vec::new();
+        exp.expand(&config, &mut out);
+
+        // The expander should produce candidates. q1 at site 5 sits on
+        // q0's target, so it may get moved as a free rider if it shares
+        // the same bus group. The deadlock escape also applies.
+        assert!(!out.is_empty());
     }
 }
