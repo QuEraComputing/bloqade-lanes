@@ -59,8 +59,8 @@ def _assert_cz_pairs_are_blockaded_neighbors(move_kernel) -> None:
             target_loc = state.data.qubit_to_locations[target_id]
 
             assert (
-                arch_spec.get_blockaded_location(control_loc) == target_loc
-                or arch_spec.get_blockaded_location(target_loc) == control_loc
+                arch_spec.get_cz_partner(control_loc) == target_loc
+                or arch_spec.get_cz_partner(target_loc) == control_loc
             ), (
                 "CZ pair is not blockaded neighbors: "
                 f"control={control_id}@{control_loc}, target={target_id}@{target_loc}"

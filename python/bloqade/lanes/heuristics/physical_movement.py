@@ -220,7 +220,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         target = dict(placement)
         for control_qid, target_qid in zip(controls, targets):
             target_loc = placement[target_qid]
-            blockade_partner = self.arch_spec.get_blockaded_location(target_loc)
+            blockade_partner = self.arch_spec.get_cz_partner(target_loc)
             assert blockade_partner is not None, f"No blockade partner for {target_loc}"
             target[control_qid] = blockade_partner
         return target

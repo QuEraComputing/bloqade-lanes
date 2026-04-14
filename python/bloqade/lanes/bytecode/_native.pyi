@@ -841,6 +841,14 @@ class ArchSpec:
         """
         ...
 
+    def zone_location_index(self, loc: LocationAddress, zone_id: int) -> Optional[int]:
+        """O(1) flat index of a location within a zone.
+
+        Returns ``word_id * sites_per_word + site_id`` if the location's
+        zone matches ``zone_id`` and the word/site are in range, else None.
+        """
+        ...
+
     def check_zone(self, addr: ZoneAddress) -> Optional[str]:
         """Check whether a zone address is valid.
 

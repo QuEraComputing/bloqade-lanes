@@ -1,6 +1,5 @@
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.word import Word
 
 # Direct construction of the Gemini logical arch spec using the zone-centric
 # schema. Bypasses the builder to isolate the pipeline during migration.
@@ -91,9 +90,4 @@ _ARCH_JSON = r"""
 
 def get_arch_spec() -> ArchSpec:
     rust_spec = _RustArchSpec.from_json(_ARCH_JSON)
-    py_words = []
-    for rw in rust_spec.words:
-        w = Word.__new__(Word)
-        w._inner = rw
-        py_words.append(w)
-    return ArchSpec(inner=rust_spec, words=tuple(py_words))
+    return ArchSpec(rust_spec)

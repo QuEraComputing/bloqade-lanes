@@ -9,31 +9,31 @@ from bloqade.lanes.layout.encoding import (
 from bloqade.lanes.layout.word import Word
 
 
-def test_get_blockaded_location_with_pair():
-    """Test get_blockaded_location returns the correct paired location.
+def test_get_cz_partner_with_pair():
+    """Test get_cz_partner returns the correct paired location.
 
     Entangling pairs are defined within each zone. The CZ partner of
     (zone=0, word=W, site=S) is (zone=0, partner_word, site=S).
     """
     arch_spec = logical.get_arch_spec()
 
-    # get_blockaded_location preserves zone_id and maps to partner word
+    # get_cz_partner preserves zone_id and maps to partner word
     location = layout.LocationAddress(0, 0)
-    blockaded = arch_spec.get_blockaded_location(location)
+    blockaded = arch_spec.get_cz_partner(location)
 
     assert blockaded is not None
     assert blockaded == layout.LocationAddress(1, 0)
 
     # test reverse
     location2 = layout.LocationAddress(1, 0)
-    blockaded2 = arch_spec.get_blockaded_location(location2)
+    blockaded2 = arch_spec.get_cz_partner(location2)
 
     assert blockaded2 is not None
     assert blockaded2 == layout.LocationAddress(0, 0)
 
 
-def test_get_blockaded_location_without_pair():
-    """Test get_blockaded_location returns None for locations without pairs."""
+def test_get_cz_partner_without_pair():
+    """Test get_cz_partner returns None for locations without pairs."""
     from bloqade.lanes.bytecode._native import (
         Grid as RustGrid,
         LocationAddress as RustLocAddr,
@@ -63,20 +63,20 @@ def test_get_blockaded_location_without_pair():
         modes=[rust_mode],
     )
 
-    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 0)) is None
-    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 1)) is None
-    assert arch_spec.get_blockaded_location(layout.LocationAddress(0, 2)) is None
+    assert arch_spec.get_cz_partner(layout.LocationAddress(0, 0)) is None
+    assert arch_spec.get_cz_partner(layout.LocationAddress(0, 1)) is None
+    assert arch_spec.get_cz_partner(layout.LocationAddress(0, 2)) is None
 
 
 def test_blockaded_location_preserves_site_index():
-    """Site-symmetric pairing: get_blockaded_location preserves site_id across all CZ pairs."""
+    """Site-symmetric pairing: get_cz_partner preserves site_id across all CZ pairs."""
     arch_spec = logical.get_arch_spec()
-    # get_blockaded_location maps to the partner word within the same zone
+    # get_cz_partner maps to the partner word within the same zone
     num_sites = len(arch_spec.words[0].site_indices)
     for word_id in range(len(arch_spec.words)):
         for s in range(num_sites):
             loc = layout.LocationAddress(word_id, s)
-            blockaded = arch_spec.get_blockaded_location(loc)
+            blockaded = arch_spec.get_cz_partner(loc)
             if blockaded is not None:
                 assert (
                     blockaded.site_id == s
