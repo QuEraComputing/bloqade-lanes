@@ -43,6 +43,7 @@ def make_shape_only_dem(
         terms.append(" ".join(f"L{i}" for i in range(num_observables)))
     if not terms:
         raise ValueError("Need at least one detector or observable.")
+    # NOTE: this DEFINITELY is a shape-only DEM.
     return stim.DetectorErrorModel("\n".join(f"error(0.5) {term}" for term in terms))
 
 
@@ -81,6 +82,7 @@ def build_shared_mld_postselection_scores(
     *,
     table_decoder_cls: type,
     factory_target: np.ndarray,
+    ranking_data_by_basis: Mapping[str, BasisDataset] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
@@ -90,13 +92,28 @@ def build_shared_mld_postselection_scores(
             "Need X/Y/Z training datasets to build shared MLD postselection scores."
         )
 
+    score_data_by_basis = (
+        ranking_data_by_basis
+        if ranking_data_by_basis is not None
+        else training_data_by_basis
+    )
+    if set(score_data_by_basis) != set(basis_labels):
+        raise ValueError(
+            "Need X/Y/Z ranking datasets to build shared MLD postselection scores."
+        )
+
     corrected_by_pattern = {basis: defaultdict(list) for basis in basis_labels}
     ancilla_detectors: int | None = None
 
     for basis in basis_labels:
         training_dataset = training_data_by_basis[basis]
-        anc_det, anc_obs = split_factory_bits(
+        score_dataset = score_data_by_basis[basis]
+
+        training_anc_det, training_anc_obs = split_factory_bits(
             training_dataset.detectors, training_dataset.observables
+        )
+        anc_det, anc_obs = split_factory_bits(
+            score_dataset.detectors, score_dataset.observables
         )
         if ancilla_detectors is None:
             ancilla_detectors = anc_det.shape[1]
@@ -115,13 +132,13 @@ def build_shared_mld_postselection_scores(
             ).astype(bool),
         )
         factory_decoder = table_decoder_cls.from_det_obs_shots(
-            make_shape_only_dem(anc_det.shape[1], anc_obs.shape[1]),
-            np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
+            make_shape_only_dem(training_anc_det.shape[1], training_anc_obs.shape[1]),
+            np.concatenate([training_anc_det, training_anc_obs], axis=1).astype(bool),
         )
 
         for det, obs, a_det, a_obs in zip(
-            training_dataset.detectors,
-            training_dataset.observables,
+            score_dataset.detectors,
+            score_dataset.observables,
             anc_det,
             anc_obs,
             strict=True,
@@ -217,6 +234,7 @@ def build_mld_decoders(
     )
 
 
+# TODO: come back to MLE later.
 def _score_from_decoder(
     decoder: Any,
     syndrome: np.ndarray,
@@ -258,6 +276,7 @@ def _score_from_decoder(
     return correction, float("nan"), "none"
 
 
+# TODO: continue here, 4/14, 3:36 PM
 def build_mle_decoders(
     task: Any,
     *,
@@ -423,6 +442,7 @@ def evaluate_mld_curve(
 ) -> dict[str, np.ndarray]:
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
     corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
+    pattern_scores: dict[int, float] = {}
     total_shots = 0
 
     for basis in basis_labels:
@@ -445,8 +465,16 @@ def evaluate_mld_curve(
             packed = int(pack_boolean_array(a_det)[0])
             pattern_counts[packed] += 1
 
-            anc_flip, _score = decode_factory(bits_to_key(a_det))
+            anc_flip, score = decode_factory(bits_to_key(a_det))
             anc_flip = np.asarray(anc_flip, dtype=np.uint8)
+            if np.isfinite(score):
+                existing = pattern_scores.get(packed)
+                if existing is None:
+                    pattern_scores[packed] = float(score)
+                elif not np.isclose(existing, score, rtol=1e-9, atol=1e-12):
+                    raise ValueError(
+                        f"Inconsistent MLD score for ancilla detector pattern {packed}."
+                    )
             if not np.array_equal(a_obs ^ anc_flip, factory_target):
                 continue
 
@@ -461,25 +489,15 @@ def evaluate_mld_curve(
     )
     ranked_patterns = []
     for pattern in all_patterns:
-        basis_counts = {
-            basis: np.asarray(
-                corrected_bits_by_basis[basis].get(pattern, ()), dtype=np.uint8
-            )
-            for basis in basis_labels
-        }
-        if min(len(basis_counts[basis]) for basis in basis_labels) == 0:
+        score = pattern_scores.get(pattern)
+        if score is None or not np.isfinite(score):
             continue
-        mean_score = magic_state_fidelity_point_from_counts(
-            basis_counts["X"],
-            basis_counts["Y"],
-            basis_counts["Z"],
-            sign_vector=sign_vector,
-            target_bloch=target_bloch,
-        )
         total_count = sum(
             pattern_counts_by_basis[basis].get(pattern, 0) for basis in basis_labels
         )
-        ranked_patterns.append((pattern, mean_score, total_count))
+        if total_count <= 0:
+            continue
+        ranked_patterns.append((pattern, float(score), total_count))
 
     ranked_patterns.sort(key=lambda row: (row[1], row[2]), reverse=True)
 

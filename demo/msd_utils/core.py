@@ -358,7 +358,6 @@ def infer_factory_target(
     return np.asarray(ranked[0][0], dtype=np.uint8)
 
 
-# TODO: continue here, 4/14
 def infer_distilled_sign_vector(
     task_map: Mapping[str, Any],
     factory_target: np.ndarray,
@@ -401,6 +400,7 @@ def infer_distilled_sign_vector(
     return scored[0][1]
 
 
+# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_injected_summary(
     task_map: Mapping[str, Any],
     *,
@@ -442,6 +442,7 @@ def naive_injected_summary(
     return summary
 
 
+# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_distilled_summary(
     task_map: Mapping[str, Any],
     factory_target: np.ndarray,
