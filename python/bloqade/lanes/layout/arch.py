@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from bloqade.geometry.dialects.grid import Grid as GeoGrid
 
     from bloqade.lanes.bytecode.exceptions import LaneGroupError, LocationGroupError
+    from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
 @dataclass(frozen=True)
@@ -363,59 +364,29 @@ class ArchSpec:
         """Get the index of a location address within a zone address."""
         return self.zone_address_map[loc_addr].get(zone_id)
 
+    # ── Visualization shims ────────────────────────────────────────
+    # The real implementations live in ``bloqade.lanes.visualize.arch``
+    # via :class:`ArchVisualizer`. These shims preserve the historical
+    # ``arch_spec.<method>()`` call sites.  A single deferred-import
+    # helper builds the visualizer and caches bounds on it, so repeated
+    # access to ``x_bounds``/``y_bounds`` avoids recomputation.
+
+    @cached_property
+    def _visualizer(self) -> ArchVisualizer:
+        from bloqade.lanes.visualize.arch import ArchVisualizer
+
+        return ArchVisualizer(self)
+
     def path_bounds(self) -> tuple[float, float, float, float]:
-        x_min, x_max = self.x_bounds
-        y_min, y_max = self.y_bounds
+        return self._visualizer.path_bounds()
 
-        x_values = set(x for path in self.paths.values() for x, _ in path)
-        y_values = set(y for path in self.paths.values() for _, y in path)
-
-        y_min = min(y_min, min(y_values, default=y_min))
-        y_max = max(y_max, max(y_values, default=y_max))
-
-        x_min = min(x_min, min(x_values, default=x_min))
-        x_max = max(x_max, max(x_values, default=x_max))
-        return (x_min, x_max, y_min, y_max)
-
-    @cached_property
+    @property
     def x_bounds(self) -> tuple[float, float]:
-        x_min = float("inf")
-        x_max = float("-inf")
-        for zone_id in range(len(self.zones)):
-            for word_id in range(len(self.words)):
-                for site_id in range(len(self.words[word_id].site_indices)):
-                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
-                    if pos is not None:
-                        x_min = min(x_min, pos[0])
-                        x_max = max(x_max, pos[0])
+        return self._visualizer.x_bounds
 
-        if x_min == float("inf"):
-            x_min = -1.0
-
-        if x_max == float("-inf"):
-            x_max = 1.0
-
-        return x_min, x_max
-
-    @cached_property
+    @property
     def y_bounds(self) -> tuple[float, float]:
-        y_min = float("inf")
-        y_max = float("-inf")
-        for zone_id in range(len(self.zones)):
-            for word_id in range(len(self.words)):
-                for site_id in range(len(self.words[word_id].site_indices)):
-                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
-                    if pos is not None:
-                        y_min = min(y_min, pos[1])
-                        y_max = max(y_max, pos[1])
-
-        if y_min == float("inf"):
-            y_min = -1.0
-
-        if y_max == float("-inf"):
-            y_max = 1.0
-
-        return y_min, y_max
+        return self._visualizer.y_bounds
 
     def get_position(self, location: LocationAddress) -> tuple[float, float]:
         pos = self._inner.location_position(location._inner)
@@ -598,46 +569,6 @@ class ArchSpec:
             GeoGrid.from_positions(tuple(dst_xs), tuple(dst_ys)),
         )
 
-    def _get_word_bus_paths(
-        self, show_word_bus: Sequence[int]
-    ) -> Iterator[tuple[tuple[float, float], ...]]:
-        for zone_id, zone in enumerate(self._inner.zones):
-            for lane_id in show_word_bus:
-                if lane_id >= len(zone.word_buses):
-                    continue
-                lane = zone.word_buses[lane_id]
-                for site_id in zone.sites_with_word_buses:
-                    for start_word_id, end_word_id in zip(lane.src, lane.dst):
-                        lane_addr = WordLaneAddress(
-                            zone_id=zone_id,
-                            word_id=start_word_id,
-                            site_id=site_id,
-                            bus_id=lane_id,
-                            direction=Direction.FORWARD,
-                        )
-                        yield self.get_path(lane_addr)
-
-    def _get_site_bus_paths(
-        self, show_words: Sequence[int], show_site_bus: Sequence[int]
-    ) -> Iterator[tuple[tuple[float, float], ...]]:
-        for zone_id, zone in enumerate(self._inner.zones):
-            for word_id in show_words:
-                if word_id not in set(zone.words_with_site_buses):
-                    continue
-                for lane_id in show_site_bus:
-                    if lane_id >= len(zone.site_buses):
-                        continue
-                    lane = zone.site_buses[lane_id]
-                    for i in range(len(lane.src)):
-                        lane_addr = SiteLaneAddress(
-                            zone_id=zone_id,
-                            word_id=word_id,
-                            site_id=lane.src[i],
-                            bus_id=lane_id,
-                            direction=Direction.FORWARD,
-                        )
-                        yield self.get_path(lane_addr)
-
     def plot(
         self,
         ax=None,  # type: ignore[no-untyped-def]
@@ -646,38 +577,13 @@ class ArchSpec:
         show_word_bus: Sequence[int] = (),
         **scatter_kwargs,  # type: ignore[no-untyped-def]
     ):  # type: ignore[no-untyped-def]
-        import matplotlib.pyplot as plt  # type: ignore[import-untyped]
-
-        if ax is None:
-            ax = plt.gca()
-
-        for word_id in show_words:
-            word = self.words[word_id]
-            # Plot sites using their positions from the arch spec.
-            # Try each zone to find valid positions for this word.
-            positions = []
-            for zone_id in range(len(self.zones)):
-                for site_id in range(len(word.site_indices)):
-                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
-                    if pos is not None:
-                        positions.append(pos)
-                if positions:
-                    break
-            if positions:
-                x_positions = [p[0] for p in positions]
-                y_positions = [p[1] for p in positions]
-                ax.scatter(x_positions, y_positions, **scatter_kwargs)
-
-        site_paths = self._get_site_bus_paths(show_words, show_site_bus)
-        for path in site_paths:
-            x_vals, y_vals = zip(*path)
-            ax.plot(x_vals, y_vals, linestyle="--")
-
-        word_paths = self._get_word_bus_paths(show_word_bus)
-        for path in word_paths:
-            x_vals, y_vals = zip(*path)
-            ax.plot(x_vals, y_vals, linestyle="-")
-        return ax
+        return self._visualizer.plot(
+            ax,
+            show_words=show_words,
+            show_site_bus=show_site_bus,
+            show_word_bus=show_word_bus,
+            **scatter_kwargs,
+        )
 
     def show(
         self,
@@ -687,16 +593,13 @@ class ArchSpec:
         show_inter: Sequence[int] = (),
         **scatter_kwargs,  # type: ignore[no-untyped-def]
     ):  # type: ignore[no-untyped-def]
-        import matplotlib.pyplot as plt  # type: ignore[import-untyped]
-
-        self.plot(
+        self._visualizer.show(
             ax,
             show_words=show_words,
-            show_site_bus=show_intra,
-            show_word_bus=show_inter,
+            show_intra=show_intra,
+            show_inter=show_inter,
             **scatter_kwargs,
         )
-        plt.show()
 
     def check_location_group(
         self, locations: Sequence[LocationAddress]
