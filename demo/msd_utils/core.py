@@ -358,6 +358,7 @@ def infer_factory_target(
     return np.asarray(ranked[0][0], dtype=np.uint8)
 
 
+# TODO: continue here, 4/14
 def infer_distilled_sign_vector(
     task_map: Mapping[str, Any],
     factory_target: np.ndarray,
