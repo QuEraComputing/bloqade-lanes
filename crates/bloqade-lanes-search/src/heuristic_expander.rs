@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -210,7 +210,7 @@ impl Expander for HeuristicExpander<'_> {
         }
 
         // Step 2: score (qubit, bus triplet) pairs.
-        type TripletKey = (u8, u32, u8); // (move_type as u8, bus_id, direction as u8)
+        type TripletKey = (u8, u32, u32, u8); // (move_type as u8, bus_id, zone_id, direction as u8)
 
         let mut all_scores: Vec<(TripletKey, ScoredTriple)> = Vec::new();
 
@@ -242,7 +242,12 @@ impl Expander for HeuristicExpander<'_> {
                     score = self.lookahead_score(score, dst_enc, target_enc, &occupied);
                 }
 
-                let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+                let triplet_key = (
+                    lane.move_type as u8,
+                    lane.bus_id,
+                    lane.zone_id,
+                    lane.direction as u8,
+                );
                 all_scores.push((
                     triplet_key,
                     ScoredTriple {
@@ -295,7 +300,7 @@ impl Expander for HeuristicExpander<'_> {
         // Collect unresolved qubit IDs for free-rider filtering.
         let unresolved_ids: HashSet<u32> = unresolved.iter().map(|&(qid, _, _)| qid).collect();
 
-        for (_, mut qubits) in groups {
+        for ((mt_u8, bus_id, zone_id, dir_u8), mut qubits) in groups {
             // Sort by score descending.
             qubits.sort_by(|a, b| b.score.cmp(&a.score));
 
@@ -329,8 +334,19 @@ impl Expander for HeuristicExpander<'_> {
                 // Free-rider augmentation: add non-target qubits sharing
                 // the same bus triplet that unblock or improve.
                 if self.free_rider_policy != FreeRiderPolicy::Off && !moves.is_empty() {
-                    // Determine the bus triplet from the first lane.
-                    // All lanes in this group share the same triplet.
+                    // Reconstruct typed triplet for bus-group filtering.
+                    let mt = if mt_u8 == MoveType::SiteBus as u8 {
+                        MoveType::SiteBus
+                    } else if mt_u8 == MoveType::WordBus as u8 {
+                        MoveType::WordBus
+                    } else {
+                        MoveType::ZoneBus
+                    };
+                    let dir = if dir_u8 == Direction::Forward as u8 {
+                        Direction::Forward
+                    } else {
+                        Direction::Backward
+                    };
                     self.add_free_riders(
                         config,
                         &occupied,
@@ -339,6 +355,7 @@ impl Expander for HeuristicExpander<'_> {
                         &mut moves,
                         &mut used_dsts,
                         &mut total_score,
+                        (mt, bus_id, zone_id, dir),
                     );
                 }
 
@@ -450,6 +467,7 @@ impl HeuristicExpander<'_> {
     ///
     /// Scans non-target qubits for available moves on the same bus group.
     /// Depending on the policy, adds them if they unblock or improve.
+    /// Only considers lanes matching the given `(move_type, bus_id, zone_id, direction)` triplet.
     #[allow(clippy::too_many_arguments)]
     fn add_free_riders(
         &self,
@@ -460,6 +478,7 @@ impl HeuristicExpander<'_> {
         moves: &mut Vec<(u32, LocationAddr)>,
         used_dsts: &mut HashSet<u64>,
         _total_score: &mut i32,
+        triplet: (MoveType, u32, u32, Direction),
     ) {
         // Collect the target locations of unresolved qubits so we can
         // check if a free rider unblocks one.
@@ -473,10 +492,15 @@ impl HeuristicExpander<'_> {
 
             let loc_enc = loc.encode();
 
-            for &lane in self.index.outgoing_lanes(loc) {
-                let Some((_, dst)) = self.index.endpoints(&lane) else {
+            let (req_mt, req_bus, req_zone, req_dir) = triplet;
+            for &lane in self.index.lanes_for(req_mt, req_bus, req_zone, req_dir) {
+                // Only consider lanes originating from this qubit's location.
+                let Some((src, dst)) = self.index.endpoints(&lane) else {
                     continue;
                 };
+                if src != loc {
+                    continue;
+                }
                 let dst_enc = dst.encode();
                 if occupied.contains(&dst_enc) || used_dsts.contains(&dst_enc) {
                     continue;

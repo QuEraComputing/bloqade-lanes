@@ -924,7 +924,7 @@ class MoveSolver:
             top_c: Top bus options per qubit in the heuristic expander.
             max_movesets_per_group: Max movesets per bus group.
             weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-            mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
+            mobility_weight: Reserved for future use (currently has no effect).
             restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
             free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
             lookahead: Enable 2-step lookahead scoring.

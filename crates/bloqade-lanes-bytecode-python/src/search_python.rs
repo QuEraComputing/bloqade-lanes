@@ -154,11 +154,12 @@ impl PyMoveSolver {
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
     ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-    ///     mobility_weight: Weight for mobility bonus in expander scoring (0.0 = disabled).
+    ///     mobility_weight: Reserved for future use (currently has no effect).
     ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
     ///     free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
     ///     lookahead: Enable 2-step lookahead scoring.
     ///     deadlock_policy: Deadlock handling: "skip" or "move_blockers".
+    ///     w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only). Affects entropy strategy.
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
@@ -274,6 +275,18 @@ impl PyMoveSolver {
                 )));
             }
         };
+
+        // Validate numeric parameters.
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(PyValueError::new_err(
+                "weight must be a finite float greater than 0.0",
+            ));
+        }
+        if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
+            return Err(PyValueError::new_err(
+                "w_t must be a finite float in the range [0.0, 1.0]",
+            ));
+        }
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
