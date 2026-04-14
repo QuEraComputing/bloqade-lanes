@@ -11,7 +11,7 @@ def _build_move_calc() -> MoveMetricCalculator:
 
 def test_metrics_get_lane_duration_us_positive():
     move_calc = _build_move_calc()
-    lanes = tuple(move_calc.arch_spec._lane_map.values())
+    lanes = tuple(move_calc.arch_spec.iter_all_lanes())
     assert lanes
     for lane in lanes:
         duration = move_calc.get_lane_duration_us(lane)
@@ -20,7 +20,7 @@ def test_metrics_get_lane_duration_us_positive():
 
 def test_metrics_get_lane_duration_cost_bounds_and_anchor():
     move_calc = _build_move_calc()
-    lanes = tuple(move_calc.arch_spec._lane_map.values())
+    lanes = tuple(move_calc.arch_spec.iter_all_lanes())
     assert lanes
     costs = [move_calc.get_lane_duration_cost(lane) for lane in lanes]
     assert all(0.0 <= cost <= 1.0 for cost in costs)
@@ -29,7 +29,7 @@ def test_metrics_get_lane_duration_cost_bounds_and_anchor():
 
 def test_metrics_get_lane_duration_cost_monotonic():
     move_calc = _build_move_calc()
-    lanes = tuple(move_calc.arch_spec._lane_map.values())
+    lanes = tuple(move_calc.arch_spec.iter_all_lanes())
     assert lanes
     pairs = sorted(
         (move_calc.get_lane_duration_us(lane), move_calc.get_lane_duration_cost(lane))
@@ -41,7 +41,7 @@ def test_metrics_get_lane_duration_cost_monotonic():
 
 def test_metrics_get_lane_duration_cost_identical_durations_match():
     move_calc = _build_move_calc()
-    lanes = tuple(move_calc.arch_spec._lane_map.values())
+    lanes = tuple(move_calc.arch_spec.iter_all_lanes())
     assert lanes
 
     duration_groups: dict[float, list] = {}
@@ -61,7 +61,7 @@ def test_metrics_get_lane_duration_cost_identical_durations_match():
 
 def test_metrics_caching():
     move_calc = _build_move_calc()
-    lanes = tuple(move_calc.arch_spec._lane_map.values())
+    lanes = tuple(move_calc.arch_spec.iter_all_lanes())
     lane = lanes[0]
     d1 = move_calc.get_lane_duration_us(lane)
     d2 = move_calc.get_lane_duration_us(lane)

@@ -21,8 +21,6 @@ from bloqade.lanes.layout.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    SiteLaneAddress,
-    WordLaneAddress,
     ZoneAddress,
 )
 
@@ -80,38 +78,57 @@ class ArchSpec:
                     index += 1
         return dict(result)
 
-    @cached_property
-    def _lane_map(self) -> dict[tuple[LocationAddress, LocationAddress], LaneAddress]:
-        lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
+    def iter_all_lanes(self) -> Iterator[LaneAddress]:
+        """Yield every valid lane address in the architecture.
+
+        Enumerates site-bus, word-bus, and zone-bus lanes in both forward
+        and backward directions. Used by
+        :class:`~bloqade.lanes.layout.MoveMetricCalculator` to compute
+        max-duration bounds. Prefer ``get_lane_address(src, dst)`` for
+        single-pair lookups.
+        """
+        sites_per_word = self.sites_per_word
+
+        # Intra-zone: site buses and word buses.
         for zone_id, zone in enumerate(self._inner.zones):
             for bus_id, bus in enumerate(zone.site_buses):
-                bus_word_ids = zone.words_with_site_buses
-                for word_id in bus_word_ids:
+                for word_id in zone.words_with_site_buses:
                     for i in range(len(bus.src)):
                         for direction in (Direction.FORWARD, Direction.BACKWARD):
-                            lane_addr = SiteLaneAddress(
-                                zone_id=zone_id,
-                                word_id=word_id,
-                                site_id=bus.src[i],
-                                bus_id=bus_id,
-                                direction=direction,
+                            yield LaneAddress(
+                                MoveType.SITE,
+                                word_id,
+                                bus.src[i],
+                                bus_id,
+                                direction,
+                                zone_id,
                             )
-                            src, dst = self.get_endpoints(lane_addr)
-                            lane_map[(src, dst)] = lane_addr
             for bus_id, bus in enumerate(zone.word_buses):
                 for site_id in zone.sites_with_word_buses:
                     for word_id in bus.src:
                         for direction in (Direction.FORWARD, Direction.BACKWARD):
-                            lane_addr = WordLaneAddress(
-                                zone_id=zone_id,
-                                word_id=word_id,
-                                site_id=site_id,
-                                bus_id=bus_id,
-                                direction=direction,
+                            yield LaneAddress(
+                                MoveType.WORD,
+                                word_id,
+                                site_id,
+                                bus_id,
+                                direction,
+                                zone_id,
                             )
-                            src, dst = self.get_endpoints(lane_addr)
-                            lane_map[(src, dst)] = lane_addr
-        return lane_map
+
+        # Inter-zone: zone buses.
+        for bus_id, zb in enumerate(self._inner.zone_buses):
+            for (src_zone, src_word), (_dst_zone, _dst_word) in zip(zb.src, zb.dst):
+                for site_id in range(sites_per_word):
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        yield LaneAddress(
+                            MoveType.ZONE,
+                            src_word,
+                            site_id,
+                            bus_id,
+                            direction,
+                            src_zone,
+                        )
 
     # ── Properties derived from Rust inner ──
 
@@ -126,16 +143,7 @@ class ArchSpec:
     @cached_property
     def _home_words(self) -> frozenset[int]:
         """Words that are 'home' (not CZ-staging) -- lower word_id in each pair."""
-        home: set[int] = set()
-        paired: set[int] = set()
-        for w_a, w_b in self._word_partner_map.items():
-            paired.add(w_a)
-            paired.add(w_b)
-            home.add(min(w_a, w_b))
-        # Unpaired words are also home
-        all_words = set(range(len(self.words)))
-        home |= all_words - paired
-        return frozenset(home)
+        return frozenset(self._inner.left_cz_word_ids())
 
     def is_home_position(self, addr: LocationAddress) -> bool:
         """True if this address is at a home (non-CZ-staging) word."""
@@ -145,26 +153,9 @@ class ArchSpec:
     def word_zone_map(self) -> dict[int, int]:
         """Map each word_id to the zone_id it belongs to.
 
-        Derived from each zone's entangling_pairs, word_buses, and
-        words_with_site_buses. A word may only appear in one zone; if
-        multiple zones claim the same word the first match wins.
+        Delegates to Rust ``ArchSpec.word_zone_map()``.
         """
-        mapping: dict[int, int] = {}
-        for zone_id, zone in enumerate(self._inner.zones):
-            for w_a, w_b in zone.entangling_pairs:
-                mapping.setdefault(w_a, zone_id)
-                mapping.setdefault(w_b, zone_id)
-            for bus in zone.word_buses:
-                for w in bus.src:
-                    mapping.setdefault(w, zone_id)
-                for w in bus.dst:
-                    mapping.setdefault(w, zone_id)
-            for w in zone.words_with_site_buses:
-                mapping.setdefault(w, zone_id)
-        # Any unreferenced word is (conservatively) assigned to zone 0.
-        for word_id in range(len(self.words)):
-            mapping.setdefault(word_id, 0)
-        return mapping
+        return self._inner.word_zone_map()
 
     @cached_property
     def home_sites(self) -> frozenset[LocationAddress]:
@@ -654,8 +645,14 @@ class ArchSpec:
     def get_lane_address(
         self, src: LocationAddress, dst: LocationAddress
     ) -> LaneAddress | None:
-        """Given an input tuple of locations, gets the lane (w/direction)."""
-        return self._lane_map.get((src, dst))
+        """Given an input tuple of locations, gets the lane (w/direction).
+
+        Delegates to Rust ``ArchSpec.lane_for_endpoints()``.
+        """
+        result = self._inner.lane_for_endpoints(src._inner, dst._inner)
+        if result is None:
+            return None
+        return LaneAddress.from_inner(result)
 
     def get_endpoints(
         self, lane_address: LaneAddress
@@ -698,12 +695,6 @@ class ArchSpec:
     def _word_partner_map(self) -> dict[int, int]:
         """Map word_id -> partner_word_id from each zone's entangling_pairs.
 
-        Iterates entangling_pairs on each zone and builds a bidirectional
-        word partner mapping.
+        Delegates to Rust ``ArchSpec.word_partner_map()``.
         """
-        partner_map: dict[int, int] = {}
-        for zone in self._inner.zones:
-            for w_a, w_b in zone.entangling_pairs:
-                partner_map[w_a] = w_b
-                partner_map[w_b] = w_a
-        return partner_map
+        return self._inner.word_partner_map()

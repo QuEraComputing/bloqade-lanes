@@ -789,6 +789,57 @@ class ArchSpec:
                 in any entangling pair within its zone.
         """
         ...
+    # -- Derived topology queries (#464 phase 2) --
+
+    def word_partner_map(self) -> dict[int, int]:
+        """Bidirectional word partner map from entangling pairs.
+
+        Returns:
+            dict[int, int]: word_id → partner_word_id for every word
+                appearing in any zone's ``entangling_pairs``.
+        """
+        ...
+
+    def word_zone_map(self) -> dict[int, int]:
+        """Map each word_id to the zone_id that owns it.
+
+        Derived from each zone's ``entangling_pairs``, ``word_buses``,
+        and ``words_with_site_buses``. Words not referenced by any zone
+        default to zone 0.
+
+        Returns:
+            dict[int, int]: word_id → zone_id.
+        """
+        ...
+
+    def left_cz_word_ids(self) -> list[int]:
+        """Sorted left-CZ word IDs.
+
+        The lower word of each entangling pair, plus any word not
+        appearing in any pair.
+
+        Returns:
+            list[int]: Sorted word IDs.
+        """
+        ...
+
+    def lane_for_endpoints(
+        self, src: LocationAddress, dst: LocationAddress
+    ) -> Optional[LaneAddress]:
+        """Reverse-lookup: find the lane connecting ``src`` to ``dst``.
+
+        Searches SiteBus, WordBus, and ZoneBus lanes. Exploits the
+        LaneAddr encoding to narrow the search to
+        ``O(site_buses + word_buses + zone_buses)`` per direction.
+
+        Args:
+            src (LocationAddress): Source location.
+            dst (LocationAddress): Destination location.
+
+        Returns:
+            LaneAddress: The lane, or None if no lane connects them.
+        """
+        ...
 
     def check_zone(self, addr: ZoneAddress) -> Optional[str]:
         """Check whether a zone address is valid.
