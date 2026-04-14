@@ -1063,6 +1063,37 @@ impl PyArchSpec {
             .map(|l| PyLocationAddr { inner: l })
     }
 
+    // -- Derived topology queries (#464 phase 2) --
+
+    /// Build a bidirectional word-partner map from entangling pairs.
+    ///
+    /// Returns a dict mapping each word_id to its CZ partner word_id.
+    fn word_partner_map(&self) -> std::collections::HashMap<u32, u32> {
+        self.inner.word_partner_map()
+    }
+
+    /// Map each word_id to the zone_id that owns it.
+    ///
+    /// Returns a dict mapping word_id → zone_id.
+    fn word_zone_map(&self) -> std::collections::HashMap<u32, u32> {
+        self.inner.word_zone_map()
+    }
+
+    /// Return sorted left-CZ word IDs (lower word of each CZ pair + unpaired).
+    fn left_cz_word_ids(&self) -> Vec<u32> {
+        self.inner.left_cz_word_ids()
+    }
+
+    /// Reverse-lookup: find the lane connecting src → dst.
+    ///
+    /// Returns the ``LaneAddress`` if found, or None.
+    #[pyo3(text_signature = "(self, src, dst)")]
+    fn lane_for_endpoints(&self, src: &PyLocationAddr, dst: &PyLocationAddr) -> Option<PyLaneAddr> {
+        self.inner
+            .lane_for_endpoints(&src.inner, &dst.inner)
+            .map(|l| PyLaneAddr { inner: l })
+    }
+
     fn check_zone(&self, addr: &PyZoneAddr) -> Option<String> {
         self.inner.check_zone(&addr.inner)
     }

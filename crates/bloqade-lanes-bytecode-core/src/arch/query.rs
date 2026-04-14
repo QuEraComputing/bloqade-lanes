@@ -256,7 +256,7 @@ impl ArchSpec {
 
     /// Return the set of "home" word IDs — the lower word in each entangling
     /// pair, plus any word not appearing in any pair.
-    pub fn home_word_ids(&self) -> Vec<u32> {
+    pub fn left_cz_word_ids(&self) -> Vec<u32> {
         let partner = self.word_partner_map();
         let mut paired: HashSet<u32> = HashSet::new();
         let mut home: HashSet<u32> = HashSet::new();
@@ -1525,9 +1525,9 @@ mod tests {
     }
 
     #[test]
-    fn test_home_word_ids() {
+    fn test_left_cz_word_ids() {
         let spec = make_valid_two_zone_spec();
-        let home = spec.home_word_ids();
+        let home = spec.left_cz_word_ids();
         // Pair [0, 1] -> home word is 0. Word 1 is the staging word.
         // But there are only 2 words and they're all paired, so home = [0].
         assert_eq!(home, vec![0]);
