@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 from scipy.special import logsumexp
+from scipy.stats import binomtest
 
 DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
 DEFAULT_IDEAL_FACTORY_ACCEPTANCE = 1.0 / 6.0
@@ -38,6 +39,38 @@ def logical_expectation(bits: np.ndarray) -> float:
     if len(bits) == 0:
         return float("nan")
     return float(np.mean(1.0 - 2.0 * np.asarray(bits, dtype=np.float64)))
+
+
+def expectation_conf_interval(
+    zero_count: int,
+    one_count: int,
+    *,
+    confidence: float = 0.95,
+    method: str = "wilson",
+) -> np.ndarray:
+    n = max(1, int(zero_count) + int(one_count))
+    zero_interval = binomtest(int(zero_count), n).proportion_ci(
+        confidence, method=method
+    )
+    return (
+        2.0 * np.array([zero_interval.low, zero_interval.high], dtype=np.float64) - 1.0
+    )
+
+
+def expectation_with_error_bar(
+    zero_count: int,
+    one_count: int,
+    *,
+    confidence: float = 0.95,
+    method: str = "wilson",
+) -> tuple[float, float]:
+    num_shots = max(int(zero_count) + int(one_count), 1)
+    exp_val = float((int(zero_count) - int(one_count)) / num_shots)
+    exp_interval = expectation_conf_interval(
+        zero_count, one_count, confidence=confidence, method=method
+    )
+    exp_err = float((exp_interval[1] - exp_interval[0]) / 2.0)
+    return exp_val, exp_err
 
 
 def weighted_quantile(
@@ -214,36 +247,39 @@ def fidelity_from_counts(
     sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
 ) -> dict[str, Any]:
-    ex = logical_expectation(x_bits)
-    ey = logical_expectation(y_bits)
-    ez = logical_expectation(z_bits)
-
     sign = np.asarray(sign_vector, dtype=np.float64)
+    target = np.asarray(target_bloch, dtype=np.float64)
+
+    x_zero = int(np.sum(np.asarray(x_bits) == 0))
+    x_one = int(np.sum(np.asarray(x_bits) != 0))
+    y_zero = int(np.sum(np.asarray(y_bits) == 0))
+    y_one = int(np.sum(np.asarray(y_bits) != 0))
+    z_zero = int(np.sum(np.asarray(z_bits) == 0))
+    z_one = int(np.sum(np.asarray(z_bits) != 0))
+
+    ex, ex_err = expectation_with_error_bar(x_zero, x_one)
+    ey, ey_err = expectation_with_error_bar(y_zero, y_one)
+    ez, ez_err = expectation_with_error_bar(z_zero, z_one)
+
     bloch = np.array([ex, ey, ez], dtype=np.float64) * sign
     point = 0.5 + float(np.dot(bloch, target_bloch)) / 2.0
+    del posterior_samples
 
-    n = np.array([len(x_bits), len(y_bits), len(z_bits)], dtype=np.int64)
-    k = np.array(
-        [
-            int(np.sum(np.asarray(x_bits) == 0)),
-            int(np.sum(np.asarray(y_bits) == 0)),
-            int(np.sum(np.asarray(z_bits) == 0)),
-        ],
-        dtype=np.int64,
+    # Propagate Wilson-style expectation errors into a fidelity interval,
+    # matching the uncertainty model used in distillation_sim.
+    fidelity_err = 0.5 * float(
+        np.sqrt(
+            np.sum((target * np.array([ex_err, ey_err, ez_err], dtype=np.float64)) ** 2)
+        )
     )
-
-    q16, q50, q84 = _posterior_fidelity_quantiles(
-        n,
-        k,
-        sign=sign,
-        target_bloch=np.asarray(target_bloch, dtype=np.float64),
-        posterior_samples=posterior_samples,
-    )
+    low = point - fidelity_err
+    high = point + fidelity_err
     return {
         "point": float(point),
-        "median": float(q50),
-        "low": float(q16),
-        "high": float(q84),
+        "median": float(point),
+        "low": float(low),
+        "high": float(high),
+        "error": float(fidelity_err),
         "bloch": tuple(float(x) for x in bloch),
     }
 
