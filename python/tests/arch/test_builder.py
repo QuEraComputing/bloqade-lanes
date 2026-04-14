@@ -9,6 +9,15 @@ from bloqade.lanes.arch.topology import (
     MatchingTopology,
 )
 from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+from bloqade.lanes.layout import ArchSpec
+
+
+def _has_site_buses(arch: ArchSpec) -> frozenset[int]:
+    return frozenset(w for z in arch.zones for w in z.words_with_site_buses)
+
+
+def _has_word_buses(arch: ArchSpec) -> frozenset[int]:
+    return frozenset(s for z in arch.zones for s in z.sites_with_word_buses)
 
 
 def _two_zone_blueprint(
@@ -74,7 +83,7 @@ class TestBuildArchSingleZone:
         result = build_arch(bp)
         # 4 sites → log2(4) = 2 site buses (1 zone, no split)
         assert len(result.arch.site_buses) == 2
-        assert result.arch.has_site_buses == frozenset({0, 1})
+        assert _has_site_buses(result.arch) == frozenset({0, 1})
 
 
 class TestBuildArchTwoZones:
@@ -137,13 +146,13 @@ class TestBuildArchTwoZones:
     def test_has_word_buses_all_sites(self) -> None:
         bp = _two_zone_blueprint()
         result = build_arch(bp)
-        assert result.arch.has_word_buses == frozenset({0, 1, 2, 3})
+        assert _has_word_buses(result.arch) == frozenset({0, 1, 2, 3})
 
     def test_has_site_buses_union(self) -> None:
         bp = _two_zone_blueprint(entangling_site_topo=True)
         result = build_arch(bp)
         # Only proc has site_topology → only proc word IDs
-        assert result.arch.has_site_buses == frozenset({0, 1, 2, 3})
+        assert _has_site_buses(result.arch) == frozenset({0, 1, 2, 3})
 
 
 class TestBuildArchThreeZones:
@@ -214,7 +223,7 @@ class TestBuildArchValidation:
         )
         result = build_arch(bp)
         assert len(result.arch.site_buses) == 0
-        assert result.arch.has_site_buses == frozenset()
+        assert _has_site_buses(result.arch) == frozenset()
 
     def test_non_measurement_zone(self) -> None:
         """Zone with measurement=False is excluded from per-zone modes."""
@@ -267,7 +276,7 @@ class TestBuildArchPerBusWords:
         assert arch.zones[1].words_with_site_buses == [2, 3]
 
         # has_site_buses = union across zones (global IDs)
-        assert arch.has_site_buses == frozenset({0, 1, 2, 3})
+        assert _has_site_buses(arch) == frozenset({0, 1, 2, 3})
 
     def test_single_zone_site_buses_have_words(self) -> None:
         """Single zone with site topology → all words have site buses."""
@@ -309,7 +318,7 @@ class TestBuildArchPerBusWords:
         # Mem zone has no site buses
         assert result.arch.zones[1].words_with_site_buses == []
         # has_site_buses = only proc words (zone-local)
-        assert result.arch.has_site_buses == frozenset({0, 1})
+        assert _has_site_buses(result.arch) == frozenset({0, 1})
 
 
 class TestPathFinderIntegration:
