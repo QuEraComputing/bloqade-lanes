@@ -275,11 +275,35 @@ def run_task(
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
 ) -> BasisDataset:
+    def _observable_reference() -> np.ndarray:
+        cached = task.__dict__.get("_observable_reference")
+        if cached is not None:
+            return np.asarray(cached, dtype=np.uint8)
+
+        reference_result = task.run(64, with_noise=False, run_detectors=True)
+        reference_obs = np.asarray(reference_result.observables, dtype=np.uint8)
+        unique_rows = np.unique(reference_obs, axis=0)
+        if len(unique_rows) != 1:
+            raise RuntimeError(
+                "Expected a deterministic noiseless observable reference row for this task."
+            )
+        reference = unique_rows[0].copy()
+        task.__dict__["_observable_reference"] = reference
+        return reference
+
+    def _maybe_rebase_observables(observables: np.ndarray) -> np.ndarray:
+        if not task.__dict__.get("_rebase_observables_to_noiseless_reference", False):
+            return observables
+        reference = _observable_reference().reshape(1, -1)
+        return observables ^ reference
+
     if chunk_size is None or shots <= chunk_size:
         result = task.run(shots, with_noise=with_noise, run_detectors=True)
         return BasisDataset(
             detectors=np.asarray(result.detectors, dtype=np.uint8),
-            observables=np.asarray(result.observables, dtype=np.uint8),
+            observables=_maybe_rebase_observables(
+                np.asarray(result.observables, dtype=np.uint8)
+            ),
         )
 
     det_chunks = []
@@ -289,7 +313,9 @@ def run_task(
         batch = min(chunk_size, remaining)
         result = task.run(batch, with_noise=with_noise, run_detectors=True)
         det_chunks.append(np.asarray(result.detectors, dtype=np.uint8))
-        obs_chunks.append(np.asarray(result.observables, dtype=np.uint8))
+        obs_chunks.append(
+            _maybe_rebase_observables(np.asarray(result.observables, dtype=np.uint8))
+        )
         remaining -= batch
 
     return BasisDataset(

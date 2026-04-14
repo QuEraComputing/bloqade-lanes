@@ -517,6 +517,7 @@ def build_task(
                 initializer_name=str(initializer_name),
             )
         )
+        task.__dict__["_rebase_observables_to_noiseless_reference"] = True
 
     return task
 
