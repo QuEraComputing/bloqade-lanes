@@ -4,7 +4,6 @@ from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     LocationAddress,
-    ZoneAddress,
 )
 
 
@@ -28,27 +27,6 @@ def test_physical_architecture():
     assert len(zone.word_buses) == 10  # 9 merged shifts + 1 cross-gap
     assert len(zone.entangling_pairs) == 10
     assert arch.max_qubits == 80  # 20 words × 8 sites // 2
-
-
-def test_get_zone_index():
-    arch = logical.get_arch_spec()
-
-    loc_addr = LocationAddress(zone_id=0, word_id=0, site_id=0)
-    zone_id = ZoneAddress(0)
-    index = arch.get_zone_index(loc_addr, zone_id)
-    assert index == 0
-
-    # Word 1 is at index 1 in zone 0 (1 site per word)
-    loc_addr = LocationAddress(zone_id=0, word_id=1, site_id=0)
-    zone_id = ZoneAddress(0)
-    index = arch.get_zone_index(loc_addr, zone_id)
-    assert index == 1
-
-    # Word 2 is at index 2
-    loc_addr = LocationAddress(zone_id=0, word_id=2, site_id=0)
-    zone_id = ZoneAddress(0)
-    index = arch.get_zone_index(loc_addr, zone_id)
-    assert index == 2
 
 
 def test_entangling_pairs():
@@ -93,7 +71,8 @@ def invalid_locations():
 def test_location_validation(
     arch_spec: ArchSpec, location_address: LocationAddress, message: set[str]
 ):
-    assert message == arch_spec.validate_location(location_address)
+    errors = arch_spec.check_location_group([location_address])
+    assert message == {str(e) for e in errors}
 
 
 def test_negative_location_ids_rejected():

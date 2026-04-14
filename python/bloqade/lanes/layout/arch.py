@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Sequence
 
+from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import (
     ArchSpec as _RustArchSpec,
     LaneAddress as _RustLaneAddress,
@@ -45,38 +45,30 @@ class BusDescriptor:
     num_lanes: int
 
 
-class ArchSpec:
+class ArchSpec(RustWrapper[_RustArchSpec]):
     """Architecture specification for a quantum device."""
 
-    _inner: _RustArchSpec
-    words: tuple[Word, ...]
-    paths: MappingProxyType[LaneAddress, tuple[tuple[float, float], ...]]
-
-    def __init__(
-        self,
-        inner: _RustArchSpec,
-        words: tuple[Word, ...],
-        paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
-    ):
+    def __init__(self, inner: _RustArchSpec):
         self._inner = inner
-        self.words = words
-        self.paths = MappingProxyType(paths if paths is not None else {})
-
         self._inner.validate()
 
     @cached_property
-    def zone_address_map(self) -> dict[LocationAddress, dict[ZoneAddress, int]]:
-        result: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(dict)
-        for zone_id, zone in enumerate(self._inner.zones):
-            index = 0
-            for word_id in range(len(self.words)):
-                word = self.words[word_id]
-                for site_id in range(len(word.site_indices)):
-                    loc_addr = LocationAddress(word_id, site_id, zone_id)
-                    zone_address = ZoneAddress(zone_id)
-                    result[loc_addr][zone_address] = index
-                    index += 1
-        return dict(result)
+    def words(self) -> tuple[Word, ...]:
+        """Python Word wrappers, derived from the Rust ArchSpec."""
+        return tuple(Word.from_inner(w) for w in self._inner.words)
+
+    @cached_property
+    def paths(self) -> MappingProxyType[LaneAddress, tuple[tuple[float, float], ...]]:
+        """Transport path waypoints keyed by LaneAddress.
+
+        Derived from the Rust ``ArchSpec.paths`` on first access.
+        """
+        raw = self._inner.paths
+        if raw is None:
+            return MappingProxyType({})
+        return MappingProxyType(
+            {LaneAddress.from_inner(p.lane): tuple(p.waypoints) for p in raw}
+        )
 
     def iter_all_lanes(self) -> Iterator[LaneAddress]:
         """Yield every valid lane address in the architecture.
@@ -193,22 +185,6 @@ class ArchSpec:
         return self._inner.atom_reloading
 
     @cached_property
-    def has_site_buses(self) -> frozenset[int]:
-        """Word IDs that have site-bus transport capability."""
-        result: set[int] = set()
-        for zone in self._inner.zones:
-            result.update(zone.words_with_site_buses)
-        return frozenset(result)
-
-    @cached_property
-    def has_word_buses(self) -> frozenset[int]:
-        """Site indices that serve as word bus landing positions."""
-        result: set[int] = set()
-        for zone in self._inner.zones:
-            result.update(zone.sites_with_word_buses)
-        return frozenset(result)
-
-    @cached_property
     def site_buses(self) -> tuple[SiteBus, ...]:
         """Aggregate all site buses across all zones.
 
@@ -280,15 +256,7 @@ class ArchSpec:
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
         )
-        return cls(inner, words, paths)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ArchSpec):
-            return NotImplemented
-        return self._inner == other._inner and self.words == other.words
-
-    def __hash__(self) -> int:
-        return hash(self._inner)
+        return cls(inner)
 
     @property
     def sites_per_word(self) -> int:
@@ -338,6 +306,17 @@ class ArchSpec:
         # Final fallback: all words (for zones with no buses at all)
         return list(range(len(self.words)))
 
+    def get_zone_index(
+        self,
+        loc_addr: LocationAddress,
+        zone_id: ZoneAddress,
+    ) -> int | None:
+        """O(1) flat index of a location within a zone.
+
+        Delegates to Rust ``ArchSpec.zone_location_index()``.
+        """
+        return self._inner.zone_location_index(loc_addr._inner, zone_id.zone_id)
+
     def get_path(
         self,
         lane_address: LaneAddress,
@@ -346,14 +325,6 @@ class ArchSpec:
             src, dst = self.get_endpoints(lane_address)
             return (self.get_position(src), self.get_position(dst))
         return path
-
-    def get_zone_index(
-        self,
-        loc_addr: LocationAddress,
-        zone_id: ZoneAddress,
-    ) -> int | None:
-        """Get the index of a location address within a zone address."""
-        return self.zone_address_map[loc_addr].get(zone_id)
 
     # ── Visualization shims ────────────────────────────────────────
     # The real implementations live in ``bloqade.lanes.visualize.arch``
@@ -614,34 +585,6 @@ class ArchSpec:
         rust_addrs = [lane._inner for lane in lanes]
         return self._inner.check_lanes(rust_addrs)
 
-    def compatible_lane_error(self, lane1: LaneAddress, lane2: LaneAddress) -> set[str]:
-        """Get error messages if two lanes are not compatible.
-
-        Delegates to Rust group validation.
-        """
-        errors = self.check_lane_group([lane1, lane2])
-        return {str(e) for e in errors}
-
-    def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
-        """Check if two lanes are compatible (can be executed in parallel)."""
-        return len(self.check_lane_group([lane1, lane2])) == 0
-
-    def validate_location(self, location_address: LocationAddress) -> set[str]:
-        """Check if a location address is valid in this architecture.
-
-        Delegates to Rust validation.
-        """
-        errors = self.check_location_group([location_address])
-        return {str(e) for e in errors}
-
-    def validate_lane(self, lane_address: LaneAddress) -> set[str]:
-        """Check if a lane address is valid in this architecture.
-
-        Delegates to Rust validation.
-        """
-        errors = self.check_lane_group([lane_address])
-        return {str(e) for e in errors}
-
     def get_lane_address(
         self, src: LocationAddress, dst: LocationAddress
     ) -> LaneAddress | None:
@@ -676,25 +619,3 @@ class ArchSpec:
         if result is None:
             return None
         return LocationAddress.from_inner(result)
-
-    def get_blockaded_location(
-        self, location: LocationAddress
-    ) -> LocationAddress | None:
-        """Get the CZ partner for a given location using word-level pairing.
-
-        Maps to the partner word, preserving the input zone_id. This is used
-        by the Python heuristics layer where CZ partners are resolved within
-        the same zone coordinate frame (word buses connect words within a zone).
-        """
-        partner_word = self._word_partner_map.get(location.word_id)
-        if partner_word is None:
-            return None
-        return LocationAddress(partner_word, location.site_id, location.zone_id)
-
-    @cached_property
-    def _word_partner_map(self) -> dict[int, int]:
-        """Map word_id -> partner_word_id from each zone's entangling_pairs.
-
-        Delegates to Rust ``ArchSpec.word_partner_map()``.
-        """
-        return self._inner.word_partner_map()
