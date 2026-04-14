@@ -34,11 +34,13 @@ def _build_zone_grid(
     layout: DeviceLayout,
     n: int,
     s: float,
+    y_offset: float = 0.0,
 ) -> _RustGrid:
     """Build a Rust Grid covering all columns and rows in a zone.
 
     The grid must have enough x-positions to cover all interleaved CZ pairs
-    and enough y-positions for all rows.
+    and enough y-positions for all rows. ``y_offset`` shifts the zone
+    vertically so that stacked zones do not overlap in physical space.
     """
     num_rows = zone_spec.num_rows
     num_cols = zone_spec.num_cols
@@ -53,9 +55,9 @@ def _build_zone_grid(
             x_positions.append(pair_x + s + 2.0 * s * i)
 
     x_pos_sorted = sorted(set(x_positions))
-    y_positions = [row * layout.row_spacing for row in range(num_rows)]
+    y_positions = [y_offset + row * layout.row_spacing for row in range(num_rows)]
     if not y_positions:
-        y_positions = [0.0]
+        y_positions = [y_offset]
 
     return _RustGrid.from_positions(x_pos_sorted, y_positions)
 
@@ -108,10 +110,14 @@ def build_arch(
 
     # 2. Build ZoneBuilders from blueprint zones.
     zone_builders: dict[str, ZoneBuilder] = {}
+    y_offset = 0.0
 
     for zone_name, zone_spec in blueprint.zones.items():
         word_grid = zone_grids[zone_name]
-        rust_grid = _build_zone_grid(zone_spec, layout, n, s)
+        rust_grid = _build_zone_grid(zone_spec, layout, n, s, y_offset=y_offset)
+        # Advance y_offset past this zone's rows + the inter-zone gap.
+        zone_height = max(0, zone_spec.num_rows - 1) * layout.row_spacing
+        y_offset += zone_height + layout.zone_gap
         word_shape = _word_shape_from_layout(zone_spec, layout)
 
         zone = ZoneBuilder(zone_name, rust_grid, word_shape)
