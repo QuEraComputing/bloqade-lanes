@@ -28,12 +28,12 @@ def assert_valid_cz_placement(
         c_addr = result.layout[c]
         t_addr = result.layout[t]
         assert (
-            arch_spec.get_blockaded_location(c_addr) == t_addr
-            or arch_spec.get_blockaded_location(t_addr) == c_addr
+            arch_spec.get_cz_partner(c_addr) == t_addr
+            or arch_spec.get_cz_partner(t_addr) == c_addr
         ), f"CZ pair ({c_addr}, {t_addr}) not at blockade positions"
     for layer in result.get_move_layers():
         for lane in layer:
-            assert arch_spec.validate_lane(lane) == set(), f"Invalid lane: {lane}"
+            assert not arch_spec.check_lane_group([lane]), f"Invalid lane: {lane}"
 
 
 def assert_all_home(
@@ -263,7 +263,7 @@ def test_move_scheduler_cz_exact_layers():
     # All layer lanes must be valid
     for layer in layers:
         for lane_enc in layer:
-            assert arch.validate_lane(lane_enc) == set()
+            assert not arch.check_lane_group([lane_enc])
 
 
 def test_nohome_choose_return_layout():

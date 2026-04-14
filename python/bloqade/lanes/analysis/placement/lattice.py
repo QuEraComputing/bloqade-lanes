@@ -131,8 +131,8 @@ class ExecuteCZ(ConcreteState):
             c_addr = self.layout[control]
             t_addr = self.layout[target]
 
-            if (arch_spec.get_blockaded_location(c_addr) != t_addr) and (
-                arch_spec.get_blockaded_location(t_addr) != c_addr
+            if (arch_spec.get_cz_partner(c_addr) != t_addr) and (
+                arch_spec.get_cz_partner(t_addr) != c_addr
             ):
                 return False
 

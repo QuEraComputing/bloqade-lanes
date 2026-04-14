@@ -355,6 +355,27 @@ impl ArchSpec {
         None
     }
 
+    /// Get the flat index of a location within a zone — O(1).
+    ///
+    /// The index is `word_id * sites_per_word + site_id`. This relies on
+    /// the validated invariant that all words have the same number of sites
+    /// (`check_uniform_word_site_counts`).
+    ///
+    /// Returns `None` if `loc.zone_id != zone_id` or if word/site is out
+    /// of range.
+    pub fn zone_location_index(&self, loc: &LocationAddr, zone_id: u32) -> Option<usize> {
+        if loc.zone_id != zone_id {
+            return None;
+        }
+        let spw = self.sites_per_word();
+        let wid = loc.word_id as usize;
+        let sid = loc.site_id as usize;
+        if wid >= self.words.len() || sid >= spw {
+            return None;
+        }
+        Some(wid * spw + sid)
+    }
+
     /// Construct a candidate `LaneAddr` from the origin location and
     /// check whether its resolved endpoints match `(origin, target)`.
     fn check_lane_candidate(

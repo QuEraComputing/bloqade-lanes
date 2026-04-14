@@ -74,12 +74,12 @@ def assert_valid_cz_placement(
         c_addr = result.layout[c]
         t_addr = result.layout[t]
         assert (
-            arch_spec.get_blockaded_location(c_addr) == t_addr
-            or arch_spec.get_blockaded_location(t_addr) == c_addr
+            arch_spec.get_cz_partner(c_addr) == t_addr
+            or arch_spec.get_cz_partner(t_addr) == c_addr
         ), f"CZ pair ({c_addr}, {t_addr}) not at blockade positions"
     for layer in result.get_move_layers():
         for lane in layer:
-            assert arch_spec.validate_lane(lane) == set(), f"Invalid lane: {lane}"
+            assert not arch_spec.check_lane_group([lane]), f"Invalid lane: {lane}"
 
 
 def assert_all_home(
@@ -153,8 +153,8 @@ class TestDesiredCzLayout:
             c_addr = result.layout[c]
             t_addr = result.layout[t]
             assert (
-                arch.get_blockaded_location(c_addr) == t_addr
-                or arch.get_blockaded_location(t_addr) == c_addr
+                arch.get_cz_partner(c_addr) == t_addr
+                or arch.get_cz_partner(t_addr) == c_addr
             ), f"CZ pair ({c_addr}, {t_addr}) not at blockade positions"
 
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
@@ -176,8 +176,8 @@ class TestDesiredCzLayout:
             c_addr = result.layout[c]
             t_addr = result.layout[t]
             assert (
-                arch.get_blockaded_location(c_addr) == t_addr
-                or arch.get_blockaded_location(t_addr) == c_addr
+                arch.get_cz_partner(c_addr) == t_addr
+                or arch.get_cz_partner(t_addr) == c_addr
             ), f"CZ pair ({c_addr}, {t_addr}) not at blockade positions"
 
 
@@ -203,7 +203,7 @@ class TestComputeMoveLayers:
         assert len(layers) > 0
         for layer in layers:
             for lane in layer:
-                assert arch_spec.validate_lane(lane) == set()
+                assert not arch_spec.check_lane_group([lane])
 
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_cross_word_move(self, word_size_y: int):
@@ -223,7 +223,7 @@ class TestComputeMoveLayers:
         assert len(layers) > 0
         for layer in layers:
             for lane in layer:
-                assert arch_spec.validate_lane(lane) == set()
+                assert not arch_spec.check_lane_group([lane])
 
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_multi_hop_move(self, word_size_y: int):
@@ -244,7 +244,7 @@ class TestComputeMoveLayers:
         assert len(layers) > 0
         for layer in layers:
             for lane in layer:
-                assert arch_spec.validate_lane(lane) == set()
+                assert not arch_spec.check_lane_group([lane])
 
     @pytest.mark.parametrize("word_size_y", [3, 5, 7])
     def test_no_diff_no_moves(self, word_size_y: int):
@@ -298,7 +298,7 @@ class TestNoHomeReturnLayout:
         assert len(non_home) > 0
         # CZ address in non-home word, home address in blockade partner word
         cz_addr = LocationAddress(non_home[0], 0)
-        partner = arch.get_blockaded_location(cz_addr)
+        partner = arch.get_cz_partner(cz_addr)
         assert partner is not None
         key = placement._distance_key(cz_addr, partner)
         assert key[0] == 0  # word_distance

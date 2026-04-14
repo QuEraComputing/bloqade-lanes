@@ -1084,6 +1084,12 @@ impl PyArchSpec {
         self.inner.left_cz_word_ids()
     }
 
+    /// O(1) flat index of a location within a zone.
+    #[pyo3(text_signature = "(self, loc, zone_id)")]
+    fn zone_location_index(&self, loc: &PyLocationAddr, zone_id: u32) -> Option<usize> {
+        self.inner.zone_location_index(&loc.inner, zone_id)
+    }
+
     /// Reverse-lookup: find the lane connecting src → dst.
     ///
     /// Returns the ``LaneAddress`` if found, or None.

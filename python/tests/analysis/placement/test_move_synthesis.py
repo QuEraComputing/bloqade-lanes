@@ -38,7 +38,7 @@ def test_compute_move_layers_word_0_to_1():
     assert len(result) > 0
     for layer in result:
         for lane in layer:
-            assert arch_spec.validate_lane(lane) == set()
+            assert not arch_spec.check_lane_group([lane])
 
 
 def test_compute_move_layers_cross_word_exact():
@@ -112,7 +112,7 @@ def test_compute_move_layers_word_1_to_0():
     assert len(result) > 0
     for layer in result:
         for lane in layer:
-            assert arch_spec.validate_lane(lane) == set()
+            assert not arch_spec.check_lane_group([lane])
 
 
 def test_compute_move_layers_no_diffs():
@@ -147,7 +147,7 @@ def test_compute_move_layers_same_word():
     assert len(result) > 0
     for layer in result:
         for lane in layer:
-            assert arch_spec.validate_lane(lane) == set()
+            assert not arch_spec.check_lane_group([lane])
 
 
 def test_move_to_entangle_wrapper():
