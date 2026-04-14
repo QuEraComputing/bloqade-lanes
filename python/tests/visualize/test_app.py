@@ -185,7 +185,8 @@ def test_run_mpl_event_loop_closes_figure(monkeypatch) -> None:
     fig.canvas = MagicMock()
     fig.canvas.mpl_connect = MagicMock()
     monkeypatch.setattr(
-        "matplotlib.widgets.Button", lambda ax, label: MagicMock(on_clicked=MagicMock())
+        "bloqade.lanes.visualize.app.Button",
+        lambda ax, label: MagicMock(on_clicked=MagicMock()),
     )
     monkeypatch.setattr(
         controller, "run", lambda: setattr(controller, "run_called", True)
@@ -224,7 +225,8 @@ def test_slider_created_when_num_steps_greater_than_one(monkeypatch) -> None:
         return slider
 
     monkeypatch.setattr(
-        "matplotlib.widgets.Button", lambda ax, label: MagicMock(on_clicked=MagicMock())
+        "bloqade.lanes.visualize.app.Button",
+        lambda ax, label: MagicMock(on_clicked=MagicMock()),
     )
     monkeypatch.setattr("bloqade.lanes.visualize.app.Slider", fake_slider)
     monkeypatch.setattr(plt, "close", lambda fig: None)
@@ -255,7 +257,8 @@ def test_no_slider_when_only_one_step(monkeypatch) -> None:
 
     slider_called: list[object] = []
     monkeypatch.setattr(
-        "matplotlib.widgets.Button", lambda ax, label: MagicMock(on_clicked=MagicMock())
+        "bloqade.lanes.visualize.app.Button",
+        lambda ax, label: MagicMock(on_clicked=MagicMock()),
     )
     monkeypatch.setattr(
         "bloqade.lanes.visualize.app.Slider",
@@ -304,6 +307,67 @@ def test_default_on_slider_change_is_noop() -> None:
     controller.on_slider_change(5)  # must not raise
 
 
+def test_run_mpl_event_loop_clears_stale_slider_on_reuse(monkeypatch) -> None:
+    """If the same controller instance is invoked twice (or only the
+    second invocation has multiple steps) ``self.slider`` must not still
+    point at a slider belonging to a closed figure. ``run_mpl_event_loop``
+    clears it at the start of every run."""
+    controller: DummyController = DummyController()
+    controller.num_steps = 1  # type: ignore[attr-defined]
+    # Pretend an earlier run left a stale slider lying around.
+    controller.slider = MagicMock(name="StaleSliderFromPriorRun")
+
+    ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
+    fig: mpl_fig.Figure = MagicMock(spec=mpl_fig.Figure)
+    fig.add_axes = MagicMock(side_effect=[MagicMock() for _ in range(3)])
+    fig.canvas = MagicMock()
+    fig.canvas.mpl_connect = MagicMock()
+
+    monkeypatch.setattr(
+        "bloqade.lanes.visualize.app.Button",
+        lambda ax, label: MagicMock(on_clicked=MagicMock()),
+    )
+    monkeypatch.setattr(plt, "close", lambda fig: None)
+
+    DebuggerController.run_mpl_event_loop(controller, ax, fig)
+
+    assert controller.slider is None, "stale slider must be cleared on reuse"
+
+
+def test_slider_initial_step_clamped_into_range(monkeypatch) -> None:
+    """If the controller's ``step_index`` happens to be out of range when
+    ``run_mpl_event_loop`` runs (e.g. set externally before reset), the
+    slider's ``valinit`` must be clamped so Slider construction does not
+    raise."""
+    controller: DummyController = DummyController()
+    controller.num_steps = 3  # type: ignore[attr-defined]
+    controller.step_index = 99  # type: ignore[attr-defined]
+
+    ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
+    fig: mpl_fig.Figure = MagicMock(spec=mpl_fig.Figure)
+    fig.add_axes = MagicMock(side_effect=[MagicMock() for _ in range(4)])
+    fig.canvas = MagicMock()
+    fig.canvas.mpl_connect = MagicMock()
+
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_slider(**kwargs):
+        captured_kwargs.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(
+        "bloqade.lanes.visualize.app.Button",
+        lambda ax, label: MagicMock(on_clicked=MagicMock()),
+    )
+    monkeypatch.setattr("bloqade.lanes.visualize.app.Slider", fake_slider)
+    monkeypatch.setattr(plt, "close", lambda fig: None)
+
+    DebuggerController.run_mpl_event_loop(controller, ax, fig)
+
+    # initial_step was 99 but valmax is 2 (num_steps-1); must clamp to 2.
+    assert captured_kwargs["valinit"] == 2
+
+
 def test_run_mpl_event_loop_subfigure(monkeypatch) -> None:
     controller: DummyController = DummyController()
     ax: mpl_axes.Axes = MagicMock(spec=mpl_axes.Axes)
@@ -319,7 +383,8 @@ def test_run_mpl_event_loop_subfigure(monkeypatch) -> None:
     fig: SubFigure = SubFigure()
     fig.canvas.mpl_connect = MagicMock()
     monkeypatch.setattr(
-        "matplotlib.widgets.Button", lambda ax, label: MagicMock(on_clicked=MagicMock())
+        "bloqade.lanes.visualize.app.Button",
+        lambda ax, label: MagicMock(on_clicked=MagicMock()),
     )
     monkeypatch.setattr(
         controller, "run", lambda: setattr(controller, "run_called", True)

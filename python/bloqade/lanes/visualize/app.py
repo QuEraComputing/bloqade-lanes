@@ -60,6 +60,10 @@ class DebuggerController(ABC):
         ax: axes.Axes,
         fig: figure.Figure | figure.SubFigure,
     ):
+        # Always clear any slider reference left over from a previous run on
+        # this same controller instance. Without this, ``sync_slider`` could
+        # poke a stale widget belonging to a closed figure.
+        self.slider = None
 
         prev_ax = fig.add_axes((0.01, 0.01, 0.1, 0.075))
         exit_ax = fig.add_axes((0.21, 0.01, 0.1, 0.075))
@@ -80,7 +84,9 @@ class DebuggerController(ABC):
         num_steps = getattr(self, "num_steps", 1)
         if num_steps > 1:
             slider_ax = fig.add_axes((0.1, 0.12, 0.8, 0.04))
-            initial_step = getattr(self, "step_index", 0)
+            # Clamp initial_step into the valid slider range; out-of-band
+            # step_index values would otherwise cause Slider to raise.
+            initial_step = max(0, min(getattr(self, "step_index", 0), num_steps - 1))
             self.slider = Slider(
                 ax=slider_ax,
                 label="Step",

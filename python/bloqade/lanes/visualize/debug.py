@@ -44,6 +44,12 @@ class StaticDebuggerController(DebuggerController):
             self.updated = True
 
     def on_slider_change(self, value):
+        # Honour the same single-event-per-iteration guard that on_next /
+        # on_prev use: if another handler already updated the state in this
+        # event-processing window (e.g. user clicked Next then dragged the
+        # slider during the same plt.pause), the first event wins.
+        if self.updated:
+            return
         new_index = max(0, min(int(value), self.num_steps - 1))
         if new_index == self.step_index:
             return
@@ -119,6 +125,11 @@ class AnimatorController(DebuggerController):
             self.animation_step = -1
 
     def on_slider_change(self, value):
+        # Honour the same single-event-per-iteration guard that on_next /
+        # on_prev use: if another handler already updated the state in this
+        # event-processing window, the first event wins.
+        if self.updated:
+            return
         new_index = max(0, min(int(value), self.num_steps - 1))
         if new_index == self.step_index:
             return

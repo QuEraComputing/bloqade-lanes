@@ -154,15 +154,66 @@ def test_animator_controller_on_slider_change(dummy_ax, dummy_get_renderer):
 def test_animator_controller_on_next_prev_calls_sync_slider(
     dummy_ax, dummy_get_renderer
 ):
-    """Animator's on_next/on_prev should also sync the slider when the step
-    actually advances (i.e. the second click in the same direction)."""
+    """Animator's on_next/on_prev calls sync_slider whenever they actually
+    mutate step_index. The default direction is forward (animation_step=1),
+    so the very first on_next() advances and syncs immediately."""
     ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
     sync_calls: list[int] = []
     ctrl.sync_slider = lambda step_index: sync_calls.append(step_index)
-    # First click sets direction; second click advances.
-    ctrl.on_next(MagicMock())
     ctrl.on_next(MagicMock())
     assert sync_calls == [1]
+
+
+def test_animator_controller_direction_flip_syncs_slider_on_advance(
+    dummy_ax, dummy_get_renderer
+):
+    """When the previous direction was opposite, the first on_next/on_prev
+    only flips animation_step (no advance, no sync). The next call in the
+    same direction does the actual advance and the sync."""
+    ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
+    ctrl.step_index = 2
+    ctrl.animation_step = -1  # last action was a backward step
+    sync_calls: list[int] = []
+    ctrl.sync_slider = lambda step_index: sync_calls.append(step_index)
+
+    # First on_next: only flips direction; no step change, no sync.
+    ctrl.on_next(MagicMock())
+    assert ctrl.animation_step == 1
+    assert ctrl.step_index == 2
+    assert sync_calls == []
+
+    # Second on_next (same iteration window): direction matches, but the
+    # 'updated' flag from the first call still gates this one. Reset to
+    # simulate the run loop processing in between.
+    ctrl.updated = False
+    ctrl.on_next(MagicMock())
+    assert ctrl.step_index == 3
+    assert sync_calls == [3]
+
+
+def test_static_debugger_slider_respects_updated_guard(dummy_ax, dummy_draw):
+    """Race scenario: a button event already updated the state within the
+    same plt.pause window, then the slider fires. The slider must NOT
+    clobber the button intent — first event in the window wins, matching
+    the existing on_next / on_prev guard pattern."""
+    ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
+    ctrl.on_next(MagicMock())
+    assert ctrl.step_index == 1
+    assert ctrl.updated is True
+    # Slider event arrives in the same window — must be ignored.
+    ctrl.on_slider_change(3)
+    assert ctrl.step_index == 1
+    assert ctrl.updated is True
+
+
+def test_animator_slider_respects_updated_guard(dummy_ax, dummy_get_renderer):
+    """Same race-guard semantics for the animator: a previous handler's
+    update wins over a slider event in the same iteration window."""
+    ctrl = AnimatorController(dummy_ax, 5, dummy_get_renderer)
+    ctrl.on_next(MagicMock())  # advances to step 1, sets updated=True
+    assert ctrl.step_index == 1
+    ctrl.on_slider_change(4)
+    assert ctrl.step_index == 1, "slider must not clobber a pending button update"
 
 
 def test_animator_controller_on_key_dispatch(dummy_ax, dummy_get_renderer):
