@@ -473,8 +473,11 @@ class ZoneBuilder:
             )
         )
 
-        x_candidates = list({ref_src[0], ref_dst[0], *safe_xs})
-        y_candidates = list({ref_src[1], ref_dst[1], *safe_ys})
+        # Sorted (not just set→list) so DFS exploration order — and
+        # therefore the first-found-wins tie-break on equal-cost paths —
+        # is deterministic across runs and Python versions.
+        x_candidates = sorted({ref_src[0], ref_dst[0], *safe_xs})
+        y_candidates = sorted({ref_src[1], ref_dst[1], *safe_ys})
 
         offsets = [(p[0] - ref_src[0], p[1] - ref_src[1]) for p in bus_src_positions]
         grid_xs = self._grid_x_nm
@@ -670,7 +673,7 @@ class ZoneBuilder:
                 ref_waypoints = result
 
             for local_word in range(self.num_words):
-                for src_s, _ in zip(src_sites, dst_sites):
+                for src_s in src_sites:
                     lane_src = self._site_nm(local_word, src_s)
                     lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
                     lane_path = self._path_nm_to_um(lane_path_nm)
@@ -736,7 +739,7 @@ class ZoneBuilder:
                     continue
                 ref_waypoints = result
 
-            for src_w, _ in zip(src_words, dst_words):
+            for src_w in src_words:
                 for site_id in spw:
                     lane_src = self._site_nm(src_w, site_id)
                     lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
