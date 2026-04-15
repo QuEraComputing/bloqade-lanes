@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, Mapping, Sequence
 
 import numpy as np
-from scipy.special import logsumexp
 from scipy.stats import binomtest
+
+from .bayesian_tomography import posterior_fidelity_summary
+from .common import (
+    DEFAULT_SYNDROME_LAYOUT,
+    DemoTask,
+    ObservableFrame,
+    SyndromeLayout,
+)
 
 DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
 DEFAULT_IDEAL_FACTORY_ACCEPTANCE = 1.0 / 6.0
@@ -33,6 +39,14 @@ def pack_boolean_array(arr: np.ndarray) -> np.ndarray:
     if arr.ndim == 1:
         arr = arr.reshape(1, -1)
     return np.sum(arr << np.arange(arr.shape[1], dtype=np.uint64), axis=1)
+
+
+def packed_bits_to_int(bits: np.ndarray | Sequence[bool] | Sequence[int]) -> int:
+    return int(pack_boolean_array(np.asarray(bits, dtype=np.uint8))[0])
+
+
+def unpack_packed_bits(packed: int, length: int) -> np.ndarray:
+    return ((int(packed) >> np.arange(length, dtype=np.uint64)) & 1).astype(np.uint8)
 
 
 def logical_expectation(bits: np.ndarray) -> float:
@@ -73,171 +87,6 @@ def expectation_with_error_bar(
     return exp_val, exp_err
 
 
-def weighted_quantile(
-    values: np.ndarray,
-    quantiles: Sequence[float],
-    weights: np.ndarray,
-) -> np.ndarray:
-    order = np.argsort(values)
-    values = values[order]
-    weights = weights[order]
-    cdf = np.cumsum(weights)
-    cdf /= cdf[-1]
-    return np.interp(np.asarray(quantiles, dtype=np.float64), cdf, values)
-
-
-def _bures_measure(points: np.ndarray) -> np.ndarray:
-    radii_sq = np.sum(points * points, axis=1)
-    weights = np.zeros(len(points), dtype=np.float64)
-    mask = radii_sq < 1.0
-    weights[mask] = 1.0 / (np.pi**2 * np.sqrt(np.maximum(1.0 - radii_sq[mask], 1e-12)))
-    return weights
-
-
-def _grid_axis_points(posterior_samples: int) -> int:
-    # Use a much finer 1D grid than the previous cube-root heuristic, closer in
-    # spirit to the paper's binary-precision Bloch grid. We keep the total work
-    # manageable later by adaptively cropping around the measured expectations.
-    binary_precision = max(
-        4,
-        int(round(np.log2(float(max(posterior_samples, 1))) / 2.0)),
-    )
-    return min(513, 2**binary_precision + 1)
-
-
-@lru_cache(maxsize=None)
-def _grid_axis_values(axis_points: int) -> np.ndarray:
-    # Use cell centers instead of endpoints so the Bures prior stays finite.
-    edges = np.linspace(-1.0, 1.0, axis_points + 1, dtype=np.float64)
-    return (edges[:-1] + edges[1:]) / 2.0
-
-
-def _axis_window(
-    values: np.ndarray, n_i: int, k_i: int, *, min_points: int = 33
-) -> np.ndarray:
-    if n_i <= 0 or len(values) <= min_points:
-        return values
-
-    p = float(np.clip(k_i / n_i, 1e-6, 1.0 - 1e-6))
-    mean = 2.0 * p - 1.0
-    sigma = 2.0 * np.sqrt(max(p * (1.0 - p), 1.0 / max(4 * n_i, 1)) / n_i)
-    half_width = max(0.08, 8.0 * sigma)
-    low = max(-1.0, mean - half_width)
-    high = min(1.0, mean + half_width)
-
-    mask = (values >= low) & (values <= high)
-    if int(mask.sum()) >= min_points:
-        return values[mask]
-
-    center = int(np.argmin(np.abs(values - mean)))
-    radius = min_points // 2
-    start = max(0, center - radius)
-    stop = min(len(values), center + radius + 1)
-    if stop - start < min_points:
-        if start == 0:
-            stop = min(len(values), min_points)
-        else:
-            start = max(0, len(values) - min_points)
-    return values[start:stop]
-
-
-def _downsample_axis(values: np.ndarray, keep: int) -> np.ndarray:
-    if len(values) <= keep:
-        return values
-    indices = np.linspace(0, len(values) - 1, num=keep, dtype=int)
-    return values[np.unique(indices)]
-
-
-def _adaptive_bloch_ball_grid(
-    axis_points: int, n: np.ndarray, k: np.ndarray
-) -> np.ndarray:
-    axis_values = _grid_axis_values(axis_points)
-    subsets = [
-        _axis_window(axis_values, int(n_i), int(k_i))
-        for n_i, k_i in zip(n, k, strict=True)
-    ]
-
-    max_grid_points = 1_500_000
-    total_points = len(subsets[0]) * len(subsets[1]) * len(subsets[2])
-    if total_points > max_grid_points:
-        scale = (total_points / max_grid_points) ** (1.0 / 3.0)
-        subsets = [
-            _downsample_axis(values, max(33, int(round(len(values) / scale))))
-            for values in subsets
-        ]
-
-    x, y, z = np.meshgrid(*subsets, indexing="ij")
-    points = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
-    points = points[np.sum(points * points, axis=1) <= 1.0]
-    if len(points):
-        return points
-
-    # Rare edge case: with very few accepted shots, the empirical expectations
-    # can sit near +/-1 on all three axes. A tight crop around that corner of
-    # the cube can miss the physical Bloch ball entirely and spuriously drive
-    # the posterior fallback to fidelity 0.5. When that happens, fall back to a
-    # broad but still downsampled full-axis grid.
-    broad_axis = _downsample_axis(axis_values, min(len(axis_values), 113))
-    x, y, z = np.meshgrid(broad_axis, broad_axis, broad_axis, indexing="ij")
-    broad_points = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
-    return broad_points[np.sum(broad_points * broad_points, axis=1) <= 1.0]
-
-
-def _histogram_quantiles(
-    edges: np.ndarray,
-    probabilities: np.ndarray,
-    quantiles: Sequence[float],
-) -> np.ndarray:
-    cdf = np.cumsum(probabilities)
-    values = []
-    for quantile in quantiles:
-        idx = int(np.searchsorted(cdf, quantile, side="left"))
-        idx = min(max(idx, 0), len(probabilities) - 1)
-        low = cdf[idx - 1] if idx > 0 else 0.0
-        high = cdf[idx]
-        frac = 0.0 if high <= low else (quantile - low) / (high - low)
-        values.append(edges[idx] + (edges[idx + 1] - edges[idx]) * frac)
-    return np.asarray(values, dtype=np.float64)
-
-
-def _posterior_fidelity_quantiles(
-    n: np.ndarray,
-    k: np.ndarray,
-    *,
-    sign: np.ndarray,
-    target_bloch: np.ndarray,
-    posterior_samples: int,
-) -> np.ndarray:
-    axis_points = _grid_axis_points(posterior_samples)
-    points = _adaptive_bloch_ball_grid(axis_points, n, k)
-
-    probs = np.clip((1.0 + points) / 2.0, 1e-12, 1.0 - 1e-12)
-    log_likelihood = (k * np.log(probs) + (n - k) * np.log1p(-probs)).sum(axis=1)
-
-    prior = _bures_measure(points)
-    log_prior = np.full(len(points), -np.inf, dtype=np.float64)
-    positive_prior = prior > 0.0
-    log_prior[positive_prior] = np.log(prior[positive_prior])
-
-    log_weights = log_likelihood + log_prior
-    finite = np.isfinite(log_weights)
-    if not np.any(finite):
-        point = 0.5
-        return np.array([point, point, point], dtype=np.float64)
-
-    weights = np.exp(log_weights[finite] - logsumexp(log_weights[finite]))
-    corrected_points = points[finite] * sign
-    fidelities = np.clip(
-        0.5 + np.sum(corrected_points * target_bloch.reshape(1, 3), axis=1) / 2.0,
-        0.0,
-        1.0,
-    )
-    if weights.sum() <= 0.0:
-        point = 0.5
-        return np.array([point, point, point], dtype=np.float64)
-    return weighted_quantile(fidelities, [0.16, 0.5, 0.84], weights)
-
-
 def fidelity_from_counts(
     x_bits: np.ndarray,
     y_bits: np.ndarray,
@@ -246,6 +95,7 @@ def fidelity_from_counts(
     *,
     sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    uncertainty_backend: str = "wilson",
 ) -> dict[str, Any]:
     sign = np.asarray(sign_vector, dtype=np.float64)
     target = np.asarray(target_bloch, dtype=np.float64)
@@ -263,17 +113,51 @@ def fidelity_from_counts(
 
     bloch = np.array([ex, ey, ez], dtype=np.float64) * sign
     point = 0.5 + float(np.dot(bloch, target_bloch)) / 2.0
-    del posterior_samples
-
-    # Propagate Wilson-style expectation errors into a fidelity interval,
-    # matching the uncertainty model used in distillation_sim.
-    fidelity_err = 0.5 * float(
-        np.sqrt(
-            np.sum((target * np.array([ex_err, ey_err, ez_err], dtype=np.float64)) ** 2)
+    if uncertainty_backend == "wilson":
+        fidelity_err = 0.5 * float(
+            np.sqrt(
+                np.sum(
+                    (target * np.array([ex_err, ey_err, ez_err], dtype=np.float64)) ** 2
+                )
+            )
         )
-    )
-    low = point - fidelity_err
-    high = point + fidelity_err
+        low = point - fidelity_err
+        high = point + fidelity_err
+    elif uncertainty_backend == "bayesian_bloch_ball":
+        n = np.array(
+            [len(x_bits), len(y_bits), len(z_bits)],
+            dtype=np.int64,
+        )
+        k = np.array(
+            [
+                int(np.sum(np.asarray(x_bits) == 0)),
+                int(np.sum(np.asarray(y_bits) == 0)),
+                int(np.sum(np.asarray(z_bits) == 0)),
+            ],
+            dtype=np.int64,
+        )
+        posterior = posterior_fidelity_summary(
+            n,
+            k,
+            sign=sign,
+            target_bloch=target,
+            posterior_samples=posterior_samples,
+        )
+        low = posterior["low"]
+        high = posterior["high"]
+        fidelity_err = posterior["error"]
+        return {
+            "point": float(point),
+            "median": float(posterior["median"]),
+            "low": float(low),
+            "high": float(high),
+            "error": float(fidelity_err),
+            "bloch": tuple(float(x) for x in bloch),
+        }
+    else:
+        raise ValueError(
+            "uncertainty_backend must be 'wilson' or 'bayesian_bloch_ball'."
+        )
     return {
         "point": float(point),
         "median": float(point),
@@ -300,46 +184,23 @@ def magic_state_fidelity_point_from_counts(
             posterior_samples=4096,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
+            uncertainty_backend="wilson",
         )["point"]
     )
 
 
-def run_task(
+def sample_task_raw(
     task: Any,
     shots: int,
     *,
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
 ) -> BasisDataset:
-    def _observable_reference() -> np.ndarray:
-        cached = task.__dict__.get("_observable_reference")
-        if cached is not None:
-            return np.asarray(cached, dtype=np.uint8)
-
-        reference_result = task.run(64, with_noise=False, run_detectors=True)
-        reference_obs = np.asarray(reference_result.observables, dtype=np.uint8)
-        unique_rows = np.unique(reference_obs, axis=0)
-        if len(unique_rows) != 1:
-            raise RuntimeError(
-                "Expected a deterministic noiseless observable reference row for this task."
-            )
-        reference = unique_rows[0].copy()
-        task.__dict__["_observable_reference"] = reference
-        return reference
-
-    def _maybe_rebase_observables(observables: np.ndarray) -> np.ndarray:
-        if not task.__dict__.get("_rebase_observables_to_noiseless_reference", False):
-            return observables
-        reference = _observable_reference().reshape(1, -1)
-        return observables ^ reference
-
     if chunk_size is None or shots <= chunk_size:
         result = task.run(shots, with_noise=with_noise, run_detectors=True)
         return BasisDataset(
             detectors=np.asarray(result.detectors, dtype=np.uint8),
-            observables=_maybe_rebase_observables(
-                np.asarray(result.observables, dtype=np.uint8)
-            ),
+            observables=np.asarray(result.observables, dtype=np.uint8),
         )
 
     det_chunks = []
@@ -349,9 +210,7 @@ def run_task(
         batch = min(chunk_size, remaining)
         result = task.run(batch, with_noise=with_noise, run_detectors=True)
         det_chunks.append(np.asarray(result.detectors, dtype=np.uint8))
-        obs_chunks.append(
-            _maybe_rebase_observables(np.asarray(result.observables, dtype=np.uint8))
-        )
+        obs_chunks.append(np.asarray(result.observables, dtype=np.uint8))
         remaining -= batch
 
     return BasisDataset(
@@ -360,14 +219,68 @@ def run_task(
     )
 
 
+def compute_observable_reference(task: DemoTask, *, shots: int = 64) -> np.ndarray:
+    if task.observable_reference is not None:
+        return np.asarray(task.observable_reference, dtype=np.uint8)
+
+    reference_result = task.run(shots, with_noise=False, run_detectors=True)
+    reference_obs = np.asarray(reference_result.observables, dtype=np.uint8)
+    unique_rows = np.unique(reference_obs, axis=0)
+    if len(unique_rows) != 1:
+        raise RuntimeError(
+            "Expected a deterministic noiseless observable reference row for this task."
+        )
+    task.observable_reference = unique_rows[0].copy()
+    return np.asarray(task.observable_reference, dtype=np.uint8)
+
+
+def rebase_dataset_observables(
+    dataset: BasisDataset,
+    reference: np.ndarray,
+) -> BasisDataset:
+    return BasisDataset(
+        detectors=dataset.detectors,
+        observables=dataset.observables ^ reference.reshape(1, -1),
+    )
+
+
+def normalize_observable_frame(task: Any, dataset: BasisDataset) -> BasisDataset:
+    if not isinstance(task, DemoTask):
+        return dataset
+    if task.observable_frame != ObservableFrame.NOISELESS_REFERENCE_FLIPS:
+        return dataset
+    reference = compute_observable_reference(task)
+    return rebase_dataset_observables(dataset, reference)
+
+
+def run_task(
+    task: Any,
+    shots: int,
+    *,
+    with_noise: bool = True,
+    chunk_size: int | None = 1_000_000,
+) -> BasisDataset:
+    return normalize_observable_frame(
+        task,
+        sample_task_raw(
+            task,
+            shots,
+            with_noise=with_noise,
+            chunk_size=chunk_size,
+        ),
+    )
+
+
 def split_factory_bits(
     detectors: np.ndarray,
     observables: np.ndarray,
     *,
-    detector_prefix: int = 3,
-    observable_prefix: int = 1,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> tuple[np.ndarray, np.ndarray]:
-    return detectors[:, detector_prefix:], observables[:, observable_prefix:]
+    return (
+        detectors[:, layout.output_detector_count :],
+        observables[:, layout.output_observable_count :],
+    )
 
 
 def infer_factory_target(

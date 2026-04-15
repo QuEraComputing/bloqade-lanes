@@ -4,36 +4,39 @@ import inspect
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, TypeAlias
 
 import numpy as np
 import stim
 from beliefmatching import detector_error_model_to_check_matrices
 
+from .common import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout
 from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
-    bits_to_key,
     fidelity_from_counts,
-    key_to_bits,
     magic_state_fidelity_point_from_counts,
     pack_boolean_array,
+    packed_bits_to_int,
     run_task,
     split_factory_bits,
+    unpack_packed_bits,
 )
+
+SyndromeKey: TypeAlias = int | str
 
 
 @dataclass(frozen=True)
 class DecoderAdapter:
     full_decoder: Any
     factory_decoder: Any
-    decode_factory: Callable[[str], tuple[tuple[int, ...], float]]
-    decode_full: Callable[[str], tuple[int, ...]]
+    decode_factory: Callable[[Any], tuple[tuple[int, ...], float]]
+    decode_full: Callable[[Any], tuple[int, ...]]
     factory_score_mode: str
 
 
-def make_shape_only_dem(
+def make_layout_only_dem(
     num_detectors: int, num_observables: int
 ) -> stim.DetectorErrorModel:
     terms = []
@@ -43,8 +46,14 @@ def make_shape_only_dem(
         terms.append(" ".join(f"L{i}" for i in range(num_observables)))
     if not terms:
         raise ValueError("Need at least one detector or observable.")
-    # NOTE: this DEFINITELY is a shape-only DEM.
+    # NOTE: this DEM only carries detector/observable layout metadata.
     return stim.DetectorErrorModel("\n".join(f"error(0.5) {term}" for term in terms))
+
+
+def make_shape_only_dem(
+    num_detectors: int, num_observables: int
+) -> stim.DetectorErrorModel:
+    return make_layout_only_dem(num_detectors, num_observables)
 
 
 def matrix_to_dem(
@@ -77,43 +86,105 @@ def compute_dem_data(task: Any) -> dict[str, np.ndarray]:
     }
 
 
-def build_shared_mld_postselection_scores(
-    training_data_by_basis: Mapping[str, BasisDataset],
+def train_mld_decoder_pair(
+    training_dataset: BasisDataset,
     *,
     table_decoder_cls: type,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+) -> tuple[Any, Any]:
+    anc_det, anc_obs = split_factory_bits(
+        training_dataset.detectors,
+        training_dataset.observables,
+        layout=layout,
+    )
+
+    full_decoder = table_decoder_cls.from_det_obs_shots(
+        make_layout_only_dem(
+            training_dataset.detectors.shape[1],
+            training_dataset.observables.shape[1],
+        ),
+        np.concatenate(
+            [training_dataset.detectors, training_dataset.observables], axis=1
+        ).astype(bool),
+    )
+    factory_decoder = table_decoder_cls.from_det_obs_shots(
+        make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1]),
+        np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
+    )
+    return full_decoder, factory_decoder
+
+
+def _make_decoder_adapter(
+    *,
+    full_decoder: Any,
+    factory_decoder: Any,
+    full_syndrome_length: int,
+    factory_syndrome_length: int,
+    factory_decode_impl: Callable[[np.ndarray], tuple[np.ndarray, float]],
+    factory_score_mode: str,
+) -> DecoderAdapter:
+    def _normalize_syndrome_key(key: SyndromeKey, length: int) -> np.ndarray:
+        if isinstance(key, str):
+            bits = np.fromiter((1 if c == "1" else 0 for c in key), dtype=np.uint8)
+            if len(bits) != length:
+                raise ValueError(
+                    f"Syndrome key has length {len(bits)} but expected {length} bits."
+                )
+            return bits.astype(bool)
+        return unpack_packed_bits(int(key), length).astype(bool)
+
+    @lru_cache(maxsize=None)
+    def decode_factory(packed_syndrome: SyndromeKey):
+        syndrome = _normalize_syndrome_key(packed_syndrome, factory_syndrome_length)
+        correction, score = factory_decode_impl(syndrome)
+        return tuple(
+            int(x) for x in np.asarray(correction, dtype=np.uint8).tolist()
+        ), float(score)
+
+    @lru_cache(maxsize=None)
+    def decode_full(packed_syndrome: SyndromeKey):
+        syndrome = _normalize_syndrome_key(packed_syndrome, full_syndrome_length)
+        correction = np.asarray(full_decoder.decode(syndrome), dtype=np.uint8)
+        return tuple(int(x) for x in correction.tolist())
+
+    return DecoderAdapter(
+        full_decoder=full_decoder,
+        factory_decoder=factory_decoder,
+        decode_factory=decode_factory,
+        decode_full=decode_full,
+        factory_score_mode=factory_score_mode,
+    )
+
+
+def estimate_mld_ancilla_scores(
+    decoder_by_basis: Mapping[str, tuple[Any, Any]],
+    ranking_data_by_basis: Mapping[str, BasisDataset],
+    *,
     factory_target: np.ndarray,
-    ranking_data_by_basis: Mapping[str, BasisDataset] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> np.ndarray:
-    if set(training_data_by_basis) != set(basis_labels):
+    if set(decoder_by_basis) != set(basis_labels):
         raise ValueError(
-            "Need X/Y/Z training datasets to build shared MLD postselection scores."
+            "Need X/Y/Z decoder pairs to estimate shared MLD postselection scores."
         )
-
-    score_data_by_basis = (
-        ranking_data_by_basis
-        if ranking_data_by_basis is not None
-        else training_data_by_basis
-    )
-    if set(score_data_by_basis) != set(basis_labels):
+    if set(ranking_data_by_basis) != set(basis_labels):
         raise ValueError(
-            "Need X/Y/Z ranking datasets to build shared MLD postselection scores."
+            "Need X/Y/Z ranking datasets to estimate shared MLD postselection scores."
         )
 
     corrected_by_pattern = {basis: defaultdict(list) for basis in basis_labels}
     ancilla_detectors: int | None = None
 
     for basis in basis_labels:
-        training_dataset = training_data_by_basis[basis]
-        score_dataset = score_data_by_basis[basis]
-
-        training_anc_det, training_anc_obs = split_factory_bits(
-            training_dataset.detectors, training_dataset.observables
-        )
+        full_decoder, factory_decoder = decoder_by_basis[basis]
+        score_dataset = ranking_data_by_basis[basis]
         anc_det, anc_obs = split_factory_bits(
-            score_dataset.detectors, score_dataset.observables
+            score_dataset.detectors,
+            score_dataset.observables,
+            layout=layout,
         )
         if ancilla_detectors is None:
             ancilla_detectors = anc_det.shape[1]
@@ -121,20 +192,6 @@ def build_shared_mld_postselection_scores(
             raise ValueError(
                 "Inconsistent ancilla detector counts across MLD training datasets."
             )
-
-        full_decoder = table_decoder_cls.from_det_obs_shots(
-            make_shape_only_dem(
-                training_dataset.detectors.shape[1],
-                training_dataset.observables.shape[1],
-            ),
-            np.concatenate(
-                [training_dataset.detectors, training_dataset.observables], axis=1
-            ).astype(bool),
-        )
-        factory_decoder = table_decoder_cls.from_det_obs_shots(
-            make_shape_only_dem(training_anc_det.shape[1], training_anc_obs.shape[1]),
-            np.concatenate([training_anc_det, training_anc_obs], axis=1).astype(bool),
-        )
 
         for det, obs, a_det, a_obs in zip(
             score_dataset.detectors,
@@ -180,36 +237,85 @@ def build_shared_mld_postselection_scores(
     return scores
 
 
+def build_shared_mld_postselection_scores(
+    training_data_by_basis: Mapping[str, BasisDataset],
+    *,
+    table_decoder_cls: type,
+    factory_target: np.ndarray,
+    ranking_data_by_basis: Mapping[str, BasisDataset] | None = None,
+    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
+    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+) -> np.ndarray:
+    if set(training_data_by_basis) != set(basis_labels):
+        raise ValueError(
+            "Need X/Y/Z training datasets to build shared MLD postselection scores."
+        )
+    score_data_by_basis = (
+        ranking_data_by_basis
+        if ranking_data_by_basis is not None
+        else training_data_by_basis
+    )
+    decoder_by_basis = {
+        basis: train_mld_decoder_pair(
+            training_data_by_basis[basis],
+            table_decoder_cls=table_decoder_cls,
+            layout=layout,
+        )
+        for basis in basis_labels
+    }
+    return estimate_mld_ancilla_scores(
+        decoder_by_basis,
+        score_data_by_basis,
+        factory_target=factory_target,
+        basis_labels=basis_labels,
+        sign_vector=sign_vector,
+        target_bloch=target_bloch,
+        layout=layout,
+    )
+
+
 def build_mld_decoders(
     training_dataset: BasisDataset,
     ancilla_scores: np.ndarray,
     *,
     table_decoder_cls: type,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
     anc_det, anc_obs = split_factory_bits(
-        training_dataset.detectors, training_dataset.observables
+        training_dataset.detectors,
+        training_dataset.observables,
+        layout=layout,
+    )
+    full_decoder, factory_decoder = train_mld_decoder_pair(
+        training_dataset,
+        table_decoder_cls=table_decoder_cls,
+        layout=layout,
+    )
+    return build_mld_decoders_from_pair(
+        full_decoder=full_decoder,
+        factory_decoder=factory_decoder,
+        full_syndrome_length=training_dataset.detectors.shape[1],
+        factory_syndrome_length=anc_det.shape[1],
+        ancilla_scores=ancilla_scores,
     )
 
-    full_decoder = table_decoder_cls.from_det_obs_shots(
-        make_shape_only_dem(
-            training_dataset.detectors.shape[1], training_dataset.observables.shape[1]
-        ),
-        np.concatenate(
-            [training_dataset.detectors, training_dataset.observables], axis=1
-        ).astype(bool),
-    )
-    factory_decoder = table_decoder_cls.from_det_obs_shots(
-        make_shape_only_dem(anc_det.shape[1], anc_obs.shape[1]),
-        np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
-    )
-    if len(ancilla_scores) != (1 << anc_det.shape[1]):
+
+def build_mld_decoders_from_pair(
+    *,
+    full_decoder: Any,
+    factory_decoder: Any,
+    full_syndrome_length: int,
+    factory_syndrome_length: int,
+    ancilla_scores: np.ndarray,
+) -> DecoderAdapter:
+    if len(ancilla_scores) != (1 << factory_syndrome_length):
         raise ValueError(
-            "Ancilla score table has the wrong size for this training dataset."
+            "Ancilla score table has the wrong size for this decoder pair."
         )
 
-    @lru_cache(maxsize=None)
-    def decode_factory(syndrome_key: str):
-        syndrome = key_to_bits(syndrome_key).astype(bool)
+    def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
         correction = np.asarray(factory_decoder.decode(syndrome), dtype=np.uint8)
         packed = int(pack_boolean_array(syndrome)[0])
         score = (
@@ -217,24 +323,32 @@ def build_mld_decoders(
             if packed < len(ancilla_scores)
             else float("nan")
         )
-        return tuple(int(x) for x in correction.tolist()), score
+        return correction, score
 
-    @lru_cache(maxsize=None)
-    def decode_full(syndrome_key: str):
-        syndrome = key_to_bits(syndrome_key).astype(bool)
-        correction = np.asarray(full_decoder.decode(syndrome), dtype=np.uint8)
-        return tuple(int(x) for x in correction.tolist())
-
-    return DecoderAdapter(
+    return _make_decoder_adapter(
         full_decoder=full_decoder,
         factory_decoder=factory_decoder,
-        decode_factory=decode_factory,
-        decode_full=decode_full,
+        full_syndrome_length=full_syndrome_length,
+        factory_syndrome_length=factory_syndrome_length,
+        factory_decode_impl=factory_decode_impl,
         factory_score_mode="mld_output_fidelity",
     )
 
 
-# TODO: come back to MLE later.
+class MLEFactoryScorer:
+    def __init__(self, decoder: Any, *, score_mode: str):
+        self.decoder = decoder
+        self.score_mode = score_mode
+        self.decode_signature = inspect.signature(decoder.decode)
+
+    def decode(self, syndrome: np.ndarray) -> tuple[np.ndarray, float, str]:
+        return _score_from_decoder(
+            self.decoder,
+            syndrome,
+            score_mode=self.score_mode,
+        )
+
+
 def _score_from_decoder(
     decoder: Any,
     syndrome: np.ndarray,
@@ -276,12 +390,12 @@ def _score_from_decoder(
     return correction, float("nan"), "none"
 
 
-# TODO: continue here, 4/14, 3:36 PM
 def build_mle_decoders(
     task: Any,
     *,
     gurobi_decoder_cls: type,
     score_mode: str = "best_available",
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
     if score_mode not in {"best_available", "logical_gap"}:
         raise ValueError("score_mode must be 'best_available' or 'logical_gap'.")
@@ -289,41 +403,38 @@ def build_mle_decoders(
     dem_data = compute_dem_data(task)
     full_dem = matrix_to_dem(dem_data["H"], dem_data["O"], dem_data["priors"])
     factory_dem = matrix_to_dem(
-        dem_data["H"][3:, :], dem_data["O"][1:, :], dem_data["priors"]
+        dem_data["H"][layout.output_detector_count :, :],
+        dem_data["O"][layout.output_observable_count :, :],
+        dem_data["priors"],
     )
 
     full_decoder = gurobi_decoder_cls(full_dem)
     factory_decoder = gurobi_decoder_cls(factory_dem)
-    resolved_mode: str | None = None
+    scorer = MLEFactoryScorer(factory_decoder, score_mode=score_mode)
+    resolved_mode: str = score_mode
 
-    @lru_cache(maxsize=None)
-    def decode_factory(syndrome_key: str):
+    def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
         nonlocal resolved_mode
-        syndrome = key_to_bits(syndrome_key).astype(bool)
-        correction, score, used_mode = _score_from_decoder(
-            factory_decoder,
-            syndrome,
-            score_mode=score_mode,
-        )
+        correction, score, used_mode = scorer.decode(syndrome)
         resolved_mode = used_mode
-        return tuple(int(x) for x in correction.tolist()), score
+        return correction, score
 
-    @lru_cache(maxsize=None)
-    def decode_full(syndrome_key: str):
-        syndrome = key_to_bits(syndrome_key).astype(bool)
-        correction = np.asarray(full_decoder.decode(syndrome), dtype=np.uint8)
-        return tuple(int(x) for x in correction.tolist())
-
-    # Prime the adapter so downstream code can inspect the effective score mode
-    sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
-    decode_factory(bits_to_key(sample_syndrome))
-
-    return DecoderAdapter(
+    adapter = _make_decoder_adapter(
         full_decoder=full_decoder,
         factory_decoder=factory_decoder,
-        decode_factory=decode_factory,
-        decode_full=decode_full,
-        factory_score_mode=resolved_mode or score_mode,
+        full_syndrome_length=full_dem.num_detectors,
+        factory_syndrome_length=factory_dem.num_detectors,
+        factory_decode_impl=factory_decode_impl,
+        factory_score_mode=resolved_mode,
+    )
+    sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
+    adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
+    return DecoderAdapter(
+        full_decoder=adapter.full_decoder,
+        factory_decoder=adapter.factory_decoder,
+        decode_factory=adapter.decode_factory,
+        decode_full=adapter.decode_full,
+        factory_score_mode=resolved_mode,
     )
 
 
@@ -339,14 +450,21 @@ def evaluate_curve(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
+    threshold_policy: str = "quantile",
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    uncertainty_backend: str = "wilson",
 ) -> dict[str, np.ndarray]:
     all_scores = []
     for basis in basis_labels:
         dataset = actual_data[basis]
-        anc_det, anc_obs = split_factory_bits(dataset.detectors, dataset.observables)
+        anc_det, anc_obs = split_factory_bits(
+            dataset.detectors,
+            dataset.observables,
+            layout=layout,
+        )
         decode_factory = decoder_map[basis].decode_factory
         for a_det, a_obs in zip(anc_det, anc_obs, strict=True):
-            anc_flip, score = decode_factory(bits_to_key(a_det))
+            anc_flip, score = decode_factory(packed_bits_to_int(a_det))
             anc_flip = np.asarray(anc_flip, dtype=np.uint8)
             if np.array_equal(a_obs ^ anc_flip, factory_target) and np.isfinite(score):
                 all_scores.append(score)
@@ -355,9 +473,15 @@ def evaluate_curve(
             f"No factory-accepted shots found for {metric} threshold sweep"
         )
 
-    thresholds = np.unique(
-        np.quantile(np.asarray(all_scores), np.linspace(0.0, 1.0, threshold_points))
-    )
+    score_array = np.asarray(all_scores, dtype=np.float64)
+    if threshold_policy == "quantile":
+        thresholds = np.unique(
+            np.quantile(score_array, np.linspace(0.0, 1.0, threshold_points))
+        )
+    elif threshold_policy == "unique_values":
+        thresholds = np.unique(score_array)
+    else:
+        raise ValueError("threshold_policy must be 'quantile' or 'unique_values'.")
     accepted_fractions = []
     fidelities = []
     credibility = []
@@ -369,7 +493,9 @@ def evaluate_curve(
         for basis in basis_labels:
             dataset = actual_data[basis]
             anc_det, anc_obs = split_factory_bits(
-                dataset.detectors, dataset.observables
+                dataset.detectors,
+                dataset.observables,
+                layout=layout,
             )
             decode_factory = decoder_map[basis].decode_factory
             decode_full = decoder_map[basis].decode_full
@@ -381,14 +507,17 @@ def evaluate_curve(
                 anc_obs,
                 strict=True,
             ):
-                anc_flip, score = decode_factory(bits_to_key(a_det))
+                anc_flip, score = decode_factory(packed_bits_to_int(a_det))
                 anc_flip = np.asarray(anc_flip, dtype=np.uint8)
                 corrected_anc = a_obs ^ anc_flip
                 if not np.array_equal(corrected_anc, factory_target):
                     continue
                 if score < threshold:
                     continue
-                full_flip = np.asarray(decode_full(bits_to_key(det)), dtype=np.uint8)
+                full_flip = np.asarray(
+                    decode_full(packed_bits_to_int(det)),
+                    dtype=np.uint8,
+                )
                 corrected_bits.append(int(obs[0] ^ full_flip[0]))
             corrected[basis] = np.asarray(corrected_bits, dtype=np.uint8)
             total_kept += len(corrected[basis])
@@ -407,6 +536,7 @@ def evaluate_curve(
             posterior_samples,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
+            uncertainty_backend=uncertainty_backend,
         )
         accepted_fractions.append(total_kept / total_shots)
         fidelities.append(summary["median"])
@@ -439,6 +569,8 @@ def evaluate_mld_curve(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    uncertainty_backend: str = "wilson",
 ) -> dict[str, np.ndarray]:
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
     corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
@@ -448,7 +580,11 @@ def evaluate_mld_curve(
     for basis in basis_labels:
         dataset = actual_data[basis]
         total_shots += len(dataset.observables)
-        anc_det, anc_obs = split_factory_bits(dataset.detectors, dataset.observables)
+        anc_det, anc_obs = split_factory_bits(
+            dataset.detectors,
+            dataset.observables,
+            layout=layout,
+        )
         decode_factory = decoder_map[basis].decode_factory
         decode_full = decoder_map[basis].decode_full
 
@@ -465,7 +601,7 @@ def evaluate_mld_curve(
             packed = int(pack_boolean_array(a_det)[0])
             pattern_counts[packed] += 1
 
-            anc_flip, score = decode_factory(bits_to_key(a_det))
+            anc_flip, score = decode_factory(packed_bits_to_int(a_det))
             anc_flip = np.asarray(anc_flip, dtype=np.uint8)
             if np.isfinite(score):
                 existing = pattern_scores.get(packed)
@@ -478,7 +614,10 @@ def evaluate_mld_curve(
             if not np.array_equal(a_obs ^ anc_flip, factory_target):
                 continue
 
-            full_flip = np.asarray(decode_full(bits_to_key(det)), dtype=np.uint8)
+            full_flip = np.asarray(
+                decode_full(packed_bits_to_int(det)),
+                dtype=np.uint8,
+            )
             corrected_bits[packed].append(int(obs[0] ^ full_flip[0]))
 
         pattern_counts_by_basis[basis] = dict(pattern_counts)
@@ -525,6 +664,7 @@ def evaluate_mld_curve(
             posterior_samples,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
+            uncertainty_backend=uncertainty_backend,
         )
         total_kept = sum(len(cumulative_bits[basis]) for basis in basis_labels)
         accepted_fractions.append(total_kept / total_shots)
@@ -549,6 +689,7 @@ def injected_baseline(
     raw: bool = False,
     training_task_map: Mapping[str, Any] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    uncertainty_backend: str = "wilson",
 ) -> dict[str, Any]:
     corrected = {}
     for basis in basis_labels:
@@ -589,4 +730,5 @@ def injected_baseline(
         posterior_samples,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
+        uncertainty_backend=uncertainty_backend,
     )

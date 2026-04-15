@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -16,20 +17,27 @@ from bloqade.lanes.logical_mvp import (
     append_measurements_and_annotations,
     compile_squin_to_move,
 )
+from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
+
+from .common import DemoTask, LogicalKernelSpec, ObservableFrame
 
 
 @dataclass(frozen=True)
 class NaiveKernelBundle:
-    distilled: dict[str, Any]
-    injected: dict[str, Any]
+    distilled: dict[str, LogicalKernelSpec]
+    injected: dict[str, LogicalKernelSpec]
 
 
 @dataclass(frozen=True)
 class DecoderKernelBundle:
-    actual: dict[str, Any]
-    special: dict[str, Any]
-    injected: dict[str, Any]
+    actual: dict[str, LogicalKernelSpec]
+    special: dict[str, LogicalKernelSpec]
+    injected: dict[str, LogicalKernelSpec]
+
+
+def build_measurement_maps(num_logical_qubits: int) -> tuple[Any, Any]:
+    return steane7_m2dets(num_logical_qubits), steane7_m2obs(num_logical_qubits)
 
 
 def _build_special_prefix_kernel(
@@ -74,6 +82,13 @@ def _count_initializer_invokes(
     return count
 
 
+def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) -> None:
+    try:
+        setattr(task, attr, value)
+    except AttributeError:
+        task.__dict__[attr] = value
+
+
 def _splice_noiseless_prefix_into_compiled_kernel(
     compiled_kernel: Any,
     prefix_kernel: Any,
@@ -115,6 +130,27 @@ def _splice_noiseless_prefix_into_compiled_kernel(
         stmt.delete(safe=False)
 
     return mt
+
+
+def _apply_special_state_prefix(
+    compiled_kernel: Any,
+    *,
+    prepare_kernel: Any,
+    initializer_kernel: Any,
+    initializer_name: str,
+) -> Any:
+    prefix_kernel = _build_special_prefix_kernel(prepare_kernel, initializer_kernel)
+    return _splice_noiseless_prefix_into_compiled_kernel(
+        compiled_kernel,
+        prefix_kernel,
+        initializer_name=initializer_name,
+    )
+
+
+def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSpec:
+    if isinstance(kernel_like, LogicalKernelSpec):
+        return kernel_like
+    return LogicalKernelSpec(kernel=kernel_like)
 
 
 def _build_primitives(theta: float, phi: float, lam: float, *, output_qubit: int):
@@ -242,8 +278,16 @@ def build_naive_kernel_bundle(
         return
 
     return NaiveKernelBundle(
-        distilled={"X": distilled_x, "Y": distilled_y, "Z": distilled_z},
-        injected={"X": injected_x, "Y": injected_y, "Z": injected_z},
+        distilled={
+            "X": LogicalKernelSpec(kernel=distilled_x),
+            "Y": LogicalKernelSpec(kernel=distilled_y),
+            "Z": LogicalKernelSpec(kernel=distilled_z),
+        },
+        injected={
+            "X": LogicalKernelSpec(kernel=injected_x),
+            "Y": LogicalKernelSpec(kernel=injected_y),
+            "Z": LogicalKernelSpec(kernel=injected_z),
+        },
     )
 
 
@@ -325,10 +369,6 @@ def build_decoder_kernel_bundle(
         tomography_z(reg)
         return default_post_processing(reg)
 
-    msd_special_x.__dict__["_msd_special_prepare_kernel"] = prepare_special_x
-    msd_special_y.__dict__["_msd_special_prepare_kernel"] = prepare_special_y
-    msd_special_z.__dict__["_msd_special_prepare_kernel"] = prepare_special_z
-
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_x():
         reg = qubit.qalloc(1)
@@ -351,44 +391,75 @@ def build_decoder_kernel_bundle(
         return default_post_processing(reg)
 
     return DecoderKernelBundle(
-        actual={"X": msd_actual_x, "Y": msd_actual_y, "Z": msd_actual_z},
-        special={"X": msd_special_x, "Y": msd_special_y, "Z": msd_special_z},
-        injected={"X": injected_x, "Y": injected_y, "Z": injected_z},
+        actual={
+            "X": LogicalKernelSpec(kernel=msd_actual_x),
+            "Y": LogicalKernelSpec(kernel=msd_actual_y),
+            "Z": LogicalKernelSpec(kernel=msd_actual_z),
+        },
+        special={
+            "X": LogicalKernelSpec(
+                kernel=msd_special_x,
+                special_prepare_kernel=prepare_special_x,
+                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            ),
+            "Y": LogicalKernelSpec(
+                kernel=msd_special_y,
+                special_prepare_kernel=prepare_special_y,
+                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            ),
+            "Z": LogicalKernelSpec(
+                kernel=msd_special_z,
+                special_prepare_kernel=prepare_special_z,
+                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            ),
+        },
+        injected={
+            "X": LogicalKernelSpec(kernel=injected_x),
+            "Y": LogicalKernelSpec(kernel=injected_y),
+            "Z": LogicalKernelSpec(kernel=injected_z),
+        },
     )
 
 
-def build_injected_decoder_kernel_map() -> dict[str, Any]:
-    h_theta = 0.5 * 3.141592653589793
+def build_injected_decoder_kernel_map(
+    *,
+    output_qubit: int = 0,
+) -> dict[str, LogicalKernelSpec]:
+    h_theta = 0.5 * math.pi
     h_phi = 0.0
-    hs_theta = 0.5 * 3.141592653589793
-    hs_phi = -0.5 * 3.141592653589793
+    hs_theta = 0.5 * math.pi
+    hs_phi = -0.5 * math.pi
     lam = 0.0
+    primitives = _build_primitives(0.0, 0.0, 0.0, output_qubit=output_qubit)
+    tomography_x = primitives["tomography_x"]
+    tomography_y = primitives["tomography_y"]
+    tomography_z = primitives["tomography_z"]
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_decoder_x():
         reg = qubit.qalloc(1)
         squin.u3(h_theta, h_phi, lam, reg[0])
-        squin.h(reg[0])
+        tomography_x(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_decoder_y():
         reg = qubit.qalloc(1)
         squin.u3(hs_theta, hs_phi, lam, reg[0])
-        squin.sqrt_z_adj(reg[0])
-        squin.h(reg[0])
+        tomography_y(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_decoder_z():
         reg = qubit.qalloc(1)
         squin.u3(0.0, 0.0, 0.0, reg[0])
+        tomography_z(reg)
         return default_post_processing(reg)
 
     return {
-        "X": injected_decoder_x,
-        "Y": injected_decoder_y,
-        "Z": injected_decoder_z,
+        "X": LogicalKernelSpec(kernel=injected_decoder_x),
+        "Y": LogicalKernelSpec(kernel=injected_decoder_y),
+        "Z": LogicalKernelSpec(kernel=injected_decoder_z),
     }
 
 
@@ -455,7 +526,7 @@ def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
 
 def build_task(
     simulator: GeminiLogicalSimulator,
-    kernel: Any,
+    kernel_spec: LogicalKernelSpec | Any,
     *,
     m2dets: Any,
     m2obs: Any,
@@ -463,10 +534,11 @@ def build_task(
     append_measurements: bool = True,
     physical_hypercube_dims: int = 4,
     transversal_rewrite: bool = True,
-) -> GeminiLogicalSimulatorTask:
+) -> DemoTask:
     from bloqade.lanes.arch.gemini.logical import steane7_initialize
 
-    logical_kernel = kernel.similar()
+    spec = _ensure_kernel_spec(kernel_spec)
+    logical_kernel = spec.kernel.similar()
     if append_measurements:
         append_measurements_and_annotations(logical_kernel, m2dets, m2obs)
 
@@ -489,16 +561,17 @@ def build_task(
     )
 
     if noisy_initializer is not None:
-        task.__dict__["physical_squin_kernel"] = MoveToSquin(
-            physical_arch_spec,
-            logical_initialization=noisy_initializer,
-            noise_model=simulator.noise_model,
-        ).emit(physical_move_kernel)
+        _set_task_override(
+            task,
+            "physical_squin_kernel",
+            MoveToSquin(
+                physical_arch_spec,
+                logical_initialization=noisy_initializer,
+                noise_model=simulator.noise_model,
+            ).emit(physical_move_kernel),
+        )
 
-    # TODO: this should get replaced with a RewriteRule; "splice" is kind of hacky just to get it working
-    if (
-        prepare_kernel := kernel.__dict__.get("_msd_special_prepare_kernel")
-    ) is not None:
+    if spec.special_prepare_kernel is not None:
         initializer_kernel = noisy_initializer or steane7_initialize
         initializer_name = (
             getattr(initializer_kernel, "sym_name", None)
@@ -506,25 +579,28 @@ def build_task(
             or initializer_kernel.__name__
         )
 
-        compiled_kernel = task.__dict__.get(
-            "physical_squin_kernel", task.physical_squin_kernel
-        )
-        prefix_kernel = _build_special_prefix_kernel(prepare_kernel, initializer_kernel)
-        task.__dict__["physical_squin_kernel"] = (
-            _splice_noiseless_prefix_into_compiled_kernel(
+        compiled_kernel = getattr(task, "physical_squin_kernel")
+        _set_task_override(
+            task,
+            "physical_squin_kernel",
+            _apply_special_state_prefix(
                 compiled_kernel,
-                prefix_kernel,
+                prepare_kernel=spec.special_prepare_kernel,
+                initializer_kernel=initializer_kernel,
                 initializer_name=str(initializer_name),
-            )
+            ),
         )
-        task.__dict__["_rebase_observables_to_noiseless_reference"] = True
 
-    return task
+    return DemoTask(
+        task=task,
+        observable_frame=spec.observable_frame,
+        metadata={"logical_kernel_spec": spec},
+    )
 
 
 def build_task_map(
     simulator: GeminiLogicalSimulator,
-    kernel_map: Mapping[str, Any],
+    kernel_map: Mapping[str, LogicalKernelSpec | Any],
     *,
     m2dets: Any,
     m2obs: Any,
@@ -532,7 +608,7 @@ def build_task_map(
     append_measurements: bool = True,
     physical_hypercube_dims: int = 4,
     transversal_rewrite: bool = True,
-) -> dict[str, GeminiLogicalSimulatorTask]:
+) -> dict[str, DemoTask]:
     return {
         basis: build_task(
             simulator,
