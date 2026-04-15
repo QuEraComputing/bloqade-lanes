@@ -144,6 +144,14 @@ test-rust:
 test-python:
     uv run --locked pytest python/tests/ -v
 
+# Run benchmark harness in physical architecture mode
+benchmark-physical:
+    uv run --locked python -m benchmarks.cli --architecture physical --compare python/benchmarks/harness/latest_physical.csv
+
+# Run benchmark harness in logical architecture mode
+benchmark-logical:
+    uv run --locked python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
+
 # Run fast Python tests only (skip slow integration tests)
 test-python-fast:
     uv run --locked pytest python/tests/ -v -m "not slow"

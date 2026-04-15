@@ -1,0 +1,19 @@
+case_id,strategy_id,backend,generator_id,success,wall_time_ms,move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,max_depth_reached,notes
+adder_4,python_entropy,python,heuristic,True,5770.021584,38,50,0.650120,70,8,
+adder_4,rust_astar,rust,rust_solver,True,245.844416,38,50,0.650120,57,,
+adder_64,python_entropy,python,heuristic,True,98185.323500,1612,1664,0.000000,1760,17,
+adder_64,rust_astar,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+bv_70,python_entropy,python,heuristic,True,9909.859667,198,198,0.000000,209,7,
+bv_70,rust_astar,rust,rust_solver,True,234.644375,198,198,0.000000,99,,
+ghz_4,python_entropy,python,heuristic,True,2251.853583,12,14,0.870604,21,5,
+ghz_4,rust_astar,rust,rust_solver,True,130.230791,12,14,0.870604,6,,
+ghz_6,python_entropy,python,heuristic,True,2232.372709,20,26,0.744816,30,6,
+ghz_6,rust_astar,rust,rust_solver,True,197.165583,20,26,0.744816,12,,
+qpe_9,python_entropy,python,heuristic,True,24627.171209,220,224,0.015963,374,5,
+qpe_9,rust_astar,rust,rust_solver,True,603.866625,220,224,0.015963,110,,
+steane_logical_5,python_entropy,python,heuristic,True,1746.450625,18,26,0.789301,24,4,
+steane_logical_5,rust_astar,rust,rust_solver,True,28.554625,18,26,0.789301,9,,
+steane_physical_35,python_entropy,python,heuristic,True,21633.147542,120,178,0.004121,156,28,
+steane_physical_35,rust_astar,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
+trotter_rand_35,python_entropy,python,heuristic,True,147794.570834,1264,1548,0.000000,1498,26,
+trotter_rand_35,rust_astar,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
