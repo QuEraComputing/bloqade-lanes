@@ -400,12 +400,8 @@ class ZoneBuilder:
 
         # Flatten every site into one KDTree, tracking (word, site_index)
         # so we can classify each returned pair.
-        positions: list[tuple[int, int]] = []
-        owners: list[tuple[int, int]] = []
-        for w in range(n):
-            for s in range(spw):
-                positions.append(self._site_nm(w, s))
-                owners.append((w, s))
+        positions = [self._site_nm(w, s) for w in range(n) for s in range(spw)]
+        owners = [(w, s) for w in range(n) for s in range(spw)]
 
         tree = KDTree(positions)
         # query_pairs returns (i, j) with i < j and dist(p_i, p_j) <= radius_nm.
