@@ -23,7 +23,9 @@ from bloqade.lanes.heuristics.physical_placement import (
     PlacementTraversalABC,
     RustPlacementTraversal,
 )
-from bloqade.lanes.metrics import Metrics
+from bloqade.lanes.logical_mvp import transversal_rewrites
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.transform import MoveToSquinLogical
 from bloqade.lanes.upstream import squin_to_move
 
 
@@ -181,13 +183,26 @@ class BenchmarkRunner:
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:
         if job.case.logical_initialize:
             placement_strategy = job.strategy.build_placement_strategy()
-            metrics = Metrics(arch_spec=placement_strategy.arch_spec)
-            fidelity = metrics.analyze_fidelity(
+            move_mt = squin_to_move(
                 job.case.kernel,
+                layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
                 placement_strategy=placement_strategy,
                 insert_return_moves=self.insert_return_moves,
+                logical_initialize=True,
             )
-            return fidelity.gate_fidelity_product
+            move_mt = transversal_rewrites(move_mt)
+            physical_squin = MoveToSquinLogical(
+                arch_spec=placement_strategy.arch_spec,
+                noise_model=generate_logical_noise_model(),
+                add_noise=True,
+                aggressive_unroll=False,
+            ).emit(move_mt)
+            analysis = FidelityAnalysis(physical_squin.dialects)
+            analysis.run(physical_squin)
+            fidelity_product = 1.0
+            for gate_fid in analysis.gate_fidelities:
+                fidelity_product *= gate_fid.min
+            return fidelity_product
 
         placement_strategy = job.strategy.build_placement_strategy()
         layout_heuristic = self._build_layout_heuristic(job)

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfig
 from benchmarks.harness.runner import BenchmarkRunner
 from kirin import ir
@@ -18,28 +18,68 @@ from bloqade.lanes.heuristics.physical_placement import (
 
 def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
     runner = BenchmarkRunner()
-    expected_fidelity = 0.73
-    calls: list[tuple[object, bool]] = []
+    expected_fidelity = 0.72
+    calls: dict[str, object] = {}
 
     @dataclass
     class _FakePlacement:
         arch_spec: object
 
-    class _FakeMetrics:
-        def __init__(self, arch_spec):
-            self.arch_spec = arch_spec
+    class _FakeMoveMethod:
+        pass
 
-        def analyze_fidelity(
-            self,
-            kernel,
-            *,
-            placement_strategy,
-            insert_return_moves,
-        ):
-            calls.append((kernel, insert_return_moves))
-            return SimpleNamespace(gate_fidelity_product=expected_fidelity)
+    class _FakePhysicalSquin:
+        dialects = object()
 
-    monkeypatch.setattr("benchmarks.harness.runner.Metrics", _FakeMetrics)
+    class _FakeGateFidelity:
+        def __init__(self, min_value: float):
+            self.min = min_value
+
+    class _FakeFidelityAnalysis:
+        def __init__(self, dialects):
+            calls["analysis_dialects"] = dialects
+            self.gate_fidelities = [_FakeGateFidelity(0.9), _FakeGateFidelity(0.8)]
+
+        def run(self, kernel):
+            calls["analysis_kernel"] = kernel
+            return None
+
+    class _FakeMoveToSquinLogical:
+        def __init__(self, *, arch_spec, noise_model, add_noise, aggressive_unroll):
+            calls["transform_arch_spec"] = arch_spec
+            calls["transform_noise_model"] = noise_model
+            calls["transform_add_noise"] = add_noise
+            calls["transform_aggressive_unroll"] = aggressive_unroll
+
+        def emit(self, move_mt):
+            calls["emit_move_mt"] = move_mt
+            return _FakePhysicalSquin()
+
+    fake_move_mt = _FakeMoveMethod()
+    fake_noise_model = object()
+
+    def _fake_squin_to_move(*args, **kwargs):
+        calls["squin_to_move_kwargs"] = kwargs
+        return fake_move_mt
+
+    def _fake_transversal_rewrites(move_mt):
+        calls["transversal_input"] = move_mt
+        return move_mt
+
+    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.transversal_rewrites", _fake_transversal_rewrites
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.generate_logical_noise_model",
+        lambda: fake_noise_model,
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.MoveToSquinLogical", _FakeMoveToSquinLogical
+    )
+    monkeypatch.setattr(
+        "benchmarks.harness.runner.FidelityAnalysis", _FakeFidelityAnalysis
+    )
 
     job = BenchmarkJob(
         case=BenchmarkCase(
@@ -58,8 +98,15 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
     )
 
     fidelity = runner._estimate_fidelity(job)
-    assert fidelity == expected_fidelity
-    assert len(calls) == 1
+    assert fidelity == pytest.approx(expected_fidelity)
+    squin_to_move_kwargs = cast(dict[str, object], calls["squin_to_move_kwargs"])
+    assert squin_to_move_kwargs["insert_return_moves"] is True
+    assert squin_to_move_kwargs["logical_initialize"] is True
+    assert calls["transversal_input"] is fake_move_mt
+    assert calls["emit_move_mt"] is fake_move_mt
+    assert calls["transform_noise_model"] is fake_noise_model
+    assert calls["transform_add_noise"] is True
+    assert calls["transform_aggressive_unroll"] is False
 
 
 def test_estimate_fidelity_runs_for_physical_mode(monkeypatch):
