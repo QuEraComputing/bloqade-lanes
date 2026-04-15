@@ -204,6 +204,7 @@ def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
 
     class _FakeResult:
         status = "unsolvable"
+        nodes_expanded = 0
 
     class _FakeSolver:
         def solve(self, *_args, **_kwargs):
