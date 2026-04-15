@@ -150,6 +150,8 @@ def test_cz_placements_passes_idle_occupied_as_blockers(monkeypatch):
 
 
 def test_rust_traversal_default_params():
+    # TODO: add assertions for weight, restarts, free_riders, lookahead,
+    # deadlock_policy, w_t once they are threaded through to RustPlacementTraversal.
     t = RustPlacementTraversal()
     assert t.strategy == "astar"
     assert t.top_c == 3

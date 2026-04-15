@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Optional, final
+from typing import Literal, Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -902,15 +902,25 @@ class MoveSolver:
         target: list[tuple[int, int, int, int]],
         blocked: list[tuple[int, int, int]],
         max_expansions: Optional[int] = None,
-        strategy: str = "astar",
+        strategy: Literal[
+            "astar",
+            "dfs",
+            "bfs",
+            "greedy",
+            "ids",
+            "cascade",
+            "cascade-ids",
+            "cascade-dfs",
+            "cascade-entropy",
+            "entropy",
+        ] = "astar",
         top_c: int = 3,
         max_movesets_per_group: int = 3,
         weight: float = 1.0,
-        mobility_weight: float = 0.0,
         restarts: int = 1,
-        free_riders: str = "off",
+        free_riders: Literal["off", "unblock", "unblock_or_improve"] = "off",
         lookahead: bool = False,
-        deadlock_policy: str = "skip",
+        deadlock_policy: Literal["skip", "move_blockers"] = "skip",
         w_t: float = 0.05,
     ) -> SolveResult:
         """Solve a move synthesis problem.
@@ -924,7 +934,6 @@ class MoveSolver:
             top_c: Top bus options per qubit in the heuristic expander.
             max_movesets_per_group: Max movesets per bus group.
             weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-            mobility_weight: Reserved for future use (currently has no effect).
             restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
             free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
             lookahead: Enable 2-step lookahead scoring.

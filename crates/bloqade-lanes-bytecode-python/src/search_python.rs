@@ -9,7 +9,9 @@ use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy};
-use bloqade_lanes_search::solve::{InnerStrategy, MoveSolver, SolveResult, SolveStatus, Strategy};
+use bloqade_lanes_search::solve::{
+    InnerStrategy, MoveSolver, SolveOptions, SolveResult, SolveStatus, Strategy,
+};
 
 use crate::arch_python::PyArchSpec;
 
@@ -101,7 +103,7 @@ impl PySolveResult {
             SolveStatus::BudgetExceeded => "budget_exceeded",
         };
         format!(
-            "SolveResult(status={}, steps={}, cost={}, expanded={}, deadlocks={})",
+            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={})",
             status,
             self.inner.move_layers.len(),
             self.inner.cost,
@@ -154,7 +156,6 @@ impl PyMoveSolver {
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
     ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-    ///     mobility_weight: Reserved for future use (currently has no effect).
     ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
     ///     free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
     ///     lookahead: Enable 2-step lookahead scoring.
@@ -163,7 +164,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, mobility_weight=0.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip", w_t=0.05))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip", w_t=0.05))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -176,7 +177,6 @@ impl PyMoveSolver {
         top_c: usize,
         max_movesets_per_group: usize,
         weight: f64,
-        mobility_weight: f64,
         restarts: u32,
         free_riders: &str,
         lookahead: bool,
@@ -288,6 +288,18 @@ impl PyMoveSolver {
             ));
         }
 
+        let opts = SolveOptions {
+            strategy: strat,
+            top_c,
+            max_movesets_per_group,
+            weight,
+            restarts,
+            free_rider_policy: fr_policy,
+            lookahead,
+            deadlock_policy: dl_policy,
+            w_t,
+        };
+
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
             .allow_threads(|| {
@@ -296,16 +308,7 @@ impl PyMoveSolver {
                     target_pairs,
                     blocked_locs,
                     max_expansions,
-                    strat,
-                    top_c,
-                    max_movesets_per_group,
-                    weight,
-                    mobility_weight,
-                    restarts,
-                    fr_policy,
-                    lookahead,
-                    dl_policy,
-                    w_t,
+                    &opts,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;

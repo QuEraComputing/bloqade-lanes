@@ -21,4 +21,4 @@ pub use config::{Config, ConfigError};
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristic_expander::{DeadlockPolicy, FreeRiderPolicy};
 pub use lane_index::LaneIndex;
-pub use solve::{InnerStrategy, Strategy};
+pub use solve::{InnerStrategy, SolveOptions, Strategy};

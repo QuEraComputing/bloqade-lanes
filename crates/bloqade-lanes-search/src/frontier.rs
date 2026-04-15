@@ -204,6 +204,10 @@ pub struct PriorityFrontier<H> {
     heuristic: H,
     weight: f64,
     use_cost: bool,
+    /// When `true`, goal is checked on pop (A* semantics). This guarantees
+    /// optimality only when `weight == 1.0` with an admissible heuristic.
+    /// With `weight > 1.0`, the guarantee weakens to bounded suboptimal
+    /// (cost ≤ weight × optimal).
     goal_on_pop: bool,
 }
 

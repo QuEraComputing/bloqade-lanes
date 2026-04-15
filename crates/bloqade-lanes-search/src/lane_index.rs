@@ -171,6 +171,11 @@ impl LaneIndex {
         &self.arch_spec
     }
 
+    /// Number of distinct locations in the architecture.
+    pub fn num_locations(&self) -> usize {
+        self.positions.len()
+    }
+
     /// Get all lanes for a `(move_type, bus_id, zone_id, direction)` triplet.
     pub fn lanes_for(
         &self,
@@ -275,7 +280,9 @@ fn compute_lane_duration_us(waypoints: &[[f64; 2]]) -> f64 {
     if waypoints.len() <= 1 {
         return 0.0;
     }
-    let ramp = 1.0 / FLAIR_MAX_RAMP_US; // normalized_amp=1.0
+    // Assumes unit amplitude for search-time cost estimation;
+    // exact timing uses FLAIR bytecode values.
+    let ramp = 1.0 / FLAIR_MAX_RAMP_US;
     let segment_sum: f64 = waypoints
         .windows(2)
         .map(|w| {

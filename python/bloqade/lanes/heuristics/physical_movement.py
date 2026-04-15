@@ -152,7 +152,13 @@ class BFSPlacementTraversal(PlacementTraversalABC):
 
 @dataclass(frozen=True)
 class RustPlacementTraversal:
-    """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
+    """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely.
+
+    Note: The Rust ``MoveSolver.solve()`` accepts additional tuning parameters
+    (weight, restarts, free_riders, lookahead, deadlock_policy, w_t) that are
+    not yet exposed here; Rust defaults are used. These will be threaded
+    through once the parameters are validated via Rust-only benchmarking.
+    """
 
     strategy: str = "astar"
     top_c: int = 3

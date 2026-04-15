@@ -488,11 +488,12 @@ fn find_path_occupied(
     let mut visited: HashSet<u64> = HashSet::new();
     visited.insert(from_enc);
 
-    // BFS: queue of (current_encoded, lane_path).
-    let mut queue: VecDeque<(u64, Vec<LaneAddr>)> = VecDeque::new();
-    queue.push_back((from_enc, Vec::new()));
+    // BFS with parent-pointer map: O(V) memory instead of O(V×L).
+    let mut parent: HashMap<u64, (u64, LaneAddr)> = HashMap::new();
+    let mut queue: VecDeque<u64> = VecDeque::new();
+    queue.push_back(from_enc);
 
-    while let Some((current_enc, path)) = queue.pop_front() {
+    while let Some(current_enc) = queue.pop_front() {
         let current = LocationAddr::decode(current_enc);
         for &lane in index.outgoing_lanes(current) {
             let Some((_, dst)) = index.endpoints(&lane) else {
@@ -502,15 +503,20 @@ fn find_path_occupied(
             if occupied.contains(&dst_enc) || visited.contains(&dst_enc) {
                 continue;
             }
-            if dst_enc == to_enc {
-                let mut full_path = path;
-                full_path.push(lane);
-                return Some(full_path);
-            }
             visited.insert(dst_enc);
-            let mut new_path = path.clone();
-            new_path.push(lane);
-            queue.push_back((dst_enc, new_path));
+            parent.insert(dst_enc, (current_enc, lane));
+            if dst_enc == to_enc {
+                // Reconstruct path by walking parent pointers backwards.
+                let mut path = Vec::new();
+                let mut cur = to_enc;
+                while let Some(&(prev, lane)) = parent.get(&cur) {
+                    path.push(lane);
+                    cur = prev;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            queue.push_back(dst_enc);
         }
     }
 
@@ -633,10 +639,14 @@ pub fn entropy_search(
     let mut max_depth_seen: u32 = 0;
     let mut found_goals: Vec<NodeId> = Vec::new();
 
+    // Safety cap: hard iteration limit prevents infinite loops when
+    // max_expansions is None and the search gets stuck in reversion cycles.
+    let hard_limit = max_expansions.unwrap_or(index.num_locations() as u32 * 10);
+    let mut iterations: u32 = 0;
+
     loop {
-        if let Some(max) = max_expansions
-            && nodes_expanded >= max
-        {
+        iterations += 1;
+        if nodes_expanded >= hard_limit || iterations >= hard_limit * 2 {
             break;
         }
 

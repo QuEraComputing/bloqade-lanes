@@ -8,8 +8,8 @@
 //! 2-step lookahead scoring, and seeded score perturbation for
 //! restart diversity.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
@@ -74,8 +74,8 @@ pub struct HeuristicExpander<'a> {
     lookahead: bool,
     /// Seed for score perturbation RNG (restart diversity).
     seed: u64,
-    /// Counter for deadlock occurrences.
-    deadlock_count: AtomicU32,
+    /// Counter for deadlock occurrences (single-threaded; each restart gets its own expander).
+    deadlock_count: Cell<u32>,
 }
 
 impl<'a> HeuristicExpander<'a> {
@@ -98,7 +98,7 @@ impl<'a> HeuristicExpander<'a> {
             free_rider_policy: FreeRiderPolicy::Off,
             lookahead: false,
             seed: 0,
-            deadlock_count: AtomicU32::new(0),
+            deadlock_count: Cell::new(0),
         }
     }
 
@@ -128,7 +128,7 @@ impl<'a> HeuristicExpander<'a> {
 
     /// Return the number of deadlocks encountered so far.
     pub fn deadlock_count(&self) -> u32 {
-        self.deadlock_count.load(Ordering::Relaxed)
+        self.deadlock_count.get()
     }
 
     /// Compute the best 2-step score for a qubit moving to `dst_enc`.
@@ -335,17 +335,16 @@ impl Expander for HeuristicExpander<'_> {
                 // the same bus triplet that unblock or improve.
                 if self.free_rider_policy != FreeRiderPolicy::Off && !moves.is_empty() {
                     // Reconstruct typed triplet for bus-group filtering.
-                    let mt = if mt_u8 == MoveType::SiteBus as u8 {
-                        MoveType::SiteBus
-                    } else if mt_u8 == MoveType::WordBus as u8 {
-                        MoveType::WordBus
-                    } else {
-                        MoveType::ZoneBus
+                    let mt = match mt_u8 {
+                        x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
+                        x if x == MoveType::WordBus as u8 => MoveType::WordBus,
+                        x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
+                        _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
                     };
-                    let dir = if dir_u8 == Direction::Forward as u8 {
-                        Direction::Forward
-                    } else {
-                        Direction::Backward
+                    let dir = match dir_u8 {
+                        x if x == Direction::Forward as u8 => Direction::Forward,
+                        x if x == Direction::Backward as u8 => Direction::Backward,
+                        _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
                     };
                     self.add_free_riders(
                         config,
@@ -394,7 +393,7 @@ impl Expander for HeuristicExpander<'_> {
 
         // Step 7: deadlock escape.
         if !has_positive {
-            self.deadlock_count.fetch_add(1, Ordering::Relaxed);
+            self.deadlock_count.set(self.deadlock_count.get() + 1);
 
             match self.deadlock_policy {
                 DeadlockPolicy::Skip => {}

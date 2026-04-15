@@ -81,6 +81,49 @@ pub struct SolveResult {
     pub deadlocks: u32,
 }
 
+/// Grouping of search-tuning parameters for [`MoveSolver::solve`].
+///
+/// Keeps the `solve()` signature compact. Problem-specific data
+/// (`initial`, `target`, `blocked`, `max_expansions`) remain as direct
+/// arguments.
+#[derive(Debug, Clone)]
+pub struct SolveOptions {
+    /// Search strategy to use.
+    pub strategy: Strategy,
+    /// Top bus options per qubit in the heuristic expander.
+    pub top_c: usize,
+    /// Max movesets generated per bus group.
+    pub max_movesets_per_group: usize,
+    /// Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
+    pub weight: f64,
+    /// Number of parallel restarts with perturbed scoring (1 = no restarts).
+    pub restarts: u32,
+    /// Policy for free-rider qubits.
+    pub free_rider_policy: FreeRiderPolicy,
+    /// Enable 2-step lookahead scoring.
+    pub lookahead: bool,
+    /// How to handle deadlocks (no improving moves).
+    pub deadlock_policy: DeadlockPolicy,
+    /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
+    pub w_t: f64,
+}
+
+impl Default for SolveOptions {
+    fn default() -> Self {
+        Self {
+            strategy: Strategy::AStar,
+            top_c: 3,
+            max_movesets_per_group: 3,
+            weight: 1.0,
+            restarts: 1,
+            free_rider_policy: FreeRiderPolicy::Off,
+            lookahead: false,
+            deadlock_policy: DeadlockPolicy::Skip,
+            w_t: 0.05,
+        }
+    }
+}
+
 /// Reusable move synthesis solver.
 ///
 /// Constructed once per architecture — parses the arch spec JSON and builds
@@ -128,15 +171,7 @@ impl MoveSolver {
     /// * `target` — Desired qubit positions: `(qubit_id, location)` pairs.
     /// * `blocked` — Locations occupied by external atoms (immovable obstacles).
     /// * `max_expansions` — Optional limit on node expansions.
-    /// * `strategy` — Search strategy to use.
-    /// * `top_c` — Top bus options per qubit in the heuristic expander.
-    /// * `max_movesets_per_group` — Max movesets generated per bus group.
-    /// * `weight` — Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-    /// * `mobility_weight` — Weight for mobility bonus in expander scoring (0.0 = disabled).
-    /// * `restarts` — Number of parallel restarts with perturbed scoring (1 = no restarts).
-    /// * `deadlock_policy` — How to handle deadlocks (no improving moves). Applied to
-    ///   IDS/DFS inner strategies and cascade inner phase. Cascade outer A* always uses
-    ///   `MoveBlockers`; standalone A*/BFS/Greedy always use `MoveBlockers`.
+    /// * `opts` — Search-tuning parameters (strategy, weight, restarts, etc.).
     ///
     /// # Returns
     ///
@@ -147,24 +182,26 @@ impl MoveSolver {
     /// # Errors
     ///
     /// Returns [`ConfigError`] if `initial` contains duplicate qubit IDs.
-    #[allow(clippy::too_many_arguments)]
     pub fn solve(
         &self,
         initial: impl IntoIterator<Item = (u32, LocationAddr)>,
         target: impl IntoIterator<Item = (u32, LocationAddr)>,
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
-        strategy: Strategy,
-        top_c: usize,
-        max_movesets_per_group: usize,
-        weight: f64,
-        _mobility_weight: f64, // reserved — will be used for expander mobility scoring
-        restarts: u32,
-        free_rider_policy: FreeRiderPolicy,
-        lookahead: bool,
-        deadlock_policy: DeadlockPolicy,
-        w_t: f64,
+        opts: &SolveOptions,
     ) -> Result<SolveResult, ConfigError> {
+        let SolveOptions {
+            strategy,
+            top_c,
+            max_movesets_per_group,
+            weight,
+            restarts,
+            free_rider_policy,
+            lookahead,
+            deadlock_policy,
+            w_t,
+        } = *opts;
+
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -429,6 +466,14 @@ mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
 
+    /// Default test options: A*, w_t=0.0.
+    fn default_opts() -> SolveOptions {
+        SolveOptions {
+            w_t: 0.0,
+            ..SolveOptions::default()
+        }
+    }
+
     #[test]
     fn solve_simple_one_step() {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
@@ -438,16 +483,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -466,16 +502,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -495,16 +522,7 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -524,16 +542,7 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -552,16 +561,7 @@ mod tests {
                 [(0, loc(99, 99))],
                 std::iter::empty(),
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -572,6 +572,7 @@ mod tests {
     #[test]
     fn solver_reusable() {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let opts = default_opts();
 
         let r1 = solver
             .solve(
@@ -579,16 +580,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 std::iter::empty(),
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &opts,
             )
             .unwrap();
 
@@ -598,16 +590,7 @@ mod tests {
                 [(0, loc(0, 0))],
                 std::iter::empty(),
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &opts,
             )
             .unwrap();
 
@@ -626,16 +609,7 @@ mod tests {
                 [(0, loc(0, 5))],
                 [loc(0, 5)],
                 Some(100),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -654,16 +628,7 @@ mod tests {
                 [(0, loc(0, 5)), (1, loc(0, 6))],
                 std::iter::empty(),
                 Some(1000),
-                Strategy::AStar,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &default_opts(),
             )
             .unwrap();
 
@@ -684,16 +649,11 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
-                Strategy::Ids,
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
+                &SolveOptions {
+                    strategy: Strategy::Ids,
+                    w_t: 0.0,
+                    ..SolveOptions::default()
+                },
             )
             .unwrap();
 
@@ -703,18 +663,13 @@ mod tests {
                 [(0, loc(1, 5))],
                 std::iter::empty(),
                 Some(1000),
-                Strategy::Cascade {
-                    inner: InnerStrategy::Ids,
+                &SolveOptions {
+                    strategy: Strategy::Cascade {
+                        inner: InnerStrategy::Ids,
+                    },
+                    w_t: 0.0,
+                    ..SolveOptions::default()
                 },
-                3,
-                3,
-                1.0,
-                0.0,
-                1,
-                FreeRiderPolicy::Off,
-                false,
-                DeadlockPolicy::Skip,
-                0.0, // w_t
             )
             .unwrap();
 
