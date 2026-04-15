@@ -120,7 +120,13 @@ def build_arch(
         y_offset += zone_height + layout.zone_gap
         word_shape = _word_shape_from_layout(zone_spec, layout)
 
-        zone = ZoneBuilder(zone_name, rust_grid, word_shape)
+        zone = ZoneBuilder(
+            zone_name,
+            rust_grid,
+            word_shape,
+            x_clearance=layout.x_clearance,
+            y_clearance=layout.y_clearance,
+        )
 
         # Place words on the grid using the same index pattern as create_zone_words.
         for row in range(zone_spec.num_rows):

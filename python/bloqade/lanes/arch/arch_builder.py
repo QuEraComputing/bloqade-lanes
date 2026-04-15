@@ -7,6 +7,7 @@ The high-level ``build_arch()`` function uses these internally.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from bloqade.lanes.bytecode._native import (
     ZoneBus as _RustZoneBus,
 )
 from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.layout.encoding import Direction, LaneAddress, MoveType
 from bloqade.lanes.layout.word import Word
 
 if TYPE_CHECKING:
@@ -27,6 +29,23 @@ if TYPE_CHECKING:
 
 
 # ── Helpers ──
+
+# Internal length unit: 1 nm.  All user-facing lengths are in µm; internally
+# we convert to nm integers so that path search (hashing, set membership,
+# equality) is exact without floating-point hazards.
+_NM_PER_UM = 1000
+
+
+def _to_nm(value_um: float, name: str) -> int:
+    """Convert a µm length to an integer nm count, validating precision.
+
+    Raises ``ValueError`` if *value_um* has sub-nm resolution.
+    """
+    scaled = value_um * _NM_PER_UM
+    rounded = round(scaled)
+    if abs(scaled - rounded) > 1e-6:
+        raise ValueError(f"{name} {value_um} µm is not representable at 1 nm precision")
+    return int(rounded)
 
 
 def _normalize_index(idx: slice | int | Sequence[int], size: int) -> list[int]:
@@ -121,18 +140,52 @@ class ZoneBuilder:
     Cartesian product compliance.
     """
 
-    def __init__(self, name: str, grid: _RustGrid, word_shape: tuple[int, int]):
+    def __init__(
+        self,
+        name: str,
+        grid: _RustGrid,
+        word_shape: tuple[int, int],
+        *,
+        x_clearance: float,
+        y_clearance: float,
+    ):
         """Initialize a zone.
 
         Args:
             name: Human-readable zone name (stored in Rust Zone).
-            grid: Coordinate grid for this zone.
+            grid: Coordinate grid for this zone.  Every x- and y-position
+                must be representable at 1 nm precision (i.e., at most 3
+                decimal places when given in µm).
             word_shape: (num_x_sites, num_y_sites) — uniform shape for
                 all words in this zone. sites_per_word = product of shape.
+            x_clearance: Minimum physical distance (> 0, µm) from grid
+                lines that path waypoints must maintain on the x-axis.
+                Must be representable at 1 nm precision.
+            y_clearance: Same as ``x_clearance``, applied to the y-axis.
+                Allowing separate values is useful when row and column
+                spacings differ substantially (e.g., tight intra-pair x
+                spacing but wide row spacing).
+
+        Raises:
+            ValueError: If either clearance is not positive or any
+                position / clearance value is not nm-precise.
         """
+        if x_clearance <= 0:
+            raise ValueError(f"x_clearance must be positive, got {x_clearance}")
+        if y_clearance <= 0:
+            raise ValueError(f"y_clearance must be positive, got {y_clearance}")
         self._name = name
         self._grid = grid
         self._word_shape = word_shape
+        # Internal nm-integer representation for exact path search.
+        self._x_clearance_nm = _to_nm(x_clearance, "x_clearance")
+        self._y_clearance_nm = _to_nm(y_clearance, "y_clearance")
+        self._grid_x_nm: list[int] = [
+            _to_nm(x, "grid x-position") for x in grid.x_positions
+        ]
+        self._grid_y_nm: list[int] = [
+            _to_nm(y, "grid y-position") for y in grid.y_positions
+        ]
         self._words: list[list[tuple[int, int]]] = []
         self._position_to_word: dict[tuple[int, int], int] = {}
         self._site_buses: list[tuple[list[int], list[int]]] = []
@@ -153,6 +206,16 @@ class ZoneBuilder:
     def sites_per_word(self) -> int:
         """Total sites per word (product of word_shape)."""
         return self._word_shape[0] * self._word_shape[1]
+
+    @property
+    def x_clearance(self) -> float:
+        """Minimum x-axis clearance (µm) from grid lines for waypoints."""
+        return self._x_clearance_nm / _NM_PER_UM
+
+    @property
+    def y_clearance(self) -> float:
+        """Minimum y-axis clearance (µm) from grid lines for waypoints."""
+        return self._y_clearance_nm / _NM_PER_UM
 
     @property
     def num_words(self) -> int:
@@ -327,6 +390,402 @@ class ZoneBuilder:
         positions = self._words[word_id]
         return (min(p[0] for p in positions), min(p[1] for p in positions))
 
+    # ── Path computation ──
+    #
+    # All internal geometry is stored as nm-integer values so that set
+    # membership, tuple equality, and candidate hashing are exact.  User-
+    # facing APIs accept and return µm floats; conversion happens at the
+    # boundary.
+
+    _MAX_PATH_SEGMENTS = 6
+
+    def _site_nm(self, word_id: int, site_id: int) -> tuple[int, int]:
+        """Physical (x, y) position of a site, in nm integers."""
+        x_idx, y_idx = self._words[word_id][site_id]
+        return (self._grid_x_nm[x_idx], self._grid_y_nm[y_idx])
+
+    def _enumerate_safe_positions(
+        self,
+        grid_positions: list[int],
+        source_positions: list[int],
+        min_cl_nm: int,
+    ) -> list[int]:
+        """Enumerate reference positions on one axis that keep the bus clear.
+
+        Returns sorted integer positions ``p`` (nm) such that, when the
+        reference atom is at ``p`` and every other atom follows by the
+        same shift (AOD invariant), every atom is at least ``min_cl_nm``
+        from every grid line on this axis.
+
+        Candidate positions are chosen to maximize clearance rather than
+        sitting exactly on the ``min_cl_nm`` threshold:
+
+        * **Midpoints** between consecutive grid lines.  When a shifted
+          atom lands at a midpoint, its distance to the two neighboring
+          grid lines is half the grid gap — which is typically larger
+          than ``min_cl_nm`` on non-uniform grids, giving extra breathing
+          room.
+        * **Boundary edges** at ``min_grid - min_cl_nm`` and
+          ``max_grid + min_cl_nm``, so the search can route around the
+          outside of the grid when the interior is too crowded.
+
+        All candidates are filtered by ``_valid`` (distance to every grid
+        line, for every offset in the bus, must be ``>= min_cl_nm``).
+        """
+        if not source_positions:
+            return []
+
+        ref_src = source_positions[0]
+        offsets = sorted({s - ref_src for s in source_positions})
+        sorted_grid = sorted(set(grid_positions))
+
+        candidates: set[int] = set()
+
+        # Midpoints between consecutive grid lines, shifted per offset.
+        # ``p = mid - off`` places the atom at offset ``off`` exactly at the
+        # midpoint.
+        for i in range(len(sorted_grid) - 1):
+            mid = (sorted_grid[i] + sorted_grid[i + 1]) // 2
+            for off in offsets:
+                candidates.add(mid - off)
+
+        # Outer boundary edges for routing around the grid.
+        if sorted_grid:
+            for off in offsets:
+                candidates.add(sorted_grid[0] - off - min_cl_nm)
+                candidates.add(sorted_grid[-1] - off + min_cl_nm)
+
+        def _valid(p: int) -> bool:
+            for off in offsets:
+                shifted = p + off
+                for g in grid_positions:
+                    if abs(shifted - g) < min_cl_nm:
+                        return False
+            return True
+
+        return sorted(c for c in candidates if _valid(c))
+
+    def _search_path(
+        self,
+        ref_src: tuple[int, int],
+        ref_dst: tuple[int, int],
+        bus_src_positions: list[tuple[int, int]],
+    ) -> tuple[tuple[int, int], ...] | None:
+        """DFS path search for a bus's reference atom, in nm-integer space.
+
+        Returns a waypoint sequence ``[ref_src, ..., ref_dst]`` or
+        ``None`` if no valid path is found within the segment cap.
+
+        * Moves alternate between horizontal and vertical.
+        * No waypoint is repeated.
+        * Every middle waypoint has ``x ∈ safe_xs`` OR ``y ∈ safe_ys``
+          (bus-level safety on at least one axis).
+        * Every segment: for every atom in the bus, the segment does
+          not cross a grid atom strictly between its endpoints.
+        * Cost is ``(segment_count, total_length)`` lexicographic.
+        """
+        src_xs = [p[0] for p in bus_src_positions]
+        src_ys = [p[1] for p in bus_src_positions]
+        safe_xs = set(
+            self._enumerate_safe_positions(
+                self._grid_x_nm, src_xs, self._x_clearance_nm
+            )
+        )
+        safe_ys = set(
+            self._enumerate_safe_positions(
+                self._grid_y_nm, src_ys, self._y_clearance_nm
+            )
+        )
+
+        # Sorted (not just set→list) so DFS exploration order — and
+        # therefore the first-found-wins tie-break on equal-cost paths —
+        # is deterministic across runs and Python versions.
+        x_candidates = sorted({ref_src[0], ref_dst[0], *safe_xs})
+        y_candidates = sorted({ref_src[1], ref_dst[1], *safe_ys})
+
+        offsets = [(p[0] - ref_src[0], p[1] - ref_src[1]) for p in bus_src_positions]
+        grid_xs = self._grid_x_nm
+        grid_ys = self._grid_y_nm
+        grid_xs_set = set(grid_xs)
+        grid_ys_set = set(grid_ys)
+
+        def _segment_safe(start: tuple[int, int], end: tuple[int, int]) -> bool:
+            """Segment doesn't cross grid atoms for any atom in the bus."""
+            if start[1] == end[1]:
+                # Horizontal: y constant.
+                for off_x, off_y in offsets:
+                    atom_y = start[1] + off_y
+                    if atom_y not in grid_ys_set:
+                        continue  # not a grid row, no atoms at this y
+                    lo = min(start[0], end[0]) + off_x
+                    hi = max(start[0], end[0]) + off_x
+                    for g in grid_xs:
+                        if lo < g < hi:
+                            return False
+            else:
+                # Vertical: x constant.
+                for off_x, off_y in offsets:
+                    atom_x = start[0] + off_x
+                    if atom_x not in grid_xs_set:
+                        continue
+                    lo = min(start[1], end[1]) + off_y
+                    hi = max(start[1], end[1]) + off_y
+                    for g in grid_ys:
+                        if lo < g < hi:
+                            return False
+            return True
+
+        max_segments = self._MAX_PATH_SEGMENTS
+        best_path: list[tuple[int, int]] | None = None
+        best_cost: tuple[int, int] = (max_segments + 1, 2**62)
+
+        def _is_safe_middle(p: tuple[int, int]) -> bool:
+            return p[0] in safe_xs or p[1] in safe_ys
+
+        def _dfs(
+            path: list[tuple[int, int]],
+            path_set: set[tuple[int, int]],
+            last_axis: str | None,
+            segments: int,
+            length: int,
+        ) -> None:
+            nonlocal best_path, best_cost
+            pos = path[-1]
+            cost = (segments, length)
+
+            if cost >= best_cost:
+                return
+
+            if pos == ref_dst:
+                best_path = path[:]
+                best_cost = cost
+                return
+
+            if segments >= max_segments:
+                return
+
+            # Horizontal move: change x, keep y.
+            if last_axis != "h":
+                for x in x_candidates:
+                    if x == pos[0]:
+                        continue
+                    new_pos = (x, pos[1])
+                    if new_pos in path_set:
+                        continue
+                    if new_pos != ref_dst and not _is_safe_middle(new_pos):
+                        continue
+                    if not _segment_safe(pos, new_pos):
+                        continue
+                    path.append(new_pos)
+                    path_set.add(new_pos)
+                    _dfs(
+                        path,
+                        path_set,
+                        "h",
+                        segments + 1,
+                        length + abs(x - pos[0]),
+                    )
+                    path.pop()
+                    path_set.remove(new_pos)
+
+            # Vertical move: change y, keep x.
+            if last_axis != "v":
+                for y in y_candidates:
+                    if y == pos[1]:
+                        continue
+                    new_pos = (pos[0], y)
+                    if new_pos in path_set:
+                        continue
+                    if new_pos != ref_dst and not _is_safe_middle(new_pos):
+                        continue
+                    if not _segment_safe(pos, new_pos):
+                        continue
+                    path.append(new_pos)
+                    path_set.add(new_pos)
+                    _dfs(
+                        path,
+                        path_set,
+                        "v",
+                        segments + 1,
+                        length + abs(y - pos[1]),
+                    )
+                    path.pop()
+                    path_set.remove(new_pos)
+
+        _dfs([ref_src], {ref_src}, None, 0, 0)
+        return tuple(best_path) if best_path is not None else None
+
+    def _apply_deltas(
+        self,
+        lane_src: tuple[int, int],
+        ref_waypoints: tuple[tuple[int, int], ...],
+    ) -> tuple[tuple[int, int], ...]:
+        """Build a lane's waypoint sequence by shifting the reference path."""
+        ref_src = ref_waypoints[0]
+        dx0 = lane_src[0] - ref_src[0]
+        dy0 = lane_src[1] - ref_src[1]
+        return tuple((w[0] + dx0, w[1] + dy0) for w in ref_waypoints)
+
+    @staticmethod
+    def _path_nm_to_um(
+        path_nm: tuple[tuple[int, int], ...],
+    ) -> tuple[tuple[float, float], ...]:
+        """Convert an nm-integer waypoint sequence to µm floats."""
+        return tuple((w[0] / _NM_PER_UM, w[1] / _NM_PER_UM) for w in path_nm)
+
+    def _compute_paths(
+        self, zone_id: int, word_offset: int
+    ) -> dict[LaneAddress, tuple[tuple[float, float], ...]]:
+        """Compute axis-aligned AOD waypoint paths for all buses.
+
+        Uses a DFS path search at the bus level over nm-integer positions.
+        For each bus, the reference atom's path is searched; every other
+        lane derives its waypoints by applying the same per-segment deltas.
+
+        Site bus paths are intra-word; word bus paths are intra-zone.
+        Zone buses are NOT included (inter-zone routing is separate).
+
+        Returns:
+            Dict mapping LaneAddress to waypoint tuples (µm floats) for
+            both directions.
+        """
+        paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
+
+        # ── Site bus paths (intra-word) ──
+        for bus_id, (src_sites, dst_sites) in enumerate(self._site_buses):
+            # AOD invariant: every (src_site, dst_site) pair must have the
+            # same physical displacement, because the AOD applies one
+            # uniform delta per segment to the entire bus.
+            displacements = {
+                (
+                    self._site_nm(0, ds)[0] - self._site_nm(0, ss)[0],
+                    self._site_nm(0, ds)[1] - self._site_nm(0, ss)[1],
+                )
+                for ss, ds in zip(src_sites, dst_sites)
+            }
+            if len(displacements) > 1:
+                warnings.warn(
+                    f"Zone '{self._name}' site bus {bus_id}: inconsistent "
+                    f"site displacements {sorted(displacements)} violate "
+                    f"the AOD single-shift invariant. "
+                    f"Skipping path generation for this bus.",
+                    stacklevel=3,
+                )
+                continue
+
+            bus_src_atoms = [
+                self._site_nm(w, s) for w in range(self.num_words) for s in src_sites
+            ]
+
+            ref_src = self._site_nm(0, src_sites[0])
+            ref_dst = self._site_nm(0, dst_sites[0])
+
+            if ref_src == ref_dst:
+                ref_waypoints: tuple[tuple[int, int], ...] = (ref_src, ref_dst)
+            else:
+                result = self._search_path(ref_src, ref_dst, bus_src_atoms)
+                if result is None:
+                    warnings.warn(
+                        f"Zone '{self._name}' site bus {bus_id}: no valid "
+                        f"path found within {self._MAX_PATH_SEGMENTS} "
+                        f"segments (x_clearance={self.x_clearance}, "
+                        f"y_clearance={self.y_clearance}). "
+                        f"Skipping path generation for this bus.",
+                        stacklevel=3,
+                    )
+                    continue
+                ref_waypoints = result
+
+            for local_word in range(self.num_words):
+                for src_s in src_sites:
+                    lane_src = self._site_nm(local_word, src_s)
+                    lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
+                    lane_path = self._path_nm_to_um(lane_path_nm)
+                    global_word = word_offset + local_word
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        lane = LaneAddress(
+                            MoveType.SITE,
+                            global_word,
+                            src_s,
+                            bus_id,
+                            direction,
+                            zone_id,
+                        )
+                        paths[lane] = (
+                            lane_path
+                            if direction == Direction.FORWARD
+                            else lane_path[::-1]
+                        )
+
+        # ── Word bus paths (intra-zone) ──
+        for bus_id, (src_words, dst_words) in enumerate(self._word_buses):
+            spw = range(self.sites_per_word)
+
+            # AOD invariant: every (src_word, dst_word) pair must have
+            # the same physical displacement.  Inconsistent spacings
+            # (e.g., differing source vs destination grid layouts)
+            # cannot be represented by a single uniform shift sequence.
+            displacements = {
+                (
+                    self._site_nm(dw, 0)[0] - self._site_nm(sw, 0)[0],
+                    self._site_nm(dw, 0)[1] - self._site_nm(sw, 0)[1],
+                )
+                for sw, dw in zip(src_words, dst_words)
+            }
+            if len(displacements) > 1:
+                warnings.warn(
+                    f"Zone '{self._name}' word bus {bus_id}: inconsistent "
+                    f"word displacements {sorted(displacements)} violate "
+                    f"the AOD single-shift invariant. "
+                    f"Skipping path generation for this bus.",
+                    stacklevel=3,
+                )
+                continue
+
+            bus_src_atoms = [self._site_nm(w, s) for w in src_words for s in spw]
+
+            ref_src = self._site_nm(src_words[0], 0)
+            ref_dst = self._site_nm(dst_words[0], 0)
+
+            if ref_src == ref_dst:
+                ref_waypoints = (ref_src, ref_dst)
+            else:
+                result = self._search_path(ref_src, ref_dst, bus_src_atoms)
+                if result is None:
+                    warnings.warn(
+                        f"Zone '{self._name}' word bus {bus_id}: no valid "
+                        f"path found within {self._MAX_PATH_SEGMENTS} "
+                        f"segments (x_clearance={self.x_clearance}, "
+                        f"y_clearance={self.y_clearance}). "
+                        f"Skipping path generation for this bus.",
+                        stacklevel=3,
+                    )
+                    continue
+                ref_waypoints = result
+
+            for src_w in src_words:
+                for site_id in spw:
+                    lane_src = self._site_nm(src_w, site_id)
+                    lane_path_nm = self._apply_deltas(lane_src, ref_waypoints)
+                    lane_path = self._path_nm_to_um(lane_path_nm)
+                    global_src = word_offset + src_w
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        lane = LaneAddress(
+                            MoveType.WORD,
+                            global_src,
+                            site_id,
+                            bus_id,
+                            direction,
+                            zone_id,
+                        )
+                        paths[lane] = (
+                            lane_path
+                            if direction == Direction.FORWARD
+                            else lane_path[::-1]
+                        )
+
+        return paths
+
 
 # ── ArchBuilder ──
 
@@ -493,10 +952,17 @@ class ArchBuilder:
                 )
             )
 
-        # 5. Assemble and validate.
+        # 5. Compute AOD waypoint paths for site and word buses.
+        all_paths: dict[LaneAddress, tuple[tuple[float, float], ...]] = {}
+        for zone_idx, zone in enumerate(self._zones):
+            offset = self._word_id_offsets[zone_idx]
+            all_paths.update(zone._compute_paths(zone_idx, offset))
+
+        # 6. Assemble and validate.
         return ArchSpec.from_components(
             words=tuple(all_words),
             zones=tuple(rust_zones),
             modes=modes,
             zone_buses=zone_buses,
+            paths=all_paths or None,
         )
