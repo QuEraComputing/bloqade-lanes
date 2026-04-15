@@ -64,6 +64,11 @@ class DeviceLayout:
         pair_spacing: Horizontal gap between adjacent CZ pairs (micrometers).
         row_spacing: Vertical distance between word grid rows (micrometers).
         zone_gap: Additional vertical gap between zones (micrometers).
+        x_clearance: Minimum x-axis clearance (µm) between AOD path
+            waypoints and grid lines.
+        y_clearance: Minimum y-axis clearance (µm) between AOD path
+            waypoints and grid lines.  Separate x/y values are useful
+            when row and column spacings differ substantially.
     """
 
     sites_per_word: int = 5
@@ -71,10 +76,16 @@ class DeviceLayout:
     pair_spacing: float = 10.0
     row_spacing: float = 20.0
     zone_gap: float = 20.0
+    x_clearance: float = 3.0
+    y_clearance: float = 3.0
 
     def __post_init__(self) -> None:
         if self.sites_per_word < 1:
             raise ValueError(f"sites_per_word must be >= 1, got {self.sites_per_word}")
+        if self.x_clearance <= 0:
+            raise ValueError(f"x_clearance must be positive, got {self.x_clearance}")
+        if self.y_clearance <= 0:
+            raise ValueError(f"y_clearance must be positive, got {self.y_clearance}")
         for name in ("site_spacing", "pair_spacing", "row_spacing", "zone_gap"):
             if getattr(self, name) < 0:
                 raise ValueError(
