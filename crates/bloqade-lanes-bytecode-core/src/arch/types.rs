@@ -112,6 +112,16 @@ pub struct ArchSpec {
     /// Defaults to `false` when absent in JSON.
     #[serde(default)]
     pub atom_reloading: bool,
+    /// Rydberg blockade radius in micrometers, if specified.
+    ///
+    /// Metadata: when present, this is the radius associated with the
+    /// architecture, typically used by consumers to interpret the
+    /// entangling word pairs. This struct does not itself enforce any
+    /// relationship between the pairs and the radius — derivation /
+    /// validation happens at the builder layer (see
+    /// `ZoneBuilder.set_blockade_radius` on the Python side).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blockade_radius: Option<f64>,
 }
 
 impl ArchSpec {
@@ -135,6 +145,7 @@ impl ArchSpec {
         paths: Option<Vec<TransportPath>>,
         feed_forward: bool,
         atom_reloading: bool,
+        blockade_radius: Option<f64>,
     ) -> Result<Self, Vec<super::validate::ArchSpecError>> {
         let spec = Self {
             version,
@@ -145,6 +156,7 @@ impl ArchSpec {
             paths,
             feed_forward,
             atom_reloading,
+            blockade_radius,
         };
         spec.validate()?;
         Ok(spec)
@@ -474,6 +486,7 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         };
         assert_eq!(spec.sites_per_word(), 2);
     }
@@ -489,7 +502,47 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         };
         assert_eq!(spec.sites_per_word(), 0);
+    }
+
+    #[test]
+    fn blockade_radius_roundtrip_none() {
+        let spec = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: None,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        // None is skipped in serialization.
+        assert!(!json.contains("blockade_radius"));
+        let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.blockade_radius, None);
+    }
+
+    #[test]
+    fn blockade_radius_roundtrip_some() {
+        let spec = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: Some(2.0),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"blockade_radius\":2.0"));
+        let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.blockade_radius, Some(2.0));
     }
 }

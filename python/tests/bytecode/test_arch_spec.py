@@ -106,6 +106,7 @@ class TestCapabilityFlags:
         spec = _build_spec_from_python()
         assert spec.feed_forward is False
         assert spec.atom_reloading is False
+        assert spec.blockade_radius is None
 
     def test_construct_from_python_explicit(self):
         word0 = _make_word()
@@ -140,9 +141,11 @@ class TestCapabilityFlags:
             modes=[mode],
             feed_forward=True,
             atom_reloading=True,
+            blockade_radius=2.0,
         )
         assert spec.feed_forward is True
         assert spec.atom_reloading is True
+        assert spec.blockade_radius == 2.0
 
 
 class TestPropertyAccess:

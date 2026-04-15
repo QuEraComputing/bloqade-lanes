@@ -7,6 +7,7 @@ The high-level ``build_arch()`` function uses these internally.
 
 from __future__ import annotations
 
+import math
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -30,17 +31,21 @@ if TYPE_CHECKING:
 
 # ── Helpers ──
 
-# Internal length unit: 1 nm.  All user-facing lengths are in µm; internally
-# we convert to nm integers so that path search (hashing, set membership,
-# equality) is exact without floating-point hazards.
+# Internal length unit: 1 nm.  All user-facing lengths are in µm;
+# internally we convert to nm integers so that path search (hashing,
+# set membership, equality) and blockade-radius distance comparisons
+# are exact without floating-point hazards.
 _NM_PER_UM = 1000
 
 
 def _to_nm(value_um: float, name: str) -> int:
     """Convert a µm length to an integer nm count, validating precision.
 
-    Raises ``ValueError`` if *value_um* has sub-nm resolution.
+    Raises ``ValueError`` if *value_um* is NaN, infinite, or has sub-nm
+    resolution.
     """
+    if not math.isfinite(value_um):
+        raise ValueError(f"{name} must be finite, got {value_um}")
     scaled = value_um * _NM_PER_UM
     rounded = round(scaled)
     if abs(scaled - rounded) > 1e-6:
@@ -187,10 +192,12 @@ class ZoneBuilder:
             _to_nm(y, "grid y-position") for y in grid.y_positions
         ]
         self._words: list[list[tuple[int, int]]] = []
+        self._word_has_site_bus: list[bool] = []
         self._position_to_word: dict[tuple[int, int], int] = {}
         self._site_buses: list[tuple[list[int], list[int]]] = []
         self._word_buses: list[tuple[list[int], list[int]]] = []
         self._entangling_pairs: list[tuple[int, int]] = []
+        self._blockade_radius_nm: int | None = None
 
     @property
     def name(self) -> str:
@@ -226,11 +233,25 @@ class ZoneBuilder:
         self,
         x_sites: slice | Sequence[int],
         y_sites: slice | Sequence[int],
+        *,
+        has_site_bus: bool = True,
     ) -> int:
         """Add a word occupying the given grid positions.
 
         The number of x-indices and y-indices must match word_shape.
         Grid positions must not overlap with any existing word.
+
+        Args:
+            x_sites: Grid x-indices for the word's sites.
+            y_sites: Grid y-indices for the word's sites.
+            has_site_bus: Whether this word participates in site-bus
+                transport. Feeds the zone-level
+                ``words_with_site_buses`` list on the final ``ArchSpec``
+                — only words with ``has_site_bus=True`` are eligible to
+                have site buses applied to them. Defaults to ``True``,
+                which preserves the historical "all words opt-in"
+                behavior. Set to ``False`` on storage words that
+                shouldn't participate in site-level routing.
 
         Returns:
             Zone-local word index.
@@ -277,6 +298,7 @@ class ZoneBuilder:
 
         word_id = len(self._words)
         self._words.append(positions)
+        self._word_has_site_bus.append(has_site_bus)
         for pos in positions:
             self._position_to_word[pos] = word_id
         return word_id
@@ -339,6 +361,14 @@ class ZoneBuilder:
 
         ``words_a[i]`` is paired with ``words_b[i]``. The two sequences
         must have the same length.
+
+        For most users, prefer :meth:`set_blockade_radius` — it derives
+        the pair list directly from geometry and validates the word
+        layout against the CZ-pairing convention.
+
+        Any ``blockade_radius`` previously recorded on this zone (via
+        :meth:`set_blockade_radius`) is cleared, since a manual append
+        means the pair list is no longer purely radius-derived.
         """
         if len(words_a) != len(words_b):
             raise ValueError(
@@ -351,6 +381,157 @@ class ZoneBuilder:
             if b < 0 or b >= n:
                 raise ValueError(f"word index {b} out of range [0, {n})")
             self._entangling_pairs.append((a, b))
+        # Pair list was just manually modified; the cached radius no
+        # longer describes its full state.
+        self._blockade_radius_nm = None
+
+    @property
+    def blockade_radius(self) -> float | None:
+        """Rydberg blockade radius (µm) used to derive entangling pairs, or None."""
+        if self._blockade_radius_nm is None:
+            return None
+        return self._blockade_radius_nm / _NM_PER_UM
+
+    def set_blockade_radius(self, radius: float) -> None:
+        """Derive entangling word pairs from the Rydberg blockade radius.
+
+        Scans every pair of distinct words in the zone and classifies
+        each under the matching-site-index CZ convention:
+
+        * All matching-index site distances ``<= radius`` and all
+          non-matching-index site distances ``> radius``: valid CZ pair.
+        * Some matching-index distances within radius, some outside:
+          ``ValueError`` (partial blockade — the word layout doesn't
+          cleanly map onto the CZ-pairing convention).
+        * Any non-matching-index site distance within radius (regardless
+          of whether the matching-index distances also fall within):
+          ``ValueError`` (crossed-index — two words are arranged such
+          that site ``i`` of one word sits next to site ``j != i`` of
+          the other, violating the exclusivity the convention requires).
+        * All distances outside radius: words ignore each other, no
+          pair recorded.
+
+        After classification, every word must appear in **at most one**
+        valid pair; multiple partners raise ``ValueError``.
+
+        This call **overwrites** ``_entangling_pairs`` with the scan
+        result and stores the radius on the zone.  To have it flow into
+        the final ``ArchSpec.blockade_radius``, either call
+        :meth:`ArchBuilder.set_blockade_radius` (which applies to every
+        zone and records the value at builder scope) or, for a single
+        zone already set via ``ZoneBuilder.set_blockade_radius``,
+        ``ArchBuilder.build()`` will pick up a consistent zone-level
+        radius automatically.
+
+        Args:
+            radius: Blockade radius in micrometers. Must be positive and
+                representable at 1 nm precision.
+
+        Raises:
+            ValueError: if the layout is inconsistent with the radius
+                (partial blockade / crossed-index / multi-partner) or
+                if ``radius`` is not positive / nm-precise.
+        """
+        if radius <= 0:
+            raise ValueError(f"blockade_radius must be positive, got {radius}")
+        radius_nm = _to_nm(radius, "blockade_radius")
+        self._entangling_pairs = self._scan_blockade_pairs(radius_nm)
+        self._blockade_radius_nm = radius_nm
+
+    def _scan_blockade_pairs(self, radius_nm: int) -> list[tuple[int, int]]:
+        """Scan word pairs and classify under the matching-index CZ rule.
+
+        Returns the list of valid ``(a, b)`` word pairs with ``a < b``.
+        Raises ``ValueError`` on partial blockade, crossed-index, or
+        multi-partner cases.
+
+        Uses ``scipy.spatial.KDTree.query_pairs`` to enumerate only the
+        site pairs within ``radius_nm`` (O(n log n + k) over all sites
+        in the zone, rather than O(n² · spw²) all-to-all).  Coordinates
+        are fed in as nm integers so the ``<= radius_nm`` cutoff lands
+        on exact boundaries without float drift.
+        """
+        n = self.num_words
+        spw = self.sites_per_word
+        if n * spw < 2:
+            # Need at least two sites anywhere in the zone before a pair
+            # can even exist; skip the KDTree build.
+            return []
+
+        from scipy.spatial import KDTree
+
+        # Flatten every site into one KDTree, tracking (word, site_index)
+        # so we can classify each returned pair.
+        positions = [self._site_nm(w, s) for w in range(n) for s in range(spw)]
+        owners = [(w, s) for w in range(n) for s in range(spw)]
+
+        tree = KDTree(positions)
+        # query_pairs returns (i, j) with i < j and dist(p_i, p_j) <= radius_nm.
+        raw_pairs = tree.query_pairs(radius_nm, output_type="set")
+
+        # For each cross-word pair within the radius, record which matching
+        # site-indices fell within (and bail immediately on crossed-index).
+        matching_sites: dict[tuple[int, int], set[int]] = {}
+        radius_um = radius_nm / _NM_PER_UM
+        for i, j in raw_pairs:
+            w1, s1 = owners[i]
+            w2, s2 = owners[j]
+            if w1 == w2:
+                # Two sites of the same word are within blockade — the
+                # layout can't support a CZ at this radius (it would
+                # entangle atoms inside a single word).
+                raise ValueError(
+                    f"Zone '{self._name}' blockade scan: word {w1} "
+                    f"has two intra-word sites ({s1} and {s2}) within "
+                    f"radius {radius_um} µm. Entanglement within a "
+                    f"single word is not allowed — tighten "
+                    f"blockade_radius or space the word's sites apart."
+                )
+            if s1 != s2:
+                raise ValueError(
+                    f"Zone '{self._name}' blockade scan: words "
+                    f"{min(w1, w2)} and {max(w1, w2)} have a "
+                    f"non-matching-index site pair (site {s1} ↔ "
+                    f"site {s2}) within radius {radius_um} µm "
+                    f"(crossed-index blockade). The layout cannot "
+                    f"be cleanly paired under the CZ matching-index "
+                    f"convention."
+                )
+            # Matching-index pair. Canonicalize only the word pair.
+            matching_sites.setdefault((min(w1, w2), max(w1, w2)), set()).add(s1)
+
+        # A clean CZ pair has all `spw` matching-index site-pairs within
+        # radius; fewer is a partial blockade.
+        valid_pairs: list[tuple[int, int]] = []
+        for (a, b), sites in matching_sites.items():
+            if len(sites) != spw:
+                raise ValueError(
+                    f"Zone '{self._name}' blockade scan: words "
+                    f"{a} and {b} have {len(sites)}/{spw} "
+                    f"matching-index site pairs within radius "
+                    f"{radius_um} µm (partial blockade). The layout "
+                    f"cannot be cleanly paired under the CZ "
+                    f"matching-index convention."
+                )
+            valid_pairs.append((a, b))
+
+        # Deterministic order (`query_pairs` returns a set).
+        valid_pairs.sort()
+
+        # Each word must appear in at most one valid pair.
+        partner: dict[int, int] = {}
+        for a, b in valid_pairs:
+            for x, y in ((a, b), (b, a)):
+                if x in partner and partner[x] != y:
+                    raise ValueError(
+                        f"Zone '{self._name}' blockade scan: word {x} "
+                        f"has multiple blockade partners: "
+                        f"{partner[x]}, {y}. Tighten blockade_radius "
+                        f"or adjust the word layout."
+                    )
+                partner[x] = y
+
+        return valid_pairs
 
     @property
     def words(self) -> _WordGridQuery:
@@ -806,6 +987,7 @@ class ArchBuilder:
         ] = []
         self._modes: list[tuple[str, list[str]]] = []
         self._total_words: int = 0
+        self._blockade_radius: float | None = None
 
     def add_zone(self, zone: ZoneBuilder) -> int:
         """Add a zone. Returns zone_id. Assigns global word IDs.
@@ -872,6 +1054,50 @@ class ArchBuilder:
                 raise ValueError(f"Unknown zone: '{z}'")
         self._modes.append((name, list(zones)))
 
+    def set_blockade_radius(self, radius: float) -> None:
+        """Apply ``radius`` to every zone by calling
+        :meth:`ZoneBuilder.set_blockade_radius` on each.
+
+        Overwrites every zone's entangling pairs with the scan result.
+        The radius is stored on the builder and flows to
+        ``ArchSpec.blockade_radius`` at :meth:`build` time.
+
+        The radius is validated up-front (positive, finite, nm-precise)
+        *before* any zone is touched, and the scan is run two-phase:
+        every zone is scanned before any pair list is overwritten, so
+        a layout error in a later zone cannot leave earlier zones in a
+        partially-updated state.
+
+        Args:
+            radius: Rydberg blockade radius in micrometers.
+
+        Raises:
+            ValueError: if ``radius`` itself is invalid (non-positive,
+                non-finite, sub-nm), or if any zone's layout is
+                inconsistent with the radius. The error message
+                includes the zone name and offending word IDs.
+        """
+        if radius <= 0:
+            raise ValueError(f"blockade_radius must be positive, got {radius}")
+        radius_nm = _to_nm(radius, "blockade_radius")
+
+        # Phase 1: scan every zone.  Any zone-level failure raises here
+        # before we've mutated anything.
+        scan_results: list[list[tuple[int, int]]] = [
+            zone._scan_blockade_pairs(radius_nm) for zone in self._zones
+        ]
+
+        # Phase 2: commit.  No further failures possible.
+        for zone, pairs in zip(self._zones, scan_results):
+            zone._entangling_pairs = pairs
+            zone._blockade_radius_nm = radius_nm
+        self._blockade_radius = radius
+
+    @property
+    def blockade_radius(self) -> float | None:
+        """Rydberg blockade radius (µm) applied to all zones, or None."""
+        return self._blockade_radius
+
     def build(self) -> ArchSpec:
         """Assemble the ArchSpec and validate via Rust.
 
@@ -898,8 +1124,18 @@ class ArchBuilder:
                 )
                 for s, d in zone._word_buses
             ]
+            # Only words flagged at add_word(has_site_bus=True) are
+            # eligible for site-bus transport. Default is True, so the
+            # historical "all words opt-in when any site bus exists"
+            # behavior is preserved unless the caller overrides.
             words_with_site_buses = (
-                [offset + w for w in range(zone.num_words)] if site_buses else []
+                [
+                    offset + w
+                    for w in range(zone.num_words)
+                    if zone._word_has_site_bus[w]
+                ]
+                if site_buses
+                else []
             )
             sites_with_word_buses = (
                 list(range(zone.sites_per_word)) if word_buses else []
@@ -958,11 +1194,58 @@ class ArchBuilder:
             offset = self._word_id_offsets[zone_idx]
             all_paths.update(zone._compute_paths(zone_idx, offset))
 
-        # 6. Assemble and validate.
+        # 6. Determine the blockade radius to record on the ArchSpec.
+        # Builder-level radius (set via ArchBuilder.set_blockade_radius)
+        # takes precedence.  Otherwise, pick up a zone-level radius if
+        # every zone with a radius agrees on the value (if some zones
+        # have a radius and others don't, or zones disagree, error out
+        # — the single-spec blockade_radius field can't represent that).
+        blockade_radius = self._resolve_blockade_radius()
+
+        # 7. Assemble and validate.
         return ArchSpec.from_components(
             words=tuple(all_words),
             zones=tuple(rust_zones),
             modes=modes,
             zone_buses=zone_buses,
             paths=all_paths or None,
+            blockade_radius=blockade_radius,
         )
+
+    def _resolve_blockade_radius(self) -> float | None:
+        """Pick the blockade_radius value for the final ArchSpec.
+
+        Precedence:
+
+        1. ``self._blockade_radius`` (builder-scope value from
+           :meth:`set_blockade_radius`) — always authoritative when set.
+        2. A unique radius shared by all zones that have one set; zones
+           without a radius must also agree (i.e., no zone opt-out) for
+           this branch to apply.
+        3. ``None`` otherwise.
+
+        Raises ``ValueError`` if zones disagree on a radius or if some
+        zones have a radius set and others don't.
+        """
+        if self._blockade_radius is not None:
+            return self._blockade_radius
+        zone_radii = [zone.blockade_radius for zone in self._zones]
+        if all(r is None for r in zone_radii):
+            return None
+        missing = [z.name for z, r in zip(self._zones, zone_radii) if r is None]
+        if missing:
+            raise ValueError(
+                "blockade_radius is set on some zones but not others; "
+                f"missing on: {missing}. Either call "
+                "ArchBuilder.set_blockade_radius to apply uniformly, "
+                "or leave it unset on every zone."
+            )
+        # Every zone has a non-None radius here.
+        present = [r for r in zone_radii if r is not None]
+        unique = sorted(set(present))
+        if len(unique) > 1:
+            raise ValueError(
+                f"Zones disagree on blockade_radius: {unique}. "
+                "The ArchSpec can only carry a single value."
+            )
+        return unique[0]

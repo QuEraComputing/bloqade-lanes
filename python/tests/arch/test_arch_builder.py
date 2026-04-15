@@ -180,6 +180,30 @@ class TestZoneBuilderAddWord:
         )
         assert zone.sites_per_word == 6
 
+    def test_has_site_bus_default_true(self):
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        assert zone._word_has_site_bus == [True, True]
+
+    def test_has_site_bus_explicit_false(self):
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0], has_site_bus=False)
+        zone.add_word(slice(2, 4), [0])
+        assert zone._word_has_site_bus == [False, True]
+
 
 # ── ZoneBuilder: grid queries ──
 
@@ -531,6 +555,45 @@ class TestArchBuilder:
         arch.add_mode("all", ["gate"])
         spec = arch.build()
         assert spec.zones[0].entangling_pairs == [(0, 1)]
+
+    def test_words_with_site_buses_default_all(self):
+        """Default has_site_bus=True → every word is in words_with_site_buses."""
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        zone.add_site_bus(src=[0], dst=[1])
+
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        assert spec.zones[0].words_with_site_buses == [0, 1]
+
+    def test_words_with_site_buses_respects_opt_out(self):
+        """has_site_bus=False excludes that word from words_with_site_buses."""
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0], has_site_bus=False)
+        zone.add_site_bus(src=[0], dst=[1])
+
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        # Only word 0 opted in.
+        assert spec.zones[0].words_with_site_buses == [0]
 
     def test_rust_validation_passes(self):
         """Build a realistic arch and verify Rust validation."""
@@ -1056,3 +1119,275 @@ class TestArchBuilderPaths:
         arch.add_mode("all", ["gate"])
         spec = arch.build()
         assert len(spec.paths) == 0
+
+
+# ── ZoneBuilder: blockade-radius inference ──
+
+
+def _gate_zone_grid() -> Grid:
+    """Gate-zone style grid: 3 CZ pairs on one row, intra-pair 2 µm, inter-pair 8 µm."""
+    # x=[0, 2, 10, 12, 20, 22], y=[0]
+    xs = [0.0, 2.0, 10.0, 12.0, 20.0, 22.0]
+    ys = [0.0]
+    return Grid.from_positions(xs, ys)
+
+
+def _make_gate_zone() -> ZoneBuilder:
+    """Zone with 6 interleaved CZ-pair words (word_shape (1, 1))."""
+    zone = ZoneBuilder(
+        "gate",
+        _gate_zone_grid(),
+        word_shape=(1, 1),
+        x_clearance=_DEFAULT_CL,
+        y_clearance=_DEFAULT_CL,
+    )
+    # 6 words, one per grid x-position.
+    for x in range(6):
+        zone.add_word([x], [0])
+    return zone
+
+
+class TestZoneBuilderBlockadeRadius:
+    def test_derives_interleaved_cz_pairs(self):
+        zone = _make_gate_zone()
+        zone.set_blockade_radius(2.0)
+        # Pairs: (0,1) at dist 2, (2,3) at 2, (4,5) at 2.
+        # Inter-pair dist = 8, outside radius.
+        assert zone._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+
+    def test_blockade_radius_property(self):
+        zone = _make_gate_zone()
+        assert zone.blockade_radius is None
+        zone.set_blockade_radius(2.0)
+        assert zone.blockade_radius == 2.0
+
+    def test_overwrites_explicit_pairs(self):
+        zone = _make_gate_zone()
+        # Bogus pre-existing pair — should be replaced by the scan.
+        zone.add_entangling_pairs([0], [3])
+        zone.set_blockade_radius(2.0)
+        assert zone._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+
+    def test_no_pairs_when_radius_too_tight(self):
+        zone = _make_gate_zone()
+        zone.set_blockade_radius(1.0)  # all gaps > 1 µm
+        assert zone._entangling_pairs == []
+        assert zone.blockade_radius == 1.0
+
+    def test_partial_blockade_raises(self):
+        """2-site words where only one matching pair is within radius."""
+        # Grid: x=[0, 10, 2, 12] giving two words with sites at x-indices
+        # (0, 1) and (2, 3) → positions [(0, 10)] and [(2, 12)]. Same-index
+        # distances: |0-2|=2, |10-12|=2 → all within radius=3 → clean pair.
+        # For the partial case, make word B's second site far:
+        # x=[0, 10, 2, 30] → B = [2, 30]. Same-index dist: 2, 20.
+        grid = Grid.from_positions([0.0, 10.0, 2.0, 30.0], [0.0])
+        zone = ZoneBuilder(
+            "z",
+            grid,
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        with pytest.raises(ValueError, match="partial blockade"):
+            zone.set_blockade_radius(3.0)
+
+    def test_crossed_index_raises(self):
+        """Two words where site 0 of A is near site 1 of B (not site 0)."""
+        # Grid x=[0, 100, 101, 5]. Word A at indices [0, 1] → sites (0, 100).
+        # Word B at indices [2, 3] → sites (101, 5).
+        # Matching: |0-101|=101, |100-5|=95 → both outside radius 2.
+        # Crossed: |0-5|=5 → outside, |100-101|=1 → INSIDE.
+        # So site_a[0] paired with site_b[1] — crossed index.
+        grid = Grid.from_positions([0.0, 100.0, 101.0, 5.0], [0.0])
+        zone = ZoneBuilder(
+            "z",
+            grid,
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word([0, 1], [0])
+        zone.add_word([2, 3], [0])
+        with pytest.raises(ValueError, match="crossed-index"):
+            zone.set_blockade_radius(2.0)
+
+    def test_multi_partner_raises(self):
+        """Three words all mutually within radius — ambiguous pairing."""
+        # 3 words at x=[0, 1, 2], single site each. Radius 1.5: all within.
+        grid = Grid.from_positions([0.0, 1.0, 2.0], [0.0])
+        zone = ZoneBuilder(
+            "z",
+            grid,
+            word_shape=(1, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        for x in range(3):
+            zone.add_word([x], [0])
+        with pytest.raises(ValueError, match="multiple blockade partners"):
+            zone.set_blockade_radius(1.5)
+
+    def test_intra_word_blockade_raises(self):
+        """Two sites of the same word within radius — invalid layout."""
+        # Word with 2 sites at x=0 and x=1; radius 1.5 puts them within
+        # blockade of each other. That would entangle atoms inside the
+        # same word, which isn't allowed.
+        grid = Grid.from_positions([0.0, 1.0], [0.0])
+        zone = ZoneBuilder(
+            "z",
+            grid,
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word([0, 1], [0])
+        with pytest.raises(ValueError, match="intra-word sites"):
+            zone.set_blockade_radius(1.5)
+
+    def test_non_positive_radius_raises(self):
+        zone = _make_gate_zone()
+        with pytest.raises(ValueError, match="must be positive"):
+            zone.set_blockade_radius(0.0)
+        with pytest.raises(ValueError, match="must be positive"):
+            zone.set_blockade_radius(-1.0)
+
+    def test_non_nm_precise_radius_raises(self):
+        zone = _make_gate_zone()
+        with pytest.raises(ValueError, match="1 nm precision"):
+            zone.set_blockade_radius(1.2345)  # sub-nm
+
+
+class TestArchBuilderBlockadeRadius:
+    def test_applies_to_all_zones(self):
+        gate_a = _make_gate_zone()
+        gate_b = _make_gate_zone()
+        # Second zone needs a distinct name to avoid clashes
+        gate_b._name = "gate_b"
+        arch = ArchBuilder()
+        arch.add_zone(gate_a)
+        arch.add_zone(gate_b)
+        arch.set_blockade_radius(2.0)
+        assert gate_a._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+        assert gate_b._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+        assert arch.blockade_radius == 2.0
+
+    def test_arch_spec_exposes_blockade_radius(self):
+        zone = _make_gate_zone()
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        arch.set_blockade_radius(2.0)
+        spec = arch.build()
+        assert spec.blockade_radius == 2.0
+
+    def test_build_without_blockade_radius_is_none(self):
+        zone = _make_gate_zone()
+        zone.add_entangling_pairs([0, 2, 4], [1, 3, 5])
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        assert spec.blockade_radius is None
+
+    def test_set_before_add_zone_has_no_effect(self):
+        """set_blockade_radius operates on currently-added zones; zones added
+        later are not automatically scanned."""
+        arch = ArchBuilder()
+        arch.set_blockade_radius(2.0)  # no zones yet
+        zone = _make_gate_zone()
+        arch.add_zone(zone)
+        # The radius is stored; zones added afterward were not scanned.
+        assert zone._entangling_pairs == []
+        # Caller can re-set to apply:
+        arch.set_blockade_radius(2.0)
+        assert zone._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+
+    def test_nan_radius_raises(self):
+        """NaN / Inf on ArchBuilder.set_blockade_radius are rejected up-front."""
+        import math
+
+        arch = ArchBuilder()  # no zones: validation must still fire
+        with pytest.raises(ValueError, match="must be positive"):
+            arch.set_blockade_radius(0.0)
+        with pytest.raises(ValueError, match="must be finite"):
+            arch.set_blockade_radius(math.nan)
+        with pytest.raises(ValueError, match="must be finite"):
+            arch.set_blockade_radius(math.inf)
+
+    def test_rollback_on_partial_failure(self):
+        """If a later zone's scan fails, earlier zones must stay untouched."""
+        good = _make_gate_zone()
+        # Give `good` an existing explicit pairing so we can see whether
+        # the failed set_blockade_radius call overwrote it.
+        good.add_entangling_pairs([0, 2, 4], [1, 3, 5])
+        # A zone whose layout fails the scan under radius=1.5.
+        bad = ZoneBuilder(
+            "bad",
+            Grid.from_positions([0.0, 1.0, 2.0], [0.0]),
+            (1, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        for x in range(3):
+            bad.add_word([x], [0])
+        # 3 mutually-within-radius words → multi-partner ValueError on bad.
+        arch = ArchBuilder()
+        arch.add_zone(good)
+        arch.add_zone(bad)
+        with pytest.raises(ValueError, match="multiple blockade partners"):
+            arch.set_blockade_radius(1.5)
+        # `good` must still have its original pairs.
+        assert good._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+        # And no radius recorded on the builder (the call failed).
+        assert arch.blockade_radius is None
+
+    def test_zone_radius_flows_to_spec(self):
+        """A radius set only on a ZoneBuilder propagates to ArchSpec."""
+        zone = _make_gate_zone()
+        zone.set_blockade_radius(2.0)
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        assert spec.blockade_radius == 2.0
+
+    def test_inconsistent_zone_radii_raises(self):
+        """Two zones with different radii cannot be composed into one spec."""
+        z1 = _make_gate_zone()
+        z1.set_blockade_radius(2.0)
+        z2 = _make_gate_zone()
+        z2._name = "gate_b"
+        z2.set_blockade_radius(3.0)
+        arch = ArchBuilder()
+        arch.add_zone(z1)
+        arch.add_zone(z2)
+        arch.add_mode("all", ["gate", "gate_b"])
+        with pytest.raises(ValueError, match="disagree on blockade_radius"):
+            arch.build()
+
+    def test_mixed_zone_radii_raises(self):
+        """If some zones have a radius and others don't, ArchBuilder.build fails."""
+        z1 = _make_gate_zone()
+        z1.set_blockade_radius(2.0)
+        z2 = _make_gate_zone()
+        z2._name = "gate_b"
+        # z2 has no radius.
+        arch = ArchBuilder()
+        arch.add_zone(z1)
+        arch.add_zone(z2)
+        arch.add_mode("all", ["gate", "gate_b"])
+        with pytest.raises(ValueError, match="some zones but not others"):
+            arch.build()
+
+
+class TestZoneBuilderBlockadeMetadata:
+    def test_add_entangling_pairs_clears_radius(self):
+        """Manual append after set_blockade_radius clears the cached radius."""
+        zone = _make_gate_zone()
+        zone.set_blockade_radius(2.0)
+        assert zone.blockade_radius == 2.0
+        zone.add_entangling_pairs([0], [5])  # manual override
+        assert zone.blockade_radius is None

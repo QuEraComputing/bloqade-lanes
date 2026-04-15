@@ -902,7 +902,7 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false))]
+    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
@@ -913,6 +913,7 @@ impl PyArchSpec {
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
         feed_forward: bool,
         atom_reloading: bool,
+        blockade_radius: Option<f64>,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: rs::ArchSpec {
@@ -924,6 +925,7 @@ impl PyArchSpec {
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
                 feed_forward,
                 atom_reloading,
+                blockade_radius,
             },
         })
     }
@@ -1002,6 +1004,11 @@ impl PyArchSpec {
     #[getter]
     fn atom_reloading(&self) -> bool {
         self.inner.atom_reloading
+    }
+
+    #[getter]
+    fn blockade_radius(&self) -> Option<f64> {
+        self.inner.blockade_radius
     }
 
     #[getter]
