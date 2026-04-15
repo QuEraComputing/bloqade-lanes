@@ -180,6 +180,30 @@ class TestZoneBuilderAddWord:
         )
         assert zone.sites_per_word == 6
 
+    def test_has_site_bus_default_true(self):
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        assert zone._word_has_site_bus == [True, True]
+
+    def test_has_site_bus_explicit_false(self):
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0], has_site_bus=False)
+        zone.add_word(slice(2, 4), [0])
+        assert zone._word_has_site_bus == [False, True]
+
 
 # ── ZoneBuilder: grid queries ──
 
@@ -531,6 +555,45 @@ class TestArchBuilder:
         arch.add_mode("all", ["gate"])
         spec = arch.build()
         assert spec.zones[0].entangling_pairs == [(0, 1)]
+
+    def test_words_with_site_buses_default_all(self):
+        """Default has_site_bus=True → every word is in words_with_site_buses."""
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        zone.add_site_bus(src=[0], dst=[1])
+
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        assert spec.zones[0].words_with_site_buses == [0, 1]
+
+    def test_words_with_site_buses_respects_opt_out(self):
+        """has_site_bus=False excludes that word from words_with_site_buses."""
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 1),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0], has_site_bus=False)
+        zone.add_site_bus(src=[0], dst=[1])
+
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        # Only word 0 opted in.
+        assert spec.zones[0].words_with_site_buses == [0]
 
     def test_rust_validation_passes(self):
         """Build a realistic arch and verify Rust validation."""

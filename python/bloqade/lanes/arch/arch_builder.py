@@ -192,6 +192,7 @@ class ZoneBuilder:
             _to_nm(y, "grid y-position") for y in grid.y_positions
         ]
         self._words: list[list[tuple[int, int]]] = []
+        self._word_has_site_bus: list[bool] = []
         self._position_to_word: dict[tuple[int, int], int] = {}
         self._site_buses: list[tuple[list[int], list[int]]] = []
         self._word_buses: list[tuple[list[int], list[int]]] = []
@@ -232,11 +233,25 @@ class ZoneBuilder:
         self,
         x_sites: slice | Sequence[int],
         y_sites: slice | Sequence[int],
+        *,
+        has_site_bus: bool = True,
     ) -> int:
         """Add a word occupying the given grid positions.
 
         The number of x-indices and y-indices must match word_shape.
         Grid positions must not overlap with any existing word.
+
+        Args:
+            x_sites: Grid x-indices for the word's sites.
+            y_sites: Grid y-indices for the word's sites.
+            has_site_bus: Whether this word participates in site-bus
+                transport. Feeds the zone-level
+                ``words_with_site_buses`` list on the final ``ArchSpec``
+                — only words with ``has_site_bus=True`` are eligible to
+                have site buses applied to them. Defaults to ``True``,
+                which preserves the historical "all words opt-in"
+                behavior. Set to ``False`` on storage words that
+                shouldn't participate in site-level routing.
 
         Returns:
             Zone-local word index.
@@ -283,6 +298,7 @@ class ZoneBuilder:
 
         word_id = len(self._words)
         self._words.append(positions)
+        self._word_has_site_bus.append(has_site_bus)
         for pos in positions:
             self._position_to_word[pos] = word_id
         return word_id
@@ -1108,8 +1124,18 @@ class ArchBuilder:
                 )
                 for s, d in zone._word_buses
             ]
+            # Only words flagged at add_word(has_site_bus=True) are
+            # eligible for site-bus transport. Default is True, so the
+            # historical "all words opt-in when any site bus exists"
+            # behavior is preserved unless the caller overrides.
             words_with_site_buses = (
-                [offset + w for w in range(zone.num_words)] if site_buses else []
+                [
+                    offset + w
+                    for w in range(zone.num_words)
+                    if zone._word_has_site_bus[w]
+                ]
+                if site_buses
+                else []
             )
             sites_with_word_buses = (
                 list(range(zone.sites_per_word)) if word_buses else []
