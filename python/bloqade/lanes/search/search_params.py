@@ -29,15 +29,15 @@ class SearchParams:
     MIN_W_T: ClassVar[float] = 0.0
     MAX_W_T: ClassVar[float] = 1.0
 
-    w_d: float = 1.2
-    w_m: float = 0.2
-    w_t: float = 0.75
-    alpha: float = 100.0
-    beta: float = 2.0
-    gamma: float = 1.5
-    max_candidates: int = 3
-    e_max: int = 6
-    max_goal_candidates: int = 2
+    w_d: float = 0.95
+    w_m: float = 0.8
+    w_t: float = 0.95
+    alpha: float = 80.0
+    beta: float = 3.0
+    gamma: float = 3.1
+    max_candidates: int = 4
+    e_max: int = 4
+    max_goal_candidates: int = 3
 
     def __post_init__(self) -> None:
         if self.e_max < self.MIN_E_MAX:

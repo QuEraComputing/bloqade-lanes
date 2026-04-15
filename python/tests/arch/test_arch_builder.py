@@ -197,9 +197,7 @@ class TestZoneBuilderQueries:
         zone.add_word(slice(2, 4), [0])
         zone.add_word(slice(0, 2), [1])
         zone.add_word(slice(2, 4), [1])
-        name, ids = zone.words[:, :]
-        assert name == "gate"
-        assert ids == [0, 1, 2, 3]
+        assert zone.words[:, :] == [0, 1, 2, 3]
 
     def test_words_query_first_column(self):
         zone = ZoneBuilder(
@@ -213,11 +211,9 @@ class TestZoneBuilderQueries:
         zone.add_word(slice(2, 4), [0])
         zone.add_word(slice(0, 2), [1])
         zone.add_word(slice(2, 4), [1])
-        name, ids = zone.words[slice(0, 2), :]
-        assert name == "gate"
-        assert ids == [0, 2]
+        assert zone.words[slice(0, 2), :] == [0, 2]
 
-    def test_words_query_returns_zone_name(self):
+    def test_zone_getitem_returns_name_qualified(self):
         zone = ZoneBuilder(
             "proc",
             _make_grid(2, 1),
@@ -226,8 +222,26 @@ class TestZoneBuilderQueries:
             y_clearance=_DEFAULT_CL,
         )
         zone.add_word(slice(0, 2), [0])
-        name, _ = zone.words[:, :]
+        name, ids = zone[:, :]
         assert name == "proc"
+        assert ids == [0]
+
+    def test_zone_getitem_matches_words_query(self):
+        """zone[key] and zone.words[key] return compatible views."""
+        zone = ZoneBuilder(
+            "gate",
+            _make_grid(4, 2),
+            word_shape=(2, 1),
+            x_clearance=_DEFAULT_CL,
+            y_clearance=_DEFAULT_CL,
+        )
+        zone.add_word(slice(0, 2), [0])
+        zone.add_word(slice(2, 4), [0])
+        zone.add_word(slice(0, 2), [1])
+        zone.add_word(slice(2, 4), [1])
+        name, ids = zone[slice(0, 2), :]
+        assert name == "gate"
+        assert ids == zone.words[slice(0, 2), :]
 
     def test_sites_query(self):
         zone = ZoneBuilder(
@@ -438,7 +452,7 @@ class TestArchBuilder:
         arch = ArchBuilder()
         arch.add_zone(proc)
         arch.add_zone(mem)
-        arch.connect(src=proc.words[:, :], dst=mem.words[:, :])
+        arch.connect(src=proc[:, :], dst=mem[:, :])
         arch.add_mode("all", ["proc", "mem"])
         spec = arch.build()
         assert len(spec.zones) == 2
@@ -578,7 +592,7 @@ class TestArchBuilderMultiZoneOffsets:
         arch = ArchBuilder()
         arch.add_zone(proc)
         arch.add_zone(mem)
-        arch.connect(src=proc.words[:, :], dst=mem.words[:, :])
+        arch.connect(src=proc[:, :], dst=mem[:, :])
         arch.add_mode("all", ["proc", "mem"])
         return arch.build()
 
@@ -677,9 +691,9 @@ class TestBuilderEdgeCases:
         )
         zone.add_word(slice(0, 2), [0])
         # Query a region with no words
-        name, ids = zone.words[:, 1]
-        assert name == "z"
-        assert ids == []
+        assert zone.words[:, 1] == []
+        # Name-qualified form still returns empty list
+        assert zone[:, 1] == ("z", [])
 
 
 # ── Path computation helpers ──
@@ -1018,7 +1032,7 @@ class TestArchBuilderPaths:
         arch = ArchBuilder()
         arch.add_zone(proc)
         arch.add_zone(mem)
-        arch.connect(src=proc.words[:, :], dst=mem.words[:, :])
+        arch.connect(src=proc[:, :], dst=mem[:, :])
         arch.add_mode("all", ["proc", "mem"])
         spec = arch.build()
 

@@ -103,14 +103,21 @@ class _SiteGridQuery:
 
 
 class _WordGridQuery:
-    """Query word indices by grid region on a ZoneBuilder."""
+    """Query word indices by grid region on a ZoneBuilder.
+
+    Returns a plain ``list[int]`` of zone-local word IDs for intra-zone
+    operations like ``add_word_bus`` and ``add_entangling_pairs``.  For
+    cross-zone operations that need a name-qualified reference (e.g.,
+    ``ArchBuilder.connect``), use ``zone[...]`` directly — that form
+    returns ``(name, list[int])``.
+    """
 
     def __init__(self, zone: ZoneBuilder):
         self._zone = zone
 
     def __getitem__(
         self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
-    ) -> tuple[str, list[int]]:
+    ) -> list[int]:
         x_idx, y_idx = key
         xs = _normalize_index(x_idx, self._zone._grid.num_x)
         ys = _normalize_index(y_idx, self._zone._grid.num_y)
@@ -119,7 +126,7 @@ class _WordGridQuery:
         for pos, word_id in self._zone._position_to_word.items():
             if pos in query_positions:
                 hits.add(word_id)
-        return (self._zone._name, sorted(hits))
+        return sorted(hits)
 
 
 # ── ZoneBuilder ──
@@ -347,14 +354,31 @@ class ZoneBuilder:
 
     @property
     def words(self) -> _WordGridQuery:
-        """Query word indices by grid region.
+        """Query word indices by grid region for intra-zone use.
 
-        Returns ``(zone_name, list[int])`` — the zone name and zone-local
-        word indices whose sites intersect the queried region.
+        Returns a plain ``list[int]`` of zone-local word indices whose
+        sites intersect the queried region — suitable for passing
+        directly to ``add_word_bus`` / ``add_entangling_pairs``.
 
-        The returned tuple can be passed directly to ``ArchBuilder.connect()``.
+        For cross-zone references (e.g. ``ArchBuilder.connect``), index
+        the zone itself (``zone[region]``) to get a name-qualified
+        ``(name, list[int])`` tuple.
         """
         return _WordGridQuery(self)
+
+    def __getitem__(
+        self, key: tuple[slice | int | Sequence[int], slice | int | Sequence[int]]
+    ) -> tuple[str, list[int]]:
+        """Query word indices by grid region, name-qualified for cross-zone use.
+
+        Returns ``(self.name, zone.words[key])`` so the result can be
+        passed directly to ``ArchBuilder.connect(src=..., dst=...)``,
+        which expects ``(zone_name, zone_local_indices)``.
+
+        For intra-zone use (passing indices to ``add_word_bus`` etc.),
+        use ``zone.words[key]`` which returns just the index list.
+        """
+        return (self._name, self.words[key])
 
     @property
     def sites(self) -> _SiteGridQuery:
@@ -814,7 +838,8 @@ class ArchBuilder:
 
         Args:
             src: ``(zone_name, zone_local_word_indices)`` — typically
-                from ``zone.words[...]``.
+                from ``zone[...]`` (indexing the zone itself, which
+                returns a name-qualified tuple).
             dst: ``(zone_name, zone_local_word_indices)`` — same format.
 
         Validates AOD Cartesian product across the two zone grids.
