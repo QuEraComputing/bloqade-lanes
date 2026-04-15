@@ -184,6 +184,12 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         """Whether the device supports reloading atoms after initial fill."""
         return self._inner.atom_reloading
 
+    @property
+    def blockade_radius(self) -> float | None:
+        """Rydberg blockade radius (µm), or None if entangling pairs were
+        specified manually without a geometric derivation."""
+        return self._inner.blockade_radius
+
     @cached_property
     def site_buses(self) -> tuple[SiteBus, ...]:
         """Aggregate all site buses across all zones.
@@ -226,6 +232,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
+        blockade_radius: float | None = None,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
 
@@ -255,6 +262,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
             paths=rust_paths,
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
+            blockade_radius=blockade_radius,
         )
         return cls(inner)
 

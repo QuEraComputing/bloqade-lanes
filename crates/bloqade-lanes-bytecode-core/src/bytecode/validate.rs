@@ -918,6 +918,7 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         }
     }
 
@@ -1055,6 +1056,7 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         }
     }
 
@@ -1178,6 +1180,7 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         };
 
         let lane0 = make_lane(Direction::Forward, MoveType::SiteBus, 1, 0, 0);

@@ -619,6 +619,9 @@ class ArchSpec:
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
         feed_forward (bool): Whether the device supports mid-circuit measurement. Default = False.
         atom_reloading (bool): Whether the device supports atom reloading. Default = False.
+        blockade_radius (Optional[float]): Rydberg blockade radius (µm). When set, the ArchSpec
+            was constructed from a scan over this radius and entangling pairs were
+            validated against the matching-site-index convention. Default = None.
     """
 
     def __init__(
@@ -631,6 +634,7 @@ class ArchSpec:
         paths: Optional[list[TransportPath]] = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
+        blockade_radius: Optional[float] = None,
     ) -> None: ...
     @staticmethod
     def from_json(json: str) -> ArchSpec:
@@ -716,6 +720,11 @@ class ArchSpec:
     @property
     def atom_reloading(self) -> bool:
         """Whether the device supports reloading atoms after initial fill."""
+        ...
+
+    @property
+    def blockade_radius(self) -> Optional[float]:
+        """Rydberg blockade radius (µm), or None if pairs were specified manually."""
         ...
 
     @property
