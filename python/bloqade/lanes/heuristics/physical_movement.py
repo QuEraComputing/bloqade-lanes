@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -160,7 +160,18 @@ class RustPlacementTraversal:
     through once the parameters are validated via Rust-only benchmarking.
     """
 
-    strategy: str = "astar"
+    strategy: Literal[
+        "astar",
+        "dfs",
+        "bfs",
+        "greedy",
+        "ids",
+        "cascade",
+        "cascade-ids",
+        "cascade-dfs",
+        "cascade-entropy",
+        "entropy",
+    ] = "astar"
     top_c: int = 3
     max_movesets_per_group: int = 3
     max_expansions: int | None = 300
