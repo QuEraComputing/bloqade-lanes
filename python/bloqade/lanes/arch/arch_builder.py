@@ -382,66 +382,79 @@ class ZoneBuilder:
         Returns the list of valid ``(a, b)`` word pairs with ``a < b``.
         Raises ``ValueError`` on partial blockade, crossed-index, or
         multi-partner cases.
+
+        Uses ``scipy.spatial.KDTree.query_pairs`` to enumerate only the
+        site pairs within ``radius_nm`` (O(n log n + k) over all sites
+        in the zone, rather than O(n² · spw²) all-to-all).  Coordinates
+        are fed in as nm integers so the ``<= radius_nm`` cutoff lands
+        on exact boundaries without float drift.
         """
         n = self.num_words
         spw = self.sites_per_word
-        r2 = radius_nm * radius_nm
+        if n < 2:
+            return []
 
-        # Cache site positions (nm) for each word so _site_nm isn't called
-        # O(n^2 * spw^2) times.
-        site_positions: list[list[tuple[int, int]]] = [
-            [self._site_nm(w, s) for s in range(spw)] for w in range(n)
-        ]
+        from scipy.spatial import KDTree
 
-        def _sq_dist(p1: tuple[int, int], p2: tuple[int, int]) -> int:
-            dx = p1[0] - p2[0]
-            dy = p1[1] - p2[1]
-            return dx * dx + dy * dy
+        # Flatten every site into one KDTree, tracking (word, site_index)
+        # so we can classify each returned pair.
+        positions: list[tuple[int, int]] = []
+        owners: list[tuple[int, int]] = []
+        for w in range(n):
+            for s in range(spw):
+                positions.append(self._site_nm(w, s))
+                owners.append((w, s))
 
-        valid_pairs: list[tuple[int, int]] = []
-        for a in range(n):
-            for b in range(a + 1, n):
-                sites_a = site_positions[a]
-                sites_b = site_positions[b]
-                same_within = [
-                    _sq_dist(sites_a[i], sites_b[i]) <= r2 for i in range(spw)
-                ]
-                cross_within = any(
-                    _sq_dist(sites_a[i], sites_b[j]) <= r2
-                    for i in range(spw)
-                    for j in range(spw)
-                    if i != j
+        tree = KDTree(positions)
+        # query_pairs returns (i, j) with i < j and dist(p_i, p_j) <= radius_nm.
+        raw_pairs = tree.query_pairs(radius_nm, output_type="set")
+
+        # For each cross-word pair within the radius, record which matching
+        # site-indices fell within (and bail immediately on crossed-index).
+        matching_sites: dict[tuple[int, int], set[int]] = {}
+        radius_um = radius_nm / _NM_PER_UM
+        for i, j in raw_pairs:
+            w1, s1 = owners[i]
+            w2, s2 = owners[j]
+            if w1 == w2:
+                # Two sites of the same word — not a CZ pair relationship.
+                continue
+            # Canonicalize (a, b) with a < b; track which site-index of `a`
+            # matches which of `b`.
+            if w1 < w2:
+                a, sa, b, sb = w1, s1, w2, s2
+            else:
+                a, sa, b, sb = w2, s2, w1, s1
+            if sa != sb:
+                raise ValueError(
+                    f"Zone '{self._name}' blockade scan: words "
+                    f"{a} and {b} have a non-matching-index site pair "
+                    f"(site {sa} ↔ site {sb}) within radius "
+                    f"{radius_um} µm (crossed-index blockade). The "
+                    f"layout cannot be cleanly paired under the CZ "
+                    f"matching-index convention."
                 )
+            matching_sites.setdefault((a, b), set()).add(sa)
 
-                n_same_within = sum(same_within)
-                if n_same_within == spw and not cross_within:
-                    # Clean CZ pair.
-                    valid_pairs.append((a, b))
-                elif n_same_within == 0 and not cross_within:
-                    # Words are outside each other's blockade — skip.
-                    continue
-                elif 0 < n_same_within < spw:
-                    raise ValueError(
-                        f"Zone '{self._name}' blockade scan: words "
-                        f"{a} and {b} have {n_same_within}/{spw} "
-                        f"matching-index site pairs within radius "
-                        f"{radius_nm / _NM_PER_UM} µm (partial blockade). "
-                        f"The layout cannot be cleanly paired under the "
-                        f"CZ matching-index convention."
-                    )
-                else:
-                    # n_same_within == 0 and cross_within (or spw same
-                    # but cross also within — violates exclusivity).
-                    raise ValueError(
-                        f"Zone '{self._name}' blockade scan: words "
-                        f"{a} and {b} have a non-matching-index site "
-                        f"pair within radius {radius_nm / _NM_PER_UM} µm "
-                        f"(crossed-index blockade). The layout cannot "
-                        f"be cleanly paired under the CZ matching-index "
-                        f"convention."
-                    )
+        # A clean CZ pair has all `spw` matching-index site-pairs within
+        # radius; fewer is a partial blockade.
+        valid_pairs: list[tuple[int, int]] = []
+        for (a, b), sites in matching_sites.items():
+            if len(sites) != spw:
+                raise ValueError(
+                    f"Zone '{self._name}' blockade scan: words "
+                    f"{a} and {b} have {len(sites)}/{spw} "
+                    f"matching-index site pairs within radius "
+                    f"{radius_um} µm (partial blockade). The layout "
+                    f"cannot be cleanly paired under the CZ "
+                    f"matching-index convention."
+                )
+            valid_pairs.append((a, b))
 
-        # Each word in at most one valid pair.
+        # Deterministic order (`query_pairs` returns a set).
+        valid_pairs.sort()
+
+        # Each word must appear in at most one valid pair.
         partner: dict[int, int] = {}
         for a, b in valid_pairs:
             for x, y in ((a, b), (b, a)):
