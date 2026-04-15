@@ -528,6 +528,17 @@ class TestZoneBuilderBlockadeRadius:
         with pytest.raises(ValueError, match="multiple blockade partners"):
             zone.set_blockade_radius(1.5)
 
+    def test_intra_word_blockade_raises(self):
+        """Two sites of the same word within radius — invalid layout."""
+        # Word with 2 sites at x=0 and x=1; radius 1.5 puts them within
+        # blockade of each other. That would entangle atoms inside the
+        # same word, which isn't allowed.
+        grid = Grid.from_positions([0.0, 1.0], [0.0])
+        zone = ZoneBuilder("z", grid, word_shape=(2, 1))
+        zone.add_word([0, 1], [0])
+        with pytest.raises(ValueError, match="intra-word sites"):
+            zone.set_blockade_radius(1.5)
+
     def test_non_positive_radius_raises(self):
         zone = _make_gate_zone()
         with pytest.raises(ValueError, match="must be positive"):

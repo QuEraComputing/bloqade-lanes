@@ -391,7 +391,9 @@ class ZoneBuilder:
         """
         n = self.num_words
         spw = self.sites_per_word
-        if n < 2:
+        if n * spw < 2:
+            # Need at least two sites anywhere in the zone before a pair
+            # can even exist; skip the KDTree build.
             return []
 
         from scipy.spatial import KDTree
@@ -417,8 +419,16 @@ class ZoneBuilder:
             w1, s1 = owners[i]
             w2, s2 = owners[j]
             if w1 == w2:
-                # Two sites of the same word — not a CZ pair relationship.
-                continue
+                # Two sites of the same word are within blockade — the
+                # layout can't support a CZ at this radius (it would
+                # entangle atoms inside a single word).
+                raise ValueError(
+                    f"Zone '{self._name}' blockade scan: word {w1} "
+                    f"has two intra-word sites ({s1} and {s2}) within "
+                    f"radius {radius_um} µm. Entanglement within a "
+                    f"single word is not allowed — tighten "
+                    f"blockade_radius or space the word's sites apart."
+                )
             # Canonicalize (a, b) with a < b; track which site-index of `a`
             # matches which of `b`.
             if w1 < w2:
