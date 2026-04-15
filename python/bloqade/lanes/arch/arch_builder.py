@@ -7,6 +7,7 @@ The high-level ``build_arch()`` function uses these internally.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -37,8 +38,11 @@ _NM_PER_UM = 1000
 def _to_nm(value_um: float, name: str) -> int:
     """Convert a µm length to an integer nm count, validating precision.
 
-    Raises ``ValueError`` if *value_um* has sub-nm resolution.
+    Raises ``ValueError`` if *value_um* is NaN, infinite, or has sub-nm
+    resolution.
     """
+    if not math.isfinite(value_um):
+        raise ValueError(f"{name} must be finite, got {value_um}")
     scaled = value_um * _NM_PER_UM
     rounded = round(scaled)
     if abs(scaled - rounded) > 1e-6:
@@ -291,6 +295,10 @@ class ZoneBuilder:
         For most users, prefer :meth:`set_blockade_radius` — it derives
         the pair list directly from geometry and validates the word
         layout against the CZ-pairing convention.
+
+        Any ``blockade_radius`` previously recorded on this zone (via
+        :meth:`set_blockade_radius`) is cleared, since a manual append
+        means the pair list is no longer purely radius-derived.
         """
         if len(words_a) != len(words_b):
             raise ValueError(
@@ -303,6 +311,9 @@ class ZoneBuilder:
             if b < 0 or b >= n:
                 raise ValueError(f"word index {b} out of range [0, {n})")
             self._entangling_pairs.append((a, b))
+        # Pair list was just manually modified; the cached radius no
+        # longer describes its full state.
+        self._blockade_radius_nm = None
 
     @property
     def blockade_radius(self) -> float | None:
@@ -322,10 +333,11 @@ class ZoneBuilder:
         * Some matching-index distances within radius, some outside:
           ``ValueError`` (partial blockade — the word layout doesn't
           cleanly map onto the CZ-pairing convention).
-        * Some non-matching-index distance within radius (but the
-          matching-index one isn't): ``ValueError`` (crossed-index —
-          two words are arranged such that site ``i`` of one word sits
-          next to site ``j != i`` of the other).
+        * Any non-matching-index site distance within radius (regardless
+          of whether the matching-index distances also fall within):
+          ``ValueError`` (crossed-index — two words are arranged such
+          that site ``i`` of one word sits next to site ``j != i`` of
+          the other, violating the exclusivity the convention requires).
         * All distances outside radius: words ignore each other, no
           pair recorded.
 
@@ -333,8 +345,13 @@ class ZoneBuilder:
         valid pair; multiple partners raise ``ValueError``.
 
         This call **overwrites** ``_entangling_pairs`` with the scan
-        result. The radius is stored on the zone and flows into
-        ``ArchSpec.blockade_radius`` at build time.
+        result and stores the radius on the zone.  To have it flow into
+        the final ``ArchSpec.blockade_radius``, either call
+        :meth:`ArchBuilder.set_blockade_radius` (which applies to every
+        zone and records the value at builder scope) or, for a single
+        zone already set via ``ZoneBuilder.set_blockade_radius``,
+        ``ArchBuilder.build()`` will pick up a consistent zone-level
+        radius automatically.
 
         Args:
             radius: Blockade radius in micrometers. Must be positive and
@@ -554,16 +571,35 @@ class ArchBuilder:
         The radius is stored on the builder and flows to
         ``ArchSpec.blockade_radius`` at :meth:`build` time.
 
+        The radius is validated up-front (positive, finite, nm-precise)
+        *before* any zone is touched, and the scan is run two-phase:
+        every zone is scanned before any pair list is overwritten, so
+        a layout error in a later zone cannot leave earlier zones in a
+        partially-updated state.
+
         Args:
             radius: Rydberg blockade radius in micrometers.
 
         Raises:
-            ValueError: if any zone's layout is inconsistent with the
-                radius. The error message includes the zone name and
-                offending word IDs.
+            ValueError: if ``radius`` itself is invalid (non-positive,
+                non-finite, sub-nm), or if any zone's layout is
+                inconsistent with the radius. The error message
+                includes the zone name and offending word IDs.
         """
-        for zone in self._zones:
-            zone.set_blockade_radius(radius)
+        if radius <= 0:
+            raise ValueError(f"blockade_radius must be positive, got {radius}")
+        radius_nm = _to_nm(radius, "blockade_radius")
+
+        # Phase 1: scan every zone.  Any zone-level failure raises here
+        # before we've mutated anything.
+        scan_results: list[list[tuple[int, int]]] = [
+            zone._scan_blockade_pairs(radius_nm) for zone in self._zones
+        ]
+
+        # Phase 2: commit.  No further failures possible.
+        for zone, pairs in zip(self._zones, scan_results):
+            zone._entangling_pairs = pairs
+            zone._blockade_radius_nm = radius_nm
         self._blockade_radius = radius
 
     @property
@@ -651,11 +687,57 @@ class ArchBuilder:
                 )
             )
 
-        # 5. Assemble and validate.
+        # 5. Determine the blockade radius to record on the ArchSpec.
+        # Builder-level radius (set via ArchBuilder.set_blockade_radius)
+        # takes precedence.  Otherwise, pick up a zone-level radius if
+        # every zone with a radius agrees on the value (if some zones
+        # have a radius and others don't, or zones disagree, error out
+        # — the single-spec blockade_radius field can't represent that).
+        blockade_radius = self._resolve_blockade_radius()
+
+        # 6. Assemble and validate.
         return ArchSpec.from_components(
             words=tuple(all_words),
             zones=tuple(rust_zones),
             modes=modes,
             zone_buses=zone_buses,
-            blockade_radius=self._blockade_radius,
+            blockade_radius=blockade_radius,
         )
+
+    def _resolve_blockade_radius(self) -> float | None:
+        """Pick the blockade_radius value for the final ArchSpec.
+
+        Precedence:
+
+        1. ``self._blockade_radius`` (builder-scope value from
+           :meth:`set_blockade_radius`) — always authoritative when set.
+        2. A unique radius shared by all zones that have one set; zones
+           without a radius must also agree (i.e., no zone opt-out) for
+           this branch to apply.
+        3. ``None`` otherwise.
+
+        Raises ``ValueError`` if zones disagree on a radius or if some
+        zones have a radius set and others don't.
+        """
+        if self._blockade_radius is not None:
+            return self._blockade_radius
+        zone_radii = [zone.blockade_radius for zone in self._zones]
+        if all(r is None for r in zone_radii):
+            return None
+        missing = [z.name for z, r in zip(self._zones, zone_radii) if r is None]
+        if missing:
+            raise ValueError(
+                "blockade_radius is set on some zones but not others; "
+                f"missing on: {missing}. Either call "
+                "ArchBuilder.set_blockade_radius to apply uniformly, "
+                "or leave it unset on every zone."
+            )
+        # Every zone has a non-None radius here.
+        present = [r for r in zone_radii if r is not None]
+        unique = sorted(set(present))
+        if len(unique) > 1:
+            raise ValueError(
+                f"Zones disagree on blockade_radius: {unique}. "
+                "The ArchSpec can only carry a single value."
+            )
+        return unique[0]

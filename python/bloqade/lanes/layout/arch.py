@@ -186,8 +186,16 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
 
     @property
     def blockade_radius(self) -> float | None:
-        """Rydberg blockade radius (µm), or None if entangling pairs were
-        specified manually without a geometric derivation."""
+        """Rydberg blockade radius (µm), or ``None`` if not provided.
+
+        This is metadata — when present, it indicates the radius
+        associated with the architecture and is typically used to
+        interpret the entangling pairs.  It is **not** independently
+        verified at the ArchSpec level; use
+        :meth:`ZoneBuilder.set_blockade_radius` /
+        :meth:`ArchBuilder.set_blockade_radius` if you want the pair
+        list to be derived from and checked against a radius.
+        """
         return self._inner.blockade_radius
 
     @cached_property

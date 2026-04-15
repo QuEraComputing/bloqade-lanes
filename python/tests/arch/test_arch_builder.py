@@ -545,7 +545,7 @@ class TestArchBuilderBlockadeRadius:
     def test_applies_to_all_zones(self):
         gate_a = _make_gate_zone()
         gate_b = _make_gate_zone()
-        # Second zone needs distinct name and y_offset to avoid clashes
+        # Second zone needs a distinct name to avoid clashes
         gate_b._name = "gate_b"
         arch = ArchBuilder()
         arch.add_zone(gate_a)
@@ -585,3 +585,84 @@ class TestArchBuilderBlockadeRadius:
         # Caller can re-set to apply:
         arch.set_blockade_radius(2.0)
         assert zone._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+
+    def test_nan_radius_raises(self):
+        """NaN / Inf on ArchBuilder.set_blockade_radius are rejected up-front."""
+        import math
+
+        arch = ArchBuilder()  # no zones: validation must still fire
+        with pytest.raises(ValueError, match="must be positive"):
+            arch.set_blockade_radius(0.0)
+        with pytest.raises(ValueError, match="must be finite"):
+            arch.set_blockade_radius(math.nan)
+        with pytest.raises(ValueError, match="must be finite"):
+            arch.set_blockade_radius(math.inf)
+
+    def test_rollback_on_partial_failure(self):
+        """If a later zone's scan fails, earlier zones must stay untouched."""
+        good = _make_gate_zone()
+        # Give `good` an existing explicit pairing so we can see whether
+        # the failed set_blockade_radius call overwrote it.
+        good.add_entangling_pairs([0, 2, 4], [1, 3, 5])
+        # A zone whose layout fails the scan under radius=1.5.
+        bad = ZoneBuilder("bad", Grid.from_positions([0.0, 1.0, 2.0], [0.0]), (1, 1))
+        for x in range(3):
+            bad.add_word([x], [0])
+        # 3 mutually-within-radius words → multi-partner ValueError on bad.
+        arch = ArchBuilder()
+        arch.add_zone(good)
+        arch.add_zone(bad)
+        with pytest.raises(ValueError, match="multiple blockade partners"):
+            arch.set_blockade_radius(1.5)
+        # `good` must still have its original pairs.
+        assert good._entangling_pairs == [(0, 1), (2, 3), (4, 5)]
+        # And no radius recorded on the builder (the call failed).
+        assert arch.blockade_radius is None
+
+    def test_zone_radius_flows_to_spec(self):
+        """A radius set only on a ZoneBuilder propagates to ArchSpec."""
+        zone = _make_gate_zone()
+        zone.set_blockade_radius(2.0)
+        arch = ArchBuilder()
+        arch.add_zone(zone)
+        arch.add_mode("all", ["gate"])
+        spec = arch.build()
+        assert spec.blockade_radius == 2.0
+
+    def test_inconsistent_zone_radii_raises(self):
+        """Two zones with different radii cannot be composed into one spec."""
+        z1 = _make_gate_zone()
+        z1.set_blockade_radius(2.0)
+        z2 = _make_gate_zone()
+        z2._name = "gate_b"
+        z2.set_blockade_radius(3.0)
+        arch = ArchBuilder()
+        arch.add_zone(z1)
+        arch.add_zone(z2)
+        arch.add_mode("all", ["gate", "gate_b"])
+        with pytest.raises(ValueError, match="disagree on blockade_radius"):
+            arch.build()
+
+    def test_mixed_zone_radii_raises(self):
+        """If some zones have a radius and others don't, ArchBuilder.build fails."""
+        z1 = _make_gate_zone()
+        z1.set_blockade_radius(2.0)
+        z2 = _make_gate_zone()
+        z2._name = "gate_b"
+        # z2 has no radius.
+        arch = ArchBuilder()
+        arch.add_zone(z1)
+        arch.add_zone(z2)
+        arch.add_mode("all", ["gate", "gate_b"])
+        with pytest.raises(ValueError, match="some zones but not others"):
+            arch.build()
+
+
+class TestZoneBuilderBlockadeMetadata:
+    def test_add_entangling_pairs_clears_radius(self):
+        """Manual append after set_blockade_radius clears the cached radius."""
+        zone = _make_gate_zone()
+        zone.set_blockade_radius(2.0)
+        assert zone.blockade_radius == 2.0
+        zone.add_entangling_pairs([0], [5])  # manual override
+        assert zone.blockade_radius is None

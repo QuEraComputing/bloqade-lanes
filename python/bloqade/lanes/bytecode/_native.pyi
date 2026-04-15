@@ -619,9 +619,10 @@ class ArchSpec:
         paths (Optional[list[TransportPath]]): AOD transport paths, default = None.
         feed_forward (bool): Whether the device supports mid-circuit measurement. Default = False.
         atom_reloading (bool): Whether the device supports atom reloading. Default = False.
-        blockade_radius (Optional[float]): Rydberg blockade radius (µm). When set, the ArchSpec
-            was constructed from a scan over this radius and entangling pairs were
-            validated against the matching-site-index convention. Default = None.
+        blockade_radius (Optional[float]): Rydberg blockade radius (µm). When set, this
+            indicates the radius associated with the architecture and is typically
+            used to interpret entangling pairs. It is metadata; this constructor
+            does not itself verify that the pairs match the radius. Default = None.
     """
 
     def __init__(
@@ -724,7 +725,7 @@ class ArchSpec:
 
     @property
     def blockade_radius(self) -> Optional[float]:
-        """Rydberg blockade radius (µm), or None if pairs were specified manually."""
+        """Rydberg blockade radius (µm), or None if not provided."""
         ...
 
     @property

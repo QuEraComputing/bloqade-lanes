@@ -114,11 +114,12 @@ pub struct ArchSpec {
     pub atom_reloading: bool,
     /// Rydberg blockade radius in micrometers, if specified.
     ///
-    /// When present, indicates that every entangling word pair in every
-    /// zone was derived from — and validated against — this radius (all
-    /// matching-index site pairs within radius, no crossed-index or
-    /// multi-partner cases). Absent means pairs were specified manually
-    /// without a geometric derivation.
+    /// Metadata: when present, this is the radius associated with the
+    /// architecture, typically used by consumers to interpret the
+    /// entangling word pairs. This struct does not itself enforce any
+    /// relationship between the pairs and the radius — derivation /
+    /// validation happens at the builder layer (see
+    /// `ZoneBuilder.set_blockade_radius` on the Python side).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blockade_radius: Option<f64>,
 }
