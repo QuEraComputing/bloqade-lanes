@@ -337,7 +337,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             top_c=self.traversal.top_c,
             max_movesets_per_group=self.traversal.max_movesets_per_group,
         )
-        self._rust_nodes_expanded_total += int(getattr(result, "nodes_expanded", 0))
+        self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
         if result.status != "solved":
             return AtomState.bottom()
