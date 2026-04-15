@@ -429,22 +429,18 @@ class ZoneBuilder:
                     f"single word is not allowed — tighten "
                     f"blockade_radius or space the word's sites apart."
                 )
-            # Canonicalize (a, b) with a < b; track which site-index of `a`
-            # matches which of `b`.
-            if w1 < w2:
-                a, sa, b, sb = w1, s1, w2, s2
-            else:
-                a, sa, b, sb = w2, s2, w1, s1
-            if sa != sb:
+            if s1 != s2:
                 raise ValueError(
                     f"Zone '{self._name}' blockade scan: words "
-                    f"{a} and {b} have a non-matching-index site pair "
-                    f"(site {sa} ↔ site {sb}) within radius "
-                    f"{radius_um} µm (crossed-index blockade). The "
-                    f"layout cannot be cleanly paired under the CZ "
-                    f"matching-index convention."
+                    f"{min(w1, w2)} and {max(w1, w2)} have a "
+                    f"non-matching-index site pair (site {s1} ↔ "
+                    f"site {s2}) within radius {radius_um} µm "
+                    f"(crossed-index blockade). The layout cannot "
+                    f"be cleanly paired under the CZ matching-index "
+                    f"convention."
                 )
-            matching_sites.setdefault((a, b), set()).add(sa)
+            # Matching-index pair. Canonicalize only the word pair.
+            matching_sites.setdefault((min(w1, w2), max(w1, w2)), set()).add(s1)
 
         # A clean CZ pair has all `spw` matching-index site-pairs within
         # radius; fewer is a partial blockade.
