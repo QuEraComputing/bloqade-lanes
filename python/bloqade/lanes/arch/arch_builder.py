@@ -415,17 +415,7 @@ class ZoneBuilder:
         # site-indices fell within (and bail immediately on crossed-index).
         matching_sites: dict[tuple[int, int], set[int]] = {}
         radius_um = radius_nm / _NM_PER_UM
-        for i, j, *extra in raw_pairs:
-            if extra:
-                # KDTree.query_pairs currently emits 2-tuples only, but
-                # if scipy ever returns a larger cluster here the
-                # pair-wise classification below wouldn't apply.
-                raise ValueError(
-                    f"Zone '{self._name}' blockade scan: unexpected "
-                    f"cluster of {2 + len(extra)} sites within radius "
-                    f"{radius_um} µm (indices {(i, j, *extra)}); "
-                    f"query_pairs returned more than a pair."
-                )
+        for i, j in raw_pairs:
             w1, s1 = owners[i]
             w2, s2 = owners[j]
             if w1 == w2:
