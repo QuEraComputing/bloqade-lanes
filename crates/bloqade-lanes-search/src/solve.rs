@@ -298,7 +298,7 @@ impl MoveSolver {
                 InnerStrategy::Ids => {
                     let move_gen = make_generator(seed, deadlock_policy);
                     let mut f = IdsFrontier::new(h_sum);
-                    let result = frontier::run_search_v2(
+                    let result = frontier::run_search(
                         root.clone(),
                         &move_gen,
                         &scorer,
@@ -315,7 +315,7 @@ impl MoveSolver {
                 InnerStrategy::Dfs => {
                     let move_gen = make_generator(seed, deadlock_policy);
                     let mut f = DfsFrontier::new(h_sum);
-                    let result = frontier::run_search_v2(
+                    let result = frontier::run_search(
                         root.clone(),
                         &move_gen,
                         &scorer,
@@ -377,7 +377,7 @@ impl MoveSolver {
             let max_depth = Some(inner_result.cost.ceil() as u32);
             let astar_move_gen = make_generator(0, DeadlockPolicy::MoveBlockers);
             let mut astar_f = PriorityFrontier::astar(h_max, weight);
-            let astar_result = frontier::run_search_v2(
+            let astar_result = frontier::run_search(
                 root.clone(),
                 &astar_move_gen,
                 &scorer,
@@ -456,7 +456,7 @@ impl MoveSolver {
         match strategy {
             Strategy::AStar => {
                 let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-                frontier::run_search_v2(
+                frontier::run_search(
                     root,
                     generator,
                     scorer,
@@ -471,7 +471,7 @@ impl MoveSolver {
             }
             Strategy::Bfs => {
                 let mut f = BfsFrontier::new();
-                frontier::run_search_v2(
+                frontier::run_search(
                     root,
                     generator,
                     scorer,
@@ -486,7 +486,7 @@ impl MoveSolver {
             }
             Strategy::GreedyBestFirst => {
                 let mut f = PriorityFrontier::greedy(heuristic_fn);
-                frontier::run_search_v2(
+                frontier::run_search(
                     root,
                     generator,
                     scorer,

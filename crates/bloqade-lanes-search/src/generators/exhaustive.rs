@@ -439,7 +439,7 @@ mod tests {
         let goal = AllAtTarget::new(&target_encoded);
         let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
 
-        let result = frontier::run_search_v2(
+        let result = frontier::run_search(
             config,
             &generator,
             &scorer,

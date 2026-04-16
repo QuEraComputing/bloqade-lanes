@@ -24,7 +24,7 @@ pub mod solve;
 pub(crate) mod test_utils;
 pub mod traits;
 
-pub use astar::{Expander, SearchResult, astar};
+pub use astar::SearchResult;
 pub use config::{Config, ConfigError};
 pub use context::{MoveCandidate, SearchContext, SearchState};
 pub use cost::UniformCost;

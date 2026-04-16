@@ -45,11 +45,10 @@ pub trait Frontier {
 
 // ── Generic search loop ─────────────────────────────────────────────
 
-/// Run a search with the given frontier strategy.
-///
-/// This is the shared loop used by all traversal strategies. The
-/// frontier controls node ordering and goal-check timing.
-pub fn run_search(
+/// Legacy search loop using the old [`Expander`] trait.
+/// Retained for internal tests. Use [`run_search`] for new code.
+#[allow(dead_code)]
+pub(crate) fn run_search_legacy(
     root: Config,
     goal: impl Fn(&Config) -> bool,
     expander: &impl Expander,
@@ -442,11 +441,10 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for IdsFrontier<H> {
 
 /// Run a search using the composable trait-based API.
 ///
-/// This is the v2 equivalent of [`run_search`]. Instead of a single
-/// `Expander` trait, it uses separate [`MoveGenerator`], [`CandidateScorer`],
-/// [`CostFn`], and [`Goal`] traits for full composability.
+/// Uses separate [`MoveGenerator`], [`CandidateScorer`], [`CostFn`], and
+/// [`Goal`] traits. The [`Frontier`] controls node ordering and goal-check timing.
 #[allow(clippy::too_many_arguments)]
-pub fn run_search_v2<G, S, C, Go, F>(
+pub fn run_search<G, S, C, Go, F>(
     root: Config,
     generator: &G,
     scorer: &S,
@@ -632,7 +630,7 @@ mod tests {
     fn bfs_finds_shallowest() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(3),
             &LineExpander { max_site: 10 },
@@ -649,7 +647,7 @@ mod tests {
     fn bfs_respects_max_depth() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -701,7 +699,7 @@ mod tests {
 
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(zero_heuristic, 1.0);
-        let result = run_search(root, site_goal(1), &TwoPathExpander, &mut f, None, None);
+        let result = run_search_legacy(root, site_goal(1), &TwoPathExpander, &mut f, None, None);
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 2.0);
     }
@@ -710,7 +708,7 @@ mod tests {
     fn astar_with_heuristic() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(3),
             &LineExpander { max_site: 10 },
@@ -730,7 +728,7 @@ mod tests {
     fn greedy_finds_goal() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::greedy(manhattan(5));
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -747,7 +745,7 @@ mod tests {
     fn dfs_finds_goal() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = DfsFrontier::new(manhattan(5));
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -764,7 +762,7 @@ mod tests {
     fn dfs_respects_max_expansions() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = DfsFrontier::new(manhattan(100));
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(100),
             &LineExpander { max_site: 200 },
@@ -783,7 +781,7 @@ mod tests {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut dfs = DfsFrontier::new(manhattan(5));
-        let dfs_result = run_search(
+        let dfs_result = run_search_legacy(
             root.clone(),
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -793,7 +791,7 @@ mod tests {
         );
 
         let mut bfs = BfsFrontier::new();
-        let bfs_result = run_search(
+        let bfs_result = run_search_legacy(
             root,
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -814,7 +812,7 @@ mod tests {
     fn ids_finds_goal() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = IdsFrontier::new(manhattan(5));
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -832,7 +830,7 @@ mod tests {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut ids = IdsFrontier::new(manhattan(5));
-        let ids_result = run_search(
+        let ids_result = run_search_legacy(
             root.clone(),
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -842,7 +840,7 @@ mod tests {
         );
 
         let mut bfs = BfsFrontier::new();
-        let bfs_result = run_search(
+        let bfs_result = run_search_legacy(
             root,
             site_goal(5),
             &LineExpander { max_site: 10 },
@@ -860,7 +858,7 @@ mod tests {
     fn ids_respects_max_expansions() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = IdsFrontier::new(manhattan(100));
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(100),
             &LineExpander { max_site: 200 },
@@ -882,19 +880,19 @@ mod tests {
         for (name, result) in [
             ("bfs", {
                 let mut f = BfsFrontier::new();
-                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("astar", {
                 let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
-                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("dfs", {
                 let mut f = DfsFrontier::new(manhattan(3));
-                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
             ("ids", {
                 let mut f = IdsFrontier::new(manhattan(3));
-                run_search(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
             }),
         ] {
             assert!(result.goal.is_some(), "{name} should find root-is-goal");
@@ -908,7 +906,7 @@ mod tests {
     fn max_depth_tracked() {
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
-        let result = run_search(
+        let result = run_search_legacy(
             root,
             site_goal(3),
             &LineExpander { max_site: 10 },
@@ -920,7 +918,7 @@ mod tests {
         assert!(result.max_depth_reached >= 3);
     }
 
-    // ── run_search_v2 ──
+    // ── trait-based run_search ──
 
     #[test]
     fn v2_astar_finds_solution() {
@@ -962,7 +960,7 @@ mod tests {
         let mut frontier = PriorityFrontier::astar(h, 1.0);
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        let result = run_search_v2(
+        let result = run_search(
             config,
             &generator,
             &scorer,

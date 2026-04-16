@@ -661,7 +661,7 @@ mod tests {
         let scorer = DistanceScorer;
         let cost_fn = UniformCost;
         let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
-        let result = frontier::run_search_v2(
+        let result = frontier::run_search(
             config,
             &generator,
             &scorer,
@@ -704,7 +704,7 @@ mod tests {
         let scorer = DistanceScorer;
         let cost_fn = UniformCost;
         let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
-        let result = frontier::run_search_v2(
+        let result = frontier::run_search(
             config,
             &generator,
             &scorer,
@@ -769,7 +769,7 @@ mod tests {
         let scorer = DistanceScorer;
         let cost_fn = UniformCost;
         let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
-        let result = frontier::run_search_v2(
+        let result = frontier::run_search(
             config,
             &generator,
             &scorer,
@@ -916,7 +916,7 @@ mod tests {
         let cost_fn = UniformCost;
 
         let mut f_no_la = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
-        let result_no_la = frontier::run_search_v2(
+        let result_no_la = frontier::run_search(
             config.clone(),
             &generator_no_la,
             &scorer,
@@ -930,7 +930,7 @@ mod tests {
         );
 
         let mut f_la = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
-        let result_la = frontier::run_search_v2(
+        let result_la = frontier::run_search(
             config,
             &generator_la,
             &scorer,

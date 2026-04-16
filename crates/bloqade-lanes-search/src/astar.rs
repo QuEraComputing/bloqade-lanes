@@ -7,12 +7,12 @@ use crate::config::Config;
 use crate::frontier::{self, PriorityFrontier};
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 
-/// Trait for generating successor configurations.
+/// Legacy trait for generating successor configurations.
 ///
-/// **Note:** Prefer [`crate::traits::MoveGenerator`] with
-/// [`crate::frontier::run_search_v2`] for new code. This trait is retained
-/// for backward compatibility.
-pub trait Expander {
+/// Retained for internal tests only. Use [`crate::traits::MoveGenerator`]
+/// with [`crate::frontier::run_search`] for new code.
+#[allow(dead_code)]
+pub(crate) trait Expander {
     /// Generate all valid successors of the given configuration.
     ///
     /// Appends `(move_set, new_config, edge_cost)` triples to `out`.
@@ -54,7 +54,8 @@ impl SearchResult {
 ///
 /// With an admissible heuristic (never overestimates), A* guarantees
 /// finding the optimal (lowest cost) solution.
-pub fn astar(
+#[allow(dead_code)]
+pub(crate) fn astar(
     root: Config,
     goal: impl Fn(&Config) -> bool,
     heuristic: impl Fn(&Config) -> f64,
@@ -62,7 +63,7 @@ pub fn astar(
     max_expansions: Option<u32>,
 ) -> SearchResult {
     let mut f = PriorityFrontier::astar(heuristic, 1.0);
-    frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
+    frontier::run_search_legacy(root, goal, expander, &mut f, max_expansions, None)
 }
 
 #[cfg(test)]
