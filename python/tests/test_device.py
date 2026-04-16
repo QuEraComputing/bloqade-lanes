@@ -2,6 +2,8 @@ import math
 from typing import Any
 
 import pytest
+import stim
+import tsim
 from bloqade.decoders.dialects import annotate
 from kirin.dialects import ilist
 
@@ -278,3 +280,64 @@ def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
         assert len(result.observables) == 10
         assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
+
+
+def test_samplers_use_stim_for_clifford_circuit():
+    """When the compiled circuit is Clifford, `tsim_circuit` still returns a
+    `tsim.Circuit`, but the compiled samplers should be stim samplers."""
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def clifford_kernel():
+        reg = qubit.qalloc(1)
+        squin.h(reg[0])
+        gemini_logical.terminal_measure(reg)
+
+    task = GeminiLogicalSimulator().task(clifford_kernel)
+
+    assert isinstance(task.tsim_circuit, tsim.Circuit)
+    assert task.tsim_circuit.is_clifford
+    assert isinstance(task.noiseless_tsim_circuit, tsim.Circuit)
+    assert task.noiseless_tsim_circuit.is_clifford
+
+    assert isinstance(task.measurement_sampler, stim.CompiledMeasurementSampler)
+    assert isinstance(
+        task.noiseless_measurement_sampler, stim.CompiledMeasurementSampler
+    )
+    assert isinstance(task.detector_sampler, stim.CompiledDetectorSampler)
+    assert isinstance(task.noiseless_detector_sampler, stim.CompiledDetectorSampler)
+    assert isinstance(task.detector_error_model, stim.DetectorErrorModel)
+
+    result = task.run(shots=5, with_noise=False)
+    assert isinstance(result, Result)
+    assert len(result.measurements) == 5
+
+
+@pytest.mark.slow
+def test_samplers_use_tsim_for_non_clifford_circuit():
+    """When the compiled circuit contains non-Clifford rotations, `tsim_circuit`
+    stays a `tsim.Circuit` and the samplers are tsim samplers."""
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def non_clifford_kernel():
+        reg = qubit.qalloc(1)
+        squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
+        gemini_logical.terminal_measure(reg)
+
+    task = GeminiLogicalSimulator().task(non_clifford_kernel)
+
+    assert isinstance(task.tsim_circuit, tsim.Circuit)
+    assert not task.tsim_circuit.is_clifford
+    assert isinstance(task.noiseless_tsim_circuit, tsim.Circuit)
+    assert not task.noiseless_tsim_circuit.is_clifford
+
+    assert isinstance(task.measurement_sampler, tsim.CompiledMeasurementSampler)
+    assert isinstance(
+        task.noiseless_measurement_sampler, tsim.CompiledMeasurementSampler
+    )
+    assert isinstance(task.detector_sampler, tsim.CompiledDetectorSampler)
+    assert isinstance(task.noiseless_detector_sampler, tsim.CompiledDetectorSampler)
+    assert isinstance(task.detector_error_model, stim.DetectorErrorModel)
+
+    result = task.run(shots=5, with_noise=False)
+    assert isinstance(result, Result)
+    assert len(result.measurements) == 5

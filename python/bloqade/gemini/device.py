@@ -11,10 +11,12 @@ from typing import (
     Literal,
     TypeVar,
     Union,
+    cast,
     overload,
 )
 
 import numpy as np
+import stim
 import tsim as tsim_backend
 from bloqade.analysis.fidelity import FidelityAnalysis
 from kirin import ir, rewrite
@@ -223,25 +225,53 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         rewrite.Walk(RemoveReturn()).rewrite(noiseless_kernel.code)
         return tsim.Circuit(noiseless_kernel)
 
+    @staticmethod
+    def _sampling_circuit(
+        circuit: tsim_backend.Circuit,
+    ) -> tsim_backend.Circuit | stim.Circuit:
+        """Return the circuit used to compile samplers.
+
+        If ``circuit`` is Clifford, the underlying ``stim.Circuit`` is returned
+        so that sampling is performed directly by stim; otherwise the original
+        ``tsim.Circuit`` is returned.
+        """
+        if circuit.is_clifford:
+            return circuit.stim_circuit
+        return circuit
+
     @cached_property
     def measurement_sampler(self):
-        """The tsim measurement sampler."""
-        return self.tsim_circuit.compile_sampler()
+        """The measurement sampler.
+
+        Uses stim when the underlying circuit is Clifford, otherwise tsim.
+        """
+        return self._sampling_circuit(self.tsim_circuit).compile_sampler()
 
     @cached_property
     def noiseless_measurement_sampler(self):
-        """The noiseless tsim measurement sampler."""
-        return self.noiseless_tsim_circuit.compile_sampler()
+        """The noiseless measurement sampler.
+
+        Uses stim when the underlying circuit is Clifford, otherwise tsim.
+        """
+        return self._sampling_circuit(self.noiseless_tsim_circuit).compile_sampler()
 
     @cached_property
     def detector_sampler(self):
-        """The tsim detector sampler."""
-        return self.tsim_circuit.compile_detector_sampler()
+        """The detector sampler.
+
+        Uses stim when the underlying circuit is Clifford, otherwise tsim.
+        """
+        return self._sampling_circuit(self.tsim_circuit).compile_detector_sampler()
 
     @cached_property
     def noiseless_detector_sampler(self):
-        """The noiseless tsim detector sampler."""
-        return self.noiseless_tsim_circuit.compile_detector_sampler()
+        """The noiseless detector sampler.
+
+        Uses stim when the underlying circuit is Clifford, otherwise tsim.
+        """
+        return self._sampling_circuit(
+            self.noiseless_tsim_circuit
+        ).compile_detector_sampler()
 
     @cached_property
     def detector_error_model(self):
@@ -377,8 +407,9 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         sampler = (
             self.detector_sampler if with_noise else self.noiseless_detector_sampler
         )
-        det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
-            shots=shots, separate_observables=True
+        det_obs = cast(
+            tuple[np.ndarray, np.ndarray],
+            sampler.sample(shots=shots, separate_observables=True),
         )
         fidelity_min, fidelity_max = self.fidelity_bounds()
         return DetectorResult(
