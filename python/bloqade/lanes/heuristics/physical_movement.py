@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -15,7 +15,7 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy
+from bloqade.lanes.bytecode._native import MoveSolver
 from bloqade.lanes.layout import (
     Direction,
     LaneAddress,
@@ -152,9 +152,26 @@ class BFSPlacementTraversal(PlacementTraversalABC):
 
 @dataclass(frozen=True)
 class RustPlacementTraversal:
-    """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely."""
+    """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely.
 
-    strategy: SearchStrategy = SearchStrategy.ASTAR
+    Note: The Rust ``MoveSolver.solve()`` accepts additional tuning parameters
+    (weight, restarts, lookahead, deadlock_policy, w_t) that are not yet
+    exposed here; Rust defaults are used. These will be threaded through
+    once the parameters are validated via Rust-only benchmarking.
+    """
+
+    strategy: Literal[
+        "astar",
+        "dfs",
+        "bfs",
+        "greedy",
+        "ids",
+        "cascade",
+        "cascade-ids",
+        "cascade-dfs",
+        "cascade-entropy",
+        "entropy",
+    ] = "astar"
     top_c: int = 3
     max_movesets_per_group: int = 3
     max_expansions: int | None = 300

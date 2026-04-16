@@ -1,4 +1,4 @@
-//! Exhaustive move generator for A* search.
+//! Exhaustive move generator for search.
 //!
 //! Port of Python's `ExhaustiveMoveGenerator`. Enumerates all valid AOD
 //! rectangle move sets from a configuration: for each bus triplet, builds
@@ -8,46 +8,37 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
-use crate::astar::Expander;
 use crate::config::Config;
-use crate::graph::MoveSet;
+use crate::context::{MoveCandidate, SearchContext, SearchState};
+use crate::graph::{MoveSet, NodeId};
 use crate::lane_index::LaneIndex;
+use crate::traits::MoveGenerator;
 
 /// Exhaustive AOD-rectangle move generator.
 ///
 /// For each `(move_type, bus_id, direction)` triplet, enumerates all valid
 /// rectangular subsets of source positions within AOD capacity, and yields
-/// them as move sets.
+/// them as [`MoveCandidate`] values.
 #[derive(Debug)]
-pub struct ExhaustiveExpander<'a> {
-    index: &'a LaneIndex,
-    /// Encoded locations that are blocked (external obstacles).
-    blocked: HashSet<u64>,
+pub struct ExhaustiveGenerator {
     /// Maximum AOD X capacity (None = unlimited).
     max_x_capacity: Option<usize>,
     /// Maximum AOD Y capacity (None = unlimited).
     max_y_capacity: Option<usize>,
 }
 
-impl<'a> ExhaustiveExpander<'a> {
-    /// Create a new expander.
-    pub fn new(
-        index: &'a LaneIndex,
-        blocked: impl IntoIterator<Item = LocationAddr>,
-        max_x_capacity: Option<usize>,
-        max_y_capacity: Option<usize>,
-    ) -> Self {
+impl ExhaustiveGenerator {
+    /// Create a new generator with the given AOD capacity constraints.
+    pub fn new(max_x_capacity: Option<usize>, max_y_capacity: Option<usize>) -> Self {
         Self {
-            index,
-            blocked: blocked.into_iter().map(|l| l.encode()).collect(),
             max_x_capacity,
             max_y_capacity,
         }
     }
 
     /// Build the set of all occupied encoded locations (config qubits + blocked).
-    fn occupied_set(&self, config: &Config) -> HashSet<u64> {
-        let mut occupied = self.blocked.clone();
+    fn occupied_set(config: &Config, blocked: &HashSet<u64>) -> HashSet<u64> {
+        let mut occupied = blocked.clone();
         for (_, loc) in config.iter() {
             occupied.insert(loc.encode());
         }
@@ -55,29 +46,40 @@ impl<'a> ExhaustiveExpander<'a> {
     }
 }
 
-impl Expander for ExhaustiveExpander<'_> {
-    fn expand(&self, config: &Config, out: &mut Vec<(MoveSet, Config, f64)>) {
-        let ctx = ExpandContext {
-            occupied: self.occupied_set(config),
+impl MoveGenerator for ExhaustiveGenerator {
+    fn generate(
+        &self,
+        config: &Config,
+        _node_id: NodeId,
+        ctx: &SearchContext,
+        _state: &mut SearchState,
+        out: &mut Vec<MoveCandidate>,
+    ) {
+        let expand_ctx = ExpandContext {
+            occupied: Self::occupied_set(config, ctx.blocked),
             loc_to_qubit: config.location_to_qubit_map(),
             config,
-            index: self.index,
+            index: ctx.index,
             max_x_capacity: self.max_x_capacity,
             max_y_capacity: self.max_y_capacity,
         };
 
-        for (mt, bus_id, zone_id, dir) in self.index.bus_groups() {
-            let lanes = self.index.lanes_for(mt, bus_id, zone_id, dir);
+        for (mt, bus_id, dir) in ctx.index.bus_groups_no_zone() {
+            let lanes: Vec<LaneAddr> = ctx
+                .index
+                .lanes_for_all_zones(mt, bus_id, dir)
+                .copied()
+                .collect();
             if lanes.is_empty() {
                 continue;
             }
 
-            rectangles_to_move_sets(lanes, &ctx, out);
+            rectangles_to_move_sets(&lanes, &expand_ctx, out);
         }
     }
 }
 
-/// Shared context for rectangle enumeration, built once per `expand()` call.
+/// Shared context for rectangle enumeration, built once per `generate()` call.
 struct ExpandContext<'a> {
     occupied: HashSet<u64>,
     loc_to_qubit: HashMap<u64, u32>,
@@ -99,7 +101,7 @@ struct TripletData {
 fn rectangles_to_move_sets(
     lanes: &[LaneAddr],
     ctx: &ExpandContext<'_>,
-    out: &mut Vec<(MoveSet, Config, f64)>,
+    out: &mut Vec<MoveCandidate>,
 ) {
     let mut pos_to_info: HashMap<(u64, u64), (LocationAddr, LaneAddr)> = HashMap::new();
     let mut unique_x: BTreeSet<u64> = BTreeSet::new();
@@ -175,7 +177,7 @@ fn try_rectangle(
     y_subset: &[u64],
     td: &TripletData,
     ctx: &ExpandContext<'_>,
-    out: &mut Vec<(MoveSet, Config, f64)>,
+    out: &mut Vec<MoveCandidate>,
 ) {
     let mut lane_addrs: Vec<LaneAddr> = Vec::new();
     let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
@@ -207,7 +209,10 @@ fn try_rectangle(
 
     let move_set = MoveSet::new(lane_addrs);
     let new_config = ctx.config.with_moves(&moves);
-    out.push((move_set, new_config, 1.0));
+    out.push(MoveCandidate {
+        move_set,
+        new_config,
+    });
 }
 
 /// Advance a combination of `k` indices chosen from `0..n` to the next
@@ -235,13 +240,67 @@ fn next_combination(indices: &mut [usize], n: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::{example_arch_json, loc};
+    use std::collections::HashSet;
+
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+
+    use super::*;
+    use crate::heuristic::DistanceTable;
+    use crate::observer::NoOpObserver;
+    use crate::test_utils::{example_arch_json, loc};
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
         LaneIndex::new(spec)
+    }
+
+    fn make_ctx<'a>(
+        index: &'a LaneIndex,
+        dist_table: &'a DistanceTable,
+        targets: &'a [(u32, u64)],
+        blocked: &'a HashSet<u64>,
+    ) -> SearchContext<'a> {
+        SearchContext {
+            index,
+            dist_table,
+            blocked,
+            targets,
+        }
+    }
+
+    /// Helper to run the generator with default context (no blocked locations).
+    fn run_generator(
+        generator: &ExhaustiveGenerator,
+        config: &Config,
+        index: &LaneIndex,
+    ) -> Vec<MoveCandidate> {
+        let targets_raw: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode())];
+        let target_locs: Vec<u64> = vec![loc(0, 5).encode()];
+        let dist_table = DistanceTable::new(&target_locs, index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(index, &dist_table, &targets_raw, &blocked);
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(config, NodeId(0), &ctx, &mut state, &mut out);
+        out
+    }
+
+    /// Helper to run the generator with blocked locations.
+    fn run_generator_blocked(
+        generator: &ExhaustiveGenerator,
+        config: &Config,
+        index: &LaneIndex,
+        blocked_locs: &[LocationAddr],
+    ) -> Vec<MoveCandidate> {
+        let targets_raw: Vec<(u32, u64)> = vec![(0, loc(0, 5).encode())];
+        let target_locs: Vec<u64> = vec![loc(0, 5).encode()];
+        let dist_table = DistanceTable::new(&target_locs, index);
+        let blocked: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+        let ctx = make_ctx(index, &dist_table, &targets_raw, &blocked);
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(config, NodeId(0), &ctx, &mut state, &mut out);
+        out
     }
 
     #[test]
@@ -272,14 +331,12 @@ mod tests {
     }
 
     #[test]
-    fn expand_produces_moves() {
+    fn generate_produces_moves() {
         let index = make_index();
-        // Qubit 0 at word 0, site 0 (a site bus source position).
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
+        let generator = ExhaustiveGenerator::new(None, None);
 
-        let mut out = Vec::new();
-        expander.expand(&config, &mut out);
+        let out = run_generator(&generator, &config, &index);
 
         // Should produce at least one move set (site bus forward moves qubit to site 5).
         assert!(!out.is_empty());
@@ -287,7 +344,7 @@ mod tests {
         // At least one move should place qubit 0 at site 5 (forward site bus).
         let has_site5 = out
             .iter()
-            .any(|(_, cfg, _)| cfg.location_of(0) == Some(loc(0, 5)));
+            .any(|c| c.new_config.location_of(0) == Some(loc(0, 5)));
         assert!(
             has_site5,
             "should have a move to site 5 via site bus forward"
@@ -295,68 +352,64 @@ mod tests {
     }
 
     #[test]
-    fn expand_respects_blocked() {
+    fn generate_respects_blocked() {
         let index = make_index();
         // Qubit 0 at word 0, site 0. Block site 5 (the forward destination).
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        let expander = ExhaustiveExpander::new(&index, [loc(0, 5)], None, None);
+        let generator = ExhaustiveGenerator::new(None, None);
 
-        let mut out = Vec::new();
-        expander.expand(&config, &mut out);
+        let out = run_generator_blocked(&generator, &config, &index, &[loc(0, 5)]);
 
         // No move should place qubit 0 at blocked site 5.
         let has_site5 = out
             .iter()
-            .any(|(_, cfg, _)| cfg.location_of(0) == Some(loc(0, 5)));
+            .any(|c| c.new_config.location_of(0) == Some(loc(0, 5)));
         assert!(!has_site5, "blocked destination should be excluded");
     }
 
     #[test]
-    fn expand_no_moves_when_no_atoms() {
+    fn generate_no_moves_when_no_atoms() {
         let index = make_index();
-        // Empty config → no atoms → no moves.
+        // Empty config -> no atoms -> no moves.
         let config = Config::new(std::iter::empty::<(u32, LocationAddr)>()).unwrap();
-        let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
+        let generator = ExhaustiveGenerator::new(None, None);
 
-        let mut out = Vec::new();
-        expander.expand(&config, &mut out);
+        let out = run_generator(&generator, &config, &index);
         assert!(out.is_empty());
     }
 
     #[test]
-    fn expand_collision_prefilter() {
+    fn generate_collision_prefilter() {
         let index = make_index();
         // Qubit 0 at site 0, qubit 1 at site 5 (destination of site 0 forward).
         // The pre-filter should mark site 0 as invalid for forward moves
         // (src occupied, dst occupied).
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
-        let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
+        let generator = ExhaustiveGenerator::new(None, None);
 
-        let mut out = Vec::new();
-        expander.expand(&config, &mut out);
+        let out = run_generator(&generator, &config, &index);
 
         // No forward site bus move should move qubit 0 to site 5 (collision).
         let collision = out
             .iter()
-            .any(|(_, cfg, _)| cfg.location_of(0) == Some(loc(0, 5)));
+            .any(|c| c.new_config.location_of(0) == Some(loc(0, 5)));
         assert!(!collision, "collision should be pre-filtered");
     }
 
     #[test]
-    fn expand_parallel_moves() {
+    fn generate_parallel_moves() {
         let index = make_index();
         // Two qubits at site bus source positions in same word.
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
-        let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
+        let generator = ExhaustiveGenerator::new(None, None);
 
-        let mut out = Vec::new();
-        expander.expand(&config, &mut out);
+        let out = run_generator(&generator, &config, &index);
 
         // Should have a move set that moves both qubits simultaneously.
-        let has_parallel = out.iter().any(|(ms, cfg, _)| {
-            ms.len() >= 2
-                && cfg.location_of(0) == Some(loc(0, 5))
-                && cfg.location_of(1) == Some(loc(0, 6))
+        let has_parallel = out.iter().any(|c| {
+            c.move_set.len() >= 2
+                && c.new_config.location_of(0) == Some(loc(0, 5))
+                && c.new_config.location_of(1) == Some(loc(0, 6))
         });
         assert!(
             has_parallel,
@@ -365,32 +418,49 @@ mod tests {
     }
 
     #[test]
-    fn expand_with_astar_finds_solution() {
-        use crate::astar::astar;
+    fn generate_with_search_finds_solution() {
+        use crate::cost::UniformCost;
+        use crate::frontier::{self, PriorityFrontier};
+        use crate::goals::AllAtTarget;
+        use crate::heuristic::HopDistanceHeuristic;
+        use crate::scorers::DistanceScorer;
 
         let index = make_index();
-        // Qubit 0 at word 0 site 0, target: word 0 site 5.
         let config = Config::new([(0, loc(0, 0))]).unwrap();
         let target_loc = loc(0, 5);
 
-        let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
-        let result = astar(
+        let targets = vec![(0u32, target_loc)];
+        let target_encoded: Vec<(u32, u64)> =
+            targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &dist_table, &target_encoded, &blocked);
+
+        let h = HopDistanceHeuristic::new(targets.clone(), &dist_table);
+        let generator = ExhaustiveGenerator::new(None, None);
+        let scorer = DistanceScorer;
+        let cost = UniformCost;
+        let goal = AllAtTarget::new(&target_encoded);
+        let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
+
+        let result = frontier::run_search(
             config,
-            |cfg| cfg.location_of(0) == Some(target_loc),
-            |cfg| {
-                if cfg.location_of(0) == Some(target_loc) {
-                    0.0
-                } else {
-                    1.0
-                }
-            },
-            &expander,
+            &generator,
+            &scorer,
+            &cost,
+            &goal,
+            &mut f,
+            &ctx,
+            &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(100),
+            None,
         );
 
         assert!(result.goal.is_some());
         let path = result.solution_path().unwrap();
-        // Site 0 → site 5 is one site bus forward move.
+        // Site 0 -> site 5 is one site bus forward move.
         assert_eq!(path.len(), 1);
     }
 }
