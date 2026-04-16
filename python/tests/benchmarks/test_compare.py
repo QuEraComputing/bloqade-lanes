@@ -89,21 +89,34 @@ def test_compare_detects_success_to_failure_transition():
 
 def test_compare_wall_time_tolerance_is_applied():
     baseline_rows = [_row(wall_time_ms=100.0)]
-    current_rows = [_row(wall_time_ms=160.0)]
+    current_rows = [_row(wall_time_ms=299.0)]
     within_tolerance = compare_against_baseline(
         current_rows=current_rows,
         baseline_rows=baseline_rows,
-        wall_time_tolerance_ratio=0.75,
+        wall_time_tolerance_ratio=2.0,
     )
     outside_tolerance = compare_against_baseline(
         current_rows=current_rows,
         baseline_rows=baseline_rows,
-        wall_time_tolerance_ratio=0.5,
+        wall_time_tolerance_ratio=1.5,
     )
 
     assert within_tolerance.has_differences is False
     assert outside_tolerance.has_differences is True
     assert outside_tolerance.diffs[0].field == "wall_time_ms"
+
+
+def test_compare_ignores_wall_time_improvements():
+    baseline_rows = [_row(wall_time_ms=1000.0)]
+    current_rows = [_row(wall_time_ms=10.0)]
+
+    report = compare_against_baseline(
+        current_rows=current_rows,
+        baseline_rows=baseline_rows,
+        wall_time_tolerance_ratio=0.0,
+    )
+
+    assert report.has_differences is False
 
 
 def test_load_baseline_csv_rejects_invalid_bool(tmp_path: Path):

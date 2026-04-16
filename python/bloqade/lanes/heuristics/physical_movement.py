@@ -78,7 +78,7 @@ class EntropyPlacementTraversal(PlacementTraversalABC):
 
     search_params: SearchParams = field(default_factory=SearchParams)
     max_depth: int | None = None
-    max_expansions: int | None = 1000
+    max_expansions: int | None = 300
     on_search_step: OnSearchStep | None = None
 
     def path_to_target_config(
@@ -112,7 +112,7 @@ class EntropyPlacementTraversal(PlacementTraversalABC):
 class GreedyPlacementTraversal(PlacementTraversalABC):
     """Placement traversal adapter backed by greedy best-first search."""
 
-    max_expansions: int | None = 300
+    max_expansions: int | None = 1000
 
     def path_to_target_config(
         self,
