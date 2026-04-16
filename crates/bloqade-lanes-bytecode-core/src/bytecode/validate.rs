@@ -221,10 +221,10 @@ pub fn validate_capabilities(program: &Program, arch: &ArchSpec) -> Vec<Validati
                     errors.push(ValidationError::FeedForwardNotSupported { pc });
                 }
             }
-            Instruction::AtomArrangement(AtomArrangementInstruction::Fill { .. }) => {
-                if !arch.atom_reloading {
-                    errors.push(ValidationError::AtomReloadingNotSupported { pc });
-                }
+            Instruction::AtomArrangement(AtomArrangementInstruction::Fill { .. })
+                if !arch.atom_reloading =>
+            {
+                errors.push(ValidationError::AtomReloadingNotSupported { pc });
             }
             _ => {}
         }
