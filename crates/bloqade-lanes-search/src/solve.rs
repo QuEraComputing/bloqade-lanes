@@ -18,6 +18,7 @@ use crate::goals::AllAtTarget;
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
 use crate::lane_index::LaneIndex;
+use crate::observer::NoOpObserver;
 use crate::scorers::DistanceScorer;
 use crate::traits::MoveGenerator;
 
@@ -307,6 +308,7 @@ impl MoveSolver {
                         &mut f,
                         &ctx,
                         &mut SearchState::default(),
+                        &mut NoOpObserver,
                         max_expansions,
                         None,
                     );
@@ -324,6 +326,7 @@ impl MoveSolver {
                         &mut f,
                         &ctx,
                         &mut SearchState::default(),
+                        &mut NoOpObserver,
                         max_expansions,
                         None,
                     );
@@ -386,6 +389,7 @@ impl MoveSolver {
                 &mut astar_f,
                 &ctx,
                 &mut SearchState::default(),
+                &mut NoOpObserver,
                 max_expansions,
                 max_depth,
             );
@@ -465,6 +469,7 @@ impl MoveSolver {
                     &mut f,
                     ctx,
                     &mut SearchState::default(),
+                    &mut NoOpObserver,
                     max_expansions,
                     None,
                 )
@@ -480,6 +485,7 @@ impl MoveSolver {
                     &mut f,
                     ctx,
                     &mut SearchState::default(),
+                    &mut NoOpObserver,
                     max_expansions,
                     None,
                 )
@@ -495,6 +501,7 @@ impl MoveSolver {
                     &mut f,
                     ctx,
                     &mut SearchState::default(),
+                    &mut NoOpObserver,
                     max_expansions,
                     None,
                 )

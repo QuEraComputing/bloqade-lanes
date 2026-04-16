@@ -14,6 +14,7 @@ use crate::astar::{Expander, SearchResult};
 use crate::config::Config;
 use crate::context::{MoveCandidate, SearchContext, SearchState};
 use crate::graph::{MoveSet, NodeId, SearchGraph};
+use crate::observer::{SearchEvent, SearchObserver};
 use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator};
 
 // ── Frontier trait ──────────────────────────────────────────────────
@@ -444,7 +445,7 @@ impl<H: crate::traits::Heuristic> Frontier for IdsFrontier<H> {
 /// Uses separate [`MoveGenerator`], [`CandidateScorer`], [`CostFn`], and
 /// [`Goal`] traits. The [`Frontier`] controls node ordering and goal-check timing.
 #[allow(clippy::too_many_arguments)]
-pub fn run_search<G, S, C, Go, F>(
+pub fn run_search<G, S, C, Go, F, O>(
     root: Config,
     generator: &G,
     scorer: &S,
@@ -453,6 +454,7 @@ pub fn run_search<G, S, C, Go, F>(
     frontier: &mut F,
     ctx: &SearchContext,
     state: &mut SearchState,
+    observer: &mut O,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
 ) -> SearchResult
@@ -462,6 +464,7 @@ where
     C: CostFn,
     Go: Goal,
     F: Frontier,
+    O: SearchObserver,
 {
     // Early check: root is already a goal.
     if goal.is_goal(&root) {
@@ -505,6 +508,12 @@ where
 
         // Goal check on pop (A* optimality).
         if frontier.check_goal_on_pop() && goal.is_goal(graph.config(node_id)) {
+            observer.on_event(
+                SearchEvent::GoalFound {
+                    depth: graph.depth(node_id),
+                },
+                graph.config(node_id),
+            );
             return SearchResult {
                 goal: Some(node_id),
                 nodes_expanded,
@@ -528,6 +537,14 @@ where
 
         candidates.clear();
         generator.generate(graph.config(node_id), node_id, ctx, state, &mut candidates);
+
+        observer.on_event(
+            SearchEvent::NodeExpanded {
+                depth,
+                num_candidates: candidates.len(),
+            },
+            graph.config(node_id),
+        );
 
         // Sort by scorer (higher = better, so sort descending).
         candidates.sort_by(|a, b| {
@@ -556,6 +573,12 @@ where
             if is_new && !child_closed {
                 // Goal check on generate (BFS/DFS).
                 if frontier.check_goal_on_generate() && goal.is_goal(graph.config(child_id)) {
+                    observer.on_event(
+                        SearchEvent::GoalFound {
+                            depth: graph.depth(child_id),
+                        },
+                        graph.config(child_id),
+                    );
                     return SearchResult {
                         goal: Some(child_id),
                         nodes_expanded,
@@ -928,6 +951,7 @@ mod tests {
         use crate::goals::AllAtTarget;
         use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
         use crate::lane_index::LaneIndex;
+        use crate::observer::NoOpObserver;
         use crate::scorers::DistanceScorer;
         use crate::test_utils::example_arch_json;
         use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
@@ -969,6 +993,7 @@ mod tests {
             &mut frontier,
             &ctx,
             &mut state,
+            &mut NoOpObserver,
             None,
             None,
         );

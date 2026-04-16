@@ -18,6 +18,7 @@ pub mod heuristic;
 pub mod heuristics;
 
 pub mod lane_index;
+pub mod observer;
 pub mod scorers;
 pub mod solve;
 #[cfg(test)]
@@ -33,6 +34,7 @@ pub use goals::{AllAtTarget, PartialPlacementGoal, ZoneGoal};
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
+pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
 pub use scorers::{DistanceScorer, EntropyScorer};
 pub use solve::{InnerStrategy, SolveOptions, Strategy};
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};

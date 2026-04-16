@@ -448,6 +448,7 @@ mod tests {
 
     use super::*;
     use crate::heuristic::DistanceTable;
+    use crate::observer::NoOpObserver;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_index() -> LaneIndex {
@@ -670,6 +671,7 @@ mod tests {
             &mut f,
             &ctx,
             &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(100),
             None,
         );
@@ -713,6 +715,7 @@ mod tests {
             &mut f,
             &ctx,
             &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(1000),
             None,
         );
@@ -778,6 +781,7 @@ mod tests {
             &mut f,
             &ctx,
             &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(500),
             None,
         );
@@ -925,6 +929,7 @@ mod tests {
             &mut f_no_la,
             &ctx,
             &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(1000),
             None,
         );
@@ -939,6 +944,7 @@ mod tests {
             &mut f_la,
             &ctx,
             &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(1000),
             None,
         );

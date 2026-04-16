@@ -309,6 +309,7 @@ impl<'a> HopDistanceHeuristic<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observer::NoOpObserver;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
@@ -490,6 +491,7 @@ mod tests {
             &mut f,
             &ctx,
             &mut SearchState::default(),
+            &mut NoOpObserver,
             Some(1000),
             None,
         );
