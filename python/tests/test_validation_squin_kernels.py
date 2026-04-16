@@ -1,5 +1,5 @@
 import pytest
-from tests._validation_squin_kernels import (
+from _validation_squin_kernels import (
     KernelSpec,
     select_kernels,
 )
