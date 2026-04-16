@@ -449,7 +449,7 @@ impl MoveSolver {
         cost_fn: &UniformCost,
         goal: &AllAtTarget,
         ctx: &SearchContext<'_>,
-        heuristic_fn: impl Fn(&Config) -> f64 + Copy,
+        heuristic_fn: impl crate::traits::Heuristic + Copy,
         max_expansions: Option<u32>,
         weight: f64,
     ) -> SearchResult {

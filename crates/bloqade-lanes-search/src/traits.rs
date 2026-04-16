@@ -43,3 +43,10 @@ pub trait Goal {
 pub trait Heuristic {
     fn estimate(&self, config: &Config) -> f64;
 }
+
+/// Blanket impl: any `Fn(&Config) -> f64` closure satisfies `Heuristic`.
+impl<F: Fn(&Config) -> f64> Heuristic for F {
+    fn estimate(&self, config: &Config) -> f64 {
+        self(config)
+    }
+}

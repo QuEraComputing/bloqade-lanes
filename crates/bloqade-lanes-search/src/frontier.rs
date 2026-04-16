@@ -239,7 +239,7 @@ impl<H> PriorityFrontier<H> {
     }
 }
 
-impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for PriorityFrontier<H> {
+impl<H: crate::traits::Heuristic> Frontier for PriorityFrontier<H> {
     fn select_next(&mut self) -> Option<NodeId> {
         self.heap.pop().map(|e| e.node_id)
     }
@@ -247,7 +247,7 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for PriorityFrontier<H> {
     fn receive_children(&mut self, children: &[NodeId], graph: &SearchGraph) {
         for &child_id in children {
             let g = graph.g_score(child_id);
-            let h = (self.heuristic)(graph.config(child_id));
+            let h = self.heuristic.estimate(graph.config(child_id));
             let f = if self.use_cost {
                 g + self.weight * h
             } else {
@@ -322,7 +322,7 @@ impl<H> DfsFrontier<H> {
     }
 }
 
-impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for DfsFrontier<H> {
+impl<H: crate::traits::Heuristic> Frontier for DfsFrontier<H> {
     fn select_next(&mut self) -> Option<NodeId> {
         self.stack.pop()
     }
@@ -335,7 +335,7 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for DfsFrontier<H> {
         // Best child is pushed last → popped first (LIFO).
         let mut scored: Vec<(f64, NodeId)> = children
             .iter()
-            .map(|&id| ((self.heuristic)(graph.config(id)), id))
+            .map(|&id| (self.heuristic.estimate(graph.config(id)), id))
             .collect();
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
         for (_, id) in scored {
@@ -417,14 +417,14 @@ impl<H> IdsFrontier<H> {
     }
 }
 
-impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for IdsFrontier<H> {
+impl<H: crate::traits::Heuristic> Frontier for IdsFrontier<H> {
     fn select_next(&mut self) -> Option<NodeId> {
         self.heap.pop().map(|e| e.node_id)
     }
 
     fn receive_children(&mut self, children: &[NodeId], graph: &SearchGraph) {
         for &child_id in children {
-            let h = (self.heuristic)(graph.config(child_id));
+            let h = self.heuristic.estimate(graph.config(child_id));
             let depth = graph.depth(child_id);
             self.heap.push(IdsEntry {
                 depth,
