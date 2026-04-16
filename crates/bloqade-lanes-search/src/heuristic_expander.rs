@@ -4,14 +4,13 @@
 //! [`DistanceTable`], then builds a small number of high-quality movesets
 //! per bus group. Independent of entropy-guided search.
 //!
-//! Supports configurable deadlock escape, free-rider policies,
-//! 2-step lookahead scoring, and seeded score perturbation for
-//! restart diversity.
+//! Supports configurable deadlock escape, 2-step lookahead scoring,
+//! and seeded score perturbation for restart diversity.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -30,17 +29,6 @@ pub enum DeadlockPolicy {
     MoveBlockers,
     /// Generate all valid single-lane moves for every qubit in the config.
     AllMoves,
-}
-
-/// Policy for adding non-target ("free rider") qubits to movesets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FreeRiderPolicy {
-    /// Never add free riders.
-    Off,
-    /// Add free riders only if they unblock an improving move.
-    Unblock,
-    /// Add free riders if they unblock or improve their own distance.
-    UnblockOrImprove,
 }
 
 /// Heuristic move generator that produces a small number of high-quality
@@ -64,12 +52,12 @@ pub struct HeuristicExpander<'a> {
     dist_table: &'a DistanceTable,
     /// Top bus options to keep per qubit.
     top_c: usize,
-    /// Max movesets to generate per bus group.
+    /// Max movesets to generate per bus group (unused by AOD grid construction,
+    /// retained because it is passed through from SolveOptions and used by entropy).
+    #[allow(dead_code)]
     max_movesets_per_group: usize,
     /// Policy for deadlock escape.
     deadlock_policy: DeadlockPolicy,
-    /// Policy for free-rider qubits.
-    free_rider_policy: FreeRiderPolicy,
     /// Enable 2-step lookahead scoring.
     lookahead: bool,
     /// Seed for score perturbation RNG (restart diversity).
@@ -95,7 +83,6 @@ impl<'a> HeuristicExpander<'a> {
             top_c,
             max_movesets_per_group,
             deadlock_policy: DeadlockPolicy::AllMoves,
-            free_rider_policy: FreeRiderPolicy::Off,
             lookahead: false,
             seed: 0,
             deadlock_count: Cell::new(0),
@@ -105,12 +92,6 @@ impl<'a> HeuristicExpander<'a> {
     /// Set the deadlock escape policy.
     pub fn with_deadlock_policy(mut self, policy: DeadlockPolicy) -> Self {
         self.deadlock_policy = policy;
-        self
-    }
-
-    /// Set the free-rider policy.
-    pub fn with_free_rider_policy(mut self, policy: FreeRiderPolicy) -> Self {
-        self.free_rider_policy = policy;
         self
     }
 
@@ -294,75 +275,64 @@ impl Expander for HeuristicExpander<'_> {
             groups.entry(key).or_default().push(triple);
         }
 
-        // Step 5: per group, generate multiple movesets.
+        // Step 5: per group, build AOD-compatible rectangular grids.
         let mut candidates: Vec<(i32, MoveSet, Config)> = Vec::new();
 
-        // Collect unresolved qubit IDs for free-rider filtering.
-        let unresolved_ids: HashSet<u32> = unresolved.iter().map(|&(qid, _, _)| qid).collect();
+        for ((mt_u8, bus_id, zone_id, dir_u8), qubits) in groups {
+            // Reconstruct typed triplet from u8 discriminants.
+            let mt = match mt_u8 {
+                x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
+                x if x == MoveType::WordBus as u8 => MoveType::WordBus,
+                x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
+                _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
+            };
+            let dir = match dir_u8 {
+                x if x == Direction::Forward as u8 => Direction::Forward,
+                x if x == Direction::Backward as u8 => Direction::Backward,
+                _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
+            };
 
-        for ((mt_u8, bus_id, zone_id, dir_u8), mut qubits) in groups {
-            // Sort by score descending.
-            qubits.sort_by(|a, b| b.score.cmp(&a.score));
+            // Build grid context from ALL lanes on this bus group.
+            let grid_ctx = crate::aod_grid::BusGridContext::new(
+                self.index, mt, bus_id, zone_id, dir, &occupied,
+            );
 
-            let n = qubits.len().min(self.max_movesets_per_group);
+            // Build entries (src_encoded → lane_encoded) and a lane → triple lookup.
+            // Each source location has at most one atom, so no overwrites occur.
+            let mut entries: HashMap<u64, u64> = HashMap::new();
+            let mut triple_by_lane: HashMap<u64, &ScoredTriple> = HashMap::new();
 
-            for start in 0..n {
-                let mut lanes: Vec<u64> = Vec::new();
-                let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
-                let mut used_dsts: HashSet<u64> = HashSet::new();
+            for t in &qubits {
+                let lane = LaneAddr::decode_u64(t.lane_encoded);
+                if let Some((src, _)) = self.index.endpoints(&lane) {
+                    let src_enc = src.encode();
+                    entries.insert(src_enc, t.lane_encoded);
+                    triple_by_lane.insert(t.lane_encoded, t);
+                }
+            }
+
+            // Build rectangular grids via two-phase algorithm.
+            // Every grid lane has a corresponding triple because `is_valid_rect`
+            // requires all grid positions to be in the movers set (derived from entries).
+            let grids = grid_ctx.build_aod_grids(&entries);
+
+            for grid_lanes in grids {
                 let mut total_score: i32 = 0;
+                let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
 
-                // Greedy: start from `start`, then add remaining in order.
-                let order: Vec<usize> = (start..qubits.len()).chain(0..start).collect();
-
-                for &idx in &order {
-                    let t = &qubits[idx];
-                    if used_dsts.contains(&t.dst_encoded) {
-                        continue;
+                for &lane_enc in &grid_lanes {
+                    if let Some(t) = triple_by_lane.get(&lane_enc) {
+                        total_score += t.score;
+                        let dst = LocationAddr::decode(t.dst_encoded);
+                        moves.push((t.qubit_id, dst));
                     }
-                    if occupied.contains(&t.dst_encoded) {
-                        continue;
-                    }
-                    lanes.push(t.lane_encoded);
-                    used_dsts.insert(t.dst_encoded);
-                    total_score += t.score;
-
-                    let dst = LocationAddr::decode(t.dst_encoded);
-                    moves.push((t.qubit_id, dst));
                 }
 
-                // Free-rider augmentation: add non-target qubits sharing
-                // the same bus triplet that unblock or improve.
-                if self.free_rider_policy != FreeRiderPolicy::Off && !moves.is_empty() {
-                    // Reconstruct typed triplet for bus-group filtering.
-                    let mt = match mt_u8 {
-                        x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
-                        x if x == MoveType::WordBus as u8 => MoveType::WordBus,
-                        x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
-                        _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
-                    };
-                    let dir = match dir_u8 {
-                        x if x == Direction::Forward as u8 => Direction::Forward,
-                        x if x == Direction::Backward as u8 => Direction::Backward,
-                        _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
-                    };
-                    self.add_free_riders(
-                        config,
-                        &occupied,
-                        &unresolved_ids,
-                        &mut lanes,
-                        &mut moves,
-                        &mut used_dsts,
-                        &mut total_score,
-                        (mt, bus_id, zone_id, dir),
-                    );
-                }
-
-                if lanes.is_empty() {
+                if moves.is_empty() {
                     continue;
                 }
 
-                let move_set = MoveSet::from_encoded(lanes);
+                let move_set = MoveSet::from_encoded(grid_lanes);
                 let new_config = config.with_moves(&moves);
 
                 // Deduplicate: skip if we already have this exact moveset.
@@ -458,87 +428,6 @@ impl HeuristicExpander<'_> {
                 let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
                 let new_cfg = config.with_moves(&[(qid, dst)]);
                 out.push((ms, new_cfg, 1.0));
-            }
-        }
-    }
-
-    /// Add free-rider qubits to a moveset.
-    ///
-    /// Scans non-target qubits for available moves on the same bus group.
-    /// Depending on the policy, adds them if they unblock or improve.
-    /// Only considers lanes matching the given `(move_type, bus_id, zone_id, direction)` triplet.
-    #[allow(clippy::too_many_arguments)]
-    fn add_free_riders(
-        &self,
-        config: &Config,
-        occupied: &HashSet<u64>,
-        unresolved_ids: &HashSet<u32>,
-        lanes: &mut Vec<u64>,
-        moves: &mut Vec<(u32, LocationAddr)>,
-        used_dsts: &mut HashSet<u64>,
-        _total_score: &mut i32,
-        triplet: (MoveType, u32, u32, Direction),
-    ) {
-        // Collect the target locations of unresolved qubits so we can
-        // check if a free rider unblocks one.
-        let target_locs: HashSet<u64> = self.targets.iter().map(|&(_, t)| t).collect();
-
-        for (qid, loc) in config.iter() {
-            // Skip qubits that are unresolved targets (already handled).
-            if unresolved_ids.contains(&qid) {
-                continue;
-            }
-
-            let loc_enc = loc.encode();
-
-            let (req_mt, req_bus, req_zone, req_dir) = triplet;
-            for &lane in self.index.lanes_for(req_mt, req_bus, req_zone, req_dir) {
-                // Only consider lanes originating from this qubit's location.
-                let Some((src, dst)) = self.index.endpoints(&lane) else {
-                    continue;
-                };
-                if src != loc {
-                    continue;
-                }
-                let dst_enc = dst.encode();
-                if occupied.contains(&dst_enc) || used_dsts.contains(&dst_enc) {
-                    continue;
-                }
-
-                let should_add = match self.free_rider_policy {
-                    FreeRiderPolicy::Off => false,
-                    FreeRiderPolicy::Unblock => {
-                        // Add only if the qubit is sitting on a target location.
-                        target_locs.contains(&loc_enc)
-                    }
-                    FreeRiderPolicy::UnblockOrImprove => {
-                        // Add if unblocking OR if the qubit has its own target
-                        // and the move improves distance.
-                        if target_locs.contains(&loc_enc) {
-                            true
-                        } else {
-                            // Check if this qubit has a target and the move helps.
-                            self.targets.iter().any(|&(tq, t_enc)| {
-                                if tq != qid {
-                                    return false;
-                                }
-                                let d_now =
-                                    self.dist_table.distance(loc_enc, t_enc).unwrap_or(u32::MAX);
-                                let d_after =
-                                    self.dist_table.distance(dst_enc, t_enc).unwrap_or(u32::MAX);
-                                d_after < d_now
-                            })
-                        }
-                    }
-                };
-
-                if should_add {
-                    lanes.push(lane.encode_u64());
-                    used_dsts.insert(dst_enc);
-                    moves.push((qid, dst));
-                    // Free riders don't contribute to score (they're bonus).
-                    break; // One free-rider move per qubit.
-                }
             }
         }
     }
@@ -978,53 +867,5 @@ mod tests {
         for (a, b) in out1.iter().zip(out2.iter()) {
             assert_eq!(a.0, b.0); // same MoveSet
         }
-    }
-
-    // ── Free rider tests ──
-
-    #[test]
-    fn free_rider_off_does_not_add_extras() {
-        let index = make_index();
-        // q0 targets site 5, q1 (non-target) at site 1.
-        let targets = [(0, loc(0, 5))];
-        let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
-
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
-            .with_free_rider_policy(FreeRiderPolicy::Off);
-
-        let mut out = Vec::new();
-        exp.expand(&config, &mut out);
-
-        // With Off policy, q1 should not move in any candidate.
-        for (_, cfg, _) in &out {
-            assert_eq!(
-                cfg.location_of(1),
-                Some(loc(0, 1)),
-                "free rider q1 should not move with Off policy"
-            );
-        }
-    }
-
-    #[test]
-    fn free_rider_unblock_moves_blockers() {
-        let index = make_index();
-        // q0 at site 0 targets site 5.
-        // q1 at site 5 (non-target, blocking q0's destination).
-        // With Unblock policy, q1 should be moved out of the way.
-        let targets = [(0, loc(0, 5))];
-        let table = make_table(&targets, &index);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
-
-        let exp = HeuristicExpander::new(&index, std::iter::empty(), targets, &table, 3, 3)
-            .with_free_rider_policy(FreeRiderPolicy::Unblock);
-
-        let mut out = Vec::new();
-        exp.expand(&config, &mut out);
-
-        // The expander should produce candidates. q1 at site 5 sits on
-        // q0's target, so it may get moved as a free rider if it shares
-        // the same bus group. The deadlock escape also applies.
-        assert!(!out.is_empty());
     }
 }

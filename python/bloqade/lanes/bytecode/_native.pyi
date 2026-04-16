@@ -918,7 +918,6 @@ class MoveSolver:
         max_movesets_per_group: int = 3,
         weight: float = 1.0,
         restarts: int = 1,
-        free_riders: Literal["off", "unblock", "unblock_or_improve"] = "off",
         lookahead: bool = False,
         deadlock_policy: Literal["skip", "move_blockers"] = "skip",
         w_t: float = 0.05,
@@ -935,7 +934,6 @@ class MoveSolver:
             max_movesets_per_group: Max movesets per bus group.
             weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
             restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
-            free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
             lookahead: Enable 2-step lookahead scoring.
             deadlock_policy: Deadlock handling: "skip" or "move_blockers".
             w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).

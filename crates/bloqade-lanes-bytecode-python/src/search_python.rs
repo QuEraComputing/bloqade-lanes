@@ -8,7 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy};
+use bloqade_lanes_search::heuristic_expander::DeadlockPolicy;
 use bloqade_lanes_search::solve::{
     InnerStrategy, MoveSolver, SolveOptions, SolveResult, SolveStatus, Strategy,
 };
@@ -157,14 +157,13 @@ impl PyMoveSolver {
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
     ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
-    ///     free_riders: Free rider policy: "off", "unblock", "unblock_or_improve".
     ///     lookahead: Enable 2-step lookahead scoring.
     ///     deadlock_policy: Deadlock handling: "skip" or "move_blockers".
     ///     w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only). Affects entropy strategy.
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, free_riders="off", lookahead=false, deadlock_policy="skip", w_t=0.05))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -178,7 +177,6 @@ impl PyMoveSolver {
         max_movesets_per_group: usize,
         weight: f64,
         restarts: u32,
-        free_riders: &str,
         lookahead: bool,
         deadlock_policy: &str,
         w_t: f64,
@@ -255,17 +253,6 @@ impl PyMoveSolver {
             }
         };
 
-        let fr_policy = match free_riders {
-            "off" => FreeRiderPolicy::Off,
-            "unblock" => FreeRiderPolicy::Unblock,
-            "unblock_or_improve" => FreeRiderPolicy::UnblockOrImprove,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown free_riders '{free_riders}', expected: off, unblock, unblock_or_improve"
-                )));
-            }
-        };
-
         let dl_policy = match deadlock_policy {
             "skip" => DeadlockPolicy::Skip,
             "move_blockers" => DeadlockPolicy::MoveBlockers,
@@ -294,7 +281,6 @@ impl PyMoveSolver {
             max_movesets_per_group,
             weight,
             restarts,
-            free_rider_policy: fr_policy,
             lookahead,
             deadlock_policy: dl_policy,
             w_t,

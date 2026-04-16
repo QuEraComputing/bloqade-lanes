@@ -155,9 +155,9 @@ class RustPlacementTraversal:
     """Config for the Rust MoveSolver — bypasses ConfigurationTree entirely.
 
     Note: The Rust ``MoveSolver.solve()`` accepts additional tuning parameters
-    (weight, restarts, free_riders, lookahead, deadlock_policy, w_t) that are
-    not yet exposed here; Rust defaults are used. These will be threaded
-    through once the parameters are validated via Rust-only benchmarking.
+    (weight, restarts, lookahead, deadlock_policy, w_t) that are not yet
+    exposed here; Rust defaults are used. These will be threaded through
+    once the parameters are validated via Rust-only benchmarking.
     """
 
     strategy: Literal[

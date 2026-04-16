@@ -12,7 +12,7 @@ use crate::config::{Config, ConfigError};
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-use crate::heuristic_expander::{DeadlockPolicy, FreeRiderPolicy, HeuristicExpander};
+use crate::heuristic_expander::{DeadlockPolicy, HeuristicExpander};
 use crate::lane_index::LaneIndex;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
@@ -98,8 +98,6 @@ pub struct SolveOptions {
     pub weight: f64,
     /// Number of parallel restarts with perturbed scoring (1 = no restarts).
     pub restarts: u32,
-    /// Policy for free-rider qubits.
-    pub free_rider_policy: FreeRiderPolicy,
     /// Enable 2-step lookahead scoring.
     pub lookahead: bool,
     /// How to handle deadlocks (no improving moves).
@@ -116,7 +114,6 @@ impl Default for SolveOptions {
             max_movesets_per_group: 3,
             weight: 1.0,
             restarts: 1,
-            free_rider_policy: FreeRiderPolicy::Off,
             lookahead: false,
             deadlock_policy: DeadlockPolicy::Skip,
             w_t: 0.05,
@@ -196,7 +193,6 @@ impl MoveSolver {
             max_movesets_per_group,
             weight,
             restarts,
-            free_rider_policy,
             lookahead,
             deadlock_policy,
             w_t,
@@ -240,7 +236,6 @@ impl MoveSolver {
                 max_movesets_per_group,
             )
             .with_deadlock_policy(policy)
-            .with_free_rider_policy(free_rider_policy)
             .with_lookahead(lookahead)
             .with_seed(seed)
         };
