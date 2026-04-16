@@ -9,11 +9,17 @@ use rayon::prelude::*;
 
 use crate::astar::SearchResult;
 use crate::config::{Config, ConfigError};
+use crate::context::{SearchContext, SearchState};
+use crate::cost::UniformCost;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
+use crate::generators::HeuristicGenerator;
+use crate::goals::AllAtTarget;
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-use crate::heuristic_expander::{DeadlockPolicy, HeuristicExpander};
+use crate::heuristic_expander::DeadlockPolicy;
 use crate::lane_index::LaneIndex;
+use crate::scorers::DistanceScorer;
+use crate::traits::MoveGenerator;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,9 +231,22 @@ impl MoveSolver {
         let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
         let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
 
-        // Build an expander with the given seed and deadlock policy.
-        let make_expander = |seed: u64, policy: DeadlockPolicy| {
-            HeuristicExpander::new(
+        // Build trait objects for the v2 search API.
+        let goal_obj = AllAtTarget::new(&target_encoded);
+        let scorer = DistanceScorer;
+        let cost_fn = UniformCost;
+        let blocked_encoded: std::collections::HashSet<u64> =
+            blocked_locs.iter().map(|l| l.encode()).collect();
+        let ctx = SearchContext {
+            index: &self.index,
+            dist_table: &dist_table,
+            blocked: &blocked_encoded,
+            targets: &target_encoded,
+        };
+
+        // Build a generator with the given seed and deadlock policy.
+        let make_generator = |seed: u64, policy: DeadlockPolicy| {
+            HeuristicGenerator::new(
                 &self.index,
                 blocked_locs.iter().copied(),
                 target_pairs.iter().copied(),
@@ -275,10 +294,6 @@ impl MoveSolver {
             }
         };
 
-        // Pre-compute blocked set for entropy (avoids per-restart allocation).
-        let blocked_encoded: std::collections::HashSet<u64> =
-            blocked_locs.iter().map(|l| l.encode()).collect();
-
         // Helper: pick best result (prefer solved, then lowest cost).
         let pick_best = |results: Vec<SolveResult>| -> SolveResult {
             results
@@ -295,30 +310,38 @@ impl MoveSolver {
         let run_inner = |inner: InnerStrategy, seed: u64| -> SolveResult {
             match inner {
                 InnerStrategy::Ids => {
-                    let expander = make_expander(seed, deadlock_policy);
+                    let move_gen = make_generator(seed, deadlock_policy);
                     let mut f = IdsFrontier::new(h_sum);
-                    let result = frontier::run_search(
+                    let result = frontier::run_search_v2(
                         root.clone(),
-                        goal,
-                        &expander,
+                        &move_gen,
+                        &scorer,
+                        &cost_fn,
+                        &goal_obj,
                         &mut f,
+                        &ctx,
+                        &mut SearchState::default(),
                         max_expansions,
                         None,
                     );
-                    extract(result, expander.deadlock_count(), max_expansions)
+                    extract(result, move_gen.deadlock_count(), max_expansions)
                 }
                 InnerStrategy::Dfs => {
-                    let expander = make_expander(seed, deadlock_policy);
+                    let move_gen = make_generator(seed, deadlock_policy);
                     let mut f = DfsFrontier::new(h_sum);
-                    let result = frontier::run_search(
+                    let result = frontier::run_search_v2(
                         root.clone(),
-                        goal,
-                        &expander,
+                        &move_gen,
+                        &scorer,
+                        &cost_fn,
+                        &goal_obj,
                         &mut f,
+                        &ctx,
+                        &mut SearchState::default(),
                         max_expansions,
                         None,
                     );
-                    extract(result, expander.deadlock_count(), max_expansions)
+                    extract(result, move_gen.deadlock_count(), max_expansions)
                 }
                 InnerStrategy::Entropy => {
                     let entropy_params = crate::entropy::EntropyParams {
@@ -369,19 +392,23 @@ impl MoveSolver {
 
             // Phase 2: single weighted A* bounded by inner cost.
             let max_depth = Some(inner_result.cost.ceil() as u32);
-            let astar_expander = make_expander(0, DeadlockPolicy::MoveBlockers);
+            let astar_move_gen = make_generator(0, DeadlockPolicy::MoveBlockers);
             let mut astar_f = PriorityFrontier::astar(h_max, weight);
-            let astar_result = frontier::run_search(
+            let astar_result = frontier::run_search_v2(
                 root.clone(),
-                goal,
-                &astar_expander,
+                &astar_move_gen,
+                &scorer,
+                &cost_fn,
+                &goal_obj,
                 &mut astar_f,
+                &ctx,
+                &mut SearchState::default(),
                 max_expansions,
                 max_depth,
             );
             let astar_solve = extract(
                 astar_result,
-                astar_expander.deadlock_count(),
+                astar_move_gen.deadlock_count(),
                 max_expansions,
             );
 
@@ -400,17 +427,20 @@ impl MoveSolver {
                 Strategy::Ids => run_inner(InnerStrategy::Ids, seed),
                 Strategy::HeuristicDfs => run_inner(InnerStrategy::Dfs, seed),
                 _ => {
-                    let expander = make_expander(seed, DeadlockPolicy::MoveBlockers);
-                    let result = Self::run_strategy(
+                    let move_gen = make_generator(seed, DeadlockPolicy::MoveBlockers);
+                    let result = Self::run_strategy_v2(
                         strategy,
                         root.clone(),
-                        goal,
+                        &move_gen,
+                        &scorer,
+                        &cost_fn,
+                        &goal_obj,
+                        &ctx,
                         h_max,
-                        &expander,
                         max_expansions,
                         weight,
                     );
-                    extract(result, expander.deadlock_count(), max_expansions)
+                    extract(result, move_gen.deadlock_count(), max_expansions)
                 }
             }
         };
@@ -426,31 +456,68 @@ impl MoveSolver {
         }
     }
 
-    /// Dispatch to the appropriate search strategy.
-    fn run_strategy(
+    /// Dispatch to the appropriate frontier-based search strategy (v2 trait API).
+    #[allow(clippy::too_many_arguments)]
+    fn run_strategy_v2(
         strategy: Strategy,
         root: Config,
-        goal: impl Fn(&Config) -> bool + Copy,
+        generator: &HeuristicGenerator<'_>,
+        scorer: &DistanceScorer,
+        cost_fn: &UniformCost,
+        goal: &AllAtTarget,
+        ctx: &SearchContext<'_>,
         heuristic_fn: impl Fn(&Config) -> f64 + Copy,
-        expander: &HeuristicExpander<'_>,
         max_expansions: Option<u32>,
         weight: f64,
     ) -> SearchResult {
         match strategy {
             Strategy::AStar => {
                 let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
+                frontier::run_search_v2(
+                    root,
+                    generator,
+                    scorer,
+                    cost_fn,
+                    goal,
+                    &mut f,
+                    ctx,
+                    &mut SearchState::default(),
+                    max_expansions,
+                    None,
+                )
             }
             Strategy::Bfs => {
                 let mut f = BfsFrontier::new();
-                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
+                frontier::run_search_v2(
+                    root,
+                    generator,
+                    scorer,
+                    cost_fn,
+                    goal,
+                    &mut f,
+                    ctx,
+                    &mut SearchState::default(),
+                    max_expansions,
+                    None,
+                )
             }
             Strategy::GreedyBestFirst => {
                 let mut f = PriorityFrontier::greedy(heuristic_fn);
-                frontier::run_search(root, goal, expander, &mut f, max_expansions, None)
+                frontier::run_search_v2(
+                    root,
+                    generator,
+                    scorer,
+                    cost_fn,
+                    goal,
+                    &mut f,
+                    ctx,
+                    &mut SearchState::default(),
+                    max_expansions,
+                    None,
+                )
             }
             _ => {
-                unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy")
+                unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
             }
         }
     }
