@@ -20,9 +20,11 @@ use rand::{Rng, SeedableRng};
 
 use crate::astar::SearchResult;
 use crate::config::Config;
+use crate::context::SearchContext;
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
+use crate::traits::Goal;
 
 // ── Parameters ─────────────────────────────────────────────────────
 
@@ -133,12 +135,13 @@ pub(crate) fn generate_candidates(
     config: &Config,
     entropy: u32,
     params: &EntropyParams,
-    index: &LaneIndex,
-    dist_table: &DistanceTable,
-    targets: &[(u32, u64)], // (qid, encoded_target)
-    blocked: &HashSet<u64>,
+    ctx: &SearchContext,
     seed: u64,
 ) -> Vec<(MoveSet, Config, f64)> {
+    let index = ctx.index;
+    let dist_table = ctx.dist_table;
+    let targets = ctx.targets;
+    let blocked = ctx.blocked;
     let mut rng = if seed != 0 {
         Some(SmallRng::seed_from_u64(
             seed ^ {
@@ -371,9 +374,7 @@ pub(crate) fn generate_candidates(
     let mut scored: Vec<(f64, MoveSet, Config)> = candidates
         .into_iter()
         .map(|(_raw_score, ms, new_cfg)| {
-            let ms_score = score_moveset(
-                config, &new_cfg, targets, dist_table, &occupied, blocked, index, params,
-            );
+            let ms_score = score_moveset(config, &new_cfg, &occupied, ctx, params);
             let ms_perturbation = rng.as_mut().map_or(0.0, |r| r.random_range(-0.5..0.5));
             (ms_score + ms_perturbation, ms, new_cfg)
         })
@@ -387,17 +388,17 @@ pub(crate) fn generate_candidates(
 }
 
 /// Score a moveset: `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
-#[allow(clippy::too_many_arguments)]
-fn score_moveset(
+pub(crate) fn score_moveset(
     old_config: &Config,
     new_config: &Config,
-    targets: &[(u32, u64)],
-    dist_table: &DistanceTable,
     occupied: &HashSet<u64>,
-    blocked: &HashSet<u64>,
-    index: &LaneIndex,
+    ctx: &SearchContext,
     params: &EntropyParams,
 ) -> f64 {
+    let targets = ctx.targets;
+    let dist_table = ctx.dist_table;
+    let blocked = ctx.blocked;
+    let index = ctx.index;
     let mut new_occupied: HashSet<u64> = new_config.iter().map(|(_, loc)| loc.encode()).collect();
     new_occupied.extend(blocked);
 
@@ -529,11 +530,12 @@ fn find_path_occupied(
 fn sequential_fallback(
     graph: &mut SearchGraph,
     start: NodeId,
-    targets: &[(u32, u64)],
-    index: &LaneIndex,
-    blocked: &HashSet<u64>,
-    goal: &impl Fn(&Config) -> bool,
+    ctx: &SearchContext,
+    goal: &impl Goal,
 ) -> (Option<NodeId>, u32) {
+    let targets = ctx.targets;
+    let index = ctx.index;
+    let blocked = ctx.blocked;
     let mut current = start;
     let mut nodes_expanded: u32 = 0;
 
@@ -594,7 +596,7 @@ fn sequential_fallback(
         }
     }
 
-    if goal(graph.config(current)) {
+    if goal.is_goal(graph.config(current)) {
         (Some(current), nodes_expanded)
     } else {
         (None, nodes_expanded)
@@ -607,21 +609,17 @@ fn sequential_fallback(
 ///
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
-#[allow(clippy::too_many_arguments)]
 pub fn entropy_search(
     root: Config,
-    goal: impl Fn(&Config) -> bool,
+    goal: &impl Goal,
     params: &EntropyParams,
-    index: &LaneIndex,
-    dist_table: &DistanceTable,
-    targets: &[(u32, u64)],
-    blocked: &HashSet<u64>,
+    ctx: &SearchContext,
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
     seed: u64,
 ) -> SearchResult {
     // Early check.
-    if goal(&root) {
+    if goal.is_goal(&root) {
         let graph = SearchGraph::new(root);
         return SearchResult {
             goal: Some(graph.root()),
@@ -641,7 +639,7 @@ pub fn entropy_search(
 
     // Safety cap: hard iteration limit prevents infinite loops when
     // max_expansions is None and the search gets stuck in reversion cycles.
-    let hard_limit = max_expansions.unwrap_or(index.num_locations() as u32 * 10);
+    let hard_limit = max_expansions.unwrap_or(ctx.index.num_locations() as u32 * 10);
     let mut iterations: u32 = 0;
 
     loop {
@@ -673,8 +671,7 @@ pub fn entropy_search(
             let ancestor_es = entropy_map.entry(ancestor).or_default();
             if ancestor == root_id && ancestor_es.entropy >= params.e_max {
                 // Sequential fallback from root.
-                let (goal_id, fb_expanded) =
-                    sequential_fallback(&mut graph, root_id, targets, index, blocked, &goal);
+                let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
                 nodes_expanded += fb_expanded;
                 if let Some(gid) = goal_id {
                     found_goals.push(gid);
@@ -688,17 +685,7 @@ pub fn entropy_search(
         }
 
         // CANDIDATE SELECTION.
-        let candidate = get_next_candidate(
-            &mut entropy_map,
-            current,
-            params,
-            index,
-            dist_table,
-            targets,
-            blocked,
-            &graph,
-            seed,
-        );
+        let candidate = get_next_candidate(&mut entropy_map, current, params, ctx, &graph, seed);
 
         let Some((move_set, new_config, cost)) = candidate else {
             // No candidates available — bump entropy.
@@ -727,7 +714,7 @@ pub fn entropy_search(
         nodes_expanded += 1;
         max_depth_seen = max_depth_seen.max(graph.depth(child_id));
 
-        if goal(graph.config(child_id)) {
+        if goal.is_goal(graph.config(child_id)) {
             found_goals.push(child_id);
             if found_goals.len() >= params.max_goal_candidates {
                 break;
@@ -751,15 +738,11 @@ pub fn entropy_search(
 }
 
 /// Get the next untried candidate from the cache, regenerating if needed.
-#[allow(clippy::too_many_arguments)]
 fn get_next_candidate(
     entropy_map: &mut HashMap<NodeId, EntropyState>,
     node_id: NodeId,
     params: &EntropyParams,
-    index: &LaneIndex,
-    dist_table: &DistanceTable,
-    targets: &[(u32, u64)],
-    blocked: &HashSet<u64>,
+    ctx: &SearchContext,
     graph: &SearchGraph,
     seed: u64,
 ) -> Option<(MoveSet, Config, f64)> {
@@ -768,9 +751,7 @@ fn get_next_candidate(
 
     // Regenerate if we've exhausted max_candidates from current cache.
     if es.candidates_tried >= params.max_candidates || es.candidate_cache.is_empty() {
-        es.candidate_cache = generate_candidates(
-            config, es.entropy, params, index, dist_table, targets, blocked, seed,
-        );
+        es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
         es.candidates_tried = 0;
     }
 
@@ -786,9 +767,7 @@ fn get_next_candidate(
     }
 
     // All cached candidates already tried — regenerate and try again.
-    es.candidate_cache = generate_candidates(
-        config, es.entropy, params, index, dist_table, targets, blocked, seed,
-    );
+    es.candidate_cache = generate_candidates(config, es.entropy, params, ctx, seed);
     es.candidates_tried = 0;
 
     while es.candidates_tried < es.candidate_cache.len() {
@@ -850,19 +829,19 @@ mod tests {
             target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
         let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
         let dist_table = DistanceTable::new(&target_locs, &index);
-        let goal = |config: &Config| -> bool {
-            target_encoded
-                .iter()
-                .all(|&(qid, t)| config.location_of(qid).is_some_and(|l| l.encode() == t))
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
         };
         entropy_search(
             root,
-            goal,
+            &goal,
             &EntropyParams::default(),
-            &index,
-            &dist_table,
-            &target_encoded,
-            &HashSet::new(),
+            &ctx,
             max_expansions,
             None,
             0,

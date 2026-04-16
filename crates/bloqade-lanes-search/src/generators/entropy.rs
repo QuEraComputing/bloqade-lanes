@@ -34,16 +34,8 @@ impl MoveGenerator for EntropyGenerator {
         // Read entropy for this node (default 1 if not yet in map).
         let entropy = state.entropy_map.get(&node_id).map_or(1, |s| s.entropy);
 
-        let raw = crate::entropy::generate_candidates(
-            config,
-            entropy,
-            &self.params,
-            ctx.index,
-            ctx.dist_table,
-            ctx.targets,
-            ctx.blocked,
-            self.seed,
-        );
+        let raw =
+            crate::entropy::generate_candidates(config, entropy, &self.params, ctx, self.seed);
 
         for (move_set, new_config, _cost) in raw {
             out.push(MoveCandidate {

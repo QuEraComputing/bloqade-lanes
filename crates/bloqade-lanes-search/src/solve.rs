@@ -211,13 +211,6 @@ impl MoveSolver {
         // Build goal predicate.
         let target_encoded: Vec<(u32, u64)> =
             target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
-        let goal = |config: &Config| -> bool {
-            target_encoded.iter().all(|&(qid, target_enc)| {
-                config
-                    .location_of(qid)
-                    .is_some_and(|l| l.encode() == target_enc)
-            })
-        };
 
         // Build distance table and heuristic (shared across restarts).
         let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
@@ -346,12 +339,9 @@ impl MoveSolver {
                     };
                     let result = crate::entropy::entropy_search(
                         root.clone(),
-                        goal,
+                        &goal_obj,
                         &entropy_params,
-                        &self.index,
-                        &dist_table,
-                        &target_encoded,
-                        &blocked_encoded,
+                        &ctx,
                         max_expansions,
                         None,
                         seed,
