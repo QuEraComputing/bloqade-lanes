@@ -12,6 +12,7 @@ from benchmarks.harness.output import CSV_COLUMNS
 BenchmarkKey = tuple[str, str]
 
 WALL_TIME_TOLERANCE_RATIO = 1.0
+FLOAT_COMPARE_DECIMALS = 6
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,7 @@ def _compare_rows(
         baseline=baseline.estimated_fidelity,
         current=current.estimated_fidelity,
         lower_is_better=False,
+        float_compare_decimals=FLOAT_COMPARE_DECIMALS,
     )
     _add_numeric_delta(
         diffs,
@@ -283,6 +285,12 @@ def _add_time_diff(
             current,
         )
         return
+    baseline_rounded = _round_float_for_compare(
+        baseline, decimals=FLOAT_COMPARE_DECIMALS
+    )
+    current_rounded = _round_float_for_compare(current, decimals=FLOAT_COMPARE_DECIMALS)
+    if baseline_rounded == current_rounded:
+        return
     delta = current - baseline
     allowed_delta = abs(baseline) * wall_time_tolerance_ratio
     if abs(delta) <= allowed_delta:
@@ -309,11 +317,19 @@ def _add_numeric_delta(
     baseline: int | float | None,
     current: int | float | None,
     lower_is_better: bool,
+    float_compare_decimals: int | None = None,
 ) -> None:
     if baseline is None or current is None:
         _add_strict_diff(diffs, case_id, strategy_id, field, baseline, current)
         return
-    if baseline == current:
+    baseline_cmp = baseline
+    current_cmp = current
+    if float_compare_decimals is not None:
+        baseline_cmp = _round_float_for_compare(
+            baseline, decimals=float_compare_decimals
+        )
+        current_cmp = _round_float_for_compare(current, decimals=float_compare_decimals)
+    if baseline_cmp == current_cmp:
         return
     if lower_is_better:
         kind = "degraded" if current > baseline else "improved"
@@ -329,6 +345,10 @@ def _add_numeric_delta(
             kind=kind,
         )
     )
+
+
+def _round_float_for_compare(value: int | float, *, decimals: int) -> float:
+    return round(float(value), decimals)
 
 
 def _parse_row(raw: dict[str, str]) -> BenchmarkRow:
