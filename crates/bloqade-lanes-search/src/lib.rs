@@ -10,7 +10,6 @@ pub mod context;
 pub mod cost;
 
 pub mod entropy;
-pub mod expander;
 pub mod frontier;
 pub mod generators;
 pub mod goals;

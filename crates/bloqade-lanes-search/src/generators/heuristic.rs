@@ -476,15 +476,14 @@ mod tests {
 
     #[test]
     fn fewer_candidates_than_exhaustive() {
-        use crate::astar::Expander;
-        use crate::expander::ExhaustiveExpander;
+        use crate::generators::exhaustive::ExhaustiveGenerator;
 
         let index = make_index();
         let targets = [(0, loc(0, 5)), (1, loc(0, 6))];
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
-        // New generator path.
+        // Heuristic generator path.
         let generator = HeuristicGenerator::new(3);
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
@@ -494,10 +493,10 @@ mod tests {
         let mut heuristic_out = Vec::new();
         generator.generate(&config, NodeId(0), &ctx, &mut state, &mut heuristic_out);
 
-        // Exhaustive expander (legacy, still exists).
+        // Exhaustive generator for comparison.
+        let exhaustive = ExhaustiveGenerator::new(None, None);
         let mut exhaustive_out = Vec::new();
-        let e_exp = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
-        e_exp.expand(&config, &mut exhaustive_out);
+        exhaustive.generate(&config, NodeId(0), &ctx, &mut state, &mut exhaustive_out);
 
         assert!(
             heuristic_out.len() < exhaustive_out.len(),

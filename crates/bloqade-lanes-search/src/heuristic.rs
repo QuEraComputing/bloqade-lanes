@@ -446,25 +446,52 @@ mod tests {
 
     #[test]
     fn hop_admissible_vs_actual() {
-        use crate::astar::astar;
-        use crate::expander::ExhaustiveExpander;
+        use std::collections::HashSet;
+
+        use crate::context::{SearchContext, SearchState};
+        use crate::cost::UniformCost;
+        use crate::frontier::{self, PriorityFrontier};
+        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::goals::AllAtTarget;
+        use crate::scorers::DistanceScorer;
 
         let index = make_index();
         let targets = vec![(0u32, loc(1, 5))];
         let table = make_table(&targets, &index);
-        let h = HopDistanceHeuristic::new(targets, &table);
+        let h = HopDistanceHeuristic::new(targets.clone(), &table);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
 
         let estimate = h.estimate_max(&config);
 
-        let expander = ExhaustiveExpander::new(&index, std::iter::empty(), None, None);
-        let target_enc = loc(1, 5).encode();
-        let result = astar(
+        let target_encoded: Vec<(u32, u64)> =
+            targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+        };
+
+        let generator = ExhaustiveGenerator::new(None, None);
+        let scorer = DistanceScorer;
+        let cost = UniformCost;
+        let goal = AllAtTarget::new(&target_encoded);
+        let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
+
+        let result = frontier::run_search_v2(
             config,
-            |cfg| cfg.location_of(0).is_some_and(|l| l.encode() == target_enc),
-            |cfg| h.estimate_max(cfg),
-            &expander,
+            &generator,
+            &scorer,
+            &cost,
+            &goal,
+            &mut f,
+            &ctx,
+            &mut SearchState::default(),
             Some(1000),
+            None,
         );
 
         assert!(result.goal.is_some());
