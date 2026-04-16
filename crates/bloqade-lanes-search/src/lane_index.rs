@@ -231,6 +231,33 @@ impl LaneIndex {
         self.bus_groups()
     }
 
+    /// Get all lanes for a bus across all zones.
+    pub fn lanes_for_all_zones(
+        &self,
+        mt: MoveType,
+        bus_id: u32,
+        dir: Direction,
+    ) -> impl Iterator<Item = &LaneAddr> + '_ {
+        self.lanes_by_triplet
+            .iter()
+            .filter(move |&(&(m, b, _, d), _)| m == mt && b == bus_id && d == dir)
+            .flat_map(|(_, lanes)| lanes.iter())
+    }
+
+    /// Iterate distinct `(move_type, bus_id, direction)` bus groups (ignoring zone).
+    pub fn bus_groups_no_zone(&self) -> impl Iterator<Item = (MoveType, u32, Direction)> + '_ {
+        let mut seen = std::collections::HashSet::new();
+        self.lanes_by_triplet
+            .keys()
+            .filter_map(move |&(mt, bus_id, _zone_id, dir)| {
+                if seen.insert((mt, bus_id, dir)) {
+                    Some((mt, bus_id, dir))
+                } else {
+                    None
+                }
+            })
+    }
+
     /// Get cached lane duration in microseconds. Returns `None` if the lane
     /// has no transport path data.
     pub fn lane_duration_us(&self, lane: &LaneAddr) -> Option<f64> {

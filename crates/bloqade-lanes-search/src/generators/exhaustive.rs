@@ -64,13 +64,17 @@ impl MoveGenerator for ExhaustiveGenerator {
             max_y_capacity: self.max_y_capacity,
         };
 
-        for (mt, bus_id, zone_id, dir) in ctx.index.bus_groups() {
-            let lanes = ctx.index.lanes_for(mt, bus_id, zone_id, dir);
+        for (mt, bus_id, dir) in ctx.index.bus_groups_no_zone() {
+            let lanes: Vec<LaneAddr> = ctx
+                .index
+                .lanes_for_all_zones(mt, bus_id, dir)
+                .copied()
+                .collect();
             if lanes.is_empty() {
                 continue;
             }
 
-            rectangles_to_move_sets(lanes, &expand_ctx, out);
+            rectangles_to_move_sets(&lanes, &expand_ctx, out);
         }
     }
 }

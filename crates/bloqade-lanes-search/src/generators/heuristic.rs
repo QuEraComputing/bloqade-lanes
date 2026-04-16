@@ -41,7 +41,7 @@ struct ScoredTriple {
     dst_encoded: u64,
 }
 
-type TripletKey = (u8, u32, u32, u8); // (move_type as u8, bus_id, zone_id, direction as u8)
+type TripletKey = (u8, u32, u8); // (move_type as u8, bus_id, direction as u8)
 
 /// Heuristic move generator that produces a small number of high-quality
 /// movesets per expansion.
@@ -278,12 +278,7 @@ impl MoveGenerator for HeuristicGenerator {
                     );
                 }
 
-                let triplet_key = (
-                    lane.move_type as u8,
-                    lane.bus_id,
-                    lane.zone_id,
-                    lane.direction as u8,
-                );
+                let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                 all_scores.push((
                     triplet_key,
                     ScoredTriple {
@@ -333,7 +328,7 @@ impl MoveGenerator for HeuristicGenerator {
         // Step 5: per group, build AOD-compatible rectangular grids.
         let mut candidates: Vec<(i32, MoveSet, Config)> = Vec::new();
 
-        for ((mt_u8, bus_id, zone_id, dir_u8), qubits) in groups {
+        for ((mt_u8, bus_id, dir_u8), qubits) in groups {
             // Reconstruct typed triplet from u8 discriminants.
             let mt = match mt_u8 {
                 x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
@@ -347,10 +342,9 @@ impl MoveGenerator for HeuristicGenerator {
                 _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
             };
 
-            // Build grid context from ALL lanes on this bus group.
-            let grid_ctx = crate::aod_grid::BusGridContext::new(
-                ctx.index, mt, bus_id, zone_id, dir, &occupied,
-            );
+            // Build grid context from ALL lanes on this bus group (cross-zone).
+            let grid_ctx =
+                crate::aod_grid::BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
 
             // Build entries (src_encoded -> lane_encoded) and a lane -> triple lookup.
             // Each source location has at most one atom, so no overwrites occur.

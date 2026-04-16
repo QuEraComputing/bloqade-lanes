@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
 
 use crate::lane_index::LaneIndex;
 
@@ -35,11 +35,12 @@ impl BusGridContext {
     /// Build a grid context from all lanes on a bus group.
     ///
     /// `occupied` is the set of encoded locations currently occupied by atoms.
+    /// When `zone_id` is `None`, lanes from all zones are included.
     pub(crate) fn new(
         index: &LaneIndex,
         mt: MoveType,
         bus_id: u32,
-        zone_id: u32,
+        zone_id: Option<u32>,
         dir: Direction,
         occupied: &HashSet<u64>,
     ) -> Self {
@@ -48,7 +49,14 @@ impl BusGridContext {
         let mut src_to_pos: HashMap<u64, (u64, u64)> = HashMap::new();
         let mut collision_srcs: HashSet<u64> = HashSet::new();
 
-        for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
+        let lanes_vec: Vec<LaneAddr> = match zone_id {
+            Some(z) => index.lanes_for(mt, bus_id, z, dir).to_vec(),
+            None => index
+                .lanes_for_all_zones(mt, bus_id, dir)
+                .copied()
+                .collect(),
+        };
+        for &lane in &lanes_vec {
             let Some((src, dst)) = index.endpoints(&lane) else {
                 continue;
             };

@@ -3,7 +3,7 @@
 //! For each unresolved qubit, computes the shortest path to its target
 //! while routing around all other atoms (but not itself) and takes the
 //! first lane. Those first-step lanes are grouped by
-//! `(move_type, bus_id, zone_id, direction)` and partitioned into
+//! `(move_type, bus_id, direction)` (zone-independent) and partitioned into
 //! AOD-compatible rectangular grids via [`BusGridContext`].
 
 use std::collections::HashMap;
@@ -72,15 +72,14 @@ impl MoveGenerator for GreedyGenerator {
             return;
         }
 
-        // 3. Group first lanes by (move_type, bus_id, zone_id, direction).
-        let mut groups: HashMap<(MoveType, u32, u32, Direction), HashMap<u64, u64>> =
-            HashMap::new();
+        // 3. Group first lanes by (move_type, bus_id, direction) — zone-independent.
+        let mut groups: HashMap<(MoveType, u32, Direction), HashMap<u64, u64>> = HashMap::new();
 
         // Build reverse lookup for resolving qubit → source location.
         let loc_to_qubit = config.location_to_qubit_map();
 
         for &(_qid, lane) in &first_lanes {
-            let key = (lane.move_type, lane.bus_id, lane.zone_id, lane.direction);
+            let key = (lane.move_type, lane.bus_id, lane.direction);
             let Some((src, _dst)) = index.endpoints(&lane) else {
                 continue;
             };
@@ -90,8 +89,8 @@ impl MoveGenerator for GreedyGenerator {
         }
 
         // 4. For each group, build AOD grids and emit candidates.
-        for ((mt, bus_id, zone_id, dir), entries) in &groups {
-            let grid_ctx = BusGridContext::new(index, *mt, *bus_id, *zone_id, *dir, &occupied);
+        for ((mt, bus_id, dir), entries) in &groups {
+            let grid_ctx = BusGridContext::new(index, *mt, *bus_id, None, *dir, &occupied);
             let grids = grid_ctx.build_aod_grids(entries);
 
             for grid in grids {
