@@ -9,10 +9,9 @@ use crate::graph::{MoveSet, NodeId, SearchGraph};
 
 /// Trait for generating successor configurations.
 ///
-/// This is the integration point for move validation. Implementations
-/// use architecture information to enumerate valid move sets and apply
-/// them, but the search algorithm itself knows nothing about lanes,
-/// buses, or architecture constraints.
+/// **Note:** Prefer [`crate::traits::MoveGenerator`] with
+/// [`crate::frontier::run_search_v2`] for new code. This trait is retained
+/// for backward compatibility.
 pub trait Expander {
     /// Generate all valid successors of the given configuration.
     ///
