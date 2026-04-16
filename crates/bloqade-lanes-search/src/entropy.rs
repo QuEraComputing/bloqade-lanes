@@ -57,20 +57,21 @@ pub struct EntropyParams {
 impl Default for EntropyParams {
     fn default() -> Self {
         Self {
-            w_d: 1.0,
-            w_m: 0.3,
-            alpha: 100.0,
-            beta: 2.0,
-            gamma: 0.5,
+            // Synced with Python SearchParams defaults (commit 9b470b3).
+            w_d: 0.95,
+            w_m: 0.8,
+            alpha: 80.0,
+            beta: 3.0,
+            gamma: 3.1,
             top_c: 3,
-            max_candidates: 2,
+            max_candidates: 4,
             reversion_steps: 1,
             delta_e: 1,
             e_max: 4,
-            max_goal_candidates: 2,
+            max_goal_candidates: 3,
             max_movesets_per_group: 3,
             lookahead: false,
-            w_t: 0.05,
+            w_t: 0.95,
         }
     }
 }
