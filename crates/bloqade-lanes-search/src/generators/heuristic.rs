@@ -8,7 +8,8 @@
 //! and seeded score perturbation for restart diversity.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
@@ -42,6 +43,21 @@ struct ScoredTriple {
 }
 
 type TripletKey = (u8, u32, u8); // (move_type as u8, bus_id, direction as u8)
+
+fn cmp_scored_triples(a: &(TripletKey, ScoredTriple), b: &(TripletKey, ScoredTriple)) -> Ordering {
+    b.1.score
+        .cmp(&a.1.score)
+        .then_with(|| a.0.cmp(&b.0))
+        .then_with(|| a.1.lane_encoded.cmp(&b.1.lane_encoded))
+        .then_with(|| a.1.dst_encoded.cmp(&b.1.dst_encoded))
+        .then_with(|| a.1.qubit_id.cmp(&b.1.qubit_id))
+}
+
+fn cmp_candidates(a: &(i32, MoveSet, Config), b: &(i32, MoveSet, Config)) -> Ordering {
+    b.0.cmp(&a.0)
+        .then_with(|| a.1.encoded_lanes().cmp(b.1.encoded_lanes()))
+        .then_with(|| a.2.as_entries().cmp(b.2.as_entries()))
+}
 
 /// Heuristic move generator that produces a small number of high-quality
 /// movesets per expansion.
@@ -292,7 +308,7 @@ impl MoveGenerator for HeuristicGenerator {
         }
 
         // Step 3: per qubit, keep top C triples.
-        let mut per_qubit: HashMap<u32, Vec<(TripletKey, ScoredTriple)>> = HashMap::new();
+        let mut per_qubit: BTreeMap<u32, Vec<(TripletKey, ScoredTriple)>> = BTreeMap::new();
         for entry in all_scores {
             per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
         }
@@ -300,8 +316,8 @@ impl MoveGenerator for HeuristicGenerator {
         let mut selected: Vec<(TripletKey, ScoredTriple)> = Vec::new();
         let mut has_positive = false;
 
-        for (_, entries) in per_qubit.iter_mut() {
-            entries.sort_by(|a, b| b.1.score.cmp(&a.1.score));
+        for entries in per_qubit.values_mut() {
+            entries.sort_by(cmp_scored_triples);
             entries.truncate(self.top_c);
             for e in entries.iter() {
                 if e.1.score > 0 {
@@ -313,14 +329,14 @@ impl MoveGenerator for HeuristicGenerator {
 
         // Fallback: if no positive scores, keep only the single best entry.
         if !has_positive {
-            selected.sort_by(|a, b| b.1.score.cmp(&a.1.score));
+            selected.sort_by(cmp_scored_triples);
             selected.truncate(1);
         } else {
             selected.retain(|e| e.1.score > 0);
         }
 
         // Step 4: group by bus triplet.
-        let mut groups: HashMap<TripletKey, Vec<ScoredTriple>> = HashMap::new();
+        let mut groups: BTreeMap<TripletKey, Vec<ScoredTriple>> = BTreeMap::new();
         for (key, triple) in selected {
             groups.entry(key).or_default().push(triple);
         }
@@ -404,7 +420,7 @@ impl MoveGenerator for HeuristicGenerator {
         }
 
         // Step 6: sort by total score descending, emit.
-        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates.sort_by(cmp_candidates);
 
         for (_, move_set, new_config) in candidates {
             out.push(MoveCandidate {
@@ -952,6 +968,62 @@ mod tests {
             result_la.nodes_expanded,
             result_no_la.nodes_expanded
         );
+    }
+
+    #[test]
+    fn scored_triple_tie_break_is_deterministic() {
+        let mut entries = vec![
+            (
+                (1, 2, 3, 0),
+                ScoredTriple {
+                    qubit_id: 9,
+                    score: 7,
+                    lane_encoded: 12,
+                    dst_encoded: 90,
+                },
+            ),
+            (
+                (1, 1, 3, 0),
+                ScoredTriple {
+                    qubit_id: 2,
+                    score: 7,
+                    lane_encoded: 15,
+                    dst_encoded: 88,
+                },
+            ),
+            (
+                (1, 1, 3, 0),
+                ScoredTriple {
+                    qubit_id: 1,
+                    score: 7,
+                    lane_encoded: 13,
+                    dst_encoded: 88,
+                },
+            ),
+        ];
+
+        entries.sort_by(cmp_scored_triples);
+
+        assert_eq!(entries[0].0, (1, 1, 3, 0));
+        assert_eq!(entries[0].1.lane_encoded, 13);
+        assert_eq!(entries[1].0, (1, 1, 3, 0));
+        assert_eq!(entries[1].1.lane_encoded, 15);
+        assert_eq!(entries[2].0, (1, 2, 3, 0));
+    }
+
+    #[test]
+    fn candidate_tie_break_uses_moveset_then_config() {
+        let cfg_a = Config::new([(0, loc(0, 1))]).unwrap();
+        let cfg_b = Config::new([(0, loc(0, 2))]).unwrap();
+        let mut candidates = vec![
+            (5, MoveSet::from_encoded(vec![9]), cfg_b),
+            (5, MoveSet::from_encoded(vec![3]), cfg_a),
+        ];
+
+        candidates.sort_by(cmp_candidates);
+
+        assert_eq!(candidates[0].1.encoded_lanes(), &[3]);
+        assert_eq!(candidates[1].1.encoded_lanes(), &[9]);
     }
 
     // -- Seed perturbation tests --
