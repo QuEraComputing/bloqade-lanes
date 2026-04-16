@@ -952,7 +952,7 @@ mod tests {
         };
         let mut state = SearchState::default();
 
-        let generator = HeuristicGenerator::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let generator = HeuristicGenerator::new(3);
         let scorer = DistanceScorer;
         let cost = UniformCost;
         let goal = AllAtTarget::new(&target_enc);

@@ -8,7 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::heuristic_expander::DeadlockPolicy;
+use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::solve::{
     InnerStrategy, MoveSolver, SolveOptions, SolveResult, SolveStatus, Strategy,
 };

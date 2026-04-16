@@ -13,10 +13,10 @@ use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::generators::HeuristicGenerator;
+use crate::generators::heuristic::DeadlockPolicy;
 use crate::goals::AllAtTarget;
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-use crate::heuristic_expander::DeadlockPolicy;
 use crate::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
 use crate::traits::MoveGenerator;
@@ -246,17 +246,10 @@ impl MoveSolver {
 
         // Build a generator with the given seed and deadlock policy.
         let make_generator = |seed: u64, policy: DeadlockPolicy| {
-            HeuristicGenerator::new(
-                &self.index,
-                blocked_locs.iter().copied(),
-                target_pairs.iter().copied(),
-                &dist_table,
-                top_c,
-                max_movesets_per_group,
-            )
-            .with_deadlock_policy(policy)
-            .with_lookahead(lookahead)
-            .with_seed(seed)
+            HeuristicGenerator::new(top_c)
+                .with_deadlock_policy(policy)
+                .with_lookahead(lookahead)
+                .with_seed(seed)
         };
 
         // Extract a SolveResult from a SearchResult.
@@ -461,7 +454,7 @@ impl MoveSolver {
     fn run_strategy_v2(
         strategy: Strategy,
         root: Config,
-        generator: &HeuristicGenerator<'_>,
+        generator: &HeuristicGenerator,
         scorer: &DistanceScorer,
         cost_fn: &UniformCost,
         goal: &AllAtTarget,

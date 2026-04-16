@@ -7,4 +7,4 @@ pub mod heuristic;
 
 pub use entropy::EntropyGenerator;
 pub use exhaustive::ExhaustiveGenerator;
-pub use heuristic::HeuristicGenerator;
+pub use heuristic::{DeadlockPolicy, HeuristicGenerator};
