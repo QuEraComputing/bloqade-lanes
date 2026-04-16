@@ -12,7 +12,9 @@ use std::collections::{BinaryHeap, VecDeque};
 
 use crate::astar::{Expander, SearchResult};
 use crate::config::Config;
+use crate::context::{MoveCandidate, SearchContext, SearchState};
 use crate::graph::{MoveSet, NodeId, SearchGraph};
+use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator};
 
 // ── Frontier trait ──────────────────────────────────────────────────
 
@@ -436,6 +438,150 @@ impl<H: for<'a> Fn(&'a Config) -> f64> Frontier for IdsFrontier<H> {
     }
 }
 
+// ── Trait-based search loop (v2) ────────────────────────────────────
+
+/// Run a search using the composable trait-based API.
+///
+/// This is the v2 equivalent of [`run_search`]. Instead of a single
+/// `Expander` trait, it uses separate [`MoveGenerator`], [`CandidateScorer`],
+/// [`CostFn`], and [`Goal`] traits for full composability.
+#[allow(clippy::too_many_arguments)]
+pub fn run_search_v2<G, S, C, Go, F>(
+    root: Config,
+    generator: &G,
+    scorer: &S,
+    cost_fn: &C,
+    goal: &Go,
+    frontier: &mut F,
+    ctx: &SearchContext,
+    state: &mut SearchState,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+) -> SearchResult
+where
+    G: MoveGenerator,
+    S: CandidateScorer,
+    C: CostFn,
+    Go: Goal,
+    F: Frontier,
+{
+    // Early check: root is already a goal.
+    if goal.is_goal(&root) {
+        return SearchResult {
+            goal: Some(NodeId(0)),
+            nodes_expanded: 0,
+            max_depth_reached: 0,
+            graph: SearchGraph::new(root),
+        };
+    }
+
+    let mut graph = SearchGraph::new(root);
+    let root_id = graph.root();
+
+    // Seed the frontier.
+    frontier.receive_children(&[root_id], &graph);
+
+    let mut nodes_expanded: u32 = 0;
+    let mut max_depth_seen: u32 = 0;
+    let mut closed: Vec<bool> = vec![false; 64];
+    let mut candidates: Vec<MoveCandidate> = Vec::new();
+    let mut new_children: Vec<NodeId> = Vec::new();
+
+    while let Some(node_id) = frontier.select_next() {
+        if let Some(max) = max_expansions
+            && nodes_expanded >= max
+        {
+            break;
+        }
+
+        let idx = node_id.0 as usize;
+
+        // Closed set check.
+        if idx >= closed.len() {
+            closed.resize(idx + 1, false);
+        }
+        if closed[idx] {
+            continue;
+        }
+        closed[idx] = true;
+
+        // Goal check on pop (A* optimality).
+        if frontier.check_goal_on_pop() && goal.is_goal(graph.config(node_id)) {
+            return SearchResult {
+                goal: Some(node_id),
+                nodes_expanded,
+                max_depth_reached: max_depth_seen,
+                graph,
+            };
+        }
+
+        // Depth tracking + limit.
+        let depth = graph.depth(node_id);
+        max_depth_seen = max_depth_seen.max(depth);
+        if let Some(max_d) = max_depth
+            && depth >= max_d
+        {
+            continue; // Don't expand beyond max depth.
+        }
+
+        // Expand.
+        nodes_expanded += 1;
+        let current_g = graph.g_score(node_id);
+
+        candidates.clear();
+        generator.generate(graph.config(node_id), node_id, ctx, state, &mut candidates);
+
+        // Sort by scorer (higher = better, so sort descending).
+        candidates.sort_by(|a, b| {
+            scorer
+                .score(b, graph.config(node_id), ctx)
+                .partial_cmp(&scorer.score(a, graph.config(node_id), ctx))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        new_children.clear();
+
+        for candidate in candidates.drain(..) {
+            let edge_cost = cost_fn.edge_cost(
+                &candidate.move_set,
+                graph.config(node_id),
+                &candidate.new_config,
+            );
+            debug_assert!(edge_cost.is_finite(), "edge_cost must be finite");
+            let new_g = current_g + edge_cost;
+            let (child_id, is_new) =
+                graph.insert(node_id, candidate.move_set, candidate.new_config, new_g);
+
+            let child_idx = child_id.0 as usize;
+            let child_closed = child_idx < closed.len() && closed[child_idx];
+
+            if is_new && !child_closed {
+                // Goal check on generate (BFS/DFS).
+                if frontier.check_goal_on_generate() && goal.is_goal(graph.config(child_id)) {
+                    return SearchResult {
+                        goal: Some(child_id),
+                        nodes_expanded,
+                        max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
+                        graph,
+                    };
+                }
+                new_children.push(child_id);
+            }
+        }
+
+        if !new_children.is_empty() {
+            frontier.receive_children(&new_children, &graph);
+        }
+    }
+
+    SearchResult {
+        goal: None,
+        nodes_expanded,
+        max_depth_reached: max_depth_seen,
+        graph,
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -772,5 +918,62 @@ mod tests {
         );
         assert!(result.goal.is_some());
         assert!(result.max_depth_reached >= 3);
+    }
+
+    // ── run_search_v2 ──
+
+    #[test]
+    fn v2_astar_finds_solution() {
+        use crate::context::{SearchContext, SearchState};
+        use crate::cost::UniformCost;
+        use crate::generators::HeuristicGenerator;
+        use crate::goals::AllAtTarget;
+        use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
+        use crate::lane_index::LaneIndex;
+        use crate::scorers::DistanceScorer;
+        use crate::test_utils::example_arch_json;
+        use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+        use std::collections::HashSet;
+
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let index = LaneIndex::new(spec);
+
+        let targets = [(0u32, loc(0, 5))];
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l.encode()).collect();
+        let table = DistanceTable::new(&target_locs, &index);
+
+        let target_enc: Vec<(u32, u64)> = targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &table,
+            blocked: &blocked,
+            targets: &target_enc,
+        };
+        let mut state = SearchState::default();
+
+        let generator = HeuristicGenerator::new(&index, std::iter::empty(), targets, &table, 3, 3);
+        let scorer = DistanceScorer;
+        let cost = UniformCost;
+        let goal = AllAtTarget::new(&target_enc);
+
+        let hop = HopDistanceHeuristic::new(targets, &table);
+        let h = move |c: &Config| -> f64 { hop.estimate_max(c) };
+        let mut frontier = PriorityFrontier::astar(h, 1.0);
+
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        let result = run_search_v2(
+            config,
+            &generator,
+            &scorer,
+            &cost,
+            &goal,
+            &mut frontier,
+            &ctx,
+            &mut state,
+            None,
+            None,
+        );
+        assert!(result.goal.is_some(), "v2 should find a solution");
     }
 }
