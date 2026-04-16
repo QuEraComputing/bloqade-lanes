@@ -6,10 +6,8 @@ from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfi
 
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.heuristics.physical_placement import (
-    EntropyPlacementTraversal,
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
-    SearchStrategy,
 )
 
 
@@ -17,12 +15,12 @@ def default_strategy_configs() -> tuple[StrategyConfig, ...]:
     """Return the default strategy matrix for V1 benchmarks."""
     return (
         StrategyConfig(
-            strategy_id="python_entropy",
-            backend="python",
-            generator_id="heuristic",
+            strategy_id="rust_entropy",
+            backend="rust",
+            generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
                 arch_spec=physical.get_arch_spec(),
-                traversal=EntropyPlacementTraversal(),
+                traversal=RustPlacementTraversal(strategy="entropy"),
             ),
         ),
         StrategyConfig(
@@ -31,45 +29,54 @@ def default_strategy_configs() -> tuple[StrategyConfig, ...]:
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
                 arch_spec=physical.get_arch_spec(),
-                traversal=RustPlacementTraversal(strategy=SearchStrategy.ASTAR),
+                traversal=RustPlacementTraversal(strategy="astar"),
             ),
         ),
-        # StrategyConfig(
-        #     strategy_id="rust_greedy_unbounded",
-        #     backend="rust",
-        #     generator_id="rust_solver",
-        #     build_placement_strategy=lambda: PhysicalPlacementStrategy(
-        #         arch_spec=physical.get_arch_spec(),
-        #         traversal=RustPlacementTraversal(
-        #             strategy=SearchStrategy.GREEDY,
-        #             top_c=50,
-        #             max_movesets_per_group=50,
-        #             max_expansions=300,
-        #         ),
-        #     ),
-        #     notes=(
-        #         "first-solution Rust solve (non-optimal); "
-        #         "Rust solver nodes_explored captured from solver output"
-        #     ),
-        # ),
-        # StrategyConfig(
-        #     strategy_id="python_bfs",
-        #     backend="python",
-        #     generator_id="exhaustive",
-        #     build_placement_strategy=lambda: PhysicalPlacementStrategy(
-        #         arch_spec=physical.get_arch_spec(),
-        #         traversal=BFSPlacementTraversal(),
-        #     ),
-        # ),
-        # StrategyConfig(
-        #     strategy_id="python_greedy_best_first",
-        #     backend="python",
-        #     generator_id="exhaustive",
-        #     build_placement_strategy=lambda: PhysicalPlacementStrategy(
-        #         arch_spec=physical.get_arch_spec(),
-        #         traversal=GreedyPlacementTraversal(),
-        #     ),
-        # ),
+        StrategyConfig(
+            strategy_id="rust_ids",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(strategy="ids"),
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_dfs",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(strategy="dfs"),
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_bfs",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(strategy="bfs"),
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_greedy",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(
+                    strategy="greedy",
+                    top_c=50,
+                    max_movesets_per_group=50,
+                    max_expansions=1000,
+                ),
+            ),
+            notes=(
+                "first-solution Rust solve (non-optimal); "
+                "Rust solver nodes_explored captured from solver output"
+            ),
+        ),
     )
 
 

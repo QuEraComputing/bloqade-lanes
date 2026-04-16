@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
 
+from bloqade.lanes.arch.gemini import logical as logical_arch
 from bloqade.lanes.compile import (
     compile_to_physical_squin_noise_model as compile_physical_noise_model,
 )
@@ -140,7 +141,7 @@ class BenchmarkRunner:
             )
 
     def _compile(self, job: BenchmarkJob) -> _RunArtifacts:
-        placement_strategy = job.strategy.build_placement_strategy()
+        placement_strategy = self._build_placement_strategy(job)
         stats_collector: SearchStatsCollector | None = None
         layout_heuristic = self._build_layout_heuristic(job)
 
@@ -182,7 +183,7 @@ class BenchmarkRunner:
 
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:
         if job.case.logical_initialize:
-            placement_strategy = job.strategy.build_placement_strategy()
+            placement_strategy = self._build_placement_strategy(job)
             move_mt = squin_to_move(
                 job.case.kernel,
                 layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
@@ -204,7 +205,7 @@ class BenchmarkRunner:
                 fidelity_product *= gate_fid.min
             return fidelity_product
 
-        placement_strategy = job.strategy.build_placement_strategy()
+        placement_strategy = self._build_placement_strategy(job)
         layout_heuristic = self._build_layout_heuristic(job)
         physical_squin = compile_physical_noise_model(
             job.case.kernel,
@@ -223,6 +224,14 @@ class BenchmarkRunner:
         if job.case.logical_initialize:
             return logical_layout.LogicalLayoutHeuristic()
         return PhysicalLayoutHeuristicGraphPartitionCenterOut()
+
+    def _build_placement_strategy(self, job: BenchmarkJob):
+        placement_strategy = job.strategy.build_placement_strategy()
+        if job.case.logical_initialize and isinstance(
+            placement_strategy, PhysicalPlacementStrategy
+        ):
+            placement_strategy.arch_spec = logical_arch.get_arch_spec()
+        return placement_strategy
 
 
 def _count_moves(move_mt) -> tuple[int, int]:

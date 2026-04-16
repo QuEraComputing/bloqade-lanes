@@ -22,6 +22,9 @@ CSV_COLUMNS: tuple[str, ...] = (
     "notes",
 )
 
+FLOAT_DECIMALS = 6
+FIDELITY_DECIMALS = 10
+
 
 def sort_rows(rows: list[BenchmarkRow]) -> list[BenchmarkRow]:
     """Sort rows deterministically for stable diffs."""
@@ -46,7 +49,7 @@ def write_csv(rows: list[BenchmarkRow], output_path: Path) -> None:
                     "wall_time_ms": _fmt_float(row.wall_time_ms),
                     "move_count_events": row.move_count_events,
                     "move_count_lanes": row.move_count_lanes,
-                    "estimated_fidelity": _fmt_float(row.estimated_fidelity),
+                    "estimated_fidelity": _fmt_fidelity(row.estimated_fidelity),
                     "nodes_explored": row.nodes_explored,
                     "max_depth_reached": row.max_depth_reached,
                     "notes": row.notes,
@@ -75,7 +78,7 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
             _fmt_float(row.wall_time_ms),
             _fmt_int(row.move_count_events),
             _fmt_int(row.move_count_lanes),
-            _fmt_float(row.estimated_fidelity),
+            _fmt_fidelity(row.estimated_fidelity),
             _fmt_int(row.nodes_explored),
         )
         for row in sorted_rows
@@ -96,7 +99,13 @@ def render_console_table(rows: list[BenchmarkRow]) -> str:
 def _fmt_float(value: float | None) -> str:
     if value is None:
         return ""
-    return f"{value:.6f}"
+    return f"{value:.{FLOAT_DECIMALS}f}"
+
+
+def _fmt_fidelity(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:.{FIDELITY_DECIMALS}f}"
 
 
 def _fmt_int(value: int | None) -> str:

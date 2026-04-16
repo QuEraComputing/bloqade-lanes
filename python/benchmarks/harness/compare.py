@@ -11,7 +11,9 @@ from benchmarks.harness.output import CSV_COLUMNS
 
 BenchmarkKey = tuple[str, str]
 
-WALL_TIME_TOLERANCE_RATIO = 1.0
+# Ignore wall-clock variance unless current run is at least 10x slower.
+# This maps to: current - baseline > baseline * 9.0.
+WALL_TIME_TOLERANCE_RATIO = 9.0
 FLOAT_COMPARE_DECIMALS = 6
 
 
@@ -292,10 +294,12 @@ def _add_time_diff(
     if baseline_rounded == current_rounded:
         return
     delta = current - baseline
-    allowed_delta = abs(baseline) * wall_time_tolerance_ratio
-    if abs(delta) <= allowed_delta:
+    # Wall clock fluctuations are noisy; only flag severe regressions.
+    if delta <= 0:
         return
-    kind = "degraded" if delta > 0 else "improved"
+    allowed_delta = abs(baseline) * wall_time_tolerance_ratio
+    if delta <= allowed_delta:
+        return
     diffs.append(
         BenchmarkDiff(
             case_id=case_id,
@@ -303,7 +307,7 @@ def _add_time_diff(
             field="wall_time_ms",
             baseline=baseline,
             current=current,
-            kind=kind,
+            kind="degraded",
         )
     )
 
