@@ -1,7 +1,5 @@
 //! Goal implementations.
 
-use std::collections::HashSet;
-
 use crate::config::Config;
 use crate::traits::Goal;
 
@@ -62,30 +60,6 @@ impl Goal for PartialPlacementGoal {
             })
             .count();
         placed >= self.min_placed
-    }
-}
-
-/// Goal: all qubits in the configuration are located within a specific zone.
-///
-/// A qubit is "in zone" if its location's `word_id` is in the zone's word set.
-pub struct ZoneGoal {
-    zone_words: HashSet<u32>,
-}
-
-impl ZoneGoal {
-    /// Create a zone goal from the set of word IDs belonging to the target zone.
-    pub fn new(zone_words: impl IntoIterator<Item = u32>) -> Self {
-        Self {
-            zone_words: zone_words.into_iter().collect(),
-        }
-    }
-}
-
-impl Goal for ZoneGoal {
-    fn is_goal(&self, config: &Config) -> bool {
-        config
-            .iter()
-            .all(|(_, loc)| self.zone_words.contains(&loc.word_id))
     }
 }
 
@@ -150,46 +124,6 @@ mod tests {
         let goal = PartialPlacementGoal::new(&targets, None);
         // Only q0 placed — needs both
         let config = Config::new([(0, loc(0, 5)), (1, loc(0, 0))]).unwrap();
-        assert!(!goal.is_goal(&config));
-    }
-
-    // ── ZoneGoal tests ──
-
-    #[test]
-    fn zone_goal_all_in_zone() {
-        // Zone with word_ids {0, 1}
-        let goal = ZoneGoal::new([0, 1]);
-        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
-        // loc(zone, site) creates LocationAddr { zone_id: zone, word_id: 0, site_id: site }
-        // word_id=0 is in zone_words
-        assert!(goal.is_goal(&config));
-    }
-
-    #[test]
-    fn zone_goal_one_outside() {
-        let goal = ZoneGoal::new([0]);
-        // loc(0, 0) has word_id=0 (in zone), but we need to test with word_id not in set
-        // loc helper sets word_id=0, so let's use a custom LocationAddr
-        use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-        let config = Config::new([
-            (
-                0,
-                LocationAddr {
-                    zone_id: 0,
-                    word_id: 0,
-                    site_id: 0,
-                },
-            ),
-            (
-                1,
-                LocationAddr {
-                    zone_id: 0,
-                    word_id: 5,
-                    site_id: 0,
-                },
-            ), // word_id=5 not in zone
-        ])
-        .unwrap();
         assert!(!goal.is_goal(&config));
     }
 }
