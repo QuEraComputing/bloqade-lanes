@@ -2,7 +2,6 @@ import importlib.resources
 
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.word import Word
 
 # Physical arch spec: 20 words x 8 sites, 1 zone, 32x5 grid.
 #
@@ -23,12 +22,7 @@ def _load_spec_json() -> str:
 def get_arch_spec() -> ArchSpec:
     """Physical arch spec for logical compilation (transversal Steane code)."""
     rust_spec = _RustArchSpec.from_json(_load_spec_json())
-    py_words = []
-    for rw in rust_spec.words:
-        w = Word.__new__(Word)
-        w._inner = rw
-        py_words.append(w)
-    return ArchSpec(inner=rust_spec, words=tuple(py_words))
+    return ArchSpec(rust_spec)
 
 
 def get_physical_layout_arch_spec() -> ArchSpec:

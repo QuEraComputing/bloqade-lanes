@@ -902,7 +902,7 @@ pub struct PyArchSpec {
 #[pymethods]
 impl PyArchSpec {
     #[new]
-    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false))]
+    #[pyo3(signature = (version, words, zones, zone_buses, modes, paths=None, feed_forward=false, atom_reloading=false, blockade_radius=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         version: (u16, u16),
@@ -913,6 +913,7 @@ impl PyArchSpec {
         paths: Option<Vec<PyRef<'_, PyTransportPath>>>,
         feed_forward: bool,
         atom_reloading: bool,
+        blockade_radius: Option<f64>,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: rs::ArchSpec {
@@ -924,6 +925,7 @@ impl PyArchSpec {
                 paths: paths.map(|v| v.iter().map(|p| p.inner.clone()).collect()),
                 feed_forward,
                 atom_reloading,
+                blockade_radius,
             },
         })
     }
@@ -1005,6 +1007,11 @@ impl PyArchSpec {
     }
 
     #[getter]
+    fn blockade_radius(&self) -> Option<f64> {
+        self.inner.blockade_radius
+    }
+
+    #[getter]
     fn paths(&self) -> Option<Vec<PyTransportPath>> {
         self.inner.paths.as_ref().map(|v| {
             v.iter()
@@ -1061,6 +1068,43 @@ impl PyArchSpec {
         self.inner
             .get_cz_partner(&loc.inner)
             .map(|l| PyLocationAddr { inner: l })
+    }
+
+    // -- Derived topology queries (#464 phase 2) --
+
+    /// Build a bidirectional word-partner map from entangling pairs.
+    ///
+    /// Returns a dict mapping each word_id to its CZ partner word_id.
+    fn word_partner_map(&self) -> std::collections::HashMap<u32, u32> {
+        self.inner.word_partner_map()
+    }
+
+    /// Map each word_id to the zone_id that owns it.
+    ///
+    /// Returns a dict mapping word_id → zone_id.
+    fn word_zone_map(&self) -> std::collections::HashMap<u32, u32> {
+        self.inner.word_zone_map()
+    }
+
+    /// Return sorted left-CZ word IDs (lower word of each CZ pair + unpaired).
+    fn left_cz_word_ids(&self) -> Vec<u32> {
+        self.inner.left_cz_word_ids()
+    }
+
+    /// O(1) flat index of a location within a zone.
+    #[pyo3(text_signature = "(self, loc, zone_id)")]
+    fn zone_location_index(&self, loc: &PyLocationAddr, zone_id: u32) -> Option<usize> {
+        self.inner.zone_location_index(&loc.inner, zone_id)
+    }
+
+    /// Reverse-lookup: find the lane connecting src → dst.
+    ///
+    /// Returns the ``LaneAddress`` if found, or None.
+    #[pyo3(text_signature = "(self, src, dst)")]
+    fn lane_for_endpoints(&self, src: &PyLocationAddr, dst: &PyLocationAddr) -> Option<PyLaneAddr> {
+        self.inner
+            .lane_for_endpoints(&src.inner, &dst.inner)
+            .map(|l| PyLaneAddr { inner: l })
     }
 
     fn check_zone(&self, addr: &PyZoneAddr) -> Option<String> {

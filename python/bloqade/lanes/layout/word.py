@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import Word as _RustWord
 
@@ -29,9 +27,6 @@ class Word(RustWrapper[_RustWord]):
         """Number of sites in this word."""
         return len(self._inner.sites)
 
-    def __getitem__(self, index: int) -> WordSite:
-        return WordSite(word=self, site_index=index)
-
     # NOTE: the underlying Rust ``_native.Word`` does not yet implement
     # value-based ``__eq__``/``__hash__`` (it falls back to identity), so we
     # cannot rely on ``RustWrapper``'s delegation here. Override with a
@@ -49,9 +44,3 @@ class Word(RustWrapper[_RustWord]):
 
     def __repr__(self) -> str:
         return f"Word(n_sites={self.n_sites})"
-
-
-@dataclass(frozen=True)
-class WordSite:
-    word: Word
-    site_index: int

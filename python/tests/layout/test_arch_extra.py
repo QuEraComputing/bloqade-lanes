@@ -48,25 +48,9 @@ arch_spec = ArchSpec.from_components(
 )
 
 
-def test__get_site_bus_paths():
-    # Should yield at least one path for valid word and bus
-    paths = list(arch_spec._get_site_bus_paths([0], [0]))
-    assert paths, "No site bus paths yielded"
-    for path in paths:
-        assert isinstance(path, tuple)
-        assert all(isinstance(coord, tuple) and len(coord) == 2 for coord in path)
-
-
-def test__get_word_bus_paths():
-    # Should yield at least one path for valid bus
-    paths = list(arch_spec._get_word_bus_paths([0]))
-    assert paths, "No word bus paths yielded"
-    for path in paths:
-        assert isinstance(path, tuple)
-        assert all(isinstance(coord, tuple) and len(coord) == 2 for coord in path)
-
-
 def test_show_with_mocked_pyplot():
+    """``ArchSpec.show`` delegates to ``ArchVisualizer.show``; the existing
+    API must still drive matplotlib and call ``plt.show``."""
     with (
         patch("matplotlib.pyplot.gca") as mock_gca,
         patch("matplotlib.pyplot.show") as mock_show,
@@ -101,13 +85,6 @@ def test_get_path_and_position():
     assert isinstance(pos_src, tuple)
 
 
-def test_get_zone_index():
-    loc = LocationAddress(0, 0)
-    zone = ZoneAddress(0)
-    idx = arch_spec.get_zone_index(loc, zone)
-    assert isinstance(idx, int)
-
-
 def test_path_bounds_x_y_bounds():
     x_min, x_max, y_min, y_max = arch_spec.path_bounds()
     assert x_min <= x_max
@@ -116,35 +93,6 @@ def test_path_bounds_x_y_bounds():
     y_min2, y_max2 = arch_spec.y_bounds
     assert x_min2 <= x_max2
     assert y_min2 <= y_max2
-
-
-def test_compatible_lane_error_and_lanes():
-    lane1 = SiteLaneAddress(
-        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
-    )
-    lane2 = SiteLaneAddress(
-        zone_id=0, word_id=0, site_id=1, bus_id=0, direction=Direction.FORWARD
-    )
-    errors = arch_spec.compatible_lane_error(lane1, lane2)
-    assert isinstance(errors, set)
-    assert arch_spec.compatible_lanes(lane1, lane2) in [True, False]
-
-
-def test_validate_location():
-    loc = LocationAddress(0, 0)
-    errors = arch_spec.validate_location(loc)
-    assert isinstance(errors, set)
-    loc_invalid = LocationAddress(10, 0)
-    errors_invalid = arch_spec.validate_location(loc_invalid)
-    assert errors_invalid
-
-
-def test_validate_lane():
-    lane = SiteLaneAddress(
-        zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
-    )
-    errors = arch_spec.validate_lane(lane)
-    assert isinstance(errors, set)
 
 
 def test_get_endpoints_word_and_site():
@@ -162,13 +110,13 @@ def test_get_endpoints_word_and_site():
     assert isinstance(dst2, LocationAddress)
 
 
-def test_get_blockaded_location_paired():
+def test_get_cz_partner_paired():
     loc = LocationAddress(0, 0)
-    result = arch_spec.get_blockaded_location(loc)
+    result = arch_spec.get_cz_partner(loc)
     assert result is not None
 
 
-def test_get_blockaded_location_none():
+def test_get_cz_partner_none():
     word_no_cz = Word(sites=((0, 0), (1, 0)))
     rust_grid_no_cz = RustGrid.from_positions([0.0, 1.0], [0.0])
     rust_zone_no_cz = RustZone(
@@ -190,7 +138,7 @@ def test_get_blockaded_location_none():
         modes=[rust_mode_no_cz],
     )
     loc = LocationAddress(0, 0)
-    assert spec_no_cz.get_blockaded_location(loc) is None
+    assert spec_no_cz.get_cz_partner(loc) is None
 
 
 def test_capability_flags_default():

@@ -112,6 +112,16 @@ pub struct ArchSpec {
     /// Defaults to `false` when absent in JSON.
     #[serde(default)]
     pub atom_reloading: bool,
+    /// Rydberg blockade radius in micrometers, if specified.
+    ///
+    /// Metadata: when present, this is the radius associated with the
+    /// architecture, typically used by consumers to interpret the
+    /// entangling word pairs. This struct does not itself enforce any
+    /// relationship between the pairs and the radius — derivation /
+    /// validation happens at the builder layer (see
+    /// `ZoneBuilder.set_blockade_radius` on the Python side).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blockade_radius: Option<f64>,
 }
 
 impl ArchSpec {
@@ -135,6 +145,7 @@ impl ArchSpec {
         paths: Option<Vec<TransportPath>>,
         feed_forward: bool,
         atom_reloading: bool,
+        blockade_radius: Option<f64>,
     ) -> Result<Self, Vec<super::validate::ArchSpecError>> {
         let spec = Self {
             version,
@@ -145,6 +156,7 @@ impl ArchSpec {
             paths,
             feed_forward,
             atom_reloading,
+            blockade_radius,
         };
         spec.validate()?;
         Ok(spec)
@@ -336,6 +348,24 @@ impl Grid {
         }
         positions
     }
+
+    /// Compute the bounding box as `(x_min, x_max, y_min, y_max)`.
+    ///
+    /// Assumes all spacing values are non-negative (positions are
+    /// monotonically increasing from the start). This invariant is
+    /// enforced by the ArchSpec validator. If spacings could be negative,
+    /// callers should use `x_positions()`/`y_positions()` with min/max
+    /// instead.
+    pub fn bounding_box(&self) -> (f64, f64, f64, f64) {
+        let x_end = self.x_start + self.x_spacing.iter().sum::<f64>();
+        let y_end = self.y_start + self.y_spacing.iter().sum::<f64>();
+        (
+            self.x_start.min(x_end),
+            self.x_start.max(x_end),
+            self.y_start.min(y_end),
+            self.y_start.max(y_end),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +486,7 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         };
         assert_eq!(spec.sites_per_word(), 2);
     }
@@ -471,7 +502,47 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         };
         assert_eq!(spec.sites_per_word(), 0);
+    }
+
+    #[test]
+    fn blockade_radius_roundtrip_none() {
+        let spec = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: None,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        // None is skipped in serialization.
+        assert!(!json.contains("blockade_radius"));
+        let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.blockade_radius, None);
+    }
+
+    #[test]
+    fn blockade_radius_roundtrip_some() {
+        let spec = ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![],
+            zones: vec![],
+            zone_buses: vec![],
+            modes: vec![],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: Some(2.0),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains("\"blockade_radius\":2.0"));
+        let parsed: ArchSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.blockade_radius, Some(2.0));
     }
 }

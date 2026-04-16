@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Sequence
 
+from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import (
     ArchSpec as _RustArchSpec,
     LaneAddress as _RustLaneAddress,
@@ -21,8 +21,6 @@ from bloqade.lanes.layout.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
-    SiteLaneAddress,
-    WordLaneAddress,
     ZoneAddress,
 )
 
@@ -34,6 +32,7 @@ if TYPE_CHECKING:
     from bloqade.geometry.dialects.grid import Grid as GeoGrid
 
     from bloqade.lanes.bytecode.exceptions import LaneGroupError, LocationGroupError
+    from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
 @dataclass(frozen=True)
@@ -46,71 +45,82 @@ class BusDescriptor:
     num_lanes: int
 
 
-class ArchSpec:
+class ArchSpec(RustWrapper[_RustArchSpec]):
     """Architecture specification for a quantum device."""
 
-    _inner: _RustArchSpec
-    words: tuple[Word, ...]
-    paths: MappingProxyType[LaneAddress, tuple[tuple[float, float], ...]]
-
-    def __init__(
-        self,
-        inner: _RustArchSpec,
-        words: tuple[Word, ...],
-        paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
-    ):
+    def __init__(self, inner: _RustArchSpec):
         self._inner = inner
-        self.words = words
-        self.paths = MappingProxyType(paths if paths is not None else {})
-
         self._inner.validate()
 
     @cached_property
-    def zone_address_map(self) -> dict[LocationAddress, dict[ZoneAddress, int]]:
-        result: dict[LocationAddress, dict[ZoneAddress, int]] = defaultdict(dict)
-        for zone_id, zone in enumerate(self._inner.zones):
-            index = 0
-            for word_id in range(len(self.words)):
-                word = self.words[word_id]
-                for site_id in range(len(word.site_indices)):
-                    loc_addr = LocationAddress(word_id, site_id, zone_id)
-                    zone_address = ZoneAddress(zone_id)
-                    result[loc_addr][zone_address] = index
-                    index += 1
-        return dict(result)
+    def words(self) -> tuple[Word, ...]:
+        """Python Word wrappers, derived from the Rust ArchSpec."""
+        return tuple(Word.from_inner(w) for w in self._inner.words)
 
     @cached_property
-    def _lane_map(self) -> dict[tuple[LocationAddress, LocationAddress], LaneAddress]:
-        lane_map: dict[tuple[LocationAddress, LocationAddress], LaneAddress] = {}
+    def paths(self) -> MappingProxyType[LaneAddress, tuple[tuple[float, float], ...]]:
+        """Transport path waypoints keyed by LaneAddress.
+
+        Derived from the Rust ``ArchSpec.paths`` on first access.
+        """
+        raw = self._inner.paths
+        if raw is None:
+            return MappingProxyType({})
+        return MappingProxyType(
+            {LaneAddress.from_inner(p.lane): tuple(p.waypoints) for p in raw}
+        )
+
+    def iter_all_lanes(self) -> Iterator[LaneAddress]:
+        """Yield every valid lane address in the architecture.
+
+        Enumerates site-bus, word-bus, and zone-bus lanes in both forward
+        and backward directions. Used by
+        :class:`~bloqade.lanes.layout.MoveMetricCalculator` to compute
+        max-duration bounds. Prefer ``get_lane_address(src, dst)`` for
+        single-pair lookups.
+        """
+        sites_per_word = self.sites_per_word
+
+        # Intra-zone: site buses and word buses.
         for zone_id, zone in enumerate(self._inner.zones):
             for bus_id, bus in enumerate(zone.site_buses):
-                bus_word_ids = zone.words_with_site_buses
-                for word_id in bus_word_ids:
+                for word_id in zone.words_with_site_buses:
                     for i in range(len(bus.src)):
                         for direction in (Direction.FORWARD, Direction.BACKWARD):
-                            lane_addr = SiteLaneAddress(
-                                zone_id=zone_id,
-                                word_id=word_id,
-                                site_id=bus.src[i],
-                                bus_id=bus_id,
-                                direction=direction,
+                            yield LaneAddress(
+                                MoveType.SITE,
+                                word_id,
+                                bus.src[i],
+                                bus_id,
+                                direction,
+                                zone_id,
                             )
-                            src, dst = self.get_endpoints(lane_addr)
-                            lane_map[(src, dst)] = lane_addr
             for bus_id, bus in enumerate(zone.word_buses):
                 for site_id in zone.sites_with_word_buses:
                     for word_id in bus.src:
                         for direction in (Direction.FORWARD, Direction.BACKWARD):
-                            lane_addr = WordLaneAddress(
-                                zone_id=zone_id,
-                                word_id=word_id,
-                                site_id=site_id,
-                                bus_id=bus_id,
-                                direction=direction,
+                            yield LaneAddress(
+                                MoveType.WORD,
+                                word_id,
+                                site_id,
+                                bus_id,
+                                direction,
+                                zone_id,
                             )
-                            src, dst = self.get_endpoints(lane_addr)
-                            lane_map[(src, dst)] = lane_addr
-        return lane_map
+
+        # Inter-zone: zone buses.
+        for bus_id, zb in enumerate(self._inner.zone_buses):
+            for (src_zone, src_word), (_dst_zone, _dst_word) in zip(zb.src, zb.dst):
+                for site_id in range(sites_per_word):
+                    for direction in (Direction.FORWARD, Direction.BACKWARD):
+                        yield LaneAddress(
+                            MoveType.ZONE,
+                            src_word,
+                            site_id,
+                            bus_id,
+                            direction,
+                            src_zone,
+                        )
 
     # ── Properties derived from Rust inner ──
 
@@ -125,16 +135,7 @@ class ArchSpec:
     @cached_property
     def _home_words(self) -> frozenset[int]:
         """Words that are 'home' (not CZ-staging) -- lower word_id in each pair."""
-        home: set[int] = set()
-        paired: set[int] = set()
-        for w_a, w_b in self._word_partner_map.items():
-            paired.add(w_a)
-            paired.add(w_b)
-            home.add(min(w_a, w_b))
-        # Unpaired words are also home
-        all_words = set(range(len(self.words)))
-        home |= all_words - paired
-        return frozenset(home)
+        return frozenset(self._inner.left_cz_word_ids())
 
     def is_home_position(self, addr: LocationAddress) -> bool:
         """True if this address is at a home (non-CZ-staging) word."""
@@ -144,26 +145,9 @@ class ArchSpec:
     def word_zone_map(self) -> dict[int, int]:
         """Map each word_id to the zone_id it belongs to.
 
-        Derived from each zone's entangling_pairs, word_buses, and
-        words_with_site_buses. A word may only appear in one zone; if
-        multiple zones claim the same word the first match wins.
+        Delegates to Rust ``ArchSpec.word_zone_map()``.
         """
-        mapping: dict[int, int] = {}
-        for zone_id, zone in enumerate(self._inner.zones):
-            for w_a, w_b in zone.entangling_pairs:
-                mapping.setdefault(w_a, zone_id)
-                mapping.setdefault(w_b, zone_id)
-            for bus in zone.word_buses:
-                for w in bus.src:
-                    mapping.setdefault(w, zone_id)
-                for w in bus.dst:
-                    mapping.setdefault(w, zone_id)
-            for w in zone.words_with_site_buses:
-                mapping.setdefault(w, zone_id)
-        # Any unreferenced word is (conservatively) assigned to zone 0.
-        for word_id in range(len(self.words)):
-            mapping.setdefault(word_id, 0)
-        return mapping
+        return self._inner.word_zone_map()
 
     @cached_property
     def home_sites(self) -> frozenset[LocationAddress]:
@@ -200,21 +184,19 @@ class ArchSpec:
         """Whether the device supports reloading atoms after initial fill."""
         return self._inner.atom_reloading
 
-    @cached_property
-    def has_site_buses(self) -> frozenset[int]:
-        """Word IDs that have site-bus transport capability."""
-        result: set[int] = set()
-        for zone in self._inner.zones:
-            result.update(zone.words_with_site_buses)
-        return frozenset(result)
+    @property
+    def blockade_radius(self) -> float | None:
+        """Rydberg blockade radius (µm), or ``None`` if not provided.
 
-    @cached_property
-    def has_word_buses(self) -> frozenset[int]:
-        """Site indices that serve as word bus landing positions."""
-        result: set[int] = set()
-        for zone in self._inner.zones:
-            result.update(zone.sites_with_word_buses)
-        return frozenset(result)
+        This is metadata — when present, it indicates the radius
+        associated with the architecture and is typically used to
+        interpret the entangling pairs.  It is **not** independently
+        verified at the ArchSpec level; use
+        :meth:`ZoneBuilder.set_blockade_radius` /
+        :meth:`ArchBuilder.set_blockade_radius` if you want the pair
+        list to be derived from and checked against a radius.
+        """
+        return self._inner.blockade_radius
 
     @cached_property
     def site_buses(self) -> tuple[SiteBus, ...]:
@@ -258,6 +240,7 @@ class ArchSpec:
         paths: dict[LaneAddress, tuple[tuple[float, float], ...]] | None = None,
         feed_forward: bool = False,
         atom_reloading: bool = False,
+        blockade_radius: float | None = None,
     ) -> ArchSpec:
         """Construct an ArchSpec from Python component types."""
 
@@ -287,16 +270,9 @@ class ArchSpec:
             paths=rust_paths,
             feed_forward=feed_forward,
             atom_reloading=atom_reloading,
+            blockade_radius=blockade_radius,
         )
-        return cls(inner, words, paths)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ArchSpec):
-            return NotImplemented
-        return self._inner == other._inner and self.words == other.words
-
-    def __hash__(self) -> int:
-        return hash(self._inner)
+        return cls(inner)
 
     @property
     def sites_per_word(self) -> int:
@@ -346,6 +322,17 @@ class ArchSpec:
         # Final fallback: all words (for zones with no buses at all)
         return list(range(len(self.words)))
 
+    def get_zone_index(
+        self,
+        loc_addr: LocationAddress,
+        zone_id: ZoneAddress,
+    ) -> int | None:
+        """O(1) flat index of a location within a zone.
+
+        Delegates to Rust ``ArchSpec.zone_location_index()``.
+        """
+        return self._inner.zone_location_index(loc_addr._inner, zone_id.zone_id)
+
     def get_path(
         self,
         lane_address: LaneAddress,
@@ -355,67 +342,29 @@ class ArchSpec:
             return (self.get_position(src), self.get_position(dst))
         return path
 
-    def get_zone_index(
-        self,
-        loc_addr: LocationAddress,
-        zone_id: ZoneAddress,
-    ) -> int | None:
-        """Get the index of a location address within a zone address."""
-        return self.zone_address_map[loc_addr].get(zone_id)
+    # ── Visualization shims ────────────────────────────────────────
+    # The real implementations live in ``bloqade.lanes.visualize.arch``
+    # via :class:`ArchVisualizer`. These shims preserve the historical
+    # ``arch_spec.<method>()`` call sites.  A single deferred-import
+    # helper builds the visualizer and caches bounds on it, so repeated
+    # access to ``x_bounds``/``y_bounds`` avoids recomputation.
+
+    @cached_property
+    def _visualizer(self) -> ArchVisualizer:
+        from bloqade.lanes.visualize.arch import ArchVisualizer
+
+        return ArchVisualizer(self)
 
     def path_bounds(self) -> tuple[float, float, float, float]:
-        x_min, x_max = self.x_bounds
-        y_min, y_max = self.y_bounds
+        return self._visualizer.path_bounds()
 
-        x_values = set(x for path in self.paths.values() for x, _ in path)
-        y_values = set(y for path in self.paths.values() for _, y in path)
-
-        y_min = min(y_min, min(y_values, default=y_min))
-        y_max = max(y_max, max(y_values, default=y_max))
-
-        x_min = min(x_min, min(x_values, default=x_min))
-        x_max = max(x_max, max(x_values, default=x_max))
-        return (x_min, x_max, y_min, y_max)
-
-    @cached_property
+    @property
     def x_bounds(self) -> tuple[float, float]:
-        x_min = float("inf")
-        x_max = float("-inf")
-        for zone_id in range(len(self.zones)):
-            for word_id in range(len(self.words)):
-                for site_id in range(len(self.words[word_id].site_indices)):
-                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
-                    if pos is not None:
-                        x_min = min(x_min, pos[0])
-                        x_max = max(x_max, pos[0])
+        return self._visualizer.x_bounds
 
-        if x_min == float("inf"):
-            x_min = -1.0
-
-        if x_max == float("-inf"):
-            x_max = 1.0
-
-        return x_min, x_max
-
-    @cached_property
+    @property
     def y_bounds(self) -> tuple[float, float]:
-        y_min = float("inf")
-        y_max = float("-inf")
-        for zone_id in range(len(self.zones)):
-            for word_id in range(len(self.words)):
-                for site_id in range(len(self.words[word_id].site_indices)):
-                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
-                    if pos is not None:
-                        y_min = min(y_min, pos[1])
-                        y_max = max(y_max, pos[1])
-
-        if y_min == float("inf"):
-            y_min = -1.0
-
-        if y_max == float("-inf"):
-            y_max = 1.0
-
-        return y_min, y_max
+        return self._visualizer.y_bounds
 
     def get_position(self, location: LocationAddress) -> tuple[float, float]:
         pos = self._inner.location_position(location._inner)
@@ -598,46 +547,6 @@ class ArchSpec:
             GeoGrid.from_positions(tuple(dst_xs), tuple(dst_ys)),
         )
 
-    def _get_word_bus_paths(
-        self, show_word_bus: Sequence[int]
-    ) -> Iterator[tuple[tuple[float, float], ...]]:
-        for zone_id, zone in enumerate(self._inner.zones):
-            for lane_id in show_word_bus:
-                if lane_id >= len(zone.word_buses):
-                    continue
-                lane = zone.word_buses[lane_id]
-                for site_id in zone.sites_with_word_buses:
-                    for start_word_id, end_word_id in zip(lane.src, lane.dst):
-                        lane_addr = WordLaneAddress(
-                            zone_id=zone_id,
-                            word_id=start_word_id,
-                            site_id=site_id,
-                            bus_id=lane_id,
-                            direction=Direction.FORWARD,
-                        )
-                        yield self.get_path(lane_addr)
-
-    def _get_site_bus_paths(
-        self, show_words: Sequence[int], show_site_bus: Sequence[int]
-    ) -> Iterator[tuple[tuple[float, float], ...]]:
-        for zone_id, zone in enumerate(self._inner.zones):
-            for word_id in show_words:
-                if word_id not in set(zone.words_with_site_buses):
-                    continue
-                for lane_id in show_site_bus:
-                    if lane_id >= len(zone.site_buses):
-                        continue
-                    lane = zone.site_buses[lane_id]
-                    for i in range(len(lane.src)):
-                        lane_addr = SiteLaneAddress(
-                            zone_id=zone_id,
-                            word_id=word_id,
-                            site_id=lane.src[i],
-                            bus_id=lane_id,
-                            direction=Direction.FORWARD,
-                        )
-                        yield self.get_path(lane_addr)
-
     def plot(
         self,
         ax=None,  # type: ignore[no-untyped-def]
@@ -646,38 +555,13 @@ class ArchSpec:
         show_word_bus: Sequence[int] = (),
         **scatter_kwargs,  # type: ignore[no-untyped-def]
     ):  # type: ignore[no-untyped-def]
-        import matplotlib.pyplot as plt  # type: ignore[import-untyped]
-
-        if ax is None:
-            ax = plt.gca()
-
-        for word_id in show_words:
-            word = self.words[word_id]
-            # Plot sites using their positions from the arch spec.
-            # Try each zone to find valid positions for this word.
-            positions = []
-            for zone_id in range(len(self.zones)):
-                for site_id in range(len(word.site_indices)):
-                    pos = self.get_position(LocationAddress(word_id, site_id, zone_id))
-                    if pos is not None:
-                        positions.append(pos)
-                if positions:
-                    break
-            if positions:
-                x_positions = [p[0] for p in positions]
-                y_positions = [p[1] for p in positions]
-                ax.scatter(x_positions, y_positions, **scatter_kwargs)
-
-        site_paths = self._get_site_bus_paths(show_words, show_site_bus)
-        for path in site_paths:
-            x_vals, y_vals = zip(*path)
-            ax.plot(x_vals, y_vals, linestyle="--")
-
-        word_paths = self._get_word_bus_paths(show_word_bus)
-        for path in word_paths:
-            x_vals, y_vals = zip(*path)
-            ax.plot(x_vals, y_vals, linestyle="-")
-        return ax
+        return self._visualizer.plot(
+            ax,
+            show_words=show_words,
+            show_site_bus=show_site_bus,
+            show_word_bus=show_word_bus,
+            **scatter_kwargs,
+        )
 
     def show(
         self,
@@ -687,16 +571,13 @@ class ArchSpec:
         show_inter: Sequence[int] = (),
         **scatter_kwargs,  # type: ignore[no-untyped-def]
     ):  # type: ignore[no-untyped-def]
-        import matplotlib.pyplot as plt  # type: ignore[import-untyped]
-
-        self.plot(
+        self._visualizer.show(
             ax,
             show_words=show_words,
-            show_site_bus=show_intra,
-            show_word_bus=show_inter,
+            show_intra=show_intra,
+            show_inter=show_inter,
             **scatter_kwargs,
         )
-        plt.show()
 
     def check_location_group(
         self, locations: Sequence[LocationAddress]
@@ -720,39 +601,17 @@ class ArchSpec:
         rust_addrs = [lane._inner for lane in lanes]
         return self._inner.check_lanes(rust_addrs)
 
-    def compatible_lane_error(self, lane1: LaneAddress, lane2: LaneAddress) -> set[str]:
-        """Get error messages if two lanes are not compatible.
-
-        Delegates to Rust group validation.
-        """
-        errors = self.check_lane_group([lane1, lane2])
-        return {str(e) for e in errors}
-
-    def compatible_lanes(self, lane1: LaneAddress, lane2: LaneAddress) -> bool:
-        """Check if two lanes are compatible (can be executed in parallel)."""
-        return len(self.check_lane_group([lane1, lane2])) == 0
-
-    def validate_location(self, location_address: LocationAddress) -> set[str]:
-        """Check if a location address is valid in this architecture.
-
-        Delegates to Rust validation.
-        """
-        errors = self.check_location_group([location_address])
-        return {str(e) for e in errors}
-
-    def validate_lane(self, lane_address: LaneAddress) -> set[str]:
-        """Check if a lane address is valid in this architecture.
-
-        Delegates to Rust validation.
-        """
-        errors = self.check_lane_group([lane_address])
-        return {str(e) for e in errors}
-
     def get_lane_address(
         self, src: LocationAddress, dst: LocationAddress
     ) -> LaneAddress | None:
-        """Given an input tuple of locations, gets the lane (w/direction)."""
-        return self._lane_map.get((src, dst))
+        """Given an input tuple of locations, gets the lane (w/direction).
+
+        Delegates to Rust ``ArchSpec.lane_for_endpoints()``.
+        """
+        result = self._inner.lane_for_endpoints(src._inner, dst._inner)
+        if result is None:
+            return None
+        return LaneAddress.from_inner(result)
 
     def get_endpoints(
         self, lane_address: LaneAddress
@@ -776,31 +635,3 @@ class ArchSpec:
         if result is None:
             return None
         return LocationAddress.from_inner(result)
-
-    def get_blockaded_location(
-        self, location: LocationAddress
-    ) -> LocationAddress | None:
-        """Get the CZ partner for a given location using word-level pairing.
-
-        Maps to the partner word, preserving the input zone_id. This is used
-        by the Python heuristics layer where CZ partners are resolved within
-        the same zone coordinate frame (word buses connect words within a zone).
-        """
-        partner_word = self._word_partner_map.get(location.word_id)
-        if partner_word is None:
-            return None
-        return LocationAddress(partner_word, location.site_id, location.zone_id)
-
-    @cached_property
-    def _word_partner_map(self) -> dict[int, int]:
-        """Map word_id -> partner_word_id from each zone's entangling_pairs.
-
-        Iterates entangling_pairs on each zone and builds a bidirectional
-        word partner mapping.
-        """
-        partner_map: dict[int, int] = {}
-        for zone in self._inner.zones:
-            for w_a, w_b in zone.entangling_pairs:
-                partner_map[w_a] = w_b
-                partner_map[w_b] = w_a
-        return partner_map

@@ -108,8 +108,8 @@ class LogicalPlacementMethods:
         t_addr = state.layout[target]
 
         # CZ destination: blockade partner of the other qubit's position
-        c_addr_dst = self.arch_spec.get_blockaded_location(t_addr)
-        t_addr_dst = self.arch_spec.get_blockaded_location(c_addr)
+        c_addr_dst = self.arch_spec.get_cz_partner(t_addr)
+        t_addr_dst = self.arch_spec.get_cz_partner(c_addr)
         assert c_addr_dst is not None, f"No CZ partner for {t_addr}"
         assert t_addr_dst is not None, f"No CZ partner for {c_addr}"
 
@@ -229,7 +229,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         home_addr: layout.LocationAddress,
     ) -> tuple[int, int, int, int]:
         # Map CZ position back to its home equivalent
-        home_equivalent = self.arch_spec.get_blockaded_location(cz_addr)
+        home_equivalent = self.arch_spec.get_cz_partner(cz_addr)
         if home_equivalent is None:
             home_equivalent = cz_addr
         word_distance = 0 if home_addr.word_id == home_equivalent.word_id else 1
