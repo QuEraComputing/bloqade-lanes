@@ -129,7 +129,7 @@ fn blended_distance(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_candidates(
+pub(crate) fn generate_candidates(
     config: &Config,
     entropy: u32,
     params: &EntropyParams,
