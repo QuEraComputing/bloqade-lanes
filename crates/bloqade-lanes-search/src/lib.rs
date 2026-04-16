@@ -12,11 +12,15 @@ pub mod cost;
 pub mod entropy;
 pub mod expander;
 pub mod frontier;
+pub mod generators;
 pub mod goals;
 pub mod graph;
 pub mod heuristic;
 pub mod heuristic_expander;
+pub mod heuristics;
+
 pub mod lane_index;
+pub mod scorers;
 pub mod solve;
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -26,9 +30,12 @@ pub use astar::{Expander, SearchResult, astar};
 pub use config::{Config, ConfigError};
 pub use context::{MoveCandidate, SearchContext, SearchState};
 pub use cost::UniformCost;
+pub use generators::{ExhaustiveGenerator, HeuristicGenerator};
 pub use goals::AllAtTarget;
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristic_expander::DeadlockPolicy;
+pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
+pub use scorers::DistanceScorer;
 pub use solve::{InnerStrategy, SolveOptions, Strategy};
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};
