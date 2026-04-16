@@ -29,7 +29,7 @@ pub use config::{Config, ConfigError};
 pub use context::{MoveCandidate, SearchContext, SearchState};
 pub use cost::UniformCost;
 pub use generators::{DeadlockPolicy, ExhaustiveGenerator, HeuristicGenerator};
-pub use goals::AllAtTarget;
+pub use goals::{AllAtTarget, PartialPlacementGoal, ZoneGoal};
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
