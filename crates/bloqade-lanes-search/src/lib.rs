@@ -33,6 +33,6 @@ pub use goals::AllAtTarget;
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
-pub use scorers::DistanceScorer;
+pub use scorers::{DistanceScorer, EntropyScorer};
 pub use solve::{InnerStrategy, SolveOptions, Strategy};
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};
