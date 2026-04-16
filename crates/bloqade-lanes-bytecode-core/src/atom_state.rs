@@ -347,6 +347,7 @@ mod tests {
             paths: None,
             feed_forward: false,
             atom_reloading: false,
+            blockade_radius: None,
         }
     }
 
