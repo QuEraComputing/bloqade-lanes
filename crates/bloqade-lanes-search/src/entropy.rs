@@ -85,6 +85,9 @@ struct EntropyState {
     candidate_cache: Vec<(MoveSet, Config, f64)>,
     /// Encoded lane vecs of movesets already attempted from this node.
     tried_moves: HashSet<Vec<u64>>,
+    /// Encoded lane vecs of movesets that failed (collision/transposition).
+    /// Skipped on retry to avoid repeating known failures.
+    failed_candidates: HashSet<Vec<u64>>,
     /// Number of actually-created children (is_new=true from graph.insert).
     n_children: usize,
 }
@@ -96,6 +99,7 @@ impl Default for EntropyState {
             candidates_tried: 0,
             candidate_cache: Vec::new(),
             tried_moves: HashSet::new(),
+            failed_candidates: HashSet::new(),
             n_children: 0,
         }
     }
@@ -201,15 +205,25 @@ pub(crate) fn generate_candidates(
         };
         let m_now = {
             let loc = LocationAddr::decode(loc_enc);
-            index
-                .outgoing_lanes(loc)
-                .iter()
-                .filter(|lane| {
-                    index
-                        .endpoints(lane)
-                        .is_some_and(|(_, dst)| !occupied.contains(&dst.encode()))
-                })
-                .count() as f64
+            let mut m = 0.0_f64;
+            for &lane in index.outgoing_lanes(loc) {
+                let Some((_, dst)) = index.endpoints(&lane) else {
+                    continue;
+                };
+                let dst_e = dst.encode();
+                if occupied.contains(&dst_e) {
+                    continue;
+                }
+                let d = dist_table
+                    .distance(dst_e, target_enc)
+                    .map_or(f64::MAX, |d| {
+                        blended_distance(d as f64, dst_e, target_enc, params.w_t, dist_table)
+                    });
+                if d < f64::MAX {
+                    m += 1.0 / (1.0 + d);
+                }
+            }
+            m
         };
 
         let loc = LocationAddr::decode(loc_enc);
@@ -238,13 +252,15 @@ pub(crate) fn generate_candidates(
                 if occupied.contains(&enc) {
                     continue;
                 }
-                m_after += 1.0;
-                if params.lookahead
-                    && let Some(d) = dist_table.distance(enc, target_enc)
-                {
-                    let d_blended =
-                        blended_distance(d as f64, enc, target_enc, params.w_t, dist_table);
-                    best_d2 = best_d2.min(d_blended);
+                // Distance-weighted mobility: closer destinations count more.
+                let d_to_target = dist_table.distance(enc, target_enc).map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, enc, target_enc, params.w_t, dist_table)
+                });
+                if d_to_target < f64::MAX {
+                    m_after += 1.0 / (1.0 + d_to_target);
+                }
+                if params.lookahead && d_to_target < f64::MAX {
+                    best_d2 = best_d2.min(d_to_target);
                 }
             }
             let effective_d_after = if params.lookahead { best_d2 } else { d_after };
@@ -447,24 +463,41 @@ pub(crate) fn score_moveset(
             arrived += 1.0;
         }
 
-        mobility_before += index
-            .outgoing_lanes(old_loc)
-            .iter()
-            .filter(|l| {
-                index
-                    .endpoints(l)
-                    .is_some_and(|(_, d)| !occupied.contains(&d.encode()))
-            })
-            .count() as f64;
-        mobility_after += index
-            .outgoing_lanes(new_loc)
-            .iter()
-            .filter(|l| {
-                index
-                    .endpoints(l)
-                    .is_some_and(|(_, d)| !new_occupied.contains(&d.encode()))
-            })
-            .count() as f64;
+        // Distance-weighted mobility: closer destinations count more.
+        for &lane in index.outgoing_lanes(old_loc) {
+            let Some((_, dst)) = index.endpoints(&lane) else {
+                continue;
+            };
+            let dst_enc = dst.encode();
+            if occupied.contains(&dst_enc) {
+                continue;
+            }
+            let d = dist_table
+                .distance(dst_enc, target_enc)
+                .map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
+                });
+            if d < f64::MAX {
+                mobility_before += 1.0 / (1.0 + d);
+            }
+        }
+        for &lane in index.outgoing_lanes(new_loc) {
+            let Some((_, dst)) = index.endpoints(&lane) else {
+                continue;
+            };
+            let dst_enc = dst.encode();
+            if new_occupied.contains(&dst_enc) {
+                continue;
+            }
+            let d = dist_table
+                .distance(dst_enc, target_enc)
+                .map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
+                });
+            if d < f64::MAX {
+                mobility_after += 1.0 / (1.0 + d);
+            }
+        }
     }
 
     params.alpha * distance_progress
@@ -697,7 +730,7 @@ pub fn entropy_search(
         // Record as tried.
         let es = entropy_map.entry(current).or_default();
         let move_key = move_set.encoded_lanes().to_vec();
-        es.tried_moves.insert(move_key);
+        es.tried_moves.insert(move_key.clone());
         es.candidates_tried += 1;
 
         // Insert into graph.
@@ -706,7 +739,9 @@ pub fn entropy_search(
 
         if !is_new {
             // Transposition: config seen at equal or better cost.
-            entropy_map.entry(current).or_default().entropy += params.delta_e;
+            let es = entropy_map.entry(current).or_default();
+            es.failed_candidates.insert(move_key.clone());
+            es.entropy += params.delta_e;
             continue;
         }
 
@@ -756,11 +791,11 @@ fn get_next_candidate(
         es.candidates_tried = 0;
     }
 
-    // Find first untried candidate.
+    // Find first untried, non-failed candidate.
     while es.candidates_tried < es.candidate_cache.len() {
         let (ref ms, ref cfg, cost) = es.candidate_cache[es.candidates_tried];
         let move_key = ms.encoded_lanes().to_vec();
-        if !es.tried_moves.contains(&move_key) {
+        if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
             let result = (ms.clone(), cfg.clone(), cost);
             return Some(result);
         }
@@ -774,7 +809,7 @@ fn get_next_candidate(
     while es.candidates_tried < es.candidate_cache.len() {
         let (ref ms, ref cfg, cost) = es.candidate_cache[es.candidates_tried];
         let move_key = ms.encoded_lanes().to_vec();
-        if !es.tried_moves.contains(&move_key) {
+        if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
             let result = (ms.clone(), cfg.clone(), cost);
             return Some(result);
         }
