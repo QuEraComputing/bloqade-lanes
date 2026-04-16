@@ -8,56 +8,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
-use bloqade_lanes_search::solve::{MoveSolver, SolveResult, SolveStatus, Strategy};
+use bloqade_lanes_search::DeadlockPolicy;
+use bloqade_lanes_search::solve::{
+    InnerStrategy, MoveSolver, SolveOptions, SolveResult, SolveStatus, Strategy,
+};
 
 use crate::arch_python::PyArchSpec;
-
-// ── SearchStrategy enum ──
-
-/// Search strategy for the Rust move solver.
-#[pyclass(
-    name = "SearchStrategy",
-    eq,
-    eq_int,
-    hash,
-    frozen,
-    module = "bloqade.lanes.bytecode._native"
-)]
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum PySearchStrategy {
-    #[pyo3(name = "ASTAR")]
-    AStar = 0,
-    #[pyo3(name = "DFS")]
-    HeuristicDfs = 1,
-    #[pyo3(name = "BFS")]
-    Bfs = 2,
-    #[pyo3(name = "GREEDY")]
-    GreedyBestFirst = 3,
-}
-
-#[pymethods]
-impl PySearchStrategy {
-    #[getter]
-    fn name(&self) -> &'static str {
-        match self {
-            PySearchStrategy::AStar => "ASTAR",
-            PySearchStrategy::HeuristicDfs => "DFS",
-            PySearchStrategy::Bfs => "BFS",
-            PySearchStrategy::GreedyBestFirst => "GREEDY",
-        }
-    }
-}
-
-impl PySearchStrategy {
-    fn to_rs(&self) -> Strategy {
-        match self {
-            PySearchStrategy::AStar => Strategy::AStar,
-            PySearchStrategy::HeuristicDfs => Strategy::HeuristicDfs,
-            PySearchStrategy::Bfs => Strategy::Bfs,
-            PySearchStrategy::GreedyBestFirst => Strategy::GreedyBestFirst,
-        }
-    }
-}
 
 /// Result of a move synthesis solve.
 ///
@@ -134,6 +90,12 @@ impl PySolveResult {
         self.inner.cost
     }
 
+    /// Number of deadlocks encountered during search.
+    #[getter]
+    fn deadlocks(&self) -> u32 {
+        self.inner.deadlocks
+    }
+
     fn __repr__(&self) -> String {
         let status = match self.inner.status {
             SolveStatus::Solved => "solved",
@@ -141,11 +103,12 @@ impl PySolveResult {
             SolveStatus::BudgetExceeded => "budget_exceeded",
         };
         format!(
-            "SolveResult(status={}, steps={}, cost={}, expanded={})",
+            "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={})",
             status,
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
+            self.inner.deadlocks,
         )
     }
 }
@@ -165,12 +128,6 @@ pub struct PyMoveSolver {
 #[pymethods]
 impl PyMoveSolver {
     /// Create a solver from an ArchSpec JSON string.
-    ///
-    /// Args:
-    ///     arch_spec_json: JSON string of the architecture specification.
-    ///
-    /// Raises:
-    ///     ValueError: If the JSON is invalid.
     #[new]
     fn new(arch_spec_json: &str) -> PyResult<Self> {
         let inner = MoveSolver::from_json(arch_spec_json)
@@ -179,9 +136,6 @@ impl PyMoveSolver {
     }
 
     /// Create a solver from a native ArchSpec object.
-    ///
-    /// Serializes the ArchSpec to JSON internally, avoiding manual
-    /// JSON round-trips.
     #[staticmethod]
     fn from_arch_spec(arch: &PyArchSpec) -> PyResult<Self> {
         let json = serde_json::to_string(&arch.inner)
@@ -193,21 +147,23 @@ impl PyMoveSolver {
 
     /// Solve a move synthesis problem.
     ///
-    /// Finds the minimum-cost sequence of parallel move steps to move
-    /// qubits from initial to target placement, avoiding blocked locations.
-    ///
     /// Args:
     ///     initial: List of (qubit_id, zone_id, word_id, site_id) tuples for starting positions.
     ///     target: List of (qubit_id, zone_id, word_id, site_id) tuples for desired positions.
     ///     blocked: List of (zone_id, word_id, site_id) tuples for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
-    ///     strategy: Search strategy (default: SearchStrategy.ASTAR).
+    ///     strategy: Search strategy string.
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
+    ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
+    ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
+    ///     lookahead: Enable 2-step lookahead scoring.
+    ///     deadlock_policy: Deadlock handling: "skip" or "move_blockers".
+    ///     w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only). Affects entropy strategy.
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy=PySearchStrategy::AStar, top_c=3, max_movesets_per_group=3))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -216,9 +172,14 @@ impl PyMoveSolver {
         target: Vec<(u32, u32, u32, u32)>,
         blocked: Vec<(u32, u32, u32)>,
         max_expansions: Option<u32>,
-        strategy: PySearchStrategy,
+        strategy: &str,
         top_c: usize,
         max_movesets_per_group: usize,
+        weight: f64,
+        restarts: u32,
+        lookahead: bool,
+        deadlock_policy: &str,
+        w_t: f64,
     ) -> PyResult<PySolveResult> {
         // Validate: check for duplicate qubit IDs in target.
         {
@@ -269,7 +230,61 @@ impl PyMoveSolver {
             })
             .collect();
 
-        let strat = strategy.to_rs();
+        let strat = match strategy {
+            "astar" => Strategy::AStar,
+            "dfs" => Strategy::HeuristicDfs,
+            "bfs" => Strategy::Bfs,
+            "greedy" => Strategy::GreedyBestFirst,
+            "ids" => Strategy::Ids,
+            "cascade" | "cascade-ids" => Strategy::Cascade {
+                inner: InnerStrategy::Ids,
+            },
+            "cascade-dfs" => Strategy::Cascade {
+                inner: InnerStrategy::Dfs,
+            },
+            "cascade-entropy" => Strategy::Cascade {
+                inner: InnerStrategy::Entropy,
+            },
+            "entropy" => Strategy::Entropy,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
+                )));
+            }
+        };
+
+        let dl_policy = match deadlock_policy {
+            "skip" => DeadlockPolicy::Skip,
+            "move_blockers" => DeadlockPolicy::MoveBlockers,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown deadlock_policy '{deadlock_policy}', expected: skip, move_blockers"
+                )));
+            }
+        };
+
+        // Validate numeric parameters.
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(PyValueError::new_err(
+                "weight must be a finite float greater than 0.0",
+            ));
+        }
+        if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
+            return Err(PyValueError::new_err(
+                "w_t must be a finite float in the range [0.0, 1.0]",
+            ));
+        }
+
+        let opts = SolveOptions {
+            strategy: strat,
+            top_c,
+            max_movesets_per_group,
+            weight,
+            restarts,
+            lookahead,
+            deadlock_policy: dl_policy,
+            w_t,
+        };
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -279,9 +294,7 @@ impl PyMoveSolver {
                     target_pairs,
                     blocked_locs,
                     max_expansions,
-                    strat,
-                    top_c,
-                    max_movesets_per_group,
+                    &opts,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
