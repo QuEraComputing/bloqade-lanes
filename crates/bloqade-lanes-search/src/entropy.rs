@@ -11,7 +11,8 @@
 //! file and the one-line references in `lib.rs`, `solve.rs`, and the Python
 //! bindings.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
@@ -24,6 +25,10 @@ use crate::context::SearchContext;
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
+use crate::ordering::{
+    TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
+    cmp_triplet_entry_tiebreak,
+};
 use crate::traits::Goal;
 
 // ── Parameters ─────────────────────────────────────────────────────
@@ -90,6 +95,46 @@ struct EntropyState {
     failed_candidates: HashSet<Vec<u64>>,
     /// Number of actually-created children (is_new=true from graph.insert).
     n_children: usize,
+}
+
+struct ScoredEntry {
+    qubit_id: u32,
+    score: f64,
+    lane_encoded: u64,
+    dst_encoded: u64,
+}
+
+fn cmp_scored_entries(a: &(TripletKey, ScoredEntry), b: &(TripletKey, ScoredEntry)) -> Ordering {
+    b.1.score.total_cmp(&a.1.score).then_with(|| {
+        cmp_triplet_entry_tiebreak(
+            &a.0,
+            a.1.qubit_id,
+            a.1.lane_encoded,
+            a.1.dst_encoded,
+            &b.0,
+            b.1.qubit_id,
+            b.1.lane_encoded,
+            b.1.dst_encoded,
+        )
+    })
+}
+
+fn cmp_group_entries(a: &ScoredEntry, b: &ScoredEntry) -> Ordering {
+    b.score.total_cmp(&a.score).then_with(|| {
+        cmp_qubit_lane_dst_tiebreak(
+            a.qubit_id,
+            a.lane_encoded,
+            a.dst_encoded,
+            b.qubit_id,
+            b.lane_encoded,
+            b.dst_encoded,
+        )
+    })
+}
+
+fn cmp_scored_candidates(a: &(f64, MoveSet, Config), b: &(f64, MoveSet, Config)) -> Ordering {
+    b.0.total_cmp(&a.0)
+        .then_with(|| cmp_moveset_config_tiebreak(&a.1, &a.2, &b.1, &b.2))
 }
 
 impl Default for EntropyState {
@@ -183,16 +228,6 @@ pub(crate) fn generate_candidates(
 
     if unresolved.is_empty() {
         return Vec::new();
-    }
-
-    // Step 2: score (qubit, bus triplet) pairs with entropy weighting.
-    type TripletKey = (u8, u32, u8);
-
-    struct ScoredEntry {
-        qubit_id: u32,
-        score: f64,
-        lane_encoded: u64,
-        dst_encoded: u64,
     }
 
     let mut raw_deltas: Vec<(TripletKey, u32, f64, f64, u64, u64)> = Vec::new();
@@ -317,7 +352,7 @@ pub(crate) fn generate_candidates(
         .collect();
 
     // Step 3: per qubit, keep top C.
-    let mut per_qubit: HashMap<u32, Vec<(TripletKey, ScoredEntry)>> = HashMap::new();
+    let mut per_qubit: BTreeMap<u32, Vec<(TripletKey, ScoredEntry)>> = BTreeMap::new();
     for entry in all_scores.drain(..) {
         per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
     }
@@ -326,7 +361,7 @@ pub(crate) fn generate_candidates(
     let mut has_positive = false;
 
     for entries in per_qubit.values_mut() {
-        entries.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        entries.sort_by(cmp_scored_entries);
         entries.truncate(params.top_c);
         for e in entries.drain(..) {
             if e.1.score > 0.0 {
@@ -337,14 +372,14 @@ pub(crate) fn generate_candidates(
     }
 
     if !has_positive {
-        selected.sort_by(|a, b| b.1.score.total_cmp(&a.1.score));
+        selected.sort_by(cmp_scored_entries);
         selected.truncate(1);
     } else {
         selected.retain(|e| e.1.score > 0.0);
     }
 
     // Step 4: group by bus triplet.
-    let mut groups: HashMap<TripletKey, Vec<ScoredEntry>> = HashMap::new();
+    let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
     for (key, entry) in selected {
         groups.entry(key).or_default().push(entry);
     }
@@ -353,7 +388,7 @@ pub(crate) fn generate_candidates(
     let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
     for (_key, mut qubits) in groups {
-        qubits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        qubits.sort_by(cmp_group_entries);
         let n = qubits.len().min(params.max_movesets_per_group);
 
         for start in 0..n {
@@ -396,7 +431,7 @@ pub(crate) fn generate_candidates(
             (ms_score + ms_perturbation, ms, new_cfg)
         })
         .collect();
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored.sort_by(cmp_scored_candidates);
 
     scored
         .into_iter()
@@ -938,5 +973,79 @@ mod tests {
         let blocked: HashSet<u64> = [loc(0, 5).encode()].into_iter().collect();
         let path = find_path_occupied(loc(0, 0), loc(0, 5), &blocked, &index);
         assert!(path.is_none());
+    }
+
+    #[test]
+    fn scored_entry_tie_break_is_deterministic() {
+        let mut entries = vec![
+            (
+                (1, 2, 1),
+                ScoredEntry {
+                    qubit_id: 8,
+                    score: 3.0,
+                    lane_encoded: 19,
+                    dst_encoded: 40,
+                },
+            ),
+            (
+                (1, 1, 1),
+                ScoredEntry {
+                    qubit_id: 4,
+                    score: 3.0,
+                    lane_encoded: 12,
+                    dst_encoded: 40,
+                },
+            ),
+            (
+                (1, 1, 1),
+                ScoredEntry {
+                    qubit_id: 4,
+                    score: 3.0,
+                    lane_encoded: 10,
+                    dst_encoded: 40,
+                },
+            ),
+        ];
+
+        entries.sort_by(cmp_scored_entries);
+
+        assert_eq!(entries[0].0, (1, 1, 1));
+        assert_eq!(entries[0].1.lane_encoded, 10);
+        assert_eq!(entries[1].0, (1, 1, 1));
+        assert_eq!(entries[1].1.lane_encoded, 12);
+        assert_eq!(entries[2].0, (1, 2, 1));
+    }
+
+    #[test]
+    fn generate_candidates_seed_zero_tie_fallback_is_stable() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        let target_encoded = vec![(0u32, loc(0, 5).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+        };
+        let params = EntropyParams {
+            w_d: 0.0,
+            w_m: 0.0,
+            top_c: 8,
+            max_movesets_per_group: 8,
+            ..EntropyParams::default()
+        };
+
+        let out1 = generate_candidates(&config, 1, &params, &ctx, 0);
+        let out2 = generate_candidates(&config, 1, &params, &ctx, 0);
+
+        assert!(!out1.is_empty());
+        assert_eq!(out1.len(), out2.len());
+        for ((ms_a, cfg_a, _), (ms_b, cfg_b, _)) in out1.iter().zip(out2.iter()) {
+            assert_eq!(ms_a, ms_b);
+            assert_eq!(cfg_a.as_entries(), cfg_b.as_entries());
+        }
     }
 }
