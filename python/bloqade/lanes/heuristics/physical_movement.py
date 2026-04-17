@@ -323,7 +323,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         return self._rust_nodes_expanded_total
 
     _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
-    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD}
+    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
 
     def _cz_placements_rust(
         self,
