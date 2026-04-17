@@ -440,6 +440,46 @@ impl<H: crate::traits::Heuristic> Frontier for IdsFrontier<H> {
 
 // ── Trait-based search loop (v2) ────────────────────────────────────
 
+/// Debug-only AOD lane-group validation for generator output.
+///
+/// ## Convention
+///
+/// Every candidate emitted by a [`MoveGenerator`] must represent a legal
+/// AOD move: a single `(move_type, bus_id, direction)` group whose source
+/// positions form a complete X×Y rectangle, with no duplicate or unknown
+/// lane addresses. The generators enforce this structurally (by how they
+/// build rectangles), but this helper acts as a **debug-only safety net**
+/// that re-validates each candidate against `ArchSpec::check_lanes` before
+/// it is inserted into the search graph.
+///
+/// Call this once, right after `MoveGenerator::generate`, from any new
+/// search loop. Under `#[cfg(debug_assertions)]` it verifies every
+/// candidate; in release builds it is a zero-cost no-op.
+///
+/// Do **not** call this from hot production paths outside the search loop
+/// — `ArchSpec::check_lanes` is linear in the group size and allocates.
+#[inline]
+fn debug_assert_candidates_valid(candidates: &[MoveCandidate], ctx: &SearchContext<'_>) {
+    #[cfg(debug_assertions)]
+    {
+        let arch = ctx.index.arch_spec();
+        for candidate in candidates {
+            let lanes = candidate.move_set.decode();
+            let errors = arch.check_lanes(&lanes);
+            debug_assert!(
+                errors.is_empty(),
+                "generator emitted invalid AOD lane group: {:?} (lanes={:?})",
+                errors,
+                lanes,
+            );
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (candidates, ctx);
+    }
+}
+
 /// Run a search using the composable trait-based API.
 ///
 /// Uses separate [`MoveGenerator`], [`CandidateScorer`], [`CostFn`], and
@@ -537,6 +577,7 @@ where
 
         candidates.clear();
         generator.generate(graph.config(node_id), node_id, ctx, state, &mut candidates);
+        debug_assert_candidates_valid(&candidates, ctx);
 
         observer.on_event(
             SearchEvent::NodeExpanded {
