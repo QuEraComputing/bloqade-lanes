@@ -14,6 +14,7 @@ class ObservableFrame(str, Enum):
 class LogicalKernelSpec:
     kernel: Any
     special_prepare_kernel: Any | None = None
+    special_tsim_circuit_strategy: str | None = None
     observable_frame: ObservableFrame = ObservableFrame.RAW
 
 

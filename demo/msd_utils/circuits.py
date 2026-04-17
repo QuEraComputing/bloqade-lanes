@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from kirin.dialects import func, ilist
 
@@ -21,6 +21,18 @@ from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
 
 from .common import DemoTask, LogicalKernelSpec, ObservableFrame
+
+NONUNITARY_PREFIXES = (
+    "M",
+    "MX",
+    "MY",
+    "MR",
+    "MRX",
+    "MRY",
+    "MPP",
+    "DETECTOR",
+    "OBSERVABLE_INCLUDE",
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +99,44 @@ def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) 
         setattr(task, attr, value)
     except AttributeError:
         task.__dict__[attr] = value
+
+
+def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
+    for attr in (
+        "tsim_circuit",
+        "noiseless_tsim_circuit",
+        "measurement_sampler",
+        "noiseless_measurement_sampler",
+        "detector_sampler",
+        "noiseless_detector_sampler",
+        "detector_error_model",
+    ):
+        task.__dict__.pop(attr, None)
+
+
+def _first_nonunitary_instruction_index(circuit: Any) -> int:
+    for idx in range(len(circuit)):
+        if str(circuit[idx]).startswith(NONUNITARY_PREFIXES):
+            return idx
+    return len(circuit)
+
+
+def _build_compiled_inverse_prefix_circuit(task: GeminiLogicalSimulatorTask):
+    compiled_circuit = task.tsim_circuit
+    unitary_prefix = compiled_circuit[
+        : _first_nonunitary_instruction_index(compiled_circuit)
+    ]
+    inverse_prefix = unitary_prefix.without_noise().inverse()
+    return inverse_prefix + compiled_circuit
+
+
+def _override_task_tsim_circuit(
+    task: GeminiLogicalSimulatorTask,
+    circuit: Any,
+) -> None:
+    _set_task_override(task, "tsim_circuit", circuit)
+    _clear_task_tsim_artifacts(task)
+    _set_task_override(task, "tsim_circuit", circuit)
 
 
 def _splice_noiseless_prefix_into_compiled_kernel(
@@ -297,7 +347,16 @@ def build_decoder_kernel_bundle(
     lam: float,
     *,
     output_qubit: int = 0,
+    special_kernel_strategy: Literal[
+        "prefix_prepare", "compiled_inverse_prefix"
+    ] = "prefix_prepare",
 ) -> DecoderKernelBundle:
+    if special_kernel_strategy not in {"prefix_prepare", "compiled_inverse_prefix"}:
+        raise ValueError(
+            "special_kernel_strategy must be 'prefix_prepare' or "
+            "'compiled_inverse_prefix'."
+        )
+
     primitives = _build_primitives(theta, phi, lam, output_qubit=output_qubit)
     msd_magic_prep = primitives["msd_magic_prep"]
     msd_forward = primitives["msd_forward"]
@@ -390,13 +449,13 @@ def build_decoder_kernel_bundle(
         tomography_z(reg)
         return default_post_processing(reg)
 
-    return DecoderKernelBundle(
-        actual={
-            "X": LogicalKernelSpec(kernel=msd_actual_x),
-            "Y": LogicalKernelSpec(kernel=msd_actual_y),
-            "Z": LogicalKernelSpec(kernel=msd_actual_z),
-        },
-        special={
+    actual = {
+        "X": LogicalKernelSpec(kernel=msd_actual_x),
+        "Y": LogicalKernelSpec(kernel=msd_actual_y),
+        "Z": LogicalKernelSpec(kernel=msd_actual_z),
+    }
+    if special_kernel_strategy == "prefix_prepare":
+        special = {
             "X": LogicalKernelSpec(
                 kernel=msd_special_x,
                 special_prepare_kernel=prepare_special_x,
@@ -412,7 +471,29 @@ def build_decoder_kernel_bundle(
                 special_prepare_kernel=prepare_special_z,
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
-        },
+        }
+    else:
+        special = {
+            "X": LogicalKernelSpec(
+                kernel=msd_actual_x,
+                special_tsim_circuit_strategy="compiled_inverse_prefix",
+                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            ),
+            "Y": LogicalKernelSpec(
+                kernel=msd_actual_y,
+                special_tsim_circuit_strategy="compiled_inverse_prefix",
+                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            ),
+            "Z": LogicalKernelSpec(
+                kernel=msd_actual_z,
+                special_tsim_circuit_strategy="compiled_inverse_prefix",
+                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            ),
+        }
+
+    return DecoderKernelBundle(
+        actual=actual,
+        special=special,
         injected={
             "X": LogicalKernelSpec(kernel=injected_x),
             "Y": LogicalKernelSpec(kernel=injected_y),
@@ -572,6 +653,11 @@ def build_task(
         )
 
     if spec.special_prepare_kernel is not None:
+        if spec.special_tsim_circuit_strategy is not None:
+            raise ValueError(
+                "LogicalKernelSpec cannot set both special_prepare_kernel and "
+                "special_tsim_circuit_strategy."
+            )
         initializer_kernel = noisy_initializer or steane7_initialize
         initializer_name = (
             getattr(initializer_kernel, "sym_name", None)
@@ -590,6 +676,14 @@ def build_task(
                 initializer_name=str(initializer_name),
             ),
         )
+
+    if spec.special_tsim_circuit_strategy is not None:
+        if spec.special_tsim_circuit_strategy != "compiled_inverse_prefix":
+            raise ValueError(
+                "Unknown special_tsim_circuit_strategy: "
+                f"{spec.special_tsim_circuit_strategy}"
+            )
+        _override_task_tsim_circuit(task, _build_compiled_inverse_prefix_circuit(task))
 
     return DemoTask(
         task=task,
