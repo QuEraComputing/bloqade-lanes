@@ -15,10 +15,12 @@ from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
+    ancilla_matches_valid_targets,
     fidelity_from_counts,
     magic_state_fidelity_point_from_counts,
     pack_boolean_array,
     packed_bits_to_int,
+    resolve_valid_factory_targets,
     run_task,
     split_factory_bits,
     unpack_packed_bits,
@@ -160,12 +162,17 @@ def estimate_mld_ancilla_scores(
     decoder_by_basis: Mapping[str, tuple[Any, Any]],
     ranking_data_by_basis: Mapping[str, BasisDataset],
     *,
-    factory_target: np.ndarray,
+    factory_target: np.ndarray | Sequence[int] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> np.ndarray:
+    targets = resolve_valid_factory_targets(
+        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
+    )
     if set(decoder_by_basis) != set(basis_labels):
         raise ValueError(
             "Need X/Y/Z decoder pairs to estimate shared MLD postselection scores."
@@ -204,7 +211,7 @@ def estimate_mld_ancilla_scores(
                 factory_decoder.decode(a_det.astype(bool)), dtype=np.uint8
             )
             corrected_anc = a_obs ^ anc_flip
-            if not np.array_equal(corrected_anc, factory_target):
+            if not ancilla_matches_valid_targets(corrected_anc, targets):
                 continue
             full_flip = np.asarray(
                 full_decoder.decode(det.astype(bool)), dtype=np.uint8
@@ -241,7 +248,8 @@ def build_shared_mld_postselection_scores(
     training_data_by_basis: Mapping[str, BasisDataset],
     *,
     table_decoder_cls: type,
-    factory_target: np.ndarray,
+    factory_target: np.ndarray | Sequence[int] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
     ranking_data_by_basis: Mapping[str, BasisDataset] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
@@ -269,6 +277,7 @@ def build_shared_mld_postselection_scores(
         decoder_by_basis,
         score_data_by_basis,
         factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
         basis_labels=basis_labels,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
@@ -445,7 +454,8 @@ def evaluate_curve(
     posterior_samples: int,
     threshold_points: int,
     metric: str,
-    factory_target: np.ndarray,
+    factory_target: np.ndarray | Sequence[int] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
@@ -454,6 +464,10 @@ def evaluate_curve(
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
 ) -> dict[str, np.ndarray]:
+    targets = resolve_valid_factory_targets(
+        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
+    )
     all_scores = []
     for basis in basis_labels:
         dataset = actual_data[basis]
@@ -466,7 +480,10 @@ def evaluate_curve(
         for a_det, a_obs in zip(anc_det, anc_obs, strict=True):
             anc_flip, score = decode_factory(packed_bits_to_int(a_det))
             anc_flip = np.asarray(anc_flip, dtype=np.uint8)
-            if np.array_equal(a_obs ^ anc_flip, factory_target) and np.isfinite(score):
+            if ancilla_matches_valid_targets(
+                a_obs ^ anc_flip,
+                targets,
+            ) and np.isfinite(score):
                 all_scores.append(score)
     if not all_scores:
         raise RuntimeError(
@@ -510,7 +527,7 @@ def evaluate_curve(
                 anc_flip, score = decode_factory(packed_bits_to_int(a_det))
                 anc_flip = np.asarray(anc_flip, dtype=np.uint8)
                 corrected_anc = a_obs ^ anc_flip
-                if not np.array_equal(corrected_anc, factory_target):
+                if not ancilla_matches_valid_targets(corrected_anc, targets):
                     continue
                 if score < threshold:
                     continue
@@ -564,7 +581,8 @@ def evaluate_mld_curve(
     decoder_map: Mapping[str, DecoderAdapter],
     *,
     posterior_samples: int,
-    factory_target: np.ndarray,
+    factory_target: np.ndarray | Sequence[int] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
@@ -572,6 +590,10 @@ def evaluate_mld_curve(
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
 ) -> dict[str, np.ndarray]:
+    targets = resolve_valid_factory_targets(
+        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
+    )
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
     corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
     pattern_scores: dict[int, float] = {}
@@ -611,7 +633,7 @@ def evaluate_mld_curve(
                     raise ValueError(
                         f"Inconsistent MLD score for ancilla detector pattern {packed}."
                     )
-            if not np.array_equal(a_obs ^ anc_flip, factory_target):
+            if not ancilla_matches_valid_targets(a_obs ^ anc_flip, targets):
                 continue
 
             full_flip = np.asarray(
