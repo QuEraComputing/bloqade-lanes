@@ -78,7 +78,7 @@ class EntropyPlacementTraversal(PlacementTraversalABC):
 
     search_params: SearchParams = field(default_factory=SearchParams)
     max_depth: int | None = None
-    max_expansions: int | None = 1000
+    max_expansions: int | None = 300
     on_search_step: OnSearchStep | None = None
 
     def path_to_target_config(
@@ -112,7 +112,7 @@ class EntropyPlacementTraversal(PlacementTraversalABC):
 class GreedyPlacementTraversal(PlacementTraversalABC):
     """Placement traversal adapter backed by greedy best-first search."""
 
-    max_expansions: int | None = 300
+    max_expansions: int | None = 1000
 
     def path_to_target_config(
         self,
@@ -193,6 +193,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         default_factory=dict, init=False, repr=False
     )
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
+    _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
 
     @property
     def traced_tree(self) -> ConfigurationTree | None:
@@ -316,8 +317,13 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
         return self._rust_solver
 
+    @property
+    def rust_nodes_expanded_total(self) -> int:
+        """Total Rust solver node expansions for this strategy instance."""
+        return self._rust_nodes_expanded_total
+
     _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
-    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD}
+    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
 
     def _cz_placements_rust(
         self,
@@ -348,6 +354,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             top_c=self.traversal.top_c,
             max_movesets_per_group=self.traversal.max_movesets_per_group,
         )
+        self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
         if result.status != "solved":
             return AtomState.bottom()

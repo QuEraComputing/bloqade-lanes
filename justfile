@@ -8,16 +8,16 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    coverage run -m pytest python/tests
+    uv run pytest python/tests --cov --cov-report= -n auto
 
 coverage-xml: coverage-run
-    coverage xml
+    uv run coverage xml
 
 coverage-html: coverage-run
-    coverage html
+    uv run coverage html
 
 coverage-report: coverage-run
-    coverage report
+    uv run coverage report
 
 coverage-open: coverage-html
     open htmlcov/index.html
@@ -143,6 +143,14 @@ test-rust:
 # Run Python tests
 test-python:
     uv run --locked pytest python/tests/ -v
+
+# Run benchmark harness in physical architecture mode
+benchmark-physical:
+    uv run --locked python -m benchmarks.cli --architecture physical --compare python/benchmarks/harness/latest_physical.csv
+
+# Run benchmark harness in logical architecture mode
+benchmark-logical:
+    uv run --locked python -m benchmarks.cli --architecture logical --compare python/benchmarks/harness/latest_logical.csv
 
 # Run fast Python tests only (skip slow integration tests)
 test-python-fast:
