@@ -109,12 +109,15 @@ def _validate_candidate(
         raise ValueError(
             f"target-generator candidate missing qubits: {sorted(missing)}"
         )
-    # Reuse the Rust-backed location-group validator.
-    loc_errors = ctx.arch_spec.check_location_group(list(candidate.values()))
-    if loc_errors:
+    # Reuse the Rust-backed location-group validator, checking per-qid so
+    # the error message can identify which qids hold invalid locations.
+    bad: list[str] = []
+    for qid, loc in candidate.items():
+        if len(ctx.arch_spec.check_location_group([loc])) > 0:
+            bad.append(f"qid={qid} @ {loc}")
+    if len(bad) > 0:
         raise ValueError(
-            f"target-generator candidate contains invalid locations: "
-            f"{list(loc_errors)}"
+            f"target-generator candidate contains invalid locations: " f"{bad}"
         )
     for control_qid, target_qid in zip(ctx.controls, ctx.targets):
         c_loc = candidate[control_qid]

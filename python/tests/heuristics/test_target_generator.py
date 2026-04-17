@@ -61,6 +61,9 @@ def test_default_target_generator_is_target_generator_abc():
     assert isinstance(DefaultTargetGenerator(), TargetGeneratorABC)
 
 
+# ── _validate_candidate helpers and tests ──
+
+
 def _make_valid_ctx() -> TargetContext:
     state = _make_state()
     return TargetContext(
@@ -115,5 +118,5 @@ def test_validate_candidate_rejects_unknown_location():
     # arch_spec.check_location_group
     bogus = layout.LocationAddress(999, 999)
     candidate = {0: bogus, 1: ctx.state.layout[1]}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="invalid locations"):
         _validate_candidate(ctx, candidate)
