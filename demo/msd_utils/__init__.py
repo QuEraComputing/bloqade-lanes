@@ -86,6 +86,12 @@ from .noise import (
     DistillationSimNoiseConfig,
     build_distillation_sim_noise_model,
 )
+from .qet import (
+    QET_VALID_POSTSELECTION_PATTERNS,
+    bloch_vector_from_state,
+    build_qet_kernel_maps,
+    build_qet_target_state,
+)
 
 __all__ = [
     "BasisDataset",
@@ -149,6 +155,7 @@ __all__ = [
     "plot_msd_fig3b",
     "print_experiment_diagnostics",
     "print_msd_fig3b_summary",
+    "QET_VALID_POSTSELECTION_PATTERNS",
     "rebase_dataset_observables",
     "resolve_valid_factory_targets",
     "resolve_msd_prep_parameters",
@@ -156,7 +163,10 @@ __all__ = [
     "run_msd_fig3b_experiment",
     "sample_task_raw",
     "split_factory_bits",
+    "bloch_vector_from_state",
     "build_experiment_task_maps",
+    "build_qet_kernel_maps",
+    "build_qet_target_state",
     "collect_experiment_diagnostics",
     "train_mld_experiment",
     "train_mld_decoder_pair",
