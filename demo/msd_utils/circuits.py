@@ -203,8 +203,7 @@ def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSp
     return LogicalKernelSpec(kernel=kernel_like)
 
 
-def _build_primitives(theta: float, phi: float, lam: float, *, output_qubit: int):
-    # NOTE: this fn seems OK
+def _build_msd_primitives(theta: float, phi: float, lam: float):
     @squin.kernel
     def msd_magic_prep(reg):
         squin.broadcast.u3(theta, phi, lam, reg)
@@ -229,6 +228,14 @@ def _build_primitives(theta: float, phi: float, lam: float, *, output_qubit: int
         squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
         squin.broadcast.sqrt_x_adj(ilist.IList([reg[0], reg[1], reg[4]]))
 
+    return {
+        "state_injection_circuit": msd_magic_prep,
+        "logical_circuit": msd_forward,
+        "logical_circuit_inverse": msd_inverse,
+    }
+
+
+def _build_tomography_primitives(*, output_qubit: int):
     @squin.kernel
     def tomography_x(reg):
         squin.h(reg[output_qubit])
@@ -256,9 +263,6 @@ def _build_primitives(theta: float, phi: float, lam: float, *, output_qubit: int
         return
 
     return {
-        "msd_magic_prep": msd_magic_prep,
-        "msd_forward": msd_forward,
-        "msd_inverse": msd_inverse,
         "tomography_x": tomography_x,
         "tomography_y": tomography_y,
         "tomography_z": tomography_z,
@@ -275,34 +279,35 @@ def build_naive_kernel_bundle(
     *,
     output_qubit: int = 0,
 ) -> NaiveKernelBundle:
-    primitives = _build_primitives(theta, phi, lam, output_qubit=output_qubit)
-    msd_magic_prep = primitives["msd_magic_prep"]
-    msd_forward = primitives["msd_forward"]
-    tomography_x = primitives["tomography_x"]
-    tomography_y = primitives["tomography_y"]
-    tomography_z = primitives["tomography_z"]
+    msd_primitives = _build_msd_primitives(theta, phi, lam)
+    tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
+    state_injection_circuit = msd_primitives["state_injection_circuit"]
+    logical_circuit = msd_primitives["logical_circuit"]
+    tomography_x = tomography_primitives["tomography_x"]
+    tomography_y = tomography_primitives["tomography_y"]
+    tomography_z = tomography_primitives["tomography_z"]
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def distilled_x():
         reg = qubit.qalloc(5)
-        msd_magic_prep(reg)
-        msd_forward(reg)
+        state_injection_circuit(reg)
+        logical_circuit(reg)
         tomography_x(reg)
         return
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def distilled_y():
         reg = qubit.qalloc(5)
-        msd_magic_prep(reg)
-        msd_forward(reg)
+        state_injection_circuit(reg)
+        logical_circuit(reg)
         tomography_y(reg)
         return
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def distilled_z():
         reg = qubit.qalloc(5)
-        msd_magic_prep(reg)
-        msd_forward(reg)
+        state_injection_circuit(reg)
+        logical_circuit(reg)
         tomography_z(reg)
         return
 
@@ -357,74 +362,75 @@ def build_decoder_kernel_bundle(
             "'compiled_inverse_prefix'."
         )
 
-    primitives = _build_primitives(theta, phi, lam, output_qubit=output_qubit)
-    msd_magic_prep = primitives["msd_magic_prep"]
-    msd_forward = primitives["msd_forward"]
-    msd_inverse = primitives["msd_inverse"]
-    tomography_x = primitives["tomography_x"]
-    tomography_y = primitives["tomography_y"]
-    tomography_z = primitives["tomography_z"]
-    tomography_x_inv = primitives["tomography_x_inv"]
-    tomography_y_inv = primitives["tomography_y_inv"]
-    tomography_z_inv = primitives["tomography_z_inv"]
+    msd_primitives = _build_msd_primitives(theta, phi, lam)
+    tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
+    state_injection_circuit = msd_primitives["state_injection_circuit"]
+    logical_circuit = msd_primitives["logical_circuit"]
+    logical_circuit_inverse = msd_primitives["logical_circuit_inverse"]
+    tomography_x = tomography_primitives["tomography_x"]
+    tomography_y = tomography_primitives["tomography_y"]
+    tomography_z = tomography_primitives["tomography_z"]
+    tomography_x_inv = tomography_primitives["tomography_x_inv"]
+    tomography_y_inv = tomography_primitives["tomography_y_inv"]
+    tomography_z_inv = tomography_primitives["tomography_z_inv"]
 
     @squin.kernel
     def prepare_special_x(inputs):
         tomography_x_inv(inputs)
-        msd_inverse(inputs)
+        logical_circuit_inverse(inputs)
 
     @squin.kernel
     def prepare_special_y(inputs):
         tomography_y_inv(inputs)
-        msd_inverse(inputs)
+        logical_circuit_inverse(inputs)
 
     @squin.kernel
     def prepare_special_z(inputs):
         tomography_z_inv(inputs)
-        msd_inverse(inputs)
+        logical_circuit_inverse(inputs)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_x():
         reg = qubit.qalloc(5)
-        msd_magic_prep(reg)
-        msd_forward(reg)
+        state_injection_circuit(reg)
+        logical_circuit(reg)
         tomography_x(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_y():
         reg = qubit.qalloc(5)
-        msd_magic_prep(reg)
-        msd_forward(reg)
+        state_injection_circuit(reg)
+        logical_circuit(reg)
         tomography_y(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_z():
         reg = qubit.qalloc(5)
-        msd_magic_prep(reg)
-        msd_forward(reg)
+        state_injection_circuit(reg)
+        logical_circuit(reg)
         tomography_z(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_x():
         reg = qubit.qalloc(5)
-        msd_forward(reg)
+        logical_circuit(reg)
         tomography_x(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_y():
         reg = qubit.qalloc(5)
-        msd_forward(reg)
+        logical_circuit(reg)
         tomography_y(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_z():
         reg = qubit.qalloc(5)
-        msd_forward(reg)
+        logical_circuit(reg)
         tomography_z(reg)
         return default_post_processing(reg)
 
@@ -511,10 +517,10 @@ def build_injected_decoder_kernel_map(
     hs_theta = 0.5 * math.pi
     hs_phi = -0.5 * math.pi
     lam = 0.0
-    primitives = _build_primitives(0.0, 0.0, 0.0, output_qubit=output_qubit)
-    tomography_x = primitives["tomography_x"]
-    tomography_y = primitives["tomography_y"]
-    tomography_z = primitives["tomography_z"]
+    tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
+    tomography_x = tomography_primitives["tomography_x"]
+    tomography_y = tomography_primitives["tomography_y"]
+    tomography_z = tomography_primitives["tomography_z"]
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def injected_decoder_x():
