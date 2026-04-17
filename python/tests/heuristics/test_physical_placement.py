@@ -238,8 +238,7 @@ def test_cz_placements_rust_with_blocked_locations():
 
 def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     """Regression test for #510: _MT_MAP must include MoveType.ZONE (2)."""
-    from bloqade.lanes.bytecode import Direction as BytecodeDirection
-    from bloqade.lanes.bytecode import MoveType
+    from bloqade.lanes.bytecode import Direction as BytecodeDirection, MoveType
     from bloqade.lanes.layout.encoding import LaneAddress
 
     strategy = PhysicalPlacementStrategy(
