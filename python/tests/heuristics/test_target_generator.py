@@ -9,6 +9,8 @@ from bloqade.lanes.heuristics.physical.movement import (
     DefaultTargetGenerator,
     TargetContext,
     TargetGeneratorABC,
+    _CallableTargetGenerator,
+    _coerce_target_generator,
     _validate_candidate,
 )
 
@@ -120,3 +122,33 @@ def test_validate_candidate_rejects_unknown_location():
     candidate = {0: bogus, 1: ctx.state.layout[1]}
     with pytest.raises(ValueError, match="invalid locations"):
         _validate_candidate(ctx, candidate)
+
+
+def test_callable_target_generator_wraps_function():
+    ctx = _make_valid_ctx()
+    expected = DefaultTargetGenerator().generate(ctx)
+
+    def fn(c: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+        assert c is ctx
+        return expected
+
+    gen = _CallableTargetGenerator(fn)
+    assert isinstance(gen, TargetGeneratorABC)
+    assert gen.generate(ctx) == expected
+
+
+def test_coerce_target_generator_passthrough_for_abc():
+    abc_gen = DefaultTargetGenerator()
+    assert _coerce_target_generator(abc_gen) is abc_gen
+
+
+def test_coerce_target_generator_wraps_callable():
+    def fn(c: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+        return []
+
+    gen = _coerce_target_generator(fn)
+    assert isinstance(gen, _CallableTargetGenerator)
+
+
+def test_coerce_target_generator_returns_none_for_none():
+    assert _coerce_target_generator(None) is None

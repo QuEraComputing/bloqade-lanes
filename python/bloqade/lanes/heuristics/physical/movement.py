@@ -133,6 +133,28 @@ def _validate_candidate(
             )
 
 
+TargetGeneratorCallable = Callable[[TargetContext], list[dict[int, LocationAddress]]]
+
+
+@dataclass(frozen=True)
+class _CallableTargetGenerator(TargetGeneratorABC):
+    """Private adapter that lifts a bare callable to TargetGeneratorABC."""
+
+    fn: TargetGeneratorCallable
+
+    def generate(self, ctx: TargetContext) -> list[dict[int, LocationAddress]]:
+        return self.fn(ctx)
+
+
+def _coerce_target_generator(
+    value: TargetGeneratorABC | TargetGeneratorCallable | None,
+) -> TargetGeneratorABC | None:
+    """Normalize the public union down to TargetGeneratorABC | None."""
+    if value is None or isinstance(value, TargetGeneratorABC):
+        return value
+    return _CallableTargetGenerator(value)
+
+
 class PlacementTraversalABC(abc.ABC):
     """Placement-facing traversal API for target-configuration search."""
 
