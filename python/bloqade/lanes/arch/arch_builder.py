@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Sequence
+from bisect import bisect_left, bisect_right
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
+
+import rustworkx as rx
 
 from bloqade.lanes.bytecode._native import (
     Grid as _RustGrid,
@@ -578,8 +582,6 @@ class ZoneBuilder:
     # facing APIs accept and return µm floats; conversion happens at the
     # boundary.
 
-    _MAX_PATH_SEGMENTS = 6
-
     def _site_nm(self, word_id: int, site_id: int) -> tuple[int, int]:
         """Physical (x, y) position of a site, in nm integers."""
         x_idx, y_idx = self._words[word_id][site_id]
@@ -652,18 +654,15 @@ class ZoneBuilder:
         ref_dst: tuple[int, int],
         bus_src_positions: list[tuple[int, int]],
     ) -> tuple[tuple[int, int], ...] | None:
-        """DFS path search for a bus's reference atom, in nm-integer space.
+        """Graph-based shortest path for a bus's reference atom, in nm-integer space.
+
+        Builds a position graph where nodes are safe waypoint positions
+        and edges are axis-aligned moves validated against bus-level grid
+        crossings.  Dijkstra's algorithm finds the shortest-distance
+        path, and a merge pass collapses consecutive same-axis segments.
 
         Returns a waypoint sequence ``[ref_src, ..., ref_dst]`` or
-        ``None`` if no valid path is found within the segment cap.
-
-        * Moves alternate between horizontal and vertical.
-        * No waypoint is repeated.
-        * Every middle waypoint has ``x ∈ safe_xs`` OR ``y ∈ safe_ys``
-          (bus-level safety on at least one axis).
-        * Every segment: for every atom in the bus, the segment does
-          not cross a grid atom strictly between its endpoints.
-        * Cost is ``(segment_count, total_length)`` lexicographic.
+        ``None`` if no valid path exists.
         """
         src_xs = [p[0] for p in bus_src_positions]
         src_ys = [p[1] for p in bus_src_positions]
@@ -678,9 +677,6 @@ class ZoneBuilder:
             )
         )
 
-        # Sorted (not just set→list) so DFS exploration order — and
-        # therefore the first-found-wins tie-break on equal-cost paths —
-        # is deterministic across runs and Python versions.
         x_candidates = sorted({ref_src[0], ref_dst[0], *safe_xs})
         y_candidates = sorted({ref_src[1], ref_dst[1], *safe_ys})
 
@@ -690,24 +686,109 @@ class ZoneBuilder:
         grid_xs_set = set(grid_xs)
         grid_ys_set = set(grid_ys)
 
+        # ── Build graph nodes ──
+        # A node is valid if it is src/dst or a safe middle waypoint
+        # (x in safe_xs OR y in safe_ys).
+        pos_to_idx: dict[tuple[int, int], int] = {}
+        idx_to_pos: list[tuple[int, int]] = []
+
+        for x in x_candidates:
+            x_safe = x in safe_xs
+            for y in y_candidates:
+                pos = (x, y)
+                if pos == ref_src or pos == ref_dst or x_safe or y in safe_ys:
+                    pos_to_idx[pos] = len(idx_to_pos)
+                    idx_to_pos.append(pos)
+
+        if ref_src not in pos_to_idx or ref_dst not in pos_to_idx:
+            return None
+
+        graph: rx.PyGraph = rx.PyGraph()
+        graph.add_nodes_from(range(len(idx_to_pos)))
+
+        # ── Build edges via blocking-position sweep ──
+        # Group nodes by row (y) for horizontal edges, by column (x) for
+        # vertical edges.
+        rows: dict[int, list[int]] = defaultdict(list)
+        cols: dict[int, list[int]] = defaultdict(list)
+        for pos, idx in pos_to_idx.items():
+            rows[pos[1]].append(idx)
+            cols[pos[0]].append(idx)
+
+        # Horizontal edges: for each row, compute blocking x-positions
+        # from bus offsets, then connect adjacent candidates without a
+        # blocker strictly between them.
+        for y, node_indices in rows.items():
+            # Blocking ref-x positions: grid x values shifted by -off_x
+            # for each offset whose shifted y lands on a grid row.
+            blockers: list[int] = []
+            for off_x, off_y in offsets:
+                if (y + off_y) in grid_ys_set:
+                    for g_x in grid_xs:
+                        blockers.append(g_x - off_x)
+            sorted_blockers = sorted(set(blockers))
+
+            # Sort nodes on this row by x-coordinate.
+            node_indices.sort(key=lambda i: idx_to_pos[i][0])
+
+            for a, b in zip(node_indices, node_indices[1:]):
+                x_a = idx_to_pos[a][0]
+                x_b = idx_to_pos[b][0]
+                # Check if any blocker lies strictly between x_a and x_b.
+                lo = bisect_right(sorted_blockers, x_a)
+                hi = bisect_left(sorted_blockers, x_b)
+                if lo >= hi:
+                    # No blocker in (x_a, x_b) → safe edge.
+                    graph.add_edge(a, b, x_b - x_a)
+
+        # Vertical edges: same logic transposed.
+        for x, node_indices in cols.items():
+            blockers = []
+            for off_x, off_y in offsets:
+                if (x + off_x) in grid_xs_set:
+                    for g_y in grid_ys:
+                        blockers.append(g_y - off_y)
+            sorted_blockers = sorted(set(blockers))
+
+            node_indices.sort(key=lambda i: idx_to_pos[i][1])
+
+            for a, b in zip(node_indices, node_indices[1:]):
+                y_a = idx_to_pos[a][1]
+                y_b = idx_to_pos[b][1]
+                lo = bisect_right(sorted_blockers, y_a)
+                hi = bisect_left(sorted_blockers, y_b)
+                if lo >= hi:
+                    graph.add_edge(a, b, y_b - y_a)
+
+        # ── Dijkstra's shortest path ──
+        src_idx = pos_to_idx[ref_src]
+        dst_idx = pos_to_idx[ref_dst]
+
+        paths = rx.dijkstra_shortest_paths(
+            graph, src_idx, target=dst_idx, weight_fn=float
+        )
+        if dst_idx not in paths:
+            return None
+
+        raw_path = [idx_to_pos[i] for i in paths[dst_idx]]
+
+        # ── Merge consecutive same-axis segments ──
+        # Dijkstra's path uses fine-grained adjacent-candidate steps.
+        # Collapse runs on the same axis where the direct segment does
+        # not cross any grid atom for the bus.
         def _segment_safe(start: tuple[int, int], end: tuple[int, int]) -> bool:
-            """Segment doesn't cross grid atoms for any atom in the bus."""
             if start[1] == end[1]:
-                # Horizontal: y constant.
                 for off_x, off_y in offsets:
-                    atom_y = start[1] + off_y
-                    if atom_y not in grid_ys_set:
-                        continue  # not a grid row, no atoms at this y
+                    if (start[1] + off_y) not in grid_ys_set:
+                        continue
                     lo = min(start[0], end[0]) + off_x
                     hi = max(start[0], end[0]) + off_x
                     for g in grid_xs:
                         if lo < g < hi:
                             return False
             else:
-                # Vertical: x constant.
                 for off_x, off_y in offsets:
-                    atom_x = start[0] + off_x
-                    if atom_x not in grid_xs_set:
+                    if (start[0] + off_x) not in grid_xs_set:
                         continue
                     lo = min(start[1], end[1]) + off_y
                     hi = max(start[1], end[1]) + off_y
@@ -716,85 +797,52 @@ class ZoneBuilder:
                             return False
             return True
 
-        max_segments = self._MAX_PATH_SEGMENTS
-        best_path: list[tuple[int, int]] | None = None
-        best_cost: tuple[int, int] = (max_segments + 1, 2**62)
+        merged = self._merge_collinear(raw_path, _segment_safe)
+        return merged
 
-        def _is_safe_middle(p: tuple[int, int]) -> bool:
-            return p[0] in safe_xs or p[1] in safe_ys
+    @staticmethod
+    def _merge_collinear(
+        path: list[tuple[int, int]],
+        segment_safe: Callable[[tuple[int, int], tuple[int, int]], bool],
+    ) -> tuple[tuple[int, int], ...]:
+        """Collapse consecutive same-axis waypoints into longer segments.
 
-        def _dfs(
-            path: list[tuple[int, int]],
-            path_set: set[tuple[int, int]],
-            last_axis: str | None,
-            segments: int,
-            length: int,
-        ) -> None:
-            nonlocal best_path, best_cost
-            pos = path[-1]
-            cost = (segments, length)
+        Walks the path and, for each axis-aligned run, extends the anchor
+        to the farthest reachable point whose direct segment passes
+        ``segment_safe``.  Positions within an axis run are monotonic
+        (shortest-path guarantee), so once a merge is blocked all
+        subsequent points on the same axis are also blocked.
+        """
+        if len(path) <= 2:
+            return tuple(path)
 
-            if cost >= best_cost:
-                return
+        merged: list[tuple[int, int]] = [path[0]]
+        i = 0
+        while i < len(path) - 1:
+            j = i + 1
+            is_horizontal = path[j][1] == merged[-1][1]
+            is_vertical = path[j][0] == merged[-1][0]
 
-            if pos == ref_dst:
-                best_path = path[:]
-                best_cost = cost
-                return
+            # Extend as far as possible on the current axis.
+            best = j
+            for k in range(j + 1, len(path)):
+                if is_horizontal and path[k][1] == merged[-1][1]:
+                    if segment_safe(merged[-1], path[k]):
+                        best = k
+                    else:
+                        break
+                elif is_vertical and path[k][0] == merged[-1][0]:
+                    if segment_safe(merged[-1], path[k]):
+                        best = k
+                    else:
+                        break
+                else:
+                    break
 
-            if segments >= max_segments:
-                return
+            merged.append(path[best])
+            i = best
 
-            # Horizontal move: change x, keep y.
-            if last_axis != "h":
-                for x in x_candidates:
-                    if x == pos[0]:
-                        continue
-                    new_pos = (x, pos[1])
-                    if new_pos in path_set:
-                        continue
-                    if new_pos != ref_dst and not _is_safe_middle(new_pos):
-                        continue
-                    if not _segment_safe(pos, new_pos):
-                        continue
-                    path.append(new_pos)
-                    path_set.add(new_pos)
-                    _dfs(
-                        path,
-                        path_set,
-                        "h",
-                        segments + 1,
-                        length + abs(x - pos[0]),
-                    )
-                    path.pop()
-                    path_set.remove(new_pos)
-
-            # Vertical move: change y, keep x.
-            if last_axis != "v":
-                for y in y_candidates:
-                    if y == pos[1]:
-                        continue
-                    new_pos = (pos[0], y)
-                    if new_pos in path_set:
-                        continue
-                    if new_pos != ref_dst and not _is_safe_middle(new_pos):
-                        continue
-                    if not _segment_safe(pos, new_pos):
-                        continue
-                    path.append(new_pos)
-                    path_set.add(new_pos)
-                    _dfs(
-                        path,
-                        path_set,
-                        "v",
-                        segments + 1,
-                        length + abs(y - pos[1]),
-                    )
-                    path.pop()
-                    path_set.remove(new_pos)
-
-        _dfs([ref_src], {ref_src}, None, 0, 0)
-        return tuple(best_path) if best_path is not None else None
+        return tuple(merged)
 
     def _apply_deltas(
         self,
@@ -868,8 +916,7 @@ class ZoneBuilder:
                 if result is None:
                     warnings.warn(
                         f"Zone '{self._name}' site bus {bus_id}: no valid "
-                        f"path found within {self._MAX_PATH_SEGMENTS} "
-                        f"segments (x_clearance={self.x_clearance}, "
+                        f"path found (x_clearance={self.x_clearance}, "
                         f"y_clearance={self.y_clearance}). "
                         f"Skipping path generation for this bus.",
                         stacklevel=3,
@@ -935,8 +982,7 @@ class ZoneBuilder:
                 if result is None:
                     warnings.warn(
                         f"Zone '{self._name}' word bus {bus_id}: no valid "
-                        f"path found within {self._MAX_PATH_SEGMENTS} "
-                        f"segments (x_clearance={self.x_clearance}, "
+                        f"path found (x_clearance={self.x_clearance}, "
                         f"y_clearance={self.y_clearance}). "
                         f"Skipping path generation for this bus.",
                         stacklevel=3,
