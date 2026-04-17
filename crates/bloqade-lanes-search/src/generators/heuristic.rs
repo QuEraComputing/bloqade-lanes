@@ -20,6 +20,7 @@ use crate::context::{MoveCandidate, SearchContext, SearchState};
 use crate::graph::{MoveSet, NodeId};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
+use crate::ordering::{TripletKey, cmp_moveset_config_tiebreak, cmp_triplet_entry_tiebreak};
 use crate::traits::MoveGenerator;
 
 /// Policy for handling deadlocks (no improving moves available).
@@ -42,21 +43,24 @@ struct ScoredTriple {
     dst_encoded: u64,
 }
 
-type TripletKey = (u8, u32, u8); // (move_type as u8, bus_id, direction as u8)
-
 fn cmp_scored_triples(a: &(TripletKey, ScoredTriple), b: &(TripletKey, ScoredTriple)) -> Ordering {
-    b.1.score
-        .cmp(&a.1.score)
-        .then_with(|| a.0.cmp(&b.0))
-        .then_with(|| a.1.lane_encoded.cmp(&b.1.lane_encoded))
-        .then_with(|| a.1.dst_encoded.cmp(&b.1.dst_encoded))
-        .then_with(|| a.1.qubit_id.cmp(&b.1.qubit_id))
+    b.1.score.cmp(&a.1.score).then_with(|| {
+        cmp_triplet_entry_tiebreak(
+            &a.0,
+            a.1.qubit_id,
+            a.1.lane_encoded,
+            a.1.dst_encoded,
+            &b.0,
+            b.1.qubit_id,
+            b.1.lane_encoded,
+            b.1.dst_encoded,
+        )
+    })
 }
 
 fn cmp_candidates(a: &(i32, MoveSet, Config), b: &(i32, MoveSet, Config)) -> Ordering {
     b.0.cmp(&a.0)
-        .then_with(|| a.1.encoded_lanes().cmp(b.1.encoded_lanes()))
-        .then_with(|| a.2.as_entries().cmp(b.2.as_entries()))
+        .then_with(|| cmp_moveset_config_tiebreak(&a.1, &a.2, &b.1, &b.2))
 }
 
 /// Heuristic move generator that produces a small number of high-quality
@@ -974,7 +978,7 @@ mod tests {
     fn scored_triple_tie_break_is_deterministic() {
         let mut entries = vec![
             (
-                (1, 2, 3, 0),
+                (1, 2, 3),
                 ScoredTriple {
                     qubit_id: 9,
                     score: 7,
@@ -983,7 +987,7 @@ mod tests {
                 },
             ),
             (
-                (1, 1, 3, 0),
+                (1, 1, 3),
                 ScoredTriple {
                     qubit_id: 2,
                     score: 7,
@@ -992,7 +996,7 @@ mod tests {
                 },
             ),
             (
-                (1, 1, 3, 0),
+                (1, 1, 3),
                 ScoredTriple {
                     qubit_id: 1,
                     score: 7,
@@ -1004,11 +1008,11 @@ mod tests {
 
         entries.sort_by(cmp_scored_triples);
 
-        assert_eq!(entries[0].0, (1, 1, 3, 0));
+        assert_eq!(entries[0].0, (1, 1, 3));
         assert_eq!(entries[0].1.lane_encoded, 13);
-        assert_eq!(entries[1].0, (1, 1, 3, 0));
+        assert_eq!(entries[1].0, (1, 1, 3));
         assert_eq!(entries[1].1.lane_encoded, 15);
-        assert_eq!(entries[2].0, (1, 2, 3, 0));
+        assert_eq!(entries[2].0, (1, 2, 3));
     }
 
     #[test]

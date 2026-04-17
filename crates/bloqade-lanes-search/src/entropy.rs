@@ -25,6 +25,10 @@ use crate::context::SearchContext;
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
+use crate::ordering::{
+    TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
+    cmp_triplet_entry_tiebreak,
+};
 use crate::traits::Goal;
 
 // ── Parameters ─────────────────────────────────────────────────────
@@ -93,8 +97,6 @@ struct EntropyState {
     n_children: usize,
 }
 
-type TripletKey = (u8, u32, u8);
-
 struct ScoredEntry {
     qubit_id: u32,
     score: f64,
@@ -103,26 +105,36 @@ struct ScoredEntry {
 }
 
 fn cmp_scored_entries(a: &(TripletKey, ScoredEntry), b: &(TripletKey, ScoredEntry)) -> Ordering {
-    b.1.score
-        .total_cmp(&a.1.score)
-        .then_with(|| a.0.cmp(&b.0))
-        .then_with(|| a.1.qubit_id.cmp(&b.1.qubit_id))
-        .then_with(|| a.1.lane_encoded.cmp(&b.1.lane_encoded))
-        .then_with(|| a.1.dst_encoded.cmp(&b.1.dst_encoded))
+    b.1.score.total_cmp(&a.1.score).then_with(|| {
+        cmp_triplet_entry_tiebreak(
+            &a.0,
+            a.1.qubit_id,
+            a.1.lane_encoded,
+            a.1.dst_encoded,
+            &b.0,
+            b.1.qubit_id,
+            b.1.lane_encoded,
+            b.1.dst_encoded,
+        )
+    })
 }
 
 fn cmp_group_entries(a: &ScoredEntry, b: &ScoredEntry) -> Ordering {
-    b.score
-        .total_cmp(&a.score)
-        .then_with(|| a.qubit_id.cmp(&b.qubit_id))
-        .then_with(|| a.lane_encoded.cmp(&b.lane_encoded))
-        .then_with(|| a.dst_encoded.cmp(&b.dst_encoded))
+    b.score.total_cmp(&a.score).then_with(|| {
+        cmp_qubit_lane_dst_tiebreak(
+            a.qubit_id,
+            a.lane_encoded,
+            a.dst_encoded,
+            b.qubit_id,
+            b.lane_encoded,
+            b.dst_encoded,
+        )
+    })
 }
 
 fn cmp_scored_candidates(a: &(f64, MoveSet, Config), b: &(f64, MoveSet, Config)) -> Ordering {
     b.0.total_cmp(&a.0)
-        .then_with(|| a.1.encoded_lanes().cmp(b.1.encoded_lanes()))
-        .then_with(|| a.2.as_entries().cmp(b.2.as_entries()))
+        .then_with(|| cmp_moveset_config_tiebreak(&a.1, &a.2, &b.1, &b.2))
 }
 
 impl Default for EntropyState {

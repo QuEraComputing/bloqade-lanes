@@ -19,6 +19,7 @@ pub mod heuristics;
 
 pub mod lane_index;
 pub mod observer;
+pub(crate) mod ordering;
 pub mod scorers;
 pub mod solve;
 #[cfg(test)]
