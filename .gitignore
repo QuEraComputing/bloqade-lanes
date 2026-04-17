@@ -202,3 +202,4 @@ cython_debug/
 *.png
 scripts/visualize_arch.py
 .superpowers/
+bench/

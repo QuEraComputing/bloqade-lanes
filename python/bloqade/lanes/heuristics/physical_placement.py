@@ -5,7 +5,6 @@ from bloqade.lanes.heuristics.physical_movement import (
     PhysicalPlacementStrategy,
     PlacementTraversalABC,
     RustPlacementTraversal,
-    SearchStrategy,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "PhysicalPlacementStrategy",
     "PlacementTraversalABC",
     "RustPlacementTraversal",
-    "SearchStrategy",
 ]

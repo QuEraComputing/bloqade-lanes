@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Optional, final
+from typing import Literal, Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -905,21 +905,6 @@ class ArchSpec:
 # ── Move Solver ──
 
 @final
-class SearchStrategy:
-    """Search strategy for the Rust move solver."""
-
-    ASTAR: SearchStrategy
-    DFS: SearchStrategy
-    BFS: SearchStrategy
-    GREEDY: SearchStrategy
-
-    @property
-    def name(self) -> str: ...
-    def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
-    def __int__(self) -> int: ...
-
-@final
 class SolveResult:
     """Result of a move synthesis solve.
 
@@ -958,6 +943,11 @@ class SolveResult:
         """Total path cost. 0.0 when ``status`` is not ``"solved"``."""
         ...
 
+    @property
+    def deadlocks(self) -> int:
+        """Number of deadlocks encountered during search."""
+        ...
+
     def __repr__(self) -> str: ...
 
 @final
@@ -981,20 +971,41 @@ class MoveSolver:
         target: list[tuple[int, int, int, int]],
         blocked: list[tuple[int, int, int]],
         max_expansions: Optional[int] = None,
-        strategy: SearchStrategy = SearchStrategy.ASTAR,
+        strategy: Literal[
+            "astar",
+            "dfs",
+            "bfs",
+            "greedy",
+            "ids",
+            "cascade",
+            "cascade-ids",
+            "cascade-dfs",
+            "cascade-entropy",
+            "entropy",
+        ] = "astar",
         top_c: int = 3,
         max_movesets_per_group: int = 3,
+        weight: float = 1.0,
+        restarts: int = 1,
+        lookahead: bool = False,
+        deadlock_policy: Literal["skip", "move_blockers"] = "skip",
+        w_t: float = 0.05,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
         Args:
-            initial: List of (qubit_id, word_id, site_id) starting positions.
-            target: List of (qubit_id, word_id, site_id) desired positions.
-            blocked: List of (word_id, site_id) immovable obstacle locations.
+            initial: List of (qubit_id, zone_id, word_id, site_id) starting positions.
+            target: List of (qubit_id, zone_id, word_id, site_id) desired positions.
+            blocked: List of (zone_id, word_id, site_id) immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
-            strategy: Search strategy: "astar", "dfs", "bfs", "greedy".
+            strategy: Search strategy string.
             top_c: Top bus options per qubit in the heuristic expander.
             max_movesets_per_group: Max movesets per bus group.
+            weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
+            restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
+            lookahead: Enable 2-step lookahead scoring.
+            deadlock_policy: Deadlock handling: "skip" or "move_blockers".
+            w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
 
         Returns:
             SolveResult with status indicating outcome.

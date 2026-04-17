@@ -63,6 +63,11 @@ impl MoveSet {
     pub fn is_empty(&self) -> bool {
         self.lanes.is_empty()
     }
+
+    /// Return the encoded lane values (sorted, deduplicated).
+    pub fn encoded_lanes(&self) -> &[u64] {
+        &self.lanes
+    }
 }
 
 /// Internal node storage.
@@ -134,6 +139,11 @@ impl SearchGraph {
     /// Get the depth of a node (number of steps from root). O(1).
     pub fn depth(&self, id: NodeId) -> u32 {
         self.nodes[id.0 as usize].depth
+    }
+
+    /// Return the parent node, or `None` for the root.
+    pub fn parent(&self, id: NodeId) -> Option<NodeId> {
+        self.nodes[id.0 as usize].parent
     }
 
     /// Number of nodes in the arena (always >= 1 due to root).
