@@ -126,6 +126,23 @@ def test_validate_candidate_rejects_unknown_location():
         _validate_candidate(ctx, candidate)
 
 
+def test_validate_candidate_rejects_extra_qid():
+    ctx = _make_valid_ctx()
+    candidate = DefaultTargetGenerator().generate(ctx)[0]
+    candidate[99] = ctx.state.layout[0]
+    with pytest.raises(ValueError, match="unexpected"):
+        _validate_candidate(ctx, candidate)
+
+
+def test_validate_candidate_rejects_duplicate_locations():
+    """Group-level check catches two qids at the same location."""
+    ctx = _make_valid_ctx()
+    same_loc = ctx.state.layout[0]
+    candidate = {0: same_loc, 1: same_loc}
+    with pytest.raises(ValueError, match="invalid locations"):
+        _validate_candidate(ctx, candidate)
+
+
 def test_callable_target_generator_wraps_function():
     ctx = _make_valid_ctx()
     expected = DefaultTargetGenerator().generate(ctx)
@@ -240,3 +257,41 @@ def test_build_candidates_raises_on_malformed():
     ctx = _make_valid_ctx()
     with pytest.raises(ValueError, match="blockade"):
         strategy._build_candidates(ctx)
+
+
+# ── PlacementTraversalABC.with_max_expansions ──
+
+
+def test_with_max_expansions_default_uses_replace():
+    """The default ABC method clones the dataclass with a new budget."""
+    from bloqade.lanes.heuristics.physical.movement import EntropyPlacementTraversal
+
+    t = EntropyPlacementTraversal(max_expansions=100)
+    t2 = t.with_max_expansions(25)
+    assert t2.max_expansions == 25
+    assert t.max_expansions == 100  # original unchanged
+    assert type(t2) is type(t)
+
+
+def test_with_max_expansions_override_is_honored():
+    """A non-dataclass subclass can override with_max_expansions."""
+    from bloqade.lanes.heuristics.physical.movement import PlacementTraversalABC
+    from bloqade.lanes.search.traversal.goal import SearchResult
+
+    class _NonDataclassTraversal(PlacementTraversalABC):
+        def __init__(self, max_expansions: int | None = None) -> None:
+            self.max_expansions = max_expansions
+
+        def path_to_target_config(self, **kwargs) -> SearchResult:  # type: ignore[override]
+            _ = kwargs
+            raise NotImplementedError
+
+        def with_max_expansions(
+            self, max_expansions: int | None
+        ) -> PlacementTraversalABC:
+            return _NonDataclassTraversal(max_expansions=max_expansions)
+
+    t = _NonDataclassTraversal(max_expansions=50)
+    t2 = t.with_max_expansions(5)
+    assert t2.max_expansions == 5
+    assert t.max_expansions == 50

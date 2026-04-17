@@ -105,20 +105,26 @@ def _validate_candidate(
     """
     placement = ctx.placement
     missing = set(placement.keys()) - set(candidate.keys())
-    if missing:
-        raise ValueError(
-            f"target-generator candidate missing qubits: {sorted(missing)}"
-        )
-    # Reuse the Rust-backed location-group validator, checking per-qid so
-    # the error message can identify which qids hold invalid locations.
-    bad: list[str] = []
-    for qid, loc in candidate.items():
-        if len(ctx.arch_spec.check_location_group([loc])) > 0:
-            bad.append(f"qid={qid} @ {loc}")
-    if len(bad) > 0:
-        raise ValueError(
-            f"target-generator candidate contains invalid locations: " f"{bad}"
-        )
+    extra = set(candidate.keys()) - set(placement.keys())
+    if missing or extra:
+        parts: list[str] = []
+        if missing:
+            parts.append(f"missing {sorted(missing)}")
+        if extra:
+            parts.append(f"unexpected {sorted(extra)}")
+        raise ValueError(f"target-generator candidate qubits: {'; '.join(parts)}")
+    # Run the Rust-backed validator on the full candidate so group-level
+    # errors (e.g. duplicate locations) are caught, then attribute per-qid
+    # where possible for a helpful error message.
+    group_errors = list(ctx.arch_spec.check_location_group(list(candidate.values())))
+    if group_errors:
+        per_qid_bad = [
+            f"qid={qid} @ {loc}"
+            for qid, loc in candidate.items()
+            if ctx.arch_spec.check_location_group([loc])
+        ]
+        detail = per_qid_bad if per_qid_bad else [str(e) for e in group_errors]
+        raise ValueError(f"target-generator candidate has invalid locations: {detail}")
     for control_qid, target_qid in zip(ctx.controls, ctx.targets):
         c_loc = candidate[control_qid]
         t_loc = candidate[target_qid]
@@ -169,6 +175,17 @@ class PlacementTraversalABC(abc.ABC):
     ) -> SearchResult:
         """Run search and return one or more goal nodes."""
         ...
+
+    def with_max_expansions(
+        self, max_expansions: int | None
+    ) -> "PlacementTraversalABC":
+        """Return a copy of this traversal with an overridden budget.
+
+        The default implementation uses :func:`dataclasses.replace`, which
+        requires the subclass to be a dataclass (all built-in subclasses are).
+        Override this method if your subclass is not a dataclass.
+        """
+        return replace(cast(Any, self), max_expansions=max_expansions)
 
 
 def _mismatch_heuristic(
@@ -463,10 +480,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             per_call_traversal = (
                 base_traversal
                 if remaining == base_traversal.max_expansions
-                else cast(
-                    PlacementTraversalABC,
-                    replace(cast(Any, base_traversal), max_expansions=remaining),
-                )
+                else base_traversal.with_max_expansions(remaining)
             )
             result = self._run_search(tree, candidate, per_call_traversal)
             if remaining is not None:
