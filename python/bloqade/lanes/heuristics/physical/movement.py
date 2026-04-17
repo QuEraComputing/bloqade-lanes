@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -157,6 +157,8 @@ def _coerce_target_generator(
 
 class PlacementTraversalABC(abc.ABC):
     """Placement-facing traversal API for target-configuration search."""
+
+    max_expansions: int | None
 
     @abc.abstractmethod
     def path_to_target_config(
@@ -416,40 +418,68 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        _ = lookahead_cz_layers
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
         if isinstance(self.traversal, RustPlacementTraversal):
-            return self._cz_placements_rust(state, controls, targets)
+            return self._cz_placements_rust(
+                state, controls, targets, lookahead_cz_layers
+            )
 
-        placement = {qid: loc for qid, loc in enumerate(state.layout)}
-        target = self._target_from_stage_controls_only(placement, controls, targets)
+        ctx = TargetContext(
+            arch_spec=self.arch_spec,
+            state=state,
+            controls=controls,
+            targets=targets,
+            lookahead_cz_layers=lookahead_cz_layers,
+            cz_stage_index=self._cz_counter,
+        )
+        candidates = self._build_candidates(ctx)
+
         tree = ConfigurationTree.from_initial_placement(
             self.arch_spec,
-            placement,
+            ctx.placement,
             blocked_locations=state.occupied,
         )
 
         should_trace = (
             self._trace_cz_index is None or self._cz_counter == self._trace_cz_index
         )
-        traversal = self.traversal
-        if isinstance(traversal, EntropyPlacementTraversal) and not should_trace:
-            traversal = replace(traversal, on_search_step=None)
+        base_traversal = self.traversal
+        assert isinstance(base_traversal, PlacementTraversalABC)
+        if isinstance(base_traversal, EntropyPlacementTraversal) and not should_trace:
+            base_traversal = replace(base_traversal, on_search_step=None)
         if should_trace:
             self._traced_tree = tree
-            self._traced_target = dict(target)
+            self._traced_target = dict(candidates[0])
 
-        result = self._run_search(tree, target, traversal)
+        remaining = base_traversal.max_expansions
+        best_goal = None
+        for candidate in candidates:
+            if remaining is not None and remaining <= 0:
+                break
+            per_call_traversal = (
+                base_traversal
+                if remaining == base_traversal.max_expansions
+                else cast(
+                    PlacementTraversalABC,
+                    replace(cast(Any, base_traversal), max_expansions=remaining),
+                )
+            )
+            result = self._run_search(tree, candidate, per_call_traversal)
+            if remaining is not None:
+                remaining -= int(result.nodes_expanded)
+            if result.goal_nodes:
+                best_goal = result.goal_nodes[0]
+                break
+
         self._cz_counter += 1
 
-        if not result.goal_nodes:
+        if best_goal is None:
             return AtomState.bottom()
 
-        best_goal = result.goal_nodes[0]
         move_program = best_goal.to_move_program()
         goal_layout_map = best_goal.configuration
         goal_layout = tuple(goal_layout_map[qid] for qid in range(len(state.layout)))
@@ -483,7 +513,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
+        _ = lookahead_cz_layers
         assert isinstance(self.traversal, RustPlacementTraversal)
         placement = {qid: loc for qid, loc in enumerate(state.layout)}
         target = self._target_from_stage_controls_only(placement, controls, targets)
