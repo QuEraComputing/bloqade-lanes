@@ -4,8 +4,8 @@ from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import (
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.logical.placement import (
     LogicalPlacementStrategy,
     LogicalPlacementStrategyNoHome,
 )

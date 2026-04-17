@@ -23,8 +23,8 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC

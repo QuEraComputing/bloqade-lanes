@@ -15,11 +15,11 @@ from bloqade.lanes.compile import (
     compile_to_physical_squin_noise_model as compile_physical_noise_model,
 )
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.physical_layout import (
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import (
+from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     PlacementTraversalABC,
     RustPlacementTraversal,

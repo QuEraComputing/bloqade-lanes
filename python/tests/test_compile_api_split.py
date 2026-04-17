@@ -6,12 +6,12 @@ from kirin import ir
 from bloqade.lanes import compile as compile_api, logical_mvp
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.heuristics.physical_layout import (
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 
 
 def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):

@@ -1,4 +1,7 @@
-from bloqade.lanes.heuristics.physical_movement import (
+from bloqade.lanes.heuristics.physical.layout import (
+    PhysicalLayoutHeuristicGraphPartitionCenterOut,
+)
+from bloqade.lanes.heuristics.physical.movement import (
     BFSPlacementTraversal,
     EntropyPlacementTraversal,
     GreedyPlacementTraversal,
@@ -11,6 +14,7 @@ __all__ = [
     "BFSPlacementTraversal",
     "EntropyPlacementTraversal",
     "GreedyPlacementTraversal",
+    "PhysicalLayoutHeuristicGraphPartitionCenterOut",
     "PhysicalPlacementStrategy",
     "PlacementTraversalABC",
     "RustPlacementTraversal",

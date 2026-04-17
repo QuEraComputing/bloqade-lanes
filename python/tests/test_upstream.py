@@ -5,10 +5,10 @@ from kirin.dialects import ilist
 from bloqade import squin
 from bloqade.lanes.compile import squin_to_move
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics.physical_layout import (
+from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 
 
 def test_physical_compile():

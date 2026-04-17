@@ -10,7 +10,7 @@ from bloqade.lanes.analysis.placement.lattice import ConcreteState
 from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.search import ConfigurationNode, ConfigurationTree
 
-from .physical_placement import EntropyPlacementTraversal
+from .physical.placement import EntropyPlacementTraversal
 
 
 def _intra_word_moves(

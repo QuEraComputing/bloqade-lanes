@@ -6,8 +6,8 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
-from bloqade.lanes.heuristics import physical_layout as physical_layout_module
-from bloqade.lanes.heuristics.physical_layout import (
+from bloqade.lanes.heuristics.physical import layout as physical_layout_module
+from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 
