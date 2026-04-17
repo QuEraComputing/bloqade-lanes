@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from kirin.dialects import func, ilist
 
@@ -272,6 +272,19 @@ def _build_tomography_primitives(*, output_qubit: int):
     }
 
 
+def _require_primitive_keys(
+    primitives: Mapping[str, Any],
+    *,
+    keys: tuple[str, ...],
+    builder_name: str,
+) -> None:
+    missing = [key for key in keys if key not in primitives]
+    if missing:
+        raise ValueError(
+            f"{builder_name} must return keys {keys}; missing {tuple(missing)}."
+        )
+
+
 def build_naive_kernel_bundle(
     theta: float,
     phi: float,
@@ -351,7 +364,11 @@ def build_decoder_kernel_bundle(
     phi: float,
     lam: float,
     *,
+    num_logical_qubits: int = 5,
     output_qubit: int = 0,
+    build_primitives: Callable[
+        [float, float, float], Mapping[str, Any]
+    ] = _build_msd_primitives,
     special_kernel_strategy: Literal[
         "prefix_prepare", "compiled_inverse_prefix"
     ] = "prefix_prepare",
@@ -362,7 +379,16 @@ def build_decoder_kernel_bundle(
             "'compiled_inverse_prefix'."
         )
 
-    msd_primitives = _build_msd_primitives(theta, phi, lam)
+    msd_primitives = build_primitives(theta, phi, lam)
+    _require_primitive_keys(
+        msd_primitives,
+        keys=(
+            "state_injection_circuit",
+            "logical_circuit",
+            "logical_circuit_inverse",
+        ),
+        builder_name=getattr(build_primitives, "__name__", "build_primitives"),
+    )
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
     state_injection_circuit = msd_primitives["state_injection_circuit"]
     logical_circuit = msd_primitives["logical_circuit"]
@@ -391,7 +417,7 @@ def build_decoder_kernel_bundle(
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_x():
-        reg = qubit.qalloc(5)
+        reg = qubit.qalloc(num_logical_qubits)
         state_injection_circuit(reg)
         logical_circuit(reg)
         tomography_x(reg)
@@ -399,7 +425,7 @@ def build_decoder_kernel_bundle(
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_y():
-        reg = qubit.qalloc(5)
+        reg = qubit.qalloc(num_logical_qubits)
         state_injection_circuit(reg)
         logical_circuit(reg)
         tomography_y(reg)
@@ -407,7 +433,7 @@ def build_decoder_kernel_bundle(
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_z():
-        reg = qubit.qalloc(5)
+        reg = qubit.qalloc(num_logical_qubits)
         state_injection_circuit(reg)
         logical_circuit(reg)
         tomography_z(reg)
@@ -415,21 +441,21 @@ def build_decoder_kernel_bundle(
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_x():
-        reg = qubit.qalloc(5)
+        reg = qubit.qalloc(num_logical_qubits)
         logical_circuit(reg)
         tomography_x(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_y():
-        reg = qubit.qalloc(5)
+        reg = qubit.qalloc(num_logical_qubits)
         logical_circuit(reg)
         tomography_y(reg)
         return default_post_processing(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_special_z():
-        reg = qubit.qalloc(5)
+        reg = qubit.qalloc(num_logical_qubits)
         logical_circuit(reg)
         tomography_z(reg)
         return default_post_processing(reg)
