@@ -197,10 +197,41 @@ control-moves should be chosen:
 - `PathFinder.find_path(start, end, occupied, edge_weight)` — returns
   `(tuple[LaneAddress, ...], tuple[LocationAddress, ...])` or `None`.
   `edge_weight` is the callable injection point for congestion
-  penalties.
-- `MoveMetricCalculator.get_lane_duration_cost(lane)` — base weight;
-  same metric the logical heuristic uses.
+  penalties. **Explicit deviation from default**: `find_path` defaults
+  `edge_weight` to `get_lane_duration_us` (microseconds). We pass
+  `get_lane_duration_cost` (normalized) so the penalty-weight floats
+  remain commensurate with the base term.
+- `PathFinder.get_endpoints(lane) -> (LocationAddress, LocationAddress)`
+  — used inside the edge-weight closure. The underlying
+  `end_points_cache` is populated for every lane produced during
+  `PathFinder.__post_init__`, so lanes returned by `find_path` are
+  guaranteed to round-trip through `get_endpoints` with non-`None`
+  values. (`get_endpoints` returns `(None, None)` for unknown lanes,
+  which is structurally unreachable here.)
+- `MoveMetricCalculator.get_lane_duration_cost(lane)` — normalized
+  base weight; same metric the logical heuristic uses. Distinct from
+  `get_lane_duration_us` (absolute microsecond duration).
 - `ArchSpec.get_cz_partner(loc)` — partner lookup.
+
+### Local helpers
+
+All module-private:
+
+- `_sum_base(path) -> float` — sum of
+  `pf.metrics.get_lane_duration_cost(lane)` over `path[0]` (the
+  `tuple[LaneAddress, ...]` component). Returns `0.0` for the
+  zero-length path `((), (start,))`.
+- `_sum_weighted(path, weight_fn) -> float` — sum of `weight_fn(lane)`
+  over `path[0]`. Returns `0.0` for zero-length paths. Kept separate
+  from `_sum_base` so the initial sort (which uses base weights) and
+  the commit loop (which uses the full congestion-aware closure) each
+  have a clearly labeled helper.
+- `_make_weight_fn(pf, committed_lanes, committed_sites, gen)` — see
+  "Cost function and congestion encoding".
+- `_lane_key(lane) -> _LaneKey` — see "Lane canonical key".
+- `_choose_control(cost_c, cost_t, len_c, len_t) -> bool` — tiebreak
+  comparator; returns `True` when control-moves wins under the
+  (cost, path-lane-count, prefer-control) hierarchy.
 
 ## Cost function and congestion encoding
 
@@ -250,11 +281,12 @@ def _lane_key(lane: LaneAddress) -> _LaneKey:
             lane.bus_id, lane.zone_id)
 ```
 
-Implementation note: the exact tuple fields will be confirmed against
-`LaneAddress`'s public API at write-time. If multiple callers want
-this canonical-key concept, a `LaneAddress.canonical()` helper on the
-layout type is a follow-up — but a private helper is adequate for
-this first cut.
+The five fields above are exactly the direction-independent subset of
+`LaneAddress` (which also exposes `direction`). Verified against
+`python/bloqade/lanes/layout/encoding.py`. If a second caller wants
+this canonical-key concept, promoting `_lane_key` to
+`LaneAddress.canonical()` is a small follow-up — but a private helper
+is adequate for this first cut.
 
 ### Shared-site accounting
 
@@ -268,21 +300,35 @@ candidate lanes whose endpoint is in that set pay
 
 On the physical arch, lanes are bidirectional and their
 `get_lane_duration_cost` is direction-symmetric. CZ partnering is a
-fixed translation on the lattice. Consequently, the **uncongested**
-path cost of "move control to partner(target)" equals the uncongested
-path cost of "move target to partner(control)" — by the symmetry
-argument `distance(L, partner(M)) == distance(M, partner(L))`.
+fixed translation on the lattice. Consequently, in the **ideal
+unconstrained lane graph**, the uncongested path cost of "move
+control to partner(target)" equals the uncongested path cost of "move
+target to partner(control)" — by the symmetry argument
+`distance(L, partner(M)) == distance(M, partner(L))`.
 
-Implication: the **initial sort score** is effectively
-direction-agnostic; `min(c_ctrl, c_tgt)` is well-defined but the two
-terms are equal by symmetry. Direction choice gains meaningful signal
-only once congestion from earlier committed pairs enters the
-weighting — which happens at commit time, not at the initial sort.
+**Caveat — the occupied-set is asymmetric.** The two `find_path`
+calls within `score(pair)` use different `occupied` frozensets:
+`occ_ctrl` excludes only `ctrl` (so `tgt` blocks), `occ_tgt` excludes
+only `tgt` (so `ctrl` blocks). When a candidate shortest path would
+need to pass through the pair's *other* atom, one direction can be
+infeasible (`find_path` returns `None`) while the other is fine, or
+both paths are feasible but forced onto different detours of
+different cost. The symmetry argument therefore holds only modulo
+which partnered endpoint sits on the shortest-path geodesic — in the
+typical case of two partners with an unobstructed direct route
+between them, the two directions tie; in degenerate cases they
+diverge.
+
+Implication for the **initial sort score**: `min(c_ctrl, c_tgt)` is
+well-defined either way. Most pairs tie (symmetric case); a minority
+may have an asymmetric score due to endpoint-blocking. Direction
+choice gains meaningful signal at commit time once congestion from
+earlier pairs enters the weighting.
 
 This is why **move-count is a tiebreaker only at commit time, not
-during the initial sort**: at initial sort, there is no move-count
-asymmetry to exploit (both directions have identical shortest paths
-under a symmetric cost function).
+during the initial sort**: at initial sort, the typical symmetric
+case offers no move-count asymmetry to exploit, and the degenerate
+asymmetric case is already resolved by the primary cost comparison.
 
 ## Edge cases
 
@@ -293,8 +339,13 @@ under a symmetric cost function).
 2. **Already-partnered pair** — `ctrl_loc` and `tgt_loc` are already
    CZ blockade partners: both `find_path` calls return `((), (start,))`
    with cost 0 and length 0. The pair no-ops; tiebreak picks control;
-   `working[ctrl]` is reassigned to the same location; committed state
-   unchanged.
+   `working[ctrl]` is reassigned to the same location;
+   `committed_lanes` is unchanged (no lanes traversed) and
+   `committed_sites` gains `ctrl_loc` (the single site in
+   `chosen[1]`). The latter is benign: the pair's atom already sits
+   there and the lane-reuse penalties always dominate the
+   shared-site tier, so this accounting costs nothing observable to
+   later pairs.
 
 3. **Both directions infeasible** — `path_ctrl is None and path_tgt is
    None`: `return []`. The framework's auto-appended default is the
@@ -397,8 +448,18 @@ Each test constructs a minimal `TargetContext` directly and asserts on
     existing move-program validators from neighbor tests.
 15. **Dedup with default** — for a trivially-symmetric stage where the
     heuristic's candidate equals the default's, framework dedup
-    ensures exactly one search runs (assert on
-    `rust_nodes_expanded_total` or analogous Python-side counter).
+    ensures exactly one search runs. Assertion mechanism depends on
+    the traversal path:
+    - **Rust path**: assert on
+      `PhysicalPlacementStrategy.rust_nodes_expanded_total` — the
+      existing strategy-level counter already sums across
+      candidates.
+    - **Python path**: no strategy-level counter exists
+      (`SearchResult.nodes_expanded` is per-call only). Instrument by
+      installing a counting `on_search_step` hook on the
+      `EntropyPlacementTraversal`, or by monkey-patching / wrapping
+      `self.traversal.path_to_target_config` to count calls. A call
+      count of `1` (not `2`) after the dedup step is the signal.
 16. **Rust-path parity** — same circuit under
     `EntropyPlacementTraversal` and `RustPlacementTraversal`; plugin
     applies identically; both terminate with `ExecuteCZ`.
