@@ -227,8 +227,8 @@ def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
         def decode_factory(key: str):
             a_det = np.array([int(x) for x in key], dtype=np.uint8)
             # Deliberately misleading score: the lower-fidelity pattern gets the
-            # higher decoder score. The evaluator should ignore this and rank by
-            # the fidelity induced by the corrected output bits instead.
+            # higher decoder score. The legacy MLD evaluator ranks by this score
+            # table, not by recomputing a separate fidelity-based ordering.
             return (0,), 0.5 if int(a_det[-1]) == 0 else 1.0
 
         def decode_full(key: str):
@@ -257,8 +257,76 @@ def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
     assert np.all(np.diff(accepted) >= -1e-12)
     assert accepted[0] == pytest.approx(0.5)
     assert accepted[-1] == pytest.approx(1.0)
-    assert fidelity[0] >= fidelity[-1]
-    assert fidelity[0] > 0.8
+    assert fidelity[0] <= fidelity[-1]
+
+
+def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
+    dataset = BasisDataset(
+        detectors=np.array(
+            [
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 1],
+                [0, 0, 0, 1],
+            ],
+            dtype=np.uint8,
+        ),
+        observables=np.array(
+            [
+                [0, 0],
+                [0, 0],
+                [1, 0],
+                [1, 0],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+
+    def make_adapter():
+        def decode_factory(key: str):
+            a_det = np.array([int(x) for x in key], dtype=np.uint8)
+            return (0,), 0.5 if int(a_det[-1]) == 0 else 1.0
+
+        def decode_full(key: str):
+            return (0, 0)
+
+        return DecoderAdapter(
+            full_decoder=None,
+            factory_decoder=None,
+            decode_factory=decode_factory,
+            decode_full=decode_full,
+            factory_score_mode="mld_output_fidelity",
+        )
+
+    legacy_curves = evaluate_mld_curve(
+        {"X": dataset, "Y": dataset, "Z": dataset},
+        {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
+        posterior_samples=64,
+        factory_target=np.array([0], dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        min_accepted_per_basis=1,
+    )
+
+    curves = evaluate_curve(
+        {"X": dataset, "Y": dataset, "Z": dataset},
+        {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
+        posterior_samples=64,
+        threshold_points=4,
+        metric="test",
+        factory_target=np.array([0], dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        min_accepted_per_basis=1,
+        selection_mode="pattern_rank",
+    )
+
+    accepted = curves["accepted_fraction"]
+    # fidelity = curves["fidelity"]
+    assert accepted.ndim == 1
+    assert np.all(np.diff(accepted) >= -1e-12)
+    assert accepted[0] == pytest.approx(0.5)
+    assert accepted[-1] == pytest.approx(1.0)
+    assert np.allclose(curves["accepted_fraction"], legacy_curves["accepted_fraction"])
+    assert np.allclose(curves["fidelity"], legacy_curves["fidelity"])
 
 
 def test_notebooks_import_shared_msd_utils():

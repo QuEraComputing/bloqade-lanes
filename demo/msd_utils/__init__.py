@@ -47,6 +47,7 @@ from .core import (
 )
 from .decoders import (
     DecoderAdapter,
+    TableDecoderWithConfidence,
     build_mld_decoders,
     build_mld_decoders_from_pair,
     build_mle_decoders,
@@ -107,6 +108,7 @@ __all__ = [
     "NaiveKernelBundle",
     "ObservableFrame",
     "SyndromeLayout",
+    "TableDecoderWithConfidence",
     "ancilla_matches_valid_targets",
     "bits_to_key",
     "build_measurement_maps",

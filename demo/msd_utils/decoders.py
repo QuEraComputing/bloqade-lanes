@@ -16,6 +16,7 @@ from .core import (
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
     ancilla_matches_valid_targets,
+    bits_to_key,
     fidelity_from_counts,
     magic_state_fidelity_point_from_counts,
     pack_boolean_array,
@@ -36,6 +37,33 @@ class DecoderAdapter:
     decode_factory: Callable[[Any], tuple[tuple[int, ...], float]]
     decode_full: Callable[[Any], tuple[int, ...]]
     factory_score_mode: str
+
+
+@dataclass(frozen=True)
+class TableDecoderWithConfidence:
+    decoder: Any
+    syndrome_confidence: np.ndarray
+    confidence_score_mode: str = "mld_output_fidelity"
+
+    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        return np.asarray(self.decoder.decode(detector_bits), dtype=np.bool_)
+
+    def decode_with_confidence(
+        self,
+        detector_bits: np.ndarray,
+    ) -> tuple[np.ndarray, np.float64]:
+        if detector_bits.ndim != 1:
+            raise ValueError(
+                "decode_with_confidence expects a single detector shot (1D array)."
+            )
+        correction = self.decode(detector_bits)
+        packed = int(pack_boolean_array(np.asarray(detector_bits, dtype=np.uint8))[0])
+        score = (
+            float(self.syndrome_confidence[packed])
+            if packed < len(self.syndrome_confidence)
+            else float("nan")
+        )
+        return correction, np.float64(score)
 
 
 def make_layout_only_dem(
@@ -156,6 +184,17 @@ def _make_decoder_adapter(
         decode_full=decode_full,
         factory_score_mode=factory_score_mode,
     )
+
+
+def _call_decoder_fn(
+    fn: Callable[[SyndromeKey], Any],
+    bits: np.ndarray,
+) -> Any:
+    packed = packed_bits_to_int(bits)
+    try:
+        return fn(packed)
+    except TypeError:
+        return fn(bits_to_key(bits))
 
 
 def estimate_mld_ancilla_scores(
@@ -324,23 +363,24 @@ def build_mld_decoders_from_pair(
             "Ancilla score table has the wrong size for this decoder pair."
         )
 
+    wrapped_factory_decoder = TableDecoderWithConfidence(
+        decoder=factory_decoder,
+        syndrome_confidence=np.asarray(ancilla_scores, dtype=np.float64),
+    )
+
     def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
-        correction = np.asarray(factory_decoder.decode(syndrome), dtype=np.uint8)
-        packed = int(pack_boolean_array(syndrome)[0])
-        score = (
-            float(ancilla_scores[packed])
-            if packed < len(ancilla_scores)
-            else float("nan")
+        correction, score = wrapped_factory_decoder.decode_with_confidence(
+            syndrome.astype(bool)
         )
-        return correction, score
+        return np.asarray(correction, dtype=np.uint8), float(score)
 
     return _make_decoder_adapter(
         full_decoder=full_decoder,
-        factory_decoder=factory_decoder,
+        factory_decoder=wrapped_factory_decoder,
         full_syndrome_length=full_syndrome_length,
         factory_syndrome_length=factory_syndrome_length,
         factory_decode_impl=factory_decode_impl,
-        factory_score_mode="mld_output_fidelity",
+        factory_score_mode=wrapped_factory_decoder.confidence_score_mode,
     )
 
 
@@ -364,6 +404,15 @@ def _score_from_decoder(
     *,
     score_mode: str,
 ) -> tuple[np.ndarray, float, str]:
+    if hasattr(decoder, "decode_with_confidence"):
+        correction, confidence = decoder.decode_with_confidence(syndrome.astype(bool))
+        score_kind = getattr(decoder, "confidence_score_mode", "confidence")
+        return (
+            np.asarray(correction, dtype=np.uint8),
+            float(np.float64(confidence)),
+            str(score_kind),
+        )
+
     decode_signature = inspect.signature(decoder.decode)
 
     if "return_logical_gap" in decode_signature.parameters:
@@ -461,9 +510,27 @@ def evaluate_curve(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
     threshold_policy: str = "quantile",
+    selection_mode: str = "threshold",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
 ) -> dict[str, np.ndarray]:
+    if selection_mode == "pattern_rank":
+        return evaluate_mld_curve(
+            actual_data,
+            decoder_map,
+            posterior_samples=posterior_samples,
+            factory_target=factory_target,
+            valid_factory_targets=valid_factory_targets,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            basis_labels=basis_labels,
+            min_accepted_per_basis=min_accepted_per_basis,
+            layout=layout,
+            uncertainty_backend=uncertainty_backend,
+        )
+    if selection_mode != "threshold":
+        raise ValueError("selection_mode must be 'threshold' or 'pattern_rank'.")
+
     targets = resolve_valid_factory_targets(
         factory_target=factory_target,
         valid_factory_targets=valid_factory_targets,
@@ -478,7 +545,7 @@ def evaluate_curve(
         )
         decode_factory = decoder_map[basis].decode_factory
         for a_det, a_obs in zip(anc_det, anc_obs, strict=True):
-            anc_flip, score = decode_factory(packed_bits_to_int(a_det))
+            anc_flip, score = _call_decoder_fn(decode_factory, a_det)
             anc_flip = np.asarray(anc_flip, dtype=np.uint8)
             if ancilla_matches_valid_targets(
                 a_obs ^ anc_flip,
@@ -497,8 +564,17 @@ def evaluate_curve(
         )
     elif threshold_policy == "unique_values":
         thresholds = np.unique(score_array)
+    elif threshold_policy == "linear_range":
+        score_min = float(np.min(score_array))
+        score_max = float(np.max(score_array))
+        if np.isclose(score_min, score_max):
+            thresholds = np.array([score_min], dtype=np.float64)
+        else:
+            thresholds = np.linspace(score_min, score_max, threshold_points)
     else:
-        raise ValueError("threshold_policy must be 'quantile' or 'unique_values'.")
+        raise ValueError(
+            "threshold_policy must be 'quantile', 'unique_values', or 'linear_range'."
+        )
     accepted_fractions = []
     fidelities = []
     credibility = []
@@ -524,7 +600,7 @@ def evaluate_curve(
                 anc_obs,
                 strict=True,
             ):
-                anc_flip, score = decode_factory(packed_bits_to_int(a_det))
+                anc_flip, score = _call_decoder_fn(decode_factory, a_det)
                 anc_flip = np.asarray(anc_flip, dtype=np.uint8)
                 corrected_anc = a_obs ^ anc_flip
                 if not ancilla_matches_valid_targets(corrected_anc, targets):
@@ -532,8 +608,7 @@ def evaluate_curve(
                 if score < threshold:
                     continue
                 full_flip = np.asarray(
-                    decode_full(packed_bits_to_int(det)),
-                    dtype=np.uint8,
+                    _call_decoder_fn(decode_full, det), dtype=np.uint8
                 )
                 corrected_bits.append(int(obs[0] ^ full_flip[0]))
             corrected[basis] = np.asarray(corrected_bits, dtype=np.uint8)
@@ -623,7 +698,7 @@ def evaluate_mld_curve(
             packed = int(pack_boolean_array(a_det)[0])
             pattern_counts[packed] += 1
 
-            anc_flip, score = decode_factory(packed_bits_to_int(a_det))
+            anc_flip, score = _call_decoder_fn(decode_factory, a_det)
             anc_flip = np.asarray(anc_flip, dtype=np.uint8)
             if np.isfinite(score):
                 existing = pattern_scores.get(packed)
@@ -636,10 +711,7 @@ def evaluate_mld_curve(
             if not ancilla_matches_valid_targets(a_obs ^ anc_flip, targets):
                 continue
 
-            full_flip = np.asarray(
-                decode_full(packed_bits_to_int(det)),
-                dtype=np.uint8,
-            )
+            full_flip = np.asarray(_call_decoder_fn(decode_full, det), dtype=np.uint8)
             corrected_bits[packed].append(int(obs[0] ^ full_flip[0]))
 
         pattern_counts_by_basis[basis] = dict(pattern_counts)
