@@ -43,6 +43,25 @@ if TYPE_CHECKING:
 OnSearchStep = Callable[[str, "ConfigurationNode", "StepInfo"], None]
 
 
+@dataclass(frozen=True)
+class TargetContext:
+    """Signals passed to a TargetGenerator.
+
+    Composes ConcreteState to avoid duplicating lattice state fields.
+    """
+
+    arch_spec: layout.ArchSpec
+    state: ConcreteState
+    controls: tuple[int, ...]
+    targets: tuple[int, ...]
+    lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]
+    cz_stage_index: int
+
+    @property
+    def placement(self) -> dict[int, LocationAddress]:
+        return dict(enumerate(self.state.layout))
+
+
 class PlacementTraversalABC(abc.ABC):
     """Placement-facing traversal API for target-configuration search."""
 
