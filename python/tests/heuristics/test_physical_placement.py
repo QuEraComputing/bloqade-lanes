@@ -401,3 +401,59 @@ def test_target_generator_raises_propagates():
     state = _make_state()
     with pytest.raises(RuntimeError, match="plugin exploded"):
         strategy.cz_placements(state, controls=(0,), targets=(1,))
+
+
+def test_rust_path_target_generator_shared_budget(monkeypatch):
+    arch_spec = logical.get_arch_spec()
+    # Use state where default and alt are distinct (layout[0]=(0,0), layout[1]=(2,0))
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            layout.LocationAddress(0, 0),
+            layout.LocationAddress(2, 0),
+        ),
+        move_count=(0, 0),
+    )
+    # A plausible alt — swap control's destination
+    alt_target = {
+        0: state.layout[0],
+        1: arch_spec.get_cz_partner(state.layout[0]),
+    }
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch_spec,
+        traversal=RustPlacementTraversal(max_expansions=10),
+        target_generator=lambda ctx: [alt_target],
+    )
+    budgets_seen: list[int | None] = []
+    consumed = 4
+
+    class _FakeResult:
+        def __init__(self):
+            self.status = "unsolvable"
+            self.nodes_expanded = consumed
+
+    class _FakeSolver:
+        def solve(self, *args, **kwargs):
+            _ = args
+            budgets_seen.append(kwargs.get("max_expansions"))
+            return _FakeResult()
+
+    monkeypatch.setattr(
+        PhysicalPlacementStrategy,
+        "_get_rust_solver",
+        lambda _self: _FakeSolver(),
+    )
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    # alt candidate first with full 10; default candidate second with 6.
+    assert budgets_seen == [10, 6]
+
+
+def test_rust_path_cz_counter_increments():
+    """Parity fix: _cz_counter must increment on the Rust path too."""
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(),
+    )
+    state = _make_state()
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert strategy._cz_counter == 1

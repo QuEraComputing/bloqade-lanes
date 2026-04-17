@@ -515,53 +515,77 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        _ = lookahead_cz_layers
         assert isinstance(self.traversal, RustPlacementTraversal)
-        placement = {qid: loc for qid, loc in enumerate(state.layout)}
-        target = self._target_from_stage_controls_only(placement, controls, targets)
+        ctx = TargetContext(
+            arch_spec=self.arch_spec,
+            state=state,
+            controls=controls,
+            targets=targets,
+            lookahead_cz_layers=lookahead_cz_layers,
+            cz_stage_index=self._cz_counter,
+        )
+        candidates = self._build_candidates(ctx)
 
         initial = [
             (qid, loc.zone_id, loc.word_id, loc.site_id)
-            for qid, loc in placement.items()
-        ]
-        target_tuples = [
-            (qid, loc.zone_id, loc.word_id, loc.site_id) for qid, loc in target.items()
+            for qid, loc in ctx.placement.items()
         ]
         blocked = [(loc.zone_id, loc.word_id, loc.site_id) for loc in state.occupied]
-
         solver = self._get_rust_solver()
-        result = solver.solve(
-            initial,
-            target_tuples,
-            blocked,
-            self.traversal.max_expansions,
-            strategy=self.traversal.strategy,
-            top_c=self.traversal.top_c,
-            max_movesets_per_group=self.traversal.max_movesets_per_group,
-        )
-        self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
-        if result.status != "solved":
+        remaining = self.traversal.max_expansions
+        winning_result = None
+        for candidate in candidates:
+            if remaining is not None and remaining <= 0:
+                break
+            target_tuples = [
+                (qid, loc.zone_id, loc.word_id, loc.site_id)
+                for qid, loc in candidate.items()
+            ]
+            result = solver.solve(
+                initial,
+                target_tuples,
+                blocked,
+                max_expansions=remaining,
+                strategy=self.traversal.strategy,
+                top_c=self.traversal.top_c,
+                max_movesets_per_group=self.traversal.max_movesets_per_group,
+            )
+            self._rust_nodes_expanded_total += int(result.nodes_expanded)
+            if remaining is not None:
+                remaining -= int(result.nodes_expanded)
+            if result.status == "solved":
+                winning_result = result
+                break
+
+        self._cz_counter += 1
+
+        if winning_result is None:
             return AtomState.bottom()
 
         move_layers = tuple(
             tuple(
-                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d], zone)
+                LaneAddress(
+                    self._MT_MAP[mt],
+                    word,
+                    site,
+                    bus,
+                    self._DIR_MAP[d],
+                    zone,
+                )
                 for d, mt, zone, word, site, bus in step
             )
-            for step in result.move_layers
+            for step in winning_result.move_layers
         )
 
         goal_map = {
-            qid: LocationAddress(w, s, z) for qid, z, w, s in result.goal_config
+            qid: LocationAddress(w, s, z) for qid, z, w, s in winning_result.goal_config
         }
         goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
-
         move_count = tuple(
             mc + int(src != dst)
             for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
         )
-
         return ExecuteCZ(
             occupied=state.occupied,
             layout=goal_layout,
