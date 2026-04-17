@@ -8,7 +8,7 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    coverage run -m pytest python/tests
+    uv run pytest python/tests --cov=bloqade.lanes --cov-report= -n auto
 
 coverage-xml: coverage-run
     coverage xml
