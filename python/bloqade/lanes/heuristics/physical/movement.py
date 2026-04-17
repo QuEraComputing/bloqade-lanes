@@ -62,6 +62,33 @@ class TargetContext:
         return dict(enumerate(self.state.layout))
 
 
+class TargetGeneratorABC(abc.ABC):
+    """Plugin interface for choosing the target configuration of a CZ stage.
+
+    Implementations return an *ordered* list of candidate target
+    placements. The strategy framework appends the default candidate
+    (``DefaultTargetGenerator``) as a guaranteed last-resort, so a plugin
+    may return ``[]`` to defer entirely to the default.
+    """
+
+    @abc.abstractmethod
+    def generate(self, ctx: TargetContext) -> list[dict[int, LocationAddress]]: ...
+
+
+@dataclass(frozen=True)
+class DefaultTargetGenerator(TargetGeneratorABC):
+    """Current rule: control qubit moves to the CZ partner of the target's location."""
+
+    def generate(self, ctx: TargetContext) -> list[dict[int, LocationAddress]]:
+        target = dict(ctx.placement)
+        for control_qid, target_qid in zip(ctx.controls, ctx.targets):
+            target_loc = target[target_qid]
+            partner = ctx.arch_spec.get_cz_partner(target_loc)
+            assert partner is not None, f"No CZ blockade partner for {target_loc}"
+            target[control_qid] = partner
+        return [target]
+
+
 class PlacementTraversalABC(abc.ABC):
     """Placement-facing traversal API for target-configuration search."""
 
