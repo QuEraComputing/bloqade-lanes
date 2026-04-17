@@ -2,22 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
+from benchmarks.harness.models import BenchmarkCase
 from kirin import ir
-
-
-@dataclass(frozen=True)
-class BenchmarkCase:
-    """Reproducible benchmark input circuit."""
-
-    case_id: str
-    kernel: ir.Method
-    tags: tuple[str, ...] = ()
-    logical_initialize: bool = True
-
 
 SIZE_BUCKETS = ("small", "medium", "large")
 _KERNELS_DIR = Path(__file__).parent
