@@ -1206,11 +1206,8 @@ class ArchBuilder:
             all_paths.update(zone._compute_paths(zone_idx, offset))
 
         # 6. Determine the blockade radius to record on the ArchSpec.
-        # Builder-level radius (set via ArchBuilder.set_blockade_radius)
-        # takes precedence.  Otherwise, pick up a zone-level radius if
-        # every zone with a radius agrees on the value (if some zones
-        # have a radius and others don't, or zones disagree, error out
-        # — the single-spec blockade_radius field can't represent that).
+        # Precedence: explicit build(blockade_radius=...) argument >
+        # builder-level set_blockade_radius > zone-level agreement > None.
         resolved_radius = (
             blockade_radius
             if blockade_radius is not None

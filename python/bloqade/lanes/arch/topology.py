@@ -7,7 +7,7 @@ All topologies are 2D-grid-aware.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, log2
+from math import log2
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from bloqade.lanes.bytecode._native import SiteBus, WordBus
@@ -54,10 +54,10 @@ def _check_power_of_two(n: int, name: str) -> int:
 def _next_power_of_two(n: int) -> tuple[int, int]:
     """Return (padded, dims) where padded is the smallest power of 2 >= n."""
     if n < 1:
-        raise ValueError(f"n must be >= 1, got {n}")
+        raise ValueError(f"num_sites must be >= 1, got {n}")
     if n == 1:
         return (1, 0)
-    dims = int(ceil(log2(n)))
+    dims = (n - 1).bit_length()
     return (1 << dims, dims)
 
 
