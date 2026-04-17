@@ -297,6 +297,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     traversal: PlacementTraversalABC | RustPlacementTraversal = field(
         default_factory=EntropyPlacementTraversal
     )
+    target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None
 
     _cz_counter: int = field(default=0, init=False, repr=False)
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
@@ -306,6 +307,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     )
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _resolved_target_generator: TargetGeneratorABC | None = field(
+        default=None, init=False, repr=False
+    )
 
     @property
     def traced_tree(self) -> ConfigurationTree | None:
@@ -332,6 +336,16 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 "traversal must implement PlacementTraversalABC or be a "
                 "RustPlacementTraversal instance"
             )
+        if self.target_generator is not None and not (
+            isinstance(self.target_generator, TargetGeneratorABC)
+            or callable(self.target_generator)
+        ):
+            raise TypeError(
+                "target_generator must be a TargetGeneratorABC, a callable, " "or None"
+            )
+        self._resolved_target_generator = _coerce_target_generator(
+            self.target_generator
+        )
 
     def validate_initial_layout(
         self,

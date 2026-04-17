@@ -7,6 +7,7 @@ from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.heuristics.physical.movement import (
     DefaultTargetGenerator,
+    PhysicalPlacementStrategy,
     TargetContext,
     TargetGeneratorABC,
     _CallableTargetGenerator,
@@ -152,3 +153,22 @@ def test_coerce_target_generator_wraps_callable():
 
 def test_coerce_target_generator_returns_none_for_none():
     assert _coerce_target_generator(None) is None
+
+
+def test_strategy_default_target_generator_is_none():
+    s = PhysicalPlacementStrategy()
+    assert s._resolved_target_generator is None
+
+
+def test_strategy_accepts_abc_target_generator():
+    gen = DefaultTargetGenerator()
+    s = PhysicalPlacementStrategy(target_generator=gen)
+    assert s._resolved_target_generator is gen
+
+
+def test_strategy_wraps_callable_target_generator():
+    def fn(ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+        return []
+
+    s = PhysicalPlacementStrategy(target_generator=fn)
+    assert isinstance(s._resolved_target_generator, _CallableTargetGenerator)
