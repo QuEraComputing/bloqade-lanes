@@ -10,7 +10,7 @@ from kirin import ir
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.heuristics.physical_placement import (
+from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.heuristics.physical_placement import (
+from bloqade.lanes.heuristics.physical.placement import (
     BFSPlacementTraversal,
     EntropyPlacementTraversal,
     GreedyPlacementTraversal,
@@ -65,15 +65,15 @@ def test_traversal_selection_calls_selected_backend(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.EntropyPlacementTraversal.path_to_target_config",
+        "bloqade.lanes.heuristics.physical.movement.EntropyPlacementTraversal.path_to_target_config",
         fake_entropy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.GreedyPlacementTraversal.path_to_target_config",
+        "bloqade.lanes.heuristics.physical.movement.GreedyPlacementTraversal.path_to_target_config",
         fake_greedy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.BFSPlacementTraversal.path_to_target_config",
+        "bloqade.lanes.heuristics.physical.movement.BFSPlacementTraversal.path_to_target_config",
         fake_bfs,
     )
 
@@ -234,3 +234,39 @@ def test_cz_placements_rust_with_blocked_locations():
     )
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
+
+
+def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
+    """Regression test for #510: _MT_MAP must include MoveType.ZONE (2)."""
+    from bloqade.lanes.bytecode import Direction as BytecodeDirection, MoveType
+    from bloqade.lanes.layout.encoding import LaneAddress
+
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
+    )
+    state = _make_state()
+
+    class _FakeResult:
+        status = "solved"
+        nodes_expanded = 1
+        # move_layers format: list[list[tuple[dir, move_type, zone, word, site, bus]]]
+        # move_type=2 is MoveType.ZONE — the variant that was missing from _MT_MAP
+        move_layers = [[(0, 2, 0, 0, 0, 0)]]
+        goal_config = [(0, 0, 0, 0), (1, 0, 1, 0)]
+
+    class _FakeSolver:
+        def solve(self, *_args, **_kwargs):
+            return _FakeResult()
+
+    monkeypatch.setattr(
+        PhysicalPlacementStrategy,
+        "_get_rust_solver",
+        lambda _self: _FakeSolver(),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)
+    assert len(out.move_layers) == 1
+    lane = out.move_layers[0][0]
+    assert isinstance(lane, LaneAddress)
+    assert lane.move_type == MoveType.ZONE
+    assert lane.direction == BytecodeDirection.FORWARD

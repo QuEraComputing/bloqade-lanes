@@ -8,16 +8,16 @@ default:
 # ── Python ──────────────────────────────────────────────────────────
 
 coverage-run:
-    coverage run -m pytest python/tests
+    uv run pytest python/tests --cov --cov-report= -n auto
 
 coverage-xml: coverage-run
-    coverage xml
+    uv run coverage xml
 
 coverage-html: coverage-run
-    coverage html
+    uv run coverage html
 
 coverage-report: coverage-run
-    coverage report
+    uv run coverage report
 
 coverage-open: coverage-html
     open htmlcov/index.html

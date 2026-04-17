@@ -4,7 +4,7 @@ from kirin.interp.exceptions import InterpreterError
 
 from bloqade.lanes.analysis.placement import PlacementAnalysis
 from bloqade.lanes.dialects import place
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
 from bloqade.lanes.layout import LocationAddress
 
 
