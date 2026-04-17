@@ -369,6 +369,33 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             target[control_qid] = blockade_partner
         return target
 
+    def _build_candidates(
+        self,
+        ctx: TargetContext,
+    ) -> list[dict[int, LocationAddress]]:
+        """Build the ordered candidate list: plugin output + default-as-fallback.
+
+        Dedups plugin candidates by dict equality (preserving order) and
+        appends the default candidate only if it is not already present.
+        Validates every candidate against ``_validate_candidate`` before
+        returning; a malformed candidate raises ``ValueError``.
+        """
+        plugin = self._resolved_target_generator
+        plugin_candidates: list[dict[int, LocationAddress]] = (
+            [] if plugin is None else list(plugin.generate(ctx))
+        )
+
+        deduped: list[dict[int, LocationAddress]] = []
+        for candidate in plugin_candidates:
+            _validate_candidate(ctx, candidate)
+            if candidate not in deduped:
+                deduped.append(candidate)
+
+        default = DefaultTargetGenerator().generate(ctx)[0]
+        if default not in deduped:
+            deduped.append(default)
+        return deduped
+
     def _run_search(
         self,
         tree: ConfigurationTree,

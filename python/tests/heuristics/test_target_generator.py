@@ -10,6 +10,7 @@ from bloqade.lanes.heuristics.physical.movement import (
     PhysicalPlacementStrategy,
     TargetContext,
     TargetGeneratorABC,
+    TargetGeneratorCallable,
     _CallableTargetGenerator,
     _coerce_target_generator,
     _validate_candidate,
@@ -172,3 +173,70 @@ def test_strategy_wraps_callable_target_generator():
 
     s = PhysicalPlacementStrategy(target_generator=fn)
     assert isinstance(s._resolved_target_generator, _CallableTargetGenerator)
+
+
+# ── _build_candidates tests ──
+
+
+def _make_strategy_with_generator(
+    gen: TargetGeneratorABC | TargetGeneratorCallable | None,
+) -> PhysicalPlacementStrategy:
+    return PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        target_generator=gen,
+    )
+
+
+def test_build_candidates_none_returns_default_only():
+    strategy = _make_strategy_with_generator(None)
+    ctx = _make_valid_ctx()
+    candidates = strategy._build_candidates(ctx)
+    assert candidates == DefaultTargetGenerator().generate(ctx)
+
+
+def test_build_candidates_empty_plugin_appends_default():
+    def fn(c):
+        return []
+
+    strategy = _make_strategy_with_generator(fn)
+    ctx = _make_valid_ctx()
+    candidates = strategy._build_candidates(ctx)
+    assert candidates == DefaultTargetGenerator().generate(ctx)
+
+
+def test_build_candidates_dedups_default():
+    """Plugin returning the default verbatim should yield one candidate."""
+
+    def fn(c):
+        return DefaultTargetGenerator().generate(c)
+
+    strategy = _make_strategy_with_generator(fn)
+    ctx = _make_valid_ctx()
+    candidates = strategy._build_candidates(ctx)
+    assert len(candidates) == 1
+
+
+def test_build_candidates_preserves_plugin_order_with_default_last():
+    ctx = _make_valid_ctx()
+    default = DefaultTargetGenerator().generate(ctx)[0]
+    # Construct a second valid candidate by swapping control/target
+    alt = dict(default)
+    alt[0], alt[1] = alt[1], alt[0]
+
+    def fn(c):
+        return [alt]
+
+    strategy = _make_strategy_with_generator(fn)
+    candidates = strategy._build_candidates(ctx)
+    assert candidates == [alt, default]
+
+
+def test_build_candidates_raises_on_malformed():
+    def fn(c):
+        # (0,0) and (2,0) are NOT CZ partners — partner((0,0))=(1,0), partner((2,0))=(3,0)
+        return [{0: c.state.layout[0], 1: layout.LocationAddress(2, 0)}]
+
+    strategy = _make_strategy_with_generator(fn)
+    ctx = _make_valid_ctx()
+    with pytest.raises(ValueError, match="blockade"):
+        strategy._build_candidates(ctx)
