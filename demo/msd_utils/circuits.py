@@ -605,6 +605,7 @@ def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
     return noisy_steane7_initialize
 
 
+# TODO, 4/17 10:30 AM: continue reading from here to think about how to integrate Jing's code.
 def build_task(
     simulator: GeminiLogicalSimulator,
     kernel_spec: LogicalKernelSpec | Any,
