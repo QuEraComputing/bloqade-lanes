@@ -15,8 +15,8 @@ from bloqade.lanes import compile
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import (
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.logical.placement import (
     LogicalPlacementStrategyNoHome,
 )
 from bloqade.lanes.logical_mvp import (

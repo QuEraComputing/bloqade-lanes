@@ -12,7 +12,7 @@
 # %%
 from bloqade import squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -67,7 +67,7 @@ example_kernel.print()
 from bloqade.analysis import address  # noqa: E402
 
 from bloqade.lanes.analysis import layout  # noqa: E402
-from bloqade.lanes.heuristics import logical_layout  # noqa: E402
+from bloqade.lanes.heuristics.logical import layout as logical_layout  # noqa: E402
 
 address_frame, _ = address.AddressAnalysis(example_kernel.dialects).run(example_kernel)
 

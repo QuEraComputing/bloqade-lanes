@@ -8,10 +8,10 @@ from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.compile import squin_to_move
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics.physical_layout import (
+from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.validation.address import Validation
 
 

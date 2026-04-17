@@ -6,7 +6,7 @@ from kirin import ir
 
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics import logical_layout
+from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_logical_noise_model

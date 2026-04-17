@@ -5,7 +5,7 @@ from __future__ import annotations
 from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfig
 
 from bloqade.lanes.arch.gemini import physical
-from bloqade.lanes.heuristics.physical_placement import (
+from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )

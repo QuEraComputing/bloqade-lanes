@@ -13,7 +13,7 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
-from bloqade.lanes.heuristics.logical_placement import (
+from bloqade.lanes.heuristics.logical.placement import (
     LogicalPlacementMethods,
     LogicalPlacementStrategyNoHome,
 )

@@ -8,10 +8,10 @@ from bloqade.lanes import visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.heuristics.physical_layout import (
+from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical_placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn

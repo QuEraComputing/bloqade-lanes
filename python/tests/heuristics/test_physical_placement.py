@@ -3,7 +3,7 @@ from __future__ import annotations
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.heuristics.physical_placement import (
+from bloqade.lanes.heuristics.physical.placement import (
     BFSPlacementTraversal,
     EntropyPlacementTraversal,
     GreedyPlacementTraversal,
@@ -65,15 +65,15 @@ def test_traversal_selection_calls_selected_backend(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.EntropyPlacementTraversal.path_to_target_config",
+        "bloqade.lanes.heuristics.physical.movement.EntropyPlacementTraversal.path_to_target_config",
         fake_entropy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.GreedyPlacementTraversal.path_to_target_config",
+        "bloqade.lanes.heuristics.physical.movement.GreedyPlacementTraversal.path_to_target_config",
         fake_greedy,
     )
     monkeypatch.setattr(
-        "bloqade.lanes.heuristics.physical_movement.BFSPlacementTraversal.path_to_target_config",
+        "bloqade.lanes.heuristics.physical.movement.BFSPlacementTraversal.path_to_target_config",
         fake_bfs,
     )
 
