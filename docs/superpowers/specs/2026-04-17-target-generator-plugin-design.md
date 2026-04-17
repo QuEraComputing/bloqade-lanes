@@ -71,6 +71,17 @@ class TargetContext:
 `cz_stage_index` is a per-strategy counter equal to `_cz_counter` at
 call time.
 
+`placement` assumes dense qids `0..len(state.layout)-1` (matches the
+`placement = {qid: loc for qid, loc in enumerate(state.layout)}` pattern
+used at the current call sites). This assumption is noted so future
+qid-sparse representations don't silently break plugins.
+
+**Parity fix required**: `_cz_counter` is currently incremented in
+`cz_placements` but **not** in `_cz_placements_rust`. This plugin work
+adds the increment to the Rust path so `cz_stage_index` is meaningful
+for both traversals. This is an incidental fix folded into this spec,
+called out explicitly so it's not silently introduced.
+
 ### `TargetGeneratorABC`
 
 ```python
@@ -138,9 +149,9 @@ updated to the same pattern:
    - `candidates = list(plugin.generate(ctx))` (or callable-adapter).
    - Validate each candidate (see "Validation" below). Invalid →
      `ValueError`.
-   - Dedup candidates by dict equality.
-   - Append `DefaultTargetGenerator().generate(ctx)` output if not
-     already present.
+   - Dedup the plugin's candidates by dict equality (preserving order).
+   - Compute the default candidate via `DefaultTargetGenerator`; append
+     it only if it is not already present in the deduped list.
    - Loop with shared budget.
 
 ### Shared-budget loop
@@ -160,9 +171,11 @@ return AtomState.bottom()
 
 - **Python path** — `run_one` does
   `replace(self.traversal, max_expansions=remaining).path_to_target_config(tree, candidate)`
-  (frozen dataclass `replace` produces a per-iteration copy).
+  (frozen dataclass `replace` produces a per-iteration copy). Success
+  is `bool(result.goal_nodes)`.
 - **Rust path** — `run_one` calls
   `solver.solve(..., target=candidate, max_expansions=remaining)`.
+  Success is `result.status == "solved"`.
   `_rust_nodes_expanded_total` accumulates across candidates.
 - `None` budget (unlimited) passes through untouched; no decrementing.
 
@@ -192,10 +205,17 @@ Each candidate is validated before the search runs. All failures raise
 2. **Unknown location**: every value must be a `LocationAddress` that the
    `arch_spec` recognizes (via existing `arch_spec` validation).
 3. **Invalid CZ pair**: for every `(control_qid, target_qid)` in
-   `zip(controls, targets)`,
-   `arch_spec.get_cz_partner(candidate[target_qid]) == candidate[control_qid]`
-   must hold. A candidate whose pair is not CZ-blockade-partnered cannot
-   execute the CZ and indicates a plugin bug.
+   `zip(controls, targets)`, the pair
+   `(candidate[control_qid], candidate[target_qid])` must be
+   CZ-blockade-partnered. The check matches the existing convention at
+   `python/bloqade/lanes/analysis/placement/lattice.py:134-135`, which
+   accepts either direction:
+   `get_cz_partner(control_loc) == target_loc` **OR**
+   `get_cz_partner(target_loc) == control_loc`. This handles the case
+   where `get_cz_partner` is not strictly involutive (the default
+   generator exercises the second direction; other heuristics may
+   exercise the first). A candidate whose pair fails both checks
+   cannot execute the CZ and indicates a plugin bug.
 
 Rationale: malformed candidates indicate a plugin contract violation.
 Silent skipping would hide bugs. The "default as fallback" mechanism is
