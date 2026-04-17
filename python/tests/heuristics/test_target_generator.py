@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini import logical
@@ -7,6 +9,7 @@ from bloqade.lanes.heuristics.physical.movement import (
     DefaultTargetGenerator,
     TargetContext,
     TargetGeneratorABC,
+    _validate_candidate,
 )
 
 
@@ -56,3 +59,61 @@ def test_default_target_generator_matches_current_rule():
 
 def test_default_target_generator_is_target_generator_abc():
     assert isinstance(DefaultTargetGenerator(), TargetGeneratorABC)
+
+
+def _make_valid_ctx() -> TargetContext:
+    state = _make_state()
+    return TargetContext(
+        arch_spec=logical.get_arch_spec(),
+        state=state,
+        controls=(0,),
+        targets=(1,),
+        lookahead_cz_layers=(),
+        cz_stage_index=0,
+    )
+
+
+def test_validate_candidate_accepts_default():
+    ctx = _make_valid_ctx()
+    candidate = DefaultTargetGenerator().generate(ctx)[0]
+    _validate_candidate(ctx, candidate)  # no raise
+
+
+def test_validate_candidate_rejects_missing_qid():
+    ctx = _make_valid_ctx()
+    candidate = DefaultTargetGenerator().generate(ctx)[0]
+    del candidate[1]
+    with pytest.raises(ValueError, match="missing"):
+        _validate_candidate(ctx, candidate)
+
+
+def test_validate_candidate_rejects_non_cz_pair():
+    ctx = _make_valid_ctx()
+    # (0,0) and (2,0) are NOT CZ partners on logical.get_arch_spec()
+    # — partner((0,0))=(1,0); partner((2,0))=(3,0). Both checks fail.
+    non_partner = layout.LocationAddress(2, 0)
+    candidate = {0: ctx.state.layout[0], 1: non_partner}
+    with pytest.raises(ValueError, match="blockade"):
+        _validate_candidate(ctx, candidate)
+
+
+def test_validate_candidate_accepts_reverse_pair_direction():
+    """The 'either direction' OR-check in _validate_candidate must work
+    when partner(control)==target (not just partner(target)==control)."""
+    ctx = _make_valid_ctx()
+    arch = ctx.arch_spec
+    # Build a candidate where the control (qid 0) stays put at its
+    # current location, and the target (qid 1) moves to control's partner.
+    c_loc = ctx.state.layout[0]
+    candidate = {0: c_loc, 1: arch.get_cz_partner(c_loc)}
+    _validate_candidate(ctx, candidate)  # no raise
+
+
+def test_validate_candidate_rejects_unknown_location():
+    ctx = _make_valid_ctx()
+    # LocationAddress with a wildly out-of-range word_id will fail
+    # arch_spec.check_location_group
+    bogus = layout.LocationAddress(999, 999)
+    candidate = {0: bogus, 1: ctx.state.layout[1]}
+    with pytest.raises(ValueError):
+        _validate_candidate(ctx, candidate)

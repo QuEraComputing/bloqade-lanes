@@ -89,6 +89,47 @@ class DefaultTargetGenerator(TargetGeneratorABC):
         return [target]
 
 
+def _validate_candidate(
+    ctx: TargetContext,
+    candidate: dict[int, LocationAddress],
+) -> None:
+    """Raise ValueError if the candidate is not a legal CZ target.
+
+    Checks:
+    1. Every qid from ``ctx.placement`` appears in ``candidate``.
+    2. Every location value is recognized by ``ctx.arch_spec`` (via
+       ``check_location_group``).
+    3. Each ``(control_qid, target_qid)`` pair is CZ-blockade-partnered
+       in either direction (matching the convention at
+       ``python/bloqade/lanes/analysis/placement/lattice.py:134-135``).
+    """
+    placement = ctx.placement
+    missing = set(placement.keys()) - set(candidate.keys())
+    if missing:
+        raise ValueError(
+            f"target-generator candidate missing qubits: {sorted(missing)}"
+        )
+    # Reuse the Rust-backed location-group validator.
+    loc_errors = ctx.arch_spec.check_location_group(list(candidate.values()))
+    if loc_errors:
+        raise ValueError(
+            f"target-generator candidate contains invalid locations: "
+            f"{list(loc_errors)}"
+        )
+    for control_qid, target_qid in zip(ctx.controls, ctx.targets):
+        c_loc = candidate[control_qid]
+        t_loc = candidate[target_qid]
+        if (
+            ctx.arch_spec.get_cz_partner(c_loc) != t_loc
+            and ctx.arch_spec.get_cz_partner(t_loc) != c_loc
+        ):
+            raise ValueError(
+                f"target-generator candidate CZ pair "
+                f"(control={control_qid}@{c_loc}, target={target_qid}@{t_loc}) "
+                f"is not blockade-partnered"
+            )
+
+
 class PlacementTraversalABC(abc.ABC):
     """Placement-facing traversal API for target-configuration search."""
 
