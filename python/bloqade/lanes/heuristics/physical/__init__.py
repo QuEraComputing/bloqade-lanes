@@ -3,12 +3,14 @@ from bloqade.lanes.heuristics.physical.layout import (
 )
 from bloqade.lanes.heuristics.physical.movement import (
     BFSPlacementTraversal,
-    DefaultTargetGenerator,
     EntropyPlacementTraversal,
     GreedyPlacementTraversal,
     PhysicalPlacementStrategy,
     PlacementTraversalABC,
     RustPlacementTraversal,
+)
+from bloqade.lanes.heuristics.physical.target_generator import (
+    DefaultTargetGenerator,
     TargetContext,
     TargetGeneratorABC,
 )

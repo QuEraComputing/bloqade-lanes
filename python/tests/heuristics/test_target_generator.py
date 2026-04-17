@@ -5,9 +5,9 @@ import pytest
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.heuristics.physical.movement import (
+from bloqade.lanes.heuristics.physical.movement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
-    PhysicalPlacementStrategy,
     TargetContext,
     TargetGeneratorABC,
     TargetGeneratorCallable,
