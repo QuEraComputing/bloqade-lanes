@@ -820,22 +820,18 @@ class ZoneBuilder:
         i = 0
         while i < len(path) - 1:
             j = i + 1
+            # Determine which coordinate must stay constant (the axis).
             is_horizontal = path[j][1] == merged[-1][1]
-            is_vertical = path[j][0] == merged[-1][0]
+            coord = 1 if is_horizontal else 0
+            anchor_val = merged[-1][coord]
 
             # Extend as far as possible on the current axis.
             best = j
             for k in range(j + 1, len(path)):
-                if is_horizontal and path[k][1] == merged[-1][1]:
-                    if segment_safe(merged[-1], path[k]):
-                        best = k
-                    else:
-                        break
-                elif is_vertical and path[k][0] == merged[-1][0]:
-                    if segment_safe(merged[-1], path[k]):
-                        best = k
-                    else:
-                        break
+                if path[k][coord] != anchor_val:
+                    break
+                if segment_safe(merged[-1], path[k]):
+                    best = k
                 else:
                     break
 
