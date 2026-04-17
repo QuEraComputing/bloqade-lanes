@@ -8,7 +8,7 @@ from pathlib import Path
 from benchmarks.harness.models import BenchmarkCase
 from kirin import ir
 
-SIZE_BUCKETS = ("small", "medium", "large")
+SIZE_BUCKETS = ("small", "medium", "large", "random_stabilizers")
 _KERNELS_DIR = Path(__file__).parent
 
 

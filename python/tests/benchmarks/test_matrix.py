@@ -27,3 +27,14 @@ def test_default_strategy_configs_are_importable_and_buildable():
     for strategy in strategies:
         placement_strategy = strategy.build_placement_strategy()
         assert placement_strategy is not None
+
+
+def test_default_strategy_configs_include_python_entropy():
+    strategies = default_strategy_configs()
+    python_entropy = [
+        strategy for strategy in strategies if strategy.strategy_id == "python_entropy"
+    ]
+
+    assert len(python_entropy) == 1
+    assert python_entropy[0].backend == "python"
+    assert python_entropy[0].generator_id == "heuristic"

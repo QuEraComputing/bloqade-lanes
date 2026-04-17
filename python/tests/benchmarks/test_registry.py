@@ -27,6 +27,14 @@ def test_case_selector_supports_bucket_selectors():
     assert len(selected) < len(all_cases)
 
 
+def test_case_selector_supports_random_stabilizers_bucket():
+    selected = select_benchmark_cases({"random_stabilizers"})
+
+    assert selected
+    assert "random_stabilizers" in SIZE_BUCKETS
+    assert all(case.case_id.startswith("multi_qubit_rb_") for case in selected)
+
+
 def test_case_selector_rejects_unknown_selector():
     with pytest.raises(ValueError, match="Unknown case selector"):
         select_benchmark_cases({"definitely_not_a_kernel"})
