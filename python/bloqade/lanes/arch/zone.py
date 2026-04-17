@@ -108,6 +108,9 @@ class ArchBlueprint:
 
     zones: dict[str, ZoneSpec]
     layout: DeviceLayout = field(default_factory=DeviceLayout)
+    feed_forward: bool = False
+    atom_reloading: bool = False
+    blockade_radius: float | None = None
 
     def __post_init__(self) -> None:
         if not self.zones:

@@ -7,7 +7,7 @@ All topologies are 2D-grid-aware.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import log2
+from math import ceil, log2
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from bloqade.lanes.bytecode._native import SiteBus, WordBus
@@ -51,6 +51,16 @@ def _check_power_of_two(n: int, name: str) -> int:
     return int(log2(n))
 
 
+def _next_power_of_two(n: int) -> tuple[int, int]:
+    """Return (padded, dims) where padded is the smallest power of 2 >= n."""
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    if n == 1:
+        return (1, 0)
+    dims = int(ceil(log2(n)))
+    return (1 << dims, dims)
+
+
 # ── Site topologies ──
 
 
@@ -61,16 +71,27 @@ class HypercubeSiteTopology:
     For N = 2^k sites, produces k buses. Bus for dimension d connects
     sites that differ in bit d: src = [sites with bit d=0],
     dst = [sites with bit d=1]. Each bus has N/2 parallel moves.
+
+    For non-power-of-2 N, rounds up to the next power of 2 and filters
+    out site indices >= N. Higher-indexed sites get fewer connections
+    (e.g. for N=17, site 16 connects only to site 0 via dimension 4).
     """
 
     def generate_site_buses(self, num_sites: int) -> tuple[SiteBus, ...]:
-        dims = _check_power_of_two(num_sites, "num_sites")
+        padded, dims = _next_power_of_two(num_sites)
         buses: list[SiteBus] = []
         for d in range(dims):
             mask = 1 << d
-            src = [i for i in range(num_sites) if i & mask == 0]
-            dst = [i | mask for i in src]
-            buses.append(SiteBus(src=src, dst=dst))
+            src: list[int] = []
+            dst: list[int] = []
+            for i in range(padded):
+                if i & mask == 0:
+                    j = i | mask
+                    if i < num_sites and j < num_sites:
+                        src.append(i)
+                        dst.append(j)
+            if src:
+                buses.append(SiteBus(src=src, dst=dst))
         return tuple(buses)
 
 

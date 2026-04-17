@@ -1098,8 +1098,19 @@ class ArchBuilder:
         """Rydberg blockade radius (µm) applied to all zones, or None."""
         return self._blockade_radius
 
-    def build(self) -> ArchSpec:
+    def build(
+        self,
+        feed_forward: bool = False,
+        atom_reloading: bool = False,
+        blockade_radius: float | None = None,
+    ) -> ArchSpec:
         """Assemble the ArchSpec and validate via Rust.
+
+        Args:
+            feed_forward: Whether the device supports feed-forward.
+            atom_reloading: Whether the device supports atom reloading.
+            blockade_radius: Explicit blockade radius (µm). If provided,
+                overrides both builder-level and zone-level radii.
 
         Raises:
             ValueError: If Rust validation fails.
@@ -1200,7 +1211,11 @@ class ArchBuilder:
         # every zone with a radius agrees on the value (if some zones
         # have a radius and others don't, or zones disagree, error out
         # — the single-spec blockade_radius field can't represent that).
-        blockade_radius = self._resolve_blockade_radius()
+        resolved_radius = (
+            blockade_radius
+            if blockade_radius is not None
+            else self._resolve_blockade_radius()
+        )
 
         # 7. Assemble and validate.
         return ArchSpec.from_components(
@@ -1209,7 +1224,9 @@ class ArchBuilder:
             modes=modes,
             zone_buses=zone_buses,
             paths=all_paths or None,
-            blockade_radius=blockade_radius,
+            feed_forward=feed_forward,
+            atom_reloading=atom_reloading,
+            blockade_radius=resolved_radius,
         )
 
     def _resolve_blockade_radius(self) -> float | None:

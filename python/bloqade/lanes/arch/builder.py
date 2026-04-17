@@ -198,7 +198,11 @@ def build_arch(
             arch_builder.add_mode(name, [name])
 
     # 6. Build and return.
-    arch = arch_builder.build()
+    arch = arch_builder.build(
+        feed_forward=blueprint.feed_forward,
+        atom_reloading=blueprint.atom_reloading,
+        blockade_radius=blueprint.blockade_radius,
+    )
 
     return ArchResult(
         arch=arch,
