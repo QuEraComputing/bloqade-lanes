@@ -7,7 +7,6 @@ import pytest
 from bloqade.lanes.arch.gemini_full import get_arch
 from bloqade.lanes.arch.topology import HypercubeSiteTopology
 
-
 # ── HypercubeSiteTopology: non-power-of-2 extension ──
 
 
