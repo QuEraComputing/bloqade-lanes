@@ -401,3 +401,28 @@ def test_move_count_tiebreak_at_commit_end_to_end(arch):
     already covers the logic directly.
     """
     ...
+
+
+def test_generate_is_deterministic_across_calls(arch):
+    loc0, loc1 = _pick_cz_pair(arch)
+    ctx = _ctx(arch, (loc0, loc1), controls=(0,), targets=(1,))
+    gen = CongestionAwareTargetGenerator()
+    assert gen.generate(ctx) == gen.generate(ctx)
+
+
+@pytest.mark.skip(
+    reason="requires a blocker set that provably isolates both partners "
+    "from the full physical lane graph; deferred to a synthetic arch "
+    "fixture follow-up (same issue as opposite-direction-reuse test)"
+)
+def test_both_directions_infeasible_returns_empty_list():
+    """Surround both endpoints of a pair by blockers so that no path
+    exists; verify generate() returns [].
+
+    Fixture construction sketch for the follow-up: use arch_builder to
+    build a 2-word arch where both partners of the test pair are
+    reachable only through a single lane, then place atoms on that
+    lane's two endpoints. The all-paths-infeasible property follows
+    from the arch's topology.
+    """
+    ...
