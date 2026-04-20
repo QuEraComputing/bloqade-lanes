@@ -326,6 +326,171 @@ def test_evaluate_curve_returns_monotone_acceptance():
     assert np.all(np.diff(accepted) >= -1e-12)
 
 
+def test_evaluate_curve_cached_generic_threshold_matches_legacy_loop():
+    layout = SyndromeLayout(output_detector_count=1, output_observable_count=1)
+    dataset = BasisDataset(
+        detectors=np.array(
+            [
+                [0, 0, 0],
+                [0, 0, 1],
+                [0, 1, 0],
+                [0, 1, 1],
+                [1, 0, 0],
+                [1, 0, 1],
+            ],
+            dtype=np.uint8,
+        ),
+        observables=np.array(
+            [
+                [0, 0],
+                [1, 0],
+                [0, 1],
+                [1, 1],
+                [0, 0],
+                [1, 1],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+    actual_data = {basis: dataset for basis in "XYZ"}
+
+    def make_adapter(score_offset: float):
+        def decode_factory(key):
+            packed = int(key)
+            return (packed & 1,), float(score_offset + packed)
+
+        def decode_full(key):
+            packed = int(key)
+            return (packed & 1,)
+
+        return DecoderAdapter(
+            full_decoder=None,
+            factory_decoder=None,
+            decode_factory=decode_factory,
+            decode_full=decode_full,
+            factory_score_mode="logical_gap",
+        )
+
+    decoder_map = {
+        "X": make_adapter(0.0),
+        "Y": make_adapter(0.5),
+        "Z": make_adapter(1.0),
+    }
+
+    curves = evaluate_curve(
+        actual_data,
+        decoder_map,
+        posterior_samples=256,
+        threshold_points=5,
+        metric="test",
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
+        sign_vector=(1.0, -1.0, 1.0),
+        target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
+        basis_labels=("X", "Y", "Z"),
+        min_accepted_per_basis=1,
+        threshold_policy="quantile",
+        selection_mode="threshold",
+        layout=layout,
+        uncertainty_backend="wilson",
+    )
+
+    def legacy_curve():
+        thresholds_source = []
+        for basis in "XYZ":
+            anc_det, anc_obs = split_factory_bits(
+                actual_data[basis].detectors,
+                actual_data[basis].observables,
+                layout=layout,
+            )
+            for a_det, a_obs in zip(anc_det, anc_obs, strict=True):
+                anc_flip, score = decoder_map[basis].decode_factory(
+                    int(pack_boolean_array(a_det)[0])
+                )
+                anc_flip = np.asarray(anc_flip, dtype=np.uint8)
+                if np.isfinite(score) and np.array_equal(
+                    a_obs ^ anc_flip, np.array([0], dtype=np.uint8)
+                ):
+                    thresholds_source.append(score)
+
+        thresholds = np.unique(
+            np.quantile(
+                np.asarray(thresholds_source, dtype=np.float64),
+                np.linspace(0.0, 1.0, 5),
+            )
+        )
+        accepted = []
+        fidelity = []
+        credible = []
+
+        for threshold in thresholds:
+            corrected = {}
+            total_kept = 0
+            total_shots = 0
+            for basis in "XYZ":
+                anc_det, anc_obs = split_factory_bits(
+                    actual_data[basis].detectors,
+                    actual_data[basis].observables,
+                    layout=layout,
+                )
+                corrected_bits = []
+                for det, obs, a_det, a_obs in zip(
+                    actual_data[basis].detectors,
+                    actual_data[basis].observables,
+                    anc_det,
+                    anc_obs,
+                    strict=True,
+                ):
+                    anc_flip, score = decoder_map[basis].decode_factory(
+                        int(pack_boolean_array(a_det)[0])
+                    )
+                    anc_flip = np.asarray(anc_flip, dtype=np.uint8)
+                    if not np.array_equal(
+                        a_obs ^ anc_flip, np.array([0], dtype=np.uint8)
+                    ):
+                        continue
+                    if score < threshold:
+                        continue
+                    full_flip = np.asarray(
+                        decoder_map[basis].decode_full(int(pack_boolean_array(det)[0])),
+                        dtype=np.uint8,
+                    )
+                    corrected_bits.append(int(obs[0] ^ full_flip[0]))
+                corrected[basis] = np.asarray(corrected_bits, dtype=np.uint8)
+                total_kept += len(corrected[basis])
+                total_shots += len(actual_data[basis].observables)
+
+            if min(len(corrected[basis]) for basis in "XYZ") < 1:
+                continue
+
+            summary = fidelity_from_counts(
+                corrected["X"],
+                corrected["Y"],
+                corrected["Z"],
+                256,
+                sign_vector=(1.0, -1.0, 1.0),
+                target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                uncertainty_backend="wilson",
+            )
+            accepted.append(total_kept / total_shots)
+            fidelity.append(summary["median"])
+            credible.append((summary["low"], summary["high"]))
+
+        accepted = np.asarray(accepted, dtype=np.float64)
+        fidelity = np.asarray(fidelity, dtype=np.float64)
+        credible = np.asarray(credible, dtype=np.float64)
+        if len(accepted):
+            order = np.argsort(accepted)
+            accepted = accepted[order]
+            fidelity = fidelity[order]
+            credible = credible[order]
+        return accepted, fidelity, credible
+
+    legacy_accepted, legacy_fidelity, legacy_credible = legacy_curve()
+    assert np.allclose(curves["accepted_fraction"], legacy_accepted)
+    assert np.allclose(curves["fidelity"], legacy_fidelity)
+    assert np.allclose(curves["credible"], legacy_credible)
+
+
 def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
     dataset = BasisDataset(
         detectors=np.array(

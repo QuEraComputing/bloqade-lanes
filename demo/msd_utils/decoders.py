@@ -912,7 +912,10 @@ def _build_mld_sparse_threshold_tables(
         unique_anc_det = np.unique(unique_groups[:, 0])
         ancilla_decode_cache: dict[int, tuple[int, float]] = {}
         for packed in unique_anc_det.tolist():
-            anc_flip, score = decoder_map[basis].decode_factory(int(packed))
+            anc_flip, score = _call_decoder_fn(
+                decoder_map[basis].decode_factory,
+                unpack_packed_bits(int(packed), anc_det.shape[1]),
+            )
             anc_flip_bits = np.asarray(anc_flip, dtype=np.uint8)
             ancilla_decode_cache[int(packed)] = (
                 int(pack_boolean_array(anc_flip_bits)[0]) if len(anc_flip_bits) else 0,
@@ -923,7 +926,10 @@ def _build_mld_sparse_threshold_tables(
         full_decode_cache: dict[int, int] = {}
         for packed in unique_full_det.tolist():
             full_flip = np.asarray(
-                decoder_map[basis].decode_full(int(packed)),
+                _call_decoder_fn(
+                    decoder_map[basis].decode_full,
+                    unpack_packed_bits(int(packed), dataset.detectors.shape[1]),
+                ),
                 dtype=np.uint8,
             )
             full_decode_cache[int(packed)] = int(full_flip[0]) if len(full_flip) else 0
@@ -969,6 +975,113 @@ def _build_mld_sparse_threshold_tables(
         [int(global_score_weights[score]) for score in global_scores], dtype=np.int64
     )
     return per_basis_tables, global_scores, global_weights, total_shots
+
+
+def _build_generic_threshold_tables(
+    actual_data: Mapping[str, BasisDataset],
+    decoder_map: Mapping[str, DecoderAdapter],
+    *,
+    targets: np.ndarray,
+    basis_labels: Sequence[str],
+    layout: SyndromeLayout,
+) -> tuple[
+    dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+    np.ndarray,
+    int,
+]:
+    packed_targets = _packed_pattern_targets(targets)
+    per_basis_tables: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    all_scores: list[np.ndarray] = []
+    total_shots = 0
+
+    for basis in basis_labels:
+        dataset = actual_data[basis]
+        total_shots += len(dataset.observables)
+        anc_det, anc_obs = split_factory_bits(
+            dataset.detectors,
+            dataset.observables,
+            layout=layout,
+        )
+
+        packed_full_det = pack_boolean_array(dataset.detectors).astype(np.uint64)
+        packed_anc_det = pack_boolean_array(anc_det).astype(np.uint64)
+        packed_anc_obs = pack_boolean_array(anc_obs).astype(np.uint64)
+        output_bits = np.asarray(dataset.observables[:, 0], dtype=np.uint8)
+
+        unique_anc_det = np.unique(packed_anc_det)
+        ancilla_decode_cache: dict[int, tuple[int, float]] = {}
+        for packed in unique_anc_det.tolist():
+            anc_flip, score = _call_decoder_fn(
+                decoder_map[basis].decode_factory,
+                unpack_packed_bits(int(packed), anc_det.shape[1]),
+            )
+            anc_flip_bits = np.asarray(anc_flip, dtype=np.uint8)
+            ancilla_decode_cache[int(packed)] = (
+                int(pack_boolean_array(anc_flip_bits)[0]) if len(anc_flip_bits) else 0,
+                float(score),
+            )
+
+        anc_flip_packed = np.array(
+            [ancilla_decode_cache[int(p)][0] for p in packed_anc_det.tolist()],
+            dtype=np.uint64,
+        )
+        scores = np.array(
+            [ancilla_decode_cache[int(p)][1] for p in packed_anc_det.tolist()],
+            dtype=np.float64,
+        )
+        valid_mask = np.isfinite(scores) & np.isin(
+            packed_anc_obs ^ anc_flip_packed,
+            list(packed_targets),
+        )
+
+        eligible_scores = scores[valid_mask]
+        if len(eligible_scores) == 0:
+            per_basis_tables[basis] = (
+                np.array([], dtype=np.float64),
+                np.array([], dtype=np.int64),
+                np.array([], dtype=np.int64),
+            )
+            continue
+
+        valid_full_det = packed_full_det[valid_mask]
+        unique_full_det = np.unique(valid_full_det)
+        full_decode_cache: dict[int, int] = {}
+        for packed in unique_full_det.tolist():
+            full_flip = np.asarray(
+                _call_decoder_fn(
+                    decoder_map[basis].decode_full,
+                    unpack_packed_bits(int(packed), dataset.detectors.shape[1]),
+                ),
+                dtype=np.uint8,
+            )
+            full_decode_cache[int(packed)] = int(full_flip[0]) if len(full_flip) else 0
+
+        corrected_bits = np.asarray(output_bits[valid_mask], dtype=np.uint8) ^ np.array(
+            [full_decode_cache[int(p)] for p in valid_full_det.tolist()],
+            dtype=np.uint8,
+        )
+
+        unique_scores, inverse = np.unique(eligible_scores, return_inverse=True)
+        zero_counts = np.bincount(
+            inverse,
+            weights=(corrected_bits == 0).astype(np.int64),
+            minlength=len(unique_scores),
+        ).astype(np.int64)
+        one_counts = np.bincount(
+            inverse,
+            weights=(corrected_bits != 0).astype(np.int64),
+            minlength=len(unique_scores),
+        ).astype(np.int64)
+
+        per_basis_tables[basis] = (unique_scores, zero_counts, one_counts)
+        all_scores.append(eligible_scores)
+
+    if all_scores:
+        score_array = np.concatenate(all_scores, axis=0).astype(np.float64, copy=False)
+    else:
+        score_array = np.array([], dtype=np.float64)
+
+    return per_basis_tables, score_array, total_shots
 
 
 def _counts_for_threshold(
@@ -1036,6 +1149,98 @@ def _evaluate_sparse_mld_threshold_curve(
     elif threshold_policy == "linear_range":
         score_min = float(np.min(global_scores))
         score_max = float(np.max(global_scores))
+        if np.isclose(score_min, score_max):
+            thresholds = np.array([score_min], dtype=np.float64)
+        else:
+            thresholds = np.linspace(score_min, score_max, threshold_points)
+    else:
+        raise ValueError(
+            "threshold_policy must be 'quantile', 'unique_values', or 'linear_range'."
+        )
+
+    accepted_fractions = []
+    fidelities = []
+    credibility = []
+
+    for threshold in thresholds:
+        counts_by_basis: dict[str, tuple[int, int]] = {}
+        total_kept = 0
+        for basis in basis_labels:
+            scores, zero_counts, one_counts = per_basis_tables[basis]
+            basis_zero, basis_one = _counts_for_threshold(
+                scores,
+                zero_counts,
+                one_counts,
+                float(threshold),
+            )
+            counts_by_basis[basis] = (basis_zero, basis_one)
+            total_kept += basis_zero + basis_one
+
+        if (
+            min(sum(counts_by_basis[basis]) for basis in basis_labels)
+            < min_accepted_per_basis
+        ):
+            continue
+
+        summary = fidelity_from_zero_one_counts(
+            counts_by_basis["X"][0],
+            counts_by_basis["X"][1],
+            counts_by_basis["Y"][0],
+            counts_by_basis["Y"][1],
+            counts_by_basis["Z"][0],
+            counts_by_basis["Z"][1],
+            posterior_samples,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            uncertainty_backend=uncertainty_backend,
+        )
+        accepted_fractions.append(total_kept / total_shots)
+        fidelities.append(summary["median"])
+        credibility.append((summary["low"], summary["high"]))
+
+    accepted_array = np.asarray(accepted_fractions, dtype=np.float64)
+    fidelity_array = np.asarray(fidelities, dtype=np.float64)
+    credible_array = np.asarray(credibility, dtype=np.float64)
+
+    if len(accepted_array) > 0:
+        order = np.argsort(accepted_array)
+        accepted_array = accepted_array[order]
+        fidelity_array = fidelity_array[order]
+        credible_array = credible_array[order]
+
+    return {
+        "accepted_fraction": accepted_array,
+        "fidelity": fidelity_array,
+        "credible": credible_array,
+    }
+
+
+def _evaluate_cached_threshold_curve(
+    per_basis_tables: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+    score_array: np.ndarray,
+    *,
+    posterior_samples: int,
+    threshold_points: int,
+    sign_vector: Sequence[float],
+    target_bloch: np.ndarray,
+    basis_labels: Sequence[str],
+    min_accepted_per_basis: int,
+    threshold_policy: str,
+    total_shots: int,
+    uncertainty_backend: str,
+) -> dict[str, np.ndarray]:
+    if len(score_array) == 0:
+        raise RuntimeError("No factory-accepted shots found for threshold sweep")
+
+    if threshold_policy == "quantile":
+        thresholds = np.unique(
+            np.quantile(score_array, np.linspace(0.0, 1.0, threshold_points))
+        )
+    elif threshold_policy == "unique_values":
+        thresholds = np.unique(score_array)
+    elif threshold_policy == "linear_range":
+        score_min = float(np.min(score_array))
+        score_max = float(np.max(score_array))
         if np.isclose(score_min, score_max):
             thresholds = np.array([score_min], dtype=np.float64)
         else:
@@ -1208,120 +1413,31 @@ def evaluate_curve(
         factory_target=factory_target,
         valid_factory_targets=valid_factory_targets,
     )
-    all_scores = []
-    for basis in basis_labels:
-        dataset = actual_data[basis]
-        anc_det, anc_obs = split_factory_bits(
-            dataset.detectors,
-            dataset.observables,
-            layout=layout,
-        )
-        decode_factory = decoder_map[basis].decode_factory
-        for a_det, a_obs in zip(anc_det, anc_obs, strict=True):
-            anc_flip, score = _call_decoder_fn(decode_factory, a_det)
-            anc_flip = np.asarray(anc_flip, dtype=np.uint8)
-            if ancilla_matches_valid_targets(
-                a_obs ^ anc_flip,
-                targets,
-            ) and np.isfinite(score):
-                all_scores.append(score)
-    if not all_scores:
-        raise RuntimeError(
-            f"No factory-accepted shots found for {metric} threshold sweep"
-        )
-
-    score_array = np.asarray(all_scores, dtype=np.float64)
-    if threshold_policy == "quantile":
-        thresholds = np.unique(
-            np.quantile(score_array, np.linspace(0.0, 1.0, threshold_points))
-        )
-    elif threshold_policy == "unique_values":
-        thresholds = np.unique(score_array)
-    elif threshold_policy == "linear_range":
-        score_min = float(np.min(score_array))
-        score_max = float(np.max(score_array))
-        if np.isclose(score_min, score_max):
-            thresholds = np.array([score_min], dtype=np.float64)
-        else:
-            thresholds = np.linspace(score_min, score_max, threshold_points)
-    else:
-        raise ValueError(
-            "threshold_policy must be 'quantile', 'unique_values', or 'linear_range'."
-        )
-    accepted_fractions = []
-    fidelities = []
-    credibility = []
-
-    for threshold in thresholds:
-        corrected: dict[str, np.ndarray] = {}
-        total_kept = 0
-        total_shots = 0
-        for basis in basis_labels:
-            dataset = actual_data[basis]
-            anc_det, anc_obs = split_factory_bits(
-                dataset.detectors,
-                dataset.observables,
-                layout=layout,
-            )
-            decode_factory = decoder_map[basis].decode_factory
-            decode_full = decoder_map[basis].decode_full
-            corrected_bits = []
-            for det, obs, a_det, a_obs in zip(
-                dataset.detectors,
-                dataset.observables,
-                anc_det,
-                anc_obs,
-                strict=True,
-            ):
-                anc_flip, score = _call_decoder_fn(decode_factory, a_det)
-                anc_flip = np.asarray(anc_flip, dtype=np.uint8)
-                corrected_anc = a_obs ^ anc_flip
-                if not ancilla_matches_valid_targets(corrected_anc, targets):
-                    continue
-                if score < threshold:
-                    continue
-                full_flip = np.asarray(
-                    _call_decoder_fn(decode_full, det), dtype=np.uint8
-                )
-                corrected_bits.append(int(obs[0] ^ full_flip[0]))
-            corrected[basis] = np.asarray(corrected_bits, dtype=np.uint8)
-            total_kept += len(corrected[basis])
-            total_shots += len(dataset.observables)
-
-        if (
-            min(len(corrected[basis]) for basis in basis_labels)
-            < min_accepted_per_basis
-        ):
-            continue
-
-        summary = fidelity_from_counts(
-            corrected["X"],
-            corrected["Y"],
-            corrected["Z"],
-            posterior_samples,
+    per_basis_tables, score_array, total_shots = _build_generic_threshold_tables(
+        actual_data,
+        decoder_map,
+        targets=targets,
+        basis_labels=basis_labels,
+        layout=layout,
+    )
+    try:
+        return _evaluate_cached_threshold_curve(
+            per_basis_tables,
+            score_array,
+            posterior_samples=posterior_samples,
+            threshold_points=threshold_points,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
+            basis_labels=basis_labels,
+            min_accepted_per_basis=min_accepted_per_basis,
+            threshold_policy=threshold_policy,
+            total_shots=total_shots,
             uncertainty_backend=uncertainty_backend,
         )
-        accepted_fractions.append(total_kept / total_shots)
-        fidelities.append(summary["median"])
-        credibility.append((summary["low"], summary["high"]))
-
-    accepted_array = np.asarray(accepted_fractions, dtype=np.float64)
-    fidelity_array = np.asarray(fidelities, dtype=np.float64)
-    credible_array = np.asarray(credibility, dtype=np.float64)
-
-    if len(accepted_array) > 0:
-        order = np.argsort(accepted_array)
-        accepted_array = accepted_array[order]
-        fidelity_array = fidelity_array[order]
-        credible_array = credible_array[order]
-
-    return {
-        "accepted_fraction": accepted_array,
-        "fidelity": fidelity_array,
-        "credible": credible_array,
-    }
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"No factory-accepted shots found for {metric} threshold sweep"
+        ) from exc
 
 
 def evaluate_mld_curve(
