@@ -5,8 +5,11 @@ import math
 import pytest
 
 from bloqade.lanes import layout
+from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.heuristics.physical.target_generator import (
+    CongestionAwareTargetGenerator,
+    TargetContext,
     _choose_control,
     _lane_key,
     _LaneKey,
@@ -166,3 +169,38 @@ def test_weight_fn_lane_reuse_dominates_shared_site(arch):
     weight = _make_weight_fn(pf, committed_lanes, {src}, _WeightCtx(10.0, 1.0, 0.1))
     base = pf.metrics.get_lane_duration_cost(lane)
     assert weight(lane) == base + 1.0
+
+
+def _ctx(
+    arch: layout.ArchSpec,
+    layout_tup: tuple[layout.LocationAddress, ...],
+    controls: tuple[int, ...],
+    targets: tuple[int, ...],
+) -> TargetContext:
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=layout_tup,
+        move_count=(0,) * len(layout_tup),
+    )
+    return TargetContext(
+        arch_spec=arch,
+        state=state,
+        controls=controls,
+        targets=targets,
+        lookahead_cz_layers=(),
+        cz_stage_index=0,
+    )
+
+
+def test_generate_empty_stage_returns_current_placement(arch):
+    loc0, loc1 = _pick_cz_pair(arch)
+    ctx = _ctx(arch, (loc0, loc1), controls=(), targets=())
+    out = CongestionAwareTargetGenerator().generate(ctx)
+    assert out == [{0: loc0, 1: loc1}]
+
+
+def test_generate_already_partnered_pair_is_noop(arch):
+    loc0, loc1 = _pick_cz_pair(arch)
+    ctx = _ctx(arch, (loc0, loc1), controls=(0,), targets=(1,))
+    out = CongestionAwareTargetGenerator().generate(ctx)
+    assert out == [{0: loc0, 1: loc1}]

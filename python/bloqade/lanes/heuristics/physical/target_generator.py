@@ -237,3 +237,99 @@ def _make_weight_fn(
         return base
 
     return weight
+
+
+@dataclass(frozen=True)
+class CongestionAwareTargetGenerator(TargetGeneratorABC):
+    """Joint, longest-first, congestion-aware target generator.
+
+    For each CZ pair, picks whether to move the control or the target
+    based on schedule-time cost computed against a working placement
+    that reflects all prior pairs' committed moves and a running
+    directional congestion record.
+
+    Penalty weights are additive on top of
+    ``MoveMetricCalculator.get_lane_duration_cost(lane)`` and are tuned
+    relative to that base-duration scale. Defaults are illustrative;
+    empirical tuning is a documented follow-up.
+    """
+
+    opposite_direction_penalty: float = 10.0
+    same_direction_penalty: float = 1.0
+    shared_site_penalty: float = 0.1
+
+    def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+        placement = ctx.placement
+        if not ctx.controls:
+            return [dict(placement)]
+
+        pf = layout.PathFinder(ctx.arch_spec)
+        working: dict[int, layout.LocationAddress] = dict(placement)
+        committed_lanes: dict[_LaneKey, layout.Direction] = {}
+        committed_sites: set[layout.LocationAddress] = set()
+
+        pairs = self._sort_pairs_longest_first(ctx, pf)
+
+        for ctrl, tgt in pairs:
+            result = self._commit_pair(
+                ctx.arch_spec,
+                pf,
+                working,
+                committed_lanes,
+                committed_sites,
+                ctrl,
+                tgt,
+            )
+            if result is None:
+                return []  # both directions infeasible -> fallback to default
+            mover, new_loc, chosen = result
+            working[mover] = new_loc
+            for lane in chosen[0]:
+                committed_lanes[_lane_key(lane)] = lane.direction
+            committed_sites.update(chosen[1])
+
+        return [working]
+
+    def _sort_pairs_longest_first(
+        self, ctx: TargetContext, pf: layout.PathFinder
+    ) -> list[tuple[int, int]]:
+        # Placeholder: return in original order.
+        # Task 6 replaces this with real sorting.
+        return list(zip(ctx.controls, ctx.targets))
+
+    def _commit_pair(
+        self,
+        arch_spec: layout.ArchSpec,
+        pf: layout.PathFinder,
+        working: dict[int, layout.LocationAddress],
+        committed_lanes: dict[_LaneKey, layout.Direction],
+        committed_sites: set[layout.LocationAddress],
+        ctrl: int,
+        tgt: int,
+    ) -> (
+        tuple[
+            int,
+            layout.LocationAddress,
+            tuple[
+                tuple[layout.LaneAddress, ...],
+                tuple[layout.LocationAddress, ...],
+            ],
+        ]
+        | None
+    ):
+        # Placeholder: picks control direction, no path computation.
+        # Task 7 replaces this with real direction choice.
+        ctrl_loc = working[ctrl]
+        tgt_loc = working[tgt]
+        partner = arch_spec.get_cz_partner(tgt_loc)
+        assert partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
+        if ctrl_loc == partner:
+            # Already partnered; trivial zero-length path at ctrl_loc.
+            return (ctrl, partner, ((), (ctrl_loc,)))
+        # Walk a real path so the already-partnered case works end-to-end
+        # even before Task 7 lands.
+        occ = frozenset(loc for q, loc in working.items() if q != ctrl)
+        path = pf.find_path(ctrl_loc, partner, occupied=occ)
+        if path is None:
+            return None
+        return (ctrl, partner, path)
