@@ -51,6 +51,16 @@ def _check_power_of_two(n: int, name: str) -> int:
     return int(log2(n))
 
 
+def _next_power_of_two(n: int) -> tuple[int, int]:
+    """Return (padded, dims) where padded is the smallest power of 2 >= n."""
+    if n < 1:
+        raise ValueError(f"num_sites must be >= 1, got {n}")
+    if n == 1:
+        return (1, 0)
+    dims = (n - 1).bit_length()
+    return (1 << dims, dims)
+
+
 # ── Site topologies ──
 
 
@@ -61,16 +71,27 @@ class HypercubeSiteTopology:
     For N = 2^k sites, produces k buses. Bus for dimension d connects
     sites that differ in bit d: src = [sites with bit d=0],
     dst = [sites with bit d=1]. Each bus has N/2 parallel moves.
+
+    For non-power-of-2 N, rounds up to the next power of 2 and filters
+    out site indices >= N. Higher-indexed sites get fewer connections
+    (e.g. for N=17, site 16 connects only to site 0 via dimension 4).
     """
 
     def generate_site_buses(self, num_sites: int) -> tuple[SiteBus, ...]:
-        dims = _check_power_of_two(num_sites, "num_sites")
+        padded, dims = _next_power_of_two(num_sites)
         buses: list[SiteBus] = []
         for d in range(dims):
             mask = 1 << d
-            src = [i for i in range(num_sites) if i & mask == 0]
-            dst = [i | mask for i in src]
-            buses.append(SiteBus(src=src, dst=dst))
+            src: list[int] = []
+            dst: list[int] = []
+            for i in range(padded):
+                if i & mask == 0:
+                    j = i | mask
+                    if i < num_sites and j < num_sites:
+                        src.append(i)
+                        dst.append(j)
+            if src:
+                buses.append(SiteBus(src=src, dst=dst))
         return tuple(buses)
 
 
@@ -137,41 +158,42 @@ class HypercubeWordTopology:
 
 @dataclass(frozen=True)
 class DiagonalWordTopology:
-    """Diagonal word connectivity replicating old Gemini site-bus pattern.
+    """Diagonal word connectivity between adjacent column pairs.
 
-    For a grid of (N rows x 2 cols), produces 2*N - 1 buses.
-    Each bus connects words in column 0 to words in column 1 at a
-    diagonal offset:
+    For a grid of (N rows x C cols), applies diagonal connectivity
+    between each adjacent column pair (col_i, col_{i+1}). Per pair,
+    produces 2*N - 1 buses. Total buses: (C-1) * (2*N - 1).
 
-    - Group 1 (shift 0..N-1): col_0[r] -> col_1[r + shift]
+    Per column pair:
+    - Group 1 (shift 0..N-1): col_a[r] -> col_b[r + shift]
       for r in 0..N-1-shift
-    - Group 2 (shift 1..N-1): col_0[r + shift] -> col_1[r]
+    - Group 2 (shift 1..N-1): col_a[r + shift] -> col_b[r]
       for r in 0..N-1-shift (reverse diagonal)
 
-    This gives full connectivity between all (col_0, col_1) word pairs,
-    organized by diagonal. Requires exactly 2 columns.
+    This gives full connectivity between all word pairs in adjacent
+    columns, organized by diagonal. Non-adjacent columns are reachable
+    via multi-hop.
     """
 
     def generate_word_buses(self, grid: WordGrid) -> tuple[WordBus, ...]:
-        if grid.num_cols != 2:
-            raise ValueError(
-                f"DiagonalWordTopology requires exactly 2 columns, got {grid.num_cols}"
-            )
         n = grid.num_rows
         buses: list[WordBus] = []
 
-        # Group 1: col_0[r] -> col_1[r + shift]
-        for shift in range(n):
-            src = [grid.word_id_at(r, 0) for r in range(n - shift)]
-            dst = [grid.word_id_at(r + shift, 1) for r in range(n - shift)]
-            buses.append(WordBus(src=src, dst=dst))
+        for col_a in range(grid.num_cols - 1):
+            col_b = col_a + 1
 
-        # Group 2: col_0[r + shift] -> col_1[r] (reverse diagonals)
-        for diff in range(1, n):
-            shift = n - diff
-            src = [grid.word_id_at(r + shift, 0) for r in range(n - shift)]
-            dst = [grid.word_id_at(r, 1) for r in range(n - shift)]
-            buses.append(WordBus(src=src, dst=dst))
+            # Group 1: col_a[r] -> col_b[r + shift]
+            for shift in range(n):
+                src = [grid.word_id_at(r, col_a) for r in range(n - shift)]
+                dst = [grid.word_id_at(r + shift, col_b) for r in range(n - shift)]
+                buses.append(WordBus(src=src, dst=dst))
+
+            # Group 2: col_a[r + shift] -> col_b[r] (reverse diagonals)
+            for diff in range(1, n):
+                shift = n - diff
+                src = [grid.word_id_at(r + shift, col_a) for r in range(n - shift)]
+                dst = [grid.word_id_at(r, col_b) for r in range(n - shift)]
+                buses.append(WordBus(src=src, dst=dst))
 
         return tuple(buses)
 

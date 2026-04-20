@@ -104,10 +104,19 @@ class ArchBlueprint:
     Args:
         zones: Named zones with their specifications.
         layout: Physical layout parameters for word/site placement.
+        feed_forward: Whether the device supports feed-forward operations.
+        atom_reloading: Whether the device supports atom reloading.
+        blockade_radius: Rydberg blockade radius (µm) to record on the
+            ArchSpec. When set, this value is passed directly to
+            ``ArchSpec.from_components`` and overrides any radius derived
+            from ``ArchBuilder.set_blockade_radius`` or zone-level scans.
     """
 
     zones: dict[str, ZoneSpec]
     layout: DeviceLayout = field(default_factory=DeviceLayout)
+    feed_forward: bool = False
+    atom_reloading: bool = False
+    blockade_radius: float | None = None
 
     def __post_init__(self) -> None:
         if not self.zones:

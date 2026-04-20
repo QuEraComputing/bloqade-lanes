@@ -52,10 +52,14 @@ class TestHypercubeSiteTopology:
             for bus in buses:
                 assert set(bus.src).isdisjoint(set(bus.dst))
 
-    def test_non_power_of_two_raises(self) -> None:
+    def test_non_power_of_two_accepted(self) -> None:
         topo = HypercubeSiteTopology()
-        with pytest.raises(ValueError, match="power of 2"):
-            topo.generate_site_buses(5)
+        buses = topo.generate_site_buses(5)
+        # 5 rounds up to 8 (3 dims), buses are filtered to indices < 5
+        assert len(buses) == 3
+        for bus in buses:
+            assert all(s < 5 for s in bus.src)
+            assert all(d < 5 for d in bus.dst)
 
 
 class TestAllToAllSiteTopology:
