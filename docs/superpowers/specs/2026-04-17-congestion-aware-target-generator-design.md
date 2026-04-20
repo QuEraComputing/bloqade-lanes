@@ -2,7 +2,7 @@
 
 Status: Design — pending review
 Date: 2026-04-17
-Module: `python/bloqade/lanes/heuristics/physical/movement.py`
+Module: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 Depends on: [2026-04-17-target-generator-plugin-design.md](./2026-04-17-target-generator-plugin-design.md)
 
 ## Summary
@@ -64,7 +64,10 @@ Rust `MoveSolver`) converges faster.
 ## Interface
 
 Colocated with `DefaultTargetGenerator` in
-`python/bloqade/lanes/heuristics/physical/movement.py`:
+`python/bloqade/lanes/heuristics/physical/target_generator.py` (the
+target-generator plugin interface landed in its own module in PR #533,
+separate from `movement.py` which still hosts `PhysicalPlacementStrategy`
+and the traversal classes):
 
 ```python
 @dataclass(frozen=True)

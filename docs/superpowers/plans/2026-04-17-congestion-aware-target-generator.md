@@ -8,7 +8,7 @@
 
 **Depends on:** target-generator plugin interface (`TargetContext`, `TargetGeneratorABC`, `DefaultTargetGenerator`, `_validate_candidate`, `_build_candidates`, strategy-level shared-budget loop) landing via `docs/superpowers/plans/2026-04-17-target-generator-plugin.md` on branch `spec/target-generator-plugin`. **Do not start execution until that branch is merged to main** — every task below imports symbols that only exist after that work lands.
 
-**Architecture:** Add one new public class plus five module-private helpers to `python/bloqade/lanes/heuristics/physical/movement.py`. The class is a frozen dataclass with three penalty-weight floats and a `generate()` method that (a) builds a `layout.PathFinder` once, (b) scores all pairs with base lane-duration cost on the current placement, (c) sorts longest-first, (d) walks the sorted list, re-scoring both directions against a running `committed_lanes` / `committed_sites` record, committing the cheaper direction per pair with a `(cost, path-length, prefer-control)` tiebreak. No Rust surface changes; no modifications to the plugin framework.
+**Architecture:** Add one new public class plus five module-private helpers to `python/bloqade/lanes/heuristics/physical/target_generator.py`. The class is a frozen dataclass with three penalty-weight floats and a `generate()` method that (a) builds a `layout.PathFinder` once, (b) scores all pairs with base lane-duration cost on the current placement, (c) sorts longest-first, (d) walks the sorted list, re-scoring both directions against a running `committed_lanes` / `committed_sites` record, committing the cheaper direction per pair with a `(cost, path-length, prefer-control)` tiebreak. No Rust surface changes; no modifications to the plugin framework.
 
 **Tech Stack:** Python 3.10+ (dataclasses, typing), `layout.PathFinder`, `MoveMetricCalculator`, pytest, pyright (clean required), pre-commit (black/isort/ruff).
 
@@ -20,7 +20,7 @@
 
 | Path | Change | Responsibility |
 |---|---|---|
-| `python/bloqade/lanes/heuristics/physical/movement.py` | modify | Add `_LaneKey`, `_lane_key`, `_sum_base`, `_sum_weighted`, `_choose_control`, `_make_weight_fn`, and `CongestionAwareTargetGenerator`. New public export colocated with `DefaultTargetGenerator`. |
+| `python/bloqade/lanes/heuristics/physical/target_generator.py` | modify | Add `_LaneKey`, `_lane_key`, `_sum_base`, `_sum_weighted`, `_choose_control`, `_make_weight_fn`, and `CongestionAwareTargetGenerator`. New public export colocated with `DefaultTargetGenerator`. |
 | `python/bloqade/lanes/heuristics/physical/__init__.py` | modify | Re-export `CongestionAwareTargetGenerator`. |
 | `python/tests/heuristics/test_congestion_aware_target_generator.py` | create | Unit tests 1–13 from spec (helpers + `generate()` behavior). |
 | `python/tests/heuristics/test_physical_placement.py` | modify | Integration tests 14–16 (end-to-end strategy, dedup, Rust-path parity). |
@@ -35,7 +35,7 @@ Before starting any task, confirm the plugin interface is merged:
 
 ```bash
 uv run python -c "
-from bloqade.lanes.heuristics.physical.movement import (
+from bloqade.lanes.heuristics.physical.target_generator import (
     TargetContext, TargetGeneratorABC, DefaultTargetGenerator,
 )
 print('plugin interface ready')
@@ -102,7 +102,7 @@ Integration tests in `test_physical_placement.py` use the same helper (copy-past
 ### Task 1: `_LaneKey` alias and `_lane_key` function
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Test: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 - [ ] **Step 1: Create the test file with a failing test**
@@ -112,7 +112,7 @@ Create `python/tests/heuristics/test_congestion_aware_target_generator.py`:
 ```python
 from __future__ import annotations
 
-from bloqade.lanes.heuristics.physical.movement import _LaneKey, _lane_key
+from bloqade.lanes.heuristics.physical.target_generator import _LaneKey, _lane_key
 from bloqade.lanes.layout import Direction, LaneAddress, MoveType
 
 
@@ -144,7 +144,7 @@ uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py 
 
 Expected: `ImportError: cannot import name '_LaneKey'` or equivalent.
 
-- [ ] **Step 3: Add `_LaneKey` and `_lane_key` to `movement.py`**
+- [ ] **Step 3: Add `_LaneKey` and `_lane_key` to `target_generator.py`**
 
 Insert near the bottom of the file, after all existing strategy/traversal classes and before the `CongestionAwareTargetGenerator` class (which Task 5 will add). A reasonable anchor: immediately after `PhysicalPlacementStrategy.measure_placements`. For now, just add:
 
@@ -173,7 +173,7 @@ Also add `MoveType` to the existing `from bloqade.lanes.layout import (...)` blo
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 ```
 
 Expected: 3 passed; pyright: 0 errors.
@@ -181,7 +181,7 @@ Expected: 3 passed; pyright: 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): add _LaneKey canonical key for congestion-aware generator"
 ```
 
@@ -190,7 +190,7 @@ git commit -m "feat(heuristics): add _LaneKey canonical key for congestion-aware
 ### Task 2: `_sum_base` and `_sum_weighted`
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Modify: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 - [ ] **Step 1: Add failing tests**
@@ -198,7 +198,7 @@ git commit -m "feat(heuristics): add _LaneKey canonical key for congestion-aware
 Append to `test_congestion_aware_target_generator.py`:
 
 ```python
-from bloqade.lanes.heuristics.physical.movement import _sum_base, _sum_weighted
+from bloqade.lanes.heuristics.physical.target_generator import _sum_base, _sum_weighted
 from bloqade.lanes.layout import PathFinder
 
 
@@ -235,7 +235,7 @@ uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py 
 
 Expected: `ImportError` on `_sum_base` / `_sum_weighted`.
 
-- [ ] **Step 3: Add helpers to `movement.py`**
+- [ ] **Step 3: Add helpers to `target_generator.py`**
 
 Immediately after `_lane_key`:
 
@@ -271,7 +271,7 @@ Ensure `PathFinder` is re-exported from `bloqade.lanes.layout`. Check with `grep
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 ```
 
 Expected: 6 passed; pyright: 0 errors.
@@ -279,7 +279,7 @@ Expected: 6 passed; pyright: 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/bloqade/lanes/layout/__init__.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/bloqade/lanes/layout/__init__.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): add _sum_base and _sum_weighted path-cost helpers"
 ```
 
@@ -288,14 +288,14 @@ git commit -m "feat(heuristics): add _sum_base and _sum_weighted path-cost helpe
 ### Task 3: `_choose_control` tiebreak comparator
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Modify: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 - [ ] **Step 1: Add failing tests**
 
 ```python
 import math
-from bloqade.lanes.heuristics.physical.movement import _choose_control
+from bloqade.lanes.heuristics.physical.target_generator import _choose_control
 
 
 def test_choose_control_lower_cost_wins():
@@ -328,7 +328,7 @@ uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py 
 
 Expected: `ImportError` on `_choose_control`.
 
-- [ ] **Step 3: Add `_choose_control` to `movement.py`**
+- [ ] **Step 3: Add `_choose_control` to `target_generator.py`**
 
 After `_sum_weighted`:
 
@@ -358,7 +358,7 @@ def _choose_control(
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
 Expected: 10 passed; pyright: 0 errors.
@@ -366,7 +366,7 @@ Expected: 10 passed; pyright: 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): add _choose_control tiebreak comparator"
 ```
 
@@ -377,7 +377,7 @@ git commit -m "feat(heuristics): add _choose_control tiebreak comparator"
 ### Task 4: `_make_weight_fn`
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Modify: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 This closure is the heart of the congestion model. It is tested in isolation here so the final `generate()` tests don't need to probe implementation details.
@@ -385,7 +385,7 @@ This closure is the heart of the congestion model. It is tested in isolation her
 - [ ] **Step 1: Add failing tests**
 
 ```python
-from bloqade.lanes.heuristics.physical.movement import _make_weight_fn
+from bloqade.lanes.heuristics.physical.target_generator import _make_weight_fn
 
 
 class _WeightCtx:
@@ -516,7 +516,7 @@ Ensure `Protocol` is imported from `typing` at the top of the module.
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
 Expected: 15 passed; pyright: 0 errors.
@@ -524,7 +524,7 @@ Expected: 15 passed; pyright: 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): add _make_weight_fn penalty closure"
 ```
 
@@ -535,7 +535,7 @@ git commit -m "feat(heuristics): add _make_weight_fn penalty closure"
 ### Task 5: Class skeleton + degenerate cases
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Modify: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 Start with: empty stage returns `[placement]`, already-partnered pair returns a candidate equal to current placement.
@@ -546,7 +546,7 @@ Append a test-fixture helper and the first two generator tests:
 
 ```python
 from bloqade.lanes.analysis.placement import ConcreteState
-from bloqade.lanes.heuristics.physical.movement import (
+from bloqade.lanes.heuristics.physical.target_generator import (
     CongestionAwareTargetGenerator,
     TargetContext,
 )
@@ -695,13 +695,13 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         return (ctrl, partner, path)
 ```
 
-`TargetGeneratorABC` must be importable from this module (added by the plugin-interface PR). `abc` is already imported at the top of `movement.py` — no new import needed.
+`TargetGeneratorABC` is defined at the top of `target_generator.py` (added by PR #533); the imports we need (`abc`, `dataclass`, `layout`, `ConcreteState`, `LocationAddress`, `Callable`) are already present. Task 4 introduces `import math` and `from typing import Protocol` for the new helpers.
 
 - [ ] **Step 4: Run tests**
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
 Expected: 17 passed; pyright: 0 errors.
@@ -709,7 +709,7 @@ Expected: 17 passed; pyright: 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): add CongestionAwareTargetGenerator skeleton"
 ```
 
@@ -718,7 +718,7 @@ git commit -m "feat(heuristics): add CongestionAwareTargetGenerator skeleton"
 ### Task 6: Implement `_sort_pairs_longest_first`
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Modify: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 - [ ] **Step 1: Add a failing test that requires actual sort behavior**
@@ -822,13 +822,13 @@ def _sort_pairs_longest_first(
     return pairs
 ```
 
-Move `import math` to the top of the file.
+Add `import math` near the top of `target_generator.py` (it's not currently imported there).
 
 - [ ] **Step 4: Run tests + pyright**
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
 Expected: 18 passed; pyright: 0 errors.
@@ -836,7 +836,7 @@ Expected: 18 passed; pyright: 0 errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): implement longest-first sort in CongestionAwareTargetGenerator"
 ```
 
@@ -845,7 +845,7 @@ git commit -m "feat(heuristics): implement longest-first sort in CongestionAware
 ### Task 7: Implement `_commit_pair` with direction choice
 
 **Files:**
-- Modify: `python/bloqade/lanes/heuristics/physical/movement.py`
+- Modify: `python/bloqade/lanes/heuristics/physical/target_generator.py`
 - Modify: `python/tests/heuristics/test_congestion_aware_target_generator.py`
 
 This replaces the placeholder with real direction-choice logic using `_make_weight_fn` and `_choose_control`.
@@ -927,7 +927,7 @@ def test_penalty_zero_reproduces_default_on_symmetric_stage(arch):
     congestion-aware heuristic reduces to the default (control-moves)
     by symmetry + tiebreak. Sanity check the reduction.
     """
-    from bloqade.lanes.heuristics.physical.movement import DefaultTargetGenerator
+    from bloqade.lanes.heuristics.physical.target_generator import DefaultTargetGenerator
 
     loc0, loc1 = _pick_cz_pair(arch)
     # Seed a fresh pair of qubits at non-partnered storage locations so
@@ -1050,7 +1050,7 @@ def _commit_pair(
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
 Expected: `test_target_direction_chosen_when_target_path_cheaper` and `test_penalty_zero_reproduces_default_on_symmetric_stage` now pass (or `pytest.skip` cleanly if the arch's geometry has no suitable blocker scenario — follow-up issue then tracks the synthetic fixture). Two `@pytest.mark.skip`-decorated tests remain deferred. Pyright: 0 errors.
@@ -1058,7 +1058,7 @@ Expected: `test_target_direction_chosen_when_target_path_cheaper` and `test_pena
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/test_congestion_aware_target_generator.py
+git add python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/test_congestion_aware_target_generator.py
 git commit -m "feat(heuristics): implement direction choice in CongestionAwareTargetGenerator"
 ```
 
@@ -1108,7 +1108,7 @@ def test_both_directions_infeasible_returns_empty_list():
 
 ```bash
 uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
 Expected: determinism test passes; infeasibility test shows `SKIPPED`. Pyright: 0 errors.
@@ -1132,7 +1132,7 @@ git commit -m "test(heuristics): add determinism test and defer infeasibility to
 - [ ] **Step 1: Identify existing re-export pattern**
 
 ```bash
-grep -n "^from .movement" python/bloqade/lanes/heuristics/physical/__init__.py
+grep -n "^from .target_generator" python/bloqade/lanes/heuristics/physical/__init__.py
 grep -n "__all__" python/bloqade/lanes/heuristics/physical/__init__.py
 ```
 
@@ -1352,10 +1352,10 @@ Expected: pass.
 
 ```bash
 uv run pytest python/tests -v
-uv run pyright python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/
-uv run black python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/
-uv run isort python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/
-uv run ruff check python/bloqade/lanes/heuristics/physical/movement.py python/tests/heuristics/
+uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/
+uv run black python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/
+uv run isort python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/
+uv run ruff check python/bloqade/lanes/heuristics/physical/target_generator.py python/tests/heuristics/
 ```
 
 Expected: 0 failures, 0 pyright errors, no formatting diff.
