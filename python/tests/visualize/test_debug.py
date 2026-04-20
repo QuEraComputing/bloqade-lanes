@@ -35,7 +35,10 @@ def test_static_debugger_on_next_prev_exit(dummy_ax, dummy_draw):
     ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
     ctrl.on_next(MagicMock())
     assert ctrl.step_index == 1
-    assert dummy_ax.cla.called
+    # Handlers must NOT clear the axes themselves — doing so caused a visual
+    # flicker where the axes resized to matplotlib defaults for one paint
+    # frame before run() repainted. run() owns ax.cla() so clear+draw is atomic.
+    assert not dummy_ax.cla.called
     # Reset updated to allow prev
     ctrl.updated = False
     ctrl.on_prev(MagicMock())
@@ -101,7 +104,8 @@ def test_static_debugger_on_slider_change_jumps_to_step(dummy_ax, dummy_draw):
     ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
     ctrl.on_slider_change(3)
     assert ctrl.step_index == 3
-    assert dummy_ax.cla.called
+    # Handler must not cla() — see test_static_debugger_on_next_prev_exit.
+    assert not dummy_ax.cla.called
     assert ctrl.updated
     assert not ctrl.waiting
 
@@ -116,15 +120,15 @@ def test_static_debugger_on_slider_change_clamps_out_of_range(dummy_ax, dummy_dr
 
 
 def test_static_debugger_on_slider_change_noop_on_same_value(dummy_ax, dummy_draw):
-    """Idempotent: clicking the current step should not redraw or break out
-    of the wait loop, otherwise the renderer flickers."""
+    """Idempotent: clicking the current step should not break out of the
+    wait loop (which would trigger a redundant run-loop redraw)."""
     ctrl = StaticDebuggerController(dummy_ax, 5, dummy_draw)
     ctrl.step_index = 2
     dummy_ax.cla.reset_mock()
     ctrl.on_slider_change(2)
     assert ctrl.step_index == 2
-    assert not dummy_ax.cla.called
     assert not ctrl.updated
+    assert ctrl.waiting
 
 
 def test_static_debugger_on_next_calls_sync_slider(dummy_ax, dummy_draw):
@@ -146,7 +150,8 @@ def test_animator_controller_on_slider_change(dummy_ax, dummy_get_renderer):
     assert ctrl.step_index == 2
     # Slider jumps reset the play direction to forward.
     assert ctrl.animation_step == 1
-    assert dummy_ax.cla.called
+    # Handler must not cla() — run() owns clear+redraw so it's atomic.
+    assert not dummy_ax.cla.called
     assert ctrl.updated
     assert not ctrl.waiting
 
@@ -244,8 +249,10 @@ def test_animator_controller_on_key_dispatch(dummy_ax, dummy_get_renderer):
 def test_static_debugger_run(monkeypatch, dummy_ax, dummy_draw):
     ctrl = StaticDebuggerController(dummy_ax, 2, dummy_draw)
     call_count = {"draw": 0, "pause": 0}
+    order: list[str] = []
 
     def fake_draw(idx):
+        order.append("draw")
         call_count["draw"] += 1
         # Simulate waiting loop for pause
         ctrl.waiting = True
@@ -254,6 +261,7 @@ def test_static_debugger_run(monkeypatch, dummy_ax, dummy_draw):
             ctrl.waiting = False
 
     monkeypatch.setattr(ctrl, "draw", fake_draw)
+    dummy_ax.cla.side_effect = lambda: order.append("cla")
 
     def fake_pause(t):
         call_count["pause"] += 1
@@ -264,6 +272,11 @@ def test_static_debugger_run(monkeypatch, dummy_ax, dummy_draw):
     ctrl.run()
     assert call_count["draw"] >= 1
     assert call_count["pause"] >= 1
+    # Every draw must be immediately preceded by a cla() — no intervening
+    # pause/paint frame. This is the invariant that prevents the flicker.
+    for i, token in enumerate(order):
+        if token == "draw":
+            assert i > 0 and order[i - 1] == "cla"
 
 
 def test_animator_controller_run(monkeypatch, dummy_ax, dummy_get_renderer):
