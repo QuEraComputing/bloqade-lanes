@@ -97,15 +97,42 @@ def fidelity_from_counts(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
 ) -> dict[str, Any]:
-    sign = np.asarray(sign_vector, dtype=np.float64)
-    target = np.asarray(target_bloch, dtype=np.float64)
-
     x_zero = int(np.sum(np.asarray(x_bits) == 0))
     x_one = int(np.sum(np.asarray(x_bits) != 0))
     y_zero = int(np.sum(np.asarray(y_bits) == 0))
     y_one = int(np.sum(np.asarray(y_bits) != 0))
     z_zero = int(np.sum(np.asarray(z_bits) == 0))
     z_one = int(np.sum(np.asarray(z_bits) != 0))
+
+    return fidelity_from_zero_one_counts(
+        x_zero,
+        x_one,
+        y_zero,
+        y_one,
+        z_zero,
+        z_one,
+        posterior_samples,
+        sign_vector=sign_vector,
+        target_bloch=target_bloch,
+        uncertainty_backend=uncertainty_backend,
+    )
+
+
+def fidelity_from_zero_one_counts(
+    x_zero: int,
+    x_one: int,
+    y_zero: int,
+    y_one: int,
+    z_zero: int,
+    z_one: int,
+    posterior_samples: int,
+    *,
+    sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
+    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    uncertainty_backend: str = "wilson",
+) -> dict[str, Any]:
+    sign = np.asarray(sign_vector, dtype=np.float64)
+    target = np.asarray(target_bloch, dtype=np.float64)
 
     ex, ex_err = expectation_with_error_bar(x_zero, x_one)
     ey, ey_err = expectation_with_error_bar(y_zero, y_one)
@@ -125,14 +152,14 @@ def fidelity_from_counts(
         high = point + fidelity_err
     elif uncertainty_backend == "bayesian_bloch_ball":
         n = np.array(
-            [len(x_bits), len(y_bits), len(z_bits)],
+            [x_zero + x_one, y_zero + y_one, z_zero + z_one],
             dtype=np.int64,
         )
         k = np.array(
             [
-                int(np.sum(np.asarray(x_bits) == 0)),
-                int(np.sum(np.asarray(y_bits) == 0)),
-                int(np.sum(np.asarray(z_bits) == 0)),
+                x_zero,
+                y_zero,
+                z_zero,
             ],
             dtype=np.int64,
         )

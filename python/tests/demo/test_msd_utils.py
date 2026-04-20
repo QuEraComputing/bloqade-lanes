@@ -24,6 +24,7 @@ from demo.msd_utils.decoders import (
     build_mle_decoders,
     evaluate_curve,
     evaluate_mld_curve,
+    train_mld_decoder_pair,
 )
 
 
@@ -327,6 +328,121 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
     assert accepted[-1] == pytest.approx(1.0)
     assert np.allclose(curves["accepted_fraction"], legacy_curves["accepted_fraction"])
     assert np.allclose(curves["fidelity"], legacy_curves["fidelity"])
+
+
+def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
+    dataset = BasisDataset(
+        detectors=np.array(
+            [
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 1],
+                [0, 0, 0, 1],
+                [0, 0, 1, 0],
+                [0, 0, 1, 0],
+            ],
+            dtype=np.uint8,
+        ),
+        observables=np.array(
+            [
+                [0, 0],
+                [1, 0],
+                [0, 0],
+                [1, 0],
+                [0, 1],
+                [1, 1],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+
+    def make_adapter(score_mode: str):
+        def decode_factory(key: str | int):
+            key_str = key if isinstance(key, str) else format(int(key), "b")
+            last = int(key_str[-1]) if key_str else 0
+            if last == 0:
+                return (0,), 0.8
+            return (0,), 0.4
+
+        def decode_full(key: str | int):
+            key_str = key if isinstance(key, str) else format(int(key), "b")
+            last = int(key_str[-1]) if key_str else 0
+            return (last, 0)
+
+        return DecoderAdapter(
+            full_decoder=None,
+            factory_decoder=None,
+            decode_factory=decode_factory,
+            decode_full=decode_full,
+            factory_score_mode=score_mode,
+        )
+
+    sparse_curves = evaluate_curve(
+        {"X": dataset, "Y": dataset, "Z": dataset},
+        {
+            "X": make_adapter("mld_output_fidelity"),
+            "Y": make_adapter("mld_output_fidelity"),
+            "Z": make_adapter("mld_output_fidelity"),
+        },
+        posterior_samples=64,
+        threshold_points=3,
+        metric="test",
+        factory_target=np.array([0], dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        min_accepted_per_basis=1,
+        threshold_policy="quantile",
+    )
+
+    generic_curves = evaluate_curve(
+        {"X": dataset, "Y": dataset, "Z": dataset},
+        {
+            "X": make_adapter("logical_gap"),
+            "Y": make_adapter("logical_gap"),
+            "Z": make_adapter("logical_gap"),
+        },
+        posterior_samples=64,
+        threshold_points=3,
+        metric="test",
+        factory_target=np.array([0], dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        min_accepted_per_basis=1,
+        threshold_policy="quantile",
+    )
+
+    assert np.allclose(
+        sparse_curves["accepted_fraction"], generic_curves["accepted_fraction"]
+    )
+    assert np.allclose(sparse_curves["fidelity"], generic_curves["fidelity"])
+    assert np.allclose(sparse_curves["credible"], generic_curves["credible"])
+
+
+def test_train_mld_decoder_pair_uses_only_output_observables_for_full_decoder():
+    class _RecordingTableDecoder:
+        @classmethod
+        def from_det_obs_shots(cls, dem, det_obs_shots):
+            return {
+                "num_detectors": dem.num_detectors,
+                "num_observables": dem.num_observables,
+                "shape": tuple(det_obs_shots.shape),
+            }
+
+    dataset = BasisDataset(
+        detectors=np.zeros((8, 27), dtype=np.uint8),
+        observables=np.zeros((8, 9), dtype=np.uint8),
+    )
+
+    full_decoder, factory_decoder = train_mld_decoder_pair(
+        dataset,
+        table_decoder_cls=_RecordingTableDecoder,
+    )
+
+    assert full_decoder["num_detectors"] == 27
+    assert full_decoder["num_observables"] == 1
+    assert full_decoder["shape"] == (8, 28)
+
+    assert factory_decoder["num_detectors"] == 24
+    assert factory_decoder["num_observables"] == 8
+    assert factory_decoder["shape"] == (8, 32)
 
 
 def test_notebooks_import_shared_msd_utils():

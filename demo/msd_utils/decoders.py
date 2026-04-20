@@ -18,6 +18,7 @@ from .core import (
     ancilla_matches_valid_targets,
     bits_to_key,
     fidelity_from_counts,
+    fidelity_from_zero_one_counts,
     magic_state_fidelity_point_from_counts,
     pack_boolean_array,
     packed_bits_to_int,
@@ -116,12 +117,32 @@ def compute_dem_data(task: Any) -> dict[str, np.ndarray]:
     }
 
 
+def select_output_observables(
+    observables: np.ndarray,
+    *,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+) -> np.ndarray:
+    output_obs = np.asarray(observables, dtype=np.uint8)[
+        :, : layout.output_observable_count
+    ]
+    if output_obs.shape[1] != layout.output_observable_count:
+        raise ValueError(
+            "Observable array does not contain the requested number of output "
+            "observables."
+        )
+    return output_obs
+
+
 def train_mld_decoder_pair(
     training_dataset: BasisDataset,
     *,
     table_decoder_cls: type,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> tuple[Any, Any]:
+    output_obs = select_output_observables(
+        training_dataset.observables,
+        layout=layout,
+    )
     anc_det, anc_obs = split_factory_bits(
         training_dataset.detectors,
         training_dataset.observables,
@@ -131,11 +152,9 @@ def train_mld_decoder_pair(
     full_decoder = table_decoder_cls.from_det_obs_shots(
         make_layout_only_dem(
             training_dataset.detectors.shape[1],
-            training_dataset.observables.shape[1],
+            output_obs.shape[1],
         ),
-        np.concatenate(
-            [training_dataset.detectors, training_dataset.observables], axis=1
-        ).astype(bool),
+        np.concatenate([training_dataset.detectors, output_obs], axis=1).astype(bool),
     )
     factory_decoder = table_decoder_cls.from_det_obs_shots(
         make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1]),
@@ -448,6 +467,287 @@ def _score_from_decoder(
     return correction, float("nan"), "none"
 
 
+def _packed_pattern_targets(
+    targets: np.ndarray,
+) -> set[int]:
+    return {
+        int(x) for x in pack_boolean_array(np.asarray(targets, dtype=np.uint8)).tolist()
+    }
+
+
+def _weighted_quantiles_from_counts(
+    values: np.ndarray,
+    weights: np.ndarray,
+    quantiles: np.ndarray,
+) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    weights = np.asarray(weights, dtype=np.int64).reshape(-1)
+    quantiles = np.asarray(quantiles, dtype=np.float64).reshape(-1)
+    if len(values) != len(weights):
+        raise ValueError("values and weights must have the same length.")
+    if len(values) == 0:
+        return np.array([], dtype=np.float64)
+
+    keep = weights > 0
+    values = values[keep]
+    weights = weights[keep]
+    if len(values) == 0:
+        return np.array([], dtype=np.float64)
+
+    order = np.argsort(values)
+    values = values[order]
+    weights = weights[order]
+    cumulative_end = np.cumsum(weights) - 1
+    total = int(np.sum(weights))
+    if total <= 1:
+        return np.full_like(quantiles, values[0], dtype=np.float64)
+
+    def value_at_rank(rank: int) -> float:
+        idx = int(np.searchsorted(cumulative_end, rank, side="left"))
+        return float(values[idx])
+
+    out = np.empty_like(quantiles, dtype=np.float64)
+    for i, q in enumerate(quantiles):
+        q = float(np.clip(q, 0.0, 1.0))
+        rank = q * (total - 1)
+        lo = int(np.floor(rank))
+        hi = int(np.ceil(rank))
+        frac = rank - lo
+        vlo = value_at_rank(lo)
+        vhi = value_at_rank(hi)
+        out[i] = (1.0 - frac) * vlo + frac * vhi
+    return out
+
+
+def _build_mld_sparse_threshold_tables(
+    actual_data: Mapping[str, BasisDataset],
+    decoder_map: Mapping[str, DecoderAdapter],
+    *,
+    targets: np.ndarray,
+    basis_labels: Sequence[str],
+    layout: SyndromeLayout,
+) -> tuple[
+    dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]], np.ndarray, np.ndarray, int
+]:
+    packed_targets = _packed_pattern_targets(targets)
+    per_basis_tables: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    global_score_weights: defaultdict[float, int] = defaultdict(int)
+    total_shots = 0
+
+    for basis in basis_labels:
+        dataset = actual_data[basis]
+        total_shots += len(dataset.observables)
+        anc_det, anc_obs = split_factory_bits(
+            dataset.detectors,
+            dataset.observables,
+            layout=layout,
+        )
+
+        packed_full_det = pack_boolean_array(dataset.detectors).astype(np.uint64)
+        packed_anc_det = pack_boolean_array(anc_det).astype(np.uint64)
+        packed_anc_obs = pack_boolean_array(anc_obs).astype(np.uint64)
+        output_bits = np.asarray(dataset.observables[:, 0], dtype=np.uint8).astype(
+            np.uint64
+        )
+
+        grouped = np.column_stack(
+            [packed_anc_det, packed_anc_obs, packed_full_det, output_bits]
+        )
+        unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
+
+        unique_anc_det = np.unique(unique_groups[:, 0])
+        ancilla_decode_cache: dict[int, tuple[int, float]] = {}
+        for packed in unique_anc_det.tolist():
+            anc_flip, score = decoder_map[basis].decode_factory(int(packed))
+            anc_flip_bits = np.asarray(anc_flip, dtype=np.uint8)
+            ancilla_decode_cache[int(packed)] = (
+                int(pack_boolean_array(anc_flip_bits)[0]) if len(anc_flip_bits) else 0,
+                float(score),
+            )
+
+        unique_full_det = np.unique(unique_groups[:, 2])
+        full_decode_cache: dict[int, int] = {}
+        for packed in unique_full_det.tolist():
+            full_flip = np.asarray(
+                decoder_map[basis].decode_full(int(packed)),
+                dtype=np.uint8,
+            )
+            full_decode_cache[int(packed)] = int(full_flip[0]) if len(full_flip) else 0
+
+        score_to_counts: defaultdict[float, np.ndarray] = defaultdict(
+            lambda: np.zeros(2, dtype=np.int64)
+        )
+
+        for row, count in zip(unique_groups, group_counts, strict=True):
+            packed_a_det = int(row[0])
+            packed_a_obs = int(row[1])
+            packed_det = int(row[2])
+            output_bit = int(row[3])
+
+            anc_flip_packed, score = ancilla_decode_cache[packed_a_det]
+            if not np.isfinite(score):
+                continue
+            corrected_anc_packed = packed_a_obs ^ anc_flip_packed
+            if corrected_anc_packed not in packed_targets:
+                continue
+
+            corrected_output_bit = output_bit ^ full_decode_cache[packed_det]
+            score_to_counts[float(score)][corrected_output_bit] += int(count)
+            global_score_weights[float(score)] += int(count)
+
+        if score_to_counts:
+            scores = np.array(sorted(score_to_counts), dtype=np.float64)
+            zero_counts = np.array(
+                [int(score_to_counts[score][0]) for score in scores], dtype=np.int64
+            )
+            one_counts = np.array(
+                [int(score_to_counts[score][1]) for score in scores], dtype=np.int64
+            )
+        else:
+            scores = np.array([], dtype=np.float64)
+            zero_counts = np.array([], dtype=np.int64)
+            one_counts = np.array([], dtype=np.int64)
+
+        per_basis_tables[basis] = (scores, zero_counts, one_counts)
+
+    global_scores = np.array(sorted(global_score_weights), dtype=np.float64)
+    global_weights = np.array(
+        [int(global_score_weights[score]) for score in global_scores], dtype=np.int64
+    )
+    return per_basis_tables, global_scores, global_weights, total_shots
+
+
+def _counts_for_threshold(
+    scores: np.ndarray,
+    zero_counts: np.ndarray,
+    one_counts: np.ndarray,
+    threshold: float,
+) -> tuple[int, int]:
+    if len(scores) == 0:
+        return 0, 0
+    idx = int(np.searchsorted(scores, threshold, side="left"))
+    if idx >= len(scores):
+        return 0, 0
+    return int(np.sum(zero_counts[idx:])), int(np.sum(one_counts[idx:]))
+
+
+def _evaluate_sparse_mld_threshold_curve(
+    actual_data: Mapping[str, BasisDataset],
+    decoder_map: Mapping[str, DecoderAdapter],
+    *,
+    posterior_samples: int,
+    threshold_points: int,
+    factory_target: np.ndarray | Sequence[int] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    sign_vector: Sequence[float],
+    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    min_accepted_per_basis: int = 50,
+    threshold_policy: str = "quantile",
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    uncertainty_backend: str = "wilson",
+) -> dict[str, np.ndarray]:
+    targets = resolve_valid_factory_targets(
+        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
+    )
+    (
+        per_basis_tables,
+        global_scores,
+        global_weights,
+        total_shots,
+    ) = _build_mld_sparse_threshold_tables(
+        actual_data,
+        decoder_map,
+        targets=targets,
+        basis_labels=basis_labels,
+        layout=layout,
+    )
+
+    if len(global_scores) == 0:
+        raise RuntimeError(
+            "No factory-accepted shots found for sparse MLD threshold sweep"
+        )
+
+    if threshold_policy == "quantile":
+        thresholds = np.unique(
+            _weighted_quantiles_from_counts(
+                global_scores,
+                global_weights,
+                np.linspace(0.0, 1.0, threshold_points),
+            )
+        )
+    elif threshold_policy == "unique_values":
+        thresholds = np.unique(global_scores)
+    elif threshold_policy == "linear_range":
+        score_min = float(np.min(global_scores))
+        score_max = float(np.max(global_scores))
+        if np.isclose(score_min, score_max):
+            thresholds = np.array([score_min], dtype=np.float64)
+        else:
+            thresholds = np.linspace(score_min, score_max, threshold_points)
+    else:
+        raise ValueError(
+            "threshold_policy must be 'quantile', 'unique_values', or 'linear_range'."
+        )
+
+    accepted_fractions = []
+    fidelities = []
+    credibility = []
+
+    for threshold in thresholds:
+        counts_by_basis: dict[str, tuple[int, int]] = {}
+        total_kept = 0
+        for basis in basis_labels:
+            scores, zero_counts, one_counts = per_basis_tables[basis]
+            basis_zero, basis_one = _counts_for_threshold(
+                scores,
+                zero_counts,
+                one_counts,
+                float(threshold),
+            )
+            counts_by_basis[basis] = (basis_zero, basis_one)
+            total_kept += basis_zero + basis_one
+
+        if (
+            min(sum(counts_by_basis[basis]) for basis in basis_labels)
+            < min_accepted_per_basis
+        ):
+            continue
+
+        summary = fidelity_from_zero_one_counts(
+            counts_by_basis["X"][0],
+            counts_by_basis["X"][1],
+            counts_by_basis["Y"][0],
+            counts_by_basis["Y"][1],
+            counts_by_basis["Z"][0],
+            counts_by_basis["Z"][1],
+            posterior_samples,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            uncertainty_backend=uncertainty_backend,
+        )
+        accepted_fractions.append(total_kept / total_shots)
+        fidelities.append(summary["median"])
+        credibility.append((summary["low"], summary["high"]))
+
+    accepted_array = np.asarray(accepted_fractions, dtype=np.float64)
+    fidelity_array = np.asarray(fidelities, dtype=np.float64)
+    credible_array = np.asarray(credibility, dtype=np.float64)
+
+    if len(accepted_array) > 0:
+        order = np.argsort(accepted_array)
+        accepted_array = accepted_array[order]
+        fidelity_array = fidelity_array[order]
+        credible_array = credible_array[order]
+
+    return {
+        "accepted_fraction": accepted_array,
+        "fidelity": fidelity_array,
+        "credible": credible_array,
+    }
+
+
 def build_mle_decoders(
     task: Any,
     *,
@@ -530,6 +830,25 @@ def evaluate_curve(
         )
     if selection_mode != "threshold":
         raise ValueError("selection_mode must be 'threshold' or 'pattern_rank'.")
+    if all(
+        decoder_map[basis].factory_score_mode == "mld_output_fidelity"
+        for basis in basis_labels
+    ):
+        return _evaluate_sparse_mld_threshold_curve(
+            actual_data,
+            decoder_map,
+            posterior_samples=posterior_samples,
+            threshold_points=threshold_points,
+            factory_target=factory_target,
+            valid_factory_targets=valid_factory_targets,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            basis_labels=basis_labels,
+            min_accepted_per_basis=min_accepted_per_basis,
+            threshold_policy=threshold_policy,
+            layout=layout,
+            uncertainty_backend=uncertainty_backend,
+        )
 
     targets = resolve_valid_factory_targets(
         factory_target=factory_target,

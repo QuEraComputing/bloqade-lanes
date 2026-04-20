@@ -5,10 +5,8 @@ skills
 
 # for qet code
 demo/msd_utils/qet.py
-demo/qet_reprod_bloqade_decoders.ipynb
+demo/qet*.ipynb
 python/tests/demo/test_qet_utils.py
-demo/qet_validate_postselection_patterns.ipynb
-demo/qet_validate_logical_tomography_postselection_patterns.ipynb
 
 # misc
 .DS_Store
