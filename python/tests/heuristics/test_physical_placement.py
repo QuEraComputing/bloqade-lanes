@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
@@ -166,8 +168,8 @@ def test_rust_traversal_dispatches_to_rust_path(monkeypatch):
     state = _make_state()
     calls: list[str] = []
 
-    def fake_cz_placements_rust(self, state, controls, targets):
-        _ = self, state, controls, targets
+    def fake_cz_placements_rust(self, state, controls, targets, lookahead_cz_layers=()):
+        _ = self, state, controls, targets, lookahead_cz_layers
         calls.append("rust")
         return AtomState.bottom()
 
@@ -270,3 +272,188 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     assert isinstance(lane, LaneAddress)
     assert lane.move_type == MoveType.ZONE
     assert lane.direction == BytecodeDirection.FORWARD
+
+
+# ---------------------------------------------------------------------------
+# target_generator plugin-path tests (shared-budget candidate loop)
+# ---------------------------------------------------------------------------
+
+
+def test_target_generator_none_matches_today_behavior(monkeypatch):
+    """Regression guard: None plugin path is functionally identical to today."""
+    strategy = PhysicalPlacementStrategy(arch_spec=logical.get_arch_spec())
+    state = _make_state()
+    seen_targets: list[dict] = []
+
+    def fake_run_search(self, tree, target, traversal=None):
+        _ = self, tree, traversal
+        seen_targets.append(dict(target))
+        return SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
+
+    monkeypatch.setattr(PhysicalPlacementStrategy, "_run_search", fake_run_search)
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert len(seen_targets) == 1
+
+
+def test_target_generator_empty_plugin_behaves_like_none(monkeypatch):
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        target_generator=lambda ctx: [],
+    )
+    state = _make_state()
+    count = 0
+
+    def fake_run_search(self, tree, target, traversal=None):
+        nonlocal count
+        count += 1
+        _ = self, target, traversal
+        return SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
+
+    monkeypatch.setattr(PhysicalPlacementStrategy, "_run_search", fake_run_search)
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert count == 1  # only the default candidate runs
+
+
+def test_target_generator_cheaper_candidate_wins(monkeypatch):
+    """Plugin returns a candidate that solves on first attempt; default never runs."""
+    arch_spec = logical.get_arch_spec()
+    state = _make_state()
+    default_target = {
+        0: arch_spec.get_cz_partner(state.layout[1]),
+        1: state.layout[1],
+    }
+    # Alt candidate swaps the roles: target moves to control's partner.
+    alt_target = {
+        0: state.layout[0],
+        1: arch_spec.get_cz_partner(state.layout[0]),
+    }
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch_spec,
+        target_generator=lambda ctx: [alt_target],
+    )
+    targets_tried: list[dict] = []
+
+    def fake_run_search(self, tree, target, traversal=None):
+        _ = self, traversal
+        targets_tried.append(dict(target))
+        # First attempt succeeds
+        return SearchResult(goal_node=tree.root, nodes_expanded=0, max_depth_reached=0)
+
+    monkeypatch.setattr(PhysicalPlacementStrategy, "_run_search", fake_run_search)
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert targets_tried == [alt_target]  # default not tried
+    _ = default_target
+
+
+def test_target_generator_shared_budget(monkeypatch):
+    """Sum of per-candidate nodes_expanded cannot exceed configured max."""
+    arch_spec = logical.get_arch_spec()
+    # Use a state where alt and default targets are distinct: with layout
+    # (loc0, loc2), default = {0: partner(loc2)=loc3, 1: loc2}, while the
+    # alt below = {0: loc0, 1: partner(loc0)=loc1}.
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            layout.LocationAddress(0, 0),
+            layout.LocationAddress(2, 0),
+        ),
+        move_count=(0, 0),
+    )
+    alt_target = {
+        0: state.layout[0],
+        1: arch_spec.get_cz_partner(state.layout[0]),
+    }
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch_spec,
+        traversal=EntropyPlacementTraversal(max_expansions=10),
+        target_generator=lambda ctx: [alt_target],
+    )
+    budgets_seen: list[int | None] = []
+    consumed_per_call = 4
+
+    def fake_path_to_target_config(self, **kwargs):
+        _ = kwargs
+        budgets_seen.append(self.max_expansions)
+        return SearchResult(
+            goal_node=None,
+            nodes_expanded=consumed_per_call,
+            max_depth_reached=0,
+        )
+
+    monkeypatch.setattr(
+        EntropyPlacementTraversal,
+        "path_to_target_config",
+        fake_path_to_target_config,
+    )
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    # First call uses full 10; second call uses 10 - 4 = 6.
+    assert budgets_seen == [10, 6]
+
+
+def test_target_generator_raises_propagates():
+    def boom(ctx):
+        raise RuntimeError("plugin exploded")
+
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        target_generator=boom,
+    )
+    state = _make_state()
+    with pytest.raises(RuntimeError, match="plugin exploded"):
+        strategy.cz_placements(state, controls=(0,), targets=(1,))
+
+
+def test_rust_path_target_generator_shared_budget(monkeypatch):
+    arch_spec = logical.get_arch_spec()
+    # Use state where default and alt are distinct (layout[0]=(0,0), layout[1]=(2,0))
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            layout.LocationAddress(0, 0),
+            layout.LocationAddress(2, 0),
+        ),
+        move_count=(0, 0),
+    )
+    # A plausible alt — swap control's destination
+    alt_target = {
+        0: state.layout[0],
+        1: arch_spec.get_cz_partner(state.layout[0]),
+    }
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch_spec,
+        traversal=RustPlacementTraversal(max_expansions=10),
+        target_generator=lambda ctx: [alt_target],
+    )
+    budgets_seen: list[int | None] = []
+    consumed = 4
+
+    class _FakeResult:
+        def __init__(self):
+            self.status = "unsolvable"
+            self.nodes_expanded = consumed
+
+    class _FakeSolver:
+        def solve(self, *args, **kwargs):
+            _ = args
+            budgets_seen.append(kwargs.get("max_expansions"))
+            return _FakeResult()
+
+    monkeypatch.setattr(
+        PhysicalPlacementStrategy,
+        "_get_rust_solver",
+        lambda _self: _FakeSolver(),
+    )
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    # alt candidate first with full 10; default candidate second with 6.
+    assert budgets_seen == [10, 6]
+
+
+def test_rust_path_cz_counter_increments():
+    """Parity fix: _cz_counter must increment on the Rust path too."""
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(),
+    )
+    state = _make_state()
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert strategy._cz_counter == 1

@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
@@ -16,6 +16,14 @@ from bloqade.lanes.analysis.placement import (
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.heuristics.physical.target_generator import (
+    DefaultTargetGenerator,
+    TargetContext,
+    TargetGeneratorABC,
+    TargetGeneratorCallable,
+    _coerce_target_generator,
+    _validate_candidate,
+)
 from bloqade.lanes.layout import (
     Direction,
     LaneAddress,
@@ -46,6 +54,8 @@ OnSearchStep = Callable[[str, "ConfigurationNode", "StepInfo"], None]
 class PlacementTraversalABC(abc.ABC):
     """Placement-facing traversal API for target-configuration search."""
 
+    max_expansions: int | None
+
     @abc.abstractmethod
     def path_to_target_config(
         self,
@@ -55,6 +65,17 @@ class PlacementTraversalABC(abc.ABC):
     ) -> SearchResult:
         """Run search and return one or more goal nodes."""
         ...
+
+    def with_max_expansions(
+        self, max_expansions: int | None
+    ) -> "PlacementTraversalABC":
+        """Return a copy of this traversal with an overridden budget.
+
+        The default implementation uses :func:`dataclasses.replace`, which
+        requires the subclass to be a dataclass (all built-in subclasses are).
+        Override this method if your subclass is not a dataclass.
+        """
+        return replace(cast(Any, self), max_expansions=max_expansions)
 
 
 def _mismatch_heuristic(
@@ -185,6 +206,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     traversal: PlacementTraversalABC | RustPlacementTraversal = field(
         default_factory=EntropyPlacementTraversal
     )
+    target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None
 
     _cz_counter: int = field(default=0, init=False, repr=False)
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
@@ -194,6 +216,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     )
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _resolved_target_generator: TargetGeneratorABC | None = field(
+        default=None, init=False, repr=False
+    )
 
     @property
     def traced_tree(self) -> ConfigurationTree | None:
@@ -220,6 +245,16 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 "traversal must implement PlacementTraversalABC or be a "
                 "RustPlacementTraversal instance"
             )
+        if self.target_generator is not None and not (
+            isinstance(self.target_generator, TargetGeneratorABC)
+            or callable(self.target_generator)
+        ):
+            raise TypeError(
+                "target_generator must be a TargetGeneratorABC, a callable, " "or None"
+            )
+        self._resolved_target_generator = _coerce_target_generator(
+            self.target_generator
+        )
 
     def validate_initial_layout(
         self,
@@ -227,21 +262,32 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> None:
         _ = initial_layout
 
-    def _target_from_stage_controls_only(
+    def _build_candidates(
         self,
-        placement: dict[int, layout.LocationAddress],
-        controls: tuple[int, ...],
-        targets: tuple[int, ...],
-    ) -> dict[int, layout.LocationAddress]:
-        if len(placement) == 0:
-            return {}
-        target = dict(placement)
-        for control_qid, target_qid in zip(controls, targets):
-            target_loc = placement[target_qid]
-            blockade_partner = self.arch_spec.get_cz_partner(target_loc)
-            assert blockade_partner is not None, f"No blockade partner for {target_loc}"
-            target[control_qid] = blockade_partner
-        return target
+        ctx: TargetContext,
+    ) -> list[dict[int, LocationAddress]]:
+        """Build the ordered candidate list: plugin output + default-as-fallback.
+
+        Dedups plugin candidates by dict equality (preserving order) and
+        appends the default candidate only if it is not already present.
+        Validates every candidate against ``_validate_candidate`` before
+        returning; a malformed candidate raises ``ValueError``.
+        """
+        plugin = self._resolved_target_generator
+        plugin_candidates: list[dict[int, LocationAddress]] = (
+            [] if plugin is None else list(plugin.generate(ctx))
+        )
+
+        deduped: list[dict[int, LocationAddress]] = []
+        for candidate in plugin_candidates:
+            _validate_candidate(ctx, candidate)
+            if candidate not in deduped:
+                deduped.append(candidate)
+
+        default = DefaultTargetGenerator().generate(ctx)[0]
+        if default not in deduped:
+            deduped.append(default)
+        return deduped
 
     def _run_search(
         self,
@@ -263,40 +309,65 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
-        _ = lookahead_cz_layers
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
         if isinstance(self.traversal, RustPlacementTraversal):
-            return self._cz_placements_rust(state, controls, targets)
+            return self._cz_placements_rust(
+                state, controls, targets, lookahead_cz_layers
+            )
 
-        placement = {qid: loc for qid, loc in enumerate(state.layout)}
-        target = self._target_from_stage_controls_only(placement, controls, targets)
+        ctx = TargetContext(
+            arch_spec=self.arch_spec,
+            state=state,
+            controls=controls,
+            targets=targets,
+            lookahead_cz_layers=lookahead_cz_layers,
+            cz_stage_index=self._cz_counter,
+        )
+        candidates = self._build_candidates(ctx)
+
         tree = ConfigurationTree.from_initial_placement(
             self.arch_spec,
-            placement,
+            ctx.placement,
             blocked_locations=state.occupied,
         )
 
         should_trace = (
             self._trace_cz_index is None or self._cz_counter == self._trace_cz_index
         )
-        traversal = self.traversal
-        if isinstance(traversal, EntropyPlacementTraversal) and not should_trace:
-            traversal = replace(traversal, on_search_step=None)
+        base_traversal = self.traversal
+        assert isinstance(base_traversal, PlacementTraversalABC)
+        if isinstance(base_traversal, EntropyPlacementTraversal) and not should_trace:
+            base_traversal = replace(base_traversal, on_search_step=None)
         if should_trace:
             self._traced_tree = tree
-            self._traced_target = dict(target)
+            self._traced_target = dict(candidates[0])
 
-        result = self._run_search(tree, target, traversal)
+        remaining = base_traversal.max_expansions
+        best_goal = None
+        for candidate in candidates:
+            if remaining is not None and remaining <= 0:
+                break
+            per_call_traversal = (
+                base_traversal
+                if remaining == base_traversal.max_expansions
+                else base_traversal.with_max_expansions(remaining)
+            )
+            result = self._run_search(tree, candidate, per_call_traversal)
+            if remaining is not None:
+                remaining -= int(result.nodes_expanded)
+            if result.goal_nodes:
+                best_goal = result.goal_nodes[0]
+                break
+
         self._cz_counter += 1
 
-        if not result.goal_nodes:
+        if best_goal is None:
             return AtomState.bottom()
 
-        best_goal = result.goal_nodes[0]
         move_program = best_goal.to_move_program()
         goal_layout_map = best_goal.configuration
         goal_layout = tuple(goal_layout_map[qid] for qid in range(len(state.layout)))
@@ -330,53 +401,79 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         state: ConcreteState,
         controls: tuple[int, ...],
         targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
     ) -> AtomState:
         assert isinstance(self.traversal, RustPlacementTraversal)
-        placement = {qid: loc for qid, loc in enumerate(state.layout)}
-        target = self._target_from_stage_controls_only(placement, controls, targets)
+        ctx = TargetContext(
+            arch_spec=self.arch_spec,
+            state=state,
+            controls=controls,
+            targets=targets,
+            lookahead_cz_layers=lookahead_cz_layers,
+            cz_stage_index=self._cz_counter,
+        )
+        candidates = self._build_candidates(ctx)
 
         initial = [
             (qid, loc.zone_id, loc.word_id, loc.site_id)
-            for qid, loc in placement.items()
-        ]
-        target_tuples = [
-            (qid, loc.zone_id, loc.word_id, loc.site_id) for qid, loc in target.items()
+            for qid, loc in ctx.placement.items()
         ]
         blocked = [(loc.zone_id, loc.word_id, loc.site_id) for loc in state.occupied]
-
         solver = self._get_rust_solver()
-        result = solver.solve(
-            initial,
-            target_tuples,
-            blocked,
-            self.traversal.max_expansions,
-            strategy=self.traversal.strategy,
-            top_c=self.traversal.top_c,
-            max_movesets_per_group=self.traversal.max_movesets_per_group,
-        )
-        self._rust_nodes_expanded_total += int(result.nodes_expanded)
 
-        if result.status != "solved":
+        remaining = self.traversal.max_expansions
+        winning_result = None
+        for candidate in candidates:
+            if remaining is not None and remaining <= 0:
+                break
+            target_tuples = [
+                (qid, loc.zone_id, loc.word_id, loc.site_id)
+                for qid, loc in candidate.items()
+            ]
+            result = solver.solve(
+                initial,
+                target_tuples,
+                blocked,
+                max_expansions=remaining,
+                strategy=self.traversal.strategy,
+                top_c=self.traversal.top_c,
+                max_movesets_per_group=self.traversal.max_movesets_per_group,
+            )
+            self._rust_nodes_expanded_total += int(result.nodes_expanded)
+            if remaining is not None:
+                remaining -= int(result.nodes_expanded)
+            if result.status == "solved":
+                winning_result = result
+                break
+
+        self._cz_counter += 1
+
+        if winning_result is None:
             return AtomState.bottom()
 
         move_layers = tuple(
             tuple(
-                LaneAddress(self._MT_MAP[mt], word, site, bus, self._DIR_MAP[d], zone)
+                LaneAddress(
+                    self._MT_MAP[mt],
+                    word,
+                    site,
+                    bus,
+                    self._DIR_MAP[d],
+                    zone,
+                )
                 for d, mt, zone, word, site, bus in step
             )
-            for step in result.move_layers
+            for step in winning_result.move_layers
         )
 
         goal_map = {
-            qid: LocationAddress(w, s, z) for qid, z, w, s in result.goal_config
+            qid: LocationAddress(w, s, z) for qid, z, w, s in winning_result.goal_config
         }
         goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
-
         move_count = tuple(
             mc + int(src != dst)
             for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
         )
-
         return ExecuteCZ(
             occupied=state.occupied,
             layout=goal_layout,
