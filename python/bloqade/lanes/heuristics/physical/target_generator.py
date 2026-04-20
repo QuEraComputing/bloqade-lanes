@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
-from bloqade.lanes.layout import LocationAddress
+from bloqade.lanes.layout import LocationAddress, MoveType
 
 
 @dataclass(frozen=True)
@@ -136,3 +136,21 @@ def _validate_candidate(
                 f"(control={control_qid}@{c_loc}, target={target_qid}@{t_loc}) "
                 f"is not blockade-partnered"
             )
+
+
+_LaneKey = tuple[MoveType, int, int, int, int]
+
+
+def _lane_key(lane: layout.LaneAddress) -> _LaneKey:
+    """Direction-independent canonical key for a lane.
+
+    A physical lane used FORWARD and BACKWARD is the same resource;
+    `_lane_key` strips `direction` so the two map to the same key.
+    """
+    return (
+        lane.move_type,
+        lane.word_id,
+        lane.site_id,
+        lane.bus_id,
+        lane.zone_id,
+    )
