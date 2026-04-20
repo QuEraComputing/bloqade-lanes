@@ -203,9 +203,12 @@ def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) ->
 
 
 class _HasPenalties(Protocol):
-    opposite_direction_penalty: float
-    same_direction_penalty: float
-    shared_site_penalty: float
+    @property
+    def opposite_direction_penalty(self) -> float: ...
+    @property
+    def same_direction_penalty(self) -> float: ...
+    @property
+    def shared_site_penalty(self) -> float: ...
 
 
 def _make_weight_fn(
@@ -339,19 +342,35 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         ]
         | None
     ):
-        # Placeholder: picks control direction, no path computation.
-        # Task 7 replaces this with real direction choice.
         ctrl_loc = working[ctrl]
         tgt_loc = working[tgt]
-        partner = arch_spec.get_cz_partner(tgt_loc)
-        assert partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
-        if ctrl_loc == partner:
-            # Already partnered; trivial zero-length path at ctrl_loc.
-            return (ctrl, partner, ((), (ctrl_loc,)))
-        # Walk a real path so the already-partnered case works end-to-end
-        # even before Task 7 lands.
-        occ = frozenset(loc for q, loc in working.items() if q != ctrl)
-        path = pf.find_path(ctrl_loc, partner, occupied=occ)
-        if path is None:
+        ctrl_partner = arch_spec.get_cz_partner(tgt_loc)
+        tgt_partner = arch_spec.get_cz_partner(ctrl_loc)
+        assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
+        assert tgt_partner is not None, f"No CZ partner for qid={ctrl} at {ctrl_loc}"
+
+        occ_ctrl = frozenset(loc for q, loc in working.items() if q != ctrl)
+        occ_tgt = frozenset(loc for q, loc in working.items() if q != tgt)
+
+        weight = _make_weight_fn(pf, committed_lanes, committed_sites, self)
+        path_ctrl = pf.find_path(
+            ctrl_loc, ctrl_partner, occupied=occ_ctrl, edge_weight=weight
+        )
+        path_tgt = pf.find_path(
+            tgt_loc, tgt_partner, occupied=occ_tgt, edge_weight=weight
+        )
+
+        cost_ctrl = _sum_weighted(path_ctrl, weight) if path_ctrl else math.inf
+        cost_tgt = _sum_weighted(path_tgt, weight) if path_tgt else math.inf
+
+        if cost_ctrl == math.inf and cost_tgt == math.inf:
             return None
-        return (ctrl, partner, path)
+
+        len_ctrl = float(len(path_ctrl[0])) if path_ctrl else math.inf
+        len_tgt = float(len(path_tgt[0])) if path_tgt else math.inf
+
+        if _choose_control(cost_ctrl, cost_tgt, len_ctrl, len_tgt):
+            assert path_ctrl is not None
+            return (ctrl, ctrl_partner, path_ctrl)
+        assert path_tgt is not None
+        return (tgt, tgt_partner, path_tgt)
