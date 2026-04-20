@@ -9,3 +9,4 @@ from .encoding import (
     ZoneAddress as ZoneAddress,
 )
 from .move_metric import MoveMetricCalculator as MoveMetricCalculator
+from .path import PathFinder as PathFinder

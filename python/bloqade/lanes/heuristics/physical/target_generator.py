@@ -154,3 +154,28 @@ def _lane_key(lane: layout.LaneAddress) -> _LaneKey:
         lane.bus_id,
         lane.zone_id,
     )
+
+
+def _sum_base(
+    path: tuple[
+        tuple[layout.LaneAddress, ...],
+        tuple[layout.LocationAddress, ...],
+    ],
+    pf: layout.PathFinder,
+) -> float:
+    """Sum of base (no-penalty) lane-duration cost over a path's lanes."""
+    return sum(pf.metrics.get_lane_duration_cost(lane) for lane in path[0])
+
+
+def _sum_weighted(
+    path: tuple[
+        tuple[layout.LaneAddress, ...],
+        tuple[layout.LocationAddress, ...],
+    ],
+    weight_fn: Callable[[layout.LaneAddress], float],
+) -> float:
+    """Sum of `weight_fn(lane)` over a path's lanes.
+
+    Returns 0.0 for zero-length paths (empty lane tuple).
+    """
+    return sum(weight_fn(lane) for lane in path[0])
