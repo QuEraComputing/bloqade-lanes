@@ -10,6 +10,7 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     _choose_control,
     _lane_key,
     _LaneKey,
+    _make_weight_fn,
     _sum_base,
     _sum_weighted,
 )
@@ -99,3 +100,69 @@ def test_choose_control_inf_handled():
     assert _choose_control(cost_c=5.0, cost_t=math.inf, len_c=1, len_t=0) is True
     # Control infeasible → target wins
     assert _choose_control(cost_c=math.inf, cost_t=5.0, len_c=0, len_t=1) is False
+
+
+class _WeightCtx:
+    """Minimal stand-in for the generator's penalty-weight fields."""
+
+    def __init__(self, opposite: float, same: float, site: float) -> None:
+        self.opposite_direction_penalty = opposite
+        self.same_direction_penalty = same
+        self.shared_site_penalty = site
+
+
+def _first_lane(pf: "PathFinder") -> "LaneAddress":
+    # Pick any lane in the physical graph for tests.
+    return next(iter(pf.end_points_cache))
+
+
+def test_weight_fn_no_congestion_returns_base(arch):
+    pf = PathFinder(arch)
+    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(10.0, 1.0, 0.1))
+    lane = _first_lane(pf)
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base
+
+
+def test_weight_fn_same_direction_adds_same_penalty(arch):
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    committed_lanes = {_lane_key(lane): lane.direction}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 1.0, 0.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base + 1.0
+
+
+def test_weight_fn_opposite_direction_adds_opposite_penalty(arch):
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    reversed_lane = lane.reverse()
+    # Mark the reversed direction as committed; now `lane` is opposite.
+    committed_lanes = {_lane_key(lane): reversed_lane.direction}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 1.0, 0.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base + 10.0
+
+
+def test_weight_fn_shared_site_without_lane_reuse(arch):
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    src, dst = pf.get_endpoints(lane)
+    assert src is not None and dst is not None
+    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(10.0, 1.0, 0.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base + 0.1
+
+
+def test_weight_fn_lane_reuse_dominates_shared_site(arch):
+    """When a lane is committed AND an endpoint is in committed_sites,
+    the lane-reuse penalty applies, not the shared-site penalty.
+    """
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    src, dst = pf.get_endpoints(lane)
+    assert src is not None
+    committed_lanes = {_lane_key(lane): lane.direction}
+    weight = _make_weight_fn(pf, committed_lanes, {src}, _WeightCtx(10.0, 1.0, 0.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base + 1.0

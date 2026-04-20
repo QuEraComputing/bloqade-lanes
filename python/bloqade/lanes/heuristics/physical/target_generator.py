@@ -12,6 +12,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
@@ -198,3 +199,41 @@ def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) ->
     if len_t < len_c:
         return False
     return True
+
+
+class _HasPenalties(Protocol):
+    opposite_direction_penalty: float
+    same_direction_penalty: float
+    shared_site_penalty: float
+
+
+def _make_weight_fn(
+    pf: layout.PathFinder,
+    committed_lanes: dict[_LaneKey, layout.Direction],
+    committed_sites: set[layout.LocationAddress],
+    gen: _HasPenalties,
+) -> Callable[[layout.LaneAddress], float]:
+    """Closure over the running congestion state; passed to `find_path`.
+
+    Penalty precedence (largest to smallest):
+      1. lane reused in opposite direction -> opposite_direction_penalty
+      2. lane reused in same direction    -> same_direction_penalty
+      3. lane not reused, but an endpoint is in committed_sites
+                                          -> shared_site_penalty
+      4. no overlap                        -> 0 (base only)
+    """
+
+    def weight(lane: layout.LaneAddress) -> float:
+        base = pf.metrics.get_lane_duration_cost(lane)
+        key = _lane_key(lane)
+        prior_dir = committed_lanes.get(key)
+        if prior_dir is not None:
+            if prior_dir != lane.direction:
+                return base + gen.opposite_direction_penalty
+            return base + gen.same_direction_penalty
+        src, dst = pf.get_endpoints(lane)
+        if src in committed_sites or dst in committed_sites:
+            return base + gen.shared_site_penalty
+        return base
+
+    return weight
