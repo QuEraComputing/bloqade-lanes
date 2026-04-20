@@ -202,29 +202,37 @@ def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) ->
     return True
 
 
-class _HasPenalties(Protocol):
+class _HasFactors(Protocol):
     @property
-    def opposite_direction_penalty(self) -> float: ...
+    def opposite_direction_factor(self) -> float: ...
     @property
-    def same_direction_penalty(self) -> float: ...
+    def same_direction_factor(self) -> float: ...
     @property
-    def shared_site_penalty(self) -> float: ...
+    def shared_site_factor(self) -> float: ...
 
 
 def _make_weight_fn(
     pf: layout.PathFinder,
     committed_lanes: dict[_LaneKey, layout.Direction],
     committed_sites: set[layout.LocationAddress],
-    gen: _HasPenalties,
+    gen: _HasFactors,
 ) -> Callable[[layout.LaneAddress], float]:
     """Closure over the running congestion state; passed to `find_path`.
 
-    Penalty precedence (largest to smallest):
-      1. lane reused in opposite direction -> opposite_direction_penalty
-      2. lane reused in same direction    -> same_direction_penalty
+    Factor precedence (which field multiplies the base lane cost):
+      1. lane reused in opposite direction -> opposite_direction_factor
+      2. lane reused in same direction    -> same_direction_factor
       3. lane not reused, but an endpoint is in committed_sites
-                                          -> shared_site_penalty
-      4. no overlap                        -> 0 (base only)
+                                          -> shared_site_factor
+      4. no overlap                        -> 1.0 (base only)
+
+    Each field is a non-negative multiplier applied to the base
+    ``get_lane_duration_cost``. Values ``< 1`` act as bonuses (reward
+    that case), ``> 1`` act as penalties, ``= 1`` is neutral. Factors
+    must be non-negative for the Dijkstra-based path finder. Canonical
+    tuning: ``opposite_direction_factor`` large (penalty), ``same_direction_factor``
+    below 1 (reward AOD-parallel moves on a shared bus), ``shared_site_factor``
+    slightly above 1 (mild crossing penalty).
     """
 
     def weight(lane: layout.LaneAddress) -> float:
@@ -233,14 +241,30 @@ def _make_weight_fn(
         prior_dir = committed_lanes.get(key)
         if prior_dir is not None:
             if prior_dir != lane.direction:
-                return base + gen.opposite_direction_penalty
-            return base + gen.same_direction_penalty
+                return base * gen.opposite_direction_factor
+            return base * gen.same_direction_factor
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base + gen.shared_site_penalty
+            return base * gen.shared_site_factor
         return base
 
     return weight
+
+
+@dataclass
+class _GenerateState:
+    """Mutable state threaded through the congestion-aware commit loop.
+
+    ``arch_spec`` and ``pf`` are fixed for the whole ``generate()`` call;
+    ``working``, ``committed_lanes``, and ``committed_sites`` accumulate
+    as pairs commit.
+    """
+
+    arch_spec: layout.ArchSpec
+    pf: layout.PathFinder
+    working: dict[int, layout.LocationAddress]
+    committed_lanes: dict[_LaneKey, layout.Direction]
+    committed_sites: set[layout.LocationAddress]
 
 
 @dataclass(frozen=True)
@@ -252,15 +276,20 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Penalty weights are additive on top of
-    ``MoveMetricCalculator.get_lane_duration_cost(lane)`` and are tuned
-    relative to that base-duration scale. Defaults are illustrative;
-    empirical tuning is a documented follow-up.
+    Factor fields are non-negative multipliers on
+    ``MoveMetricCalculator.get_lane_duration_cost(lane)``. Values below
+    1.0 reward the case (cheaper than base), above 1.0 penalize, and
+    1.0 is neutral. Dijkstra requires non-negative edge weights, so
+    factors must remain ``>= 0``. Defaults reflect the canonical
+    tuning — same-direction lane reuse rewarded (AOD transport layer
+    parallelism), opposite-direction reuse penalized, shared-site
+    crossings mildly penalized. Empirical tuning is a documented
+    follow-up.
     """
 
-    opposite_direction_penalty: float = 10.0
-    same_direction_penalty: float = 1.0
-    shared_site_penalty: float = 0.1
+    opposite_direction_factor: float = 10.0
+    same_direction_factor: float = 0.25
+    shared_site_factor: float = 1.1
 
     def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
         placement = ctx.placement
@@ -268,31 +297,27 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
             return [dict(placement)]
 
         pf = layout.PathFinder(ctx.arch_spec)
-        working: dict[int, layout.LocationAddress] = dict(placement)
-        committed_lanes: dict[_LaneKey, layout.Direction] = {}
-        committed_sites: set[layout.LocationAddress] = set()
+        state = _GenerateState(
+            arch_spec=ctx.arch_spec,
+            pf=pf,
+            working=dict(placement),
+            committed_lanes={},
+            committed_sites=set(),
+        )
 
         pairs = self._sort_pairs_longest_first(ctx, pf)
 
         for ctrl, tgt in pairs:
-            result = self._commit_pair(
-                ctx.arch_spec,
-                pf,
-                working,
-                committed_lanes,
-                committed_sites,
-                ctrl,
-                tgt,
-            )
+            result = self._commit_pair(state, ctrl, tgt)
             if result is None:
                 return []  # both directions infeasible -> fallback to default
             mover, new_loc, chosen = result
-            working[mover] = new_loc
+            state.working[mover] = new_loc
             for lane in chosen[0]:
-                committed_lanes[_lane_key(lane)] = lane.direction
-            committed_sites.update(chosen[1])
+                state.committed_lanes[_lane_key(lane)] = lane.direction
+            state.committed_sites.update(chosen[1])
 
-        return [working]
+        return [state.working]
 
     def _sort_pairs_longest_first(
         self, ctx: TargetContext, pf: layout.PathFinder
@@ -324,11 +349,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
 
     def _commit_pair(
         self,
-        arch_spec: layout.ArchSpec,
-        pf: layout.PathFinder,
-        working: dict[int, layout.LocationAddress],
-        committed_lanes: dict[_LaneKey, layout.Direction],
-        committed_sites: set[layout.LocationAddress],
+        state: _GenerateState,
         ctrl: int,
         tgt: int,
     ) -> (
@@ -342,21 +363,23 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         ]
         | None
     ):
-        ctrl_loc = working[ctrl]
-        tgt_loc = working[tgt]
-        ctrl_partner = arch_spec.get_cz_partner(tgt_loc)
-        tgt_partner = arch_spec.get_cz_partner(ctrl_loc)
+        ctrl_loc = state.working[ctrl]
+        tgt_loc = state.working[tgt]
+        ctrl_partner = state.arch_spec.get_cz_partner(tgt_loc)
+        tgt_partner = state.arch_spec.get_cz_partner(ctrl_loc)
         assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
         assert tgt_partner is not None, f"No CZ partner for qid={ctrl} at {ctrl_loc}"
 
-        occ_ctrl = frozenset(loc for q, loc in working.items() if q != ctrl)
-        occ_tgt = frozenset(loc for q, loc in working.items() if q != tgt)
+        occ_ctrl = frozenset(loc for q, loc in state.working.items() if q != ctrl)
+        occ_tgt = frozenset(loc for q, loc in state.working.items() if q != tgt)
 
-        weight = _make_weight_fn(pf, committed_lanes, committed_sites, self)
-        path_ctrl = pf.find_path(
+        weight = _make_weight_fn(
+            state.pf, state.committed_lanes, state.committed_sites, self
+        )
+        path_ctrl = state.pf.find_path(
             ctrl_loc, ctrl_partner, occupied=occ_ctrl, edge_weight=weight
         )
-        path_tgt = pf.find_path(
+        path_tgt = state.pf.find_path(
             tgt_loc, tgt_partner, occupied=occ_tgt, edge_weight=weight
         )
 

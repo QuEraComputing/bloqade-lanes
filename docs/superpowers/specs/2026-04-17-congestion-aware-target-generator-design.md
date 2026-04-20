@@ -84,9 +84,9 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     relative to that base-duration scale.
     """
 
-    opposite_direction_penalty: float = 10.0
-    same_direction_penalty: float = 1.0
-    shared_site_penalty: float = 0.1
+    opposite_direction_cost: float = 10.0
+    same_direction_cost: float = 1.0
+    shared_site_cost: float = 0.1
 
     def generate(
         self, ctx: TargetContext
@@ -200,9 +200,9 @@ control-moves should be chosen:
 - `PathFinder.find_path(start, end, occupied, edge_weight)` — returns
   `(tuple[LaneAddress, ...], tuple[LocationAddress, ...])` or `None`.
   `edge_weight` is the callable injection point for congestion
-  penalties. **Explicit deviation from default**: `find_path` defaults
+  costs. **Explicit deviation from default**: `find_path` defaults
   `edge_weight` to `get_lane_duration_us` (microseconds). We pass
-  `get_lane_duration_cost` (normalized) so the penalty-weight floats
+  `get_lane_duration_cost` (normalized) so the congestion-cost floats
   remain commensurate with the base term.
 - `PathFinder.get_endpoints(lane) -> (LocationAddress, LocationAddress)`
   — used inside the edge-weight closure. The underlying
@@ -247,26 +247,28 @@ def _make_weight_fn(pf, committed_lanes, committed_sites, gen):
         key = _lane_key(lane)
         if key in committed_lanes:
             if committed_lanes[key] != lane.direction:
-                return base + gen.opposite_direction_penalty
-            return base + gen.same_direction_penalty
+                return base + gen.opposite_direction_cost
+            return base + gen.same_direction_cost
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base + gen.shared_site_penalty
+            return base + gen.shared_site_cost
         return base
     return weight
 ```
 
-Penalty tiers (largest to smallest):
+Cost tiers (each added to the base lane cost; sign determines whether
+the case is discouraged or favored):
 
-| Tier | Condition | Intuition |
-|---|---|---|
-| `opposite_direction_penalty` | Lane already committed in the opposite direction | Very bad for the move scheduler — cannot be temporally packed. |
-| `same_direction_penalty` | Lane already committed in the same direction | Bad: lane contention, but scheduler can serialize. |
-| `shared_site_penalty` | New lane, but one or both endpoints are sites a prior path traversed | Mild: paths cross at a shared node but use different physical lanes — scheduler handles these with one extra layer. |
-| `0` | No overlap | Unconstrained. |
+| Tier | Condition | Intuition | Canonical sign |
+|---|---|---|---|
+| `opposite_direction_cost` | Lane already committed in the opposite direction | Very bad for the move scheduler — cannot be temporally packed. | Large positive (penalty) |
+| `same_direction_cost` | Lane already committed in the same direction | **Favorable**: the AOD transport layer can move both atoms together in a single move-layer; shared same-direction motion is exactly what the scheduler parallelizes best. | Negative (bonus) |
+| `shared_site_cost` | New lane, but one or both endpoints are sites a prior path traversed | Mild: paths cross at a shared node but use different physical lanes — scheduler handles these with one extra layer. | Small positive (penalty) |
+| `0` | No overlap | Unconstrained. | — |
 
-The penalty is additive per-edge. A path's total weighted cost is the
-sum of `weight(lane)` over its lanes — re-evaluated by the caller
+The cost is additive per-edge. Positive values act as penalties,
+negative values as bonuses. A path's total weighted cost is the sum
+of `weight(lane)` over its lanes — re-evaluated by the caller
 (`_sum_weighted`) against the same closure the pathfinder used.
 
 ### Lane canonical key
@@ -296,7 +298,7 @@ is adequate for this first cut.
 After a pair commits, every location its path traversed (start,
 intermediates, end) is added to `committed_sites`. Subsequent pairs'
 candidate lanes whose endpoint is in that set pay
-`shared_site_penalty` — but only when the lane itself is not reused
+`shared_site_cost` — but only when the lane itself is not reused
 (the lane-reuse penalties dominate; shared-site is the lower tier).
 
 ### Bidirectional-cost symmetry note
@@ -419,15 +421,15 @@ Each test constructs a minimal `TargetContext` directly and asserts on
    only longest-first commit order produces a valid candidate; verify.
 5. **Opposite-direction congestion avoided** — two pairs where a
    naive order reuses a lane in opposite directions; with
-   `opposite_direction_penalty=1e6` and `same_direction_penalty=0`
+   `opposite_direction_cost=1e6` and `same_direction_cost=0`
    verify the second pair picks the direction that does not reuse in
    opposite sense.
 6. **Same-direction reuse preferred to opposite** — both directions
    reuse a committed lane, one same-dir, one opposite-dir; same-dir is
    chosen even when slightly longer in lane count.
-7. **Shared-site penalty tier** — two directions, one crosses a prior
+7. **Shared-site cost tier** — two directions, one crosses a prior
    path's site, the other fully fresh but longer in raw duration;
-   verify the decision depends on `shared_site_penalty` magnitude as
+   verify the decision depends on `shared_site_cost` magnitude as
    expected.
 8. **Penalty-zero config** — all three penalties = 0 → identical
    output to a greedy-shortest-cost joint heuristic with no congestion
