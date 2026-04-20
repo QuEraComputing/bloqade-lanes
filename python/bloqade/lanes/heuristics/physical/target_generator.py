@@ -179,3 +179,22 @@ def _sum_weighted(
     Returns 0.0 for zero-length paths (empty lane tuple).
     """
     return sum(weight_fn(lane) for lane in path[0])
+
+
+def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) -> bool:
+    """Tiebreak comparator. Returns True iff control-direction wins.
+
+    Hierarchy:
+      1. lower cost wins
+      2. on cost tie, shorter path wins (fewer physical moves)
+      3. on both-tie, prefer control (parity with DefaultTargetGenerator)
+    """
+    if cost_c < cost_t:
+        return True
+    if cost_t < cost_c:
+        return False
+    if len_c < len_t:
+        return True
+    if len_t < len_c:
+        return False
+    return True

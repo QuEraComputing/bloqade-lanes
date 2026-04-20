@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from bloqade.lanes import layout
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
 from bloqade.lanes.heuristics.physical.target_generator import (
+    _choose_control,
     _lane_key,
     _LaneKey,
     _sum_base,
@@ -74,3 +77,25 @@ def test_sum_weighted_sums_per_lane(arch):
     assert path is not None
     lane_count = len(path[0])
     assert _sum_weighted(path, lambda lane: 1.0) == float(lane_count)
+
+
+def test_choose_control_lower_cost_wins():
+    assert _choose_control(cost_c=1.0, cost_t=2.0, len_c=10, len_t=1) is True
+    assert _choose_control(cost_c=2.0, cost_t=1.0, len_c=1, len_t=10) is False
+
+
+def test_choose_control_cost_tie_uses_length():
+    # Equal cost → shorter path wins
+    assert _choose_control(cost_c=1.0, cost_t=1.0, len_c=2, len_t=5) is True
+    assert _choose_control(cost_c=1.0, cost_t=1.0, len_c=5, len_t=2) is False
+
+
+def test_choose_control_all_tied_prefers_control():
+    assert _choose_control(cost_c=1.0, cost_t=1.0, len_c=3, len_t=3) is True
+
+
+def test_choose_control_inf_handled():
+    # Target infeasible → control wins
+    assert _choose_control(cost_c=5.0, cost_t=math.inf, len_c=1, len_t=0) is True
+    # Control infeasible → target wins
+    assert _choose_control(cost_c=math.inf, cost_t=5.0, len_c=0, len_t=1) is False
