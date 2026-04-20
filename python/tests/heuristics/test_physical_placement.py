@@ -457,3 +457,40 @@ def test_rust_path_cz_counter_increments():
     state = _make_state()
     strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert strategy._cz_counter == 1
+
+
+# ---------------------------------------------------------------------------
+# CongestionAwareTargetGenerator integration tests
+# ---------------------------------------------------------------------------
+
+
+def _pick_cz_pair_integration(arch):
+    for s in arch.home_sites:
+        p = arch.get_cz_partner(s)
+        if p is not None and p != s:
+            return s, p
+    raise AssertionError("arch has no CZ-partnered home site")
+
+
+def test_cz_placements_with_congestion_aware_generator_produces_execute_cz():
+    """Smoke test: PhysicalPlacementStrategy wired with
+    CongestionAwareTargetGenerator completes cz_placements and returns
+    an ExecuteCZ result for a simple stage.
+    """
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.heuristics.physical import (
+        CongestionAwareTargetGenerator,
+    )
+
+    arch = get_arch_spec()
+    loc0, loc1 = _pick_cz_pair_integration(arch)
+
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch,
+        target_generator=CongestionAwareTargetGenerator(),
+    )
+    state = ConcreteState(occupied=frozenset(), layout=(loc0, loc1), move_count=(0, 0))
+    result = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(
+        result, ExecuteCZ
+    ), f"expected ExecuteCZ, got {type(result).__name__}"
