@@ -29,6 +29,7 @@ from .core import (
     fidelity_from_counts,
     infer_distilled_sign_vector,
     infer_factory_target,
+    iter_task_datasets,
     key_to_bits,
     logical_expectation,
     magic_state_fidelity_point_from_counts,
@@ -47,6 +48,7 @@ from .core import (
 )
 from .decoders import (
     DecoderAdapter,
+    SparseTableDecoder,
     TableDecoderWithConfidence,
     build_mld_decoders,
     build_mld_decoders_from_pair,
@@ -54,6 +56,7 @@ from .decoders import (
     build_shared_mld_postselection_scores,
     compute_dem_data,
     estimate_mld_ancilla_scores,
+    estimate_mld_ancilla_scores_from_tasks,
     evaluate_curve,
     evaluate_mld_curve,
     injected_baseline,
@@ -61,6 +64,7 @@ from .decoders import (
     make_shape_only_dem,
     matrix_to_dem,
     train_mld_decoder_pair,
+    train_mld_decoder_pair_from_task,
 )
 from .experiment import (
     DecoderSweepEvaluation,
@@ -113,6 +117,7 @@ __all__ = [
     "MLDTrainingArtifacts",
     "NaiveKernelBundle",
     "ObservableFrame",
+    "SparseTableDecoder",
     "SyndromeLayout",
     "TableDecoderWithConfidence",
     "ancilla_matches_valid_targets",
@@ -133,12 +138,14 @@ __all__ = [
     "evaluate_decoder_experiment",
     "evaluate_mld_curve",
     "estimate_mld_ancilla_scores",
+    "estimate_mld_ancilla_scores_from_tasks",
     "fidelity_from_counts",
     "DecoderSweepEvaluation",
     "compute_observable_reference",
     "infer_distilled_sign_vector",
     "infer_factory_target",
     "injected_baseline",
+    "iter_task_datasets",
     "key_to_bits",
     "logical_expectation",
     "make_layout_only_dem",
@@ -170,6 +177,7 @@ __all__ = [
     "collect_experiment_diagnostics",
     "train_mld_experiment",
     "train_mld_decoder_pair",
+    "train_mld_decoder_pair_from_task",
     "u3_prep_bloch",
     "unpack_packed_bits",
 ]

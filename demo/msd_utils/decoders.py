@@ -19,6 +19,7 @@ from .core import (
     bits_to_key,
     fidelity_from_counts,
     fidelity_from_zero_one_counts,
+    iter_task_datasets,
     magic_state_fidelity_point_from_counts,
     pack_boolean_array,
     packed_bits_to_int,
@@ -65,6 +66,120 @@ class TableDecoderWithConfidence:
             else float("nan")
         )
         return correction, np.float64(score)
+
+
+class SparseTableDecoder:
+    """Sparse lookup-table decoder with the same MLD argmax semantics.
+
+    Stores only observed detector/observable pairs, then decodes each detector
+    syndrome to the most frequently observed observable correction. Ties are
+    broken toward the smallest observable index, matching ``np.argmax`` on a
+    dense count table.
+    """
+
+    def __init__(
+        self,
+        dem: stim.DetectorErrorModel,
+        det_obs_counts: np.ndarray | None = None,
+    ) -> None:
+        self._dem = dem
+        self._counts_by_detector: dict[int, dict[int, int]] = {}
+        self._maximum_likelihood_correction: dict[int, int] | None = None
+        if det_obs_counts is not None:
+            dense = np.asarray(det_obs_counts)
+            expected_len = 1 << (self.num_detectors + self.num_observables)
+            if dense.shape != (expected_len,):
+                raise ValueError(
+                    f"det_obs_counts must have shape ({expected_len},), got {dense.shape}"
+                )
+            nonzero = np.flatnonzero(dense)
+            if len(nonzero):
+                det_mask = (1 << self.num_detectors) - 1
+                for packed in nonzero.tolist():
+                    det = int(packed) & det_mask
+                    obs = int(packed) >> self.num_detectors
+                    detector_counts = self._counts_by_detector.setdefault(det, {})
+                    detector_counts[obs] = detector_counts.get(obs, 0) + int(
+                        dense[packed]
+                    )
+
+    @property
+    def num_detectors(self) -> int:
+        return self._dem.num_detectors
+
+    @property
+    def num_observables(self) -> int:
+        return self._dem.num_observables
+
+    @classmethod
+    def from_det_obs_shots(
+        cls,
+        dem: stim.DetectorErrorModel,
+        det_obs_shots: np.ndarray,
+    ) -> "SparseTableDecoder":
+        decoder = cls(dem)
+        decoder.update_det_obs_counts(det_obs_shots)
+        return decoder
+
+    def update_det_obs_counts(self, det_obs_shots: np.ndarray) -> None:
+        shots = np.asarray(det_obs_shots, dtype=np.uint8)
+        expected_width = self.num_detectors + self.num_observables
+        if shots.ndim != 2 or shots.shape[1] != expected_width:
+            raise ValueError(
+                f"Expected det_obs_shots with shape (N, {expected_width}), got {shots.shape}"
+            )
+
+        packed_det = pack_boolean_array(shots[:, : self.num_detectors]).astype(
+            np.uint64
+        )
+        if self.num_observables:
+            packed_obs = pack_boolean_array(
+                shots[:, self.num_detectors : expected_width]
+            ).astype(np.uint64)
+        else:
+            packed_obs = np.zeros(len(shots), dtype=np.uint64)
+
+        pairs = np.column_stack([packed_det, packed_obs])
+        unique_pairs, counts = np.unique(pairs, axis=0, return_counts=True)
+        for row, count in zip(unique_pairs, counts, strict=True):
+            det = int(row[0])
+            obs = int(row[1])
+            detector_counts = self._counts_by_detector.setdefault(det, {})
+            detector_counts[obs] = detector_counts.get(obs, 0) + int(count)
+        self._maximum_likelihood_correction = None
+
+    def cache_correction(self) -> None:
+        if self._maximum_likelihood_correction is not None:
+            return
+        correction: dict[int, int] = {}
+        for det, obs_counts in self._counts_by_detector.items():
+            best_obs = 0
+            best_count = -1
+            for obs, count in obs_counts.items():
+                if count > best_count or (count == best_count and obs < best_obs):
+                    best_obs = int(obs)
+                    best_count = int(count)
+            correction[det] = best_obs
+        self._maximum_likelihood_correction = correction
+
+    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        arr = np.asarray(detector_bits, dtype=np.uint8)
+        self.cache_correction()
+        assert self._maximum_likelihood_correction is not None
+        if arr.ndim == 1:
+            packed = int(pack_boolean_array(arr)[0])
+            obs = self._maximum_likelihood_correction.get(packed, 0)
+            return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
+
+        packed = pack_boolean_array(arr).astype(np.uint64)
+        obs = np.array(
+            [self._maximum_likelihood_correction.get(int(p), 0) for p in packed],
+            dtype=np.uint64,
+        )
+        if self.num_observables == 0:
+            return np.zeros((len(obs), 0), dtype=np.bool_)
+        shifts = np.arange(self.num_observables, dtype=np.uint64).reshape(1, -1)
+        return ((obs.reshape(-1, 1) >> shifts) & 1).astype(np.bool_)
 
 
 def make_layout_only_dem(
@@ -160,6 +275,81 @@ def train_mld_decoder_pair(
         make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1]),
         np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
     )
+    return full_decoder, factory_decoder
+
+
+def _det_obs_arrays_for_chunk(
+    dataset: BasisDataset,
+    *,
+    layout: SyndromeLayout,
+) -> tuple[np.ndarray, np.ndarray]:
+    output_obs = select_output_observables(dataset.observables, layout=layout)
+    anc_det, anc_obs = split_factory_bits(
+        dataset.detectors,
+        dataset.observables,
+        layout=layout,
+    )
+    full_det_obs = np.concatenate([dataset.detectors, output_obs], axis=1).astype(bool)
+    factory_det_obs = np.concatenate([anc_det, anc_obs], axis=1).astype(bool)
+    return full_det_obs, factory_det_obs
+
+
+def train_mld_decoder_pair_from_task(
+    task: Any,
+    shots: int,
+    *,
+    table_decoder_cls: type,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    chunk_size: int | None = 1_000_000,
+    with_noise: bool = True,
+) -> tuple[Any, Any]:
+    chunk_iter = iter_task_datasets(
+        task,
+        shots,
+        with_noise=with_noise,
+        chunk_size=chunk_size,
+    )
+
+    try:
+        first_chunk = next(chunk_iter)
+    except StopIteration as exc:
+        raise ValueError(
+            "Need at least one shot to train an MLD decoder pair."
+        ) from exc
+
+    full_det_obs, factory_det_obs = _det_obs_arrays_for_chunk(
+        first_chunk,
+        layout=layout,
+    )
+    anc_det, anc_obs = split_factory_bits(
+        first_chunk.detectors,
+        first_chunk.observables,
+        layout=layout,
+    )
+
+    full_decoder = table_decoder_cls.from_det_obs_shots(
+        make_layout_only_dem(
+            first_chunk.detectors.shape[1],
+            select_output_observables(
+                first_chunk.observables,
+                layout=layout,
+            ).shape[1],
+        ),
+        full_det_obs,
+    )
+    factory_decoder = table_decoder_cls.from_det_obs_shots(
+        make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1]),
+        factory_det_obs,
+    )
+
+    for chunk in chunk_iter:
+        full_chunk_det_obs, factory_chunk_det_obs = _det_obs_arrays_for_chunk(
+            chunk,
+            layout=layout,
+        )
+        full_decoder.update_det_obs_counts(full_chunk_det_obs)
+        factory_decoder.update_det_obs_counts(factory_chunk_det_obs)
+
     return full_decoder, factory_decoder
 
 
@@ -299,6 +489,170 @@ def estimate_mld_ancilla_scores(
             sign_vector=sign_vector,
             target_bloch=target_bloch,
         )
+    return scores
+
+
+def _accumulate_mld_pattern_counts(
+    pattern_counts: defaultdict[int, np.ndarray],
+    dataset: BasisDataset,
+    *,
+    full_decoder: Any,
+    factory_decoder: Any,
+    packed_targets: set[int],
+    layout: SyndromeLayout,
+) -> int:
+    anc_det, anc_obs = split_factory_bits(
+        dataset.detectors,
+        dataset.observables,
+        layout=layout,
+    )
+    if anc_det.shape[1] == 0:
+        return 0
+
+    packed_full_det = pack_boolean_array(dataset.detectors).astype(np.uint64)
+    packed_anc_det = pack_boolean_array(anc_det).astype(np.uint64)
+    packed_anc_obs = pack_boolean_array(anc_obs).astype(np.uint64)
+    output_bits = np.asarray(dataset.observables[:, 0], dtype=np.uint8).astype(
+        np.uint64
+    )
+
+    grouped = np.column_stack(
+        [packed_anc_det, packed_anc_obs, packed_full_det, output_bits]
+    )
+    unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
+
+    unique_anc_det = np.unique(unique_groups[:, 0])
+    ancilla_decode_cache: dict[int, int] = {}
+    for packed in unique_anc_det.tolist():
+        anc_flip = np.asarray(
+            factory_decoder.decode(
+                unpack_packed_bits(int(packed), anc_det.shape[1]).astype(bool)
+            ),
+            dtype=np.uint8,
+        )
+        ancilla_decode_cache[int(packed)] = (
+            int(pack_boolean_array(anc_flip)[0]) if len(anc_flip) else 0
+        )
+
+    unique_full_det = np.unique(unique_groups[:, 2])
+    full_decode_cache: dict[int, int] = {}
+    for packed in unique_full_det.tolist():
+        full_flip = np.asarray(
+            full_decoder.decode(
+                unpack_packed_bits(int(packed), dataset.detectors.shape[1]).astype(bool)
+            ),
+            dtype=np.uint8,
+        )
+        full_decode_cache[int(packed)] = int(full_flip[0]) if len(full_flip) else 0
+
+    accepted = 0
+    for row, count in zip(unique_groups, group_counts, strict=True):
+        packed_a_det = int(row[0])
+        packed_a_obs = int(row[1])
+        packed_det = int(row[2])
+        output_bit = int(row[3])
+
+        corrected_anc_packed = packed_a_obs ^ ancilla_decode_cache[packed_a_det]
+        if corrected_anc_packed not in packed_targets:
+            continue
+
+        corrected_output_bit = output_bit ^ full_decode_cache[packed_det]
+        pattern_counts[packed_a_det][corrected_output_bit] += int(count)
+        accepted += int(count)
+    return accepted
+
+
+def estimate_mld_ancilla_scores_from_tasks(
+    decoder_by_basis: Mapping[str, tuple[Any, Any]],
+    ranking_tasks_by_basis: Mapping[str, Any],
+    shots: int,
+    *,
+    factory_target: np.ndarray | Sequence[int] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+    sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
+    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    chunk_size: int | None = 1_000_000,
+    with_noise: bool = True,
+) -> np.ndarray:
+    targets = resolve_valid_factory_targets(
+        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
+    )
+    if set(decoder_by_basis) != set(basis_labels):
+        raise ValueError(
+            "Need X/Y/Z decoder pairs to estimate shared MLD postselection scores."
+        )
+    if set(ranking_tasks_by_basis) != set(basis_labels):
+        raise ValueError(
+            "Need X/Y/Z ranking tasks to estimate shared MLD postselection scores."
+        )
+
+    packed_targets = _packed_pattern_targets(targets)
+    corrected_by_pattern = {
+        basis: defaultdict(lambda: np.zeros(2, dtype=np.int64))
+        for basis in basis_labels
+    }
+    ancilla_detectors: int | None = None
+
+    for basis in basis_labels:
+        full_decoder, factory_decoder = decoder_by_basis[basis]
+        for dataset in iter_task_datasets(
+            ranking_tasks_by_basis[basis],
+            shots,
+            with_noise=with_noise,
+            chunk_size=chunk_size,
+        ):
+            anc_det, _ = split_factory_bits(
+                dataset.detectors,
+                dataset.observables,
+                layout=layout,
+            )
+            if ancilla_detectors is None:
+                ancilla_detectors = anc_det.shape[1]
+            elif ancilla_detectors != anc_det.shape[1]:
+                raise ValueError(
+                    "Inconsistent ancilla detector counts across MLD ranking tasks."
+                )
+            _accumulate_mld_pattern_counts(
+                corrected_by_pattern[basis],
+                dataset,
+                full_decoder=full_decoder,
+                factory_decoder=factory_decoder,
+                packed_targets=packed_targets,
+                layout=layout,
+            )
+
+    assert ancilla_detectors is not None
+    scores = np.full(1 << ancilla_detectors, np.nan, dtype=np.float64)
+    all_patterns = set()
+    for basis in basis_labels:
+        all_patterns.update(corrected_by_pattern[basis].keys())
+
+    for packed in all_patterns:
+        counts_x = corrected_by_pattern["X"].get(packed)
+        counts_y = corrected_by_pattern["Y"].get(packed)
+        counts_z = corrected_by_pattern["Z"].get(packed)
+        if counts_x is None or counts_y is None or counts_z is None:
+            continue
+        if (
+            min(int(np.sum(counts_x)), int(np.sum(counts_y)), int(np.sum(counts_z)))
+            == 0
+        ):
+            continue
+        scores[packed] = fidelity_from_zero_one_counts(
+            int(counts_x[0]),
+            int(counts_x[1]),
+            int(counts_y[0]),
+            int(counts_y[1]),
+            int(counts_z[0]),
+            int(counts_z[1]),
+            posterior_samples=1,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            uncertainty_backend="wilson",
+        )["point"]
     return scores
 
 

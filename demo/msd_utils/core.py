@@ -280,6 +280,33 @@ def normalize_observable_frame(task: Any, dataset: BasisDataset) -> BasisDataset
     return rebase_dataset_observables(dataset, reference)
 
 
+def iter_task_datasets(
+    task: Any,
+    shots: int,
+    *,
+    with_noise: bool = True,
+    chunk_size: int | None = 1_000_000,
+):
+    remaining = int(shots)
+    if remaining < 0:
+        raise ValueError("shots must be non-negative.")
+    if remaining == 0:
+        return
+
+    if chunk_size is None:
+        chunk_size = remaining
+
+    while remaining > 0:
+        batch = min(int(chunk_size), remaining)
+        result = task.run(batch, with_noise=with_noise, run_detectors=True)
+        dataset = BasisDataset(
+            detectors=np.asarray(result.detectors, dtype=np.uint8),
+            observables=np.asarray(result.observables, dtype=np.uint8),
+        )
+        yield normalize_observable_frame(task, dataset)
+        remaining -= batch
+
+
 def run_task(
     task: Any,
     shots: int,

@@ -13,6 +13,7 @@ from demo.msd_utils.circuits import (
     build_decoder_kernel_bundle,
     build_naive_kernel_bundle,
 )
+from demo.msd_utils.common import SyndromeLayout
 from demo.msd_utils.core import (
     BasisDataset,
     fidelity_from_counts,
@@ -21,10 +22,14 @@ from demo.msd_utils.core import (
 )
 from demo.msd_utils.decoders import (
     DecoderAdapter,
+    SparseTableDecoder,
     build_mle_decoders,
+    estimate_mld_ancilla_scores,
+    estimate_mld_ancilla_scores_from_tasks,
     evaluate_curve,
     evaluate_mld_curve,
     train_mld_decoder_pair,
+    train_mld_decoder_pair_from_task,
 )
 
 
@@ -127,6 +132,28 @@ class _FakeTask:
     detector_error_model = object()
 
 
+class _ChunkResult:
+    def __init__(self, detectors: np.ndarray, observables: np.ndarray):
+        self.detectors = detectors.tolist()
+        self.observables = observables.tolist()
+
+
+class _ChunkTask:
+    def __init__(self, dataset: BasisDataset):
+        self._dataset = dataset
+        self._offset = 0
+
+    def run(self, shots: int, with_noise: bool = True, *, run_detectors: bool = False):
+        assert run_detectors
+        start = self._offset
+        stop = start + int(shots)
+        self._offset = stop
+        return _ChunkResult(
+            self._dataset.detectors[start:stop],
+            self._dataset.observables[start:stop],
+        )
+
+
 def test_build_mle_decoders_supports_newer_and_older_decoder_apis(monkeypatch):
     monkeypatch.setattr(
         "demo.msd_utils.decoders.detector_error_model_to_check_matrices",
@@ -146,6 +173,103 @@ def test_build_mle_decoders_supports_newer_and_older_decoder_apis(monkeypatch):
     _, score_old = adapter_old.decode_factory("0")
     assert adapter_old.factory_score_mode == "weight"
     assert score_old == pytest.approx(0.75)
+
+
+def test_streaming_sparse_mld_decoder_pair_matches_batch():
+    layout = SyndromeLayout(output_detector_count=1, output_observable_count=1)
+    dataset = BasisDataset(
+        detectors=np.array(
+            [
+                [0, 0, 0],
+                [0, 0, 1],
+                [1, 0, 0],
+                [1, 1, 0],
+                [1, 1, 1],
+                [0, 1, 1],
+            ],
+            dtype=np.uint8,
+        ),
+        observables=np.array(
+            [
+                [0, 0],
+                [1, 1],
+                [0, 1],
+                [1, 0],
+                [1, 1],
+                [0, 0],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+
+    batch_full, batch_factory = train_mld_decoder_pair(
+        dataset,
+        table_decoder_cls=SparseTableDecoder,
+        layout=layout,
+    )
+    stream_full, stream_factory = train_mld_decoder_pair_from_task(
+        _ChunkTask(dataset),
+        len(dataset.detectors),
+        table_decoder_cls=SparseTableDecoder,
+        layout=layout,
+        chunk_size=2,
+    )
+
+    test_full = np.array(
+        [[0, 0, 0], [0, 0, 1], [1, 1, 0], [1, 1, 1]],
+        dtype=np.uint8,
+    )
+    test_factory = test_full[:, 1:]
+    assert np.array_equal(batch_full.decode(test_full), stream_full.decode(test_full))
+    assert np.array_equal(
+        batch_factory.decode(test_factory),
+        stream_factory.decode(test_factory),
+    )
+
+
+def test_streaming_mld_ancilla_scores_match_batch():
+    layout = SyndromeLayout(output_detector_count=1, output_observable_count=1)
+
+    def make_dataset(seed: int) -> BasisDataset:
+        rng = np.random.default_rng(seed)
+        detectors = rng.integers(0, 2, size=(32, 3), dtype=np.uint8)
+        observables = np.zeros((32, 2), dtype=np.uint8)
+        observables[:, 0] = rng.integers(0, 2, size=32, dtype=np.uint8)
+        observables[:, 1] = detectors[:, 2]
+        return BasisDataset(detectors=detectors, observables=observables)
+
+    ranking_data = {basis: make_dataset(i) for i, basis in enumerate("XYZ", start=1)}
+    decoder_pairs = {
+        basis: train_mld_decoder_pair(
+            dataset,
+            table_decoder_cls=SparseTableDecoder,
+            layout=layout,
+        )
+        for basis, dataset in ranking_data.items()
+    }
+
+    batch_scores = estimate_mld_ancilla_scores(
+        decoder_pairs,
+        ranking_data,
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
+        basis_labels=("X", "Y", "Z"),
+        sign_vector=(1.0, -1.0, 1.0),
+        target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
+        layout=layout,
+    )
+    streamed_scores = estimate_mld_ancilla_scores_from_tasks(
+        decoder_pairs,
+        {basis: _ChunkTask(dataset) for basis, dataset in ranking_data.items()},
+        32,
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
+        basis_labels=("X", "Y", "Z"),
+        sign_vector=(1.0, -1.0, 1.0),
+        target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
+        layout=layout,
+        chunk_size=7,
+    )
+
+    assert np.allclose(batch_scores, streamed_scores, equal_nan=True)
 
 
 def test_evaluate_curve_returns_monotone_acceptance():
