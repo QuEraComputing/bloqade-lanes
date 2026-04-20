@@ -549,3 +549,37 @@ def test_congestion_aware_dedups_with_default_on_symmetric_stage():
     assert (
         call_count["n"] <= 1
     ), f"expected at most 1 search call after dedup, got {call_count['n']}"
+
+
+def test_congestion_aware_applies_to_rust_traversal():
+    """Plugin applies identically under RustPlacementTraversal; both
+    traversals complete with ExecuteCZ for a simple stage.
+    """
+    from bloqade.lanes.analysis.placement import ConcreteState, ExecuteCZ
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.heuristics.physical import (
+        CongestionAwareTargetGenerator,
+        EntropyPlacementTraversal,
+        PhysicalPlacementStrategy,
+        RustPlacementTraversal,
+    )
+
+    arch = get_arch_spec()
+    loc0, loc1 = _pick_cz_pair_integration(arch)
+
+    for traversal in (
+        EntropyPlacementTraversal(),
+        RustPlacementTraversal(),
+    ):
+        strategy = PhysicalPlacementStrategy(
+            arch_spec=arch,
+            traversal=traversal,
+            target_generator=CongestionAwareTargetGenerator(),
+        )
+        state = ConcreteState(
+            occupied=frozenset(), layout=(loc0, loc1), move_count=(0, 0)
+        )
+        result = strategy.cz_placements(state, controls=(0,), targets=(1,))
+        assert isinstance(
+            result, ExecuteCZ
+        ), f"{type(traversal).__name__} did not produce ExecuteCZ"
