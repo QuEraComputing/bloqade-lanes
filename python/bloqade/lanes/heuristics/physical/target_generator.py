@@ -10,6 +10,7 @@ entirely to the default.
 from __future__ import annotations
 
 import abc
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -293,9 +294,30 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     def _sort_pairs_longest_first(
         self, ctx: TargetContext, pf: layout.PathFinder
     ) -> list[tuple[int, int]]:
-        # Placeholder: return in original order.
-        # Task 6 replaces this with real sorting.
-        return list(zip(ctx.controls, ctx.targets))
+        placement = ctx.placement
+        arch = ctx.arch_spec
+
+        def score(pair: tuple[int, int]) -> float:
+            ctrl, tgt = pair
+            ctrl_loc = placement[ctrl]
+            tgt_loc = placement[tgt]
+            ctrl_partner = arch.get_cz_partner(tgt_loc)
+            tgt_partner = arch.get_cz_partner(ctrl_loc)
+            assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
+            assert (
+                tgt_partner is not None
+            ), f"No CZ partner for qid={ctrl} at {ctrl_loc}"
+            occ_ctrl = frozenset(loc for q, loc in placement.items() if q != ctrl)
+            occ_tgt = frozenset(loc for q, loc in placement.items() if q != tgt)
+            p_ctrl = pf.find_path(ctrl_loc, ctrl_partner, occupied=occ_ctrl)
+            p_tgt = pf.find_path(tgt_loc, tgt_partner, occupied=occ_tgt)
+            c_ctrl = _sum_base(p_ctrl, pf) if p_ctrl is not None else math.inf
+            c_tgt = _sum_base(p_tgt, pf) if p_tgt is not None else math.inf
+            return min(c_ctrl, c_tgt)
+
+        pairs = list(zip(ctx.controls, ctx.targets))
+        pairs.sort(key=score, reverse=True)
+        return pairs
 
     def _commit_pair(
         self,

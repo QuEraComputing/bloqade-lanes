@@ -204,3 +204,58 @@ def test_generate_already_partnered_pair_is_noop(arch):
     ctx = _ctx(arch, (loc0, loc1), controls=(0,), targets=(1,))
     out = CongestionAwareTargetGenerator().generate(ctx)
     assert out == [{0: loc0, 1: loc1}]
+
+
+def _find_two_distinct_cost_pairs(arch):
+    """Scan home_sites for two CZ-partnered pairs with different
+    uncongested path costs. Returns ((short_pair, short_cost),
+    (long_pair, long_cost)) or None if arch doesn't support this.
+    """
+    pf = layout.PathFinder(arch)
+    candidates: list[tuple[layout.LocationAddress, layout.LocationAddress, float]] = []
+    seen: set[frozenset[layout.LocationAddress]] = set()
+    for s in arch.home_sites:
+        p = arch.get_cz_partner(s)
+        if p is None or p == s:
+            continue
+        key = frozenset({s, p})
+        if key in seen:
+            continue
+        seen.add(key)
+        path = pf.find_path(s, p)
+        if path is None:
+            continue
+        candidates.append((s, p, _sum_base(path, pf)))
+    if len(candidates) < 2:
+        return None
+    costs = sorted(candidates, key=lambda t: t[2])
+    if costs[0][2] == costs[-1][2]:
+        return None
+    return costs[0], costs[-1]
+
+
+def test_sort_longest_first_orders_by_descending_uncongested_min_cost(arch):
+    """Construct two pairs with different uncongested shortest-path
+    cost; verify the longer pair sorts first.
+    """
+    picked = _find_two_distinct_cost_pairs(arch)
+    if picked is None:
+        pytest.skip(
+            "physical arch has no two CZ-partnered pairs with distinct path costs; "
+            "replace with a tiny arch_builder fixture if this test is re-enabled "
+            "(follow-up issue)"
+        )
+    (loc_short, partner_short, _), (loc_long, partner_long, _) = picked
+    ctx = _ctx(
+        arch,
+        (loc_short, partner_short, loc_long, partner_long),
+        controls=(0, 2),
+        targets=(1, 3),
+    )
+    sorted_pairs = CongestionAwareTargetGenerator()._sort_pairs_longest_first(
+        ctx, layout.PathFinder(arch)
+    )
+    assert sorted_pairs[0] == (
+        2,
+        3,
+    ), f"longest-first expected (2,3) first, got {sorted_pairs}"
