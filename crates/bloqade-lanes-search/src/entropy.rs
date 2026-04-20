@@ -15,10 +15,11 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
-use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use crate::aod_grid::BusGridContext;
 use crate::astar::SearchResult;
 use crate::config::Config;
 use crate::context::SearchContext;
@@ -332,7 +333,7 @@ pub(crate) fn generate_candidates(
     debug_assert!(m_ref >= 1.0, "m_ref must be >= 1.0 (fold seed)");
 
     // Apply entropy-weighted formula and build scored entries.
-    let mut all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
+    let all_scores: Vec<(TripletKey, ScoredEntry)> = raw_deltas
         .into_iter()
         .map(|(key, qid, delta_d, delta_m, lane_enc, dst_enc)| {
             let d_hat = delta_d / d_ref;
@@ -351,28 +352,13 @@ pub(crate) fn generate_candidates(
         })
         .collect();
 
-    // Step 3: per qubit, keep top C.
-    let mut per_qubit: BTreeMap<u32, Vec<(TripletKey, ScoredEntry)>> = BTreeMap::new();
-    for entry in all_scores.drain(..) {
-        per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
-    }
-
-    let mut selected: Vec<(TripletKey, ScoredEntry)> = Vec::new();
-    let mut has_positive = false;
-
-    for entries in per_qubit.values_mut() {
-        entries.sort_by(cmp_scored_entries);
-        entries.truncate(params.top_c);
-        for e in entries.drain(..) {
-            if e.1.score > 0.0 {
-                has_positive = true;
-            }
-            selected.push(e);
-        }
-    }
+    // Step 3: keep all positive-scoring entries (Python parity).
+    // If none are positive, keep only the single best entry as fallback.
+    let mut selected: Vec<(TripletKey, ScoredEntry)> = all_scores;
+    let has_positive = selected.iter().any(|e| e.1.score > 0.0);
+    selected.sort_by(cmp_scored_entries);
 
     if !has_positive {
-        selected.sort_by(cmp_scored_entries);
         selected.truncate(1);
     } else {
         selected.retain(|e| e.1.score > 0.0);
@@ -384,41 +370,79 @@ pub(crate) fn generate_candidates(
         groups.entry(key).or_default().push(entry);
     }
 
-    // Step 5: per group, generate movesets (greedy by score, rotating start).
+    // Step 5: per group, build AOD-compatible rectangular grids.
     let mut candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
 
-    for (_key, mut qubits) in groups {
+    for ((mt_u8, bus_id, dir_u8), mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
-        let n = qubits.len().min(params.max_movesets_per_group);
+        let mt = match mt_u8 {
+            x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
+            x if x == MoveType::WordBus as u8 => MoveType::WordBus,
+            x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
+            _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
+        };
+        let dir = match dir_u8 {
+            x if x == Direction::Forward as u8 => Direction::Forward,
+            x if x == Direction::Backward as u8 => Direction::Backward,
+            _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
+        };
 
-        for start in 0..n {
-            let mut lanes: Vec<u64> = Vec::new();
+        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
+
+        let mut entries: HashMap<u64, u64> = HashMap::new();
+        let mut entry_by_lane: HashMap<u64, &ScoredEntry> = HashMap::new();
+        for t in &qubits {
+            let lane = LaneAddr::decode_u64(t.lane_encoded);
+            if let Some((src, _)) = ctx.index.endpoints(&lane) {
+                let src_enc = src.encode();
+                entries.insert(src_enc, t.lane_encoded);
+                entry_by_lane.insert(t.lane_encoded, t);
+            }
+        }
+
+        let grids = grid_ctx.build_aod_grids(&entries);
+        let mut group_candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
+        for grid_lanes in grids {
+            let mut total_score = 0.0;
             let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
-            let mut used_dsts: HashSet<u64> = HashSet::new();
-            let mut total_score: f64 = 0.0;
 
-            let order: Vec<usize> = (start..qubits.len()).chain(0..start).collect();
-            for &idx in &order {
-                let t = &qubits[idx];
-                if used_dsts.contains(&t.dst_encoded) || occupied.contains(&t.dst_encoded) {
-                    continue;
+            for &lane_enc in &grid_lanes {
+                if let Some(t) = entry_by_lane.get(&lane_enc) {
+                    total_score += t.score;
+                    moves.push((t.qubit_id, LocationAddr::decode(t.dst_encoded)));
                 }
-                lanes.push(t.lane_encoded);
-                used_dsts.insert(t.dst_encoded);
-                total_score += t.score;
-                moves.push((t.qubit_id, LocationAddr::decode(t.dst_encoded)));
             }
 
-            if lanes.is_empty() {
+            if moves.is_empty() {
                 continue;
             }
 
-            let move_set = MoveSet::from_encoded(lanes);
-            if candidates.iter().any(|(_, ms, _)| *ms == move_set) {
-                continue;
-            }
+            let move_set = MoveSet::from_encoded(grid_lanes);
             let new_config = config.with_moves(&moves);
-            candidates.push((total_score, move_set, new_config));
+            if group_candidates
+                .iter()
+                .any(|(_, existing, _)| *existing == move_set)
+            {
+                continue;
+            }
+            group_candidates.push((total_score, move_set, new_config));
+        }
+
+        group_candidates.sort_by(cmp_scored_candidates);
+        if params.max_movesets_per_group > 0 {
+            group_candidates.truncate(params.max_movesets_per_group);
+        } else {
+            group_candidates.clear();
+        }
+
+        for candidate in group_candidates {
+            if candidates
+                .iter()
+                .any(|(_, existing, _)| existing == &candidate.1)
+            {
+                continue;
+            }
+            candidates.push(candidate);
         }
     }
 
@@ -1046,6 +1070,93 @@ mod tests {
         for ((ms_a, cfg_a, _), (ms_b, cfg_b, _)) in out1.iter().zip(out2.iter()) {
             assert_eq!(ms_a, ms_b);
             assert_eq!(cfg_a.as_entries(), cfg_b.as_entries());
+        }
+    }
+
+    #[test]
+    fn generate_candidates_respects_zero_movesets_per_group() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+        let target_encoded = vec![(0u32, loc(0, 5).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+        };
+        let params = EntropyParams {
+            max_movesets_per_group: 0,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn generate_candidates_emit_aod_rectangles() {
+        let index = make_index();
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        let target_encoded = vec![(0u32, loc(0, 5).encode()), (1u32, loc(0, 6).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+        };
+        let params = EntropyParams {
+            top_c: 4,
+            max_movesets_per_group: 4,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+        assert!(!out.is_empty());
+
+        let mut occupied = HashSet::new();
+        for (_, loc) in config.iter() {
+            occupied.insert(loc.encode());
+        }
+
+        for (moveset, _, _) in out {
+            let lanes = moveset.decode();
+            if lanes.is_empty() {
+                continue;
+            }
+            let first = lanes[0];
+            let grid_ctx = BusGridContext::new(
+                &index,
+                first.move_type,
+                first.bus_id,
+                None,
+                first.direction,
+                &occupied,
+            );
+
+            let mut entries: HashMap<u64, u64> = HashMap::new();
+            for lane in &lanes {
+                assert_eq!(lane.move_type, first.move_type);
+                assert_eq!(lane.bus_id, first.bus_id);
+                assert_eq!(lane.direction, first.direction);
+                let (src, _) = index.endpoints(lane).expect("lane endpoints must exist");
+                entries.insert(src.encode(), lane.encode_u64());
+            }
+
+            let grids = grid_ctx.build_aod_grids(&entries);
+            let expected = moveset.encoded_lanes().to_vec();
+            assert!(
+                grids.into_iter().any(|grid| {
+                    let candidate = MoveSet::from_encoded(grid);
+                    candidate.encoded_lanes() == expected.as_slice()
+                }),
+                "moveset must be directly reproducible via AOD grid builder"
+            );
         }
     }
 }
