@@ -10,6 +10,7 @@ from bloqade.lanes.heuristics.physical.movement import (
     RustPlacementTraversal,
 )
 from bloqade.lanes.heuristics.physical.target_generator import (
+    CongestionAwareTargetGenerator,
     DefaultTargetGenerator,
     TargetContext,
     TargetGeneratorABC,
@@ -17,6 +18,7 @@ from bloqade.lanes.heuristics.physical.target_generator import (
 
 __all__ = [
     "BFSPlacementTraversal",
+    "CongestionAwareTargetGenerator",
     "DefaultTargetGenerator",
     "EntropyPlacementTraversal",
     "GreedyPlacementTraversal",
