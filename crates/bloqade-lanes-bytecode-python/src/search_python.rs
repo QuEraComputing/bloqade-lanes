@@ -155,6 +155,7 @@ impl PyMoveSolver {
     ///     strategy: Search strategy string.
     ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
     ///     max_movesets_per_group: Max movesets per bus group (default 3).
+    ///     max_goal_candidates: Number of goal candidates to collect in entropy search (default 3).
     ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
     ///     lookahead: Enable 2-step lookahead scoring.
@@ -163,7 +164,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -175,6 +176,7 @@ impl PyMoveSolver {
         strategy: &str,
         top_c: usize,
         max_movesets_per_group: usize,
+        max_goal_candidates: usize,
         weight: f64,
         restarts: u32,
         lookahead: bool,
@@ -279,6 +281,7 @@ impl PyMoveSolver {
             strategy: strat,
             top_c,
             max_movesets_per_group,
+            max_goal_candidates,
             weight,
             restarts,
             lookahead,

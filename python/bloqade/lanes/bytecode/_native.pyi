@@ -985,6 +985,7 @@ class MoveSolver:
         ] = "astar",
         top_c: int = 3,
         max_movesets_per_group: int = 3,
+        max_goal_candidates: int = 3,
         weight: float = 1.0,
         restarts: int = 1,
         lookahead: bool = False,
@@ -1001,6 +1002,7 @@ class MoveSolver:
             strategy: Search strategy string.
             top_c: Top bus options per qubit in the heuristic expander.
             max_movesets_per_group: Max movesets per bus group.
+            max_goal_candidates: Number of goal candidates to collect in entropy search.
             weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
             restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
             lookahead: Enable 2-step lookahead scoring.

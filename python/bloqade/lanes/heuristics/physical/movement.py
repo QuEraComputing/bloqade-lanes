@@ -195,6 +195,7 @@ class RustPlacementTraversal:
     ] = "astar"
     top_c: int = 3
     max_movesets_per_group: int = 3
+    max_goal_candidates: int = 3
     max_expansions: int | None = 300
 
 
@@ -438,6 +439,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 strategy=self.traversal.strategy,
                 top_c=self.traversal.top_c,
                 max_movesets_per_group=self.traversal.max_movesets_per_group,
+                max_goal_candidates=self.traversal.max_goal_candidates,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:

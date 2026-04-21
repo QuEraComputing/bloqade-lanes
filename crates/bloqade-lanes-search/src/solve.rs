@@ -101,6 +101,8 @@ pub struct SolveOptions {
     pub top_c: usize,
     /// Max movesets generated per bus group.
     pub max_movesets_per_group: usize,
+    /// Number of goal candidates to collect before stopping entropy search.
+    pub max_goal_candidates: usize,
     /// Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     pub weight: f64,
     /// Number of parallel restarts with perturbed scoring (1 = no restarts).
@@ -119,6 +121,7 @@ impl Default for SolveOptions {
             strategy: Strategy::AStar,
             top_c: 3,
             max_movesets_per_group: 3,
+            max_goal_candidates: 3,
             weight: 1.0,
             restarts: 1,
             lookahead: false,
@@ -198,6 +201,7 @@ impl MoveSolver {
             strategy,
             top_c,
             max_movesets_per_group,
+            max_goal_candidates,
             weight,
             restarts,
             lookahead,
@@ -336,6 +340,7 @@ impl MoveSolver {
                     let entropy_params = crate::entropy::EntropyParams {
                         top_c,
                         max_movesets_per_group,
+                        max_goal_candidates,
                         lookahead,
                         w_t,
                         ..crate::entropy::EntropyParams::default()

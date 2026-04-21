@@ -189,6 +189,11 @@ pub(crate) fn generate_candidates(
     ctx: &SearchContext,
     seed: u64,
 ) -> Vec<(MoveSet, Config, f64)> {
+    assert!(
+        params.max_movesets_per_group > 0,
+        "max_movesets_per_group must be > 0"
+    );
+
     let index = ctx.index;
     let dist_table = ctx.dist_table;
     let targets = ctx.targets;
@@ -354,15 +359,16 @@ pub(crate) fn generate_candidates(
 
     // Step 3: keep all positive-scoring entries (Python parity).
     // If none are positive, keep only the single best entry as fallback.
-    let mut selected: Vec<(TripletKey, ScoredEntry)> = all_scores;
-    let has_positive = selected.iter().any(|e| e.1.score > 0.0);
-    selected.sort_by(cmp_scored_entries);
-
-    if !has_positive {
-        selected.truncate(1);
+    let has_positive = all_scores.iter().any(|e| e.1.score > 0.0);
+    let selected: Vec<(TripletKey, ScoredEntry)> = if has_positive {
+        all_scores.into_iter().filter(|e| e.1.score > 0.0).collect()
     } else {
-        selected.retain(|e| e.1.score > 0.0);
-    }
+        all_scores
+            .into_iter()
+            .min_by(cmp_scored_entries)
+            .into_iter()
+            .collect()
+    };
 
     // Step 4: group by bus triplet.
     let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
@@ -429,11 +435,7 @@ pub(crate) fn generate_candidates(
         }
 
         group_candidates.sort_by(cmp_scored_candidates);
-        if params.max_movesets_per_group > 0 {
-            group_candidates.truncate(params.max_movesets_per_group);
-        } else {
-            group_candidates.clear();
-        }
+        group_candidates.truncate(params.max_movesets_per_group);
 
         for candidate in group_candidates {
             if candidates
@@ -1074,7 +1076,8 @@ mod tests {
     }
 
     #[test]
-    fn generate_candidates_respects_zero_movesets_per_group() {
+    #[should_panic(expected = "max_movesets_per_group must be > 0")]
+    fn generate_candidates_rejects_zero_movesets_per_group() {
         let index = make_index();
         let config = Config::new([(0, loc(0, 0))]).unwrap();
         let target_encoded = vec![(0u32, loc(0, 5).encode())];
@@ -1092,8 +1095,7 @@ mod tests {
             ..EntropyParams::default()
         };
 
-        let out = generate_candidates(&config, 1, &params, &ctx, 0);
-        assert!(out.is_empty());
+        let _ = generate_candidates(&config, 1, &params, &ctx, 0);
     }
 
     #[test]
