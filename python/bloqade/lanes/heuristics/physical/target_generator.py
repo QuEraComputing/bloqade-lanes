@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import abc
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.layout import LocationAddress, MoveType
+
+_PairSide = Literal["ctrl", "tgt"]
+_Path = tuple[tuple[layout.LaneAddress, ...], tuple[layout.LocationAddress, ...]]
 
 
 @dataclass(frozen=True)
@@ -158,29 +161,66 @@ def _lane_key(lane: layout.LaneAddress) -> _LaneKey:
     )
 
 
-def _sum_base(
-    path: tuple[
-        tuple[layout.LaneAddress, ...],
-        tuple[layout.LocationAddress, ...],
-    ],
-    pf: layout.PathFinder,
-) -> float:
+def _sum_base(path: _Path, pf: layout.PathFinder) -> float:
     """Sum of base (no-penalty) lane-duration cost over a path's lanes."""
     return sum(pf.metrics.get_lane_duration_cost(lane) for lane in path[0])
 
 
 def _sum_weighted(
-    path: tuple[
-        tuple[layout.LaneAddress, ...],
-        tuple[layout.LocationAddress, ...],
-    ],
-    weight_fn: Callable[[layout.LaneAddress], float],
+    path: _Path, weight_fn: Callable[[layout.LaneAddress], float]
 ) -> float:
     """Sum of `weight_fn(lane)` over a path's lanes.
 
     Returns 0.0 for zero-length paths (empty lane tuple).
     """
     return sum(weight_fn(lane) for lane in path[0])
+
+
+def _probe_pair(
+    arch_spec: layout.ArchSpec,
+    pf: layout.PathFinder,
+    placement: Mapping[int, layout.LocationAddress],
+    ctrl: int,
+    tgt: int,
+    edge_weight: Callable[[layout.LaneAddress], float] | None = None,
+) -> tuple[
+    layout.LocationAddress,
+    layout.LocationAddress,
+    _Path | None,
+    _Path | None,
+]:
+    """Compute CZ partners and the two candidate paths for pair ``(ctrl, tgt)``.
+
+    Returns ``(ctrl_partner, tgt_partner, path_ctrl, path_tgt)``. The
+    control-direction path moves ``ctrl`` to ``ctrl_partner``; the
+    target-direction path moves ``tgt`` to ``tgt_partner``. Each path
+    is ``None`` if infeasible under the current occupancy.
+
+    Locations are unique per placement (one atom per site), so the
+    occupancy frozensets can be derived by set difference from a single
+    shared base set rather than re-iterating placement per direction.
+    """
+    ctrl_loc = placement[ctrl]
+    tgt_loc = placement[tgt]
+    ctrl_partner = arch_spec.get_cz_partner(tgt_loc)
+    tgt_partner = arch_spec.get_cz_partner(ctrl_loc)
+    assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
+    assert tgt_partner is not None, f"No CZ partner for qid={ctrl} at {ctrl_loc}"
+
+    occupied_all = frozenset(placement.values())
+    path_ctrl = pf.find_path(
+        ctrl_loc,
+        ctrl_partner,
+        occupied=occupied_all - {ctrl_loc},
+        edge_weight=edge_weight,
+    )
+    path_tgt = pf.find_path(
+        tgt_loc,
+        tgt_partner,
+        occupied=occupied_all - {tgt_loc},
+        edge_weight=edge_weight,
+    )
+    return ctrl_partner, tgt_partner, path_ctrl, path_tgt
 
 
 def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) -> bool:
@@ -322,7 +362,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         for ctrl, tgt in pairs:
             result = self._commit_pair(state, ctrl, tgt)
             if result is None:
-                return []  # both directions infeasible -> fallback to default
+                return []
             mover, new_loc, chosen = result
             state.working[mover] = new_loc
             for lane in chosen[0]:
@@ -339,18 +379,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
 
         def score(pair: tuple[int, int]) -> float:
             ctrl, tgt = pair
-            ctrl_loc = placement[ctrl]
-            tgt_loc = placement[tgt]
-            ctrl_partner = arch.get_cz_partner(tgt_loc)
-            tgt_partner = arch.get_cz_partner(ctrl_loc)
-            assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
-            assert (
-                tgt_partner is not None
-            ), f"No CZ partner for qid={ctrl} at {ctrl_loc}"
-            occ_ctrl = frozenset(loc for q, loc in placement.items() if q != ctrl)
-            occ_tgt = frozenset(loc for q, loc in placement.items() if q != tgt)
-            p_ctrl = pf.find_path(ctrl_loc, ctrl_partner, occupied=occ_ctrl)
-            p_tgt = pf.find_path(tgt_loc, tgt_partner, occupied=occ_tgt)
+            _, _, p_ctrl, p_tgt = _probe_pair(arch, pf, placement, ctrl, tgt)
             c_ctrl = _sum_base(p_ctrl, pf) if p_ctrl is not None else math.inf
             c_tgt = _sum_base(p_tgt, pf) if p_tgt is not None else math.inf
             return min(c_ctrl, c_tgt)
@@ -364,35 +393,17 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         state: _GenerateState,
         ctrl: int,
         tgt: int,
-    ) -> (
-        tuple[
-            int,
-            layout.LocationAddress,
-            tuple[
-                tuple[layout.LaneAddress, ...],
-                tuple[layout.LocationAddress, ...],
-            ],
-        ]
-        | None
-    ):
-        ctrl_loc = state.working[ctrl]
-        tgt_loc = state.working[tgt]
-        ctrl_partner = state.arch_spec.get_cz_partner(tgt_loc)
-        tgt_partner = state.arch_spec.get_cz_partner(ctrl_loc)
-        assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
-        assert tgt_partner is not None, f"No CZ partner for qid={ctrl} at {ctrl_loc}"
-
-        occ_ctrl = frozenset(loc for q, loc in state.working.items() if q != ctrl)
-        occ_tgt = frozenset(loc for q, loc in state.working.items() if q != tgt)
-
+    ) -> tuple[int, layout.LocationAddress, _Path] | None:
         weight = _make_weight_fn(
             state.pf, state.committed_lanes, state.committed_sites, self
         )
-        path_ctrl = state.pf.find_path(
-            ctrl_loc, ctrl_partner, occupied=occ_ctrl, edge_weight=weight
-        )
-        path_tgt = state.pf.find_path(
-            tgt_loc, tgt_partner, occupied=occ_tgt, edge_weight=weight
+        ctrl_partner, tgt_partner, path_ctrl, path_tgt = _probe_pair(
+            state.arch_spec,
+            state.pf,
+            state.working,
+            ctrl,
+            tgt,
+            edge_weight=weight,
         )
 
         cost_ctrl = _sum_weighted(path_ctrl, weight) if path_ctrl else math.inf
@@ -418,15 +429,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
 _AODSig = tuple[MoveType, int, int, layout.Direction]
 
 
-def _first_hop_sig(
-    path: (
-        tuple[
-            tuple[layout.LaneAddress, ...],
-            tuple[layout.LocationAddress, ...],
-        ]
-        | None
-    ),
-) -> _AODSig | None:
+def _first_hop_sig(path: _Path | None) -> _AODSig | None:
     """Signature of a path's first hop. ``None`` if the path is missing or empty.
 
     An empty path means the qubit is already at its destination — no
@@ -471,28 +474,20 @@ class AODClusterTargetGenerator(TargetGeneratorABC):
         pf = layout.PathFinder(ctx.arch_spec)
         pairs = list(zip(ctx.controls, ctx.targets))
 
-        # Classification pass. A pair is either:
-        #  - forced to one direction (other infeasible, or other path empty);
-        #  - contributing two (pair_idx, direction, sig) entries to buckets.
-        forced: dict[int, str] = {}
+        # One entry per pair: chosen side (or None = still to be decided),
+        # the two partner locations to commit against, and — for pairs
+        # still in the greedy pool — their two candidate signatures.
+        decisions: list[_PairSide | None] = [None] * len(pairs)
         partners: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
-        bucket_entries: list[tuple[int, str, _AODSig]] = []
+        pair_sigs: dict[int, tuple[_AODSig, _AODSig]] = {}
+        buckets: dict[_AODSig, list[tuple[int, _PairSide]]] = {}
+        live_count: dict[_AODSig, int] = {}
 
         for i, (ctrl, tgt) in enumerate(pairs):
-            ctrl_loc = placement[ctrl]
-            tgt_loc = placement[tgt]
-            ctrl_partner = ctx.arch_spec.get_cz_partner(tgt_loc)
-            tgt_partner = ctx.arch_spec.get_cz_partner(ctrl_loc)
-            assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
-            assert (
-                tgt_partner is not None
-            ), f"No CZ partner for qid={ctrl} at {ctrl_loc}"
+            ctrl_partner, tgt_partner, path_ctrl, path_tgt = _probe_pair(
+                ctx.arch_spec, pf, placement, ctrl, tgt
+            )
             partners.append((ctrl_partner, tgt_partner))
-
-            occ_ctrl = frozenset(loc for q, loc in placement.items() if q != ctrl)
-            occ_tgt = frozenset(loc for q, loc in placement.items() if q != tgt)
-            path_ctrl = pf.find_path(ctrl_loc, ctrl_partner, occupied=occ_ctrl)
-            path_tgt = pf.find_path(tgt_loc, tgt_partner, occupied=occ_tgt)
 
             sig_c = _first_hop_sig(path_ctrl)
             sig_t = _first_hop_sig(path_tgt)
@@ -500,62 +495,57 @@ class AODClusterTargetGenerator(TargetGeneratorABC):
             tgt_feasible = path_tgt is not None
 
             if not ctrl_feasible and not tgt_feasible:
-                return []  # defer to Default
+                return []
             if not ctrl_feasible:
-                forced[i] = "tgt"
+                decisions[i] = "tgt"
                 continue
             if not tgt_feasible:
-                forced[i] = "ctrl"
+                decisions[i] = "ctrl"
                 continue
-            # Empty path => already at destination. Prefer such a
-            # direction so it doesn't pollute the clustering signal.
-            if sig_c is None and sig_t is None:
-                forced[i] = "ctrl"  # parity with Default
+            # Empty path (``sig is None``) means the qubit is already at
+            # its destination: no lane to cluster, no pollution of bucket
+            # signals. Commit that side immediately; default to ctrl when
+            # both sides are trivial, matching DefaultTargetGenerator.
+            if sig_t is None:
+                decisions[i] = "ctrl"
                 continue
             if sig_c is None:
-                forced[i] = "ctrl"
-                continue
-            if sig_t is None:
-                forced[i] = "tgt"
+                decisions[i] = "tgt"
                 continue
 
-            bucket_entries.append((i, "ctrl", sig_c))
-            bucket_entries.append((i, "tgt", sig_t))
+            pair_sigs[i] = (sig_c, sig_t)
+            buckets.setdefault(sig_c, []).append((i, "ctrl"))
+            buckets.setdefault(sig_t, []).append((i, "tgt"))
+            live_count[sig_c] = live_count.get(sig_c, 0) + 1
+            live_count[sig_t] = live_count.get(sig_t, 0) + 1
 
-        buckets: dict[_AODSig, list[tuple[int, str]]] = {}
-        for i, d, sig in bucket_entries:
-            buckets.setdefault(sig, []).append((i, d))
-
-        resolved: dict[int, str] = dict(forced)
-
-        # Greedy fill: commit the bucket with the most unresolved pairs.
-        # Stop once no bucket has more than one unresolved pair — the
-        # remaining pairs can't cluster further, so committing arbitrary
-        # directions for them doesn't help (and control-direction parity
-        # with Default is a reasonable tiebreak).
+        # Greedy fill: the signature with the most unresolved candidates
+        # wins, and every pair in its bucket commits to that side. Once
+        # no bucket has more than one live candidate, remaining pairs
+        # can't cluster further, so they default to ctrl-direction for
+        # parity with DefaultTargetGenerator.
         while True:
             best_sig: _AODSig | None = None
-            best_count = 1  # strict > 1 required
-            for sig, entries in buckets.items():
-                count = sum(1 for (i, _d) in entries if i not in resolved)
+            best_count = 1
+            for sig, count in live_count.items():
                 if count > best_count:
                     best_count = count
                     best_sig = sig
             if best_sig is None:
                 break
-            for i, d in buckets[best_sig]:
-                if i not in resolved:
-                    resolved[i] = d
-
-        for i in range(len(pairs)):
-            if i not in resolved:
-                resolved[i] = "ctrl"
+            for i, side in buckets[best_sig]:
+                if decisions[i] is not None:
+                    continue
+                decisions[i] = side
+                sig_c, sig_t = pair_sigs[i]
+                live_count[sig_c] -= 1
+                live_count[sig_t] -= 1
 
         target = dict(placement)
-        for i, direction in resolved.items():
-            ctrl, tgt = pairs[i]
+        for i, (ctrl, tgt) in enumerate(pairs):
+            side = decisions[i] if decisions[i] is not None else "ctrl"
             ctrl_partner, tgt_partner = partners[i]
-            if direction == "ctrl":
+            if side == "ctrl":
                 target[ctrl] = ctrl_partner
             else:
                 target[tgt] = tgt_partner
