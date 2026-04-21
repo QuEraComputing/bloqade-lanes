@@ -79,16 +79,21 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Factor weights are **multiplicative** on top of
-    ``MoveMetricCalculator.get_lane_duration_cost(lane)``. A factor ``< 1``
-    *rewards* the case (cheaper than base), ``> 1`` *penalises* it, and
-    ``= 1`` is neutral. Dijkstra requires non-negative edge weights, so
-    all three factors must be ``>= 0``; ``__post_init__`` enforces this
-    at construction.
+    Per-lane weighting uses a single ``direction_factor`` raised to the
+    signed net of same-direction minus opposite-direction prior commits
+    on that lane: ``weight = base * direction_factor ** (N - M)`` where
+    ``N`` counts prior same-direction commits and ``M`` counts opposite.
+    With ``direction_factor < 1`` the factor rewards net-same traffic,
+    penalises net-opposite, and is neutral at ``N == M``. A separate
+    ``shared_site_factor`` applies to lanes that don't overlap prior
+    commits but touch a previously traversed site.
+
+    ``direction_factor`` must be strictly positive (``0 ** -M`` is
+    undefined); ``shared_site_factor`` must be ``>= 0``. Both are
+    validated in ``__post_init__``.
     """
 
-    opposite_direction_factor: float = 10.0
-    same_direction_factor: float = 0.25
+    direction_factor: float = 0.5
     shared_site_factor: float = 1.1
 
     def generate(
@@ -245,14 +250,19 @@ All module-private:
 
 ```python
 def _make_weight_fn(pf, committed_lanes, committed_sites, gen):
+    df = gen.direction_factor
+
     def weight(lane: LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
         key = _lane_key(lane)
-        prior_dir = committed_lanes.get(key)
-        if prior_dir is not None:
-            if prior_dir != lane.direction:
-                return base * gen.opposite_direction_factor
-            return base * gen.same_direction_factor
+        counts = committed_lanes.get(key)  # Counter[Direction] | None
+        if counts:
+            same = counts.get(lane.direction, 0)
+            opposite = counts.get(_opposite(lane.direction), 0)
+            net = same - opposite
+            if net != 0:
+                return base * (df ** net)
+            return base
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
             return base * gen.shared_site_factor
@@ -260,21 +270,27 @@ def _make_weight_fn(pf, committed_lanes, committed_sites, gen):
     return weight
 ```
 
-Factor tiers (each multiplies the base lane cost; values ``< 1``
-reward the case, ``> 1`` penalise it, ``= 1`` is neutral):
+``committed_lanes`` maps each lane's canonical key to a per-direction
+``Counter``. Reward and penalty compose into one exponent of
+``direction_factor``:
 
-| Tier | Condition | Intuition | Canonical value |
+| ``N`` same | ``M`` opposite | Factor (with ``df = 0.5``) | Interpretation |
 |---|---|---|---|
-| `opposite_direction_factor` | Lane already committed in the opposite direction | Very bad for the move scheduler — cannot be temporally packed. | ``>> 1`` (penalty; default 10.0) |
-| `same_direction_factor` | Lane already committed in the same direction | **Favorable**: the AOD transport layer can move both atoms together in a single move-layer; shared same-direction motion is exactly what the scheduler parallelizes best. | ``< 1`` (reward; default 0.25) |
-| `shared_site_factor` | New lane, but one or both endpoints are sites a prior path traversed | Mild: paths cross at a shared node but use different physical lanes — scheduler handles these with one extra layer. | Slightly ``> 1`` (penalty; default 1.1) |
-| `1.0` | No overlap | Unconstrained — base cost is used directly. | — |
+| 0 | 0 | 1.0 (base) | Falls through to ``shared_site_factor`` or base. |
+| 1 | 0 | 0.5 | Reward for joining one prior same-direction atom. |
+| 2 | 0 | 0.25 | Stronger reward — larger AOD cluster. |
+| 3 | 0 | 0.125 | Reward compounds with cluster size. |
+| 0 | 1 | 2.0 | Penalty for crossing one opposite-direction commit. |
+| 0 | 2 | 4.0 | Stronger penalty. |
+| 1 | 1 | 1.0 (neutral) | Balanced traffic — local signal is ambiguous. |
+| 2 | 1 | 0.5 | Net ``+1`` reward. |
 
-The cost is multiplicative per-edge and must remain non-negative for
-Dijkstra; ``CongestionAwareTargetGenerator.__post_init__`` validates
-that. A path's total weighted cost is the sum of ``weight(lane)`` over
-its lanes — re-evaluated by the caller (`_sum_weighted`) against the
-same closure the pathfinder used.
+``direction_factor`` must be strictly positive (the negative exponent is
+otherwise undefined); ``shared_site_factor`` must be ``>= 0``. Dijkstra
+requires non-negative edge weights; ``__post_init__`` validates both.
+A path's total weighted cost is the sum of ``weight(lane)`` over its
+lanes — re-evaluated by the caller (`_sum_weighted`) against the same
+closure the pathfinder used.
 
 ### Lane canonical key
 
@@ -426,7 +442,7 @@ Each test constructs a minimal `TargetContext` directly and asserts on
    only longest-first commit order produces a valid candidate; verify.
 5. **Opposite-direction congestion avoided** — two pairs where a
    naive order reuses a lane in opposite directions; with
-   `opposite_direction_factor=1e6` and `same_direction_factor=1.0`
+   `direction_factor=1e-6` (very strong reward/penalty per net atom)
    verify the second pair picks the direction that does not reuse in
    opposite sense.
 6. **Same-direction reuse preferred to opposite** — both directions

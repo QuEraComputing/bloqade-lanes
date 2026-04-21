@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import abc
 import math
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -21,6 +22,7 @@ from bloqade.lanes.layout import LocationAddress, MoveType
 
 _PairSide = Literal["ctrl", "tgt"]
 _Path = tuple[tuple[layout.LaneAddress, ...], tuple[layout.LocationAddress, ...]]
+_LaneDirCounts = Counter[layout.Direction]
 
 
 @dataclass(frozen=True)
@@ -244,45 +246,52 @@ def _choose_control(cost_c: float, cost_t: float, len_c: float, len_t: float) ->
 
 class _HasFactors(Protocol):
     @property
-    def opposite_direction_factor(self) -> float: ...
-    @property
-    def same_direction_factor(self) -> float: ...
+    def direction_factor(self) -> float: ...
     @property
     def shared_site_factor(self) -> float: ...
 
 
 def _make_weight_fn(
     pf: layout.PathFinder,
-    committed_lanes: dict[_LaneKey, layout.Direction],
+    committed_lanes: dict[_LaneKey, _LaneDirCounts],
     committed_sites: set[layout.LocationAddress],
     gen: _HasFactors,
 ) -> Callable[[layout.LaneAddress], float]:
     """Closure over the running congestion state; passed to `find_path`.
 
-    Factor precedence (which field multiplies the base lane cost):
-      1. lane reused in opposite direction -> opposite_direction_factor
-      2. lane reused in same direction    -> same_direction_factor
-      3. lane not reused, but an endpoint is in committed_sites
-                                          -> shared_site_factor
-      4. no overlap                        -> 1.0 (base only)
+    For a candidate lane with direction ``d`` and prior-commit counts
+    ``N`` (same direction) and ``M`` (opposite direction) on that lane:
 
-    Each field is a non-negative multiplier applied to the base
-    ``get_lane_duration_cost``. Values ``< 1`` act as bonuses (reward
-    that case), ``> 1`` act as penalties, ``= 1`` is neutral. Factors
-    must be non-negative for the Dijkstra-based path finder. Canonical
-    tuning: ``opposite_direction_factor`` large (penalty), ``same_direction_factor``
-    below 1 (reward AOD-parallel moves on a shared bus), ``shared_site_factor``
-    slightly above 1 (mild crossing penalty).
+        weight = base * direction_factor ** (N - M)
+
+    Reward and penalty are combined into a single exponent:
+    ``direction_factor ** N`` rewards same-direction AOD-sharing,
+    ``direction_factor ** -M`` penalises opposite-direction conflicts.
+    Balanced traffic (``N == M``) is neutral by construction — there
+    is no local information that prefers one side over the other.
+
+    If the lane has no prior commits, an endpoint may still be in
+    ``committed_sites``, in which case ``shared_site_factor`` applies.
+    Otherwise the base cost passes through unchanged.
+
+    ``direction_factor`` must be strictly positive (Dijkstra requires
+    non-negative edges, and ``0 ** -M`` is undefined). ``shared_site_factor``
+    must be non-negative.
     """
+
+    df = gen.direction_factor
 
     def weight(lane: layout.LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
         key = _lane_key(lane)
-        prior_dir = committed_lanes.get(key)
-        if prior_dir is not None:
-            if prior_dir != lane.direction:
-                return base * gen.opposite_direction_factor
-            return base * gen.same_direction_factor
+        counts = committed_lanes.get(key)
+        if counts:
+            same = counts.get(lane.direction, 0)
+            opposite = counts.get(_opposite(lane.direction), 0)
+            net = same - opposite
+            if net != 0:
+                return base * (df**net)
+            return base
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
             return base * gen.shared_site_factor
@@ -291,19 +300,29 @@ def _make_weight_fn(
     return weight
 
 
+def _opposite(direction: layout.Direction) -> layout.Direction:
+    return (
+        layout.Direction.BACKWARD
+        if direction == layout.Direction.FORWARD
+        else layout.Direction.FORWARD
+    )
+
+
 @dataclass
 class _GenerateState:
     """Mutable state threaded through the congestion-aware commit loop.
 
     ``arch_spec`` and ``pf`` are fixed for the whole ``generate()`` call;
     ``working``, ``committed_lanes``, and ``committed_sites`` accumulate
-    as pairs commit.
+    as pairs commit. ``committed_lanes`` tracks a per-direction count so
+    the weight function can reward strong same-direction clusters and
+    penalise mixed-direction contention multiplicatively.
     """
 
     arch_spec: layout.ArchSpec
     pf: layout.PathFinder
     working: dict[int, layout.LocationAddress]
-    committed_lanes: dict[_LaneKey, layout.Direction]
+    committed_lanes: dict[_LaneKey, _LaneDirCounts]
     committed_sites: set[layout.LocationAddress]
 
 
@@ -316,32 +335,35 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Factor fields are non-negative multipliers on
-    ``MoveMetricCalculator.get_lane_duration_cost(lane)``. Values below
-    1.0 reward the case (cheaper than base), above 1.0 penalize, and
-    1.0 is neutral. Dijkstra requires non-negative edge weights, so
-    factors must remain ``>= 0``. Defaults reflect the canonical
-    tuning — same-direction lane reuse rewarded (AOD transport layer
-    parallelism), opposite-direction reuse penalized, shared-site
-    crossings mildly penalized. Empirical tuning is a documented
-    follow-up.
+    Per-lane weighting uses a single multiplicative ``direction_factor``
+    raised to the signed net of same-direction minus opposite-direction
+    prior commits on that lane (see :func:`_make_weight_fn`). With
+    ``direction_factor < 1``, net-positive traffic rewards AOD-parallel
+    reuse and net-negative traffic penalises it; equal traffic is
+    neutral. ``shared_site_factor`` applies to fresh lanes that touch a
+    previously traversed site.
+
+    Dijkstra requires non-negative edge weights. ``direction_factor``
+    must be strictly positive (the negative exponent is otherwise
+    undefined); ``shared_site_factor`` must be ``>= 0``. Defaults
+    reflect the canonical tuning; empirical retuning is a follow-up.
     """
 
-    opposite_direction_factor: float = 10.0
-    same_direction_factor: float = 0.25
+    direction_factor: float = 0.5
     shared_site_factor: float = 1.1
 
     def __post_init__(self) -> None:
-        for name, value in (
-            ("opposite_direction_factor", self.opposite_direction_factor),
-            ("same_direction_factor", self.same_direction_factor),
-            ("shared_site_factor", self.shared_site_factor),
-        ):
-            if value < 0:
-                raise ValueError(
-                    f"{name}={value!r} must be non-negative; Dijkstra "
-                    f"requires non-negative edge weights"
-                )
+        if self.direction_factor <= 0:
+            raise ValueError(
+                f"direction_factor={self.direction_factor!r} must be strictly "
+                f"positive; the opposite-direction branch raises it to a "
+                f"negative exponent which is undefined at zero"
+            )
+        if self.shared_site_factor < 0:
+            raise ValueError(
+                f"shared_site_factor={self.shared_site_factor!r} must be "
+                f"non-negative; Dijkstra requires non-negative edge weights"
+            )
 
     def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
         placement = ctx.placement
@@ -366,7 +388,8 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
             mover, new_loc, chosen = result
             state.working[mover] = new_loc
             for lane in chosen[0]:
-                state.committed_lanes[_lane_key(lane)] = lane.direction
+                counts = state.committed_lanes.setdefault(_lane_key(lane), Counter())
+                counts[lane.direction] += 1
             state.committed_sites.update(chosen[1])
 
         return [state.working]

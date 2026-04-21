@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 
 import pytest
 
@@ -108,9 +109,8 @@ def test_choose_control_inf_handled():
 class _WeightCtx:
     """Minimal stand-in for the generator's factor fields."""
 
-    def __init__(self, opposite: float, same: float, site: float) -> None:
-        self.opposite_direction_factor = opposite
-        self.same_direction_factor = same
+    def __init__(self, direction: float, site: float) -> None:
+        self.direction_factor = direction
         self.shared_site_factor = site
 
 
@@ -119,32 +119,89 @@ def _first_lane(pf: "PathFinder") -> "LaneAddress":
     return next(iter(pf.end_points_cache))
 
 
+def _counts(*entries: tuple[Direction, int]) -> Counter[Direction]:
+    c: Counter[Direction] = Counter()
+    for d, n in entries:
+        c[d] += n
+    return c
+
+
 def test_weight_fn_no_congestion_returns_base(arch):
     pf = PathFinder(arch)
-    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(10.0, 0.25, 1.1))
+    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(0.5, 1.1))
     lane = _first_lane(pf)
     base = pf.metrics.get_lane_duration_cost(lane)
     assert weight(lane) == base
 
 
-def test_weight_fn_same_direction_applies_same_factor(arch):
+def test_weight_fn_single_same_direction_reward(arch):
+    """One prior same-direction commit: N=1, M=0, factor = df ** 1."""
     pf = PathFinder(arch)
     lane = _first_lane(pf)
-    committed_lanes = {_lane_key(lane): lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 0.25, 1.1))
+    committed_lanes = {_lane_key(lane): _counts((lane.direction, 1))}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base * 0.25
+    assert weight(lane) == base * 0.5
 
 
-def test_weight_fn_opposite_direction_applies_opposite_factor(arch):
+def test_weight_fn_same_direction_reward_compounds_with_count(arch):
+    """Multiple same-direction priors: factor = df ** N."""
     pf = PathFinder(arch)
     lane = _first_lane(pf)
-    reversed_lane = lane.reverse()
-    # Mark the reversed direction as committed; now `lane` is opposite.
-    committed_lanes = {_lane_key(lane): reversed_lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 0.25, 1.1))
+    committed_lanes = {_lane_key(lane): _counts((lane.direction, 3))}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base * 10.0
+    assert weight(lane) == pytest.approx(base * 0.5**3)
+
+
+def test_weight_fn_single_opposite_direction_penalty(arch):
+    """One prior opposite-direction commit: N=0, M=1, factor = df ** -1."""
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    committed_lanes = {_lane_key(lane): _counts((lane.reverse().direction, 1))}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base * 2.0  # 0.5 ** -1
+
+
+def test_weight_fn_opposite_penalty_compounds_with_count(arch):
+    """Multiple opposite priors: factor = df ** -M."""
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    committed_lanes = {_lane_key(lane): _counts((lane.reverse().direction, 3))}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == pytest.approx(base * 0.5**-3)
+
+
+def test_weight_fn_balanced_traffic_is_neutral(arch):
+    """Equal same and opposite priors cancel: N == M ⇒ factor = 1."""
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    committed_lanes = {
+        _lane_key(lane): _counts(
+            (lane.direction, 2),
+            (lane.reverse().direction, 2),
+        )
+    }
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base
+
+
+def test_weight_fn_mixed_traffic_uses_signed_net(arch):
+    """N=3, M=1 ⇒ factor = df ** 2."""
+    pf = PathFinder(arch)
+    lane = _first_lane(pf)
+    committed_lanes = {
+        _lane_key(lane): _counts(
+            (lane.direction, 3),
+            (lane.reverse().direction, 1),
+        )
+    }
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == pytest.approx(base * 0.5**2)
 
 
 def test_weight_fn_shared_site_without_lane_reuse(arch):
@@ -152,24 +209,24 @@ def test_weight_fn_shared_site_without_lane_reuse(arch):
     lane = _first_lane(pf)
     src, dst = pf.get_endpoints(lane)
     assert src is not None and dst is not None
-    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(10.0, 0.25, 1.1))
+    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
     assert weight(lane) == base * 1.1
 
 
 def test_weight_fn_lane_reuse_dominates_shared_site(arch):
     """When a lane is committed AND an endpoint is in committed_sites,
-    the lane-reuse factor applies, not the shared-site factor.
+    the direction-factor branch applies, not shared_site_factor.
     """
     pf = PathFinder(arch)
     lane = _first_lane(pf)
     src, dst = pf.get_endpoints(lane)
     assert src is not None
-    committed_lanes = {_lane_key(lane): lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, {src}, _WeightCtx(10.0, 0.25, 1.1))
+    committed_lanes = {_lane_key(lane): _counts((lane.direction, 1))}
+    weight = _make_weight_fn(pf, committed_lanes, {src}, _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    # same_direction_factor = 0.25 wins over shared_site_factor = 1.1
-    assert weight(lane) == base * 0.25
+    # direction branch wins over shared_site_factor = 1.1
+    assert weight(lane) == base * 0.5
 
 
 def _ctx(
@@ -354,10 +411,10 @@ def test_target_direction_chosen_when_target_path_cheaper(arch):
 
 
 def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
-    """With all congestion factors = 1.0 (neutral multipliers) and a
-    single-pair symmetric stage, the congestion-aware heuristic reduces
-    to the default (control-moves) by symmetry + tiebreak. Sanity check
-    the reduction.
+    """With ``direction_factor = shared_site_factor = 1.0`` (neutral
+    multipliers) and a single-pair symmetric stage, the congestion-aware
+    heuristic reduces to the default (control-moves) by symmetry +
+    tiebreak. Sanity check the reduction.
     """
     from bloqade.lanes.heuristics.physical.target_generator import (
         DefaultTargetGenerator,
@@ -371,7 +428,7 @@ def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
         pytest.skip("arch has no suitable non-partnered pair; see follow-up issue")
     loc_ctrl, loc_tgt, _blocker = scenario
     ctx = _ctx(arch, (loc_ctrl, loc_tgt), controls=(0,), targets=(1,))
-    gen_neutral = CongestionAwareTargetGenerator(1.0, 1.0, 1.0)
+    gen_neutral = CongestionAwareTargetGenerator(1.0, 1.0)
     gen_default = DefaultTargetGenerator()
     out_neutral = gen_neutral.generate(ctx)
     out_default = gen_default.generate(ctx)
@@ -386,9 +443,9 @@ def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
 )
 def test_multi_pair_avoids_opposite_direction_reuse(arch):
     """Two pairs whose uncongested shortest paths would traverse the
-    same lane in opposite directions. With opposite_direction_factor
-    large enough, the second-committed pair picks its more-expensive
-    direction to avoid the conflict.
+    same lane in opposite directions. With ``direction_factor`` small
+    enough, the second-committed pair picks its more-expensive direction
+    to avoid the conflict.
     """
     ...
 
@@ -405,14 +462,19 @@ def test_move_count_tiebreak_at_commit_end_to_end(arch):
     ...
 
 
-@pytest.mark.parametrize(
-    "field",
-    ["opposite_direction_factor", "same_direction_factor", "shared_site_factor"],
-)
-def test_negative_factor_raises(field):
-    kwargs = {field: -0.1}
+def test_direction_factor_zero_or_negative_raises():
+    """``direction_factor <= 0`` breaks the opposite-direction branch
+    (``0 ** -M`` is undefined; negative bases with non-integer exponents
+    leave Dijkstra's invariants)."""
+    with pytest.raises(ValueError, match="must be strictly positive"):
+        CongestionAwareTargetGenerator(direction_factor=0.0)
+    with pytest.raises(ValueError, match="must be strictly positive"):
+        CongestionAwareTargetGenerator(direction_factor=-0.1)
+
+
+def test_shared_site_factor_negative_raises():
     with pytest.raises(ValueError, match="must be non-negative"):
-        CongestionAwareTargetGenerator(**kwargs)
+        CongestionAwareTargetGenerator(shared_site_factor=-0.1)
 
 
 def test_generate_is_deterministic_across_calls(arch):

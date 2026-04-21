@@ -391,9 +391,8 @@ from bloqade.lanes.heuristics.physical.target_generator import _make_weight_fn
 class _WeightCtx:
     """Minimal stand-in for the generator's factor-weight fields."""
 
-    def __init__(self, opposite: float, same: float, site: float) -> None:
-        self.opposite_direction_factor = opposite
-        self.same_direction_factor = same
+    def __init__(self, direction: float, site: float) -> None:
+        self.direction_factor = direction
         self.shared_site_factor = site
 
 
@@ -402,32 +401,54 @@ def _first_lane(pf: "layout.PathFinder") -> "layout.LaneAddress":
     return next(iter(pf.end_points_cache))
 
 
+def _counts(*entries: tuple[Direction, int]) -> Counter[Direction]:
+    c: Counter[Direction] = Counter()
+    for d, n in entries:
+        c[d] += n
+    return c
+
+
 def test_weight_fn_no_congestion_returns_base(arch):
     pf = layout.PathFinder(arch)
-    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(10.0, 0.25, 1.1))
+    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(0.5, 1.1))
     lane = _first_lane(pf)
     base = pf.metrics.get_lane_duration_cost(lane)
     assert weight(lane) == base
 
 
-def test_weight_fn_same_direction_applies_same_factor(arch):
+def test_weight_fn_single_same_direction_reward(arch):
+    """One prior same-direction commit: factor = df ** 1."""
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
-    committed_lanes = {_lane_key(lane): lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 0.25, 1.1))
+    committed_lanes = {_lane_key(lane): _counts((lane.direction, 1))}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base * 0.25
+    assert weight(lane) == base * 0.5
 
 
-def test_weight_fn_opposite_direction_applies_opposite_factor(arch):
+def test_weight_fn_single_opposite_direction_penalty(arch):
+    """One prior opposite-direction commit: factor = df ** -1."""
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
-    reversed_lane = lane.reverse()
-    # Mark the reversed direction as committed; now `lane` is opposite.
-    committed_lanes = {_lane_key(lane): reversed_lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 0.25, 1.1))
+    committed_lanes = {_lane_key(lane): _counts((lane.reverse().direction, 1))}
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base * 10.0
+    assert weight(lane) == base * 2.0  # 0.5 ** -1
+
+
+def test_weight_fn_balanced_traffic_is_neutral(arch):
+    """Equal same and opposite priors cancel (N == M ⇒ factor = 1)."""
+    pf = layout.PathFinder(arch)
+    lane = _first_lane(pf)
+    committed_lanes = {
+        _lane_key(lane): _counts(
+            (lane.direction, 2),
+            (lane.reverse().direction, 2),
+        )
+    }
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(0.5, 1.1))
+    base = pf.metrics.get_lane_duration_cost(lane)
+    assert weight(lane) == base
 
 
 def test_weight_fn_shared_site_without_lane_reuse(arch):
@@ -435,26 +456,26 @@ def test_weight_fn_shared_site_without_lane_reuse(arch):
     lane = _first_lane(pf)
     src, dst = pf.get_endpoints(lane)
     assert src is not None and dst is not None
-    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(10.0, 0.25, 1.1))
+    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(0.5, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
     assert weight(lane) == base * 1.1
 
 
 def test_weight_fn_lane_reuse_dominates_shared_site(arch):
     """When a lane is committed AND an endpoint is in committed_sites,
-    the lane-reuse factor applies, not the shared-site factor.
+    the direction branch applies, not shared_site_factor.
     """
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
     src, dst = pf.get_endpoints(lane)
     assert src is not None
-    committed_lanes = {_lane_key(lane): lane.direction}
+    committed_lanes = {_lane_key(lane): _counts((lane.direction, 1))}
     weight = _make_weight_fn(
-        pf, committed_lanes, {src}, _WeightCtx(10.0, 0.25, 1.1)
+        pf, committed_lanes, {src}, _WeightCtx(0.5, 1.1)
     )
     base = pf.metrics.get_lane_duration_cost(lane)
-    # same_direction_factor = 0.25 wins over shared_site_factor = 1.1
-    assert weight(lane) == base * 0.25
+    # direction branch wins over shared_site_factor = 1.1
+    assert weight(lane) == base * 0.5
 ```
 
 - [ ] **Step 2: Run test to confirm failure**
@@ -475,40 +496,46 @@ from typing import Protocol
 
 class _HasFactors(Protocol):
     @property
-    def opposite_direction_factor(self) -> float: ...
-    @property
-    def same_direction_factor(self) -> float: ...
+    def direction_factor(self) -> float: ...
     @property
     def shared_site_factor(self) -> float: ...
 
 
 def _make_weight_fn(
     pf: layout.PathFinder,
-    committed_lanes: dict[_LaneKey, layout.Direction],
+    committed_lanes: dict[_LaneKey, Counter[layout.Direction]],
     committed_sites: set[layout.LocationAddress],
     gen: _HasFactors,
 ) -> Callable[[layout.LaneAddress], float]:
     """Closure over the running congestion state; passed to `find_path`.
 
-    Factor precedence (which field multiplies the base lane cost):
-      1. lane reused in opposite direction -> opposite_direction_factor
-      2. lane reused in same direction    -> same_direction_factor
-      3. lane not reused, but an endpoint is in committed_sites
-                                          -> shared_site_factor
-      4. no overlap                        -> 1.0 (base only)
+    For a candidate lane with direction ``d`` and prior-commit counts
+    ``N`` (same) and ``M`` (opposite):
 
-    Each field is a non-negative multiplier. Values ``< 1`` reward
-    the case (cheaper than base); ``> 1`` penalise it.
+        weight = base * direction_factor ** (N - M)
+
+    Reward and penalty compose into a single signed exponent. Balanced
+    traffic (``N == M``) is neutral; net-same rewards AOD-parallel
+    reuse, net-opposite penalises contention.
+
+    If the lane has no prior commits, fall through to
+    ``shared_site_factor`` when an endpoint was traversed previously,
+    otherwise return base.
     """
+
+    df = gen.direction_factor
 
     def weight(lane: layout.LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
         key = _lane_key(lane)
-        prior_dir = committed_lanes.get(key)
-        if prior_dir is not None:
-            if prior_dir != lane.direction:
-                return base * gen.opposite_direction_factor
-            return base * gen.same_direction_factor
+        counts = committed_lanes.get(key)
+        if counts:
+            same = counts.get(lane.direction, 0)
+            opposite = counts.get(_opposite(lane.direction), 0)
+            net = same - opposite
+            if net != 0:
+                return base * (df ** net)
+            return base
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
             return base * gen.shared_site_factor
@@ -616,16 +643,18 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Factor weights are **multiplicative** on top of
-    ``MoveMetricCalculator.get_lane_duration_cost(lane)``. Values ``< 1``
-    reward the case; ``> 1`` penalise it; ``= 1`` is neutral. All three
-    factors must remain ``>= 0`` (validated in ``__post_init__``) because
-    the Dijkstra path finder requires non-negative edge weights. Defaults
-    reflect the canonical tuning; empirical retuning is a follow-up.
+    Per-lane weighting uses a single ``direction_factor`` raised to the
+    signed net of same-direction minus opposite-direction prior commits
+    on that lane. ``direction_factor < 1`` rewards net-same traffic and
+    penalises net-opposite; equal traffic is neutral. ``shared_site_factor``
+    applies to lanes with no prior commits whose endpoints include a
+    previously traversed site.
+
+    ``direction_factor`` must be strictly positive; ``shared_site_factor``
+    must be ``>= 0``. Both are validated in ``__post_init__``.
     """
 
-    opposite_direction_factor: float = 10.0
-    same_direction_factor: float = 0.25
+    direction_factor: float = 0.5
     shared_site_factor: float = 1.1
 
     def generate(
@@ -637,7 +666,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
 
         pf = layout.PathFinder(ctx.arch_spec)
         working: dict[int, layout.LocationAddress] = dict(placement)
-        committed_lanes: dict[_LaneKey, layout.Direction] = {}
+        committed_lanes: dict[_LaneKey, Counter[layout.Direction]] = {}
         committed_sites: set[layout.LocationAddress] = set()
 
         pairs = self._sort_pairs_longest_first(ctx, pf)
@@ -947,7 +976,7 @@ def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
         pytest.skip("arch has no suitable non-partnered pair; see follow-up issue")
     loc_ctrl, loc_tgt, _blocker = scenario
     ctx = _ctx(arch, (loc_ctrl, loc_tgt), controls=(0,), targets=(1,))
-    gen_neutral = CongestionAwareTargetGenerator(1.0, 1.0, 1.0)
+    gen_neutral = CongestionAwareTargetGenerator(1.0, 1.0)
     gen_default = DefaultTargetGenerator()
     out_neutral = gen_neutral.generate(ctx)
     out_default = gen_default.generate(ctx)
@@ -962,9 +991,9 @@ def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
 )
 def test_multi_pair_avoids_opposite_direction_reuse(arch):
     """Two pairs whose uncongested shortest paths would traverse the
-    same lane in opposite directions. With opposite_direction_factor
-    large enough, the second-committed pair picks its more-expensive
-    direction to avoid the conflict.
+    same lane in opposite directions. With ``direction_factor`` small
+    enough, the second-committed pair picks its more-expensive direction
+    to avoid the conflict.
     """
     # Fixture: a minimal arch with at least one lane that serves two
     # CZ-partnered pairs in opposite directions (not available on the
