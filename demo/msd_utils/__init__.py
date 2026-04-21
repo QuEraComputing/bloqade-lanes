@@ -53,7 +53,6 @@ from .decoders import (
     build_mld_decoders,
     build_mld_decoders_from_pair,
     build_mle_decoders,
-    build_shared_mld_postselection_scores,
     compute_dem_data,
     estimate_mld_ancilla_scores,
     estimate_mld_ancilla_scores_from_tasks,
@@ -66,6 +65,7 @@ from .decoders import (
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
 )
+from .decoders_legacy import build_shared_mld_postselection_scores
 from .experiment import (
     DecoderSweepEvaluation,
     ExperimentDiagnostics,
