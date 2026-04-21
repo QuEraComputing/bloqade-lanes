@@ -343,12 +343,17 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
         if run_detectors:
             return self._run_detectors(shots, with_noise)
 
-        if with_noise:
-            raw_results = self.measurement_sampler.sample(shots=shots).tolist()
+        if self.tsim_circuit.is_clifford:
+            c = self.tsim_circuit if with_noise else self.noiseless_tsim_circuit
+            sampler = c.stim_circuit.compile_sampler()
         else:
-            raw_results = self.noiseless_measurement_sampler.sample(
-                shots=shots
-            ).tolist()
+            sampler = (
+                self.measurement_sampler
+                if with_noise
+                else self.noiseless_measurement_sampler
+            )
+
+        raw_results = sampler.sample(shots=shots).tolist()
 
         fidelity_min, fidelity_max = self.fidelity_bounds()
         return Result(
@@ -374,12 +379,23 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             DetectorResult: The result containing detector and observable outcomes.
 
         """
-        sampler = (
-            self.detector_sampler if with_noise else self.noiseless_detector_sampler
-        )
-        det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
-            shots=shots, separate_observables=True
-        )
+        c = self.tsim_circuit if with_noise else self.noiseless_tsim_circuit
+        if c.is_clifford:
+            # Use Stim for the Clifford case. Since .detector_sampler uses a reference
+            # sample which flips outcomes, we use the measurement sampler and convert to
+            # detectors and observables while explicitly skipping the reference sample.
+            sampler = c.stim_circuit.compile_sampler()
+            m2det = c.compile_m2d_converter(skip_reference_sample=True)
+            samples = sampler.sample(shots=shots)
+            det_obs = m2det.convert(samples, separate_observables=True)
+        else:
+            sampler = (
+                self.detector_sampler if with_noise else self.noiseless_detector_sampler
+            )
+            det_obs: tuple[np.ndarray, np.ndarray] = sampler.sample(
+                shots=shots, separate_observables=True
+            )
+
         fidelity_min, fidelity_max = self.fidelity_bounds()
         return DetectorResult(
             _detector_error_model=self.detector_error_model,
