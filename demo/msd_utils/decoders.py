@@ -20,7 +20,6 @@ from .core import (
     fidelity_from_counts,
     fidelity_from_zero_one_counts,
     iter_task_datasets,
-    magic_state_fidelity_point_from_counts,
     pack_boolean_array,
     packed_bits_to_int,
     resolve_valid_factory_targets,
@@ -239,7 +238,6 @@ def train_mld_decoder_pair_from_task(
     return full_decoder, factory_decoder
 
 
-# TODO, 4/21, 9:53 AM: continue here
 def _make_decoder_adapter(
     *,
     full_decoder: Any,
@@ -294,6 +292,7 @@ def _call_decoder_fn(
 
 
 def estimate_mld_ancilla_scores(
+    # TODO: the types need to be more specific here
     decoder_by_basis: Mapping[str, tuple[Any, Any]],
     ranking_data_by_basis: Mapping[str, BasisDataset],
     *,
@@ -317,13 +316,17 @@ def estimate_mld_ancilla_scores(
             "Need X/Y/Z ranking datasets to estimate shared MLD postselection scores."
         )
 
-    corrected_by_pattern = {basis: defaultdict(list) for basis in basis_labels}
+    packed_targets = _packed_pattern_targets(targets)
+    corrected_by_pattern = {
+        basis: defaultdict(lambda: np.zeros(2, dtype=np.int64))
+        for basis in basis_labels
+    }
     ancilla_detectors: int | None = None
 
     for basis in basis_labels:
         full_decoder, factory_decoder = decoder_by_basis[basis]
         score_dataset = ranking_data_by_basis[basis]
-        anc_det, anc_obs = split_factory_bits(
+        anc_det, _ = split_factory_bits(
             score_dataset.detectors,
             score_dataset.observables,
             layout=layout,
@@ -334,51 +337,67 @@ def estimate_mld_ancilla_scores(
             raise ValueError(
                 "Inconsistent ancilla detector counts across MLD training datasets."
             )
+        _accumulate_mld_pattern_counts(
+            corrected_by_pattern[basis],
+            score_dataset,
+            full_decoder=full_decoder,
+            factory_decoder=factory_decoder,
+            packed_targets=packed_targets,
+            layout=layout,
+        )
 
-        for det, obs, a_det, a_obs in zip(
-            score_dataset.detectors,
-            score_dataset.observables,
-            anc_det,
-            anc_obs,
-            strict=True,
-        ):
-            anc_flip = np.asarray(
-                factory_decoder.decode(a_det.astype(bool)), dtype=np.uint8
-            )
-            corrected_anc = a_obs ^ anc_flip
-            if not ancilla_matches_valid_targets(corrected_anc, targets):
-                continue
-            full_flip = np.asarray(
-                full_decoder.decode(det.astype(bool)), dtype=np.uint8
-            )
-            packed = int(pack_boolean_array(a_det)[0])
-            corrected_by_pattern[basis][packed].append(int(obs[0] ^ full_flip[0]))
+    return _mld_scores_from_pattern_counts(
+        corrected_by_pattern,
+        ancilla_detectors=ancilla_detectors,
+        basis_labels=basis_labels,
+        sign_vector=sign_vector,
+        target_bloch=target_bloch,
+    )
 
-    assert ancilla_detectors is not None
+
+def _mld_scores_from_pattern_counts(
+    corrected_by_pattern: Mapping[str, Mapping[int, np.ndarray]],
+    *,
+    ancilla_detectors: int | None,
+    basis_labels: Sequence[str],
+    sign_vector: Sequence[float],
+    target_bloch: np.ndarray,
+) -> np.ndarray:
+    if ancilla_detectors is None:
+        raise ValueError("Need at least one ancilla detector to score MLD patterns.")
+
     scores = np.full(1 << ancilla_detectors, np.nan, dtype=np.float64)
     all_patterns = set()
     for basis in basis_labels:
         all_patterns.update(corrected_by_pattern[basis].keys())
 
     for packed in all_patterns:
-        basis_counts = {
-            basis: np.asarray(
-                corrected_by_pattern[basis].get(packed, ()), dtype=np.uint8
-            )
-            for basis in basis_labels
-        }
-        if min(len(basis_counts[basis]) for basis in basis_labels) == 0:
+        counts_x = corrected_by_pattern["X"].get(packed)
+        counts_y = corrected_by_pattern["Y"].get(packed)
+        counts_z = corrected_by_pattern["Z"].get(packed)
+        if counts_x is None or counts_y is None or counts_z is None:
             continue
-        scores[packed] = magic_state_fidelity_point_from_counts(
-            basis_counts["X"],
-            basis_counts["Y"],
-            basis_counts["Z"],
+        if (
+            min(int(np.sum(counts_x)), int(np.sum(counts_y)), int(np.sum(counts_z)))
+            == 0
+        ):
+            continue
+        scores[packed] = fidelity_from_zero_one_counts(
+            int(counts_x[0]),
+            int(counts_x[1]),
+            int(counts_y[0]),
+            int(counts_y[1]),
+            int(counts_z[0]),
+            int(counts_z[1]),
+            posterior_samples=1,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
-        )
+            uncertainty_backend="wilson",
+        )["point"]
     return scores
 
 
+# TODO: continue reading here, 4/21 11:56 AM
 def _accumulate_mld_pattern_counts(
     pattern_counts: defaultdict[int, np.ndarray],
     dataset: BasisDataset,
