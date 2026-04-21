@@ -48,6 +48,16 @@ class DecoderKernelBundle:
     injected: dict[str, LogicalKernelSpec]
 
 
+@dataclass(frozen=True)
+class DecoderPrimitiveSet:
+    state_injection_circuit: Any
+    logical_circuit: Any
+    logical_circuit_inverse: Any
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+
 def build_measurement_maps(num_logical_qubits: int) -> tuple[Any, Any]:
     return steane7_m2dets(num_logical_qubits), steane7_m2obs(num_logical_qubits)
 
@@ -203,7 +213,11 @@ def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSp
     return LogicalKernelSpec(kernel=kernel_like)
 
 
-def _build_msd_primitives(theta: float, phi: float, lam: float):
+def _build_msd_primitives(
+    theta: float,
+    phi: float,
+    lam: float,
+) -> DecoderPrimitiveSet:
     @squin.kernel
     def msd_magic_prep(reg):
         squin.broadcast.u3(theta, phi, lam, reg)
@@ -228,11 +242,11 @@ def _build_msd_primitives(theta: float, phi: float, lam: float):
         squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
         squin.broadcast.sqrt_x_adj(ilist.IList([reg[0], reg[1], reg[4]]))
 
-    return {
-        "state_injection_circuit": msd_magic_prep,
-        "logical_circuit": msd_forward,
-        "logical_circuit_inverse": msd_inverse,
-    }
+    return DecoderPrimitiveSet(
+        state_injection_circuit=msd_magic_prep,
+        logical_circuit=msd_forward,
+        logical_circuit_inverse=msd_inverse,
+    )
 
 
 def _build_tomography_primitives(*, output_qubit: int):
@@ -283,6 +297,34 @@ def _require_primitive_keys(
         raise ValueError(
             f"{builder_name} must return keys {keys}; missing {tuple(missing)}."
         )
+
+
+def _coerce_decoder_primitive_set(
+    primitive_set: DecoderPrimitiveSet | Mapping[str, Any],
+    *,
+    builder_name: str,
+) -> DecoderPrimitiveSet:
+    if isinstance(primitive_set, DecoderPrimitiveSet):
+        return primitive_set
+    if isinstance(primitive_set, Mapping):
+        _require_primitive_keys(
+            primitive_set,
+            keys=(
+                "state_injection_circuit",
+                "logical_circuit",
+                "logical_circuit_inverse",
+            ),
+            builder_name=builder_name,
+        )
+        return DecoderPrimitiveSet(
+            state_injection_circuit=primitive_set["state_injection_circuit"],
+            logical_circuit=primitive_set["logical_circuit"],
+            logical_circuit_inverse=primitive_set["logical_circuit_inverse"],
+        )
+    raise TypeError(
+        f"{builder_name} must return a DecoderPrimitiveSet or mapping, got "
+        f"{type(primitive_set).__name__}."
+    )
 
 
 def build_naive_kernel_bundle(
@@ -360,15 +402,13 @@ def build_naive_kernel_bundle(
 
 
 def build_decoder_kernel_bundle(
-    theta: float,
-    phi: float,
-    lam: float,
-    *,
+    *primitive_args: float,
     num_logical_qubits: int = 5,
     output_qubit: int = 0,
-    build_primitives: Callable[
-        [float, float, float], Mapping[str, Any]
-    ] = _build_msd_primitives,
+    build_primitives: Callable[..., DecoderPrimitiveSet | Mapping[str, Any]] = (
+        _build_msd_primitives
+    ),
+    injected_prep_args: tuple[float, float, float] | None = None,
     special_kernel_strategy: Literal[
         "prefix_prepare", "compiled_inverse_prefix"
     ] = "prefix_prepare",
@@ -379,20 +419,14 @@ def build_decoder_kernel_bundle(
             "'compiled_inverse_prefix'."
         )
 
-    msd_primitives = build_primitives(theta, phi, lam)
-    _require_primitive_keys(
-        msd_primitives,
-        keys=(
-            "state_injection_circuit",
-            "logical_circuit",
-            "logical_circuit_inverse",
-        ),
+    primitive_set = _coerce_decoder_primitive_set(
+        build_primitives(*primitive_args),
         builder_name=getattr(build_primitives, "__name__", "build_primitives"),
     )
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
-    state_injection_circuit = msd_primitives["state_injection_circuit"]
-    logical_circuit = msd_primitives["logical_circuit"]
-    logical_circuit_inverse = msd_primitives["logical_circuit_inverse"]
+    state_injection_circuit = primitive_set.state_injection_circuit
+    logical_circuit = primitive_set.logical_circuit
+    logical_circuit_inverse = primitive_set.logical_circuit_inverse
     tomography_x = tomography_primitives["tomography_x"]
     tomography_y = tomography_primitives["tomography_y"]
     tomography_z = tomography_primitives["tomography_z"]
@@ -460,27 +494,6 @@ def build_decoder_kernel_bundle(
         tomography_z(reg)
         return default_post_processing(reg)
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_x():
-        reg = qubit.qalloc(1)
-        squin.u3(theta, phi, lam, reg[0])
-        tomography_x(reg)
-        return default_post_processing(reg)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_y():
-        reg = qubit.qalloc(1)
-        squin.u3(theta, phi, lam, reg[0])
-        tomography_y(reg)
-        return default_post_processing(reg)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_z():
-        reg = qubit.qalloc(1)
-        squin.u3(theta, phi, lam, reg[0])
-        tomography_z(reg)
-        return default_post_processing(reg)
-
     actual = {
         "X": LogicalKernelSpec(kernel=msd_actual_x),
         "Y": LogicalKernelSpec(kernel=msd_actual_y),
@@ -523,14 +536,49 @@ def build_decoder_kernel_bundle(
             ),
         }
 
-    return DecoderKernelBundle(
-        actual=actual,
-        special=special,
-        injected={
+    resolved_injected_prep_args = injected_prep_args
+    if resolved_injected_prep_args is None and len(primitive_args) == 3:
+        resolved_injected_prep_args = (
+            float(primitive_args[0]),
+            float(primitive_args[1]),
+            float(primitive_args[2]),
+        )
+
+    injected: dict[str, LogicalKernelSpec] = {}
+    if resolved_injected_prep_args is not None:
+        theta, phi, lam = resolved_injected_prep_args
+
+        @gemini_logical.kernel(aggressive_unroll=True)
+        def injected_x():
+            reg = qubit.qalloc(1)
+            squin.u3(theta, phi, lam, reg[0])
+            tomography_x(reg)
+            return default_post_processing(reg)
+
+        @gemini_logical.kernel(aggressive_unroll=True)
+        def injected_y():
+            reg = qubit.qalloc(1)
+            squin.u3(theta, phi, lam, reg[0])
+            tomography_y(reg)
+            return default_post_processing(reg)
+
+        @gemini_logical.kernel(aggressive_unroll=True)
+        def injected_z():
+            reg = qubit.qalloc(1)
+            squin.u3(theta, phi, lam, reg[0])
+            tomography_z(reg)
+            return default_post_processing(reg)
+
+        injected = {
             "X": LogicalKernelSpec(kernel=injected_x),
             "Y": LogicalKernelSpec(kernel=injected_y),
             "Z": LogicalKernelSpec(kernel=injected_z),
-        },
+        }
+
+    return DecoderKernelBundle(
+        actual=actual,
+        special=special,
+        injected=injected,
     )
 
 

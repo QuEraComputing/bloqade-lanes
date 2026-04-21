@@ -2,6 +2,7 @@
 
 from .circuits import (
     DecoderKernelBundle,
+    DecoderPrimitiveSet,
     NaiveKernelBundle,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
@@ -94,6 +95,7 @@ from .qet import (
     QET_VALID_POSTSELECTION_PATTERNS,
     bloch_vector_from_state,
     build_qet_kernel_maps,
+    build_qet_primitives,
     build_qet_target_state,
 )
 
@@ -106,6 +108,7 @@ __all__ = [
     "DemoTask",
     "DecoderAdapter",
     "DecoderKernelBundle",
+    "DecoderPrimitiveSet",
     "DistillationSimNoiseConfig",
     "ExperimentDiagnostics",
     "ExperimentTaskMaps",
@@ -173,6 +176,7 @@ __all__ = [
     "bloch_vector_from_state",
     "build_experiment_task_maps",
     "build_qet_kernel_maps",
+    "build_qet_primitives",
     "build_qet_target_state",
     "collect_experiment_diagnostics",
     "train_mld_experiment",

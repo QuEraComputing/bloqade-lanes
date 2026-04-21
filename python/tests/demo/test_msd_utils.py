@@ -7,9 +7,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from bloqade import squin
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_utils.circuits import (
+    DecoderPrimitiveSet,
     build_decoder_kernel_bundle,
     build_naive_kernel_bundle,
 )
@@ -31,6 +34,7 @@ from demo.msd_utils.decoders import (
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
 )
+from demo.msd_utils.qet import build_qet_kernel_maps, build_qet_primitives
 
 
 def test_fidelity_from_counts_returns_ordered_interval():
@@ -81,6 +85,47 @@ def test_kernel_builders_return_expected_basis_maps():
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert set(decoder.injected) == {"X", "Y", "Z"}
+
+
+def test_decoder_kernel_bundle_accepts_variadic_primitive_builder():
+    captured: list[tuple[float, ...]] = []
+
+    @squin.kernel
+    def sentinel(reg):
+        return
+
+    def build_primitives(*args: float) -> DecoderPrimitiveSet:
+        captured.append(args)
+        return DecoderPrimitiveSet(
+            state_injection_circuit=sentinel,
+            logical_circuit=sentinel,
+            logical_circuit_inverse=sentinel,
+        )
+
+    decoder = build_decoder_kernel_bundle(
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        num_logical_qubits=9,
+        build_primitives=build_primitives,
+        injected_prep_args=None,
+        special_kernel_strategy="compiled_inverse_prefix",
+    )
+
+    assert captured == [(0.1, 0.2, 0.3, 0.4)]
+    assert set(decoder.actual) == {"X", "Y", "Z"}
+    assert set(decoder.special) == {"X", "Y", "Z"}
+    assert decoder.injected == {}
+
+
+def test_qet_primitives_integrate_with_decoder_kernel_bundle():
+    primitive_set = build_qet_primitives(theta=0.1, phi0=0.2, phi1=0.3, phi2=0.4)
+    assert isinstance(primitive_set, DecoderPrimitiveSet)
+
+    actual, special = build_qet_kernel_maps(theta=0.1, phi0=0.2, phi1=0.3, phi2=0.4)
+    assert set(actual) == {"X", "Y", "Z"}
+    assert set(special) == {"X", "Y", "Z"}
 
 
 class _FakeDense:
