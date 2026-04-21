@@ -389,12 +389,12 @@ from bloqade.lanes.heuristics.physical.target_generator import _make_weight_fn
 
 
 class _WeightCtx:
-    """Minimal stand-in for the generator's penalty-weight fields."""
+    """Minimal stand-in for the generator's factor-weight fields."""
 
     def __init__(self, opposite: float, same: float, site: float) -> None:
-        self.opposite_direction_penalty = opposite
-        self.same_direction_penalty = same
-        self.shared_site_penalty = site
+        self.opposite_direction_factor = opposite
+        self.same_direction_factor = same
+        self.shared_site_factor = site
 
 
 def _first_lane(pf: "layout.PathFinder") -> "layout.LaneAddress":
@@ -404,30 +404,30 @@ def _first_lane(pf: "layout.PathFinder") -> "layout.LaneAddress":
 
 def test_weight_fn_no_congestion_returns_base(arch):
     pf = layout.PathFinder(arch)
-    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(10.0, 1.0, 0.1))
+    weight = _make_weight_fn(pf, {}, set(), _WeightCtx(10.0, 0.25, 1.1))
     lane = _first_lane(pf)
     base = pf.metrics.get_lane_duration_cost(lane)
     assert weight(lane) == base
 
 
-def test_weight_fn_same_direction_adds_same_penalty(arch):
+def test_weight_fn_same_direction_applies_same_factor(arch):
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
     committed_lanes = {_lane_key(lane): lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 1.0, 0.1))
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 0.25, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base + 1.0
+    assert weight(lane) == base * 0.25
 
 
-def test_weight_fn_opposite_direction_adds_opposite_penalty(arch):
+def test_weight_fn_opposite_direction_applies_opposite_factor(arch):
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
     reversed_lane = lane.reverse()
     # Mark the reversed direction as committed; now `lane` is opposite.
     committed_lanes = {_lane_key(lane): reversed_lane.direction}
-    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 1.0, 0.1))
+    weight = _make_weight_fn(pf, committed_lanes, set(), _WeightCtx(10.0, 0.25, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base + 10.0
+    assert weight(lane) == base * 10.0
 
 
 def test_weight_fn_shared_site_without_lane_reuse(arch):
@@ -435,14 +435,14 @@ def test_weight_fn_shared_site_without_lane_reuse(arch):
     lane = _first_lane(pf)
     src, dst = pf.get_endpoints(lane)
     assert src is not None and dst is not None
-    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(10.0, 1.0, 0.1))
+    weight = _make_weight_fn(pf, {}, {src}, _WeightCtx(10.0, 0.25, 1.1))
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base + 0.1
+    assert weight(lane) == base * 1.1
 
 
 def test_weight_fn_lane_reuse_dominates_shared_site(arch):
     """When a lane is committed AND an endpoint is in committed_sites,
-    the lane-reuse penalty applies, not the shared-site penalty.
+    the lane-reuse factor applies, not the shared-site factor.
     """
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
@@ -450,10 +450,11 @@ def test_weight_fn_lane_reuse_dominates_shared_site(arch):
     assert src is not None
     committed_lanes = {_lane_key(lane): lane.direction}
     weight = _make_weight_fn(
-        pf, committed_lanes, {src}, _WeightCtx(10.0, 1.0, 0.1)
+        pf, committed_lanes, {src}, _WeightCtx(10.0, 0.25, 1.1)
     )
     base = pf.metrics.get_lane_duration_cost(lane)
-    assert weight(lane) == base + 1.0
+    # same_direction_factor = 0.25 wins over shared_site_factor = 1.1
+    assert weight(lane) == base * 0.25
 ```
 
 - [ ] **Step 2: Run test to confirm failure**
@@ -472,26 +473,32 @@ After `_choose_control`:
 from typing import Protocol
 
 
-class _HasPenalties(Protocol):
-    opposite_direction_penalty: float
-    same_direction_penalty: float
-    shared_site_penalty: float
+class _HasFactors(Protocol):
+    @property
+    def opposite_direction_factor(self) -> float: ...
+    @property
+    def same_direction_factor(self) -> float: ...
+    @property
+    def shared_site_factor(self) -> float: ...
 
 
 def _make_weight_fn(
     pf: layout.PathFinder,
     committed_lanes: dict[_LaneKey, layout.Direction],
     committed_sites: set[layout.LocationAddress],
-    gen: _HasPenalties,
+    gen: _HasFactors,
 ) -> Callable[[layout.LaneAddress], float]:
     """Closure over the running congestion state; passed to `find_path`.
 
-    Penalty precedence (largest to smallest):
-      1. lane reused in opposite direction -> opposite_direction_penalty
-      2. lane reused in same direction    -> same_direction_penalty
+    Factor precedence (which field multiplies the base lane cost):
+      1. lane reused in opposite direction -> opposite_direction_factor
+      2. lane reused in same direction    -> same_direction_factor
       3. lane not reused, but an endpoint is in committed_sites
-                                          -> shared_site_penalty
-      4. no overlap                        -> 0 (base only)
+                                          -> shared_site_factor
+      4. no overlap                        -> 1.0 (base only)
+
+    Each field is a non-negative multiplier. Values ``< 1`` reward
+    the case (cheaper than base); ``> 1`` penalise it.
     """
 
     def weight(lane: layout.LaneAddress) -> float:
@@ -500,11 +507,11 @@ def _make_weight_fn(
         prior_dir = committed_lanes.get(key)
         if prior_dir is not None:
             if prior_dir != lane.direction:
-                return base + gen.opposite_direction_penalty
-            return base + gen.same_direction_penalty
+                return base * gen.opposite_direction_factor
+            return base * gen.same_direction_factor
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base + gen.shared_site_penalty
+            return base * gen.shared_site_factor
         return base
 
     return weight
@@ -609,15 +616,17 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Penalty weights are additive on top of
-    ``MoveMetricCalculator.get_lane_duration_cost(lane)`` and are tuned
-    relative to that base-duration scale. Defaults are illustrative;
-    empirical tuning is a documented follow-up.
+    Factor weights are **multiplicative** on top of
+    ``MoveMetricCalculator.get_lane_duration_cost(lane)``. Values ``< 1``
+    reward the case; ``> 1`` penalise it; ``= 1`` is neutral. All three
+    factors must remain ``>= 0`` (validated in ``__post_init__``) because
+    the Dijkstra path finder requires non-negative edge weights. Defaults
+    reflect the canonical tuning; empirical retuning is a follow-up.
     """
 
-    opposite_direction_penalty: float = 10.0
-    same_direction_penalty: float = 1.0
-    shared_site_penalty: float = 0.1
+    opposite_direction_factor: float = 10.0
+    same_direction_factor: float = 0.25
+    shared_site_factor: float = 1.1
 
     def generate(
         self, ctx: TargetContext
@@ -922,10 +931,11 @@ def test_target_direction_chosen_when_target_path_cheaper(arch):
     assert plan[2] == blocker
 
 
-def test_penalty_zero_reproduces_default_on_symmetric_stage(arch):
-    """With all penalties = 0 and a single-pair symmetric stage, the
-    congestion-aware heuristic reduces to the default (control-moves)
-    by symmetry + tiebreak. Sanity check the reduction.
+def test_neutral_factors_reproduce_default_on_symmetric_stage(arch):
+    """With all congestion factors = 1.0 (neutral multipliers) and a
+    single-pair symmetric stage, the congestion-aware heuristic reduces
+    to the default (control-moves) by symmetry + tiebreak. Sanity check
+    the reduction.
     """
     from bloqade.lanes.heuristics.physical.target_generator import DefaultTargetGenerator
 
@@ -937,13 +947,13 @@ def test_penalty_zero_reproduces_default_on_symmetric_stage(arch):
         pytest.skip("arch has no suitable non-partnered pair; see follow-up issue")
     loc_ctrl, loc_tgt, _blocker = scenario
     ctx = _ctx(arch, (loc_ctrl, loc_tgt), controls=(0,), targets=(1,))
-    gen_zero = CongestionAwareTargetGenerator(0.0, 0.0, 0.0)
+    gen_neutral = CongestionAwareTargetGenerator(1.0, 1.0, 1.0)
     gen_default = DefaultTargetGenerator()
-    out_zero = gen_zero.generate(ctx)
+    out_neutral = gen_neutral.generate(ctx)
     out_default = gen_default.generate(ctx)
-    assert out_zero == out_default, (
-        f"penalty=0 should match DefaultTargetGenerator on symmetric stages.\n"
-        f"zero:    {out_zero}\ndefault: {out_default}"
+    assert out_neutral == out_default, (
+        f"neutral factors (1.0) should match DefaultTargetGenerator on symmetric stages.\n"
+        f"neutral: {out_neutral}\ndefault: {out_default}"
     )
 
 
@@ -952,7 +962,7 @@ def test_penalty_zero_reproduces_default_on_symmetric_stage(arch):
 )
 def test_multi_pair_avoids_opposite_direction_reuse(arch):
     """Two pairs whose uncongested shortest paths would traverse the
-    same lane in opposite directions. With opposite_direction_penalty
+    same lane in opposite directions. With opposite_direction_factor
     large enough, the second-committed pair picks its more-expensive
     direction to avoid the conflict.
     """
@@ -1053,7 +1063,7 @@ uv run pytest python/tests/heuristics/test_congestion_aware_target_generator.py 
 uv run pyright python/bloqade/lanes/heuristics/physical/target_generator.py
 ```
 
-Expected: `test_target_direction_chosen_when_target_path_cheaper` and `test_penalty_zero_reproduces_default_on_symmetric_stage` now pass (or `pytest.skip` cleanly if the arch's geometry has no suitable blocker scenario — follow-up issue then tracks the synthetic fixture). Two `@pytest.mark.skip`-decorated tests remain deferred. Pyright: 0 errors.
+Expected: `test_target_direction_chosen_when_target_path_cheaper` and `test_neutral_factors_reproduce_default_on_symmetric_stage` now pass (or `pytest.skip` cleanly if the arch's geometry has no suitable blocker scenario — follow-up issue then tracks the synthetic fixture). Two `@pytest.mark.skip`-decorated tests remain deferred. Pyright: 0 errors.
 
 - [ ] **Step 5: Commit**
 

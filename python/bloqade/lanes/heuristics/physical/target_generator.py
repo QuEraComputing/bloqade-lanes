@@ -291,6 +291,18 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     same_direction_factor: float = 0.25
     shared_site_factor: float = 1.1
 
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("opposite_direction_factor", self.opposite_direction_factor),
+            ("same_direction_factor", self.same_direction_factor),
+            ("shared_site_factor", self.shared_site_factor),
+        ):
+            if value < 0:
+                raise ValueError(
+                    f"{name}={value!r} must be non-negative; Dijkstra "
+                    f"requires non-negative edge weights"
+                )
+
     def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
         placement = ctx.placement
         if not ctx.controls:
@@ -446,7 +458,7 @@ class AODClusterTargetGenerator(TargetGeneratorABC):
 
     Rationale: CongAware rewards same-direction lane reuse per edge
     via a Dijkstra weight. That is a local proxy for shot-sharing; the
-    scheduler actually batches by the triple above, not by individual
+    scheduler actually batches by the 4-tuple above, not by individual
     lane reuse. Choosing CZ directions that align first-hops on shared
     signatures produces targets the scheduler can pack more tightly.
     """

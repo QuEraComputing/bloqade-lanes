@@ -79,14 +79,17 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Penalty weights are additive on top of
-    ``MoveMetricCalculator.get_lane_duration_cost(lane)`` and are tuned
-    relative to that base-duration scale.
+    Factor weights are **multiplicative** on top of
+    ``MoveMetricCalculator.get_lane_duration_cost(lane)``. A factor ``< 1``
+    *rewards* the case (cheaper than base), ``> 1`` *penalises* it, and
+    ``= 1`` is neutral. Dijkstra requires non-negative edge weights, so
+    all three factors must be ``>= 0``; ``__post_init__`` enforces this
+    at construction.
     """
 
-    opposite_direction_cost: float = 10.0
-    same_direction_cost: float = 1.0
-    shared_site_cost: float = 0.1
+    opposite_direction_factor: float = 10.0
+    same_direction_factor: float = 0.25
+    shared_site_factor: float = 1.1
 
     def generate(
         self, ctx: TargetContext
@@ -245,31 +248,33 @@ def _make_weight_fn(pf, committed_lanes, committed_sites, gen):
     def weight(lane: LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
         key = _lane_key(lane)
-        if key in committed_lanes:
-            if committed_lanes[key] != lane.direction:
-                return base + gen.opposite_direction_cost
-            return base + gen.same_direction_cost
+        prior_dir = committed_lanes.get(key)
+        if prior_dir is not None:
+            if prior_dir != lane.direction:
+                return base * gen.opposite_direction_factor
+            return base * gen.same_direction_factor
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base + gen.shared_site_cost
+            return base * gen.shared_site_factor
         return base
     return weight
 ```
 
-Cost tiers (each added to the base lane cost; sign determines whether
-the case is discouraged or favored):
+Factor tiers (each multiplies the base lane cost; values ``< 1``
+reward the case, ``> 1`` penalise it, ``= 1`` is neutral):
 
-| Tier | Condition | Intuition | Canonical sign |
+| Tier | Condition | Intuition | Canonical value |
 |---|---|---|---|
-| `opposite_direction_cost` | Lane already committed in the opposite direction | Very bad for the move scheduler — cannot be temporally packed. | Large positive (penalty) |
-| `same_direction_cost` | Lane already committed in the same direction | **Favorable**: the AOD transport layer can move both atoms together in a single move-layer; shared same-direction motion is exactly what the scheduler parallelizes best. | Negative (bonus) |
-| `shared_site_cost` | New lane, but one or both endpoints are sites a prior path traversed | Mild: paths cross at a shared node but use different physical lanes — scheduler handles these with one extra layer. | Small positive (penalty) |
-| `0` | No overlap | Unconstrained. | — |
+| `opposite_direction_factor` | Lane already committed in the opposite direction | Very bad for the move scheduler — cannot be temporally packed. | ``>> 1`` (penalty; default 10.0) |
+| `same_direction_factor` | Lane already committed in the same direction | **Favorable**: the AOD transport layer can move both atoms together in a single move-layer; shared same-direction motion is exactly what the scheduler parallelizes best. | ``< 1`` (reward; default 0.25) |
+| `shared_site_factor` | New lane, but one or both endpoints are sites a prior path traversed | Mild: paths cross at a shared node but use different physical lanes — scheduler handles these with one extra layer. | Slightly ``> 1`` (penalty; default 1.1) |
+| `1.0` | No overlap | Unconstrained — base cost is used directly. | — |
 
-The cost is additive per-edge. Positive values act as penalties,
-negative values as bonuses. A path's total weighted cost is the sum
-of `weight(lane)` over its lanes — re-evaluated by the caller
-(`_sum_weighted`) against the same closure the pathfinder used.
+The cost is multiplicative per-edge and must remain non-negative for
+Dijkstra; ``CongestionAwareTargetGenerator.__post_init__`` validates
+that. A path's total weighted cost is the sum of ``weight(lane)`` over
+its lanes — re-evaluated by the caller (`_sum_weighted`) against the
+same closure the pathfinder used.
 
 ### Lane canonical key
 
@@ -298,8 +303,8 @@ is adequate for this first cut.
 After a pair commits, every location its path traversed (start,
 intermediates, end) is added to `committed_sites`. Subsequent pairs'
 candidate lanes whose endpoint is in that set pay
-`shared_site_cost` — but only when the lane itself is not reused
-(the lane-reuse penalties dominate; shared-site is the lower tier).
+`shared_site_factor` — but only when the lane itself is not reused
+(lane-reuse factors dominate; shared-site is the lower tier).
 
 ### Bidirectional-cost symmetry note
 
@@ -421,17 +426,17 @@ Each test constructs a minimal `TargetContext` directly and asserts on
    only longest-first commit order produces a valid candidate; verify.
 5. **Opposite-direction congestion avoided** — two pairs where a
    naive order reuses a lane in opposite directions; with
-   `opposite_direction_cost=1e6` and `same_direction_cost=0`
+   `opposite_direction_factor=1e6` and `same_direction_factor=1.0`
    verify the second pair picks the direction that does not reuse in
    opposite sense.
 6. **Same-direction reuse preferred to opposite** — both directions
    reuse a committed lane, one same-dir, one opposite-dir; same-dir is
    chosen even when slightly longer in lane count.
-7. **Shared-site cost tier** — two directions, one crosses a prior
+7. **Shared-site factor tier** — two directions, one crosses a prior
    path's site, the other fully fresh but longer in raw duration;
-   verify the decision depends on `shared_site_cost` magnitude as
+   verify the decision depends on `shared_site_factor` magnitude as
    expected.
-8. **Penalty-zero config** — all three penalties = 0 → identical
+8. **Neutral-factor config** — all three factors = 1.0 → identical
    output to a greedy-shortest-cost joint heuristic with no congestion
    awareness (regression reference).
 9. **Both directions infeasible** → `[]` (not raise).
@@ -494,10 +499,13 @@ Each test constructs a minimal `TargetContext` directly and asserts on
 
 ## Open questions
 
-1. **Penalty defaults.** The ratios proposed (`10 : 1 : 0.1`) are
-   placeholders. Empirical tuning — varying ratios on a representative
-   workload and measuring `rust_nodes_expanded_total` or wall-time —
-   is a follow-up. Tracking issue recommended.
+1. **Factor defaults.** The shipped defaults (`opposite=10.0`,
+   `same=0.25`, `shared_site=1.1`) reflect the canonical tuning —
+   penalise opposite-direction reuse, reward same-direction reuse
+   (AOD-parallelism proxy), mild shared-site penalty. Empirical
+   retuning — sweeping factors on a representative workload and
+   measuring `rust_nodes_expanded_total` or wall-time — is a follow-up.
+   Tracking issue recommended.
 
 2. **`LaneAddress.canonical()` helper.** If more callers benefit from
    a direction-stripped lane key, promote `_lane_key` from private

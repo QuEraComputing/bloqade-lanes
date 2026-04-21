@@ -405,6 +405,16 @@ def test_move_count_tiebreak_at_commit_end_to_end(arch):
     ...
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["opposite_direction_factor", "same_direction_factor", "shared_site_factor"],
+)
+def test_negative_factor_raises(field):
+    kwargs = {field: -0.1}
+    with pytest.raises(ValueError, match="must be non-negative"):
+        CongestionAwareTargetGenerator(**kwargs)
+
+
 def test_generate_is_deterministic_across_calls(arch):
     loc0, loc1 = _pick_cz_pair(arch)
     ctx = _ctx(arch, (loc0, loc1), controls=(0,), targets=(1,))
