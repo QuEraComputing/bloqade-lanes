@@ -1058,8 +1058,8 @@ class MoveSolver:
 
     def solve_with_generator(
         self,
-        initial: list[tuple[int, int, int, int]],
-        blocked: list[tuple[int, int, int]],
+        initial: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
         controls: list[int],
         targets: list[int],
         generator: DefaultTargetGenerator | None = None,
@@ -1069,8 +1069,8 @@ class MoveSolver:
         """Solve using a target generator with shared expansion budget.
 
         Args:
-            initial: Starting qubit positions.
-            blocked: Immovable obstacle locations.
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
             controls: Control qubit IDs for the CZ gate layer.
             targets: Target qubit IDs for the CZ gate layer.
             generator: Rust-side target generator (currently must be None).
@@ -1084,14 +1084,14 @@ class MoveSolver:
 
     def generate_candidates(
         self,
-        initial: list[tuple[int, int, int, int]],
+        initial: dict[int, LocationAddress],
         controls: list[int],
         targets: list[int],
         generator: DefaultTargetGenerator | None = None,
-    ) -> list[list[tuple[int, int, int, int]]]:
+    ) -> list[dict[int, LocationAddress]]:
         """Generate and validate candidate targets without solving.
 
-        Returns only validated candidates.
+        Returns only validated candidates as qubit_id -> LocationAddress mappings.
         """
         ...
 

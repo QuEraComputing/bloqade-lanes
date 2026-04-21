@@ -8,14 +8,19 @@ import pytest
 
 from bloqade.lanes.bytecode._native import (
     DefaultTargetGenerator,
+    LocationAddress,
     MoveSolver,
     MultiSolveResult,
 )
 
 
+def loc(zone: int, word: int, site: int) -> LocationAddress:
+    return LocationAddress(zone_id=zone, word_id=word, site_id=site)
+
+
 @pytest.fixture(scope="module")
 def arch_json() -> str:
-    """Two-word architecture with one CZ entangling pair (word 0 ↔ word 1)."""
+    """Two-word architecture with one CZ entangling pair (word 0 <-> word 1)."""
     return json.dumps(
         {
             "version": "2.0",
@@ -83,27 +88,28 @@ class TestDefaultTargetGenerator:
 
 class TestGenerateCandidates:
     def test_produces_one_candidate(self, solver: MoveSolver):
-        initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         candidates = solver.generate_candidates(initial, [0], [1])
         assert len(candidates) == 1
+        assert isinstance(candidates[0], dict)
+        assert 0 in candidates[0]
+        assert isinstance(candidates[0][0], LocationAddress)
 
     def test_explicit_generator_raises(self, solver: MoveSolver):
         gen = DefaultTargetGenerator()
-        initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         with pytest.raises(ValueError, match="not yet supported"):
             solver.generate_candidates(initial, [0], [1], generator=gen)
 
     def test_empty_when_target_qubit_missing(self, solver: MoveSolver):
-        initial = [(0, 0, 0, 0)]  # qubit 1 missing
+        initial = {0: loc(0, 0, 0)}  # qubit 1 missing
         candidates = solver.generate_candidates(initial, [0], [1])
         assert len(candidates) == 0
 
 
 class TestSolveWithGenerator:
     def test_solves_cz_placement(self, solver: MoveSolver):
-        # Qubit 0 at word 0 site 0, qubit 1 at word 1 site 0.
-        # CZ pair: word 0 ↔ word 1.
-        initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         result = solver.solve_with_generator(initial, [], [0], [1], max_expansions=1000)
         assert isinstance(result, MultiSolveResult)
         assert result.status == "solved"
@@ -112,7 +118,7 @@ class TestSolveWithGenerator:
         assert result.total_expansions >= 0
 
     def test_attempts_detail(self, solver: MoveSolver):
-        initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         result = solver.solve_with_generator(initial, [], [0], [1], max_expansions=1000)
         assert len(result.attempts) == 1
         attempt = result.attempts[0]
@@ -121,15 +127,14 @@ class TestSolveWithGenerator:
         assert isinstance(attempt["nodes_expanded"], int)
 
     def test_unsolvable_when_no_candidates(self, solver: MoveSolver):
-        # Qubit 1 missing → no candidates generated.
-        initial = [(0, 0, 0, 0)]
+        initial = {0: loc(0, 0, 0)}  # qubit 1 missing
         result = solver.solve_with_generator(initial, [], [0], [1], max_expansions=1000)
         assert result.status == "unsolvable"
         assert result.candidate_index is None
         assert result.candidates_tried == 0
 
     def test_move_layers_and_goal_config(self, solver: MoveSolver):
-        initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         result = solver.solve_with_generator(initial, [], [0], [1], max_expansions=1000)
         assert isinstance(result.move_layers, list)
         assert isinstance(result.goal_config, list)
@@ -137,6 +142,6 @@ class TestSolveWithGenerator:
         assert result.deadlocks >= 0
 
     def test_repr(self, solver: MoveSolver):
-        initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         result = solver.solve_with_generator(initial, [], [0], [1], max_expansions=1000)
         assert "MultiSolveResult" in repr(result)

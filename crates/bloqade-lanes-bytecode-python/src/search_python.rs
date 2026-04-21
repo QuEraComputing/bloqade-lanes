@@ -14,7 +14,7 @@ use bloqade_lanes_search::solve::{
 };
 use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGenerator};
 
-use crate::arch_python::PyArchSpec;
+use crate::arch_python::{PyArchSpec, PyLocationAddr};
 
 // ── Enum wrappers ──
 
@@ -340,11 +340,11 @@ impl PyMoveSolver {
     /// and tries them in order with a shared expansion budget.
     ///
     /// Args:
-    ///     initial: List of (qubit_id, zone_id, word_id, site_id) tuples for starting positions.
-    ///     blocked: List of (zone_id, word_id, site_id) tuples for immovable obstacle locations.
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     blocked: List of LocationAddress for immovable obstacle locations.
     ///     controls: List of control qubit IDs for the CZ gate layer.
     ///     targets: List of target qubit IDs for the CZ gate layer.
-    ///     generator: Optional Rust-side target generator. Defaults to DefaultTargetGenerator.
+    ///     generator: Optional Rust-side target generator (currently must be None).
     ///     max_expansions: Optional limit on total node expansions across all candidates.
     ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
     ///
@@ -354,16 +354,17 @@ impl PyMoveSolver {
     fn solve_with_generator(
         &self,
         py: Python<'_>,
-        initial: Vec<(u32, u32, u32, u32)>,
-        blocked: Vec<(u32, u32, u32)>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
         controls: Vec<u32>,
         targets: Vec<u32>,
         generator: Option<&PyDefaultTargetGenerator>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
     ) -> PyResult<PyMultiSolveResult> {
-        let initial_pairs = to_placement(&initial);
-        let blocked_locs = to_blocked_locs(&blocked);
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
 
         // Currently only DefaultTargetGenerator is supported. Reject explicit
@@ -394,22 +395,23 @@ impl PyMoveSolver {
 
     /// Generate and validate candidate target configurations without solving.
     ///
-    /// Returns a list of candidates, each a list of (qubit_id, zone_id, word_id, site_id) tuples.
+    /// Returns a list of candidates, each a dict mapping qubit_id to LocationAddress.
     /// Only validated candidates are included.
     #[pyo3(signature = (initial, controls, targets, generator=None))]
     fn generate_candidates(
         &self,
-        initial: Vec<(u32, u32, u32, u32)>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
         controls: Vec<u32>,
         targets: Vec<u32>,
         generator: Option<&PyDefaultTargetGenerator>,
-    ) -> PyResult<Vec<Vec<(u32, u32, u32, u32)>>> {
+    ) -> PyResult<Vec<std::collections::HashMap<u32, PyLocationAddr>>> {
         if generator.is_some() {
             return Err(PyValueError::new_err(
                 "custom generator parameter is not yet supported; pass None or omit",
             ));
         }
-        let initial_pairs = to_placement(&initial);
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let rust_gen = DefaultTargetGenerator;
 
         Ok(self
@@ -419,7 +421,7 @@ impl PyMoveSolver {
             .map(|candidate| {
                 candidate
                     .into_iter()
-                    .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+                    .map(|(qid, loc)| (qid, PyLocationAddr { inner: loc }))
                     .collect()
             })
             .collect())
