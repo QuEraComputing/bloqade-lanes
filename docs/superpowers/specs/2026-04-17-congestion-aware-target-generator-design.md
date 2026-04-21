@@ -326,9 +326,10 @@ is adequate for this first cut.
 
 After a pair commits, every location its path traversed (start,
 intermediates, end) is added to `committed_sites`. Subsequent pairs'
-candidate lanes whose endpoint is in that set pay
-`shared_site_factor` — but only when the lane itself is not reused
-(lane-reuse factors dominate; shared-site is the lower tier).
+candidate lanes whose endpoint is in that set pay `shared_site_factor`,
+composed multiplicatively with any same/opposite-direction reuse factor
+on the lane itself. The direction and shared-site signals are
+orthogonal physical phenomena and stack rather than take precedence.
 
 ### Bidirectional-cost symmetry note
 
@@ -375,11 +376,10 @@ asymmetric case is already resolved by the primary cost comparison.
    with cost 0 and length 0. The pair no-ops; tiebreak picks control;
    `working[ctrl]` is reassigned to the same location;
    `committed_lanes` is unchanged (no lanes traversed) and
-   `committed_sites` gains `ctrl_loc` (the single site in
-   `chosen[1]`). The latter is benign: the pair's atom already sits
-   there and the lane-reuse penalties always dominate the
-   shared-site tier, so this accounting costs nothing observable to
-   later pairs.
+   `committed_sites` gains `ctrl_loc` (the single site in `chosen[1]`).
+   The latter adds a ``shared_site_factor`` to later candidate lanes
+   whose endpoints touch that site — a minor mild-penalty signal that
+   the heuristic can absorb.
 
 3. **Both directions infeasible** — `path_ctrl is None and path_tgt is
    None`: `return []`. The framework's auto-appended default is the
@@ -456,13 +456,13 @@ Each test constructs a minimal `TargetContext` directly and asserts on
 6. **Same-direction reuse preferred to opposite** — both directions
    reuse a committed lane, one same-dir, one opposite-dir; same-dir is
    chosen even when slightly longer in lane count.
-7. **Shared-site factor tier** — two directions, one crosses a prior
-   path's site, the other fully fresh but longer in raw duration;
+7. **Shared-site factor contribution** — two directions, one crosses a
+   prior path's site, the other fully fresh but longer in raw duration;
    verify the decision depends on `shared_site_factor` magnitude as
    expected.
-8. **Neutral-factor config** — all three factors = 1.0 → identical
-   output to a greedy-shortest-cost joint heuristic with no congestion
-   awareness (regression reference).
+8. **Neutral-factor config** — ``direction_factor = shared_site_factor
+   = 1.0`` → identical output to a greedy-shortest-cost joint heuristic
+   with no congestion awareness (regression reference).
 9. **Both directions infeasible** → `[]` (not raise).
 10. **Empty stage** — `controls=(), targets=()` → `[placement]`.
 11. **Move-count commit tiebreaker** — craft `cost_ctrl == cost_tgt`

@@ -336,13 +336,18 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
     that reflects all prior pairs' committed moves and a running
     directional congestion record.
 
-    Per-lane weighting uses a single multiplicative ``direction_factor``
-    raised to the signed net of same-direction minus opposite-direction
-    prior commits on that lane (see :func:`_make_weight_fn`). With
-    ``direction_factor < 1``, net-positive traffic rewards AOD-parallel
-    reuse and net-negative traffic penalises it; equal traffic is
-    neutral. ``shared_site_factor`` applies to fresh lanes that touch a
-    previously traversed site.
+    Per-lane weighting composes two orthogonal multiplicative factors
+    (see :func:`_make_weight_fn`):
+
+    * ``direction_factor ** (N - M)`` — signed net of same-direction
+      (N) minus opposite-direction (M) prior commits on the lane. With
+      ``direction_factor < 1``, net-positive traffic rewards AOD-parallel
+      reuse and net-negative traffic penalises contention; balanced
+      traffic (``N == M``) is neutral.
+    * ``shared_site_factor`` — applied whenever an endpoint of the
+      candidate lane is a site a prior committed path already traversed.
+      Applies independently of ``direction_factor``; the two signals
+      compose multiplicatively.
 
     Dijkstra requires non-negative edge weights. ``direction_factor``
     must be strictly positive (the negative exponent is otherwise

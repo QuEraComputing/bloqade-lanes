@@ -461,9 +461,9 @@ def test_weight_fn_shared_site_without_lane_reuse(arch):
     assert weight(lane) == base * 1.1
 
 
-def test_weight_fn_lane_reuse_dominates_shared_site(arch):
-    """When a lane is committed AND an endpoint is in committed_sites,
-    the direction branch applies, not shared_site_factor.
+def test_weight_fn_direction_and_shared_site_stack(arch):
+    """When a lane is same-direction reused AND has an endpoint in
+    committed_sites, both factors apply multiplicatively.
     """
     pf = layout.PathFinder(arch)
     lane = _first_lane(pf)
@@ -474,8 +474,7 @@ def test_weight_fn_lane_reuse_dominates_shared_site(arch):
         pf, committed_lanes, {src}, _WeightCtx(0.5, 1.1)
     )
     base = pf.metrics.get_lane_duration_cost(lane)
-    # direction branch wins over shared_site_factor = 1.1
-    assert weight(lane) == base * 0.5
+    assert weight(lane) == pytest.approx(base * 0.5 * 1.1)
 ```
 
 - [ ] **Step 2: Run test to confirm failure**
