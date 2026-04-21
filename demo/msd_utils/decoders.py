@@ -530,36 +530,13 @@ def estimate_mld_ancilla_scores_from_tasks(
                 layout=layout,
             )
 
-    assert ancilla_detectors is not None
-    scores = np.full(1 << ancilla_detectors, np.nan, dtype=np.float64)
-    all_patterns = set()
-    for basis in basis_labels:
-        all_patterns.update(corrected_by_pattern[basis].keys())
-
-    for packed in all_patterns:
-        counts_x = corrected_by_pattern["X"].get(packed)
-        counts_y = corrected_by_pattern["Y"].get(packed)
-        counts_z = corrected_by_pattern["Z"].get(packed)
-        if counts_x is None or counts_y is None or counts_z is None:
-            continue
-        if (
-            min(int(np.sum(counts_x)), int(np.sum(counts_y)), int(np.sum(counts_z)))
-            == 0
-        ):
-            continue
-        scores[packed] = fidelity_from_zero_one_counts(
-            int(counts_x[0]),
-            int(counts_x[1]),
-            int(counts_y[0]),
-            int(counts_y[1]),
-            int(counts_z[0]),
-            int(counts_z[1]),
-            posterior_samples=1,
-            sign_vector=sign_vector,
-            target_bloch=target_bloch,
-            uncertainty_backend="wilson",
-        )["point"]
-    return scores
+    return _mld_scores_from_pattern_counts(
+        corrected_by_pattern,
+        ancilla_detectors=ancilla_detectors,
+        basis_labels=basis_labels,
+        sign_vector=sign_vector,
+        target_bloch=target_bloch,
+    )
 
 
 def build_shared_mld_postselection_scores(
