@@ -42,6 +42,7 @@ from bloqade.lanes.bytecode._clib_path import (
 from bloqade.lanes.bytecode._native import (
     ArchSpec as ArchSpec,
     AtomStateData as AtomStateData,
+    DefaultTargetGenerator as DefaultTargetGenerator,
     Direction as Direction,
     Grid as Grid,
     Instruction as Instruction,
@@ -50,6 +51,7 @@ from bloqade.lanes.bytecode._native import (
     Mode as Mode,
     MoveSolver as MoveSolver,
     MoveType as MoveType,
+    MultiSolveResult as MultiSolveResult,
     Program as Program,
     SiteBus as SiteBus,
     SolveResult as SolveResult,

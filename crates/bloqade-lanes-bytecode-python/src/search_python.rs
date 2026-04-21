@@ -10,8 +10,9 @@ use pyo3::prelude::*;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::solve::{
-    InnerStrategy, MoveSolver, SolveOptions, SolveResult, SolveStatus, Strategy,
+    InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
 };
+use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGenerator};
 
 use crate::arch_python::PyArchSpec;
 
@@ -193,98 +194,19 @@ impl PyMoveSolver {
             }
         }
 
-        let initial_pairs: Vec<_> = initial
-            .into_iter()
-            .map(|(qid, zone_id, word_id, site_id)| {
-                (
-                    qid,
-                    LocationAddr {
-                        zone_id,
-                        word_id,
-                        site_id,
-                    },
-                )
-            })
-            .collect();
-
-        let target_pairs: Vec<_> = target
-            .into_iter()
-            .map(|(qid, zone_id, word_id, site_id)| {
-                (
-                    qid,
-                    LocationAddr {
-                        zone_id,
-                        word_id,
-                        site_id,
-                    },
-                )
-            })
-            .collect();
-
-        let blocked_locs: Vec<_> = blocked
-            .into_iter()
-            .map(|(zone_id, word_id, site_id)| LocationAddr {
-                zone_id,
-                word_id,
-                site_id,
-            })
-            .collect();
-
-        let strat = match strategy {
-            "astar" => Strategy::AStar,
-            "dfs" => Strategy::HeuristicDfs,
-            "bfs" => Strategy::Bfs,
-            "greedy" => Strategy::GreedyBestFirst,
-            "ids" => Strategy::Ids,
-            "cascade" | "cascade-ids" => Strategy::Cascade {
-                inner: InnerStrategy::Ids,
-            },
-            "cascade-dfs" => Strategy::Cascade {
-                inner: InnerStrategy::Dfs,
-            },
-            "cascade-entropy" => Strategy::Cascade {
-                inner: InnerStrategy::Entropy,
-            },
-            "entropy" => Strategy::Entropy,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
-                )));
-            }
-        };
-
-        let dl_policy = match deadlock_policy {
-            "skip" => DeadlockPolicy::Skip,
-            "move_blockers" => DeadlockPolicy::MoveBlockers,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown deadlock_policy '{deadlock_policy}', expected: skip, move_blockers"
-                )));
-            }
-        };
-
-        // Validate numeric parameters.
-        if !weight.is_finite() || weight <= 0.0 {
-            return Err(PyValueError::new_err(
-                "weight must be a finite float greater than 0.0",
-            ));
-        }
-        if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
-            return Err(PyValueError::new_err(
-                "w_t must be a finite float in the range [0.0, 1.0]",
-            ));
-        }
-
-        let opts = SolveOptions {
-            strategy: strat,
+        let initial_pairs = to_initial_pairs(&initial);
+        let target_pairs = to_initial_pairs(&target);
+        let blocked_locs = to_blocked_locs(&blocked);
+        let opts = build_solve_options(
+            strategy,
             top_c,
             max_movesets_per_group,
             weight,
             restarts,
             lookahead,
-            deadlock_policy: dl_policy,
+            deadlock_policy,
             w_t,
-        };
+        )?;
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -302,7 +224,354 @@ impl PyMoveSolver {
         Ok(PySolveResult { inner: result })
     }
 
+    /// Solve using a target generator: generates candidates, validates each,
+    /// and tries them in order with a shared expansion budget.
+    ///
+    /// Args:
+    ///     initial: List of (qubit_id, zone_id, word_id, site_id) tuples for starting positions.
+    ///     blocked: List of (zone_id, word_id, site_id) tuples for immovable obstacle locations.
+    ///     controls: List of control qubit IDs for the CZ gate layer.
+    ///     targets: List of target qubit IDs for the CZ gate layer.
+    ///     generator: Optional Rust-side target generator. Defaults to DefaultTargetGenerator.
+    ///     max_expansions: Optional limit on total node expansions across all candidates.
+    ///     strategy: Search strategy string.
+    ///     top_c: Top bus options per qubit (default 3).
+    ///     max_movesets_per_group: Max movesets per bus group (default 3).
+    ///     weight: Heuristic weight for A* (default 1.0).
+    ///     restarts: Parallel restarts (default 1).
+    ///     lookahead: Enable 2-step lookahead scoring (default false).
+    ///     deadlock_policy: "skip" or "move_blockers" (default "skip").
+    ///     w_t: Time-distance blend (default 0.05).
+    ///
+    /// Returns:
+    ///     MultiSolveResult with per-candidate debug info.
+    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
+    #[allow(clippy::too_many_arguments)]
+    fn solve_with_generator(
+        &self,
+        py: Python<'_>,
+        initial: Vec<(u32, u32, u32, u32)>,
+        blocked: Vec<(u32, u32, u32)>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        generator: Option<&PyDefaultTargetGenerator>,
+        max_expansions: Option<u32>,
+        strategy: &str,
+        top_c: usize,
+        max_movesets_per_group: usize,
+        weight: f64,
+        restarts: u32,
+        lookahead: bool,
+        deadlock_policy: &str,
+        w_t: f64,
+    ) -> PyResult<PyMultiSolveResult> {
+        let initial_pairs = to_initial_pairs(&initial);
+        let blocked_locs = to_blocked_locs(&blocked);
+        let opts = build_solve_options(
+            strategy,
+            top_c,
+            max_movesets_per_group,
+            weight,
+            restarts,
+            lookahead,
+            deadlock_policy,
+            w_t,
+        )?;
+
+        // Currently only DefaultTargetGenerator exists. The `generator` parameter
+        // is accepted for API stability — future generator types will dispatch here.
+        let _ = generator;
+        let rust_gen: Box<dyn TargetGenerator> = Box::new(DefaultTargetGenerator);
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_with_generator(
+                    initial_pairs,
+                    blocked_locs,
+                    &controls,
+                    &targets,
+                    rust_gen.as_ref(),
+                    max_expansions,
+                    &opts,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PyMultiSolveResult { inner: result })
+    }
+
+    /// Generate and validate candidate target configurations without solving.
+    ///
+    /// Returns a list of candidates, each a list of (qubit_id, zone_id, word_id, site_id) tuples.
+    /// Only validated candidates are included.
+    #[pyo3(signature = (initial, controls, targets, generator=None))]
+    fn generate_candidates(
+        &self,
+        initial: Vec<(u32, u32, u32, u32)>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        generator: Option<&PyDefaultTargetGenerator>,
+    ) -> Vec<Vec<(u32, u32, u32, u32)>> {
+        let initial_pairs = to_initial_pairs(&initial);
+
+        let _ = generator;
+        let rust_gen = DefaultTargetGenerator;
+
+        self.inner
+            .generate_candidates(&initial_pairs, &controls, &targets, &rust_gen)
+            .into_iter()
+            .map(|candidate| {
+                candidate
+                    .into_iter()
+                    .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+                    .collect()
+            })
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
         "MoveSolver(...)".to_string()
+    }
+}
+
+// ── Helper functions ──
+
+fn to_initial_pairs(initial: &[(u32, u32, u32, u32)]) -> Vec<(u32, LocationAddr)> {
+    initial
+        .iter()
+        .map(|&(qid, zone_id, word_id, site_id)| {
+            (
+                qid,
+                LocationAddr {
+                    zone_id,
+                    word_id,
+                    site_id,
+                },
+            )
+        })
+        .collect()
+}
+
+fn to_blocked_locs(blocked: &[(u32, u32, u32)]) -> Vec<LocationAddr> {
+    blocked
+        .iter()
+        .map(|&(zone_id, word_id, site_id)| LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_solve_options(
+    strategy: &str,
+    top_c: usize,
+    max_movesets_per_group: usize,
+    weight: f64,
+    restarts: u32,
+    lookahead: bool,
+    deadlock_policy: &str,
+    w_t: f64,
+) -> PyResult<SolveOptions> {
+    let strat = match strategy {
+        "astar" => Strategy::AStar,
+        "dfs" => Strategy::HeuristicDfs,
+        "bfs" => Strategy::Bfs,
+        "greedy" => Strategy::GreedyBestFirst,
+        "ids" => Strategy::Ids,
+        "cascade" | "cascade-ids" => Strategy::Cascade {
+            inner: InnerStrategy::Ids,
+        },
+        "cascade-dfs" => Strategy::Cascade {
+            inner: InnerStrategy::Dfs,
+        },
+        "cascade-entropy" => Strategy::Cascade {
+            inner: InnerStrategy::Entropy,
+        },
+        "entropy" => Strategy::Entropy,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
+            )));
+        }
+    };
+
+    let dl_policy = match deadlock_policy {
+        "skip" => DeadlockPolicy::Skip,
+        "move_blockers" => DeadlockPolicy::MoveBlockers,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "unknown deadlock_policy '{deadlock_policy}', expected: skip, move_blockers"
+            )));
+        }
+    };
+
+    if !weight.is_finite() || weight <= 0.0 {
+        return Err(PyValueError::new_err(
+            "weight must be a finite float greater than 0.0",
+        ));
+    }
+    if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
+        return Err(PyValueError::new_err(
+            "w_t must be a finite float in the range [0.0, 1.0]",
+        ));
+    }
+
+    Ok(SolveOptions {
+        strategy: strat,
+        top_c,
+        max_movesets_per_group,
+        weight,
+        restarts,
+        lookahead,
+        deadlock_policy: dl_policy,
+        w_t,
+    })
+}
+
+// ── Target generator PyO3 types ──
+
+/// Default target generator: moves each control qubit to the CZ blockade
+/// partner of its corresponding target qubit.
+#[pyclass(
+    name = "DefaultTargetGenerator",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyDefaultTargetGenerator;
+
+#[pymethods]
+impl PyDefaultTargetGenerator {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "DefaultTargetGenerator()"
+    }
+}
+
+/// Result of a multi-candidate solve via `MoveSolver.solve_with_generator()`.
+#[pyclass(
+    name = "MultiSolveResult",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyMultiSolveResult {
+    inner: MultiSolveResult,
+}
+
+fn status_str(s: SolveStatus) -> &'static str {
+    match s {
+        SolveStatus::Solved => "solved",
+        SolveStatus::Unsolvable => "unsolvable",
+        SolveStatus::BudgetExceeded => "budget_exceeded",
+    }
+}
+
+#[pymethods]
+impl PyMultiSolveResult {
+    /// Status of the winning solve: "solved", "unsolvable", or "budget_exceeded".
+    #[getter]
+    fn status(&self) -> &'static str {
+        status_str(self.inner.result.status)
+    }
+
+    /// Index of the candidate that succeeded, or None if all failed.
+    #[getter]
+    fn candidate_index(&self) -> Option<usize> {
+        self.inner.candidate_index
+    }
+
+    /// Total nodes expanded across all candidates.
+    #[getter]
+    fn total_expansions(&self) -> u32 {
+        self.inner.total_expansions
+    }
+
+    /// Number of candidates actually attempted (excludes validation failures).
+    #[getter]
+    fn candidates_tried(&self) -> usize {
+        self.inner.candidates_tried
+    }
+
+    /// Per-candidate attempt details: list of dicts with
+    /// `candidate_index`, `status`, `nodes_expanded`.
+    #[getter]
+    fn attempts(&self) -> Vec<PyObject> {
+        Python::with_gil(|py| {
+            self.inner
+                .attempts
+                .iter()
+                .map(|a| {
+                    let dict = pyo3::types::PyDict::new(py);
+                    dict.set_item("candidate_index", a.candidate_index).unwrap();
+                    dict.set_item("status", status_str(a.status)).unwrap();
+                    dict.set_item("nodes_expanded", a.nodes_expanded).unwrap();
+                    dict.into_any().unbind()
+                })
+                .collect()
+        })
+    }
+
+    /// Move layers from the winning candidate (same format as SolveResult.move_layers).
+    #[getter]
+    #[allow(clippy::type_complexity)]
+    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+        self.inner
+            .result
+            .move_layers
+            .iter()
+            .map(|ms| {
+                ms.decode()
+                    .into_iter()
+                    .map(|lane| {
+                        (
+                            lane.direction as u8,
+                            lane.move_type as u8,
+                            lane.zone_id,
+                            lane.word_id,
+                            lane.site_id,
+                            lane.bus_id,
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Goal configuration from the winning candidate.
+    #[getter]
+    fn goal_config(&self) -> Vec<(u32, u32, u32, u32)> {
+        self.inner
+            .result
+            .goal_config
+            .iter()
+            .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+            .collect()
+    }
+
+    /// Total path cost from the winning candidate.
+    #[getter]
+    fn cost(&self) -> f64 {
+        self.inner.result.cost
+    }
+
+    /// Number of deadlocks from the winning candidate.
+    #[getter]
+    fn deadlocks(&self) -> u32 {
+        self.inner.result.deadlocks
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MultiSolveResult(status='{}', candidate={:?}, tried={}, expansions={})",
+            status_str(self.inner.result.status),
+            self.inner.candidate_index,
+            self.inner.candidates_tried,
+            self.inner.total_expansions,
+        )
     }
 }

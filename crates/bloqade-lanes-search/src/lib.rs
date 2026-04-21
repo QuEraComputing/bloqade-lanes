@@ -22,6 +22,7 @@ pub mod observer;
 pub(crate) mod ordering;
 pub mod scorers;
 pub mod solve;
+pub mod target_generator;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod traits;
@@ -37,5 +38,8 @@ pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
 pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
 pub use scorers::{DistanceScorer, EntropyScorer};
-pub use solve::{InnerStrategy, SolveOptions, Strategy};
+pub use solve::{CandidateAttempt, InnerStrategy, MultiSolveResult, SolveOptions, Strategy};
+pub use target_generator::{
+    CandidateError, DefaultTargetGenerator, TargetContext, TargetGenerator,
+};
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};

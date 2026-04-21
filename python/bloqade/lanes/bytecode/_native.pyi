@@ -1012,6 +1012,131 @@ class MoveSolver:
         """
         ...
 
+    def solve_with_generator(
+        self,
+        initial: list[tuple[int, int, int, int]],
+        blocked: list[tuple[int, int, int]],
+        controls: list[int],
+        targets: list[int],
+        generator: DefaultTargetGenerator | None = None,
+        max_expansions: Optional[int] = None,
+        strategy: Literal[
+            "astar",
+            "dfs",
+            "bfs",
+            "greedy",
+            "ids",
+            "cascade",
+            "cascade-ids",
+            "cascade-dfs",
+            "cascade-entropy",
+            "entropy",
+        ] = "astar",
+        top_c: int = 3,
+        max_movesets_per_group: int = 3,
+        weight: float = 1.0,
+        restarts: int = 1,
+        lookahead: bool = False,
+        deadlock_policy: Literal["skip", "move_blockers"] = "skip",
+        w_t: float = 0.05,
+    ) -> MultiSolveResult:
+        """Solve using a target generator with shared expansion budget.
+
+        Generates candidate target configurations, validates each, and tries
+        them in order. Returns on the first successful solve.
+
+        Args:
+            initial: Starting qubit positions.
+            blocked: Immovable obstacle locations.
+            controls: Control qubit IDs for the CZ gate layer.
+            targets: Target qubit IDs for the CZ gate layer.
+            generator: Rust-side target generator. Defaults to DefaultTargetGenerator.
+            max_expansions: Total expansion budget across all candidates.
+            strategy: Search strategy string.
+            top_c: Top bus options per qubit.
+            max_movesets_per_group: Max movesets per bus group.
+            weight: Heuristic weight for A*.
+            restarts: Parallel restarts.
+            lookahead: Enable 2-step lookahead scoring.
+            deadlock_policy: Deadlock handling.
+            w_t: Time-distance blend weight.
+
+        Returns:
+            MultiSolveResult with per-candidate debug info.
+        """
+        ...
+
+    def generate_candidates(
+        self,
+        initial: list[tuple[int, int, int, int]],
+        controls: list[int],
+        targets: list[int],
+        generator: DefaultTargetGenerator | None = None,
+    ) -> list[list[tuple[int, int, int, int]]]:
+        """Generate and validate candidate targets without solving.
+
+        Returns only validated candidates.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class DefaultTargetGenerator:
+    """Default target generator: moves control qubits to CZ blockade partners."""
+
+    def __init__(self) -> None: ...
+    def __repr__(self) -> str: ...
+
+@final
+class MultiSolveResult:
+    """Result of a multi-candidate solve via ``MoveSolver.solve_with_generator()``."""
+
+    @property
+    def status(self) -> str:
+        """Status of the winning solve."""
+        ...
+
+    @property
+    def candidate_index(self) -> int | None:
+        """Index of the winning candidate, or None if all failed."""
+        ...
+
+    @property
+    def total_expansions(self) -> int:
+        """Total nodes expanded across all candidates."""
+        ...
+
+    @property
+    def candidates_tried(self) -> int:
+        """Number of candidates attempted."""
+        ...
+
+    @property
+    def attempts(self) -> list[dict[str, object]]:
+        """Per-candidate attempt details."""
+        ...
+
+    @property
+    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+        """Move layers from the winning candidate."""
+        ...
+
+    @property
+    def goal_config(self) -> list[tuple[int, int, int, int]]:
+        """Goal configuration from the winning candidate."""
+        ...
+
+    @property
+    def cost(self) -> float:
+        """Path cost from the winning candidate."""
+        ...
+
+    @property
+    def deadlocks(self) -> int:
+        """Deadlocks from the winning candidate."""
+        ...
+
     def __repr__(self) -> str: ...
 
 # ── AtomStateData ──
