@@ -118,7 +118,7 @@ class TestSolveWithGenerator:
         attempt = result.attempts[0]
         assert attempt["candidate_index"] == 0
         assert attempt["status"] == "solved"
-        assert attempt["nodes_expanded"] >= 0
+        assert isinstance(attempt["nodes_expanded"], int)
 
     def test_unsolvable_when_no_candidates(self, solver: MoveSolver):
         # Qubit 1 missing → no candidates generated.
