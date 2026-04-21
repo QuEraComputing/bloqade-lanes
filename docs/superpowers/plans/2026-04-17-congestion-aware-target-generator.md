@@ -518,28 +518,29 @@ def _make_weight_fn(
     traffic (``N == M``) is neutral; net-same rewards AOD-parallel
     reuse, net-opposite penalises contention.
 
-    If the lane has no prior commits, fall through to
-    ``shared_site_factor`` when an endpoint was traversed previously,
-    otherwise return base.
+    Direction reuse and shared-site crossings are orthogonal signals
+    and compose multiplicatively. ``shared_site_factor`` still applies
+    when direction traffic happens to be balanced (``N == M``) — the
+    direction exponent cancels to 1, but the shared-site signal isn't
+    suppressed.
     """
 
     df = gen.direction_factor
 
     def weight(lane: layout.LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
-        key = _lane_key(lane)
-        counts = committed_lanes.get(key)
+        factor = 1.0
+        counts = committed_lanes.get(_lane_key(lane))
         if counts:
-            same = counts.get(lane.direction, 0)
-            opposite = counts.get(_opposite(lane.direction), 0)
-            net = same - opposite
+            net = counts.get(lane.direction, 0) - counts.get(
+                _opposite(lane.direction), 0
+            )
             if net != 0:
-                return base * (df ** net)
-            return base
+                factor *= df ** net
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base * gen.shared_site_factor
-        return base
+            factor *= gen.shared_site_factor
+        return base * factor
 
     return weight
 ```

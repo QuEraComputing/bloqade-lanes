@@ -254,21 +254,29 @@ def _make_weight_fn(pf, committed_lanes, committed_sites, gen):
 
     def weight(lane: LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
-        key = _lane_key(lane)
-        counts = committed_lanes.get(key)  # Counter[Direction] | None
+        factor = 1.0
+        counts = committed_lanes.get(_lane_key(lane))
         if counts:
-            same = counts.get(lane.direction, 0)
-            opposite = counts.get(_opposite(lane.direction), 0)
-            net = same - opposite
+            net = counts.get(lane.direction, 0) - counts.get(
+                _opposite(lane.direction), 0
+            )
             if net != 0:
-                return base * (df ** net)
-            return base
+                factor *= df ** net
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base * gen.shared_site_factor
-        return base
+            factor *= gen.shared_site_factor
+        return base * factor
     return weight
 ```
+
+Direction reuse and shared-site crossings are **orthogonal physical
+signals** — the direction signal is about what happens on the lane
+itself (AOD shot packing); the shared-site signal is about path
+waypoints in transit. They compose multiplicatively, so both
+contribute independently. In particular, a lane with balanced
+direction traffic (``N == M``) still picks up the shared-site factor
+when its endpoint was previously traversed — the direction exponent
+cancels to 1, but doesn't suppress the orthogonal signal.
 
 ``committed_lanes`` maps each lane's canonical key to a per-direction
 ``Counter``. Reward and penalty compose into one exponent of

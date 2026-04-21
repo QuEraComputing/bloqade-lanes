@@ -259,43 +259,44 @@ def _make_weight_fn(
 ) -> Callable[[layout.LaneAddress], float]:
     """Closure over the running congestion state; passed to `find_path`.
 
-    For a candidate lane with direction ``d`` and prior-commit counts
-    ``N`` (same direction) and ``M`` (opposite direction) on that lane:
+    The two signals — direction reuse and shared-site crossings —
+    measure orthogonal physical phenomena (AOD shot packing on the
+    lane itself vs path waypoints in transit) and compose
+    multiplicatively:
 
         weight = base * direction_factor ** (N - M)
+                      * shared_site_factor (iff an endpoint was
+                                            previously traversed)
 
-    Reward and penalty are combined into a single exponent:
+    where ``N`` and ``M`` are prior same- and opposite-direction commit
+    counts on the lane. Reward and penalty share the direction exponent:
     ``direction_factor ** N`` rewards same-direction AOD-sharing,
     ``direction_factor ** -M`` penalises opposite-direction conflicts.
-    Balanced traffic (``N == M``) is neutral by construction — there
-    is no local information that prefers one side over the other.
-
-    If the lane has no prior commits, an endpoint may still be in
-    ``committed_sites``, in which case ``shared_site_factor`` applies.
-    Otherwise the base cost passes through unchanged.
+    Balanced traffic (``N == M``) zeroes the direction exponent, which
+    on its own is neutral but still lets a coincident shared-site
+    crossing contribute.
 
     ``direction_factor`` must be strictly positive (Dijkstra requires
-    non-negative edges, and ``0 ** -M`` is undefined). ``shared_site_factor``
-    must be non-negative.
+    non-negative edges, and ``0 ** -M`` is undefined).
+    ``shared_site_factor`` must be non-negative.
     """
 
     df = gen.direction_factor
 
     def weight(lane: layout.LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
-        key = _lane_key(lane)
-        counts = committed_lanes.get(key)
+        factor = 1.0
+        counts = committed_lanes.get(_lane_key(lane))
         if counts:
-            same = counts.get(lane.direction, 0)
-            opposite = counts.get(_opposite(lane.direction), 0)
-            net = same - opposite
+            net = counts.get(lane.direction, 0) - counts.get(
+                _opposite(lane.direction), 0
+            )
             if net != 0:
-                return base * (df**net)
-            return base
+                factor *= df**net
         src, dst = pf.get_endpoints(lane)
         if src in committed_sites or dst in committed_sites:
-            return base * gen.shared_site_factor
-        return base
+            factor *= gen.shared_site_factor
+        return base * factor
 
     return weight
 
