@@ -46,9 +46,9 @@ from .core import (
     split_factory_bits,
     unpack_packed_bits,
 )
+from .decoder_classes import SparseTableDecoder
 from .decoders import (
     DecoderAdapter,
-    SparseTableDecoder,
     TableDecoderWithConfidence,
     build_mld_decoders,
     build_mld_decoders_from_pair,

@@ -20,9 +20,9 @@ from demo.msd_utils.core import (
     pack_boolean_array,
     split_factory_bits,
 )
+from demo.msd_utils.decoder_classes import SparseTableDecoder
 from demo.msd_utils.decoders import (
     DecoderAdapter,
-    SparseTableDecoder,
     build_mle_decoders,
     estimate_mld_ancilla_scores,
     estimate_mld_ancilla_scores_from_tasks,
