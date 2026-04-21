@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Literal, Optional, final
+from typing import Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
