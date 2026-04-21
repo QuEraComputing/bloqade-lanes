@@ -16,6 +16,118 @@ use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGener
 
 use crate::arch_python::PyArchSpec;
 
+// ── Enum wrappers ──
+
+/// Search strategy for the move solver.
+#[pyclass(
+    name = "SearchStrategy",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PySearchStrategy {
+    #[pyo3(name = "ASTAR")]
+    AStar = 0,
+    #[pyo3(name = "DFS")]
+    HeuristicDfs = 1,
+    #[pyo3(name = "BFS")]
+    Bfs = 2,
+    #[pyo3(name = "GREEDY")]
+    GreedyBestFirst = 3,
+    #[pyo3(name = "IDS")]
+    Ids = 4,
+    #[pyo3(name = "CASCADE_IDS")]
+    CascadeIds = 5,
+    #[pyo3(name = "CASCADE_DFS")]
+    CascadeDfs = 6,
+    #[pyo3(name = "CASCADE_ENTROPY")]
+    CascadeEntropy = 7,
+    #[pyo3(name = "ENTROPY")]
+    Entropy = 8,
+}
+
+#[pymethods]
+impl PySearchStrategy {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::AStar => "ASTAR",
+            Self::HeuristicDfs => "DFS",
+            Self::Bfs => "BFS",
+            Self::GreedyBestFirst => "GREEDY",
+            Self::Ids => "IDS",
+            Self::CascadeIds => "CASCADE_IDS",
+            Self::CascadeDfs => "CASCADE_DFS",
+            Self::CascadeEntropy => "CASCADE_ENTROPY",
+            Self::Entropy => "ENTROPY",
+        }
+    }
+}
+
+impl PySearchStrategy {
+    fn to_rs(self) -> Strategy {
+        match self {
+            Self::AStar => Strategy::AStar,
+            Self::HeuristicDfs => Strategy::HeuristicDfs,
+            Self::Bfs => Strategy::Bfs,
+            Self::GreedyBestFirst => Strategy::GreedyBestFirst,
+            Self::Ids => Strategy::Ids,
+            Self::CascadeIds => Strategy::Cascade {
+                inner: InnerStrategy::Ids,
+            },
+            Self::CascadeDfs => Strategy::Cascade {
+                inner: InnerStrategy::Dfs,
+            },
+            Self::CascadeEntropy => Strategy::Cascade {
+                inner: InnerStrategy::Entropy,
+            },
+            Self::Entropy => Strategy::Entropy,
+        }
+    }
+}
+
+/// Deadlock handling policy for the move solver.
+#[pyclass(
+    name = "DeadlockPolicy",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyDeadlockPolicy {
+    #[pyo3(name = "SKIP")]
+    Skip = 0,
+    #[pyo3(name = "MOVE_BLOCKERS")]
+    MoveBlockers = 1,
+}
+
+#[pymethods]
+impl PyDeadlockPolicy {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Skip => "SKIP",
+            Self::MoveBlockers => "MOVE_BLOCKERS",
+        }
+    }
+}
+
+impl PyDeadlockPolicy {
+    fn to_rs(self) -> DeadlockPolicy {
+        match self {
+            Self::Skip => DeadlockPolicy::Skip,
+            Self::MoveBlockers => DeadlockPolicy::MoveBlockers,
+        }
+    }
+}
+
+// ── Solve results ──
+
 /// Result of a move synthesis solve.
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
@@ -194,8 +306,8 @@ impl PyMoveSolver {
             }
         }
 
-        let initial_pairs = to_initial_pairs(&initial);
-        let target_pairs = to_initial_pairs(&target);
+        let initial_pairs = to_placement(&initial);
+        let target_pairs = to_placement(&target);
         let blocked_locs = to_blocked_locs(&blocked);
         let opts = build_solve_options(
             strategy,
@@ -234,19 +346,11 @@ impl PyMoveSolver {
     ///     targets: List of target qubit IDs for the CZ gate layer.
     ///     generator: Optional Rust-side target generator. Defaults to DefaultTargetGenerator.
     ///     max_expansions: Optional limit on total node expansions across all candidates.
-    ///     strategy: Search strategy string.
-    ///     top_c: Top bus options per qubit (default 3).
-    ///     max_movesets_per_group: Max movesets per bus group (default 3).
-    ///     weight: Heuristic weight for A* (default 1.0).
-    ///     restarts: Parallel restarts (default 1).
-    ///     lookahead: Enable 2-step lookahead scoring (default false).
-    ///     deadlock_policy: "skip" or "move_blockers" (default "skip").
-    ///     w_t: Time-distance blend (default 0.05).
+    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
     ///
     /// Returns:
     ///     MultiSolveResult with per-candidate debug info.
-    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
-    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None))]
     fn solve_with_generator(
         &self,
         py: Python<'_>,
@@ -256,27 +360,11 @@ impl PyMoveSolver {
         targets: Vec<u32>,
         generator: Option<&PyDefaultTargetGenerator>,
         max_expansions: Option<u32>,
-        strategy: &str,
-        top_c: usize,
-        max_movesets_per_group: usize,
-        weight: f64,
-        restarts: u32,
-        lookahead: bool,
-        deadlock_policy: &str,
-        w_t: f64,
+        options: Option<&PySolveOptions>,
     ) -> PyResult<PyMultiSolveResult> {
-        let initial_pairs = to_initial_pairs(&initial);
+        let initial_pairs = to_placement(&initial);
         let blocked_locs = to_blocked_locs(&blocked);
-        let opts = build_solve_options(
-            strategy,
-            top_c,
-            max_movesets_per_group,
-            weight,
-            restarts,
-            lookahead,
-            deadlock_policy,
-            w_t,
-        )?;
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
 
         // Currently only DefaultTargetGenerator is supported. Reject explicit
         // generator arguments until multiple generator types are implemented.
@@ -321,7 +409,7 @@ impl PyMoveSolver {
                 "custom generator parameter is not yet supported; pass None or omit",
             ));
         }
-        let initial_pairs = to_initial_pairs(&initial);
+        let initial_pairs = to_placement(&initial);
         let rust_gen = DefaultTargetGenerator;
 
         Ok(self
@@ -342,10 +430,72 @@ impl PyMoveSolver {
     }
 }
 
+// ── Solve options ──
+
+/// Search-tuning parameters shared across solve methods.
+///
+/// Bundles strategy, heuristic weight, restarts, and other tuning knobs
+/// into a single reusable object.
+#[pyclass(
+    name = "SolveOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PySolveOptions {
+    inner: SolveOptions,
+}
+
+#[pymethods]
+impl PySolveOptions {
+    #[new]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05))]
+    fn new(
+        strategy: PySearchStrategy,
+        top_c: usize,
+        max_movesets_per_group: usize,
+        weight: f64,
+        restarts: u32,
+        lookahead: bool,
+        deadlock_policy: PyDeadlockPolicy,
+        w_t: f64,
+    ) -> PyResult<Self> {
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(PyValueError::new_err(
+                "weight must be a finite float greater than 0.0",
+            ));
+        }
+        if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
+            return Err(PyValueError::new_err(
+                "w_t must be a finite float in the range [0.0, 1.0]",
+            ));
+        }
+        Ok(Self {
+            inner: SolveOptions {
+                strategy: strategy.to_rs(),
+                top_c,
+                max_movesets_per_group,
+                weight,
+                restarts,
+                lookahead,
+                deadlock_policy: deadlock_policy.to_rs(),
+                w_t,
+            },
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SolveOptions(top_c={}, weight={}, restarts={})",
+            self.inner.top_c, self.inner.weight, self.inner.restarts,
+        )
+    }
+}
+
 // ── Helper functions ──
 
-fn to_initial_pairs(initial: &[(u32, u32, u32, u32)]) -> Vec<(u32, LocationAddr)> {
-    initial
+fn to_placement(tuples: &[(u32, u32, u32, u32)]) -> Vec<(u32, LocationAddr)> {
+    tuples
         .iter()
         .map(|&(qid, zone_id, word_id, site_id)| {
             (
@@ -371,6 +521,42 @@ fn to_blocked_locs(blocked: &[(u32, u32, u32)]) -> Vec<LocationAddr> {
         .collect()
 }
 
+/// Parse a strategy string for backwards-compatible methods.
+fn parse_strategy(strategy: &str) -> PyResult<Strategy> {
+    match strategy {
+        "astar" => Ok(Strategy::AStar),
+        "dfs" => Ok(Strategy::HeuristicDfs),
+        "bfs" => Ok(Strategy::Bfs),
+        "greedy" => Ok(Strategy::GreedyBestFirst),
+        "ids" => Ok(Strategy::Ids),
+        "cascade" | "cascade-ids" => Ok(Strategy::Cascade {
+            inner: InnerStrategy::Ids,
+        }),
+        "cascade-dfs" => Ok(Strategy::Cascade {
+            inner: InnerStrategy::Dfs,
+        }),
+        "cascade-entropy" => Ok(Strategy::Cascade {
+            inner: InnerStrategy::Entropy,
+        }),
+        "entropy" => Ok(Strategy::Entropy),
+        _ => Err(PyValueError::new_err(format!(
+            "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
+        ))),
+    }
+}
+
+/// Parse a deadlock policy string for backwards-compatible methods.
+fn parse_deadlock_policy(policy: &str) -> PyResult<DeadlockPolicy> {
+    match policy {
+        "skip" => Ok(DeadlockPolicy::Skip),
+        "move_blockers" => Ok(DeadlockPolicy::MoveBlockers),
+        _ => Err(PyValueError::new_err(format!(
+            "unknown deadlock_policy '{policy}', expected: skip, move_blockers"
+        ))),
+    }
+}
+
+/// Build SolveOptions from individual string-based parameters (backwards compat).
 #[allow(clippy::too_many_arguments)]
 fn build_solve_options(
     strategy: &str,
@@ -382,39 +568,6 @@ fn build_solve_options(
     deadlock_policy: &str,
     w_t: f64,
 ) -> PyResult<SolveOptions> {
-    let strat = match strategy {
-        "astar" => Strategy::AStar,
-        "dfs" => Strategy::HeuristicDfs,
-        "bfs" => Strategy::Bfs,
-        "greedy" => Strategy::GreedyBestFirst,
-        "ids" => Strategy::Ids,
-        "cascade" | "cascade-ids" => Strategy::Cascade {
-            inner: InnerStrategy::Ids,
-        },
-        "cascade-dfs" => Strategy::Cascade {
-            inner: InnerStrategy::Dfs,
-        },
-        "cascade-entropy" => Strategy::Cascade {
-            inner: InnerStrategy::Entropy,
-        },
-        "entropy" => Strategy::Entropy,
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
-            )));
-        }
-    };
-
-    let dl_policy = match deadlock_policy {
-        "skip" => DeadlockPolicy::Skip,
-        "move_blockers" => DeadlockPolicy::MoveBlockers,
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "unknown deadlock_policy '{deadlock_policy}', expected: skip, move_blockers"
-            )));
-        }
-    };
-
     if !weight.is_finite() || weight <= 0.0 {
         return Err(PyValueError::new_err(
             "weight must be a finite float greater than 0.0",
@@ -425,15 +578,14 @@ fn build_solve_options(
             "w_t must be a finite float in the range [0.0, 1.0]",
         ));
     }
-
     Ok(SolveOptions {
-        strategy: strat,
+        strategy: parse_strategy(strategy)?,
         top_c,
         max_movesets_per_group,
         weight,
         restarts,
         lookahead,
-        deadlock_policy: dl_policy,
+        deadlock_policy: parse_deadlock_policy(deadlock_policy)?,
         w_t,
     })
 }

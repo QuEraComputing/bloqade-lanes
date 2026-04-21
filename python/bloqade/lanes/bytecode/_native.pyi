@@ -905,6 +905,50 @@ class ArchSpec:
 # ── Move Solver ──
 
 @final
+class SearchStrategy:
+    """Search strategy for the move solver."""
+
+    ASTAR: SearchStrategy
+    DFS: SearchStrategy
+    BFS: SearchStrategy
+    GREEDY: SearchStrategy
+    IDS: SearchStrategy
+    CASCADE_IDS: SearchStrategy
+    CASCADE_DFS: SearchStrategy
+    CASCADE_ENTROPY: SearchStrategy
+    ENTROPY: SearchStrategy
+
+    @property
+    def name(self) -> str: ...
+
+@final
+class DeadlockPolicy:
+    """Deadlock handling policy for the move solver."""
+
+    SKIP: DeadlockPolicy
+    MOVE_BLOCKERS: DeadlockPolicy
+
+    @property
+    def name(self) -> str: ...
+
+@final
+class SolveOptions:
+    """Search-tuning parameters for MoveSolver."""
+
+    def __init__(
+        self,
+        strategy: SearchStrategy = SearchStrategy.ASTAR,
+        top_c: int = 3,
+        max_movesets_per_group: int = 3,
+        weight: float = 1.0,
+        restarts: int = 1,
+        lookahead: bool = False,
+        deadlock_policy: DeadlockPolicy = DeadlockPolicy.SKIP,
+        w_t: float = 0.05,
+    ) -> None: ...
+    def __repr__(self) -> str: ...
+
+@final
 class SolveResult:
     """Result of a move synthesis solve.
 
@@ -1020,46 +1064,18 @@ class MoveSolver:
         targets: list[int],
         generator: DefaultTargetGenerator | None = None,
         max_expansions: Optional[int] = None,
-        strategy: Literal[
-            "astar",
-            "dfs",
-            "bfs",
-            "greedy",
-            "ids",
-            "cascade",
-            "cascade-ids",
-            "cascade-dfs",
-            "cascade-entropy",
-            "entropy",
-        ] = "astar",
-        top_c: int = 3,
-        max_movesets_per_group: int = 3,
-        weight: float = 1.0,
-        restarts: int = 1,
-        lookahead: bool = False,
-        deadlock_policy: Literal["skip", "move_blockers"] = "skip",
-        w_t: float = 0.05,
+        options: SolveOptions | None = None,
     ) -> MultiSolveResult:
         """Solve using a target generator with shared expansion budget.
-
-        Generates candidate target configurations, validates each, and tries
-        them in order. Returns on the first successful solve.
 
         Args:
             initial: Starting qubit positions.
             blocked: Immovable obstacle locations.
             controls: Control qubit IDs for the CZ gate layer.
             targets: Target qubit IDs for the CZ gate layer.
-            generator: Rust-side target generator. Defaults to DefaultTargetGenerator.
+            generator: Rust-side target generator (currently must be None).
             max_expansions: Total expansion budget across all candidates.
-            strategy: Search strategy string.
-            top_c: Top bus options per qubit.
-            max_movesets_per_group: Max movesets per bus group.
-            weight: Heuristic weight for A*.
-            restarts: Parallel restarts.
-            lookahead: Enable 2-step lookahead scoring.
-            deadlock_policy: Deadlock handling.
-            w_t: Time-distance blend weight.
+            options: Search-tuning parameters. Defaults to SolveOptions().
 
         Returns:
             MultiSolveResult with per-candidate debug info.
