@@ -993,8 +993,8 @@ class SolveResult:
         ...
 
     @property
-    def goal_config(self) -> list[tuple[int, int, int, int]]:
-        """Goal configuration as (qubit_id, zone_id, word_id, site_id) tuples.
+    def goal_config(self) -> dict[int, LocationAddress]:
+        """Goal configuration as qubit_id -> LocationAddress mapping.
 
         Equals the initial configuration when ``status`` is not ``"solved"``.
         """
@@ -1034,45 +1034,20 @@ class MoveSolver:
 
     def solve(
         self,
-        initial: list[tuple[int, int, int, int]],
-        target: list[tuple[int, int, int, int]],
-        blocked: list[tuple[int, int, int]],
+        initial: dict[int, LocationAddress],
+        target: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
         max_expansions: Optional[int] = None,
-        strategy: Literal[
-            "astar",
-            "dfs",
-            "bfs",
-            "greedy",
-            "ids",
-            "cascade",
-            "cascade-ids",
-            "cascade-dfs",
-            "cascade-entropy",
-            "entropy",
-        ] = "astar",
-        top_c: int = 3,
-        max_movesets_per_group: int = 3,
-        weight: float = 1.0,
-        restarts: int = 1,
-        lookahead: bool = False,
-        deadlock_policy: Literal["skip", "move_blockers"] = "skip",
-        w_t: float = 0.05,
+        options: SolveOptions | None = None,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
         Args:
-            initial: List of (qubit_id, zone_id, word_id, site_id) starting positions.
-            target: List of (qubit_id, zone_id, word_id, site_id) desired positions.
-            blocked: List of (zone_id, word_id, site_id) immovable obstacle locations.
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            target: Mapping of qubit_id to LocationAddress for desired positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
-            strategy: Search strategy string.
-            top_c: Top bus options per qubit in the heuristic expander.
-            max_movesets_per_group: Max movesets per bus group.
-            weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-            restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
-            lookahead: Enable 2-step lookahead scoring.
-            deadlock_policy: Deadlock handling: "skip" or "move_blockers".
-            w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
+            options: Search-tuning parameters. Defaults to SolveOptions().
 
         Returns:
             SolveResult with status indicating outcome.
@@ -1162,7 +1137,7 @@ class MultiSolveResult:
         ...
 
     @property
-    def goal_config(self) -> list[tuple[int, int, int, int]]:
+    def goal_config(self) -> dict[int, LocationAddress]:
         """Goal configuration from the winning candidate."""
         ...
 

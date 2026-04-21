@@ -213,13 +213,13 @@ impl PySolveResult {
             .collect()
     }
 
-    /// Goal configuration: list of (qubit_id, zone_id, word_id, site_id) tuples.
+    /// Goal configuration: mapping of qubit_id to LocationAddress.
     #[getter]
-    fn goal_config(&self) -> Vec<(u32, u32, u32, u32)> {
+    fn goal_config(&self) -> std::collections::HashMap<u32, PyLocationAddr> {
         self.inner
             .goal_config
             .iter()
-            .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+            .map(|(qid, loc)| (qid, PyLocationAddr { inner: loc }))
             .collect()
     }
 
@@ -293,64 +293,30 @@ impl PyMoveSolver {
     /// Solve a move synthesis problem.
     ///
     /// Args:
-    ///     initial: List of (qubit_id, zone_id, word_id, site_id) tuples for starting positions.
-    ///     target: List of (qubit_id, zone_id, word_id, site_id) tuples for desired positions.
-    ///     blocked: List of (zone_id, word_id, site_id) tuples for immovable obstacle locations.
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     target: Mapping of qubit_id to LocationAddress for desired positions.
+    ///     blocked: List of LocationAddress for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
-    ///     strategy: Search strategy string.
-    ///     top_c: Top bus options per qubit in the heuristic expander (default 3).
-    ///     max_movesets_per_group: Max movesets per bus group (default 3).
-    ///     weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-    ///     restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
-    ///     lookahead: Enable 2-step lookahead scoring.
-    ///     deadlock_policy: Deadlock handling: "skip" or "move_blockers".
-    ///     w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only). Affects entropy strategy.
+    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
-    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None))]
     fn solve(
         &self,
         py: Python<'_>,
-        initial: Vec<(u32, u32, u32, u32)>,
-        target: Vec<(u32, u32, u32, u32)>,
-        blocked: Vec<(u32, u32, u32)>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        target: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
-        strategy: &str,
-        top_c: usize,
-        max_movesets_per_group: usize,
-        weight: f64,
-        restarts: u32,
-        lookahead: bool,
-        deadlock_policy: &str,
-        w_t: f64,
+        options: Option<&PySolveOptions>,
     ) -> PyResult<PySolveResult> {
-        // Validate: check for duplicate qubit IDs in target.
-        {
-            let mut seen = std::collections::HashSet::new();
-            for &(qid, _, _, _) in &target {
-                if !seen.insert(qid) {
-                    return Err(PyValueError::new_err(format!(
-                        "duplicate qubit_id {qid} in target placement"
-                    )));
-                }
-            }
-        }
-
-        let initial_pairs = to_placement(&initial);
-        let target_pairs = to_placement(&target);
-        let blocked_locs = to_blocked_locs(&blocked);
-        let opts = build_solve_options(
-            strategy,
-            top_c,
-            max_movesets_per_group,
-            weight,
-            restarts,
-            lookahead,
-            deadlock_policy,
-            w_t,
-        )?;
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let target_pairs: Vec<(u32, LocationAddr)> =
+            target.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -570,104 +536,6 @@ impl PySolveOptions {
     }
 }
 
-// ── Helper functions ──
-
-fn to_placement(tuples: &[(u32, u32, u32, u32)]) -> Vec<(u32, LocationAddr)> {
-    tuples
-        .iter()
-        .map(|&(qid, zone_id, word_id, site_id)| {
-            (
-                qid,
-                LocationAddr {
-                    zone_id,
-                    word_id,
-                    site_id,
-                },
-            )
-        })
-        .collect()
-}
-
-fn to_blocked_locs(blocked: &[(u32, u32, u32)]) -> Vec<LocationAddr> {
-    blocked
-        .iter()
-        .map(|&(zone_id, word_id, site_id)| LocationAddr {
-            zone_id,
-            word_id,
-            site_id,
-        })
-        .collect()
-}
-
-/// Parse a strategy string for backwards-compatible methods.
-fn parse_strategy(strategy: &str) -> PyResult<Strategy> {
-    match strategy {
-        "astar" => Ok(Strategy::AStar),
-        "dfs" => Ok(Strategy::HeuristicDfs),
-        "bfs" => Ok(Strategy::Bfs),
-        "greedy" => Ok(Strategy::GreedyBestFirst),
-        "ids" => Ok(Strategy::Ids),
-        "cascade" | "cascade-ids" => Ok(Strategy::Cascade {
-            inner: InnerStrategy::Ids,
-        }),
-        "cascade-dfs" => Ok(Strategy::Cascade {
-            inner: InnerStrategy::Dfs,
-        }),
-        "cascade-entropy" => Ok(Strategy::Cascade {
-            inner: InnerStrategy::Entropy,
-        }),
-        "entropy" => Ok(Strategy::Entropy),
-        _ => Err(PyValueError::new_err(format!(
-            "unknown strategy '{strategy}', expected: astar, dfs, bfs, greedy, ids, cascade, cascade-ids, cascade-dfs, cascade-entropy, entropy"
-        ))),
-    }
-}
-
-/// Parse a deadlock policy string for backwards-compatible methods.
-fn parse_deadlock_policy(policy: &str) -> PyResult<DeadlockPolicy> {
-    match policy {
-        "skip" => Ok(DeadlockPolicy::Skip),
-        "move_blockers" => Ok(DeadlockPolicy::MoveBlockers),
-        _ => Err(PyValueError::new_err(format!(
-            "unknown deadlock_policy '{policy}', expected: skip, move_blockers"
-        ))),
-    }
-}
-
-/// Build SolveOptions from individual string-based parameters (backwards compat).
-#[allow(clippy::too_many_arguments)]
-fn build_solve_options(
-    strategy: &str,
-    top_c: usize,
-    max_movesets_per_group: usize,
-    weight: f64,
-    restarts: u32,
-    lookahead: bool,
-    deadlock_policy: &str,
-    w_t: f64,
-) -> PyResult<SolveOptions> {
-    if !weight.is_finite() || weight <= 0.0 {
-        return Err(PyValueError::new_err(
-            "weight must be a finite float greater than 0.0",
-        ));
-    }
-    if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
-        return Err(PyValueError::new_err(
-            "w_t must be a finite float in the range [0.0, 1.0]",
-        ));
-    }
-    Ok(SolveOptions {
-        strategy: parse_strategy(strategy)?,
-        top_c,
-        max_movesets_per_group,
-        weight,
-        restarts,
-        lookahead,
-        deadlock_policy: parse_deadlock_policy(deadlock_policy)?,
-        w_t,
-    })
-}
-
 // ── Target generator PyO3 types ──
 
 /// Default target generator: moves each control qubit to the CZ blockade
@@ -782,12 +650,12 @@ impl PyMultiSolveResult {
 
     /// Goal configuration from the winning candidate.
     #[getter]
-    fn goal_config(&self) -> Vec<(u32, u32, u32, u32)> {
+    fn goal_config(&self) -> std::collections::HashMap<u32, PyLocationAddr> {
         self.inner
             .result
             .goal_config
             .iter()
-            .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
+            .map(|(qid, loc)| (qid, PyLocationAddr { inner: loc }))
             .collect()
     }
 

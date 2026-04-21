@@ -137,7 +137,7 @@ class TestSolveWithGenerator:
         initial = {0: loc(0, 0, 0), 1: loc(0, 1, 0)}
         result = solver.solve_with_generator(initial, [], [0], [1], max_expansions=1000)
         assert isinstance(result.move_layers, list)
-        assert isinstance(result.goal_config, list)
+        assert isinstance(result.goal_config, dict)
         assert result.cost >= 0.0
         assert result.deadlocks >= 0
 
