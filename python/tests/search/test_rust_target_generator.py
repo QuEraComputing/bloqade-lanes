@@ -87,11 +87,11 @@ class TestGenerateCandidates:
         candidates = solver.generate_candidates(initial, [0], [1])
         assert len(candidates) == 1
 
-    def test_with_explicit_generator(self, solver: MoveSolver):
+    def test_explicit_generator_raises(self, solver: MoveSolver):
         gen = DefaultTargetGenerator()
         initial = [(0, 0, 0, 0), (1, 0, 1, 0)]
-        candidates = solver.generate_candidates(initial, [0], [1], generator=gen)
-        assert len(candidates) == 1
+        with pytest.raises(ValueError, match="not yet supported"):
+            solver.generate_candidates(initial, [0], [1], generator=gen)
 
     def test_empty_when_target_qubit_missing(self, solver: MoveSolver):
         initial = [(0, 0, 0, 0)]  # qubit 1 missing

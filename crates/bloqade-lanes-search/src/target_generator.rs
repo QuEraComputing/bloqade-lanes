@@ -81,6 +81,10 @@ pub enum CandidateError {
     InvalidLocation(LocationAddr),
     /// A (control, target) pair is not at CZ partner locations.
     NotCzPair { control: u32, target: u32 },
+    /// Candidate contains duplicate qubit IDs.
+    DuplicateQubit(u32),
+    /// Controls and targets have different lengths.
+    LengthMismatch { controls: usize, targets: usize },
 }
 
 impl fmt::Display for CandidateError {
@@ -100,6 +104,15 @@ impl fmt::Display for CandidateError {
                     "qubits ({control}, {target}) are not at CZ partner locations"
                 )
             }
+            Self::DuplicateQubit(qid) => {
+                write!(f, "duplicate qubit {qid} in candidate")
+            }
+            Self::LengthMismatch { controls, targets } => {
+                write!(
+                    f,
+                    "controls length ({controls}) != targets length ({targets})"
+                )
+            }
         }
     }
 }
@@ -109,15 +122,33 @@ impl std::error::Error for CandidateError {}
 /// Validate a candidate target configuration.
 ///
 /// Checks:
-/// 1. All control and target qubits are present in the candidate.
-/// 2. All locations are valid positions in the architecture.
-/// 3. Each (control, target) pair sits at CZ partner locations.
+/// 1. Controls and targets have the same length.
+/// 2. No duplicate qubit IDs in the candidate.
+/// 3. All control and target qubits are present in the candidate.
+/// 4. All locations are valid positions in the architecture.
+/// 5. Each (control, target) pair sits at CZ partner locations.
 pub fn validate_candidate(
     candidate: &[(u32, LocationAddr)],
     controls: &[u32],
     targets: &[u32],
     index: &LaneIndex,
 ) -> Result<(), CandidateError> {
+    // Check controls/targets length match.
+    if controls.len() != targets.len() {
+        return Err(CandidateError::LengthMismatch {
+            controls: controls.len(),
+            targets: targets.len(),
+        });
+    }
+
+    // Check for duplicate qubit IDs.
+    let mut seen = std::collections::HashSet::new();
+    for &(qid, _) in candidate {
+        if !seen.insert(qid) {
+            return Err(CandidateError::DuplicateQubit(qid));
+        }
+    }
+
     let candidate_map: HashMap<u32, LocationAddr> = candidate.iter().copied().collect();
     let arch_spec = index.arch_spec();
 
@@ -251,6 +282,32 @@ mod tests {
             CandidateError::NotCzPair {
                 control: 0,
                 target: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_qubit() {
+        let index = make_index();
+        let candidate = vec![(0, loc(0, 0, 0)), (0, loc(0, 1, 0))];
+        let controls = [0];
+        let targets = [1];
+        let err = validate_candidate(&candidate, &controls, &targets, &index).unwrap_err();
+        assert!(matches!(err, CandidateError::DuplicateQubit(0)));
+    }
+
+    #[test]
+    fn validate_rejects_length_mismatch() {
+        let index = make_index();
+        let candidate = vec![(0, loc(0, 0, 0)), (1, loc(0, 1, 0))];
+        let controls = [0, 1];
+        let targets = [1];
+        let err = validate_candidate(&candidate, &controls, &targets, &index).unwrap_err();
+        assert!(matches!(
+            err,
+            CandidateError::LengthMismatch {
+                controls: 2,
+                targets: 1
             }
         ));
     }

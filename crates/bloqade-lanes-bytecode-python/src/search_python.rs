@@ -278,9 +278,13 @@ impl PyMoveSolver {
             w_t,
         )?;
 
-        // Currently only DefaultTargetGenerator exists. The `generator` parameter
-        // is accepted for API stability — future generator types will dispatch here.
-        let _ = generator;
+        // Currently only DefaultTargetGenerator is supported. Reject explicit
+        // generator arguments until multiple generator types are implemented.
+        if generator.is_some() {
+            return Err(PyValueError::new_err(
+                "custom generator parameter is not yet supported; pass None or omit",
+            ));
+        }
         let rust_gen: Box<dyn TargetGenerator> = Box::new(DefaultTargetGenerator);
 
         let result = py
@@ -311,13 +315,17 @@ impl PyMoveSolver {
         controls: Vec<u32>,
         targets: Vec<u32>,
         generator: Option<&PyDefaultTargetGenerator>,
-    ) -> Vec<Vec<(u32, u32, u32, u32)>> {
+    ) -> PyResult<Vec<Vec<(u32, u32, u32, u32)>>> {
+        if generator.is_some() {
+            return Err(PyValueError::new_err(
+                "custom generator parameter is not yet supported; pass None or omit",
+            ));
+        }
         let initial_pairs = to_initial_pairs(&initial);
-
-        let _ = generator;
         let rust_gen = DefaultTargetGenerator;
 
-        self.inner
+        Ok(self
+            .inner
             .generate_candidates(&initial_pairs, &controls, &targets, &rust_gen)
             .into_iter()
             .map(|candidate| {
@@ -326,7 +334,7 @@ impl PyMoveSolver {
                     .map(|(qid, loc)| (qid, loc.zone_id, loc.word_id, loc.site_id))
                     .collect()
             })
-            .collect()
+            .collect())
     }
 
     fn __repr__(&self) -> String {
@@ -500,17 +508,17 @@ impl PyMultiSolveResult {
     /// Per-candidate attempt details: list of dicts with
     /// `candidate_index`, `status`, `nodes_expanded`.
     #[getter]
-    fn attempts(&self) -> Vec<PyObject> {
+    fn attempts(&self) -> PyResult<Vec<PyObject>> {
         Python::with_gil(|py| {
             self.inner
                 .attempts
                 .iter()
                 .map(|a| {
                     let dict = pyo3::types::PyDict::new(py);
-                    dict.set_item("candidate_index", a.candidate_index).unwrap();
-                    dict.set_item("status", status_str(a.status)).unwrap();
-                    dict.set_item("nodes_expanded", a.nodes_expanded).unwrap();
-                    dict.into_any().unbind()
+                    dict.set_item("candidate_index", a.candidate_index)?;
+                    dict.set_item("status", status_str(a.status))?;
+                    dict.set_item("nodes_expanded", a.nodes_expanded)?;
+                    Ok(dict.into_any().unbind())
                 })
                 .collect()
         })
