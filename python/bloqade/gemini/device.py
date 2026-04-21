@@ -387,7 +387,7 @@ class GeminiLogicalSimulatorTask(Generic[RetType]):
             sampler = c.stim_circuit.compile_sampler()
             m2det = c.compile_m2d_converter(skip_reference_sample=True)
             samples = sampler.sample(shots=shots)
-            det_obs = m2det.convert(samples, separate_observables=True)
+            det_obs = m2det.convert(measurements=samples, separate_observables=True)
         else:
             sampler = (
                 self.detector_sampler if with_noise else self.noiseless_detector_sampler

@@ -210,6 +210,23 @@ def _steane_matrices(num_qubits: int):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_logical_x_observable_is_one(run_detectors: bool):
+    m2dets, m2obs = _steane_matrices(1)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def logical_x():
+        reg = qubit.qalloc(1)
+        squin.x(reg[0])
+        gemini_logical.terminal_measure(reg)
+
+    task = GeminiLogicalSimulator().task(logical_x, m2dets=m2dets, m2obs=m2obs)
+    result = task.run(10, with_noise=False, run_detectors=run_detectors)
+
+    assert all(all(obs) for obs in result.observables)
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "use_dets, use_obs",
     [(True, True), (True, False), (False, True)],
