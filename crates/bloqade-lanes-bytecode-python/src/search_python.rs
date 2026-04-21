@@ -68,6 +68,26 @@ impl PySearchStrategy {
 }
 
 impl PySearchStrategy {
+    fn from_rs(s: &Strategy) -> Self {
+        match s {
+            Strategy::AStar => Self::AStar,
+            Strategy::HeuristicDfs => Self::HeuristicDfs,
+            Strategy::Bfs => Self::Bfs,
+            Strategy::GreedyBestFirst => Self::GreedyBestFirst,
+            Strategy::Ids => Self::Ids,
+            Strategy::Cascade {
+                inner: InnerStrategy::Ids,
+            } => Self::CascadeIds,
+            Strategy::Cascade {
+                inner: InnerStrategy::Dfs,
+            } => Self::CascadeDfs,
+            Strategy::Cascade {
+                inner: InnerStrategy::Entropy,
+            } => Self::CascadeEntropy,
+            Strategy::Entropy => Self::Entropy,
+        }
+    }
+
     fn to_rs(self) -> Strategy {
         match self {
             Self::AStar => Strategy::AStar,
@@ -104,6 +124,8 @@ pub enum PyDeadlockPolicy {
     Skip = 0,
     #[pyo3(name = "MOVE_BLOCKERS")]
     MoveBlockers = 1,
+    #[pyo3(name = "ALL_MOVES")]
+    AllMoves = 2,
 }
 
 #[pymethods]
@@ -113,15 +135,25 @@ impl PyDeadlockPolicy {
         match self {
             Self::Skip => "SKIP",
             Self::MoveBlockers => "MOVE_BLOCKERS",
+            Self::AllMoves => "ALL_MOVES",
         }
     }
 }
 
 impl PyDeadlockPolicy {
+    fn from_rs(d: &DeadlockPolicy) -> Self {
+        match d {
+            DeadlockPolicy::Skip => Self::Skip,
+            DeadlockPolicy::MoveBlockers => Self::MoveBlockers,
+            DeadlockPolicy::AllMoves => Self::AllMoves,
+        }
+    }
+
     fn to_rs(self) -> DeadlockPolicy {
         match self {
             Self::Skip => DeadlockPolicy::Skip,
             Self::MoveBlockers => DeadlockPolicy::MoveBlockers,
+            Self::AllMoves => DeadlockPolicy::AllMoves,
         }
     }
 }
@@ -486,10 +518,54 @@ impl PySolveOptions {
         })
     }
 
+    #[getter]
+    fn strategy(&self) -> PySearchStrategy {
+        PySearchStrategy::from_rs(&self.inner.strategy)
+    }
+
+    #[getter]
+    fn top_c(&self) -> usize {
+        self.inner.top_c
+    }
+
+    #[getter]
+    fn max_movesets_per_group(&self) -> usize {
+        self.inner.max_movesets_per_group
+    }
+
+    #[getter]
+    fn weight(&self) -> f64 {
+        self.inner.weight
+    }
+
+    #[getter]
+    fn restarts(&self) -> u32 {
+        self.inner.restarts
+    }
+
+    #[getter]
+    fn lookahead(&self) -> bool {
+        self.inner.lookahead
+    }
+
+    #[getter]
+    fn deadlock_policy(&self) -> PyDeadlockPolicy {
+        PyDeadlockPolicy::from_rs(&self.inner.deadlock_policy)
+    }
+
+    #[getter]
+    fn w_t(&self) -> f64 {
+        self.inner.w_t
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(top_c={}, weight={}, restarts={})",
-            self.inner.top_c, self.inner.weight, self.inner.restarts,
+            "SolveOptions(strategy={}, top_c={}, weight={}, restarts={}, deadlock_policy={})",
+            self.strategy().name(),
+            self.inner.top_c,
+            self.inner.weight,
+            self.inner.restarts,
+            self.deadlock_policy().name(),
         )
     }
 }
