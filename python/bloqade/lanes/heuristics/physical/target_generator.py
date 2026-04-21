@@ -397,3 +397,154 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
             return (ctrl, ctrl_partner, path_ctrl)
         assert path_tgt is not None
         return (tgt, tgt_partner, path_tgt)
+
+
+# (move_type, zone_id, bus_id, direction) — the scheduler's batching key.
+# Lanes sharing this tuple are physically packable into one AOD shot (see
+# ArchSpec.check_lane_group in python/bloqade/lanes/layout/arch.py and
+# BusContext in python/bloqade/lanes/search/generators/aod_grouping.py).
+_AODSig = tuple[MoveType, int, int, layout.Direction]
+
+
+def _first_hop_sig(
+    path: (
+        tuple[
+            tuple[layout.LaneAddress, ...],
+            tuple[layout.LocationAddress, ...],
+        ]
+        | None
+    ),
+) -> _AODSig | None:
+    """Signature of a path's first hop. ``None`` if the path is missing or empty.
+
+    An empty path means the qubit is already at its destination — no
+    lane to cluster.
+    """
+    if path is None:
+        return None
+    lanes = path[0]
+    if not lanes:
+        return None
+    lane = lanes[0]
+    return (lane.move_type, lane.zone_id, lane.bus_id, lane.direction)
+
+
+@dataclass(frozen=True)
+class AODClusterTargetGenerator(TargetGeneratorABC):
+    """Choose CZ directions to maximise AOD-shot packing.
+
+    For each CZ pair, enumerate both direction candidates (control-moves
+    or target-moves) and classify each by the ``(move_type, zone_id,
+    bus_id, direction)`` signature of its first path hop — the same
+    signature the downstream move scheduler uses to batch lanes into
+    one AOD shot. Directions are then assigned greedily: the signature
+    appearing in the most candidate first-hops is filled first, then
+    the next largest, and so on. When no further clustering gain is
+    possible (largest remaining bucket has a single unresolved pair),
+    remaining pairs default to control-direction for parity with
+    :class:`DefaultTargetGenerator`.
+
+    Rationale: CongAware rewards same-direction lane reuse per edge
+    via a Dijkstra weight. That is a local proxy for shot-sharing; the
+    scheduler actually batches by the triple above, not by individual
+    lane reuse. Choosing CZ directions that align first-hops on shared
+    signatures produces targets the scheduler can pack more tightly.
+    """
+
+    def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+        placement = ctx.placement
+        if not ctx.controls:
+            return [dict(placement)]
+
+        pf = layout.PathFinder(ctx.arch_spec)
+        pairs = list(zip(ctx.controls, ctx.targets))
+
+        # Classification pass. A pair is either:
+        #  - forced to one direction (other infeasible, or other path empty);
+        #  - contributing two (pair_idx, direction, sig) entries to buckets.
+        forced: dict[int, str] = {}
+        partners: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
+        bucket_entries: list[tuple[int, str, _AODSig]] = []
+
+        for i, (ctrl, tgt) in enumerate(pairs):
+            ctrl_loc = placement[ctrl]
+            tgt_loc = placement[tgt]
+            ctrl_partner = ctx.arch_spec.get_cz_partner(tgt_loc)
+            tgt_partner = ctx.arch_spec.get_cz_partner(ctrl_loc)
+            assert ctrl_partner is not None, f"No CZ partner for qid={tgt} at {tgt_loc}"
+            assert (
+                tgt_partner is not None
+            ), f"No CZ partner for qid={ctrl} at {ctrl_loc}"
+            partners.append((ctrl_partner, tgt_partner))
+
+            occ_ctrl = frozenset(loc for q, loc in placement.items() if q != ctrl)
+            occ_tgt = frozenset(loc for q, loc in placement.items() if q != tgt)
+            path_ctrl = pf.find_path(ctrl_loc, ctrl_partner, occupied=occ_ctrl)
+            path_tgt = pf.find_path(tgt_loc, tgt_partner, occupied=occ_tgt)
+
+            sig_c = _first_hop_sig(path_ctrl)
+            sig_t = _first_hop_sig(path_tgt)
+            ctrl_feasible = path_ctrl is not None
+            tgt_feasible = path_tgt is not None
+
+            if not ctrl_feasible and not tgt_feasible:
+                return []  # defer to Default
+            if not ctrl_feasible:
+                forced[i] = "tgt"
+                continue
+            if not tgt_feasible:
+                forced[i] = "ctrl"
+                continue
+            # Empty path => already at destination. Prefer such a
+            # direction so it doesn't pollute the clustering signal.
+            if sig_c is None and sig_t is None:
+                forced[i] = "ctrl"  # parity with Default
+                continue
+            if sig_c is None:
+                forced[i] = "ctrl"
+                continue
+            if sig_t is None:
+                forced[i] = "tgt"
+                continue
+
+            bucket_entries.append((i, "ctrl", sig_c))
+            bucket_entries.append((i, "tgt", sig_t))
+
+        buckets: dict[_AODSig, list[tuple[int, str]]] = {}
+        for i, d, sig in bucket_entries:
+            buckets.setdefault(sig, []).append((i, d))
+
+        resolved: dict[int, str] = dict(forced)
+
+        # Greedy fill: commit the bucket with the most unresolved pairs.
+        # Stop once no bucket has more than one unresolved pair — the
+        # remaining pairs can't cluster further, so committing arbitrary
+        # directions for them doesn't help (and control-direction parity
+        # with Default is a reasonable tiebreak).
+        while True:
+            best_sig: _AODSig | None = None
+            best_count = 1  # strict > 1 required
+            for sig, entries in buckets.items():
+                count = sum(1 for (i, _d) in entries if i not in resolved)
+                if count > best_count:
+                    best_count = count
+                    best_sig = sig
+            if best_sig is None:
+                break
+            for i, d in buckets[best_sig]:
+                if i not in resolved:
+                    resolved[i] = d
+
+        for i in range(len(pairs)):
+            if i not in resolved:
+                resolved[i] = "ctrl"
+
+        target = dict(placement)
+        for i, direction in resolved.items():
+            ctrl, tgt = pairs[i]
+            ctrl_partner, tgt_partner = partners[i]
+            if direction == "ctrl":
+                target[ctrl] = ctrl_partner
+            else:
+                target[tgt] = tgt_partner
+        return [target]
