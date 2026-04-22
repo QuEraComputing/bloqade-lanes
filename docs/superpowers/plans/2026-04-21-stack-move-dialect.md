@@ -1394,6 +1394,7 @@ from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
+from bloqade.lanes.utils import no_none_elements_tuple
 
 T = TypeVar("T")
 
@@ -1718,40 +1719,55 @@ Expected: FAIL.
 Add to `LowerStackMove`:
 
 ```python
+    def _try_lift(self, v: ir.SSAValue, attr_type: type[T]) -> T | None:
+        """Look up an SSA value's backing attribute, unwrap, and return it if
+        the concrete type matches `attr_type`; otherwise return None (for
+        both missing-mapping and wrong-type cases)."""
+        data = self.ssa_to_attr.get(v)
+        if data is None:
+            return None
+        raw = data.unwrap() if hasattr(data, "unwrap") else data
+        return raw if isinstance(raw, attr_type) else None
+
     def _lift_attrs(
         self,
         ssa_values: tuple[ir.SSAValue, ...],
         attr_type: type[T],
     ) -> tuple[T, ...]:
         """Resolve each stack_move SSA operand to its backing Python-class
-        attribute value and check the concrete type against `attr_type`.
+        attribute value, verifying the concrete type matches ``attr_type``.
 
         Every stored attribute is an ir.Data — we unwrap to the underlying
-        Python value before type-checking, so call sites can request
+        Python value before the type check, so call sites can request
         `LocationAddress` / `LaneAddress` / `ZoneAddress` / `float` / `int`
-        directly and use the result as an ordinary Python tuple.
+        directly.
+
+        Implementation uses `bloqade.lanes.utils.no_none_elements_tuple`
+        (a TypeGuard from `T | None` → `T`) to narrow the return type
+        after the type checks succeed.
 
         Raises:
             RuntimeError: if an SSA operand isn't attribute-backed (i.e.
                 didn't come from a stack_move.Const*), or if its attribute
                 unwraps to a value whose type doesn't match ``attr_type``.
         """
-        out: list[T] = []
-        for v in ssa_values:
-            if v not in self.ssa_to_attr:
-                raise RuntimeError(
-                    f"no attribute mapping for {v}: operand must trace back "
-                    f"to a Const* statement"
-                )
-            data = self.ssa_to_attr[v]
-            raw = data.unwrap() if hasattr(data, "unwrap") else data
-            if not isinstance(raw, attr_type):
-                raise RuntimeError(
-                    f"attribute type mismatch for {v}: expected "
-                    f"{attr_type.__name__}, got {type(raw).__name__}"
-                )
-            out.append(raw)
-        return tuple(out)
+        raws: tuple[T | None, ...] = tuple(
+            self._try_lift(v, attr_type) for v in ssa_values
+        )
+        if not no_none_elements_tuple(raws):
+            # Find the offending operand and raise a specific message.
+            for v, r in zip(ssa_values, raws):
+                if r is None:
+                    if v not in self.ssa_to_attr:
+                        raise RuntimeError(
+                            f"no attribute mapping for {v}: operand must "
+                            f"trace back to a Const* statement"
+                        )
+                    raise RuntimeError(
+                        f"attribute type mismatch for {v}: expected "
+                        f"{attr_type.__name__}"
+                    )
+        return raws
 
     def _rewrite_InitialFill(self, stmt: stack_move.InitialFill, to_delete: list) -> None:
         from bloqade.lanes.bytecode import LocationAddress
