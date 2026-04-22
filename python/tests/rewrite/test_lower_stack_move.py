@@ -82,3 +82,15 @@ def test_swap_permutes_uses():
     Walk(LowerStackMove()).rewrite(block)
     # Swap is gone.
     assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)
+
+
+def test_fill_lowers_to_move_fill_with_attribute_locations():
+    a0 = LocationAddress(0, 0, 0)
+    a1 = LocationAddress(0, 0, 1)
+    cl0 = stack_move.ConstLoc(value=a0)
+    cl1 = stack_move.ConstLoc(value=a1)
+    fill = stack_move.Fill(locations=(cl0.result, cl1.result))
+    block = _build_stack_move_block([cl0, cl1, fill, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mf = next(s for s in block.stmts if isinstance(s, move.Fill))
+    assert mf.location_addresses == (a0, a1)

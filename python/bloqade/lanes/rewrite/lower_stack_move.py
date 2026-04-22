@@ -15,16 +15,20 @@ RewriteLoadStore.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
-from bloqade.lanes.utils import no_none_elements_tuple  # noqa: F401
+from bloqade.lanes.layout.encoding import (
+    LaneAddress as EncodingLaneAddress,
+    LocationAddress as EncodingLocationAddress,
+)
+from bloqade.lanes.utils import no_none_elements_tuple
 
-# TypeVar and no_none_elements_tuple are consumed by the _lift_attrs helper
-# introduced in Phase D2+ tasks; kept here so subsequent patches stay minimal.
+# Generic TypeVar used by the _lift_attrs helper to propagate the concrete
+# attribute type through runtime isinstance checks.
 T = TypeVar("T")
 
 
@@ -73,7 +77,11 @@ class LowerStackMove(RewriteRule):
                 continue
             handler(stmt, to_delete)
 
-        for stmt in to_delete:
+        # Delete in reverse order: consumers before producers so that when
+        # a Const* stmt is deleted its result already has no uses. Without
+        # this, e.g. stack_move.Fill(locations=(const_loc.result,)) would
+        # still reference the const_loc result when const_loc.delete() runs.
+        for stmt in reversed(to_delete):
             stmt.delete()
         return RewriteResult(has_done_something=True)
 
@@ -164,4 +172,104 @@ class LowerStackMove(RewriteRule):
         # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
         stmt.out_top.replace_by(stmt.in_bot)
         stmt.out_bot.replace_by(stmt.in_top)
+        to_delete.append(stmt)
+
+    # ── Attribute lifting ─────────────────────────────────────────────
+
+    def _try_lift(self, v: ir.SSAValue, attr_type: type[T]) -> T | None:
+        """Look up an SSA value's backing attribute, unwrap, and return it if
+        the concrete type matches ``attr_type``; otherwise return None (for
+        both missing-mapping and wrong-type cases)."""
+        data = self.ssa_to_attr.get(v)
+        if data is None:
+            return None
+        raw = data.unwrap() if hasattr(data, "unwrap") else data
+        return raw if isinstance(raw, attr_type) else None
+
+    def _lift_attrs(
+        self,
+        ssa_values: tuple[ir.SSAValue, ...],
+        attr_type: type[T],
+    ) -> tuple[T, ...]:
+        """Resolve each stack_move SSA operand to its backing Python-class
+        attribute value, verifying the concrete type matches ``attr_type``.
+
+        Raises:
+            RuntimeError: if an SSA operand isn't attribute-backed (i.e.
+                didn't come from a stack_move.Const*), or if its attribute
+                has a type that doesn't match ``attr_type``.
+        """
+        raws: tuple[T | None, ...] = tuple(
+            self._try_lift(v, attr_type) for v in ssa_values
+        )
+        if no_none_elements_tuple(raws):
+            return raws
+        for v, r in zip(ssa_values, raws):
+            if r is None:
+                if v not in self.ssa_to_attr:
+                    raise RuntimeError(
+                        f"no attribute mapping for {v}: operand must "
+                        f"trace back to a Const* statement"
+                    )
+                raise RuntimeError(
+                    f"attribute type mismatch for {v}: expected "
+                    f"{attr_type.__name__}"
+                )
+        # Unreachable: the loop above raises on any None encountered.
+        raise RuntimeError("_lift_attrs: unreachable")
+
+    # ── Atom operations ───────────────────────────────────────────────
+
+    def _rewrite_InitialFill(
+        self, stmt: stack_move.InitialFill, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.lanes.bytecode import LocationAddress
+
+        assert self.state is not None
+        # stack_move stores the native Rust ``bloqade.lanes.bytecode``
+        # LocationAddress on its Const* attrs. ``move.Fill`` is typed
+        # against the ``layout.encoding`` wrapper; at runtime both are
+        # accepted since attribute fields aren't type-checked. The cast
+        # documents the pre-existing cross-module type mismatch.
+        addrs = cast(
+            tuple[EncodingLocationAddress, ...],
+            self._lift_attrs(stmt.locations, LocationAddress),
+        )
+        # move dialect has no InitialFill — both stack_move.InitialFill
+        # and stack_move.Fill lower to move.Fill. The InitialFill
+        # distinction exists only at the bytecode/stack_move layer for
+        # validation (InitialFillNotFirstError).
+        new = move.Fill(self.state, location_addresses=addrs)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    def _rewrite_Fill(
+        self, stmt: stack_move.Fill, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.lanes.bytecode import LocationAddress
+
+        assert self.state is not None
+        addrs = cast(
+            tuple[EncodingLocationAddress, ...],
+            self._lift_attrs(stmt.locations, LocationAddress),
+        )
+        new = move.Fill(self.state, location_addresses=addrs)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    def _rewrite_Move(
+        self, stmt: stack_move.Move, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.lanes.bytecode import LaneAddress
+
+        assert self.state is not None
+        lanes = cast(
+            tuple[EncodingLaneAddress, ...],
+            self._lift_attrs(stmt.lanes, LaneAddress),
+        )
+        new = move.Move(self.state, lanes=lanes)
+        new.insert_before(stmt)
+        self.state = new.result
         to_delete.append(stmt)
