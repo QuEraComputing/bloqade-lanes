@@ -143,7 +143,7 @@ git commit -m "feat(stack_move): add dialect skeleton and SSA types"
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
 - Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing test**
 
 Append to `python/tests/dialects/test_stack_move.py`:
 
@@ -151,37 +151,15 @@ Append to `python/tests/dialects/test_stack_move.py`:
 from bloqade.lanes.bytecode import LocationAddress, LaneAddress, ZoneAddress, MoveType
 
 
-def test_const_float_fields():
-    stmt = stack_move.ConstFloat(value=3.14)
-    assert stmt.value == 3.14
-    assert stmt.result is not None
-
-
-def test_const_int_fields():
-    stmt = stack_move.ConstInt(value=7)
-    assert stmt.value == 7
-    assert stmt.result is not None
-
-
-def test_const_loc_fields():
-    addr = LocationAddress(0, 0, 0)
-    stmt = stack_move.ConstLoc(value=addr)
-    assert stmt.value == addr
-    assert stmt.result is not None
-
-
-def test_const_lane_fields():
-    addr = LaneAddress(MoveType.SITE, 0, 0, 0, 0)
-    stmt = stack_move.ConstLane(value=addr)
-    assert stmt.value == addr
-    assert stmt.result is not None
-
-
-def test_const_zone_fields():
-    addr = ZoneAddress(0)
-    stmt = stack_move.ConstZone(value=addr)
-    assert stmt.value == addr
-    assert stmt.result is not None
+def test_constants_construct():
+    """Smoke test: all constant statements construct. Kirin enforces field
+    and type interfaces via @statement — we only need to catch that the
+    class exists on the dialect."""
+    stack_move.ConstFloat(value=3.14)
+    stack_move.ConstInt(value=7)
+    stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
+    stack_move.ConstLane(value=LaneAddress(MoveType.SITE, 0, 0, 0, 0))
+    stack_move.ConstZone(value=ZoneAddress(0))
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -257,36 +235,20 @@ git commit -m "feat(stack_move): add constant statements"
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
 - Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing test**
 
 Append to `python/tests/dialects/test_stack_move.py`:
 
 ```python
-def test_pop_fields():
-    val = ir.TestValue()
-    stmt = stack_move.Pop(value=val)
-    assert stmt.value is val
-    assert len(stmt.results) == 0
-
-
-def test_dup_fields():
-    val = ir.TestValue()
-    stmt = stack_move.Dup(value=val)
-    assert stmt.value is val
-    assert stmt.result is not None
-
-
-def test_swap_fields():
-    top = ir.TestValue()
-    bot = ir.TestValue()
-    stmt = stack_move.Swap(in_top=top, in_bot=bot)
-    assert stmt.in_top is top
-    assert stmt.in_bot is bot
-    assert stmt.out_top is not None
-    assert stmt.out_bot is not None
+def test_stack_ops_construct():
+    v = ir.TestValue()
+    w = ir.TestValue()
+    stack_move.Pop(value=v)
+    stack_move.Dup(value=v)
+    stack_move.Swap(in_top=v, in_bot=w)
 ```
 
-Also add to the imports at top of test file: `from kirin import ir` if not already imported.
+Add to the imports at top of test file: `from kirin import ir` if not already imported.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -353,27 +315,17 @@ git commit -m "feat(stack_move): add Pop/Dup/Swap statements"
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
 - Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing test**
 
 Append to `python/tests/dialects/test_stack_move.py`:
 
 ```python
-def test_initial_fill_fields():
-    v0, v1 = ir.TestValue(), ir.TestValue()
-    stmt = stack_move.InitialFill(locations=(v0, v1))
-    assert stmt.locations == (v0, v1)
-
-
-def test_fill_fields():
-    v0, v1 = ir.TestValue(), ir.TestValue()
-    stmt = stack_move.Fill(locations=(v0, v1))
-    assert stmt.locations == (v0, v1)
-
-
-def test_move_fields():
+def test_atom_ops_construct():
     v0 = ir.TestValue()
-    stmt = stack_move.Move(lanes=(v0,))
-    assert stmt.lanes == (v0,)
+    v1 = ir.TestValue()
+    stack_move.InitialFill(locations=(v0, v1))
+    stack_move.Fill(locations=(v0, v1))
+    stack_move.Move(lanes=(v0,))
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -432,43 +384,20 @@ git commit -m "feat(stack_move): add InitialFill/Fill/Move statements"
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
 - Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing test**
 
 Append:
 
 ```python
-def test_local_r_fields():
-    phi, theta, loc = ir.TestValue(), ir.TestValue(), ir.TestValue()
-    stmt = stack_move.LocalR(phi=phi, theta=theta, locations=(loc,))
-    assert stmt.phi is phi
-    assert stmt.theta is theta
-    assert stmt.locations == (loc,)
-
-
-def test_local_rz_fields():
-    theta, loc = ir.TestValue(), ir.TestValue()
-    stmt = stack_move.LocalRz(theta=theta, locations=(loc,))
-    assert stmt.theta is theta
-    assert stmt.locations == (loc,)
-
-
-def test_global_r_fields():
-    phi, theta = ir.TestValue(), ir.TestValue()
-    stmt = stack_move.GlobalR(phi=phi, theta=theta)
-    assert stmt.phi is phi
-    assert stmt.theta is theta
-
-
-def test_global_rz_fields():
-    theta = ir.TestValue()
-    stmt = stack_move.GlobalRz(theta=theta)
-    assert stmt.theta is theta
-
-
-def test_cz_fields():
-    zone = ir.TestValue()
-    stmt = stack_move.CZ(zone=zone)
-    assert stmt.zone is zone
+def test_gates_construct():
+    phi, theta, loc, zone = (
+        ir.TestValue(), ir.TestValue(), ir.TestValue(), ir.TestValue(),
+    )
+    stack_move.LocalR(phi=phi, theta=theta, locations=(loc,))
+    stack_move.LocalRz(theta=theta, locations=(loc,))
+    stack_move.GlobalR(phi=phi, theta=theta)
+    stack_move.GlobalRz(theta=theta)
+    stack_move.CZ(zone=zone)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -543,33 +472,18 @@ git commit -m "feat(stack_move): add gate statements (LocalR/LocalRz/GlobalR/Glo
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
 - Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing test**
 
 Append:
 
 ```python
-def test_measure_fields():
+def test_measurement_and_control_flow_construct():
     loc = ir.TestValue()
-    stmt = stack_move.Measure(locations=(loc,))
-    assert stmt.locations == (loc,)
-    assert stmt.result is not None
-
-
-def test_await_measure_fields():
     future = ir.TestValue()
-    stmt = stack_move.AwaitMeasure(future=future)
-    assert stmt.future is future
-    assert stmt.result is not None
-
-
-def test_return_fields():
-    stmt = stack_move.Return()
-    assert len(stmt.args) == 0
-
-
-def test_halt_fields():
-    stmt = stack_move.Halt()
-    assert len(stmt.args) == 0
+    stack_move.Measure(locations=(loc,))
+    stack_move.AwaitMeasure(future=future)
+    stack_move.Return()
+    stack_move.Halt()
 ```
 
 - [ ] **Step 2: Run tests**
@@ -639,37 +553,18 @@ git commit -m "feat(stack_move): add Measure/AwaitMeasure/Return/Halt"
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
 - Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Write failing test**
 
 Append:
 
 ```python
-def test_new_array_fields():
-    stmt = stack_move.NewArray(type_tag=1, dim0=4, dim1=0)
-    assert stmt.type_tag == 1
-    assert stmt.dim0 == 4
-    assert stmt.dim1 == 0
-    assert stmt.result is not None
-
-
-def test_get_item_fields():
-    arr, i0 = ir.TestValue(), ir.TestValue()
-    stmt = stack_move.GetItem(array=arr, indices=(i0,))
-    assert stmt.array is arr
-    assert stmt.indices == (i0,)
-    assert stmt.result is not None
-
-
-def test_set_detector_fields():
+def test_array_and_annotation_construct():
     arr = ir.TestValue()
-    stmt = stack_move.SetDetector(array=arr)
-    assert stmt.array is arr
-
-
-def test_set_observable_fields():
-    arr = ir.TestValue()
-    stmt = stack_move.SetObservable(array=arr)
-    assert stmt.array is arr
+    idx = ir.TestValue()
+    stack_move.NewArray(type_tag=1, dim0=4, dim1=0)
+    stack_move.GetItem(array=arr, indices=(idx,))
+    stack_move.SetDetector(array=arr)
+    stack_move.SetObservable(array=arr)
 ```
 
 - [ ] **Step 2: Run tests**
@@ -733,11 +628,13 @@ git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_s
 git commit -m "feat(stack_move): add array and annotation statements"
 ```
 
-At this point the `stack_move` dialect is complete. Run the full test file and verify all ~25 tests pass:
+At this point the `stack_move` dialect is complete. Run the full test file and verify all smoke tests pass:
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
+
+Deeper verification of statement behaviour happens naturally through the decoder tests (Phase B) and rewrite tests (Phase D), which exercise each statement in context rather than duplicating Kirin's built-in interface checks.
 
 ---
 
