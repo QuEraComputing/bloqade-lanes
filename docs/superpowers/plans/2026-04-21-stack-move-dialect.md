@@ -61,7 +61,43 @@ This is tracked separately. **Phases A, C, D, E, F, G do not depend on this** �
 
 ## Phase A — `stack_move` Dialect
 
-### Task A1: Create dialect module skeleton and types
+### Task A1: Extend `bloqade.lanes.types` with new SSA type sentinels
+
+**Files:**
+- Modify: `python/bloqade/lanes/types.py`
+
+All dialect-level SSA-type sentinels live in `bloqade.lanes.types` for reuse, alongside the existing `StateType` and `MeasurementFutureType`. This task adds a single new sentinel for arrays. The three address types (`LocationAddress`, `LaneAddress`, `ZoneAddress`) use the real Rust-backed classes from `bloqade.lanes.bytecode` directly, without a separate sentinel.
+
+- [ ] **Step 1: Write implementation**
+
+Append to `python/bloqade/lanes/types.py`:
+
+```python
+class Array:
+    pass
+
+
+ArrayType = types.PyClass(Array)
+```
+
+- [ ] **Step 2: Verify module imports cleanly**
+
+```bash
+uv run python -c "from bloqade.lanes.types import ArrayType; print(ArrayType)"
+```
+
+Expected: prints the `ArrayType` object (no ImportError).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add python/bloqade/lanes/types.py
+git commit -m "feat(types): add Array sentinel for SSA array-valued types"
+```
+
+---
+
+### Task A2: Create the `stack_move` dialect module
 
 **Files:**
 - Create: `python/bloqade/lanes/dialects/stack_move.py`
@@ -78,15 +114,6 @@ from bloqade.lanes.dialects import stack_move
 
 def test_dialect_exists():
     assert stack_move.dialect.name == "lanes.stack_move"
-
-
-def test_types_defined():
-    assert stack_move.LocationAddressType is not None
-    assert stack_move.LaneAddressType is not None
-    assert stack_move.ZoneAddressType is not None
-    assert stack_move.MeasurementFutureType is not None
-    assert stack_move.BitstringType is not None
-    assert stack_move.ArrayType is not None
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -95,11 +122,11 @@ def test_types_defined():
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: `ModuleNotFoundError` or `AttributeError` (dialect module doesn't exist yet).
+Expected: `ModuleNotFoundError` — the dialect module doesn't exist yet.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `python/bloqade/lanes/dialects/stack_move.py`:
+Create `python/bloqade/lanes/dialects/stack_move.py`. Note that `types.PyClass` takes an actual Python class, not a string. We use real Rust-backed classes for addresses and reuse the sentinel-backed types in `bloqade.lanes.types`:
 
 ```python
 """stack_move dialect — 1:1 SSA image of the bytecode."""
@@ -107,17 +134,18 @@ Create `python/bloqade/lanes/dialects/stack_move.py`:
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
 
+from bloqade.lanes.bytecode import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.types import ArrayType, MeasurementFutureType
+
 dialect = ir.Dialect(name="lanes.stack_move")
 
 
 # ── SSA types ──────────────────────────────────────────────────────────
 
-LocationAddressType = types.PyClass("LocationAddress")
-LaneAddressType = types.PyClass("LaneAddress")
-ZoneAddressType = types.PyClass("ZoneAddress")
-MeasurementFutureType = types.PyClass("MeasurementFuture")
-BitstringType = types.PyClass("Bitstring")
-ArrayType = types.PyClass("Array")
+LocationAddressType = types.PyClass(LocationAddress)
+LaneAddressType = types.PyClass(LaneAddress)
+ZoneAddressType = types.PyClass(ZoneAddress)
+# ArrayType and MeasurementFutureType come from bloqade.lanes.types.
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -126,51 +154,25 @@ ArrayType = types.PyClass("Array")
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: PASS for `test_dialect_exists` and `test_types_defined`.
+Expected: PASS for `test_dialect_exists`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/
-git commit -m "feat(stack_move): add dialect skeleton and SSA types"
+git commit -m "feat(stack_move): add dialect skeleton"
 ```
 
 ---
 
-### Task A2: Add constant statements
+### Task A3: Add constant statements
 
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
-- Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing test**
+Kirin's `@statement` machinery enforces the field/type interface of each statement at construction time, so direct per-statement tests would just duplicate framework-level checks. Real behavioural verification happens in the decoder (Phase B) and rewrite (Phase D) tests, which exercise each statement in context. These Phase A tasks therefore have no per-family tests — they just add statement definitions and re-run the Task A1 smoke test to confirm the module still imports cleanly.
 
-Append to `python/tests/dialects/test_stack_move.py`:
-
-```python
-from bloqade.lanes.bytecode import LocationAddress, LaneAddress, ZoneAddress, MoveType
-
-
-def test_constants_construct():
-    """Smoke test: all constant statements construct. Kirin enforces field
-    and type interfaces via @statement — we only need to catch that the
-    class exists on the dialect."""
-    stack_move.ConstFloat(value=3.14)
-    stack_move.ConstInt(value=7)
-    stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
-    stack_move.ConstLane(value=LaneAddress(MoveType.SITE, 0, 0, 0, 0))
-    stack_move.ConstZone(value=ZoneAddress(0))
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-uv run pytest python/tests/dialects/test_stack_move.py -v
-```
-
-Expected: FAIL with `AttributeError: module 'stack_move' has no attribute 'ConstFloat'` (and similar).
-
-- [ ] **Step 3: Write implementation**
+- [ ] **Step 1: Write implementation**
 
 Append to `python/bloqade/lanes/dialects/stack_move.py`:
 
@@ -194,71 +196,47 @@ class ConstInt(ir.Statement):
 @statement(dialect=dialect)
 class ConstLoc(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    value: "LocationAddress" = info.attribute()  # type: ignore[name-defined]
+    value: LocationAddress = info.attribute()
     result: ir.ResultValue = info.result(LocationAddressType)
 
 
 @statement(dialect=dialect)
 class ConstLane(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    value: "LaneAddress" = info.attribute()  # type: ignore[name-defined]
+    value: LaneAddress = info.attribute()
     result: ir.ResultValue = info.result(LaneAddressType)
 
 
 @statement(dialect=dialect)
 class ConstZone(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    value: "ZoneAddress" = info.attribute()  # type: ignore[name-defined]
+    value: ZoneAddress = info.attribute()
     result: ir.ResultValue = info.result(ZoneAddressType)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Verify module imports cleanly**
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: all 7 tests PASS.
+Expected: the two Task A1 smoke tests still PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_stack_move.py
+git add python/bloqade/lanes/dialects/stack_move.py
 git commit -m "feat(stack_move): add constant statements"
 ```
 
 ---
 
-### Task A3: Add stack-manipulation statements
+### Task A4: Add stack-manipulation statements
 
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
-- Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing test**
-
-Append to `python/tests/dialects/test_stack_move.py`:
-
-```python
-def test_stack_ops_construct():
-    v = ir.TestValue()
-    w = ir.TestValue()
-    stack_move.Pop(value=v)
-    stack_move.Dup(value=v)
-    stack_move.Swap(in_top=v, in_bot=w)
-```
-
-Add to the imports at top of test file: `from kirin import ir` if not already imported.
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-uv run pytest python/tests/dialects/test_stack_move.py -v
-```
-
-Expected: FAIL with `AttributeError: module 'stack_move' has no attribute 'Pop'` (etc.).
-
-- [ ] **Step 3: Write implementation**
+- [ ] **Step 1: Write implementation**
 
 Append to `python/bloqade/lanes/dialects/stack_move.py`:
 
@@ -292,51 +270,29 @@ class Swap(ir.Statement):
     out_bot: ir.ResultValue = info.result()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Verify module imports cleanly**
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: all Pop/Dup/Swap tests PASS.
+Expected: Task A1 smoke tests still PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_stack_move.py
+git add python/bloqade/lanes/dialects/stack_move.py
 git commit -m "feat(stack_move): add Pop/Dup/Swap statements"
 ```
 
 ---
 
-### Task A4: Add atom-operation statements
+### Task A5: Add atom-operation statements
 
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
-- Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing test**
-
-Append to `python/tests/dialects/test_stack_move.py`:
-
-```python
-def test_atom_ops_construct():
-    v0 = ir.TestValue()
-    v1 = ir.TestValue()
-    stack_move.InitialFill(locations=(v0, v1))
-    stack_move.Fill(locations=(v0, v1))
-    stack_move.Move(lanes=(v0,))
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-uv run pytest python/tests/dialects/test_stack_move.py -v
-```
-
-Expected: FAIL with `AttributeError` for the missing classes.
-
-- [ ] **Step 3: Write implementation**
+- [ ] **Step 1: Write implementation**
 
 Append to `python/bloqade/lanes/dialects/stack_move.py`:
 
@@ -361,54 +317,29 @@ class Move(ir.Statement):
     lanes: tuple[ir.SSAValue, ...] = info.argument(type=LaneAddressType)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Verify module imports cleanly**
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: all atom-op tests PASS.
+Expected: Task A1 smoke tests still PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_stack_move.py
+git add python/bloqade/lanes/dialects/stack_move.py
 git commit -m "feat(stack_move): add InitialFill/Fill/Move statements"
 ```
 
 ---
 
-### Task A5: Add gate statements
+### Task A6: Add gate statements
 
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
-- Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing test**
-
-Append:
-
-```python
-def test_gates_construct():
-    phi, theta, loc, zone = (
-        ir.TestValue(), ir.TestValue(), ir.TestValue(), ir.TestValue(),
-    )
-    stack_move.LocalR(phi=phi, theta=theta, locations=(loc,))
-    stack_move.LocalRz(theta=theta, locations=(loc,))
-    stack_move.GlobalR(phi=phi, theta=theta)
-    stack_move.GlobalRz(theta=theta)
-    stack_move.CZ(zone=zone)
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-uv run pytest python/tests/dialects/test_stack_move.py -v
-```
-
-Expected: FAIL.
-
-- [ ] **Step 3: Write implementation**
+- [ ] **Step 1: Write implementation**
 
 Append to `python/bloqade/lanes/dialects/stack_move.py`:
 
@@ -449,52 +380,29 @@ class CZ(ir.Statement):
     zone: ir.SSAValue = info.argument(type=ZoneAddressType)
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 2: Verify module imports cleanly**
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: all gate tests PASS.
+Expected: Task A1 smoke tests still PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_stack_move.py
+git add python/bloqade/lanes/dialects/stack_move.py
 git commit -m "feat(stack_move): add gate statements (LocalR/LocalRz/GlobalR/GlobalRz/CZ)"
 ```
 
 ---
 
-### Task A6: Add measurement and control-flow statements
+### Task A7: Add measurement and control-flow statements
 
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
-- Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing test**
-
-Append:
-
-```python
-def test_measurement_and_control_flow_construct():
-    loc = ir.TestValue()
-    future = ir.TestValue()
-    stack_move.Measure(locations=(loc,))
-    stack_move.AwaitMeasure(future=future)
-    stack_move.Return()
-    stack_move.Halt()
-```
-
-- [ ] **Step 2: Run tests**
-
-```bash
-uv run pytest python/tests/dialects/test_stack_move.py -v
-```
-
-Expected: FAIL.
-
-- [ ] **Step 3: Write implementation**
+- [ ] **Step 1: Write implementation**
 
 Append to `python/bloqade/lanes/dialects/stack_move.py`:
 
@@ -512,9 +420,16 @@ class Measure(ir.Statement):
 
 @statement(dialect=dialect)
 class AwaitMeasure(ir.Statement):
+    """Synchronisation — blocks until the most recent measurement completes.
+
+    The bytecode docs state 'block until the most recent measurement
+    completes' with no documented stack effect. We treat this as a pure
+    synchronisation op: takes a MeasurementFuture, produces no result.
+    Extracting per-location measurement values is done via subsequent
+    GetItem calls on the future. Confirm against the Rust source before
+    implementation — adjust if the actual stack effect differs."""
     traits = frozenset({lowering.FromPythonCall()})
     future: ir.SSAValue = info.argument(type=MeasurementFutureType)
-    result: ir.ResultValue = info.result(BitstringType)
 
 
 # ── Control flow ───────────────────────────────────────────────────────
@@ -530,52 +445,29 @@ class Halt(ir.Statement):
     traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 2: Verify module imports cleanly**
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: all measurement and control-flow tests PASS.
+Expected: Task A1 smoke tests still PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_stack_move.py
+git add python/bloqade/lanes/dialects/stack_move.py
 git commit -m "feat(stack_move): add Measure/AwaitMeasure/Return/Halt"
 ```
 
 ---
 
-### Task A7: Add array and annotation statements
+### Task A8: Add array and annotation statements
 
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/stack_move.py`
-- Modify: `python/tests/dialects/test_stack_move.py`
 
-- [ ] **Step 1: Write failing test**
-
-Append:
-
-```python
-def test_array_and_annotation_construct():
-    arr = ir.TestValue()
-    idx = ir.TestValue()
-    stack_move.NewArray(type_tag=1, dim0=4, dim1=0)
-    stack_move.GetItem(array=arr, indices=(idx,))
-    stack_move.SetDetector(array=arr)
-    stack_move.SetObservable(array=arr)
-```
-
-- [ ] **Step 2: Run tests**
-
-```bash
-uv run pytest python/tests/dialects/test_stack_move.py -v
-```
-
-Expected: FAIL.
-
-- [ ] **Step 3: Write implementation**
+- [ ] **Step 1: Write implementation**
 
 Append to `python/bloqade/lanes/dialects/stack_move.py`:
 
@@ -613,18 +505,18 @@ class SetObservable(ir.Statement):
     array: ir.SSAValue = info.argument(type=ArrayType)
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 2: Verify module imports cleanly**
 
 ```bash
 uv run pytest python/tests/dialects/test_stack_move.py -v
 ```
 
-Expected: all array/annotation tests PASS.
+Expected: Task A1 smoke tests still PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/stack_move.py python/tests/dialects/test_stack_move.py
+git add python/bloqade/lanes/dialects/stack_move.py
 git commit -m "feat(stack_move): add array and annotation statements"
 ```
 
@@ -1269,10 +1161,14 @@ Add to `BytecodeDecoder`:
         self.stack.append(stmt.result)
 
     def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
+        # Treats await_measure as pure synchronisation — takes the future off
+        # the top of the virtual stack, pushes it back so subsequent GetItem
+        # calls can access measurement values. Verify the exact stack effect
+        # against the Rust source and adjust if the bytecode actually pops
+        # the future permanently.
         future = self._pop_or_raise(idx, instr)
-        stmt = stack_move.AwaitMeasure(future=future)
-        self.block.stmts.append(stmt)
-        self.stack.append(stmt.result)
+        self.block.stmts.append(stack_move.AwaitMeasure(future=future))
+        self.stack.append(future)
 
     def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
         stmt = stack_move.NewArray(
@@ -2008,20 +1904,14 @@ git commit -m "feat(rewrite): lower_stack_move deduplicates zones for Measure"
 Append:
 
 ```python
-def test_await_measure_lowers_to_future_result():
-    # Smoke: await_measure after measure produces a get_future_result /
-    # AwaitMeasure-equivalent in the move dialect.
+def test_await_measure_lowers_without_error():
+    # Smoke: await_measure after measure lowers cleanly. AwaitMeasure is
+    # pure synchronisation in stack_move — no target-dialect emission.
     cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
     m = stack_move.Measure(locations=(cl.result,))
     aw = stack_move.AwaitMeasure(future=m.result)
     block = _build_stack_move_block([cl, m, aw, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    # There should be a downstream statement that takes the future as SSA.
-    # Follow move.py's naming — likely move.GetFutureResult or similar.
-    assert any(
-        isinstance(s, ir.Statement) and m.result not in s.args
-        for s in out.stmts
-    )
+    LowerStackMove().run(block)  # should not raise
 
 
 def test_new_array_lowers_to_ilist_new():
@@ -2064,16 +1954,13 @@ Add to `LowerStackMove`. Exact target-dialect construction arguments must match 
 
 ```python
     def _rewrite_AwaitMeasure(self, stmt: stack_move.AwaitMeasure) -> None:
-        # Look up the source Measure's target SSA (the move.Measure result).
-        future_target = self.ssa_to_target[stmt.future]
-        # The existing move dialect calls this GetFutureResult — confirm by
-        # reading move.py. Target signature probably matches:
-        #   GetFutureResult(future, zone_address=..., location_address=...)
-        # For bytecode lowering the per-location lookup happens downstream;
-        # for v1 we emit a single consume that references the future.
-        new = move.GetFutureResult(future_target)
-        self.target_block.stmts.append(new)
-        self.ssa_to_target[stmt.result] = new.result
+        # AwaitMeasure is pure synchronisation in stack_move (no result).
+        # In the existing move pipeline, measurement values are extracted
+        # via GetFutureResult per (zone, location); for v1 we emit nothing
+        # here, and any downstream GetItem on the future is handled in
+        # _rewrite_GetItem below. Adjust if AwaitMeasure actually needs a
+        # target emission (e.g. a barrier or fence) per the Rust source.
+        pass
 
     def _rewrite_NewArray(self, stmt: stack_move.NewArray) -> None:
         from kirin.dialects import ilist
