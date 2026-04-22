@@ -13,3 +13,10 @@ class MeasurementFuture:
 
 
 MeasurementFutureType = types.PyClass(MeasurementFuture)
+
+
+class Array:
+    pass
+
+
+ArrayType = types.PyClass(Array)
