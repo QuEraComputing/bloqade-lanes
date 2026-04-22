@@ -102,58 +102,68 @@ POP
 
 The dangling `%loc0` was produced but never consumed. It's a live SSA value with no uses. This is fine — it'll be pruned by dead-code elimination later, or the decoder can raise if strict "stack must be empty at return" checking is desired.
 
-## Integrating with a lowering framework
+## Where the technique lives: decoder vs rewrite pass
 
-Host lowering frameworks (Kirin's `LoweringABC[T]`, LLVM's IRBuilder, MLIR's Builder) can provide three reusable pieces: a frame/state object that tracks the current basic block and handles IR emission, visitor dispatch that iterates your source and dispatches to per-instruction handlers, and error plumbing for clean diagnostics. A decoder built on top of one of those frameworks inherits all of this.
+The virtual-stack-of-SSA-values technique is a self-contained algorithm. It doesn't care whether it runs inside a **decoder** (which would go `source bytecode → SSA IR in one step`) or inside a **rewrite pass** over a pre-existing intermediate dialect (`source bytecode → linear stack-op dialect → [virtual-stack rewrite] → SSA IR`).
 
-**In Bloqade Lanes, the first implementation will be bespoke rather than built on Kirin's `LoweringABC`.** The virtual-stack technique is framework-agnostic — it doesn't *need* the framework's machinery — and writing the bytecode decoder directly lets us shape the API around bytecode-specific concerns (stack discipline, instruction-index-based diagnostics, operand introspection through the PyO3 bindings). The implementation is explicitly a **prototype for future generic stack-source lowering tooling in Kirin**: lessons about the right abstraction shape, error taxonomy, and visitor dispatch will feed back into the framework rather than being constrained by it up-front.
+The Bloqade Lanes implementation takes the latter split:
 
-Conceptual shape of the bespoke decoder:
+1. **Decoder** is purely syntactic. It maps each bytecode instruction to a statement in a faithful `stack_move` dialect (one statement per opcode, no SSA operands, operand data in attributes). No stack simulation, no type checks, no SSA construction.
+2. **Rewrite pass** (`lower_stack_move`) walks the `stack_move` statements in order, maintains a virtual stack of SSA values, and emits well-typed SSA into the target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`).
+
+The rationale is **prototyping clarity**: the decoder is trivially correct by inspection, and all the interesting bytecode-to-SSA logic is concentrated in one reviewable pass. The alternative (collapse both into a single `LoweringABC`-style decoder) is a valid implementation shape — but it bundles syntactic translation and SSA recovery into one step, which is harder to inspect and harder to decompose into independent chunks later.
+
+Conceptual shape of the rewrite:
 
 ```python
-class BytecodeDecoder:
+class LowerStackMove:
     stack: list[ir.SSAValue]
-    block: ir.Block
-    dialects: ir.DialectGroup
+    target_block: ir.Block
+    state: ir.SSAValue  # threaded StateType for stateful ops
 
-    def decode(self, program: Program, kernel_name: str) -> ir.Method:
-        for idx, instruction in enumerate(program.instructions):
+    def run(self, source_block: ir.Block) -> ir.Block:
+        self.state = self._emit_initial_state()
+        for idx, stmt in enumerate(source_block.stmts):
             try:
-                self.visit(instruction)
+                self._rewrite(stmt)
             except _StackError as e:
-                raise DecodeError.from_context(idx, instruction, self.stack, e)
-        return self._finalize(kernel_name)
+                raise LowerError.from_context(idx, stmt, self.stack, e)
+        return self.target_block
 
-    def visit(self, instr: Instruction) -> None:
-        # dispatch by opcode to visit_const_loc, visit_fill, visit_dup, …
+    def _rewrite(self, stmt):
+        # dispatch by statement type: ConstLoc, Fill, Dup, …
         ...
 
-    def visit_const_loc(self, instr):
-        stmt = stack_move.ConstLoc(value=instr.location_address())
-        self.block.stmts.append(stmt)
-        self.stack.append(stmt.result)
+    def _rewrite_ConstLoc(self, stmt):
+        out = move.ConstLoc(value=stmt.value)
+        self.target_block.stmts.append(out)
+        self.stack.append(out.result)
 
-    def visit_fill(self, instr):
-        locs = [self.stack.pop() for _ in range(instr.arity)]
+    def _rewrite_Fill(self, stmt):
+        locs = [self.stack.pop() for _ in range(stmt.arity)]
         locs.reverse()  # or not, depending on your chosen ordering convention
-        self._check_type(locs, stack_move.LocationAddressType)
-        self.block.stmts.append(stack_move.Fill(locations=tuple(locs)))
+        self._check_type(locs, LocationAddressType)
+        new = move.Fill(self.state, *locs)
+        self.target_block.stmts.append(new)
+        self.state = new.new_state
 
-    def visit_dup(self, instr):
+    def _rewrite_Dup(self, stmt):
         self.stack.append(self.stack[-1])
 
-    def visit_pop(self, instr):
+    def _rewrite_Pop(self, stmt):
         self.stack.pop()
 
-    def visit_swap(self, instr):
+    def _rewrite_Swap(self, stmt):
         self.stack[-1], self.stack[-2] = self.stack[-2], self.stack[-1]
 ```
 
-The virtual stack is just a `list[ir.SSAValue]` on the decoder instance — no frame subclassing, no state threading through visitor arguments, no bridging the host framework's error types. `DecodeError` is a dedicated exception that captures the offending instruction index, opcode, and a snapshot of the virtual stack at failure, which gives diagnostics tailored to bytecode debugging. When the patterns settle, the technique can be generalized and lifted into Kirin as a reusable `LoweringABC`-style adapter.
+The virtual stack is a `list[ir.SSAValue]` on the rewrite instance. `LowerError` is a dedicated exception carrying the offending `stack_move` statement, its block index, and a snapshot of the virtual stack. This rewrite pass is the direct analogue of the "decoder with a virtual stack" shape described earlier in the doc — the only difference is that the input is the `stack_move` IR (a linear sequence of stack-op statements) rather than the raw bytecode. Everything else is the same.
+
+**Composable decomposition (planned follow-up).** The v1 rewrite lives in one file and handles every `stack_move` statement. Once the mechanics settle, the instruction families decompose cleanly into sub-dialects (stack ops, constants, atom ops, gates, measurement, arrays, annotations, control flow). Each sub-dialect owns both a **decoding handler** (for the bytecode-to-`stack_move` step) and a **rewrite chunk** (for the virtual-stack-to-SSA step), with the virtual stack threaded between them as shared state. This gives independently testable, reusable, replaceable pieces — a pattern worth planning for even if v1 ships monolithic.
 
 ## Error conditions
 
-A decent decoder surfaces these as a dedicated `DecodeError` (the bespoke Bloqade Lanes variant) or the host framework's `BuildError`/equivalent:
+Whichever pass owns the virtual stack surfaces these as a dedicated exception (e.g. the Bloqade Lanes rewrite raises `LowerError`; a host framework's decoder would raise `BuildError`/equivalent):
 
 | Condition                                     | Example                                                                               |
 |-----------------------------------------------|---------------------------------------------------------------------------------------|
