@@ -1543,17 +1543,20 @@ class Instruction:
         ...
 
     def op_name(self) -> str:
-        """Lowercase snake_case opcode name matching the factory method.
+        """Lowercase snake_case opcode name matching the bytecode text-format
+        parser's canonical names (see
+        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
 
-        For variants whose factory name collides with a Python keyword, the
-        returned name keeps the trailing underscore (``"move_"``, ``"return_"``).
+        Factory methods use trailing underscores for Python-keyword conflicts
+        (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
+        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
         """
         ...
 
     def arity(self) -> int:
         """Arity field for opcodes that carry one.
 
-        Valid on ``initial_fill``, ``fill``, ``move_``, ``local_r``,
+        Valid on ``initial_fill``, ``fill``, ``move``, ``local_r``,
         ``local_rz``, ``measure``.
 
         Raises:

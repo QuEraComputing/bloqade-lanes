@@ -226,7 +226,7 @@ class TestInstructionAccessors:
             (Instruction.swap(), "swap"),
             (Instruction.initial_fill(1), "initial_fill"),
             (Instruction.fill(1), "fill"),
-            (Instruction.move_(1), "move_"),
+            (Instruction.move_(1), "move"),
             (Instruction.local_r(1), "local_r"),
             (Instruction.local_rz(1), "local_rz"),
             (Instruction.global_r(), "global_r"),
@@ -238,7 +238,7 @@ class TestInstructionAccessors:
             (Instruction.get_item(1), "get_item"),
             (Instruction.set_detector(), "set_detector"),
             (Instruction.set_observable(), "set_observable"),
-            (Instruction.return_(), "return_"),
+            (Instruction.return_(), "return"),
             (Instruction.halt(), "halt"),
         ]
         for instr, expected in cases:

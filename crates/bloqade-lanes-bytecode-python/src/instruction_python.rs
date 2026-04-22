@@ -271,7 +271,7 @@ impl PyInstruction {
                 rs::CpuInstruction::Pop => "pop",
                 rs::CpuInstruction::Dup => "dup",
                 rs::CpuInstruction::Swap => "swap",
-                rs::CpuInstruction::Return => "return_",
+                rs::CpuInstruction::Return => "return",
                 rs::CpuInstruction::Halt => "halt",
             },
             rs::Instruction::LaneConst(lc) => match lc {
@@ -282,7 +282,7 @@ impl PyInstruction {
             rs::Instruction::AtomArrangement(aa) => match aa {
                 rs::AtomArrangementInstruction::InitialFill { .. } => "initial_fill",
                 rs::AtomArrangementInstruction::Fill { .. } => "fill",
-                rs::AtomArrangementInstruction::Move { .. } => "move_",
+                rs::AtomArrangementInstruction::Move { .. } => "move",
             },
             rs::Instruction::QuantumGate(qg) => match qg {
                 rs::QuantumGateInstruction::LocalR { .. } => "local_r",
