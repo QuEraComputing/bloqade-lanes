@@ -187,6 +187,50 @@ class Move(interp.MethodTable):
 
         return (MeasureFuture(results),)
 
+    @interp.impl(move.ConstZone)
+    def const_zone_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.ConstZone,
+    ):
+        return (Value(stmt.value),)
+
+    @interp.impl(move.Measure)
+    def measure_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.Measure,
+    ):
+        current_state = frame.get(stmt.current_state)
+        interp_.current_state = current_state
+
+        # Resolve each zone SSA operand to its ZoneAddress value by
+        # consulting the interpreter frame (populated by const_zone_impl).
+        zone_values = [frame.get(z_ssa) for z_ssa in stmt.zones]
+        zone_addresses: list[layout.ZoneAddress] = [
+            zv.value for zv in zone_values if isinstance(zv, Value)
+        ]
+
+        # Track site + count for the measure_lower rewrite downstream.
+        interp_.measure_sites.append({"stmt": stmt, "zones": tuple(zone_addresses)})
+        interp_.final_measurement_count += 1
+
+        if not isinstance(current_state, AtomState):
+            return (MoveExecution.bottom(),)
+
+        # Build the MeasurementFuture by mirroring end_measure_impl: for
+        # each zone, walk every location in the zone, and record any qubit
+        # currently at that location.
+        results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]] = {}
+        for zone_address in zone_addresses:
+            result = results.setdefault(zone_address, {})
+            for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):
+                if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
+                    result[loc_addr] = qubit_id
+        return (MeasureFuture(results),)
+
     @interp.impl(move.Store)
     def store_impl(
         self,
