@@ -101,6 +101,35 @@ class BytecodeDecoder:
         self.block.stmts.append(stmt)
         self.stack.append(stmt.result)
 
+    def _pop_or_raise(self, idx: int, instr: "Instruction") -> ir.SSAValue:
+        if not self.stack:
+            raise LoweringError(
+                idx, instr.op_name(), tuple(self.stack), "stack underflow"
+            )
+        return self.stack.pop()
+
+    def _visit_pop(self, idx: int, instr: "Instruction") -> None:
+        value = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.Pop(value=value))
+
+    def _visit_dup(self, idx: int, instr: "Instruction") -> None:
+        if not self.stack:
+            raise LoweringError(idx, "dup", tuple(self.stack), "stack underflow")
+        top = self.stack[-1]
+        stmt = stack_move.Dup(value=top)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_swap(self, idx: int, instr: "Instruction") -> None:
+        in_top = self._pop_or_raise(idx, instr)
+        in_bot = self._pop_or_raise(idx, instr)
+        stmt = stack_move.Swap(in_top=in_top, in_bot=in_bot)
+        self.block.stmts.append(stmt)
+        # Convention: top-of-stack last. out_bot ≡ in_top (goes below);
+        # out_top ≡ in_bot (goes on top).
+        self.stack.append(stmt.out_bot)
+        self.stack.append(stmt.out_top)
+
     def _finalize(self, kernel_name: str) -> ir.Method:
         region = ir.Region(blocks=self.block)
         function = func.Function(

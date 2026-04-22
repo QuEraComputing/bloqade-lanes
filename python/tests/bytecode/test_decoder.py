@@ -54,3 +54,34 @@ def test_decode_const_zone():
     block = _decode([Instruction.const_zone(3)])
     stmt = next(s for s in block.stmts if isinstance(s, stack_move.ConstZone))
     assert stmt.value == ZoneAddress(3)
+
+
+def test_decode_pop_consumes_top():
+    block = _decode([Instruction.const_int(1), Instruction.pop()])
+    assert any(isinstance(s, stack_move.Pop) for s in block.stmts)
+
+
+def test_decode_dup_duplicates_top():
+    block = _decode([Instruction.const_int(1), Instruction.dup()])
+    dup = next(s for s in block.stmts if isinstance(s, stack_move.Dup))
+    cint = next(s for s in block.stmts if isinstance(s, stack_move.ConstInt))
+    assert dup.value is cint.result
+
+
+def test_decode_swap_permutes_top_two():
+    block = _decode(
+        [Instruction.const_int(1), Instruction.const_int(2), Instruction.swap()]
+    )
+    swap = next(s for s in block.stmts if isinstance(s, stack_move.Swap))
+    ints = [s for s in block.stmts if isinstance(s, stack_move.ConstInt)]
+    assert swap.in_top is ints[1].result
+    assert swap.in_bot is ints[0].result
+
+
+def test_decode_pop_underflow_raises():
+    import pytest
+
+    from bloqade.lanes.bytecode.lowering import LoweringError
+
+    with pytest.raises(LoweringError):
+        _decode([Instruction.pop()])
