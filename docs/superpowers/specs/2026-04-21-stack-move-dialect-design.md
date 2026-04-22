@@ -236,3 +236,7 @@ python/bloqade/lanes/
 ## Prerequisites
 
 - PyO3 accessors for `Instruction` operands (arity, address values, type tags, dimensions). This is the blocking follow-up the decoder needs. Tracked separately.
+
+## Known limitations
+
+- **Straight-line programs only.** The virtual-SSA-stack lowering technique in `StackMoveLowering` is a single-basic-block algorithm and does not handle branching control flow. This matches today's Bloqade Lanes bytecode (no branches) but will need a dedicated redesign if branching opcodes are later added. Reconciling stack state across control-flow joins requires snapshots per branch boundary and phi-node / block-argument insertion at joins — meaningfully more complex than the current visitor. See the companion walkthrough doc for the detailed reasoning.

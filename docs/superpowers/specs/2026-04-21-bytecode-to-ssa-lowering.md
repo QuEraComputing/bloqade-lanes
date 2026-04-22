@@ -6,6 +6,10 @@
 
 This document walks through the general problem of lowering a **stack-based bytecode** into an **SSA intermediate representation**, using the Bloqade Lanes bytecode decoder (the `stack_move` dialect) as a concrete use case. The technique generalizes to any stack-machine input; the `stack_move` specifics are just the example.
 
+> **Scope — straight-line programs only.** The virtual-stack technique described here is sufficient for bytecode programs with **no branching control flow**. That matches the Bloqade Lanes bytecode today (a single linear instruction stream terminating in `return` / `halt`) and is what the `stack_move` decoder targets.
+>
+> Once branches are introduced, stack state has to be reconciled across control-flow joins. That reconciliation requires stack snapshots at branch boundaries and phi nodes / block arguments in the SSA output — a meaningfully more complex decoder. The "Things that are genuinely subtle" section at the end revisits this. **Plan for it before adding branching opcodes to the bytecode.**
+
 ## The two models
 
 ### Stack-based bytecode
@@ -173,8 +177,8 @@ Not everything is mechanical. A few points that deserve care:
 
 - **Argument ordering convention.** When you pop N operands for an N-ary op, the IR argument list can read either "top-of-stack first" or "top-of-stack last." Both are valid; neither is obviously right. Pick one, document it, and stick to it project-wide. Bugs here are silent and painful.
 - **Shared SSA values from `dup`.** A single SSA value may appear in multiple argument positions of the same operation. This is perfectly valid SSA (one definition, many uses) — but some downstream passes or testing tools have bad intuitions about it. Test this case explicitly.
-- **Control flow.** The example above is a single basic block. Branching bytecode (not present in Bloqade Lanes bytecode today, but common in general) requires `stack` snapshots at branch joins, plus phi nodes or block arguments in the SSA IR. This is a well-understood problem — Java's JVM verifier does it — but it adds real complexity and is worth deferring until you need it.
-- **Stack-typed disagreement at joins.** If/when control flow arrives, different predecessors may have stacks of different shapes or element types. The decoder has to detect and reject this, or reconcile it via widening.
+- **Control flow — the big one.** The example above, and the entire virtual-stack technique as described, is a *single-basic-block* algorithm. It breaks as soon as the bytecode gains branches, because stack shape at a branch join has to be reconciled across predecessors. The fix is well understood — snapshot the virtual stack at each branch boundary, merge snapshots at joins, and materialize merged values as SSA block arguments (or phi nodes) in the output IR — but it turns the decoder from "straight visitor with a list" into something closer to a proper abstract interpreter. Java's JVM verifier is an existence proof that this is tractable, but it's not a small addition. The current Bloqade Lanes bytecode has no branching, so this is deferred; **when branching opcodes are added, the decoder will need a dedicated redesign**, not a small patch.
+- **Stack-typed disagreement at joins.** The specific failure mode at joins: different predecessors may have stacks of different depth or different element types. The decoder has to either reject the program or reconcile via widening. Either answer is hard to retrofit.
 - **Implicit arity instructions.** Some opcodes have arity encoded as an operand; others have a fixed arity. The decoder's per-opcode visitor handles this locally, but the bytecode format should be unambiguous on this point.
 
 ## Summary
