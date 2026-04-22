@@ -47,3 +47,38 @@ def test_const_loc_tracks_attribute_value():
     # The stack_move SSA is mapped to its raw attribute (for lifting into
     # downstream move.* attributes).
     assert rule.ssa_to_attr[cl.result] == addr
+
+
+def test_pop_is_dropped():
+    cf = stack_move.ConstFloat(value=1.0)
+    pop = stack_move.Pop(value=cf.result)
+    block = _build_stack_move_block([cf, pop, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    # No target statement for Pop, and the original stack_move.Pop is gone.
+    assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
+
+
+def test_dup_redirects_uses_to_input():
+    cf = stack_move.ConstFloat(value=1.0)
+    dup = stack_move.Dup(value=cf.result)
+    # Downstream consumer that references Dup's result.
+    consumer = stack_move.Pop(value=dup.result)
+    block = _build_stack_move_block([cf, dup, consumer, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    # Dup is gone; Pop is also lowered away.
+    assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
+    assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
+
+
+def test_swap_permutes_uses():
+    a = stack_move.ConstInt(value=1)
+    b = stack_move.ConstInt(value=2)
+    sw = stack_move.Swap(in_top=b.result, in_bot=a.result)
+    # Consumers that read Swap's outputs; pop them so the test has
+    # something observable.
+    p_top = stack_move.Pop(value=sw.out_top)
+    p_bot = stack_move.Pop(value=sw.out_bot)
+    block = _build_stack_move_block([a, b, sw, p_top, p_bot, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    # Swap is gone.
+    assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)

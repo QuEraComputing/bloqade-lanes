@@ -145,3 +145,23 @@ class LowerStackMove(RewriteRule):
     ) -> None:
         self.ssa_to_attr[stmt.result] = stmt.value
         to_delete.append(stmt)
+
+    def _rewrite_Pop(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
+        # Pop collapses — no target emission. The popped SSA value remains
+        # on its definition; if nothing else references it, it becomes
+        # dead and a later DCE pass cleans it up.
+        to_delete.append(stmt)
+
+    def _rewrite_Dup(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
+        # Dup is a semantic identity — redirect all uses of the result to
+        # the input in place.
+        stmt.result.replace_by(stmt.value)
+        to_delete.append(stmt)
+
+    def _rewrite_Swap(
+        self, stmt: stack_move.Swap, to_delete: list[ir.Statement]
+    ) -> None:
+        # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
+        stmt.out_top.replace_by(stmt.in_bot)
+        stmt.out_bot.replace_by(stmt.in_top)
+        to_delete.append(stmt)
