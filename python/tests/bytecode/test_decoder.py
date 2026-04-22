@@ -85,3 +85,33 @@ def test_decode_pop_underflow_raises():
 
     with pytest.raises(LoweringError):
         _decode([Instruction.pop()])
+
+
+def test_decode_fill_consumes_arity_locations():
+    block = _decode(
+        [
+            Instruction.const_loc(0, 0, 0),
+            Instruction.const_loc(0, 0, 1),
+            Instruction.fill(2),
+        ]
+    )
+    fill = next(s for s in block.stmts if isinstance(s, stack_move.Fill))
+    locs = [s for s in block.stmts if isinstance(s, stack_move.ConstLoc)]
+    assert fill.locations == (locs[0].result, locs[1].result)
+
+
+def test_decode_initial_fill():
+    block = _decode([Instruction.const_loc(0, 0, 0), Instruction.initial_fill(1)])
+    assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)
+
+
+def test_decode_move_consumes_arity_lanes():
+    block = _decode(
+        [
+            Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0),
+            Instruction.move_(1),
+        ]
+    )
+    mv = next(s for s in block.stmts if isinstance(s, stack_move.Move))
+    lane = next(s for s in block.stmts if isinstance(s, stack_move.ConstLane))
+    assert mv.lanes == (lane.result,)

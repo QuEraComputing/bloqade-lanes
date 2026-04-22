@@ -130,6 +130,33 @@ class BytecodeDecoder:
         self.stack.append(stmt.out_bot)
         self.stack.append(stmt.out_top)
 
+    def _pop_n(self, idx: int, instr: "Instruction", n: int) -> list[ir.SSAValue]:
+        """Pop n values from the stack, newest first. Returns them in
+        bottom-to-top order so the caller can pass them as a tuple
+        matching 'top-of-stack = last argument' convention."""
+        if len(self.stack) < n:
+            raise LoweringError(
+                idx,
+                instr.op_name(),
+                tuple(self.stack),
+                f"stack underflow (need {n}, have {len(self.stack)})",
+            )
+        popped = [self.stack.pop() for _ in range(n)]
+        popped.reverse()  # now in bottom-to-top order
+        return popped
+
+    def _visit_initial_fill(self, idx: int, instr: "Instruction") -> None:
+        locs = self._pop_n(idx, instr, instr.arity())
+        self.block.stmts.append(stack_move.InitialFill(locations=tuple(locs)))
+
+    def _visit_fill(self, idx: int, instr: "Instruction") -> None:
+        locs = self._pop_n(idx, instr, instr.arity())
+        self.block.stmts.append(stack_move.Fill(locations=tuple(locs)))
+
+    def _visit_move_(self, idx: int, instr: "Instruction") -> None:
+        lanes = self._pop_n(idx, instr, instr.arity())
+        self.block.stmts.append(stack_move.Move(lanes=tuple(lanes)))
+
     def _finalize(self, kernel_name: str) -> ir.Method:
         region = ir.Region(blocks=self.block)
         function = func.Function(
