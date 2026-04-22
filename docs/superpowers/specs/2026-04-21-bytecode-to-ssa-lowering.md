@@ -225,13 +225,34 @@ For **straight-line bytecode** (the current Bloqade Lanes case), step 3 collapse
 - Andreas Haas et al., **"Bringing the Web up to Speed with WebAssembly"**, *PLDI* 2017. Wasm design document; Section 2.1 discusses why they mandated structured control flow, which dodges the unstructured-CFG complexity in the bytecode-to-SSA pipeline. [[PDF]](https://people.mpi-sws.org/~rossberg/papers/Haas,%20Rossberg,%20Schuff,%20Titzer,%20Gohman,%20Wagner,%20Zakai,%20Bastien,%20Holman%20-%20Bringing%20the%20Web%20up%20to%20Speed%20with%20WebAssembly.pdf) [[ACM]](https://dl.acm.org/doi/10.1145/3062341.3062363)
 - **Cranelift** — production Rust compiler backend that lowers Wasm (stack machine) to CLIF (SSA IR with block arguments instead of phi nodes). Source is readable and idiomatic; a useful real-world reference for a Rust-adjacent codebase. [[cranelift.dev]](https://cranelift.dev/) [[source]](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift)
 
-### Recommendation for when branching is added to Bloqade Lanes bytecode
+### Unifying with the host dataflow framework
 
-**Strongly prefer structured control flow** (`if` / `loop` / `call` blocks with statically known stack deltas, à la WebAssembly) over unstructured `goto`. Structured control flow makes the stack shape at every boundary statically determinable without a full CFG fixpoint — the decoder remains a forward pass plus local merges at block exits, not a full abstract-interpretation engine. This is exactly why Wasm mandated it, and the Haas et al. paper above explains the reasoning. Unstructured branches force the full dataflow-fixpoint machinery from Leroy 2003 and Soot.
+A natural follow-up question: *can the stack-shape-at-joins problem be handled by the host compiler's existing dataflow/SSA machinery, rather than bolting on a bespoke abstract interpreter?* Three approaches show up in the literature, and they differ exactly on this point.
 
-Decisions we will want to make when we pick this up:
+**Approach 1 — Verifier-style, stack stays meta-level.** The JVM verifier (Leroy 2003) enforces that predecessors into a join have equal stack depth and type-compatible slots. The lattice can be trivially flat ("give up to `Top` on any inconsistency and error"), but the machinery is still a **separate pass** with its own traversal, worklist, and fixpoint — distinct from the normal IR dataflow.
 
-1. **Structured vs unstructured branching in the bytecode format.** Take the Wasm position if possible.
-2. **Abstract stack lattice** — what does "same stack shape" mean? Per-slot types (like JVM), or full symbolic equality, or something in between?
-3. **SSA flavor of the output IR** — phi nodes (Cytron 1991) vs block arguments (Cranelift, MLIR). Bloqade Lanes' host framework (Kirin) is block-argument-based, so that's probably the straightforward choice.
-4. **Error taxonomy** — unreachable-code handling, unbalanced-stack at join, type-widened joins, etc.
+**Approach 2 — Lift stack slots into named locals.** Soot's Baf → Jimple conversion normalizes `PUSH` / `POP` into reads and writes of numbered locals, then runs ordinary SSA construction on the result. The stack disappears as a concept; what remains is standard SSA over named variables.
+
+**Approach 3 — Block arguments carry the stack.** Cranelift (CLIF), MLIR, and Kirin all use block-argument SSA (no phi nodes — block entry parameters play the phi role). Each basic block declares typed parameters; branches pass values as arguments to the target block. At a join, the block-argument unification *is* the merge. If the current virtual stack has N values at a branch, the successor block is declared with N parameters and those N SSA values are passed as arguments. Multiple predecessors with consistent stack shapes feed the same block cleanly; inconsistent shapes are a type error at block-argument binding time, surfaced by the same machinery that catches any other argument-type mismatch.
+
+**Approaches 2 and 3 unify stack handling with the existing dataflow framework**: stack state is lifted from "meta level" (separate abstract interpreter) to "object level" (ordinary IR values). This is the same move that state-threading makes for world state. No additional analysis pass; no dedicated lattice; no bespoke fixpoint. The compiler framework's existing block-argument / phi-insertion / dataflow machinery is what reconciles state at joins.
+
+**Recommendation for Bloqade Lanes: Approach 3.** Kirin is block-argument-based, so this is the path of least resistance. Concretely, once branching is introduced:
+
+- **Block entry**: parameters = the stack values live at entry.
+- **Within a block**: the existing forward visitor with an ephemeral virtual stack (what the current straight-line decoder already does).
+- **Block exit / branch**: pass the current virtual stack as block arguments to the successor(s).
+- **Join**: Kirin's existing block-argument machinery reconciles — no new code.
+
+The enabling precondition is **structured control flow in the bytecode** (e.g. Wasm-style `block` / `loop` / `if` with declared stack types). With structured control flow, block boundaries and stack deltas are declared in the bytecode format itself, so Approach 3 needs zero CFG discovery. With unstructured `goto`, you first need a pass to discover block boundaries before Approach 3 applies — which reintroduces exactly the bespoke pre-pass Approach 3 was supposed to avoid.
+
+This is a second reason to pick Wasm-style structured branching when Bloqade Lanes bytecode gains control flow: it lets the decoder stay inside Kirin's dataflow framework with no custom analysis infrastructure.
+
+### Decisions to make when branching is added
+
+The two prior subsections together point at a concrete plan: **Wasm-style structured control flow + Approach 3 (block arguments)**. Open design decisions at that point:
+
+1. **Structured vs unstructured branching in the bytecode format.** Take the Wasm position — it's the precondition for Approach 3 to apply without a CFG-discovery pre-pass.
+2. **Block-argument type discipline** — how strict is "compatible stack shape" at a join? Exact type match, or widening via a lattice join?
+3. **Error taxonomy** — unreachable-code handling, unbalanced-stack at join, type-widened joins, how these surface to the user.
+4. **Unstructured fallback** — if some bytecode source *does* need arbitrary `goto`, the fallback is a CFG-discovery pre-pass that runs Approach 1 (the meta-level verifier) just to identify block boundaries and stack shapes, then the main decoder runs Approach 3. Worth having a story for, even if the format itself is structured.
