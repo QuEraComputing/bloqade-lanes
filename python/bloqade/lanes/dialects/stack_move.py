@@ -53,3 +53,36 @@ class ConstZone(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
     value: ZoneAddress = info.attribute()
     result: ir.ResultValue = info.result(ZoneAddressType)
+
+
+# ── Stack manipulation ─────────────────────────────────────────────────
+
+
+@statement(dialect=dialect)
+class Pop(ir.Statement):
+    """Pop and discard the top of the virtual stack."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    value: ir.SSAValue = info.argument()
+
+
+@statement(dialect=dialect)
+class Dup(ir.Statement):
+    """Duplicate the top of the virtual stack. Semantically result ≡ value;
+    preserved as an explicit op to give downstream passes a hook for
+    non-cloning invariants."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    value: ir.SSAValue = info.argument()
+    result: ir.ResultValue = info.result()
+
+
+@statement(dialect=dialect)
+class Swap(ir.Statement):
+    """Swap the top two virtual-stack values. out_top ≡ in_bot; out_bot ≡ in_top."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    in_top: ir.SSAValue = info.argument()
+    in_bot: ir.SSAValue = info.argument()
+    out_top: ir.ResultValue = info.result()
+    out_bot: ir.ResultValue = info.result()
