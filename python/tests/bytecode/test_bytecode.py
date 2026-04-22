@@ -288,6 +288,19 @@ class TestInstructionAccessors:
         with pytest.raises(RuntimeError):
             Instruction.const_int(0).zone_address()
 
+    def test_new_array_accessors(self):
+        instr = Instruction.new_array(7, 4, 2)
+        assert instr.type_tag() == 7
+        assert instr.dim0() == 4
+        assert instr.dim1() == 2
+        with pytest.raises(RuntimeError):
+            Instruction.pop().type_tag()
+
+    def test_get_item_ndims(self):
+        assert Instruction.get_item(3).ndims() == 3
+        with pytest.raises(RuntimeError):
+            Instruction.pop().ndims()
+
 
 class TestInstructionAddressValidation:
     """Instruction address constants validate 16-bit range."""

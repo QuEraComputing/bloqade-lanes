@@ -360,6 +360,44 @@ impl PyInstruction {
         }
     }
 
+    fn type_tag(&self) -> PyResult<u8> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { type_tag, .. }) => {
+                Ok(*type_tag)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "type_tag() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn dim0(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim0, .. }) => Ok(*dim0),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "dim0() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn dim1(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim1, .. }) => Ok(*dim1),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "dim1() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn ndims(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }) => Ok(*ndims),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "ndims() is only valid on get_item",
+            )),
+        }
+    }
+
     fn arity(&self) -> PyResult<u32> {
         match &self.inner {
             rs::Instruction::AtomArrangement(

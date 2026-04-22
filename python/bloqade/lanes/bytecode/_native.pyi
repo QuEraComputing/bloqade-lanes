@@ -1601,6 +1601,38 @@ class Instruction:
         """
         ...
 
+    def type_tag(self) -> int:
+        """Type tag attribute of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim0(self) -> int:
+        """First dimension of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim1(self) -> int:
+        """Second dimension of a ``new_array`` instruction (0 for 1-D).
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def ndims(self) -> int:
+        """Number of index dimensions of a ``get_item`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
