@@ -1403,15 +1403,19 @@ class LowerStackMove(RewriteRule):
     Mutable state on the rule instance, carried across the walk:
     - ssa_to_attr: stack_move SSA → underlying attribute value, for
       operands that need to be lifted into target-dialect attributes
-      (addresses, rotation angles).
-    - ssa_to_target: stack_move SSA → target-dialect SSA replacement,
-      for values that survive as SSA (arrays, futures, detectors,
-      observables).
+      (addresses, rotation angles). SSA-to-attribute can't be expressed
+      through SSA rewiring because attributes aren't SSA values, so we
+      carry an explicit mapping.
     - state: the current StateType SSA value in the target IR.
+
+    For SSA-valued outputs (arrays, futures, detectors, observables,
+    constants that emit py.Constant), we use the Kirin idiom
+    `old_ssa.replace_by(new_ssa)` to redirect all uses in place — no
+    second mapping needed. This matches state.RewriteLoadStore's
+    `next_use.replace_by(current_use)` pattern.
     """
 
     ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
-    ssa_to_target: dict[ir.SSAValue, ir.SSAValue] = field(default_factory=dict)
     state: ir.SSAValue | None = None
 
     def rewrite_Block(self, block: ir.Block) -> RewriteResult:
@@ -1489,12 +1493,13 @@ def test_const_float_emits_py_constant_and_tracks_value():
     block = _build_stack_move_block([cf, stack_move.Return()])
     rule = LowerStackMove()
     Walk(rule).rewrite(block)
-    # py.Constant statement emitted with value 1.5, in the same block.
-    assert any(
-        isinstance(s, py.Constant) and s.value.unwrap() == 1.5 for s in block.stmts
-    )
-    # The original stack_move SSA value is mapped to its target SSA.
-    assert cf.result in rule.ssa_to_target
+    # py.Constant statement emitted with value 1.5.
+    py_const = next(s for s in block.stmts if isinstance(s, py.Constant))
+    assert py_const.value.unwrap() == 1.5
+    # Its result is tracked in ssa_to_attr for attribute lifting by
+    # downstream stateful-op handlers (key is the new SSA, because
+    # replace_by rewired all consumer operands to point there).
+    assert rule.ssa_to_attr[py_const.result] == 1.5
 
 
 def test_const_loc_tracks_attribute_value():
@@ -1525,16 +1530,22 @@ Add to `LowerStackMove`. Each handler takes the source statement and the `to_del
         from kirin.dialects import py
         out = py.Constant(stmt.value)
         out.insert_before(stmt)
-        self.ssa_to_target[stmt.result] = out.result
-        self.ssa_to_attr[stmt.result] = stmt.value
+        # Redirect all SSA uses of the old stack_move.ConstFloat result to
+        # the new py.Constant result in place.
+        stmt.result.replace_by(out.result)
+        # Consumers that need the raw float as an attribute (e.g.
+        # _rewrite_LocalR building a theta= kwarg) look up ssa_to_attr.
+        # The key is the new SSA, because replace_by rewired the operands
+        # stored on downstream statements to point there.
+        self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
     def _rewrite_ConstInt(self, stmt: stack_move.ConstInt, to_delete: list) -> None:
         from kirin.dialects import py
         out = py.Constant(stmt.value)
         out.insert_before(stmt)
-        self.ssa_to_target[stmt.result] = out.result
-        self.ssa_to_attr[stmt.result] = stmt.value
+        stmt.result.replace_by(out.result)
+        self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
     def _rewrite_ConstLoc(self, stmt: stack_move.ConstLoc, to_delete: list) -> None:
@@ -1590,26 +1601,33 @@ def test_pop_is_dropped():
     assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
 
 
-def test_dup_maps_result_to_input():
+def test_dup_redirects_uses_to_input():
     cf = stack_move.ConstFloat(value=1.0)
     dup = stack_move.Dup(value=cf.result)
-    block = _build_stack_move_block([cf, dup, stack_move.Return()])
-    rule = LowerStackMove()
-    Walk(rule).rewrite(block)
-    # Dup result shares attribute value with its input.
-    assert rule.ssa_to_attr[dup.result] == rule.ssa_to_attr[cf.result]
+    # Downstream consumer that references Dup's result.
+    consumer = stack_move.Pop(value=dup.result)
+    block = _build_stack_move_block([cf, dup, consumer, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    # Dup is gone; any consumer that referenced dup.result now references
+    # the py.Constant that cf.result was replaced by. stack_move.Pop is
+    # also lowered away.
+    assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
+    assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
 
 
-def test_swap_permutes_mappings():
+def test_swap_permutes_uses():
     a = stack_move.ConstInt(value=1)
     b = stack_move.ConstInt(value=2)
     sw = stack_move.Swap(in_top=b.result, in_bot=a.result)
-    block = _build_stack_move_block([a, b, sw, stack_move.Return()])
-    rule = LowerStackMove()
-    Walk(rule).rewrite(block)
-    # out_top ≡ in_bot (=a); out_bot ≡ in_top (=b).
-    assert rule.ssa_to_attr[sw.out_top] == 1  # a's value
-    assert rule.ssa_to_attr[sw.out_bot] == 2  # b's value
+    # Consumers that read Swap's outputs; pop them so the test has
+    # something observable.
+    p_top = stack_move.Pop(value=sw.out_top)
+    p_bot = stack_move.Pop(value=sw.out_bot)
+    block = _build_stack_move_block([a, b, sw, p_top, p_bot, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    # Swap is gone — its outputs' uses have been redirected to the
+    # permuted inputs by replace_by.
+    assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)
 ```
 
 - [ ] **Step 2: Run tests**
@@ -1625,25 +1643,22 @@ Expected: FAIL.
 Add to `LowerStackMove`:
 
 ```python
-    def _alias(self, dst: ir.SSAValue, src: ir.SSAValue) -> None:
-        """Make dst resolve to the same target/attribute entries as src."""
-        if src in self.ssa_to_target:
-            self.ssa_to_target[dst] = self.ssa_to_target[src]
-        if src in self.ssa_to_attr:
-            self.ssa_to_attr[dst] = self.ssa_to_attr[src]
-
     def _rewrite_Pop(self, stmt: stack_move.Pop, to_delete: list) -> None:
-        # Pop collapses — no target emission. The popped SSA value is either
-        # dead (will be DCE'd) or still referenced elsewhere.
+        # Pop collapses — no target emission. The popped SSA value remains
+        # on its definition; if nothing else references it, it becomes
+        # dead and a later DCE pass cleans it up.
         to_delete.append(stmt)
 
     def _rewrite_Dup(self, stmt: stack_move.Dup, to_delete: list) -> None:
-        self._alias(stmt.result, stmt.value)
+        # Dup is a semantic identity — redirect all uses of the result to
+        # the input in place.
+        stmt.result.replace_by(stmt.value)
         to_delete.append(stmt)
 
     def _rewrite_Swap(self, stmt: stack_move.Swap, to_delete: list) -> None:
-        self._alias(stmt.out_top, stmt.in_bot)
-        self._alias(stmt.out_bot, stmt.in_top)
+        # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
+        stmt.out_top.replace_by(stmt.in_bot)
+        stmt.out_bot.replace_by(stmt.in_top)
         to_delete.append(stmt)
 ```
 
@@ -1928,7 +1943,9 @@ Add to `LowerStackMove`:
         new = move.Measure(self.state, zones=tuple(zone_ssa))
         new.insert_before(stmt)
         self.state = new.result
-        self.ssa_to_target[stmt.result] = new.result
+        # Redirect consumers of the old MeasurementFuture SSA (e.g.
+        # subsequent AwaitMeasure or GetItem on the future) to the new one.
+        stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 ```
 
@@ -2027,41 +2044,43 @@ Add to `LowerStackMove`. Exact target-dialect construction arguments must match 
         else:
             new = ilist.New(values=())  # 2-D stub
         new.insert_before(stmt)
-        self.ssa_to_target[stmt.result] = new.result
+        stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
     def _rewrite_GetItem(self, stmt: stack_move.GetItem, to_delete: list) -> None:
         from kirin.dialects.py import indexing
-        current = self.ssa_to_target[stmt.array]
+        # stmt.array and stmt.indices operands have already been rewired by
+        # earlier replace_by calls on ConstInt / NewArray — they point
+        # directly at py.Constant / ilist.New results.
+        current = stmt.array
         for idx_ssa in stmt.indices:
-            target_idx = self.ssa_to_target[idx_ssa]
-            gi = indexing.GetItem(obj=current, index=target_idx)
+            gi = indexing.GetItem(obj=current, index=idx_ssa)
             gi.insert_before(stmt)
             current = gi.result
-        self.ssa_to_target[stmt.result] = current
+        stmt.result.replace_by(current)
         to_delete.append(stmt)
 
     def _rewrite_SetDetector(self, stmt: stack_move.SetDetector, to_delete: list) -> None:
         from kirin.dialects import ilist
         from bloqade.decoders.dialects import annotate
-        measurements = self.ssa_to_target[stmt.array]
         # Coordinates default to empty per the spec — decoded bytecode
         # doesn't carry visualisation metadata.
         empty_coords = ilist.New(values=())
         empty_coords.insert_before(stmt)
+        # stmt.array already points at the ilist.New result (via replace_by
+        # during _rewrite_NewArray).
         new = annotate.SetDetector(
-            measurements=measurements, coordinates=empty_coords.result,
+            measurements=stmt.array, coordinates=empty_coords.result,
         )
         new.insert_before(stmt)
-        self.ssa_to_target[stmt.result] = new.result
+        stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
     def _rewrite_SetObservable(self, stmt: stack_move.SetObservable, to_delete: list) -> None:
         from bloqade.decoders.dialects import annotate
-        measurements = self.ssa_to_target[stmt.array]
-        new = annotate.SetObservable(measurements=measurements)
+        new = annotate.SetObservable(measurements=stmt.array)
         new.insert_before(stmt)
-        self.ssa_to_target[stmt.result] = new.result
+        stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 ```
 
