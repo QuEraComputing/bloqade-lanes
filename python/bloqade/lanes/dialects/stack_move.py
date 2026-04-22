@@ -1,11 +1,11 @@
 """stack_move dialect — 1:1 SSA image of the bytecode."""
 
+from bloqade.decoders.dialects.annotate.types import DetectorType, ObservableType
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
 
 from bloqade.lanes.bytecode import LaneAddress, LocationAddress, ZoneAddress
-from bloqade.lanes.types import ArrayType  # noqa: F401
-from bloqade.lanes.types import MeasurementFutureType
+from bloqade.lanes.types import ArrayType, MeasurementFutureType
 
 dialect = ir.Dialect(name="lanes.stack_move")
 
@@ -188,3 +188,46 @@ class Halt(ir.Statement):
     """Lowered to func.Return(None) alongside Return."""
 
     traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
+
+
+# ── Arrays ─────────────────────────────────────────────────────────────
+
+
+@statement(dialect=dialect)
+class NewArray(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    type_tag: int = info.attribute()
+    dim0: int = info.attribute()
+    dim1: int = info.attribute()
+    result: ir.ResultValue = info.result(ArrayType)
+
+
+@statement(dialect=dialect)
+class GetItem(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    array: ir.SSAValue = info.argument(type=ArrayType)
+    indices: tuple[ir.SSAValue, ...] = info.argument(type=types.Int)
+    result: ir.ResultValue = info.result()  # element type is context-dependent
+
+
+# ── Annotations (detectors / observables) ──────────────────────────────
+
+
+@statement(dialect=dialect)
+class SetDetector(ir.Statement):
+    """Build a detector record from the top-of-stack array. Matches
+    annotate.SetDetector's signature — produces a Detector."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    array: ir.SSAValue = info.argument(type=ArrayType)
+    result: ir.ResultValue = info.result(DetectorType)
+
+
+@statement(dialect=dialect)
+class SetObservable(ir.Statement):
+    """Build an observable record from the top-of-stack array. Matches
+    annotate.SetObservable's signature — produces an Observable."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    array: ir.SSAValue = info.argument(type=ArrayType)
+    result: ir.ResultValue = info.result(ObservableType)
