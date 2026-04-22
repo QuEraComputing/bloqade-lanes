@@ -244,6 +244,22 @@ class TestInstructionAccessors:
         for instr, expected in cases:
             assert instr.op_name() == expected, (instr, expected)
 
+    def test_arity_returns_field(self):
+        assert Instruction.initial_fill(3).arity() == 3
+        assert Instruction.fill(4).arity() == 4
+        assert Instruction.move_(5).arity() == 5
+        assert Instruction.local_r(2).arity() == 2
+        assert Instruction.local_rz(1).arity() == 1
+        assert Instruction.measure(7).arity() == 7
+
+    def test_arity_raises_on_inapplicable_opcodes(self):
+        with pytest.raises(RuntimeError):
+            Instruction.const_float(0.0).arity()
+        with pytest.raises(RuntimeError):
+            Instruction.pop().arity()
+        with pytest.raises(RuntimeError):
+            Instruction.cz().arity()
+
 
 class TestInstructionAddressValidation:
     """Instruction address constants validate 16-bit range."""

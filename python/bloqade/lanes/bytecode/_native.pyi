@@ -1550,6 +1550,17 @@ class Instruction:
         """
         ...
 
+    def arity(self) -> int:
+        """Arity field for opcodes that carry one.
+
+        Valid on ``initial_fill``, ``fill``, ``move_``, ``local_r``,
+        ``local_rz``, ``measure``.
+
+        Raises:
+            RuntimeError: If called on an opcode without an arity field.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 

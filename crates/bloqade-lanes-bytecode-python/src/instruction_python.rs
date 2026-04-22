@@ -306,6 +306,26 @@ impl PyInstruction {
         }
     }
 
+    fn arity(&self) -> PyResult<u32> {
+        match &self.inner {
+            rs::Instruction::AtomArrangement(
+                rs::AtomArrangementInstruction::InitialFill { arity }
+                | rs::AtomArrangementInstruction::Fill { arity }
+                | rs::AtomArrangementInstruction::Move { arity },
+            ) => Ok(*arity),
+            rs::Instruction::QuantumGate(
+                rs::QuantumGateInstruction::LocalR { arity }
+                | rs::QuantumGateInstruction::LocalRz { arity },
+            ) => Ok(*arity),
+            rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }) => {
+                Ok(*arity)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "arity() not applicable to this opcode",
+            )),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format_instruction(&self.inner)
     }
