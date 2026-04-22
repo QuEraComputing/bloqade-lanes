@@ -107,3 +107,40 @@ class Fill(ir.Statement):
 class Move(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
     lanes: tuple[ir.SSAValue, ...] = info.argument(type=LaneAddressType)
+
+
+# ── Gates ──────────────────────────────────────────────────────────────
+
+
+@statement(dialect=dialect)
+class LocalR(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    phi: ir.SSAValue = info.argument(type=types.Float)
+    theta: ir.SSAValue = info.argument(type=types.Float)
+    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
+
+
+@statement(dialect=dialect)
+class LocalRz(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    theta: ir.SSAValue = info.argument(type=types.Float)
+    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
+
+
+@statement(dialect=dialect)
+class GlobalR(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    phi: ir.SSAValue = info.argument(type=types.Float)
+    theta: ir.SSAValue = info.argument(type=types.Float)
+
+
+@statement(dialect=dialect)
+class GlobalRz(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    theta: ir.SSAValue = info.argument(type=types.Float)
+
+
+@statement(dialect=dialect)
+class CZ(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    zone: ir.SSAValue = info.argument(type=ZoneAddressType)
