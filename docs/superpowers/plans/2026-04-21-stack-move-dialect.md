@@ -2112,9 +2112,20 @@ In `python/bloqade/lanes/analysis/atom/impl.py`, find the existing `@dialect.reg
         if not isinstance(current_state, AtomState):
             return (MoveExecution.bottom(),)
 
-        # Emit a MeasurementFuture analogous to the end_measure_impl logic.
-        # ... (mirror the existing end_measure_impl in this file) ...
-        return (...,)  # fill based on end_measure_impl's return
+        # Build the MeasurementFuture by mirroring end_measure_impl: for
+        # each zone, walk every location in the zone, and record any qubit
+        # currently at that location.
+        results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]] = {}
+        for zone_val in zone_addresses:
+            # frame.get(ssa) returns the abstract value for the SSA operand;
+            # for a move.ConstZone-backed SSA this is the ZoneAddress itself
+            # (or a PyAttr wrapping it — unwrap as end_measure_impl does).
+            zone = zone_val.unwrap() if hasattr(zone_val, "unwrap") else zone_val
+            result = results.setdefault(zone, {})
+            for loc_addr in interp_.arch_spec.yield_zone_locations(zone):
+                if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
+                    result[loc_addr] = qubit_id
+        return (MeasureFuture(results),)
 ```
 
 Also add `measure_sites: list[dict] = field(default_factory=list)` and `final_measurement_count: int = 0` to the `AtomInterpreter` dataclass (or equivalent state container), initialised on `run()` entry.
@@ -2163,7 +2174,7 @@ def test_single_zone_measure_rewrites_to_endmeasure():
     block = ir.Block([m])
     # For this test we mock the analysis result — in real usage MeasureLower
     # runs AtomAnalysis first.
-    lower = MeasureLower(zone_sets={m: frozenset({0})}, final_measure_count=1)
+    lower = MeasureLower(zone_sets={m: frozenset({0})}, final_measurement_count=1)
     lower.run(block)
     # m has been replaced by a move.EndMeasure.
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
@@ -2175,7 +2186,7 @@ def test_multi_zone_measure_raises():
     z0, z1 = ir.TestValue(), ir.TestValue()
     m = move.Measure(current_state=state, zones=(z0, z1))
     block = ir.Block([m])
-    lower = MeasureLower(zone_sets={m: frozenset({0, 1})}, final_measure_count=1)
+    lower = MeasureLower(zone_sets={m: frozenset({0, 1})}, final_measurement_count=1)
     with pytest.raises(MeasureLowerError):
         lower.run(block)
 ```
@@ -2221,13 +2232,13 @@ class MeasureLower:
     """
 
     zone_sets: Mapping[move.Measure, frozenset[int]]
-    final_measure_count: int
+    final_measurement_count: int
 
     def run(self, block: ir.Block) -> None:
-        if self.final_measure_count != 1:
+        if self.final_measurement_count != 1:
             raise MeasureLowerError(
                 f"expected exactly one final measurement, "
-                f"found {self.final_measure_count}"
+                f"found {self.final_measurement_count}"
             )
         for stmt in list(block.stmts):
             if isinstance(stmt, move.Measure):
@@ -2325,7 +2336,7 @@ Add a helper to `MeasureLower` that runs `AtomAnalysis` itself and populates its
             site["stmt"]: frozenset(z.zone_id for z in site["zones"])
             for site in interp.measure_sites
         }
-        return cls(zone_sets=zone_sets, final_measure_count=interp.final_measurement_count)
+        return cls(zone_sets=zone_sets, final_measurement_count=interp.final_measurement_count)
 ```
 
 - [ ] **Step 4: Run test**
@@ -2366,9 +2377,35 @@ from bloqade.lanes.rewrite.measure_lower import MeasureLower
 
 
 def _build_arch_spec():
-    """Same arch-spec builder used in other lanes tests."""
-    # Borrow from existing tests (e.g. test_atom_interpreter.py get_arch_spec)
-    ...
+    """Minimal arch spec for the end-to-end test.
+
+    Copy the pattern from python/tests/analysis/atom/test_atom_interpreter.py's
+    get_arch_spec (pytest fixture) — refactor it out into a shared helper or
+    inline the body here. The arch spec needs at least one zone with one
+    location matching LocationAddress(0, 0, 0) so the test's initial_fill +
+    measure exercise a valid cell.
+    """
+    from bloqade.lanes.bytecode._native import (
+        Grid as RustGrid, LocationAddress as RustLocAddr,
+        Mode as RustMode, Zone as RustZone,
+    )
+    from bloqade.lanes import layout
+    from bloqade.lanes.layout import word
+
+    sole_word = word.Word(sites=((0, 0),))
+    grid = RustGrid.from_positions([0.0], [0.0])
+    zone = RustZone(
+        name="test",
+        grid=grid,
+        site_buses=[],
+        word_buses=[],
+        words_with_site_buses=[0],
+        sites_with_word_buses=[],
+    )
+    mode = RustMode(name="main", zones=[0], bitstring_order=[RustLocAddr(0, 0, 0)])
+    return layout.ArchSpec.from_components(
+        words=(sole_word,), zones=(zone,), modes=[mode],
+    )
 
 
 def test_minimal_program_runs_end_to_end():
