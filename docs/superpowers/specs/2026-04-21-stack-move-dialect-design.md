@@ -130,12 +130,24 @@ class AwaitMeasure(ir.Statement):
 
 ### 2. `python/bloqade/lanes/bytecode/lowering.py`
 
-Kirin `LoweringABC[Program]` specialization. See the companion doc [2026-04-21-bytecode-to-ssa-lowering.md](./2026-04-21-bytecode-to-ssa-lowering.md) for the full walkthrough.
+**Bespoke decoder** — not layered on Kirin's `LoweringABC[Program]`. The virtual-stack-of-SSA-values technique is framework-agnostic, and writing a first implementation directly against the bytecode lets us (a) tailor the API to bytecode-specific concerns (stack discipline, operand introspection, BLQD-binary error diagnostics), and (b) treat this work as a **prototype that will inform future generic stack-source lowering tooling in Kirin**. See the companion doc [2026-04-21-bytecode-to-ssa-lowering.md](./2026-04-21-bytecode-to-ssa-lowering.md) for the full technique walkthrough.
 
 ```python
-class StackMoveLowering(lowering.LoweringABC[Program]):
-    def run(self, stmt: Program, state: lowering.State) -> ir.Method: ...
-    def visit(self, state: lowering.State, instruction: Instruction) -> lowering.Result: ...
+class BytecodeDecoder:
+    """Decodes a bytecode Program into a stack_move ir.Method.
+
+    Maintains a virtual stack of SSA values during lowering. Each
+    bytecode instruction is dispatched to a per-opcode visitor that
+    reads the virtual stack, optionally emits IR into the current block,
+    and optionally mutates the virtual stack.
+    """
+
+    stack: list[ir.SSAValue]
+    block: ir.Block
+    dialects: ir.DialectGroup
+
+    def decode(self, program: Program, kernel_name: str) -> ir.Method: ...
+    def visit(self, instruction: Instruction) -> None: ...
     # per-opcode visitors: visit_const_loc, visit_fill, visit_move, visit_dup, …
 
 def load_program(
@@ -147,6 +159,8 @@ def load_program(
 ```
 
 `load_program` returns a `stack_move` method. Callers run the `stack_move → move` rewrite and the rest of the pipeline explicitly.
+
+A dedicated `DecodeError` exception type carries diagnostic context (instruction index, opcode, virtual-stack snapshot) for the error cases enumerated in §"Error handling" below.
 
 ### 3. New statement in old `move` dialect
 
@@ -204,14 +218,14 @@ The zone-uniqueness and single-final-measurement invariants required by the exis
 
 ## Error handling
 
-- **Decoder (`BuildError`)**: unsupported opcodes (none in v1 scope — all opcodes mapped), stack underflow, operand type mismatch (e.g. `fill` consumed a non-`LocationAddressType` value), non-empty virtual stack at `return`/`halt`.
+- **Decoder (`DecodeError`)**: unsupported opcodes (none in v1 scope — all opcodes mapped), stack underflow, operand type mismatch (e.g. `fill` consumed a non-`LocationAddressType` value), non-empty virtual stack at `return`/`halt`. `DecodeError` carries the offending instruction index, opcode, and a snapshot of the virtual stack at failure.
 - **`stack_move → move` rewrite**: should be infallible on well-typed `stack_move` IR; any failure indicates a bug in the decoder.
 - **`measure_lower`**: descriptive errors for multi-zone measurements or multiple final measurements.
 
 ## Testing strategy
 
 - **Decoder unit tests**, one per opcode. Build a minimal `Program` containing the target opcode plus whatever setup it needs, decode, assert the resulting `stack_move` IR shape.
-- **Decoder error tests** for each `BuildError` case (stack underflow, type mismatch, unsupported opcode, dangling stack at return).
+- **Decoder error tests** for each `DecodeError` case (stack underflow, type mismatch, unsupported opcode, dangling stack at return).
 - **Rewrite unit tests** for `stack_move2move` — one per statement family, verifying attribute values recovered from `Const*` defining ops and state threading inserted correctly.
 - **Analysis unit tests** for the new `AtomAnalysis` methods — verifying zone-set computation and single-measurement detection.
 - **`measure_lower` unit tests** — valid (single zone, single final measurement) and invalid (multi-zone, multiple measurements) cases.

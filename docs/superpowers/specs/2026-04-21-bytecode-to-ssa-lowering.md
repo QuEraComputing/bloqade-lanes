@@ -104,53 +104,56 @@ The dangling `%loc0` was produced but never consumed. It's a live SSA value with
 
 ## Integrating with a lowering framework
 
-If the host compiler provides a lowering framework (Kirin's `LoweringABC[T]`, LLVM's IRBuilder, MLIR's Builder, etc.) you usually get three things for free:
+Host lowering frameworks (Kirin's `LoweringABC[T]`, LLVM's IRBuilder, MLIR's Builder) can provide three reusable pieces: a frame/state object that tracks the current basic block and handles IR emission, visitor dispatch that iterates your source and dispatches to per-instruction handlers, and error plumbing for clean diagnostics. A decoder built on top of one of those frameworks inherits all of this.
 
-1. **Frame / State object** — tracks the current basic block, handles IR emission, and is where you park your `stack` list.
-2. **Visitor dispatch** — you implement one visitor per instruction kind; the framework iterates your source and calls the right one.
-3. **Error plumbing** — a `BuildError`/equivalent that carries location info and gets raised with clean diagnostics.
+**In Bloqade Lanes, the first implementation will be bespoke rather than built on Kirin's `LoweringABC`.** The virtual-stack technique is framework-agnostic — it doesn't *need* the framework's machinery — and writing the bytecode decoder directly lets us shape the API around bytecode-specific concerns (stack discipline, instruction-index-based diagnostics, operand introspection through the PyO3 bindings). The implementation is explicitly a **prototype for future generic stack-source lowering tooling in Kirin**: lessons about the right abstraction shape, error taxonomy, and visitor dispatch will feed back into the framework rather than being constrained by it up-front.
 
-For Kirin specifically:
+Conceptual shape of the bespoke decoder:
 
 ```python
-class StackMoveLowering(lowering.LoweringABC[Program]):
-    def run(self, program: Program, state: lowering.State) -> ir.Method:
-        for instruction in program.instructions:
-            self.visit(state, instruction)
-        return state.current_frame.finalize()
+class BytecodeDecoder:
+    stack: list[ir.SSAValue]
+    block: ir.Block
+    dialects: ir.DialectGroup
 
-    def visit(self, state: lowering.State, instr: Instruction) -> lowering.Result:
-        # Dispatch by opcode to visit_const_loc, visit_fill, visit_dup, ...
+    def decode(self, program: Program, kernel_name: str) -> ir.Method:
+        for idx, instruction in enumerate(program.instructions):
+            try:
+                self.visit(instruction)
+            except _StackError as e:
+                raise DecodeError.from_context(idx, instruction, self.stack, e)
+        return self._finalize(kernel_name)
+
+    def visit(self, instr: Instruction) -> None:
+        # dispatch by opcode to visit_const_loc, visit_fill, visit_dup, …
         ...
 
-    def visit_const_loc(self, state, instr):
+    def visit_const_loc(self, instr):
         stmt = stack_move.ConstLoc(value=instr.location_address())
-        state.current_frame.push(stmt)
-        self._push(state, stmt.result)  # append to virtual SSA stack
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
 
-    def visit_fill(self, state, instr):
-        locs = [self._pop(state) for _ in range(instr.arity)]
+    def visit_fill(self, instr):
+        locs = [self.stack.pop() for _ in range(instr.arity)]
         locs.reverse()  # or not, depending on your chosen ordering convention
         self._check_type(locs, stack_move.LocationAddressType)
-        state.current_frame.push(stack_move.Fill(locations=tuple(locs)))
+        self.block.stmts.append(stack_move.Fill(locations=tuple(locs)))
 
-    def visit_dup(self, state, instr):
-        top = self._peek(state)
-        self._push(state, top)
+    def visit_dup(self, instr):
+        self.stack.append(self.stack[-1])
 
-    def visit_pop(self, state, instr):
-        self._pop(state)
+    def visit_pop(self, instr):
+        self.stack.pop()
 
-    def visit_swap(self, state, instr):
-        a = self._pop(state); b = self._pop(state)
-        self._push(state, a); self._push(state, b)
+    def visit_swap(self, instr):
+        self.stack[-1], self.stack[-2] = self.stack[-2], self.stack[-1]
 ```
 
-The virtual `stack` lives on either the `State` object itself (as an added attribute) or on a custom `Frame` subclass. Both are fine; the choice depends on whether the framework lets you subclass its frame cleanly.
+The virtual stack is just a `list[ir.SSAValue]` on the decoder instance — no frame subclassing, no state threading through visitor arguments, no bridging the host framework's error types. `DecodeError` is a dedicated exception that captures the offending instruction index, opcode, and a snapshot of the virtual stack at failure, which gives diagnostics tailored to bytecode debugging. When the patterns settle, the technique can be generalized and lifted into Kirin as a reusable `LoweringABC`-style adapter.
 
 ## Error conditions
 
-A decent decoder surfaces these as `BuildError`:
+A decent decoder surfaces these as a dedicated `DecodeError` (the bespoke Bloqade Lanes variant) or the host framework's `BuildError`/equivalent:
 
 | Condition                                     | Example                                                                               |
 |-----------------------------------------------|---------------------------------------------------------------------------------------|
