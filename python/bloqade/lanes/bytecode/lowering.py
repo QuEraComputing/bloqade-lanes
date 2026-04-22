@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class DecodeError(Exception):
+class LoweringError(Exception):
     """Raised when the decoder fails.
 
     Carries the offending instruction's index, opcode, and a snapshot of
@@ -29,7 +29,7 @@ class DecodeError(Exception):
 
     def __str__(self) -> str:
         return (
-            f"DecodeError at instruction {self.instruction_index} "
+            f"LoweringError at instruction {self.instruction_index} "
             f"({self.opcode_name}): {self.reason} "
             f"[stack depth={len(self.stack_snapshot)}]"
         )
@@ -70,7 +70,7 @@ class BytecodeDecoder:
         name = instr.op_name()
         handler = getattr(self, f"_visit_{name}", None)
         if handler is None:
-            raise DecodeError(idx, name, tuple(self.stack), "unknown opcode")
+            raise LoweringError(idx, name, tuple(self.stack), "unknown opcode")
         handler(idx, instr)
 
     def _visit_return_(self, idx: int, instr: "Instruction") -> None:
