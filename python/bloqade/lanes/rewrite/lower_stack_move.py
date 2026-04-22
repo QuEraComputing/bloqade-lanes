@@ -15,7 +15,7 @@ RewriteLoadStore.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
@@ -93,7 +93,11 @@ class LowerStackMove(RewriteRule):
 
         assert self.state is not None
         move.Store(self.state).insert_before(stmt)
-        func.Return().insert_before(stmt)
+        # AtomInterpreter.func_return dereferences stmt.value; emit a
+        # ConstantNone to provide a return operand.
+        none_stmt = func.ConstantNone()
+        none_stmt.insert_before(stmt)
+        func.Return(none_stmt.result).insert_before(stmt)
         to_delete.append(stmt)
 
     def _rewrite_Halt(
@@ -103,7 +107,9 @@ class LowerStackMove(RewriteRule):
 
         assert self.state is not None
         move.Store(self.state).insert_before(stmt)
-        func.Return().insert_before(stmt)
+        none_stmt = func.ConstantNone()
+        none_stmt.insert_before(stmt)
+        func.Return(none_stmt.result).insert_before(stmt)
         to_delete.append(stmt)
 
     def _rewrite_ConstFloat(
@@ -219,23 +225,49 @@ class LowerStackMove(RewriteRule):
         # Unreachable: the loop above raises on any None encountered.
         raise RuntimeError("_lift_attrs: unreachable")
 
+    def _lift_location_addresses(
+        self, ssa_values: tuple[ir.SSAValue, ...]
+    ) -> tuple[EncodingLocationAddress, ...]:
+        """Lift a tuple of SSA operands to encoding-layer LocationAddresses.
+
+        stack_move Const* stmts store raw ``bloqade.lanes.bytecode._native``
+        addresses. Downstream analysis (AtomInterpreter → AtomStateData)
+        accesses ``._inner`` on the address objects, so we rewrap into the
+        encoding-layer wrapper here.
+        """
+        from bloqade.lanes.bytecode import LocationAddress as RustLocationAddress
+
+        raws = self._lift_attrs(ssa_values, RustLocationAddress)
+        return tuple(
+            EncodingLocationAddress(
+                word_id=raw.word_id, site_id=raw.site_id, zone_id=raw.zone_id
+            )
+            for raw in raws
+        )
+
+    def _lift_lane_addresses(
+        self, ssa_values: tuple[ir.SSAValue, ...]
+    ) -> tuple[EncodingLaneAddress, ...]:
+        """Lift a tuple of SSA operands to encoding-layer LaneAddresses."""
+        from bloqade.lanes.bytecode import LaneAddress as RustLaneAddress
+
+        raws = self._lift_attrs(ssa_values, RustLaneAddress)
+        return tuple(EncodingLaneAddress.from_inner(raw) for raw in raws)
+
+    def _lift_zone_address(self, ssa_value: ir.SSAValue) -> EncodingZoneAddress:
+        """Lift a single SSA operand to an encoding-layer ZoneAddress."""
+        from bloqade.lanes.bytecode import ZoneAddress as RustZoneAddress
+
+        (raw,) = self._lift_attrs((ssa_value,), RustZoneAddress)
+        return EncodingZoneAddress(raw.zone_id)
+
     # ── Atom operations ───────────────────────────────────────────────
 
     def _rewrite_InitialFill(
         self, stmt: stack_move.InitialFill, to_delete: list[ir.Statement]
     ) -> None:
-        from bloqade.lanes.bytecode import LocationAddress
-
         assert self.state is not None
-        # stack_move stores the native Rust ``bloqade.lanes.bytecode``
-        # LocationAddress on its Const* attrs. ``move.Fill`` is typed
-        # against the ``layout.encoding`` wrapper; at runtime both are
-        # accepted since attribute fields aren't type-checked. The cast
-        # documents the pre-existing cross-module type mismatch.
-        addrs = cast(
-            tuple[EncodingLocationAddress, ...],
-            self._lift_attrs(stmt.locations, LocationAddress),
-        )
+        addrs = self._lift_location_addresses(stmt.locations)
         # move dialect has no InitialFill — both stack_move.InitialFill
         # and stack_move.Fill lower to move.Fill. The InitialFill
         # distinction exists only at the bytecode/stack_move layer for
@@ -248,13 +280,8 @@ class LowerStackMove(RewriteRule):
     def _rewrite_Fill(
         self, stmt: stack_move.Fill, to_delete: list[ir.Statement]
     ) -> None:
-        from bloqade.lanes.bytecode import LocationAddress
-
         assert self.state is not None
-        addrs = cast(
-            tuple[EncodingLocationAddress, ...],
-            self._lift_attrs(stmt.locations, LocationAddress),
-        )
+        addrs = self._lift_location_addresses(stmt.locations)
         new = move.Fill(self.state, location_addresses=addrs)
         new.insert_before(stmt)
         self.state = new.result
@@ -263,13 +290,8 @@ class LowerStackMove(RewriteRule):
     def _rewrite_Move(
         self, stmt: stack_move.Move, to_delete: list[ir.Statement]
     ) -> None:
-        from bloqade.lanes.bytecode import LaneAddress
-
         assert self.state is not None
-        lanes = cast(
-            tuple[EncodingLaneAddress, ...],
-            self._lift_attrs(stmt.lanes, LaneAddress),
-        )
+        lanes = self._lift_lane_addresses(stmt.lanes)
         new = move.Move(self.state, lanes=lanes)
         new.insert_before(stmt)
         self.state = new.result
@@ -280,18 +302,13 @@ class LowerStackMove(RewriteRule):
     def _rewrite_LocalR(
         self, stmt: stack_move.LocalR, to_delete: list[ir.Statement]
     ) -> None:
-        from bloqade.lanes.bytecode import LocationAddress
-
         assert self.state is not None
         # stack_move.LocalR uses phi/theta SSA args + locations SSA tuple;
         # move.LocalR takes axis_angle/rotation_angle as SSA and
         # location_addresses as an attribute tuple. The phi/theta SSAs
         # were rewired to the new py.Constant results by _rewrite_ConstFloat
         # (via replace_by), so we can forward them directly.
-        addrs = cast(
-            tuple[EncodingLocationAddress, ...],
-            self._lift_attrs(stmt.locations, LocationAddress),
-        )
+        addrs = self._lift_location_addresses(stmt.locations)
         new = move.LocalR(
             self.state,
             axis_angle=stmt.phi,
@@ -305,13 +322,8 @@ class LowerStackMove(RewriteRule):
     def _rewrite_LocalRz(
         self, stmt: stack_move.LocalRz, to_delete: list[ir.Statement]
     ) -> None:
-        from bloqade.lanes.bytecode import LocationAddress
-
         assert self.state is not None
-        addrs = cast(
-            tuple[EncodingLocationAddress, ...],
-            self._lift_attrs(stmt.locations, LocationAddress),
-        )
+        addrs = self._lift_location_addresses(stmt.locations)
         new = move.LocalRz(
             self.state,
             rotation_angle=stmt.theta,
@@ -346,25 +358,20 @@ class LowerStackMove(RewriteRule):
     def _rewrite_Measure(
         self, stmt: stack_move.Measure, to_delete: list[ir.Statement]
     ) -> None:
-        from bloqade.lanes.bytecode import LocationAddress, ZoneAddress
-
         assert self.state is not None
-        # Lift each location SSA operand back to its bytecode-native
-        # LocationAddress attribute value. Deduplicate by zone_id,
-        # preserving first-seen order.
-        locs = self._lift_attrs(stmt.locations, LocationAddress)
+        # Lift each location SSA operand to its encoding-layer wrapper
+        # (AtomStateData consumers read ._inner off the wrapper).
+        # Deduplicate zone ids, preserving first-seen order.
+        locs = self._lift_location_addresses(stmt.locations)
         seen_zone_ids: list[int] = []
         for loc in locs:
             if loc.zone_id not in seen_zone_ids:
                 seen_zone_ids.append(loc.zone_id)
         # Synthesise a move.ConstZone per distinct zone to provide SSA
-        # operands for the new multi-zone move.Measure. Same cross-module
-        # type mismatch as the CZ handler — move.ConstZone is typed
-        # against the encoding wrapper but accepts the Rust-native
-        # ZoneAddress at runtime.
+        # operands for the new multi-zone move.Measure.
         zone_ssa: list[ir.SSAValue] = []
         for zid in seen_zone_ids:
-            cz = move.ConstZone(value=cast(EncodingZoneAddress, ZoneAddress(zid)))
+            cz = move.ConstZone(value=EncodingZoneAddress(zid))
             cz.insert_before(stmt)
             zone_ssa.append(cz.result)
         new = move.Measure(self.state, zones=tuple(zone_ssa))
@@ -449,16 +456,8 @@ class LowerStackMove(RewriteRule):
         to_delete.append(stmt)
 
     def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
-        from bloqade.lanes.bytecode import ZoneAddress
-
         assert self.state is not None
-        # Same cross-module type mismatch as addresses — the native Rust
-        # ZoneAddress is accepted at runtime where move.CZ's type annotation
-        # expects the encoding wrapper.
-        (zone,) = cast(
-            tuple[EncodingZoneAddress, ...],
-            self._lift_attrs((stmt.zone,), ZoneAddress),
-        )
+        zone = self._lift_zone_address(stmt.zone)
         new = move.CZ(self.state, zone_address=zone)
         new.insert_before(stmt)
         self.state = new.result

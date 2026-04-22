@@ -4,6 +4,10 @@ from kirin.rewrite import Walk
 
 from bloqade.lanes.bytecode import LocationAddress
 from bloqade.lanes.dialects import move, stack_move
+from bloqade.lanes.layout.encoding import (
+    LocationAddress as EncodingLocationAddress,
+    ZoneAddress as EncodingZoneAddress,
+)
 from bloqade.lanes.rewrite.lower_stack_move import LowerStackMove
 
 
@@ -93,7 +97,13 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
     block = _build_stack_move_block([cl0, cl1, fill, stack_move.Return()])
     Walk(LowerStackMove()).rewrite(block)
     mf = next(s for s in block.stmts if isinstance(s, move.Fill))
-    assert mf.location_addresses == (a0, a1)
+    # LowerStackMove wraps the raw Rust ``bytecode.LocationAddress`` into
+    # the encoding-layer wrapper so downstream AtomAnalysis (which reads
+    # ._inner off the wrapper) works.
+    assert mf.location_addresses == (
+        EncodingLocationAddress(0, 0, 0),
+        EncodingLocationAddress(0, 1, 0),
+    )
 
 
 def test_local_r_lowers_with_attribute_lifting():
@@ -118,7 +128,7 @@ def test_local_r_lowers_with_attribute_lifting():
     assert isinstance(rot_const, py.Constant)
     assert axis_const.value.unwrap() == 0.2
     assert rot_const.value.unwrap() == 0.1
-    assert mr.location_addresses == (LocationAddress(0, 0, 0),)
+    assert mr.location_addresses == (EncodingLocationAddress(0, 0, 0),)
 
 
 def test_local_rz_lowers_with_attribute_lifting():
@@ -131,7 +141,9 @@ def test_local_rz_lowers_with_attribute_lifting():
     rot_const = mr.rotation_angle.owner
     assert isinstance(rot_const, py.Constant)
     assert rot_const.value.unwrap() == 0.3
-    assert mr.location_addresses == (LocationAddress(0, 0, 1),)
+    # native LocationAddress(zone=0, word=0, site=1) → encoding
+    # EncodingLocationAddress(word_id=0, site_id=1, zone_id=0).
+    assert mr.location_addresses == (EncodingLocationAddress(0, 1, 0),)
 
 
 def test_global_r_lowers_with_attribute_lifting():
@@ -168,7 +180,8 @@ def test_cz_lowers_with_attribute_zone():
     block = _build_stack_move_block([cz_zone, cz, stack_move.Return()])
     Walk(LowerStackMove()).rewrite(block)
     mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
-    assert mcz.zone_address == ZoneAddress(0)
+    # LowerStackMove wraps native ZoneAddress into the encoding wrapper.
+    assert mcz.zone_address == EncodingZoneAddress(0)
 
 
 def test_measure_single_zone_emits_single_zone_measure():
