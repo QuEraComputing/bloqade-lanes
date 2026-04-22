@@ -1388,11 +1388,14 @@ RewriteLoadStore.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -1715,36 +1718,60 @@ Expected: FAIL.
 Add to `LowerStackMove`:
 
 ```python
-    def _lift_attrs(self, ssa_values: tuple[ir.SSAValue, ...]) -> tuple[ir.Data, ...]:
-        """Resolve each stack_move SSA operand to its backing ir.Data
-        attribute. Raises if a value isn't attribute-backed (i.e. didn't
-        come from a stack_move.Const*)."""
-        out: list[ir.Data] = []
+    def _lift_attrs(
+        self,
+        ssa_values: tuple[ir.SSAValue, ...],
+        attr_type: type[T],
+    ) -> tuple[T, ...]:
+        """Resolve each stack_move SSA operand to its backing Python-class
+        attribute value and check the concrete type against `attr_type`.
+
+        Every stored attribute is an ir.Data — we unwrap to the underlying
+        Python value before type-checking, so call sites can request
+        `LocationAddress` / `LaneAddress` / `ZoneAddress` / `float` / `int`
+        directly and use the result as an ordinary Python tuple.
+
+        Raises:
+            RuntimeError: if an SSA operand isn't attribute-backed (i.e.
+                didn't come from a stack_move.Const*), or if its attribute
+                unwraps to a value whose type doesn't match ``attr_type``.
+        """
+        out: list[T] = []
         for v in ssa_values:
             if v not in self.ssa_to_attr:
                 raise RuntimeError(
                     f"no attribute mapping for {v}: operand must trace back "
                     f"to a Const* statement"
                 )
-            out.append(self.ssa_to_attr[v])
+            data = self.ssa_to_attr[v]
+            raw = data.unwrap() if hasattr(data, "unwrap") else data
+            if not isinstance(raw, attr_type):
+                raise RuntimeError(
+                    f"attribute type mismatch for {v}: expected "
+                    f"{attr_type.__name__}, got {type(raw).__name__}"
+                )
+            out.append(raw)
         return tuple(out)
 
     def _rewrite_InitialFill(self, stmt: stack_move.InitialFill, to_delete: list) -> None:
-        addrs = self._lift_attrs(stmt.locations)
+        from bloqade.lanes.bytecode import LocationAddress
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.InitialFill(self.state, location_addresses=addrs)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)
 
     def _rewrite_Fill(self, stmt: stack_move.Fill, to_delete: list) -> None:
-        addrs = self._lift_attrs(stmt.locations)
+        from bloqade.lanes.bytecode import LocationAddress
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.Fill(self.state, location_addresses=addrs)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)
 
     def _rewrite_Move(self, stmt: stack_move.Move, to_delete: list) -> None:
-        lanes = self._lift_attrs(stmt.lanes)
+        from bloqade.lanes.bytecode import LaneAddress
+        lanes = self._lift_attrs(stmt.lanes, LaneAddress)
         new = move.Move(self.state, lanes=lanes)
         new.insert_before(stmt)
         self.state = new.result
@@ -1822,9 +1849,10 @@ Add to `LowerStackMove`:
 
 ```python
     def _rewrite_LocalR(self, stmt: stack_move.LocalR, to_delete: list) -> None:
-        (phi,) = self._lift_attrs((stmt.phi,))
-        (theta,) = self._lift_attrs((stmt.theta,))
-        addrs = self._lift_attrs(stmt.locations)
+        from bloqade.lanes.bytecode import LocationAddress
+        (phi,) = self._lift_attrs((stmt.phi,), float)
+        (theta,) = self._lift_attrs((stmt.theta,), float)
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.LocalR(
             self.state, phi=phi, theta=theta, location_addresses=addrs,
         )
@@ -1833,30 +1861,32 @@ Add to `LowerStackMove`:
         to_delete.append(stmt)
 
     def _rewrite_LocalRz(self, stmt: stack_move.LocalRz, to_delete: list) -> None:
-        (theta,) = self._lift_attrs((stmt.theta,))
-        addrs = self._lift_attrs(stmt.locations)
+        from bloqade.lanes.bytecode import LocationAddress
+        (theta,) = self._lift_attrs((stmt.theta,), float)
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.LocalRz(self.state, theta=theta, location_addresses=addrs)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)
 
     def _rewrite_GlobalR(self, stmt: stack_move.GlobalR, to_delete: list) -> None:
-        (phi,) = self._lift_attrs((stmt.phi,))
-        (theta,) = self._lift_attrs((stmt.theta,))
+        (phi,) = self._lift_attrs((stmt.phi,), float)
+        (theta,) = self._lift_attrs((stmt.theta,), float)
         new = move.GlobalR(self.state, phi=phi, theta=theta)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)
 
     def _rewrite_GlobalRz(self, stmt: stack_move.GlobalRz, to_delete: list) -> None:
-        (theta,) = self._lift_attrs((stmt.theta,))
+        (theta,) = self._lift_attrs((stmt.theta,), float)
         new = move.GlobalRz(self.state, theta=theta)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)
 
     def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list) -> None:
-        (zone,) = self._lift_attrs((stmt.zone,))
+        from bloqade.lanes.bytecode import ZoneAddress
+        (zone,) = self._lift_attrs((stmt.zone,), ZoneAddress)
         new = move.CZ(self.state, zone_address=zone)
         new.insert_before(stmt)
         self.state = new.result
@@ -1930,8 +1960,8 @@ Add to `LowerStackMove`:
     def _rewrite_Measure(self, stmt: stack_move.Measure, to_delete: list) -> None:
         # Lift each location to its LocationAddress, extract distinct zone ids,
         # synthesise move.ConstZone per distinct zone, emit move.Measure(...).
-        from bloqade.lanes.bytecode import ZoneAddress
-        locs = self._lift_attrs(stmt.locations)
+        from bloqade.lanes.bytecode import LocationAddress, ZoneAddress
+        locs = self._lift_attrs(stmt.locations, LocationAddress)
         seen_zone_ids: list[int] = []
         for loc in locs:
             if loc.zone_id not in seen_zone_ids:
