@@ -147,3 +147,49 @@ def test_decode_cz():
     cz = next(s for s in block.stmts if isinstance(s, stack_move.CZ))
     cz_zone = next(s for s in block.stmts if isinstance(s, stack_move.ConstZone))
     assert cz.zone is cz_zone.result
+
+
+def test_decode_measure():
+    block = _decode([Instruction.const_loc(0, 0, 0), Instruction.measure(1)])
+    m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
+    loc = next(s for s in block.stmts if isinstance(s, stack_move.ConstLoc))
+    assert m.locations == (loc.result,)
+
+
+def test_decode_await_measure():
+    # measure pushes a future; await_measure consumes it and pushes it back.
+    block = _decode(
+        [
+            Instruction.const_loc(0, 0, 0),
+            Instruction.measure(1),
+            Instruction.await_measure(),
+        ]
+    )
+    aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
+    m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
+    assert aw.future is m.result
+
+
+def test_decode_new_array():
+    block = _decode([Instruction.new_array(type_tag=0, dim0=4)])
+    na = next(s for s in block.stmts if isinstance(s, stack_move.NewArray))
+    assert na.dim0 == 4
+
+
+def test_decode_get_item():
+    block = _decode(
+        [
+            Instruction.new_array(type_tag=0, dim0=4),
+            Instruction.const_int(2),
+            Instruction.get_item(1),
+        ]
+    )
+    gi = next(s for s in block.stmts if isinstance(s, stack_move.GetItem))
+    assert len(gi.indices) == 1
+
+
+def test_decode_halt():
+    prog = Program(version=(1, 0), instructions=[Instruction.halt()])
+    method = load_program(prog)
+    block = method.callable_region.blocks[0]
+    assert any(isinstance(s, stack_move.Halt) for s in block.stmts)

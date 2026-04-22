@@ -183,6 +183,54 @@ class BytecodeDecoder:
         zone = self._pop_or_raise(idx, instr)
         self.block.stmts.append(stack_move.CZ(zone=zone))
 
+    def _visit_measure(self, idx: int, instr: "Instruction") -> None:
+        locs = self._pop_n(idx, instr, instr.arity())
+        stmt = stack_move.Measure(locations=tuple(locs))
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
+        # Treats await_measure as pure synchronisation — takes the future off
+        # the top of the virtual stack, pushes it back so subsequent GetItem
+        # calls can access measurement values. Verify the exact stack effect
+        # against the Rust source and adjust if the bytecode actually pops
+        # the future permanently.
+        future = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.AwaitMeasure(future=future))
+        self.stack.append(future)
+
+    def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
+        stmt = stack_move.NewArray(
+            type_tag=instr.type_tag(),
+            dim0=instr.dim0(),
+            dim1=instr.dim1(),
+        )
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_get_item(self, idx: int, instr: "Instruction") -> None:
+        ndims = instr.ndims()
+        indices = self._pop_n(idx, instr, ndims)
+        array = self._pop_or_raise(idx, instr)
+        stmt = stack_move.GetItem(array=array, indices=tuple(indices))
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_set_detector(self, idx: int, instr: "Instruction") -> None:
+        array = self._pop_or_raise(idx, instr)
+        stmt = stack_move.SetDetector(array=array)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_set_observable(self, idx: int, instr: "Instruction") -> None:
+        array = self._pop_or_raise(idx, instr)
+        stmt = stack_move.SetObservable(array=array)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_halt(self, idx: int, instr: "Instruction") -> None:
+        self.block.stmts.append(stack_move.Halt())
+
     def _finalize(self, kernel_name: str) -> ir.Method:
         region = ir.Region(blocks=self.block)
         function = func.Function(
