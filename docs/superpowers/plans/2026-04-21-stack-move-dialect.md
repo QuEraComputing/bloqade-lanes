@@ -14,21 +14,9 @@
 
 ---
 
-## Prerequisites (blocking for Phase B only)
+## Prerequisites (now covered by Phase 0)
 
-The decoder needs per-opcode operand accessors on the `Instruction` PyO3 binding. Currently only `Instruction.opcode: int` is exposed. Before Phase B (decoder) can be implemented, the Rust side needs accessors along the lines of:
-
-- `Instruction.op_name() -> str` — opcode-name dispatch string (or equivalent enum)
-- `Instruction.float_value() -> float` — valid on `const_float`
-- `Instruction.int_value() -> int` — valid on `const_int`
-- `Instruction.location_address() -> LocationAddress` — valid on `const_loc`
-- `Instruction.lane_address() -> LaneAddress` — valid on `const_lane`
-- `Instruction.zone_address() -> ZoneAddress` — valid on `const_zone`
-- `Instruction.arity() -> int` — valid on `initial_fill`, `fill`, `move_`, `local_r`, `local_rz`, `measure`
-- `Instruction.type_tag() -> int`, `.dim0() -> int`, `.dim1() -> int` — valid on `new_array`
-- `Instruction.ndims() -> int` — valid on `get_item`
-
-This is tracked separately. **Phases A, C, D, E, F, G do not depend on this** — only Phase B (decoder) does. If accessors aren't ready when Phase B is reached, those tasks are blocked pending the accessor work.
+Phase 0 below adds the PyO3 operand accessors that Phase B needs. With Phase 0 landed first, all subsequent phases have no external blockers.
 
 ---
 
@@ -56,6 +44,601 @@ This is tracked separately. **Phases A, C, D, E, F, G do not depend on this** �
 | `python/bloqade/lanes/dialects/move.py` | Add new `Measure` stmt — multi-zone, SSA-zone-valued, stateful. |
 | `python/bloqade/lanes/analysis/atom/impl.py` | Add `@interp.impl(move.Measure)` method tracking zone sets + final-measurement count. |
 | `python/tests/analysis/atom/test_atom_interpreter.py` | Add test for the new `move.Measure` analysis method. |
+
+---
+
+## Phase 0 — PyO3 `Instruction` Operand Accessors
+
+The `Instruction` PyO3 binding currently only exposes `opcode: int`. The decoder needs per-opcode operand accessors plus an op-name dispatcher. All Rust source changes in this phase live in a single file: `crates/bloqade-lanes-bytecode-python/src/instruction_python.rs`. Python-side tests go in `python/tests/bytecode/test_bytecode.py` (new `TestInstructionAccessors` class).
+
+The Rust `Instruction` enum variants and their fields are already visible in `format_instruction` in the same file — it uses `rs::Instruction::Cpu(rs::CpuInstruction::ConstFloat(f))` pattern-matching to read operands. Phase 0 tasks expose the same reads as `#[pymethods]`.
+
+After each task, re-run `just develop-python` to rebuild the PyO3 extension before running Python tests.
+
+---
+
+### Task 0.1: Add `op_name()` dispatcher
+
+Exposes the opcode as a lowercase snake_case string matching the `Instruction.<name>()` factory method names (e.g. `"const_float"`, `"initial_fill"`, `"move_"` — note trailing underscore, `"return_"` likewise). The Python decoder uses this for opcode dispatch.
+
+**Files:**
+- Modify: `crates/bloqade-lanes-bytecode-python/src/instruction_python.rs`
+- Modify: `python/tests/bytecode/test_bytecode.py`
+
+- [ ] **Step 1: Write failing test**
+
+Add to `python/tests/bytecode/test_bytecode.py`:
+
+```python
+class TestInstructionAccessors:
+    def test_op_name_covers_every_opcode(self):
+        # Exhaustive mapping of factory → expected op_name.
+        cases = [
+            (Instruction.const_float(0.0), "const_float"),
+            (Instruction.const_int(0), "const_int"),
+            (Instruction.const_loc(0, 0, 0), "const_loc"),
+            (Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0), "const_lane"),
+            (Instruction.const_zone(0), "const_zone"),
+            (Instruction.pop(), "pop"),
+            (Instruction.dup(), "dup"),
+            (Instruction.swap(), "swap"),
+            (Instruction.initial_fill(1), "initial_fill"),
+            (Instruction.fill(1), "fill"),
+            (Instruction.move_(1), "move_"),
+            (Instruction.local_r(1), "local_r"),
+            (Instruction.local_rz(1), "local_rz"),
+            (Instruction.global_r(), "global_r"),
+            (Instruction.global_rz(), "global_rz"),
+            (Instruction.cz(), "cz"),
+            (Instruction.measure(1), "measure"),
+            (Instruction.await_measure(), "await_measure"),
+            (Instruction.new_array(0, 1), "new_array"),
+            (Instruction.get_item(1), "get_item"),
+            (Instruction.set_detector(), "set_detector"),
+            (Instruction.set_observable(), "set_observable"),
+            (Instruction.return_(), "return_"),
+            (Instruction.halt(), "halt"),
+        ]
+        for instr, expected in cases:
+            assert instr.op_name() == expected, (instr, expected)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: FAIL with `AttributeError` — `op_name` not yet defined.
+
+- [ ] **Step 3: Write implementation**
+
+Add to `#[pymethods] impl PyInstruction` in `instruction_python.rs`, near the existing `opcode()` getter:
+
+```rust
+    fn op_name(&self) -> &'static str {
+        match &self.inner {
+            rs::Instruction::Cpu(cpu) => match cpu {
+                rs::CpuInstruction::ConstFloat(_) => "const_float",
+                rs::CpuInstruction::ConstInt(_) => "const_int",
+                rs::CpuInstruction::Pop => "pop",
+                rs::CpuInstruction::Dup => "dup",
+                rs::CpuInstruction::Swap => "swap",
+                rs::CpuInstruction::Return => "return_",
+                rs::CpuInstruction::Halt => "halt",
+            },
+            rs::Instruction::LaneConst(lc) => match lc {
+                rs::LaneConstInstruction::ConstLoc(_) => "const_loc",
+                rs::LaneConstInstruction::ConstLane(_, _) => "const_lane",
+                rs::LaneConstInstruction::ConstZone(_) => "const_zone",
+            },
+            rs::Instruction::AtomArrangement(aa) => match aa {
+                rs::AtomArrangementInstruction::InitialFill { .. } => "initial_fill",
+                rs::AtomArrangementInstruction::Fill { .. } => "fill",
+                rs::AtomArrangementInstruction::Move { .. } => "move_",
+            },
+            rs::Instruction::QuantumGate(qg) => match qg {
+                rs::QuantumGateInstruction::LocalR { .. } => "local_r",
+                rs::QuantumGateInstruction::LocalRz { .. } => "local_rz",
+                rs::QuantumGateInstruction::GlobalR => "global_r",
+                rs::QuantumGateInstruction::GlobalRz => "global_rz",
+                rs::QuantumGateInstruction::CZ => "cz",
+            },
+            rs::Instruction::Measurement(m) => match m {
+                rs::MeasurementInstruction::Measure { .. } => "measure",
+                rs::MeasurementInstruction::AwaitMeasure => "await_measure",
+            },
+            rs::Instruction::Array(arr) => match arr {
+                rs::ArrayInstruction::NewArray { .. } => "new_array",
+                rs::ArrayInstruction::GetItem { .. } => "get_item",
+            },
+            rs::Instruction::DetectorObservable(dob) => match dob {
+                rs::DetectorObservableInstruction::SetDetector => "set_detector",
+                rs::DetectorObservableInstruction::SetObservable => "set_observable",
+            },
+        }
+    }
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors::test_op_name_covers_every_opcode -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/bloqade-lanes-bytecode-python/src/instruction_python.rs python/tests/bytecode/test_bytecode.py
+git commit -m "feat(bytecode): add Instruction.op_name() dispatcher"
+```
+
+---
+
+### Task 0.2: Add `arity()` accessor
+
+Exposes the `arity` field for opcodes that have one: `initial_fill`, `fill`, `move_`, `local_r`, `local_rz`, `measure`. Raises `RuntimeError` on opcodes without an arity field.
+
+**Files:**
+- Modify: `crates/bloqade-lanes-bytecode-python/src/instruction_python.rs`
+- Modify: `python/tests/bytecode/test_bytecode.py`
+
+- [ ] **Step 1: Write failing test**
+
+Append to `TestInstructionAccessors`:
+
+```python
+    def test_arity_returns_field(self):
+        assert Instruction.initial_fill(3).arity() == 3
+        assert Instruction.fill(4).arity() == 4
+        assert Instruction.move_(5).arity() == 5
+        assert Instruction.local_r(2).arity() == 2
+        assert Instruction.local_rz(1).arity() == 1
+        assert Instruction.measure(7).arity() == 7
+
+    def test_arity_raises_on_inapplicable_opcodes(self):
+        with pytest.raises(RuntimeError):
+            Instruction.const_float(0.0).arity()
+        with pytest.raises(RuntimeError):
+            Instruction.pop().arity()
+        with pytest.raises(RuntimeError):
+            Instruction.cz().arity()
+```
+
+- [ ] **Step 2: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: FAIL — `arity` not defined.
+
+- [ ] **Step 3: Write implementation**
+
+Add to `#[pymethods] impl PyInstruction`:
+
+```rust
+    fn arity(&self) -> PyResult<u32> {
+        match &self.inner {
+            rs::Instruction::AtomArrangement(
+                rs::AtomArrangementInstruction::InitialFill { arity }
+                | rs::AtomArrangementInstruction::Fill { arity }
+                | rs::AtomArrangementInstruction::Move { arity },
+            ) => Ok(*arity),
+            rs::Instruction::QuantumGate(
+                rs::QuantumGateInstruction::LocalR { arity }
+                | rs::QuantumGateInstruction::LocalRz { arity },
+            ) => Ok(*arity),
+            rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }) => {
+                Ok(*arity)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "arity() not applicable to this opcode",
+            )),
+        }
+    }
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/bloqade-lanes-bytecode-python/src/instruction_python.rs python/tests/bytecode/test_bytecode.py
+git commit -m "feat(bytecode): add Instruction.arity() accessor"
+```
+
+---
+
+### Task 0.3: Add constant-value accessors (`float_value`, `int_value`)
+
+**Files:**
+- Modify: `crates/bloqade-lanes-bytecode-python/src/instruction_python.rs`
+- Modify: `python/tests/bytecode/test_bytecode.py`
+
+- [ ] **Step 1: Write failing test**
+
+Append to `TestInstructionAccessors`:
+
+```python
+    def test_float_value(self):
+        assert Instruction.const_float(3.14).float_value() == 3.14
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).float_value()
+
+    def test_int_value(self):
+        assert Instruction.const_int(42).int_value() == 42
+        with pytest.raises(RuntimeError):
+            Instruction.const_float(0.0).int_value()
+```
+
+- [ ] **Step 2: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: FAIL — accessors not defined.
+
+- [ ] **Step 3: Write implementation**
+
+Add to `#[pymethods] impl PyInstruction`:
+
+```rust
+    fn float_value(&self) -> PyResult<f64> {
+        match &self.inner {
+            rs::Instruction::Cpu(rs::CpuInstruction::ConstFloat(f)) => Ok(*f),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "float_value() is only valid on const_float",
+            )),
+        }
+    }
+
+    fn int_value(&self) -> PyResult<i64> {
+        match &self.inner {
+            rs::Instruction::Cpu(rs::CpuInstruction::ConstInt(n)) => Ok(*n),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "int_value() is only valid on const_int",
+            )),
+        }
+    }
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/bloqade-lanes-bytecode-python/src/instruction_python.rs python/tests/bytecode/test_bytecode.py
+git commit -m "feat(bytecode): add Instruction.float_value() and int_value() accessors"
+```
+
+---
+
+### Task 0.4: Add address accessors (`location_address`, `lane_address`, `zone_address`)
+
+Each accessor returns a Python-wrapped address (`PyLocationAddress` / `PyLaneAddress` / `PyZoneAddress` — already defined in `crates/bloqade-lanes-bytecode-python/src/arch_python.rs`; inspect that file to see the exact constructor pattern). The Rust `Instruction` stores these in encoded form (bit-packed); decoding follows `format_instruction`'s pattern.
+
+**Files:**
+- Modify: `crates/bloqade-lanes-bytecode-python/src/instruction_python.rs`
+- Modify: `python/tests/bytecode/test_bytecode.py`
+
+- [ ] **Step 1: Write failing test**
+
+```python
+    def test_location_address(self):
+        addr = Instruction.const_loc(0, 1, 2).location_address()
+        assert addr == LocationAddress(0, 1, 2)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).location_address()
+
+    def test_lane_address(self):
+        addr = Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0).lane_address()
+        assert addr == LaneAddress(MoveType.SITE, 0, 0, 0, 0)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).lane_address()
+
+    def test_zone_address(self):
+        addr = Instruction.const_zone(3).zone_address()
+        assert addr == ZoneAddress(3)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).zone_address()
+```
+
+- [ ] **Step 2: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: FAIL.
+
+- [ ] **Step 3: Write implementation**
+
+Import `PyLocationAddress`, `PyLaneAddress`, `PyZoneAddress` from `crate::arch_python` at the top of `instruction_python.rs` if not already imported. Then add the three accessors. Exact wrapping pattern depends on the existing `PyLocationAddress` constructor — read `arch_python.rs` first and match its style:
+
+```rust
+    fn location_address(&self) -> PyResult<PyLocationAddress> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(bits)) => {
+                let addr = rs_addr::LocationAddr::decode(*bits);
+                Ok(PyLocationAddress::from_rs(addr))  // or however PyLocationAddress is constructed
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "location_address() is only valid on const_loc",
+            )),
+        }
+    }
+
+    fn lane_address(&self) -> PyResult<PyLaneAddress> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLane(d0, d1)) => {
+                let addr = rs_addr::LaneAddr::decode(*d0, *d1);
+                Ok(PyLaneAddress::from_rs(addr))
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "lane_address() is only valid on const_lane",
+            )),
+        }
+    }
+
+    fn zone_address(&self) -> PyResult<PyZoneAddress> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(bits)) => {
+                let addr = rs_addr::ZoneAddr::decode(*bits);
+                Ok(PyZoneAddress::from_rs(addr))
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "zone_address() is only valid on const_zone",
+            )),
+        }
+    }
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/bloqade-lanes-bytecode-python/src/instruction_python.rs python/tests/bytecode/test_bytecode.py
+git commit -m "feat(bytecode): add Instruction address accessors"
+```
+
+---
+
+### Task 0.5: Add array accessors (`type_tag`, `dim0`, `dim1`, `ndims`)
+
+**Files:**
+- Modify: `crates/bloqade-lanes-bytecode-python/src/instruction_python.rs`
+- Modify: `python/tests/bytecode/test_bytecode.py`
+
+- [ ] **Step 1: Write failing test**
+
+```python
+    def test_new_array_accessors(self):
+        instr = Instruction.new_array(7, 4, 2)
+        assert instr.type_tag() == 7
+        assert instr.dim0() == 4
+        assert instr.dim1() == 2
+        with pytest.raises(RuntimeError):
+            Instruction.pop().type_tag()
+
+    def test_get_item_ndims(self):
+        assert Instruction.get_item(3).ndims() == 3
+        with pytest.raises(RuntimeError):
+            Instruction.pop().ndims()
+```
+
+- [ ] **Step 2: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: FAIL.
+
+- [ ] **Step 3: Write implementation**
+
+```rust
+    fn type_tag(&self) -> PyResult<u8> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { type_tag, .. }) => {
+                Ok(*type_tag)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "type_tag() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn dim0(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim0, .. }) => Ok(*dim0),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "dim0() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn dim1(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim1, .. }) => Ok(*dim1),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "dim1() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn ndims(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }) => Ok(*ndims),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "ndims() is only valid on get_item",
+            )),
+        }
+    }
+```
+
+- [ ] **Step 4: Run tests**
+
+```bash
+just develop-python && uv run pytest python/tests/bytecode/test_bytecode.py::TestInstructionAccessors -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/bloqade-lanes-bytecode-python/src/instruction_python.rs python/tests/bytecode/test_bytecode.py
+git commit -m "feat(bytecode): add Instruction array and get_item accessors"
+```
+
+---
+
+### Task 0.6: Regenerate `.pyi` stub and verify Rust lint clean
+
+The Python type stub at `python/bloqade/lanes/bytecode/_native.pyi` documents the Instruction API; append the new accessors so Python tooling sees them. Also run the full Rust checks.
+
+**Files:**
+- Modify: `python/bloqade/lanes/bytecode/_native.pyi`
+
+- [ ] **Step 1: Update the stub**
+
+Add to the `class Instruction:` block in `_native.pyi`, after the `opcode` property:
+
+```python
+    def op_name(self) -> str:
+        """Lowercase snake_case name of the opcode (matches factory method names).
+
+        Returns:
+            str: e.g. ``"const_float"``, ``"initial_fill"``, ``"move_"``.
+        """
+        ...
+
+    def arity(self) -> int:
+        """Arity field for opcodes that carry one.
+
+        Valid on ``initial_fill``, ``fill``, ``move_``, ``local_r``,
+        ``local_rz``, ``measure``.
+
+        Raises:
+            RuntimeError: If called on an opcode without an arity field.
+        """
+        ...
+
+    def float_value(self) -> float:
+        """Value attribute of a ``const_float`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def int_value(self) -> int:
+        """Value attribute of a ``const_int`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def location_address(self) -> LocationAddress:
+        """Decoded address of a ``const_loc`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def lane_address(self) -> LaneAddress:
+        """Decoded address of a ``const_lane`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def zone_address(self) -> ZoneAddress:
+        """Decoded address of a ``const_zone`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def type_tag(self) -> int:
+        """Type tag attribute of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim0(self) -> int:
+        """First dimension of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim1(self) -> int:
+        """Second dimension of a ``new_array`` instruction (0 for 1-D).
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def ndims(self) -> int:
+        """Number of index dimensions of a ``get_item`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+```
+
+- [ ] **Step 2: Run full checks**
+
+```bash
+cargo fmt --all
+cargo clippy -p bloqade-lanes-bytecode-python --all-targets -- -D warnings
+uv run pytest python/tests/bytecode/ -v
+uv run pyright python/bloqade/lanes/bytecode
+```
+
+Expected: all green.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add python/bloqade/lanes/bytecode/_native.pyi
+git commit -m "docs(bytecode): document Instruction operand accessors in .pyi stub"
+```
+
+With Phase 0 complete, Phase B can proceed with `instr.op_name()`, `instr.arity()`, etc. Phases A, C, D, E, F, G are unaffected and can proceed in parallel.
 
 ---
 
