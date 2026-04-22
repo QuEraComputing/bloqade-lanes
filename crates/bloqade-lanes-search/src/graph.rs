@@ -204,6 +204,54 @@ impl SearchGraph {
         (new_id, true)
     }
 
+    /// Try to insert a successor node with an **ancestor-only** transposition check.
+    ///
+    /// Mirrors Python `ConfigurationTree.try_move_set`'s branch-local semantics:
+    /// only configs appearing in the new node's ancestor chain (root → parent)
+    /// flag as transpositions. Equivalent configs reachable via different
+    /// branches are treated as new nodes.
+    ///
+    /// Returns `(existing_ancestor_id, false)` if `new_config` matches any
+    /// ancestor of `parent` (inclusive). Otherwise creates and returns
+    /// `(new_id, true)`.
+    ///
+    /// Used by the entropy-guided search to match Python's `_ancestor_with_config_key`.
+    /// Does NOT consult or update the global `seen` transposition table — that
+    /// table remains owned by frontier-based searches (A*/BFS/IDS/DFS).
+    pub fn insert_branch_local(
+        &mut self,
+        parent: NodeId,
+        move_set: MoveSet,
+        new_config: Config,
+        new_g: f64,
+    ) -> (NodeId, bool) {
+        // Walk parent chain (inclusive of parent itself — matches Python,
+        // which constructs `new_node` with parent pointer then calls
+        // `_ancestor_with_config_key(node, new_node.config_key)` where `node`
+        // is `new_node.parent`, i.e. the chain from parent → root).
+        let mut ancestor = Some(parent);
+        while let Some(id) = ancestor {
+            if self.nodes[id.0 as usize].config == new_config {
+                return (id, false);
+            }
+            ancestor = self.nodes[id.0 as usize].parent;
+        }
+
+        let parent_depth = self.nodes[parent.0 as usize].depth;
+        let new_id =
+            NodeId(u32::try_from(self.nodes.len()).expect("search graph exceeded 2^32 nodes"));
+        self.nodes.push(NodeData {
+            config: new_config.clone(),
+            parent: Some(parent),
+            parent_move: Some(move_set),
+            g_score: new_g,
+            depth: parent_depth + 1,
+        });
+        // Intentionally do NOT update `seen`: entropy search uses branch-local
+        // semantics and shares this graph only within its own call site.
+        (new_id, true)
+    }
+
     /// Reconstruct the path from root to this node.
     ///
     /// Returns the sequence of [`MoveSet`]s in root-to-node order.

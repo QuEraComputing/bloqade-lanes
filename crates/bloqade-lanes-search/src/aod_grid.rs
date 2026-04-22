@@ -122,13 +122,13 @@ impl BusGridContext {
     /// `entries` maps `encoded_src → encoded_lane` for the scored/selected triples.
     ///
     /// Returns a list of lane sets, each forming a valid AOD rectangle.
-    pub(crate) fn build_aod_grids(&self, entries: &HashMap<u64, u64>) -> Vec<Vec<u64>> {
+    pub(crate) fn build_aod_grids(&self, entries: &[(u64, u64)]) -> Vec<Vec<u64>> {
         if entries.is_empty() {
             return Vec::new();
         }
 
         // Movers = all source locations from the entries.
-        let movers: HashSet<u64> = entries.keys().copied().collect();
+        let movers: HashSet<u64> = entries.iter().map(|&(s, _)| s).collect();
 
         let clusters = self.greedy_init(entries, &movers);
         let solved = self.merge_clusters(clusters, &movers);
@@ -142,14 +142,17 @@ impl BusGridContext {
 
     /// Form initial clusters via greedy sequential expansion.
     ///
-    /// Processes entries in order and greedily expands a rectangle. Entries
-    /// that don't fit are put aside for the next round. Repeats until all
-    /// entries are assigned or no progress is made.
-    fn greedy_init(&self, entries: &HashMap<u64, u64>, movers: &HashSet<u64>) -> Vec<Cluster> {
+    /// Processes entries in the order given and greedily expands a rectangle.
+    /// Entries that don't fit are put aside for the next round. Repeats until
+    /// all entries are assigned or no progress is made.
+    ///
+    /// The caller controls iteration order — mirrors Python's
+    /// `BusContext.greedy_init`, which iterates `remaining.items()` in the
+    /// dict's insertion order (lane-iteration order, set up in
+    /// `CandidateScorer.score_rectangle_bus_candidates`).
+    fn greedy_init(&self, entries: &[(u64, u64)], movers: &HashSet<u64>) -> Vec<Cluster> {
         let mut clusters: Vec<Cluster> = Vec::new();
-        // Sort by src_encoded for deterministic iteration order.
-        let mut remaining: Vec<(u64, u64)> = entries.iter().map(|(&s, &l)| (s, l)).collect();
-        remaining.sort_by_key(|&(src, _)| src);
+        let mut remaining: Vec<(u64, u64)> = entries.to_vec();
 
         while !remaining.is_empty() {
             let mut xs: BTreeSet<u64> = BTreeSet::new();
@@ -356,10 +359,8 @@ mod tests {
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );
-        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102), (13, 103)]
-            .into_iter()
-            .collect();
-        let movers: HashSet<u64> = entries.keys().copied().collect();
+        let entries: Vec<(u64, u64)> = vec![(10, 100), (11, 101), (12, 102), (13, 103)];
+        let movers: HashSet<u64> = entries.iter().map(|&(s, _)| s).collect();
 
         let clusters = ctx.greedy_init(&entries, &movers);
         assert_eq!(clusters.len(), 1);
@@ -381,8 +382,8 @@ mod tests {
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );
-        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
-        let movers: HashSet<u64> = entries.keys().copied().collect();
+        let entries: Vec<(u64, u64)> = vec![(10, 100), (11, 101), (12, 102)];
+        let movers: HashSet<u64> = entries.iter().map(|&(s, _)| s).collect();
 
         let clusters = ctx.greedy_init(&entries, &movers);
         // Cannot form a 2×2, so should have multiple smaller clusters.
@@ -424,7 +425,7 @@ mod tests {
     #[test]
     fn build_aod_grids_empty_entries() {
         let ctx = make_context(&[], &[], &[]);
-        let entries = HashMap::new();
+        let entries: Vec<(u64, u64)> = Vec::new();
         let grids = ctx.build_aod_grids(&entries);
         assert!(grids.is_empty());
     }
@@ -442,9 +443,7 @@ mod tests {
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );
-        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102), (13, 103)]
-            .into_iter()
-            .collect();
+        let entries: Vec<(u64, u64)> = vec![(10, 100), (11, 101), (12, 102), (13, 103)];
 
         let grids = ctx.build_aod_grids(&entries);
         assert_eq!(grids.len(), 1);

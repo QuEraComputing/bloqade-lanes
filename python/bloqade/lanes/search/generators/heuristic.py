@@ -77,9 +77,15 @@ class HeuristicMoveGenerator:
                 if best is None or ms_score > best:
                     scored_candidates[moveset] = ms_score
 
-        for moveset, _ in sorted(
-            scored_candidates.items(), key=lambda item: item[1], reverse=True
-        ):
+        def _moveset_sort_key(
+            item: tuple[frozenset[LaneAddress], float],
+        ) -> tuple[float, tuple[int, ...]]:
+            moveset, score = item
+            # Descending score (negate), then ascending sorted lane-encoding tuple for stable tie-break.
+            lane_key = tuple(sorted(lane.encode() for lane in moveset))
+            return (-score, lane_key)
+
+        for moveset, _ in sorted(scored_candidates.items(), key=_moveset_sort_key):
             yield moveset
         if not scored_candidates:
             fallback = self._best_singleton_fallback(node, tree, entropy)

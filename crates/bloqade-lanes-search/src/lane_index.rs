@@ -176,6 +176,11 @@ impl LaneIndex {
         self.positions.len()
     }
 
+    /// Number of zones in the architecture.
+    pub fn num_zones(&self) -> u32 {
+        self.arch_spec.zones.len() as u32
+    }
+
     /// Get all lanes for a `(move_type, bus_id, zone_id, direction)` triplet.
     pub fn lanes_for(
         &self,
@@ -268,6 +273,12 @@ impl LaneIndex {
     /// Returns `None` if no lanes have path data.
     pub fn fastest_lane_duration_us(&self) -> Option<f64> {
         self.fastest_lane_duration
+    }
+
+    /// Return the set of all encoded location addresses known to the index
+    /// (every source and destination that appears in at least one lane).
+    pub fn all_location_encodings(&self) -> impl Iterator<Item = u64> + '_ {
+        self.positions.keys().copied()
     }
 }
 

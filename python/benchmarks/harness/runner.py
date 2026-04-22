@@ -32,12 +32,36 @@ from bloqade.lanes.upstream import squin_to_move
 
 @dataclass
 class SearchStatsCollector(PlacementTraversalABC):
-    """Wrap traversal to collect search result metadata."""
+    """Wrap traversal to collect search result metadata.
+
+    Proxies attribute access through to the inner traversal so that
+    PhysicalPlacementStrategy (which reads e.g. ``max_expansions`` and calls
+    ``with_max_expansions`` on the traversal before dispatching a search) can
+    treat the collector as a drop-in replacement for the real traversal.
+    """
 
     inner: PlacementTraversalABC
     nodes_expanded_total: int = 0
     max_depth_reached: int = 0
     runs: int = 0
+
+    def __post_init__(self) -> None:
+        # PlacementTraversalABC declares max_expansions; mirror the inner value
+        # so attribute reads and dataclasses.replace(...) both succeed.
+        object.__setattr__(self, "max_expansions", self.inner.max_expansions)
+
+    def __getattr__(self, name: str):
+        # Forward any unknown attribute to the wrapped traversal
+        # (e.g. on_search_step on EntropyPlacementTraversal).
+        return getattr(self.inner, name)
+
+    def with_max_expansions(self, max_expansions):
+        return SearchStatsCollector(
+            inner=self.inner.with_max_expansions(max_expansions),
+            nodes_expanded_total=self.nodes_expanded_total,
+            max_depth_reached=self.max_depth_reached,
+            runs=self.runs,
+        )
 
     def path_to_target_config(self, *, tree, target):
         result = self.inner.path_to_target_config(tree=tree, target=target)

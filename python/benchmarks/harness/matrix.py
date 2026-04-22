@@ -6,6 +6,7 @@ from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfi
 
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.heuristics.physical.placement import (
+    EntropyPlacementTraversal,
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
@@ -14,6 +15,15 @@ from bloqade.lanes.heuristics.physical.placement import (
 def default_strategy_configs() -> tuple[StrategyConfig, ...]:
     """Return the default strategy matrix for V1 benchmarks."""
     return (
+        StrategyConfig(
+            strategy_id="python_entropy",
+            backend="python",
+            generator_id="python_heuristic",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=EntropyPlacementTraversal(),
+            ),
+        ),
         StrategyConfig(
             strategy_id="rust_entropy",
             backend="rust",

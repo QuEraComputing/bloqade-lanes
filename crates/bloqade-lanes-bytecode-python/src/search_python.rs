@@ -113,6 +113,261 @@ impl PySolveResult {
     }
 }
 
+// ── parity_oracle: distance_table_lookup ───────────────────────────────────
+
+/// Compute the blended distance table for a set of target locations.
+///
+/// Returns a Python dict keyed by `(src_encoded, tgt_encoded)` tuples with
+/// blended float distances.  Intended for parity testing only; compiled only
+/// when the `parity_oracle` feature is enabled.
+#[cfg(feature = "parity_oracle")]
+#[pyfunction]
+pub fn distance_table_lookup(
+    py: Python<'_>,
+    arch_json: &str,
+    targets: Vec<u64>,
+    w_t: f64,
+) -> PyResult<PyObject> {
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use bloqade_lanes_search::{DistanceTable, LaneIndex};
+    use pyo3::types::PyDict;
+
+    let arch: ArchSpec = serde_json::from_str(arch_json)
+        .map_err(|e| PyValueError::new_err(format!("bad arch json: {e}")))?;
+    let index = LaneIndex::new(arch);
+
+    let table = if w_t > 0.0 {
+        DistanceTable::new(&targets, &index).with_time_distances(&index)
+    } else {
+        DistanceTable::new(&targets, &index)
+    };
+
+    let fastest_opt = table.fastest_lane_us();
+
+    let out = PyDict::new(py);
+    for &target in &targets {
+        for src in index.all_location_encodings() {
+            let Some(hop) = table.distance(src, target) else {
+                continue;
+            };
+            let blended = if w_t <= 0.0 || fastest_opt.is_none() {
+                hop as f64
+            } else {
+                let fastest = fastest_opt.unwrap();
+                let Some(time_us) = table.time_distance(src, target) else {
+                    continue;
+                };
+                (1.0 - w_t) * hop as f64 + w_t * (time_us / fastest)
+            };
+            out.set_item((src, target), blended)?;
+        }
+    }
+    Ok(out.into())
+}
+
+/// Score a moveset using the Rust entropy scorer.
+///
+/// Calls `bloqade_lanes_search::score_moveset` directly and returns the
+/// scalar score. Intended for parity testing only; compiled only when the
+/// `parity_oracle` feature is enabled.
+///
+/// Args:
+///     arch_json: Architecture spec as a JSON string.
+///     old_config: List of (qubit_id, encoded_location) pairs for pre-move config.
+///     new_config: List of (qubit_id, encoded_location) pairs for post-move config.
+///     targets:    List of (qubit_id, encoded_location) pairs for target positions.
+///     blocked:    List of encoded location values that are immovable obstacles.
+///     alpha, beta, gamma: Moveset scoring weights.
+///     w_t:        Time-distance blend weight (0.0 = hop-count only).
+#[cfg(feature = "parity_oracle")]
+#[pyfunction]
+#[pyo3(signature = (arch_json, old_config, new_config, targets, blocked, alpha, beta, gamma, w_t))]
+pub fn entropy_score_moveset(
+    arch_json: &str,
+    old_config: Vec<(u32, u64)>,
+    new_config: Vec<(u32, u64)>,
+    targets: Vec<(u32, u64)>,
+    blocked: Vec<u64>,
+    alpha: f64,
+    beta: f64,
+    gamma: f64,
+    w_t: f64,
+) -> PyResult<f64> {
+    use std::collections::HashSet;
+
+    use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use bloqade_lanes_search::{
+        Config, DistanceTable, EntropyParams, LaneIndex, SearchContext, score_moveset,
+    };
+
+    let arch: ArchSpec = serde_json::from_str(arch_json)
+        .map_err(|e| PyValueError::new_err(format!("bad arch json: {e}")))?;
+    let index = LaneIndex::new(arch);
+
+    // Decode encoded locations into LocationAddr pairs for Config::new().
+    let old_pairs: Vec<(u32, LocationAddr)> = old_config
+        .iter()
+        .map(|&(qid, enc)| (qid, LocationAddr::decode(enc)))
+        .collect();
+    let new_pairs: Vec<(u32, LocationAddr)> = new_config
+        .iter()
+        .map(|&(qid, enc)| (qid, LocationAddr::decode(enc)))
+        .collect();
+
+    let old_cfg = Config::new(old_pairs)
+        .map_err(|e| PyValueError::new_err(format!("old_config error: {e}")))?;
+    let new_cfg = Config::new(new_pairs)
+        .map_err(|e| PyValueError::new_err(format!("new_config error: {e}")))?;
+
+    // Build distance table from target location encodings.
+    let target_encs: Vec<u64> = targets.iter().map(|&(_, enc)| enc).collect();
+    let dist_table = if w_t > 0.0 {
+        DistanceTable::new(&target_encs, &index).with_time_distances(&index)
+    } else {
+        DistanceTable::new(&target_encs, &index)
+    };
+
+    // Build blocked set.
+    let blocked_set: HashSet<u64> = blocked.into_iter().collect();
+
+    // Build old occupied set: locations from old_config + blocked.
+    let mut occupied: HashSet<u64> = old_cfg.iter().map(|(_, loc)| loc.encode()).collect();
+    occupied.extend(&blocked_set);
+
+    let ctx = SearchContext {
+        index: &index,
+        dist_table: &dist_table,
+        blocked: &blocked_set,
+        targets: &targets,
+    };
+
+    let params = EntropyParams {
+        alpha,
+        beta,
+        gamma,
+        w_t,
+        ..EntropyParams::default()
+    };
+
+    Ok(score_moveset(&old_cfg, &new_cfg, &occupied, &ctx, &params))
+}
+
+/// Generate ranked candidate movesets using entropy-weighted scoring.
+///
+/// Mirrors the Rust `generate_candidates` function and the Python
+/// `HeuristicMoveGenerator.generate()` + `CandidateScorer` combo.
+/// Intended for parity testing only; compiled only when the `parity_oracle`
+/// feature is enabled.
+///
+/// Args:
+///     arch_json:              Architecture spec as a JSON string.
+///     config:                 List of (qubit_id, encoded_location) pairs for current config.
+///     entropy:                Entropy level (controls distance vs. mobility weighting).
+///     alpha, beta, gamma:     Moveset scoring weights.
+///     w_d, w_m, w_t:          Per-qubit scoring weights (distance, mobility, time-blend).
+///     e_max:                  Maximum entropy before forced backtrack/fallback.
+///     max_candidates:         Maximum number of candidates to return.
+///     max_movesets_per_group: Max movesets retained per bus group.
+///     targets:                List of (qubit_id, encoded_location) pairs for target positions.
+///     blocked:                List of encoded location values that are immovable obstacles.
+///     seed:                   RNG seed (0 = no perturbation).
+///
+/// Returns:
+///     List of (lane_encodings, new_config_pairs, score) triples where
+///     lane_encodings is a list of u64 encoded lane addresses,
+///     new_config_pairs is a list of (qubit_id, encoded_location) pairs, and
+///     score is the moveset score (always 1.0 in current Rust implementation).
+#[cfg(feature = "parity_oracle")]
+#[pyfunction]
+#[pyo3(signature = (
+    arch_json, config, entropy,
+    alpha, beta, gamma, w_d, w_m, w_t,
+    e_max, max_candidates, max_movesets_per_group,
+    targets, blocked, seed,
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn entropy_generate_candidates(
+    arch_json: &str,
+    config: Vec<(u32, u64)>,
+    entropy: u32,
+    alpha: f64,
+    beta: f64,
+    gamma: f64,
+    w_d: f64,
+    w_m: f64,
+    w_t: f64,
+    e_max: u32,
+    max_candidates: usize,
+    max_movesets_per_group: usize,
+    targets: Vec<(u32, u64)>,
+    blocked: Vec<u64>,
+    seed: u64,
+) -> PyResult<Vec<(Vec<u64>, Vec<(u32, u64)>, f64)>> {
+    use std::collections::HashSet;
+
+    use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use bloqade_lanes_search::{
+        Config, DistanceTable, EntropyParams, LaneIndex, SearchContext, generate_candidates,
+    };
+
+    let arch: ArchSpec = serde_json::from_str(arch_json)
+        .map_err(|e| PyValueError::new_err(format!("bad arch json: {e}")))?;
+    let index = LaneIndex::new(arch);
+
+    let target_encs: Vec<u64> = targets.iter().map(|(_, t)| *t).collect();
+    let dist_table = if w_t > 0.0 {
+        DistanceTable::new(&target_encs, &index).with_time_distances(&index)
+    } else {
+        DistanceTable::new(&target_encs, &index)
+    };
+
+    let blocked_set: HashSet<u64> = blocked.into_iter().collect();
+
+    let ctx = SearchContext {
+        index: &index,
+        dist_table: &dist_table,
+        targets: &targets,
+        blocked: &blocked_set,
+    };
+
+    let cfg_pairs: Vec<(u32, LocationAddr)> = config
+        .into_iter()
+        .map(|(q, e)| (q, LocationAddr::decode(e)))
+        .collect();
+    let cfg =
+        Config::new(cfg_pairs).map_err(|e| PyValueError::new_err(format!("config error: {e}")))?;
+
+    let params = EntropyParams {
+        alpha,
+        beta,
+        gamma,
+        w_d,
+        w_m,
+        w_t,
+        e_max,
+        max_candidates,
+        max_movesets_per_group,
+        ..EntropyParams::default()
+    };
+
+    let out = generate_candidates(&cfg, entropy, &params, &ctx, seed);
+
+    Ok(out
+        .into_iter()
+        .map(|(ms, new_cfg, score)| {
+            let lanes: Vec<u64> = ms.encoded_lanes().to_vec();
+            let cfg_pairs: Vec<(u32, u64)> = new_cfg
+                .as_entries()
+                .iter()
+                .map(|&(q, enc)| (q, enc))
+                .collect();
+            (lanes, cfg_pairs, score)
+        })
+        .collect())
+}
+
 /// Reusable move synthesis solver.
 ///
 /// Constructed once from an architecture specification JSON string.

@@ -53,7 +53,11 @@ def test_mobility_at_position():
     assert mob >= 0
 
 
-def test_mobility_at_weights_legal_lanes_by_post_lane_distance(monkeypatch):
+def test_mobility_at_weights_legal_lanes_by_post_lane_distance():
+    # adjusted in Phase 1 distance-table switch: _mobility_at now calls the
+    # DistanceTable directly instead of delegating to _distance_to_target, so
+    # monkeypatching is no longer appropriate. Expected value is computed from
+    # the real DistanceTable to verify the 1/(1+d) weighting logic is intact.
     scorer, tree = _make_scorer_and_tree()
     position = LocationAddress(0, 0)
     target = LocationAddress(7, 0)
@@ -67,23 +71,18 @@ def test_mobility_at_weights_legal_lanes_by_post_lane_distance(monkeypatch):
 
     assert len(legal_dsts) >= 2
 
-    distance_by_dst: dict[LocationAddress, float] = {}
-    for idx, dst in enumerate(legal_dsts):
-        distance_by_dst[dst] = float(idx + 1)
-
-    def fake_distance(
-        current: LocationAddress,
-        target_loc: LocationAddress,
-        _tree: ConfigurationTree,
-    ) -> float:
-        assert target_loc == target
-        return distance_by_dst[current]
-
-    monkeypatch.setattr(scorer, "_distance_to_target", fake_distance)
     mobility = scorer._mobility_at(position, target, occupied, tree)
-    expected = sum(1.0 / (1.0 + distance_by_dst[dst]) for dst in legal_dsts)
+    # Compute expected directly from the real distance table (same path the
+    # implementation now uses) to verify the 1/(1+d) weighting formula.
+    expected = 0.0
+    for dst in legal_dsts:
+        d = scorer._distance_to_target(dst, target, tree)
+        if d != float("inf"):
+            expected += 1.0 / (1.0 + d)
 
-    assert mobility == expected
+    import pytest as _pytest
+
+    assert mobility == _pytest.approx(expected, abs=1e-12)
 
 
 def test_score_all_qubit_bus_pairs_returns_dict():

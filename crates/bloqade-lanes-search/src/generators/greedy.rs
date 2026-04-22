@@ -73,7 +73,9 @@ impl MoveGenerator for GreedyGenerator {
         }
 
         // 3. Group first lanes by (move_type, bus_id, direction) — zone-independent.
-        let mut groups: HashMap<(MoveType, u32, Direction), HashMap<u64, u64>> = HashMap::new();
+        // Use Vec<(src_enc, lane_enc)> to preserve insertion order for AOD clustering.
+        let mut groups: HashMap<(MoveType, u32, Direction), Vec<(u64, u64)>> = HashMap::new();
+        let mut seen_per_group: HashMap<(MoveType, u32, Direction), HashSet<u64>> = HashMap::new();
 
         // Build reverse lookup for resolving qubit → source location.
         let loc_to_qubit = config.location_to_qubit_map();
@@ -85,7 +87,10 @@ impl MoveGenerator for GreedyGenerator {
             };
             let src_enc = src.encode();
             let lane_enc = lane.encode_u64();
-            groups.entry(key).or_default().insert(src_enc, lane_enc);
+            let seen = seen_per_group.entry(key).or_default();
+            if seen.insert(src_enc) {
+                groups.entry(key).or_default().push((src_enc, lane_enc));
+            }
         }
 
         // 4. For each group, build AOD grids and emit candidates.

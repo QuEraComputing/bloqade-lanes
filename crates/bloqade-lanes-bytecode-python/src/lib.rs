@@ -47,5 +47,25 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyMoveSolver>()?;
     m.add_class::<search_python::PySolveResult>()?;
 
+    // Parity oracle submodule (feature-gated: parity_oracle)
+    #[cfg(feature = "parity_oracle")]
+    {
+        use pyo3::types::PyModule;
+        let oracle = PyModule::new(m.py(), "_parity_oracle")?;
+        oracle.add_function(wrap_pyfunction!(
+            search_python::distance_table_lookup,
+            &oracle
+        )?)?;
+        oracle.add_function(wrap_pyfunction!(
+            search_python::entropy_score_moveset,
+            &oracle
+        )?)?;
+        oracle.add_function(wrap_pyfunction!(
+            search_python::entropy_generate_candidates,
+            &oracle
+        )?)?;
+        m.add_submodule(&oracle)?;
+    }
+
     Ok(())
 }

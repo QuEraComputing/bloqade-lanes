@@ -11,7 +11,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -366,17 +366,26 @@ impl MoveGenerator for HeuristicGenerator {
             let grid_ctx =
                 crate::aod_grid::BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
 
-            // Build entries (src_encoded -> lane_encoded) and a lane -> triple lookup.
-            // Each source location has at most one atom, so no overwrites occur.
-            let mut entries: HashMap<u64, u64> = HashMap::new();
+            // Build entries in lane-iteration order (matches Python's
+            // `CandidateScorer.score_rectangle_bus_candidates` dict-insertion
+            // order) so `greedy_init` produces Python-parity clusters.
             let mut triple_by_lane: HashMap<u64, &ScoredTriple> = HashMap::new();
-
             for t in &qubits {
-                let lane = LaneAddr::decode_u64(t.lane_encoded);
-                if let Some((src, _)) = ctx.index.endpoints(&lane) {
-                    let src_enc = src.encode();
-                    entries.insert(src_enc, t.lane_encoded);
-                    triple_by_lane.insert(t.lane_encoded, t);
+                triple_by_lane.insert(t.lane_encoded, t);
+            }
+            let mut entries: Vec<(u64, u64)> = Vec::with_capacity(qubits.len());
+            let mut entries_seen: HashSet<u64> = HashSet::new();
+            for zone_id in 0..ctx.index.num_zones() {
+                for &lane in ctx.index.lanes_for(mt, bus_id, zone_id, dir) {
+                    let lane_enc = lane.encode_u64();
+                    if triple_by_lane.contains_key(&lane_enc)
+                        && let Some((src, _)) = ctx.index.endpoints(&lane)
+                    {
+                        let src_enc = src.encode();
+                        if entries_seen.insert(src_enc) {
+                            entries.push((src_enc, lane_enc));
+                        }
+                    }
                 }
             }
 

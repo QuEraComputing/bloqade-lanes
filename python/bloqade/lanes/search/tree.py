@@ -14,6 +14,7 @@ from bloqade.lanes.layout.path import PathFinder
 from bloqade.lanes.search.configuration import ConfigurationNode
 
 if TYPE_CHECKING:
+    from bloqade.lanes.search.distance_table import DistanceTable
     from bloqade.lanes.search.generators import MoveGenerator
 
 
@@ -76,6 +77,9 @@ class ConfigurationTree:
     _outgoing_lanes_by_src: dict[LocationAddress, tuple[LaneAddress, ...]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _distance_tables: dict[tuple[frozenset[LocationAddress], float], DistanceTable] = (
+        field(default_factory=dict, init=False, repr=False)
+    )
 
     def __post_init__(self) -> None:
         self.path_finder = PathFinder(self.arch_spec)
@@ -133,6 +137,36 @@ class ConfigurationTree:
         self._outgoing_lanes_by_src = {
             src: tuple(values) for src, values in outgoing.items()
         }
+
+    def distance_table(
+        self,
+        targets: frozenset[LocationAddress],
+        w_t: float,
+    ) -> "DistanceTable":
+        """Get or create a cached DistanceTable for the given targets and weight.
+
+        The cache is keyed by (targets_frozenset, w_t). Different w_t values
+        get different instances because w_t <= 0 skips time distance computation.
+
+        Args:
+            targets: Frozenset of target locations.
+            w_t: Time weight (0.0 → hop-only, > 0.0 → includes time distances).
+
+        Returns:
+            A DistanceTable instance, cached by (targets, w_t).
+        """
+        from bloqade.lanes.search.distance_table import DistanceTable
+
+        key = (targets, w_t)
+        cached = self._distance_tables.get(key)
+        if cached is not None:
+            return cached
+
+        table = DistanceTable.build(self, targets=targets)
+        if w_t > 0.0:
+            table = table.with_time_distances(self)
+        self._distance_tables[key] = table
+        return table
 
     @classmethod
     def from_initial_placement(

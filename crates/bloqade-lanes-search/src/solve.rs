@@ -338,10 +338,8 @@ impl MoveSolver {
                 }
                 InnerStrategy::Entropy => {
                     let entropy_params = crate::entropy::EntropyParams {
-                        top_c,
                         max_movesets_per_group,
                         max_goal_candidates,
-                        lookahead,
                         w_t,
                         ..crate::entropy::EntropyParams::default()
                     };
