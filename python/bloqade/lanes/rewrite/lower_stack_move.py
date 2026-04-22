@@ -24,6 +24,7 @@ from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.layout.encoding import (
     LaneAddress as EncodingLaneAddress,
     LocationAddress as EncodingLocationAddress,
+    ZoneAddress as EncodingZoneAddress,
 )
 from bloqade.lanes.utils import no_none_elements_tuple
 
@@ -270,6 +271,90 @@ class LowerStackMove(RewriteRule):
             self._lift_attrs(stmt.lanes, LaneAddress),
         )
         new = move.Move(self.state, lanes=lanes)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    # ── Gates ─────────────────────────────────────────────────────────
+
+    def _rewrite_LocalR(
+        self, stmt: stack_move.LocalR, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.lanes.bytecode import LocationAddress
+
+        assert self.state is not None
+        # stack_move.LocalR uses phi/theta SSA args + locations SSA tuple;
+        # move.LocalR takes axis_angle/rotation_angle as SSA and
+        # location_addresses as an attribute tuple. The phi/theta SSAs
+        # were rewired to the new py.Constant results by _rewrite_ConstFloat
+        # (via replace_by), so we can forward them directly.
+        addrs = cast(
+            tuple[EncodingLocationAddress, ...],
+            self._lift_attrs(stmt.locations, LocationAddress),
+        )
+        new = move.LocalR(
+            self.state,
+            axis_angle=stmt.phi,
+            rotation_angle=stmt.theta,
+            location_addresses=addrs,
+        )
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    def _rewrite_LocalRz(
+        self, stmt: stack_move.LocalRz, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.lanes.bytecode import LocationAddress
+
+        assert self.state is not None
+        addrs = cast(
+            tuple[EncodingLocationAddress, ...],
+            self._lift_attrs(stmt.locations, LocationAddress),
+        )
+        new = move.LocalRz(
+            self.state,
+            rotation_angle=stmt.theta,
+            location_addresses=addrs,
+        )
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    def _rewrite_GlobalR(
+        self, stmt: stack_move.GlobalR, to_delete: list[ir.Statement]
+    ) -> None:
+        assert self.state is not None
+        new = move.GlobalR(
+            self.state,
+            axis_angle=stmt.phi,
+            rotation_angle=stmt.theta,
+        )
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    def _rewrite_GlobalRz(
+        self, stmt: stack_move.GlobalRz, to_delete: list[ir.Statement]
+    ) -> None:
+        assert self.state is not None
+        new = move.GlobalRz(self.state, rotation_angle=stmt.theta)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
+        from bloqade.lanes.bytecode import ZoneAddress
+
+        assert self.state is not None
+        # Same cross-module type mismatch as addresses — the native Rust
+        # ZoneAddress is accepted at runtime where move.CZ's type annotation
+        # expects the encoding wrapper.
+        (zone,) = cast(
+            tuple[EncodingZoneAddress, ...],
+            self._lift_attrs((stmt.zone,), ZoneAddress),
+        )
+        new = move.CZ(self.state, zone_address=zone)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)

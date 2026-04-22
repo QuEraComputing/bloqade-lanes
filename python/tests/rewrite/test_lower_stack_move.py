@@ -94,3 +94,78 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
     Walk(LowerStackMove()).rewrite(block)
     mf = next(s for s in block.stmts if isinstance(s, move.Fill))
     assert mf.location_addresses == (a0, a1)
+
+
+def test_local_r_lowers_with_attribute_lifting():
+    cf_theta = stack_move.ConstFloat(value=0.1)
+    cf_phi = stack_move.ConstFloat(value=0.2)
+    cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
+    lr = stack_move.LocalR(
+        phi=cf_phi.result,
+        theta=cf_theta.result,
+        locations=(cl.result,),
+    )
+    block = _build_stack_move_block([cf_theta, cf_phi, cl, lr, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mr = next(s for s in block.stmts if isinstance(s, move.LocalR))
+    # move.LocalR stores rotation angles as SSA values (axis_angle maps to
+    # stack_move.LocalR.phi; rotation_angle maps to theta). The SSA values
+    # trace back to py.Constant statements produced when lowering the
+    # ConstFloat constants.
+    axis_const = mr.axis_angle.owner
+    rot_const = mr.rotation_angle.owner
+    assert isinstance(axis_const, py.Constant)
+    assert isinstance(rot_const, py.Constant)
+    assert axis_const.value.unwrap() == 0.2
+    assert rot_const.value.unwrap() == 0.1
+    assert mr.location_addresses == (LocationAddress(0, 0, 0),)
+
+
+def test_local_rz_lowers_with_attribute_lifting():
+    cf_theta = stack_move.ConstFloat(value=0.3)
+    cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    lr = stack_move.LocalRz(theta=cf_theta.result, locations=(cl.result,))
+    block = _build_stack_move_block([cf_theta, cl, lr, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mr = next(s for s in block.stmts if isinstance(s, move.LocalRz))
+    rot_const = mr.rotation_angle.owner
+    assert isinstance(rot_const, py.Constant)
+    assert rot_const.value.unwrap() == 0.3
+    assert mr.location_addresses == (LocationAddress(0, 0, 1),)
+
+
+def test_global_r_lowers_with_attribute_lifting():
+    cf_theta = stack_move.ConstFloat(value=0.4)
+    cf_phi = stack_move.ConstFloat(value=0.5)
+    gr = stack_move.GlobalR(phi=cf_phi.result, theta=cf_theta.result)
+    block = _build_stack_move_block([cf_theta, cf_phi, gr, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mr = next(s for s in block.stmts if isinstance(s, move.GlobalR))
+    axis_const = mr.axis_angle.owner
+    rot_const = mr.rotation_angle.owner
+    assert isinstance(axis_const, py.Constant)
+    assert isinstance(rot_const, py.Constant)
+    assert axis_const.value.unwrap() == 0.5
+    assert rot_const.value.unwrap() == 0.4
+
+
+def test_global_rz_lowers_with_attribute_lifting():
+    cf_theta = stack_move.ConstFloat(value=0.6)
+    gr = stack_move.GlobalRz(theta=cf_theta.result)
+    block = _build_stack_move_block([cf_theta, gr, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mr = next(s for s in block.stmts if isinstance(s, move.GlobalRz))
+    rot_const = mr.rotation_angle.owner
+    assert isinstance(rot_const, py.Constant)
+    assert rot_const.value.unwrap() == 0.6
+
+
+def test_cz_lowers_with_attribute_zone():
+    from bloqade.lanes.bytecode import ZoneAddress
+
+    cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
+    cz = stack_move.CZ(zone=cz_zone.result)
+    block = _build_stack_move_block([cz_zone, cz, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
+    assert mcz.zone_address == ZoneAddress(0)
