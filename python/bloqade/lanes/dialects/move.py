@@ -11,6 +11,8 @@ from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
 
 dialect = ir.Dialect(name="lanes.move")
 
+ZoneAddressType = types.PyClass(ZoneAddress)
+
 
 @dataclass(frozen=True)
 class ConsumesState(ir.Trait):
@@ -123,6 +125,18 @@ class EndMeasure(ir.Statement):
     traits = frozenset({lowering.FromPythonCall(), ConsumesState(True)})
     current_state: ir.SSAValue = info.argument(StateType)
     zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
+    result: ir.ResultValue = info.result(MeasurementFutureType)
+
+
+@statement(dialect=dialect)
+class Measure(ir.Statement):
+    """Multi-zone measurement produced by lower_stack_move. Consumed by
+    measure_lower, which validates single-zone + single-final-measurement
+    invariants and rewrites to EndMeasure."""
+
+    traits = frozenset({lowering.FromPythonCall(), ConsumesState(True)})
+    current_state: ir.SSAValue = info.argument(StateType)
+    zones: tuple[ir.SSAValue, ...] = info.argument(type=ZoneAddressType)
     result: ir.ResultValue = info.result(MeasurementFutureType)
 
 
