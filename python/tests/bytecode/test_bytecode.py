@@ -212,6 +212,39 @@ class TestInstruction:
         assert a != c
 
 
+class TestInstructionAccessors:
+    def test_op_name_covers_every_opcode(self):
+        # Exhaustive mapping of factory → expected op_name.
+        cases = [
+            (Instruction.const_float(0.0), "const_float"),
+            (Instruction.const_int(0), "const_int"),
+            (Instruction.const_loc(0, 0, 0), "const_loc"),
+            (Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0), "const_lane"),
+            (Instruction.const_zone(0), "const_zone"),
+            (Instruction.pop(), "pop"),
+            (Instruction.dup(), "dup"),
+            (Instruction.swap(), "swap"),
+            (Instruction.initial_fill(1), "initial_fill"),
+            (Instruction.fill(1), "fill"),
+            (Instruction.move_(1), "move_"),
+            (Instruction.local_r(1), "local_r"),
+            (Instruction.local_rz(1), "local_rz"),
+            (Instruction.global_r(), "global_r"),
+            (Instruction.global_rz(), "global_rz"),
+            (Instruction.cz(), "cz"),
+            (Instruction.measure(1), "measure"),
+            (Instruction.await_measure(), "await_measure"),
+            (Instruction.new_array(0, 1), "new_array"),
+            (Instruction.get_item(1), "get_item"),
+            (Instruction.set_detector(), "set_detector"),
+            (Instruction.set_observable(), "set_observable"),
+            (Instruction.return_(), "return_"),
+            (Instruction.halt(), "halt"),
+        ]
+        for instr, expected in cases:
+            assert instr.op_name() == expected, (instr, expected)
+
+
 class TestInstructionAddressValidation:
     """Instruction address constants validate 16-bit range."""
 

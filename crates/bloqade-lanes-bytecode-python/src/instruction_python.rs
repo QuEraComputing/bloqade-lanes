@@ -263,6 +263,49 @@ impl PyInstruction {
         self.inner.opcode()
     }
 
+    fn op_name(&self) -> &'static str {
+        match &self.inner {
+            rs::Instruction::Cpu(cpu) => match cpu {
+                rs::CpuInstruction::ConstFloat(_) => "const_float",
+                rs::CpuInstruction::ConstInt(_) => "const_int",
+                rs::CpuInstruction::Pop => "pop",
+                rs::CpuInstruction::Dup => "dup",
+                rs::CpuInstruction::Swap => "swap",
+                rs::CpuInstruction::Return => "return_",
+                rs::CpuInstruction::Halt => "halt",
+            },
+            rs::Instruction::LaneConst(lc) => match lc {
+                rs::LaneConstInstruction::ConstLoc(_) => "const_loc",
+                rs::LaneConstInstruction::ConstLane(_, _) => "const_lane",
+                rs::LaneConstInstruction::ConstZone(_) => "const_zone",
+            },
+            rs::Instruction::AtomArrangement(aa) => match aa {
+                rs::AtomArrangementInstruction::InitialFill { .. } => "initial_fill",
+                rs::AtomArrangementInstruction::Fill { .. } => "fill",
+                rs::AtomArrangementInstruction::Move { .. } => "move_",
+            },
+            rs::Instruction::QuantumGate(qg) => match qg {
+                rs::QuantumGateInstruction::LocalR { .. } => "local_r",
+                rs::QuantumGateInstruction::LocalRz { .. } => "local_rz",
+                rs::QuantumGateInstruction::GlobalR => "global_r",
+                rs::QuantumGateInstruction::GlobalRz => "global_rz",
+                rs::QuantumGateInstruction::CZ => "cz",
+            },
+            rs::Instruction::Measurement(m) => match m {
+                rs::MeasurementInstruction::Measure { .. } => "measure",
+                rs::MeasurementInstruction::AwaitMeasure => "await_measure",
+            },
+            rs::Instruction::Array(arr) => match arr {
+                rs::ArrayInstruction::NewArray { .. } => "new_array",
+                rs::ArrayInstruction::GetItem { .. } => "get_item",
+            },
+            rs::Instruction::DetectorObservable(dob) => match dob {
+                rs::DetectorObservableInstruction::SetDetector => "set_detector",
+                rs::DetectorObservableInstruction::SetObservable => "set_observable",
+            },
+        }
+    }
+
     fn __repr__(&self) -> String {
         format_instruction(&self.inner)
     }

@@ -1542,6 +1542,14 @@ class Instruction:
         """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
         ...
 
+    def op_name(self) -> str:
+        """Lowercase snake_case opcode name matching the factory method.
+
+        For variants whose factory name collides with a Python keyword, the
+        returned name keeps the trailing underscore (``"move_"``, ``"return_"``).
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
