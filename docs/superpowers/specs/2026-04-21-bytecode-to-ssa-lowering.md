@@ -57,7 +57,7 @@ Rules:
 1. **Each bytecode instruction is a visitor** that reads `stack`, optionally emits IR, and optionally mutates `stack`.
 2. **Constant and value-producing instructions emit IR and push** the new SSA value onto `stack`.
 3. **Consuming instructions pop** the operands they need (in reverse push order), emit IR using those operands, and push any result.
-4. **Stack-only instructions (`dup`, `swap`, `pop`) emit no IR** — they just rearrange `stack` references.
+4. **Stack-only instructions (`dup`, `swap`, `pop`)** have two valid treatments — see §"Linear-IR style vs vanishing stack ops" below. The textbook choice is to emit no IR for them and just rearrange `stack` references; Bloqade Lanes makes a different choice.
 
 That's the whole trick.
 
@@ -102,68 +102,98 @@ POP
 
 The dangling `%loc0` was produced but never consumed. It's a live SSA value with no uses. This is fine — it'll be pruned by dead-code elimination later, or the decoder can raise if strict "stack must be empty at return" checking is desired.
 
-## Where the technique lives: decoder vs rewrite pass
+## Linear-IR style vs vanishing stack ops
 
-The virtual-stack-of-SSA-values technique is a self-contained algorithm. It doesn't care whether it runs inside a **decoder** (which would go `source bytecode → SSA IR in one step`) or inside a **rewrite pass** over a pre-existing intermediate dialect (`source bytecode → linear stack-op dialect → [virtual-stack rewrite] → SSA IR`).
+The walked-through example above uses the **textbook mainstream treatment** of `dup`/`swap`/`pop`: they mutate the decoder's virtual stack and emit no IR. The rationale is that `Dup` is a semantic identity in SSA (`%y = Dup %x` means `%y ≡ %x`, a tautology), `Swap` is a permutation that doesn't affect SSA def-use edges, and `Pop` is a discard with no runtime effect. In an IR where dataflow is fully explicit, preserving these operations adds no information. It's the choice Soot, Cranelift, V8 TurboFan, and the JVM verifier all make (with minor variations — Soot lifts them into local-variable copies that are then optimized away).
 
-The Bloqade Lanes implementation takes the latter split:
+The **alternative — the "linear IR" style — keeps them as explicit SSA statements**:
 
-1. **Decoder** is purely syntactic. It maps each bytecode instruction to a statement in a faithful `stack_move` dialect (one statement per opcode, no SSA operands, operand data in attributes). No stack simulation, no type checks, no SSA construction.
-2. **Rewrite pass** (`lower_stack_move`) walks the `stack_move` statements in order, maintains a virtual stack of SSA values, and emits well-typed SSA into the target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`).
-
-The rationale is **prototyping clarity**: the decoder is trivially correct by inspection, and all the interesting bytecode-to-SSA logic is concentrated in one reviewable pass. The alternative (collapse both into a single `LoweringABC`-style decoder) is a valid implementation shape — but it bundles syntactic translation and SSA recovery into one step, which is harder to inspect and harder to decompose into independent chunks later.
-
-Conceptual shape of the rewrite:
-
-```python
-class LowerStackMove:
-    stack: list[ir.SSAValue]
-    target_block: ir.Block
-    state: ir.SSAValue  # threaded StateType for stateful ops
-
-    def run(self, source_block: ir.Block) -> ir.Block:
-        self.state = self._emit_initial_state()
-        for idx, stmt in enumerate(source_block.stmts):
-            try:
-                self._rewrite(stmt)
-            except _StackError as e:
-                raise LowerError.from_context(idx, stmt, self.stack, e)
-        return self.target_block
-
-    def _rewrite(self, stmt):
-        # dispatch by statement type: ConstLoc, Fill, Dup, …
-        ...
-
-    def _rewrite_ConstLoc(self, stmt):
-        out = move.ConstLoc(value=stmt.value)
-        self.target_block.stmts.append(out)
-        self.stack.append(out.result)
-
-    def _rewrite_Fill(self, stmt):
-        locs = [self.stack.pop() for _ in range(stmt.arity)]
-        locs.reverse()  # or not, depending on your chosen ordering convention
-        self._check_type(locs, LocationAddressType)
-        new = move.Fill(self.state, *locs)
-        self.target_block.stmts.append(new)
-        self.state = new.new_state
-
-    def _rewrite_Dup(self, stmt):
-        self.stack.append(self.stack[-1])
-
-    def _rewrite_Pop(self, stmt):
-        self.stack.pop()
-
-    def _rewrite_Swap(self, stmt):
-        self.stack[-1], self.stack[-2] = self.stack[-2], self.stack[-1]
+```text
+%loc0 = stack_move.ConstLoc [value=LocationAddress(0,0,0)]
+%loc1 = stack_move.ConstLoc [value=LocationAddress(0,0,1)]
+%loc2 = stack_move.Dup %loc1                # identity — %loc2 ≡ %loc1
+%a, %b = stack_move.Swap %loc0, %loc1       # permutation
+        stack_move.Pop %loc2                # explicit discard
+        stack_move.Fill %a, %b
 ```
 
-The virtual stack is a `list[ir.SSAValue]` on the rewrite instance. `LowerError` is a dedicated exception carrying the offending `stack_move` statement, its block index, and a snapshot of the virtual stack. This rewrite pass is the direct analogue of the "decoder with a virtual stack" shape described earlier in the doc — the only difference is that the input is the `stack_move` IR (a linear sequence of stack-op statements) rather than the raw bytecode. Everything else is the same.
+This draws on categorical / substructural IRs (Joyal-Street string diagrams, Selinger's categorical quantum mechanics, linear-type compiler IRs) where `dup`, `swap`, and `discard` are first-class morphisms because the category doesn't assume cartesian (freely-duplicating) structure. Keeping them explicit gives downstream passes a hook to attach invariants.
 
-**Toward a bytecode decoder framework (planned follow-up).** The v1 implementation is deliberately monolithic — one `stack_move` dialect, one `BytecodeDecoder`, one `lower_stack_move` rewrite — so the end-to-end mechanics can be validated on a small, reviewable surface. Once those boundaries are stable, the natural next step is to decompose the work into a **bytecode decoder framework**: instruction families become sub-dialects (stack ops, constants, atom ops, gates, measurement, arrays, annotations, control flow), each sub-dialect registers a **decoding handler** that the top-level decoder dispatches to for its opcodes, and each sub-dialect also owns a **rewrite chunk** that consumes its own statements and emits into a target dialect. The virtual stack threads through the chain as shared state. The payoff is independently testable, replaceable, reusable pieces — and a framework that can handle new stack-based bytecode variants by swapping sub-dialect handlers rather than rewriting the whole decoder. This is post-v1 work but it's the direction this prototype is paving toward.
+**Bloqade Lanes uses the linear-IR style in `stack_move`**, for two reasons:
+
+1. **Atom non-cloning as a first-class invariant.** Atoms physically cannot be duplicated. An explicit `Dup` statement in the IR is exactly the right place for a later linear-type pass to check: any `Dup` whose operand has an atom-bearing type is a physical error. The mainstream vanishing-stack-ops treatment would have to reconstruct this information from alias analysis or equivalent.
+2. **Structural round-trippability to bytecode.** Every bytecode instruction has exactly one corresponding `stack_move` statement. Compiling Kirin IR back down to bytecode is a structural inverse of decoding — no reconstruction of missing stack ops.
+
+The cost is that stack ops have to be explicitly collapsed when lowering `stack_move` into the downstream target dialects (`move`, `ilist`, etc.): `Dup` and `Swap` map their result SSA values back to their inputs, `Pop` produces nothing. This is a trivial per-statement transformation in `lower_stack_move` — but it's a step that the mainstream treatment avoids by never introducing the statements in the first place.
+
+## Where the technique lives: decoder vs rewrite pass
+
+The virtual-stack-of-SSA-values technique is a self-contained algorithm. It doesn't care whether it runs inside a **decoder** (`source bytecode → SSA IR in one step`) or inside a **rewrite pass** over a pre-existing intermediate dialect. Both are valid splits.
+
+The Bloqade Lanes implementation puts the stack-to-SSA conversion **in the decoder**. Each bytecode stack slot becomes a named SSA value at decode time; the decoder maintains a virtual stack of SSA references and consumes/produces them as it walks the bytecode. The output is already-SSA `stack_move` IR where every statement has explicit operands and results.
+
+**Stack ops are preserved as explicit SSA statements** rather than being eliminated invisibly during decoding. `Dup` is an SSA identity statement (`%y = Dup %x`, semantically `%y ≡ %x`); `Swap` is an SSA permutation statement (`%a, %b = Swap %x, %y`, with `%a ≡ %y` and `%b ≡ %x`); `Pop` is an SSA discard statement (`Pop %x`, no result). This is the "linear IR" style described earlier — it preserves the bytecode's structural operations at the SSA level so that downstream analyses (notably a future atom-non-cloning type check) can attach invariants to them, and so that lowering from Kirin *back* to bytecode is a structural inverse of decoding.
+
+The follow-up rewrite `lower_stack_move` becomes a **mechanical per-statement translation** from `stack_move` into target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`). `Dup` and `Swap` collapse during that rewrite: their result SSA values are mapped to the same target-dialect SSA values as their inputs. `Pop` produces no target statement. The linear-IR shape lives only in `stack_move`; the target IR is conventional SSA.
+
+Conceptual shape of the decoder:
+
+```python
+class BytecodeDecoder:
+    stack: list[ir.SSAValue]
+    block: ir.Block
+
+    def decode(self, program: Program, kernel_name: str) -> ir.Method:
+        for idx, instruction in enumerate(program.instructions):
+            try:
+                self._visit(instruction)
+            except _StackError as e:
+                raise DecodeError.from_context(idx, instruction, self.stack, e)
+        return self._finalize(kernel_name)
+
+    def _visit(self, instr):
+        # dispatch by opcode to _visit_const_loc, _visit_fill, _visit_dup, …
+        ...
+
+    def _visit_const_loc(self, instr):
+        stmt = stack_move.ConstLoc(value=instr.location_address())
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_fill(self, instr):
+        locs = [self.stack.pop() for _ in range(instr.arity)]
+        locs.reverse()  # or not, depending on your chosen ordering convention
+        self._check_type(locs, LocationAddressType)
+        self.block.stmts.append(stack_move.Fill(locations=tuple(locs)))
+
+    def _visit_dup(self, instr):
+        top = self.stack[-1]
+        stmt = stack_move.Dup(value=top)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)  # new SSA name, semantically ≡ top
+
+    def _visit_swap(self, instr):
+        in_top = self.stack.pop()
+        in_bot = self.stack.pop()
+        stmt = stack_move.Swap(in_top=in_top, in_bot=in_bot)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.out_bot)  # new SSA name ≡ in_top
+        self.stack.append(stmt.out_top)  # new SSA name ≡ in_bot
+
+    def _visit_pop(self, instr):
+        top = self.stack.pop()
+        self.block.stmts.append(stack_move.Pop(value=top))
+```
+
+The virtual stack is a `list[ir.SSAValue]` on the decoder instance. `DecodeError` carries the offending instruction index, opcode, and a snapshot of the virtual stack at failure.
+
+**Compatibility with future control flow.** This decoder design composes cleanly with Approach 3 (block-argument SSA, see §"Unifying with the host dataflow framework" below) when branching is added: the virtual stack at a block exit becomes the argument list for the successor block, and the explicit `stack_move.Dup`/`Swap`/`Pop` statements operate uniformly on both block-argument SSA values and locally produced SSA values — they don't care which kind of SSA value they're manipulating.
+
+**Toward a bytecode decoder framework (planned follow-up).** The v1 implementation is deliberately monolithic — one `stack_move` dialect, one `BytecodeDecoder`, one `lower_stack_move` rewrite — so the end-to-end mechanics can be validated on a small, reviewable surface. Once those boundaries are stable, the natural next step is to decompose the work into a **bytecode decoder framework**: instruction families become sub-dialects (stack ops, constants, atom ops, gates, measurement, arrays, annotations, control flow), each sub-dialect registers a **decoding handler** that the top-level decoder dispatches to for its opcodes, and each sub-dialect also owns a **rewrite chunk** that consumes its own statements and emits into a target dialect. The virtual stack threads through the decoder's chain of handlers as shared state. The payoff is independently testable, replaceable, reusable pieces — and a framework that can handle new stack-based bytecode variants by swapping sub-dialect handlers rather than rewriting the whole decoder. This is post-v1 work but it's the direction this prototype is paving toward.
 
 ## Error conditions
 
-Whichever pass owns the virtual stack surfaces these as a dedicated exception (e.g. the Bloqade Lanes rewrite raises `LowerError`; a host framework's decoder would raise `BuildError`/equivalent):
+Whichever pass owns the virtual stack surfaces these as a dedicated exception (the Bloqade Lanes decoder raises `DecodeError`; a host framework's decoder would raise `BuildError`/equivalent):
 
 | Condition                                     | Example                                                                               |
 |-----------------------------------------------|---------------------------------------------------------------------------------------|
