@@ -1322,14 +1322,22 @@ git commit -m "feat(move): add multi-zone SSA-based Measure statement"
 - Create: `python/bloqade/lanes/rewrite/lower_stack_move.py`
 - Create: `python/tests/rewrite/test_lower_stack_move.py`
 
+This rewrite follows Kirin's `RewriteRule` interface (see `kirin/rewrite/abc.py` — `RewriteRule` with specialised `rewrite_Region` / `rewrite_Block` / `rewrite_Statement` handlers, all returning `RewriteResult`; IR mutation is in-place via `insert_before`, `replace_by`, `delete` on statements). The existing `bloqade-lanes` rewrites in `python/bloqade/lanes/rewrite/` (e.g. `state.py::RewriteLoadStore`, `place2move.py::InsertMoves`) show the same pattern and are the reference to match.
+
+For `LowerStackMove` we override `rewrite_Block` because:
+1. We need to insert the initial `move.Load()` once per block at the start.
+2. State threading + attribute lifting across statements requires walk-order processing that's natural at block level.
+3. Matches `RewriteLoadStore` which also processes an entire block in one pass.
+
 - [ ] **Step 1: Write failing smoke test**
 
 Create `python/tests/rewrite/test_lower_stack_move.py`:
 
 ```python
 from kirin import ir
+from kirin.rewrite import Walk
 
-from bloqade.lanes.dialects import stack_move, move
+from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.lower_stack_move import LowerStackMove
 
 
@@ -1340,11 +1348,14 @@ def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
     return block
 
 
-def test_empty_block_emits_only_load_and_return():
+def test_empty_block_emits_load_and_func_return():
     block = _build_stack_move_block([stack_move.Return()])
-    rewritten = LowerStackMove().run(block)
-    # Expect a Load (to initialise state) and a func.Return terminator.
-    assert any(isinstance(s, move.Load) for s in rewritten.stmts)
+    result = Walk(LowerStackMove()).rewrite(block)
+    assert result.has_done_something
+    # Expect a move.Load at block start and a func.Return; the stack_move
+    # Return should have been deleted.
+    assert any(isinstance(s, move.Load) for s in block.stmts)
+    assert not any(isinstance(s, stack_move.Return) for s in block.stmts)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1360,13 +1371,18 @@ Expected: FAIL with `ModuleNotFoundError` on `lower_stack_move`.
 Create `python/bloqade/lanes/rewrite/lower_stack_move.py`:
 
 ```python
-"""lower_stack_move — mechanical rewrite from stack_move → multi-dialect IR.
+"""lower_stack_move — in-place rewrite from stack_move → multi-dialect IR.
 
-Per-statement translation. The stack_move IR is already SSA (each bytecode
-stack slot is a named SSA value), so there's no stack simulation here —
-just a statement-by-statement emit into the target dialects (move, ilist,
-py.constant, py.indexing, annotate, func). State threading is inserted
-inline.
+Extends Kirin's RewriteRule with a rewrite_Block handler that walks the
+block's statements once and, for each stack_move statement, inserts the
+corresponding target-dialect statement(s) via insert_before and deletes
+the original. State threading is woven in along the way: move.Load at
+block start initialises the StateType SSA value, each stateful move.*
+op consumes the current state and produces a new one, and move.Store +
+func.Return close out the block.
+
+Follows the same pattern as python/bloqade/lanes/rewrite/state.py's
+RewriteLoadStore.
 """
 
 from __future__ import annotations
@@ -1375,56 +1391,65 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from kirin import ir
+from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
 
 
 @dataclass
-class LowerStackMove:
-    """Rewrite a stack_move ir.Block into a multi-dialect ir.Block.
+class LowerStackMove(RewriteRule):
+    """Lower a stack_move block into a multi-dialect block in place.
 
-    Maintains:
-    - a mapping from stack_move SSA values → the target-dialect SSA value
-      they should resolve to (or, for constants, the raw attribute value
-      so consumers can lift them into move.* attributes).
-    - the current StateType SSA value for state threading into stateful
-      move.* statements.
+    Mutable state on the rule instance, carried across the walk:
+    - ssa_to_attr: stack_move SSA → underlying attribute value, for
+      operands that need to be lifted into target-dialect attributes
+      (addresses, rotation angles).
+    - ssa_to_target: stack_move SSA → target-dialect SSA replacement,
+      for values that survive as SSA (arrays, futures, detectors,
+      observables).
+    - state: the current StateType SSA value in the target IR.
     """
 
-    target_block: ir.Block = field(default_factory=ir.Block)
-    ssa_to_target: dict[ir.SSAValue, ir.SSAValue] = field(default_factory=dict)
     ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
+    ssa_to_target: dict[ir.SSAValue, ir.SSAValue] = field(default_factory=dict)
     state: ir.SSAValue | None = None
 
-    def run(self, source_block: ir.Block) -> ir.Block:
-        # Initialise the state SSA value via move.Load.
+    def rewrite_Block(self, block: ir.Block) -> RewriteResult:
+        # Insert the initial move.Load at block start.
         load = move.Load()
-        self.target_block.stmts.append(load)
+        first = next(iter(block.stmts), None)
+        if first is None:
+            block.stmts.append(load)
+        else:
+            load.insert_before(first)
         self.state = load.result
 
-        for stmt in source_block.stmts:
-            self._rewrite(stmt)
+        to_delete: list[ir.Statement] = []
+        for stmt in list(block.stmts):
+            if stmt is load:
+                continue
+            handler = getattr(self, f"_rewrite_{type(stmt).__name__}", None)
+            if handler is None:
+                # Non-stack_move statements (e.g. existing py.Constant) pass
+                # through unchanged.
+                continue
+            handler(stmt, to_delete)
 
-        return self.target_block
+        for stmt in to_delete:
+            stmt.delete()
+        return RewriteResult(has_done_something=True)
 
-    def _rewrite(self, stmt: ir.Statement) -> None:
-        handler = getattr(self, f"_rewrite_{type(stmt).__name__}", None)
-        if handler is None:
-            raise NotImplementedError(
-                f"lower_stack_move has no handler for {type(stmt).__name__}"
-            )
-        handler(stmt)
-
-    def _rewrite_Return(self, stmt: stack_move.Return) -> None:
-        # Store state back before returning.
+    def _rewrite_Return(self, stmt: stack_move.Return, to_delete: list) -> None:
         from kirin.dialects import func
-        self.target_block.stmts.append(move.Store(self.state))
-        self.target_block.stmts.append(func.Return())
+        move.Store(self.state).insert_before(stmt)
+        func.Return().insert_before(stmt)
+        to_delete.append(stmt)
 
-    def _rewrite_Halt(self, stmt: stack_move.Halt) -> None:
+    def _rewrite_Halt(self, stmt: stack_move.Halt, to_delete: list) -> None:
         from kirin.dialects import func
-        self.target_block.stmts.append(move.Store(self.state))
-        self.target_block.stmts.append(func.Return())
+        move.Store(self.state).insert_before(stmt)
+        func.Return().insert_before(stmt)
+        to_delete.append(stmt)
 ```
 
 - [ ] **Step 4: Run test**
@@ -1439,7 +1464,7 @@ Expected: PASS.
 
 ```bash
 git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move skeleton with state init + Return/Halt"
+git commit -m "feat(rewrite): lower_stack_move skeleton (RewriteRule + state init + Return/Halt)"
 ```
 
 ---
@@ -1462,25 +1487,25 @@ from bloqade.lanes.bytecode import LocationAddress
 def test_const_float_emits_py_constant_and_tracks_value():
     cf = stack_move.ConstFloat(value=1.5)
     block = _build_stack_move_block([cf, stack_move.Return()])
-    lower = LowerStackMove()
-    out = lower.run(block)
-    # py.Constant statement emitted with value 1.5
+    rule = LowerStackMove()
+    Walk(rule).rewrite(block)
+    # py.Constant statement emitted with value 1.5, in the same block.
     assert any(
-        isinstance(s, py.Constant) and s.value.unwrap() == 1.5 for s in out.stmts
+        isinstance(s, py.Constant) and s.value.unwrap() == 1.5 for s in block.stmts
     )
-    # And the original stack_move SSA value is mapped to its target SSA.
-    assert cf.result in lower.ssa_to_target
+    # The original stack_move SSA value is mapped to its target SSA.
+    assert cf.result in rule.ssa_to_target
 
 
 def test_const_loc_tracks_attribute_value():
     addr = LocationAddress(0, 0, 0)
     cl = stack_move.ConstLoc(value=addr)
     block = _build_stack_move_block([cl, stack_move.Return()])
-    lower = LowerStackMove()
-    lower.run(block)
+    rule = LowerStackMove()
+    Walk(rule).rewrite(block)
     # The stack_move SSA is mapped to its raw attribute (for lifting into
     # downstream move.* attributes).
-    assert lower.ssa_to_attr[cl.result] == addr
+    assert rule.ssa_to_attr[cl.result] == addr
 ```
 
 - [ ] **Step 2: Run tests**
@@ -1493,34 +1518,39 @@ Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`:
+Add to `LowerStackMove`. Each handler takes the source statement and the `to_delete` list passed down from `rewrite_Block`; emission is via `insert_before` on the original statement:
 
 ```python
-    def _rewrite_ConstFloat(self, stmt: stack_move.ConstFloat) -> None:
+    def _rewrite_ConstFloat(self, stmt: stack_move.ConstFloat, to_delete: list) -> None:
         from kirin.dialects import py
         out = py.Constant(stmt.value)
-        self.target_block.stmts.append(out)
+        out.insert_before(stmt)
         self.ssa_to_target[stmt.result] = out.result
         self.ssa_to_attr[stmt.result] = stmt.value
+        to_delete.append(stmt)
 
-    def _rewrite_ConstInt(self, stmt: stack_move.ConstInt) -> None:
+    def _rewrite_ConstInt(self, stmt: stack_move.ConstInt, to_delete: list) -> None:
         from kirin.dialects import py
         out = py.Constant(stmt.value)
-        self.target_block.stmts.append(out)
+        out.insert_before(stmt)
         self.ssa_to_target[stmt.result] = out.result
         self.ssa_to_attr[stmt.result] = stmt.value
+        to_delete.append(stmt)
 
-    def _rewrite_ConstLoc(self, stmt: stack_move.ConstLoc) -> None:
+    def _rewrite_ConstLoc(self, stmt: stack_move.ConstLoc, to_delete: list) -> None:
         # Address constants stay as decoder attributes — downstream move.*
         # statements take them as attribute values, not SSA operands.
         # We track the raw attribute value for later attribute lifting.
         self.ssa_to_attr[stmt.result] = stmt.value
+        to_delete.append(stmt)
 
-    def _rewrite_ConstLane(self, stmt: stack_move.ConstLane) -> None:
+    def _rewrite_ConstLane(self, stmt: stack_move.ConstLane, to_delete: list) -> None:
         self.ssa_to_attr[stmt.result] = stmt.value
+        to_delete.append(stmt)
 
-    def _rewrite_ConstZone(self, stmt: stack_move.ConstZone) -> None:
+    def _rewrite_ConstZone(self, stmt: stack_move.ConstZone, to_delete: list) -> None:
         self.ssa_to_attr[stmt.result] = stmt.value
+        to_delete.append(stmt)
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1555,19 +1585,19 @@ def test_pop_is_dropped():
     cf = stack_move.ConstFloat(value=1.0)
     pop = stack_move.Pop(value=cf.result)
     block = _build_stack_move_block([cf, pop, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    # No target statement for Pop.
-    assert not any(type(s).__name__ == "Pop" for s in out.stmts)
+    Walk(LowerStackMove()).rewrite(block)
+    # No target statement for Pop, and the original stack_move.Pop is gone.
+    assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
 
 
 def test_dup_maps_result_to_input():
     cf = stack_move.ConstFloat(value=1.0)
     dup = stack_move.Dup(value=cf.result)
     block = _build_stack_move_block([cf, dup, stack_move.Return()])
-    lower = LowerStackMove()
-    lower.run(block)
+    rule = LowerStackMove()
+    Walk(rule).rewrite(block)
     # Dup result shares attribute value with its input.
-    assert lower.ssa_to_attr[dup.result] == lower.ssa_to_attr[cf.result]
+    assert rule.ssa_to_attr[dup.result] == rule.ssa_to_attr[cf.result]
 
 
 def test_swap_permutes_mappings():
@@ -1575,11 +1605,11 @@ def test_swap_permutes_mappings():
     b = stack_move.ConstInt(value=2)
     sw = stack_move.Swap(in_top=b.result, in_bot=a.result)
     block = _build_stack_move_block([a, b, sw, stack_move.Return()])
-    lower = LowerStackMove()
-    lower.run(block)
+    rule = LowerStackMove()
+    Walk(rule).rewrite(block)
     # out_top ≡ in_bot (=a); out_bot ≡ in_top (=b).
-    assert lower.ssa_to_attr[sw.out_top] == 1  # a's value
-    assert lower.ssa_to_attr[sw.out_bot] == 2  # b's value
+    assert rule.ssa_to_attr[sw.out_top] == 1  # a's value
+    assert rule.ssa_to_attr[sw.out_bot] == 2  # b's value
 ```
 
 - [ ] **Step 2: Run tests**
@@ -1602,17 +1632,19 @@ Add to `LowerStackMove`:
         if src in self.ssa_to_attr:
             self.ssa_to_attr[dst] = self.ssa_to_attr[src]
 
-    def _rewrite_Pop(self, stmt: stack_move.Pop) -> None:
-        # Nothing — Pop collapses. The discarded SSA value is either dead
-        # (DCE'd later) or still referenced elsewhere.
-        pass
+    def _rewrite_Pop(self, stmt: stack_move.Pop, to_delete: list) -> None:
+        # Pop collapses — no target emission. The popped SSA value is either
+        # dead (will be DCE'd) or still referenced elsewhere.
+        to_delete.append(stmt)
 
-    def _rewrite_Dup(self, stmt: stack_move.Dup) -> None:
+    def _rewrite_Dup(self, stmt: stack_move.Dup, to_delete: list) -> None:
         self._alias(stmt.result, stmt.value)
+        to_delete.append(stmt)
 
-    def _rewrite_Swap(self, stmt: stack_move.Swap) -> None:
+    def _rewrite_Swap(self, stmt: stack_move.Swap, to_delete: list) -> None:
         self._alias(stmt.out_top, stmt.in_bot)
         self._alias(stmt.out_bot, stmt.in_top)
+        to_delete.append(stmt)
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1650,8 +1682,8 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
     cl1 = stack_move.ConstLoc(value=a1)
     fill = stack_move.Fill(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, fill, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    mf = next(s for s in out.stmts if isinstance(s, move.Fill))
+    Walk(LowerStackMove()).rewrite(block)
+    mf = next(s for s in block.stmts if isinstance(s, move.Fill))
     assert mf.location_addresses == (a0, a1)
 ```
 
@@ -1681,23 +1713,26 @@ Add to `LowerStackMove`:
             out.append(self.ssa_to_attr[v])
         return tuple(out)
 
-    def _rewrite_InitialFill(self, stmt: stack_move.InitialFill) -> None:
+    def _rewrite_InitialFill(self, stmt: stack_move.InitialFill, to_delete: list) -> None:
         addrs = self._lift_attrs(stmt.locations)
         new = move.InitialFill(self.state, location_addresses=addrs)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_Fill(self, stmt: stack_move.Fill) -> None:
+    def _rewrite_Fill(self, stmt: stack_move.Fill, to_delete: list) -> None:
         addrs = self._lift_attrs(stmt.locations)
         new = move.Fill(self.state, location_addresses=addrs)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_Move(self, stmt: stack_move.Move) -> None:
+    def _rewrite_Move(self, stmt: stack_move.Move, to_delete: list) -> None:
         lanes = self._lift_attrs(stmt.lanes)
         new = move.Move(self.state, lanes=lanes)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 ```
 
 Note: the exact keyword arguments (`location_addresses=`, `lanes=`, etc.) for existing `move.*` statement constructors match what's already in `move.py`. If signatures differ, adjust to match.
@@ -1740,8 +1775,8 @@ def test_local_r_lowers_with_attribute_lifting():
         locations=(cl.result,),
     )
     block = _build_stack_move_block([cf_theta, cf_phi, cl, lr, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    mr = next(s for s in out.stmts if isinstance(s, move.LocalR))
+    Walk(LowerStackMove()).rewrite(block)
+    mr = next(s for s in block.stmts if isinstance(s, move.LocalR))
     assert mr.phi == 0.2
     assert mr.theta == 0.1
     assert mr.location_addresses == (LocationAddress(0, 0, 0),)
@@ -1752,8 +1787,8 @@ def test_cz_lowers_with_attribute_zone():
     cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
     cz = stack_move.CZ(zone=cz_zone.result)
     block = _build_stack_move_block([cz_zone, cz, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    mcz = next(s for s in out.stmts if isinstance(s, move.CZ))
+    Walk(LowerStackMove()).rewrite(block)
+    mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
     assert mcz.zone_address == ZoneAddress(0)
 ```
 
@@ -1770,41 +1805,46 @@ Expected: FAIL.
 Add to `LowerStackMove`:
 
 ```python
-    def _rewrite_LocalR(self, stmt: stack_move.LocalR) -> None:
+    def _rewrite_LocalR(self, stmt: stack_move.LocalR, to_delete: list) -> None:
         (phi,) = self._lift_attrs((stmt.phi,))
         (theta,) = self._lift_attrs((stmt.theta,))
         addrs = self._lift_attrs(stmt.locations)
         new = move.LocalR(
             self.state, phi=phi, theta=theta, location_addresses=addrs,
         )
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_LocalRz(self, stmt: stack_move.LocalRz) -> None:
+    def _rewrite_LocalRz(self, stmt: stack_move.LocalRz, to_delete: list) -> None:
         (theta,) = self._lift_attrs((stmt.theta,))
         addrs = self._lift_attrs(stmt.locations)
         new = move.LocalRz(self.state, theta=theta, location_addresses=addrs)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_GlobalR(self, stmt: stack_move.GlobalR) -> None:
+    def _rewrite_GlobalR(self, stmt: stack_move.GlobalR, to_delete: list) -> None:
         (phi,) = self._lift_attrs((stmt.phi,))
         (theta,) = self._lift_attrs((stmt.theta,))
         new = move.GlobalR(self.state, phi=phi, theta=theta)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_GlobalRz(self, stmt: stack_move.GlobalRz) -> None:
+    def _rewrite_GlobalRz(self, stmt: stack_move.GlobalRz, to_delete: list) -> None:
         (theta,) = self._lift_attrs((stmt.theta,))
         new = move.GlobalRz(self.state, theta=theta)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_CZ(self, stmt: stack_move.CZ) -> None:
+    def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list) -> None:
         (zone,) = self._lift_attrs((stmt.zone,))
         new = move.CZ(self.state, zone_address=zone)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
+        to_delete.append(stmt)
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1840,8 +1880,8 @@ def test_measure_single_zone_emits_single_zone_measure():
     cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
     m = stack_move.Measure(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, m, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    mm = next(s for s in out.stmts if isinstance(s, move.Measure))
+    Walk(LowerStackMove()).rewrite(block)
+    mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     # One zone (both locs are in zone 0).
     assert len(mm.zones) == 1
 
@@ -1853,8 +1893,8 @@ def test_measure_multi_zone_dedups():
     cl2 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
     m = stack_move.Measure(locations=(cl0.result, cl1.result, cl2.result))
     block = _build_stack_move_block([cl0, cl1, cl2, m, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    mm = next(s for s in out.stmts if isinstance(s, move.Measure))
+    Walk(LowerStackMove()).rewrite(block)
+    mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     assert len(mm.zones) == 2
 ```
 
@@ -1871,7 +1911,7 @@ Expected: FAIL.
 Add to `LowerStackMove`:
 
 ```python
-    def _rewrite_Measure(self, stmt: stack_move.Measure) -> None:
+    def _rewrite_Measure(self, stmt: stack_move.Measure, to_delete: list) -> None:
         # Lift each location to its LocationAddress, extract distinct zone ids,
         # synthesise move.ConstZone per distinct zone, emit move.Measure(...).
         from bloqade.lanes.bytecode import ZoneAddress
@@ -1883,12 +1923,13 @@ Add to `LowerStackMove`:
         zone_ssa: list[ir.SSAValue] = []
         for zid in seen_zone_ids:
             cz = move.ConstZone(value=ZoneAddress(zid))
-            self.target_block.stmts.append(cz)
+            cz.insert_before(stmt)
             zone_ssa.append(cz.result)
         new = move.Measure(self.state, zones=tuple(zone_ssa))
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.state = new.result
         self.ssa_to_target[stmt.result] = new.result
+        to_delete.append(stmt)
 ```
 
 Note: this assumes a `move.ConstZone(value=ZoneAddress)` statement exists in `move.py`. If not, either add one in this task (it's trivial — attribute `value: ZoneAddress`, result of type `ZoneAddressType`) or use an inline `ZoneAddress` attribute in the `Measure` constructor. Check `move.py` and adjust.
@@ -1928,15 +1969,15 @@ def test_await_measure_lowers_without_error():
     m = stack_move.Measure(locations=(cl.result,))
     aw = stack_move.AwaitMeasure(future=m.result)
     block = _build_stack_move_block([cl, m, aw, stack_move.Return()])
-    LowerStackMove().run(block)  # should not raise
+    Walk(LowerStackMove()).rewrite(block)  # should not raise
 
 
 def test_new_array_lowers_to_ilist_new():
     from kirin.dialects import ilist
     na = stack_move.NewArray(type_tag=0, dim0=4, dim1=0)
     block = _build_stack_move_block([na, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    assert any(isinstance(s, ilist.New) for s in out.stmts)
+    Walk(LowerStackMove()).rewrite(block)
+    assert any(isinstance(s, ilist.New) for s in block.stmts)
 
 
 def test_set_detector_lowers_to_annotate():
@@ -1944,8 +1985,8 @@ def test_set_detector_lowers_to_annotate():
     na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
     sd = stack_move.SetDetector(array=na.result)
     block = _build_stack_move_block([na, sd, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    assert any(isinstance(s, annotate.SetDetector) for s in out.stmts)
+    Walk(LowerStackMove()).rewrite(block)
+    assert any(isinstance(s, annotate.SetDetector) for s in block.stmts)
 
 
 def test_set_observable_lowers_to_annotate():
@@ -1953,8 +1994,8 @@ def test_set_observable_lowers_to_annotate():
     na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
     so = stack_move.SetObservable(array=na.result)
     block = _build_stack_move_block([na, so, stack_move.Return()])
-    out = LowerStackMove().run(block)
-    assert any(isinstance(s, annotate.SetObservable) for s in out.stmts)
+    Walk(LowerStackMove()).rewrite(block)
+    assert any(isinstance(s, annotate.SetObservable) for s in block.stmts)
 ```
 
 - [ ] **Step 2: Run tests**
@@ -1970,55 +2011,58 @@ Expected: FAIL.
 Add to `LowerStackMove`. Exact target-dialect construction arguments must match what the existing `ilist.New`, `py.indexing.GetItem`, `annotate.SetDetector`, and `annotate.SetObservable` constructors expect; check the Kirin / bloqade-decoders source.
 
 ```python
-    def _rewrite_AwaitMeasure(self, stmt: stack_move.AwaitMeasure) -> None:
+    def _rewrite_AwaitMeasure(self, stmt: stack_move.AwaitMeasure, to_delete: list) -> None:
         # AwaitMeasure is pure synchronisation in stack_move (no result).
         # In the existing move pipeline, measurement values are extracted
         # via GetFutureResult per (zone, location); for v1 we emit nothing
         # here, and any downstream GetItem on the future is handled in
         # _rewrite_GetItem below. Adjust if AwaitMeasure actually needs a
         # target emission (e.g. a barrier or fence) per the Rust source.
-        pass
+        to_delete.append(stmt)
 
-    def _rewrite_NewArray(self, stmt: stack_move.NewArray) -> None:
+    def _rewrite_NewArray(self, stmt: stack_move.NewArray, to_delete: list) -> None:
         from kirin.dialects import ilist
         if stmt.dim1 == 0:
             new = ilist.New(values=())  # 1-D empty; may need different signature
         else:
             new = ilist.New(values=())  # 2-D stub
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.ssa_to_target[stmt.result] = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_GetItem(self, stmt: stack_move.GetItem) -> None:
+    def _rewrite_GetItem(self, stmt: stack_move.GetItem, to_delete: list) -> None:
         from kirin.dialects.py import indexing
-        array = self.ssa_to_target[stmt.array]
-        current = array
+        current = self.ssa_to_target[stmt.array]
         for idx_ssa in stmt.indices:
             target_idx = self.ssa_to_target[idx_ssa]
             gi = indexing.GetItem(obj=current, index=target_idx)
-            self.target_block.stmts.append(gi)
+            gi.insert_before(stmt)
             current = gi.result
         self.ssa_to_target[stmt.result] = current
+        to_delete.append(stmt)
 
-    def _rewrite_SetDetector(self, stmt: stack_move.SetDetector) -> None:
+    def _rewrite_SetDetector(self, stmt: stack_move.SetDetector, to_delete: list) -> None:
         from kirin.dialects import ilist
         from bloqade.decoders.dialects import annotate
         measurements = self.ssa_to_target[stmt.array]
         # Coordinates default to empty per the spec — decoded bytecode
         # doesn't carry visualisation metadata.
         empty_coords = ilist.New(values=())
-        self.target_block.stmts.append(empty_coords)
+        empty_coords.insert_before(stmt)
         new = annotate.SetDetector(
             measurements=measurements, coordinates=empty_coords.result,
         )
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.ssa_to_target[stmt.result] = new.result
+        to_delete.append(stmt)
 
-    def _rewrite_SetObservable(self, stmt: stack_move.SetObservable) -> None:
+    def _rewrite_SetObservable(self, stmt: stack_move.SetObservable, to_delete: list) -> None:
         from bloqade.decoders.dialects import annotate
         measurements = self.ssa_to_target[stmt.array]
         new = annotate.SetObservable(measurements=measurements)
-        self.target_block.stmts.append(new)
+        new.insert_before(stmt)
         self.ssa_to_target[stmt.result] = new.result
+        to_delete.append(stmt)
 ```
 
 Note: the `ilist.New` and indexing statements' exact constructor signatures need to be verified against the Kirin source (see `python/bloqade/lanes/dialects/move.py` neighbour imports and Kirin's `kirin.dialects.ilist` and `kirin.dialects.py.indexing`). Adjust during implementation.
@@ -2162,6 +2206,7 @@ Create `python/tests/rewrite/test_measure_lower.py`:
 ```python
 import pytest
 from kirin import ir
+from kirin.rewrite import Walk
 
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite.measure_lower import MeasureLower, MeasureLowerError
@@ -2173,10 +2218,10 @@ def test_single_zone_measure_rewrites_to_endmeasure():
     m = move.Measure(current_state=state, zones=(zone,))
     block = ir.Block([m])
     # For this test we mock the analysis result — in real usage MeasureLower
-    # runs AtomAnalysis first.
-    lower = MeasureLower(zone_sets={m: frozenset({0})}, final_measurement_count=1)
-    lower.run(block)
-    # m has been replaced by a move.EndMeasure.
+    # is constructed via MeasureLower.from_method which runs AtomAnalysis.
+    rule = MeasureLower(zone_sets={m: frozenset({0})}, final_measurement_count=1)
+    Walk(rule).rewrite(block)
+    # m has been replaced by a move.EndMeasure in place.
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
     assert any(isinstance(s, move.EndMeasure) for s in block.stmts)
 
@@ -2186,9 +2231,9 @@ def test_multi_zone_measure_raises():
     z0, z1 = ir.TestValue(), ir.TestValue()
     m = move.Measure(current_state=state, zones=(z0, z1))
     block = ir.Block([m])
-    lower = MeasureLower(zone_sets={m: frozenset({0, 1})}, final_measurement_count=1)
+    rule = MeasureLower(zone_sets={m: frozenset({0, 1})}, final_measurement_count=1)
     with pytest.raises(MeasureLowerError):
-        lower.run(block)
+        Walk(rule).rewrite(block)
 ```
 
 - [ ] **Step 2: Run tests**
@@ -2201,7 +2246,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write implementation**
 
-Create `python/bloqade/lanes/rewrite/measure_lower.py`:
+Create `python/bloqade/lanes/rewrite/measure_lower.py`. This rewrite follows Kirin's `RewriteRule` interface with a `rewrite_Statement` handler — each `move.Measure` it encounters is validated and replaced in place via `stmt.replace_by(replacement)`. The existing `python/bloqade/lanes/rewrite/state.py::RewriteLoadStore` is the reference for in-place mutation idioms.
 
 ```python
 """measure_lower — validate + rewrite move.Measure to move.EndMeasure."""
@@ -2212,6 +2257,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from kirin import ir
+from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move
 
@@ -2221,7 +2267,7 @@ class MeasureLowerError(RuntimeError):
 
 
 @dataclass
-class MeasureLower:
+class MeasureLower(RewriteRule):
     """Lower move.Measure stmts to move.EndMeasure.
 
     Requires the zone set per Measure site (from AtomAnalysis) and the
@@ -2234,20 +2280,17 @@ class MeasureLower:
     zone_sets: Mapping[move.Measure, frozenset[int]]
     final_measurement_count: int
 
-    def run(self, block: ir.Block) -> None:
+    def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
+        if not isinstance(node, move.Measure):
+            return RewriteResult()
         if self.final_measurement_count != 1:
             raise MeasureLowerError(
                 f"expected exactly one final measurement, "
                 f"found {self.final_measurement_count}"
             )
-        for stmt in list(block.stmts):
-            if isinstance(stmt, move.Measure):
-                self._rewrite_measure(stmt, block)
-
-    def _rewrite_measure(self, stmt: move.Measure, block: ir.Block) -> None:
-        zones = self.zone_sets.get(stmt)
+        zones = self.zone_sets.get(node)
         if zones is None:
-            raise MeasureLowerError(f"no analysis result for {stmt}")
+            raise MeasureLowerError(f"no analysis result for {node}")
         if len(zones) != 1:
             raise MeasureLowerError(
                 f"move.Measure spans {len(zones)} zones; expected exactly 1"
@@ -2255,14 +2298,12 @@ class MeasureLower:
         from bloqade.lanes.bytecode import ZoneAddress
         (zone_id,) = zones
         replacement = move.EndMeasure(
-            current_state=stmt.current_state,
+            current_state=node.current_state,
             zone_addresses=(ZoneAddress(zone_id),),
         )
-        # Swap stmt for replacement in-place.
-        stmt.replace_by(replacement)
+        node.replace_by(replacement)
+        return RewriteResult(has_done_something=True)
 ```
-
-Note: the exact `replace_by` / statement-substitution API may differ — see Kirin's `ir.Statement.replace_by` or use `stmt.delete()` + inserting the new statement. Adjust to match the codebase's conventions (see `python/bloqade/lanes/rewrite/state.py` for an existing example).
 
 - [ ] **Step 4: Run tests**
 
@@ -2306,10 +2347,10 @@ def test_measure_lower_runs_analysis_end_to_end(get_arch_spec):
         future = move.measure(state, zones=(move.ZoneAddress(0),))
         move.store(state)
 
-    MeasureLower.from_method(main, arch_spec=get_arch_spec()).run(
-        main.callable_region.blocks[0]
-    )
+    from kirin.rewrite import Walk
     block = main.callable_region.blocks[0]
+    rule = MeasureLower.from_method(main, arch_spec=get_arch_spec())
+    Walk(rule).rewrite(block)
     assert any(isinstance(s, move.EndMeasure) for s in block.stmts)
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
 ```
@@ -2421,23 +2462,20 @@ def test_minimal_program_runs_end_to_end():
         ],
     )
     method = load_program(prog)
+    block = method.callable_region.blocks[0]
 
-    # Lower to move dialect.
-    from kirin import ir as kirin_ir
-    source_block = method.callable_region.blocks[0]
-    lowered_block = LowerStackMove().run(source_block)
+    # Lower to the move dialect in place.
+    from kirin.rewrite import Walk
+    Walk(LowerStackMove()).rewrite(block)
 
-    # Patch the method's region to use the lowered block (API-dependent).
-    method.callable_region = kirin_ir.Region(blocks=[lowered_block])
-
-    # Apply measure_lower.
+    # Apply measure_lower (also in place).
     arch_spec = _build_arch_spec()
-    MeasureLower.from_method(method, arch_spec).run(lowered_block)
+    Walk(MeasureLower.from_method(method, arch_spec)).rewrite(block)
 
     # Assert: the method now contains move.EndMeasure, not move.Measure.
     from bloqade.lanes.dialects import move
-    assert any(isinstance(s, move.EndMeasure) for s in lowered_block.stmts)
-    assert not any(isinstance(s, move.Measure) for s in lowered_block.stmts)
+    assert any(isinstance(s, move.EndMeasure) for s in block.stmts)
+    assert not any(isinstance(s, move.Measure) for s in block.stmts)
 ```
 
 - [ ] **Step 2: Run test**
