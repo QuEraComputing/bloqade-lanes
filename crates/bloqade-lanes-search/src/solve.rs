@@ -20,6 +20,7 @@ use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
 use crate::lane_index::LaneIndex;
 use crate::observer::NoOpObserver;
 use crate::scorers::DistanceScorer;
+use crate::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::traits::MoveGenerator;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
@@ -513,6 +514,180 @@ impl MoveSolver {
     }
 }
 
+// ── Multi-candidate solve ──
+
+/// Per-candidate debug info recorded during [`MoveSolver::solve_with_generator`].
+#[derive(Debug, Clone)]
+pub struct CandidateAttempt {
+    /// Index of this candidate in the generator's output.
+    pub candidate_index: usize,
+    /// Outcome status of the solve attempt for this candidate.
+    pub status: SolveStatus,
+    /// Number of nodes expanded for this candidate.
+    pub nodes_expanded: u32,
+}
+
+/// Result of a multi-candidate solve attempt via [`MoveSolver::solve_with_generator`].
+#[derive(Debug)]
+pub struct MultiSolveResult {
+    /// The solve result from the winning candidate (or the last attempted).
+    pub result: SolveResult,
+    /// Index of the candidate that succeeded (`None` if all failed).
+    pub candidate_index: Option<usize>,
+    /// Total nodes expanded across all candidates.
+    pub total_expansions: u32,
+    /// Number of candidates actually attempted (excludes validation failures).
+    pub candidates_tried: usize,
+    /// Per-candidate attempt details for debugging.
+    pub attempts: Vec<CandidateAttempt>,
+}
+
+impl MoveSolver {
+    /// Solve using a target generator: generates candidates, validates each,
+    /// and tries them in order with a shared expansion budget.
+    ///
+    /// Returns on the first successful solve, or the result of the last
+    /// candidate if all fail or the budget runs out.
+    #[allow(clippy::too_many_arguments)]
+    pub fn solve_with_generator(
+        &self,
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        blocked: impl IntoIterator<Item = LocationAddr>,
+        controls: &[u32],
+        targets: &[u32],
+        generator: &dyn TargetGenerator,
+        max_expansions: Option<u32>,
+        opts: &SolveOptions,
+    ) -> Result<MultiSolveResult, ConfigError> {
+        let initial_pairs: Vec<(u32, LocationAddr)> = initial.into_iter().collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+
+        let ctx = TargetContext {
+            placement: &initial_pairs,
+            controls,
+            targets,
+            index: &self.index,
+        };
+
+        let candidates = generator.generate(&ctx);
+
+        if candidates.is_empty() {
+            let root = Config::new(initial_pairs.iter().copied())?;
+            return Ok(MultiSolveResult {
+                result: SolveResult {
+                    status: SolveStatus::Unsolvable,
+                    move_layers: Vec::new(),
+                    goal_config: root,
+                    nodes_expanded: 0,
+                    cost: 0.0,
+                    deadlocks: 0,
+                },
+                candidate_index: None,
+                total_expansions: 0,
+                candidates_tried: 0,
+                attempts: Vec::new(),
+            });
+        }
+
+        let mut total_expansions: u32 = 0;
+        let mut remaining_budget = max_expansions;
+        let mut last_result = None;
+        let mut attempts = Vec::new();
+
+        for (i, candidate) in candidates.iter().enumerate() {
+            if validate_candidate(candidate, controls, targets, &self.index).is_err() {
+                continue;
+            }
+
+            let result = self.solve(
+                initial_pairs.iter().copied(),
+                candidate.iter().copied(),
+                blocked_locs.iter().copied(),
+                remaining_budget,
+                opts,
+            )?;
+
+            total_expansions += result.nodes_expanded;
+            attempts.push(CandidateAttempt {
+                candidate_index: i,
+                status: result.status,
+                nodes_expanded: result.nodes_expanded,
+            });
+
+            if result.status == SolveStatus::Solved {
+                return Ok(MultiSolveResult {
+                    result,
+                    candidate_index: Some(i),
+                    total_expansions,
+                    candidates_tried: attempts.len(),
+                    attempts,
+                });
+            }
+
+            if let Some(budget) = remaining_budget.as_mut() {
+                *budget = budget.saturating_sub(result.nodes_expanded);
+                if *budget == 0 {
+                    return Ok(MultiSolveResult {
+                        result,
+                        candidate_index: None,
+                        total_expansions,
+                        candidates_tried: attempts.len(),
+                        attempts,
+                    });
+                }
+            }
+
+            last_result = Some(result);
+        }
+
+        let result = last_result.unwrap_or_else(|| {
+            let root =
+                Config::new(initial_pairs.iter().copied()).expect("initial was valid on entry");
+            SolveResult {
+                status: SolveStatus::Unsolvable,
+                move_layers: Vec::new(),
+                goal_config: root,
+                nodes_expanded: 0,
+                cost: 0.0,
+                deadlocks: 0,
+            }
+        });
+
+        Ok(MultiSolveResult {
+            result,
+            candidate_index: None,
+            total_expansions,
+            candidates_tried: attempts.len(),
+            attempts,
+        })
+    }
+
+    /// Generate and validate candidate target configurations without solving.
+    ///
+    /// Useful for inspecting what a generator would produce.
+    /// Returns only candidates that pass validation.
+    pub fn generate_candidates(
+        &self,
+        initial: &[(u32, LocationAddr)],
+        controls: &[u32],
+        targets: &[u32],
+        generator: &dyn TargetGenerator,
+    ) -> Vec<Vec<(u32, LocationAddr)>> {
+        let ctx = TargetContext {
+            placement: initial,
+            controls,
+            targets,
+            index: &self.index,
+        };
+
+        generator
+            .generate(&ctx)
+            .into_iter()
+            .filter(|c| validate_candidate(c, controls, targets, &self.index).is_ok())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +903,67 @@ mod tests {
         assert_eq!(ids_result.status, SolveStatus::Solved);
         assert_eq!(cascade_result.status, SolveStatus::Solved);
         assert!(cascade_result.cost <= ids_result.cost);
+    }
+
+    // ── solve_with_generator tests ──
+
+    #[test]
+    fn solve_with_generator_default_solves_cz() {
+        use crate::target_generator::DefaultTargetGenerator;
+
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        // Qubit 0 at word 0 site 0, qubit 1 at word 1 site 0.
+        // CZ pair: word 0 ↔ word 1. DefaultTargetGenerator should produce
+        // a candidate where qubit 0 stays at word 0 (CZ partner of word 1).
+        let result = solver
+            .solve_with_generator(
+                [(0, loc(0, 0)), (1, loc(1, 0))],
+                std::iter::empty(),
+                &[0],
+                &[1],
+                &DefaultTargetGenerator,
+                Some(1000),
+                &default_opts(),
+            )
+            .unwrap();
+
+        assert_eq!(result.result.status, SolveStatus::Solved);
+        assert_eq!(result.candidate_index, Some(0));
+        assert_eq!(result.candidates_tried, 1);
+        assert_eq!(result.attempts.len(), 1);
+    }
+
+    #[test]
+    fn solve_with_generator_empty_candidates() {
+        use crate::target_generator::DefaultTargetGenerator;
+
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        // Qubit 1 missing from placement — DefaultTargetGenerator returns empty.
+        let result = solver
+            .solve_with_generator(
+                [(0, loc(0, 0))],
+                std::iter::empty(),
+                &[0],
+                &[1],
+                &DefaultTargetGenerator,
+                Some(1000),
+                &default_opts(),
+            )
+            .unwrap();
+
+        assert_eq!(result.result.status, SolveStatus::Unsolvable);
+        assert_eq!(result.candidate_index, None);
+        assert_eq!(result.candidates_tried, 0);
+        assert!(result.attempts.is_empty());
+    }
+
+    #[test]
+    fn generate_candidates_returns_valid_only() {
+        use crate::target_generator::DefaultTargetGenerator;
+
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let initial = vec![(0, loc(0, 0)), (1, loc(1, 0))];
+        let candidates = solver.generate_candidates(&initial, &[0], &[1], &DefaultTargetGenerator);
+        assert_eq!(candidates.len(), 1);
     }
 }
