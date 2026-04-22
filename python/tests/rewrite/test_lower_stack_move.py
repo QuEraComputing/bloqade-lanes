@@ -192,3 +192,42 @@ def test_measure_multi_zone_dedups():
     Walk(LowerStackMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     assert len(mm.zones) == 2
+
+
+def test_await_measure_lowers_without_error():
+    # Smoke: await_measure after measure lowers cleanly. AwaitMeasure is
+    # pure synchronisation in stack_move — no target-dialect emission.
+    cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
+    m = stack_move.Measure(locations=(cl.result,))
+    aw = stack_move.AwaitMeasure(future=m.result)
+    block = _build_stack_move_block([cl, m, aw, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)  # should not raise
+
+
+def test_new_array_lowers_to_ilist_new():
+    from kirin.dialects import ilist
+
+    na = stack_move.NewArray(type_tag=0, dim0=4, dim1=0)
+    block = _build_stack_move_block([na, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    assert any(isinstance(s, ilist.New) for s in block.stmts)
+
+
+def test_set_detector_lowers_to_annotate():
+    from bloqade.decoders.dialects import annotate
+
+    na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
+    sd = stack_move.SetDetector(array=na.result)
+    block = _build_stack_move_block([na, sd, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    assert any(isinstance(s, annotate.stmts.SetDetector) for s in block.stmts)
+
+
+def test_set_observable_lowers_to_annotate():
+    from bloqade.decoders.dialects import annotate
+
+    na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
+    so = stack_move.SetObservable(array=na.result)
+    block = _build_stack_move_block([na, so, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    assert any(isinstance(s, annotate.stmts.SetObservable) for s in block.stmts)

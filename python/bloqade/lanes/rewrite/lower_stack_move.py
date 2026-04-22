@@ -375,6 +375,79 @@ class LowerStackMove(RewriteRule):
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
+    def _rewrite_AwaitMeasure(
+        self, stmt: stack_move.AwaitMeasure, to_delete: list[ir.Statement]
+    ) -> None:
+        # AwaitMeasure is pure synchronisation in stack_move (no result).
+        # In the existing move pipeline, measurement values are extracted
+        # via GetFutureResult per (zone, location); for v1 we emit nothing
+        # here, and any downstream GetItem on the future is handled in
+        # _rewrite_GetItem below. Adjust if AwaitMeasure actually needs a
+        # target emission (e.g. a barrier or fence) per the Rust source.
+        to_delete.append(stmt)
+
+    # ── Arrays / annotations ──────────────────────────────────────────
+
+    def _rewrite_NewArray(
+        self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]
+    ) -> None:
+        from kirin.dialects import ilist
+
+        # Empty-list placeholder for both 1-D and 2-D arrays. v1 lowering
+        # does not materialise element values; any downstream GetItem will
+        # operate on this empty ilist and rely on later passes to populate
+        # or resolve elements. Adjust once array-element provenance is
+        # wired through the stack_move layer.
+        new = ilist.New(values=())
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
+    def _rewrite_GetItem(
+        self, stmt: stack_move.GetItem, to_delete: list[ir.Statement]
+    ) -> None:
+        from kirin.dialects.py import indexing
+
+        # Chained single-dim indexing: for each index SSA, emit
+        # py.indexing.GetItem(obj=current, index=idx). The final result
+        # replaces the stack_move.GetItem result for all downstream uses.
+        current = stmt.array
+        for idx_ssa in stmt.indices:
+            gi = indexing.GetItem(obj=current, index=idx_ssa)
+            gi.insert_before(stmt)
+            current = gi.result
+        stmt.result.replace_by(current)
+        to_delete.append(stmt)
+
+    def _rewrite_SetDetector(
+        self, stmt: stack_move.SetDetector, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.decoders.dialects import annotate
+        from kirin.dialects import ilist
+
+        # annotate.SetDetector requires a coordinates ilist; v1 emits an
+        # empty ilist. If coordinate provenance is added to stack_move
+        # later, thread it through here.
+        empty_coords = ilist.New(values=())
+        empty_coords.insert_before(stmt)
+        new = annotate.stmts.SetDetector(
+            measurements=stmt.array,
+            coordinates=empty_coords.result,
+        )
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
+    def _rewrite_SetObservable(
+        self, stmt: stack_move.SetObservable, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.decoders.dialects import annotate
+
+        new = annotate.stmts.SetObservable(measurements=stmt.array)
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
     def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
         from bloqade.lanes.bytecode import ZoneAddress
 
