@@ -19,6 +19,8 @@ This pushes all interesting lowering work into a single **rewrite pass** (`lower
 
 The goal is **prototyping speed and clarity of responsibility**: the decoder becomes a pure syntactic mapping (byte-in → stack_move IR out) that can be verified by inspection; all stack-to-SSA reconstruction is concentrated in one reviewable place.
 
+More broadly, this work is the **first instance of a bytecode decoder framework** for Bloqade Lanes. The v1 implementation ships as one monolithic dialect + one rewrite to get something small and end-to-end running. Once the boundaries are validated in practice, the dialect decomposes into sub-dialects, the decoder decomposes into registered per-sub-dialect handlers, and the rewrite decomposes into composable per-sub-dialect rewrite chunks (see §"Planned follow-up: sub-dialect decomposition" below). The end state is a framework for turning any stack-based bytecode dialect into SSA target-dialect IR by plugging in the right set of sub-dialect handlers.
+
 ## Scope
 
 **In scope (v1):**
@@ -321,9 +323,11 @@ python/bloqade/lanes/
 
 - PyO3 accessors for `Instruction` operands (arity, address values, type tags, dimensions). Blocking follow-up.
 
-## Planned follow-up: sub-dialect decomposition
+## Planned follow-up: sub-dialect decomposition (the bytecode decoder framework)
 
-The initial draft above treats `stack_move` as one monolithic dialect for prototyping speed. Once the mechanics are validated, the natural next step is to **group the instructions into sub-dialects** along the boundaries they already have, and then **decompose `lower_stack_move` into composable per-sub-dialect rewrite chunks**. A provisional grouping:
+The initial draft above treats `stack_move` as one monolithic dialect for prototyping speed. Once the mechanics are validated, the natural next step is to **group the instructions into sub-dialects** along the boundaries they already have, and then **decompose the decoder and `lower_stack_move` into composable per-sub-dialect chunks**. This is the point at which the implementation stops being a one-off and becomes the **bytecode decoder framework** the v1 prototype is paving the way for.
+
+A provisional grouping:
 
 | Sub-dialect | Instructions |
 |---|---|
@@ -336,14 +340,14 @@ The initial draft above treats `stack_move` as one monolithic dialect for protot
 | `stack_move.annotate` | `SetDetector`, `SetObservable` |
 | `stack_move.control` | `Return`, `Halt` |
 
-Decomposition goals:
+Framework goals:
 
 - **Composable decoding.** Each sub-dialect owns a decoding handler for its opcodes; the top-level `BytecodeDecoder` is a dispatch that consults registered handlers. Adding a new instruction family (or swapping one out for a different target dialect) is a localized change.
-- **Composable rewrites.** `lower_stack_move` decomposes into a chain of per-sub-dialect rewrite passes that each know how to consume their own statements and emit target-dialect IR. The virtual-SSA-stack state is the shared context threaded through the chain.
-- **Independent testability.** Each sub-dialect + its rewrite chunk can be unit-tested in isolation.
-- **Reuse beyond bytecode.** Sub-dialects like `stack_move.constants` or `stack_move.stack` could be reused by other stack-oriented frontends if they arise.
+- **Composable rewrites.** `lower_stack_move` decomposes into a chain of per-sub-dialect rewrite chunks, each of which knows how to consume its own statements and emit into a specific target dialect. The virtual-SSA-stack state is the shared context threaded through the chain.
+- **Independent testability.** Each sub-dialect + its handler + its rewrite chunk is a unit that can be tested in isolation.
+- **Reuse beyond bytecode.** Sub-dialects like `stack_move.stack` or `stack_move.constants` are shape-agnostic; other stack-oriented frontends that share their abstractions can reuse them directly.
 
-This is explicitly a **post-initial-draft** plan. The v1 implementation lands as one dialect and one rewrite to keep the prototype small and reviewable; the decomposition lands as a follow-up once the boundaries have been validated in practice.
+This is explicitly a **post-initial-draft** milestone. The v1 implementation lands as one dialect + one rewrite to keep the prototype small and reviewable; the decomposition into the bytecode decoder framework lands as a follow-up once the boundaries have been validated in practice.
 
 ## Known limitations
 
