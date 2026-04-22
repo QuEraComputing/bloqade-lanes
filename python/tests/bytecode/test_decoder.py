@@ -1,5 +1,13 @@
-from bloqade.lanes.bytecode import Instruction, Program
+from bloqade.lanes.bytecode import (
+    Instruction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    Program,
+    ZoneAddress,
+)
 from bloqade.lanes.bytecode.lowering import load_program
+from bloqade.lanes.dialects import stack_move
 
 
 def test_empty_program_returns_method_with_empty_body():
@@ -9,3 +17,40 @@ def test_empty_program_returns_method_with_empty_body():
     # Body should have one statement (stack_move.Return), no other statements.
     block = method.callable_region.blocks[0]
     assert len(block.stmts) == 1
+
+
+def _decode(instructions):
+    prog = Program(version=(1, 0), instructions=instructions + [Instruction.return_()])
+    return load_program(prog).callable_region.blocks[0]
+
+
+def test_decode_const_float():
+    block = _decode([Instruction.const_float(2.5)])
+    assert any(
+        isinstance(s, stack_move.ConstFloat) and s.value == 2.5 for s in block.stmts
+    )
+
+
+def test_decode_const_int():
+    block = _decode([Instruction.const_int(42)])
+    assert any(
+        isinstance(s, stack_move.ConstInt) and s.value == 42 for s in block.stmts
+    )
+
+
+def test_decode_const_loc():
+    block = _decode([Instruction.const_loc(0, 0, 0)])
+    stmt = next(s for s in block.stmts if isinstance(s, stack_move.ConstLoc))
+    assert stmt.value == LocationAddress(0, 0, 0)
+
+
+def test_decode_const_lane():
+    block = _decode([Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0)])
+    stmt = next(s for s in block.stmts if isinstance(s, stack_move.ConstLane))
+    assert stmt.value == LaneAddress(MoveType.SITE, 0, 0, 0, 0)
+
+
+def test_decode_const_zone():
+    block = _decode([Instruction.const_zone(3)])
+    stmt = next(s for s in block.stmts if isinstance(s, stack_move.ConstZone))
+    assert stmt.value == ZoneAddress(3)

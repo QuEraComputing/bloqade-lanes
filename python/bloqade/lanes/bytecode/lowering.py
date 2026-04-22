@@ -76,6 +76,31 @@ class BytecodeDecoder:
     def _visit_return_(self, idx: int, instr: "Instruction") -> None:
         self.block.stmts.append(stack_move.Return())
 
+    def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
+        stmt = stack_move.ConstFloat(value=instr.float_value())
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_const_int(self, idx: int, instr: "Instruction") -> None:
+        stmt = stack_move.ConstInt(value=instr.int_value())
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_const_loc(self, idx: int, instr: "Instruction") -> None:
+        stmt = stack_move.ConstLoc(value=instr.location_address())
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_const_lane(self, idx: int, instr: "Instruction") -> None:
+        stmt = stack_move.ConstLane(value=instr.lane_address())
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
+    def _visit_const_zone(self, idx: int, instr: "Instruction") -> None:
+        stmt = stack_move.ConstZone(value=instr.zone_address())
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
+
     def _finalize(self, kernel_name: str) -> ir.Method:
         region = ir.Region(blocks=self.block)
         function = func.Function(
