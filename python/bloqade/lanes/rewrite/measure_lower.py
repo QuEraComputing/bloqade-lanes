@@ -30,6 +30,30 @@ class MeasureLower(RewriteRule):
     zone_sets: Mapping[move.Measure, frozenset[int]]
     final_measurement_count: int
 
+    @classmethod
+    def from_method(cls, method: ir.Method, arch_spec) -> "MeasureLower":
+        """Build a MeasureLower by running AtomAnalysis on the given method.
+
+        Populates ``zone_sets`` and ``final_measurement_count`` from
+        ``AtomInterpreter.measure_sites`` / ``.final_measurement_count``.
+        """
+        from bloqade.lanes.analysis.atom import AtomInterpreter
+
+        interp = AtomInterpreter(method.dialects, arch_spec=arch_spec)
+        interp.run(method)
+        # pyright flags move.Measure as unhashable when used as a dict-literal
+        # key (ir.Statement.__hash__ = id(self) at runtime, so this is a false
+        # positive). Build via assignment to sidestep the analyzer.
+        zone_sets: dict[move.Measure, frozenset[int]] = {}
+        for site in interp.measure_sites:
+            stmt = site["stmt"]
+            zone_ids = frozenset(z.zone_id for z in site["zones"])
+            zone_sets[stmt] = zone_ids
+        return cls(
+            zone_sets=zone_sets,
+            final_measurement_count=interp.final_measurement_count,
+        )
+
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, move.Measure):
             return RewriteResult()
