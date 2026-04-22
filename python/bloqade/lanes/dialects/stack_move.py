@@ -4,7 +4,8 @@ from kirin import ir, lowering, types
 from kirin.decl import info, statement
 
 from bloqade.lanes.bytecode import LaneAddress, LocationAddress, ZoneAddress
-from bloqade.lanes.types import ArrayType, MeasurementFutureType  # noqa: F401
+from bloqade.lanes.types import ArrayType  # noqa: F401
+from bloqade.lanes.types import MeasurementFutureType
 
 dialect = ir.Dialect(name="lanes.stack_move")
 
@@ -144,3 +145,46 @@ class GlobalRz(ir.Statement):
 class CZ(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
     zone: ir.SSAValue = info.argument(type=ZoneAddressType)
+
+
+# ── Measurement ────────────────────────────────────────────────────────
+
+
+@statement(dialect=dialect)
+class Measure(ir.Statement):
+    """Matches bytecode `measure(arity)` — takes location SSA values.
+    Zone grouping happens during lower_stack_move."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
+    result: ir.ResultValue = info.result(MeasurementFutureType)
+
+
+@statement(dialect=dialect)
+class AwaitMeasure(ir.Statement):
+    """Synchronisation — blocks until the most recent measurement completes.
+
+    The bytecode docs state 'block until the most recent measurement
+    completes' with no documented stack effect. We treat this as a pure
+    synchronisation op: takes a MeasurementFuture, produces no result.
+    Extracting per-location measurement values is done via subsequent
+    GetItem calls on the future. Confirm against the Rust source before
+    implementation — adjust if the actual stack effect differs."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    future: ir.SSAValue = info.argument(type=MeasurementFutureType)
+
+
+# ── Control flow ───────────────────────────────────────────────────────
+
+
+@statement(dialect=dialect)
+class Return(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
+
+
+@statement(dialect=dialect)
+class Halt(ir.Statement):
+    """Lowered to func.Return(None) alongside Return."""
+
+    traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
