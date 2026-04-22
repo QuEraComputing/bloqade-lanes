@@ -260,6 +260,16 @@ class TestInstructionAccessors:
         with pytest.raises(RuntimeError):
             Instruction.cz().arity()
 
+    def test_float_value(self):
+        assert Instruction.const_float(3.14).float_value() == 3.14
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).float_value()
+
+    def test_int_value(self):
+        assert Instruction.const_int(42).int_value() == 42
+        with pytest.raises(RuntimeError):
+            Instruction.const_float(0.0).int_value()
+
 
 class TestInstructionAddressValidation:
     """Instruction address constants validate 16-bit range."""

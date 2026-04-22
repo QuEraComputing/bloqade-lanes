@@ -306,6 +306,24 @@ impl PyInstruction {
         }
     }
 
+    fn float_value(&self) -> PyResult<f64> {
+        match &self.inner {
+            rs::Instruction::Cpu(rs::CpuInstruction::ConstFloat(f)) => Ok(*f),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "float_value() is only valid on const_float",
+            )),
+        }
+    }
+
+    fn int_value(&self) -> PyResult<i64> {
+        match &self.inner {
+            rs::Instruction::Cpu(rs::CpuInstruction::ConstInt(n)) => Ok(*n),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "int_value() is only valid on const_int",
+            )),
+        }
+    }
+
     fn arity(&self) -> PyResult<u32> {
         match &self.inner {
             rs::Instruction::AtomArrangement(

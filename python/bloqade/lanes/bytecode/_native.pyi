@@ -1561,6 +1561,22 @@ class Instruction:
         """
         ...
 
+    def float_value(self) -> float:
+        """Value attribute of a ``const_float`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def int_value(self) -> int:
+        """Value attribute of a ``const_int`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
