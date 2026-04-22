@@ -1388,7 +1388,6 @@ RewriteLoadStore.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
@@ -1401,11 +1400,12 @@ class LowerStackMove(RewriteRule):
     """Lower a stack_move block into a multi-dialect block in place.
 
     Mutable state on the rule instance, carried across the walk:
-    - ssa_to_attr: stack_move SSA → underlying attribute value, for
+    - ssa_to_attr: stack_move SSA → Kirin attribute value (ir.Data) for
       operands that need to be lifted into target-dialect attributes
-      (addresses, rotation angles). SSA-to-attribute can't be expressed
-      through SSA rewiring because attributes aren't SSA values, so we
-      carry an explicit mapping.
+      (addresses, rotation angles). Every Kirin attribute obeys the
+      ir.Data interface, so the map's value type is ir.Data directly.
+      SSA-to-attribute can't be expressed through SSA rewiring because
+      attributes aren't SSA values, so we carry an explicit mapping.
     - state: the current StateType SSA value in the target IR.
 
     For SSA-valued outputs (arrays, futures, detectors, observables,
@@ -1415,7 +1415,7 @@ class LowerStackMove(RewriteRule):
     `next_use.replace_by(current_use)` pattern.
     """
 
-    ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
+    ssa_to_attr: dict[ir.SSAValue, ir.Data] = field(default_factory=dict)
     state: ir.SSAValue | None = None
 
     def rewrite_Block(self, block: ir.Block) -> RewriteResult:
@@ -1715,10 +1715,11 @@ Expected: FAIL.
 Add to `LowerStackMove`:
 
 ```python
-    def _lift_attrs(self, ssa_values: tuple[ir.SSAValue, ...]) -> tuple:
-        """Resolve each stack_move SSA value back to its original attribute
-        (traced through Dup / Swap). Raises if a value isn't attribute-backed."""
-        out = []
+    def _lift_attrs(self, ssa_values: tuple[ir.SSAValue, ...]) -> tuple[ir.Data, ...]:
+        """Resolve each stack_move SSA operand to its backing ir.Data
+        attribute. Raises if a value isn't attribute-backed (i.e. didn't
+        come from a stack_move.Const*)."""
+        out: list[ir.Data] = []
         for v in ssa_values:
             if v not in self.ssa_to_attr:
                 raise RuntimeError(
