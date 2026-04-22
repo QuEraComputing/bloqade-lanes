@@ -270,6 +270,24 @@ class TestInstructionAccessors:
         with pytest.raises(RuntimeError):
             Instruction.const_float(0.0).int_value()
 
+    def test_location_address(self):
+        addr = Instruction.const_loc(0, 1, 2).location_address()
+        assert addr == LocationAddress(0, 1, 2)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).location_address()
+
+    def test_lane_address(self):
+        addr = Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0).lane_address()
+        assert addr == LaneAddress(MoveType.SITE, 0, 0, 0, 0)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).lane_address()
+
+    def test_zone_address(self):
+        addr = Instruction.const_zone(3).zone_address()
+        assert addr == ZoneAddress(3)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).zone_address()
+
 
 class TestInstructionAddressValidation:
     """Instruction address constants validate 16-bit range."""

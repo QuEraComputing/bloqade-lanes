@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 
-use crate::arch_python::{PyDirection, PyMoveType};
+use crate::arch_python::{PyDirection, PyLaneAddr, PyLocationAddr, PyMoveType, PyZoneAddr};
 use crate::validation::validate_field;
 
 #[pyclass(
@@ -320,6 +320,42 @@ impl PyInstruction {
             rs::Instruction::Cpu(rs::CpuInstruction::ConstInt(n)) => Ok(*n),
             _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "int_value() is only valid on const_int",
+            )),
+        }
+    }
+
+    fn location_address(&self) -> PyResult<PyLocationAddr> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(bits)) => {
+                let addr = rs_addr::LocationAddr::decode(*bits);
+                Ok(PyLocationAddr { inner: addr })
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "location_address() is only valid on const_loc",
+            )),
+        }
+    }
+
+    fn lane_address(&self) -> PyResult<PyLaneAddr> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLane(d0, d1)) => {
+                let addr = rs_addr::LaneAddr::decode(*d0, *d1);
+                Ok(PyLaneAddr { inner: addr })
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "lane_address() is only valid on const_lane",
+            )),
+        }
+    }
+
+    fn zone_address(&self) -> PyResult<PyZoneAddr> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(bits)) => {
+                let addr = rs_addr::ZoneAddr::decode(*bits);
+                Ok(PyZoneAddr { inner: addr })
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "zone_address() is only valid on const_zone",
             )),
         }
     }

@@ -1577,6 +1577,30 @@ class Instruction:
         """
         ...
 
+    def location_address(self) -> LocationAddress:
+        """Decoded address of a ``const_loc`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def lane_address(self) -> LaneAddress:
+        """Decoded address of a ``const_lane`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def zone_address(self) -> ZoneAddress:
+        """Decoded address of a ``const_zone`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
