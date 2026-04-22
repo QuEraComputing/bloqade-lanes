@@ -184,3 +184,54 @@ Not everything is mechanical. A few points that deserve care:
 ## Summary
 
 Turning a stack-based bytecode into SSA IR is a small idea: *simulate the operand stack with SSA value references at lowering time.* The scaffolding around it — visitor dispatch, frame management, error plumbing — is whatever the host lowering framework provides. With a virtual stack on the side and one visitor per opcode, the decoder is mechanical, testable opcode-by-opcode, and easy to extend. The `stack_move` dialect decoder in Bloqade Lanes is an instance of this pattern.
+
+## Related work and future direction
+
+Stack-machine-to-SSA is a well-studied problem. The one-line framing the literature uses: stack machines don't lose dataflow, they **encode it implicitly in execution order**. Recovering the dataflow for SSA output is a **dataflow analysis in itself** — abstract interpretation over an abstract state that includes the operand stack in addition to local variables.
+
+### The general technique (for branching bytecode)
+
+Given a bytecode program with control flow, the standard approach is:
+
+1. **Define an abstract state** `(stack: list[AbstractValue], locals: map[int, AbstractValue])`.
+2. **Define transfer functions** per opcode: each instruction's effect on the abstract state.
+3. **Run a dataflow fixpoint** over the CFG. At each CFG join point, require **equal stack heights** across predecessors and compute the **pointwise ⊔ (join)** of abstract stack slots.
+4. **Materialize SSA** from the stable fixpoint: each stack slot at each join becomes a phi node (or block argument, depending on your SSA flavor).
+
+For **straight-line bytecode** (the current Bloqade Lanes case), step 3 collapses to a single forward pass with no joins, and step 4 is implicit — the visitor technique described in this doc is the degenerate case.
+
+### Key references
+
+**Directly on stack-machine → SSA via abstract interpretation:**
+
+- Xavier Leroy, **"Java bytecode verification: algorithms and formalizations"**, *Journal of Automated Reasoning* 30(3–4):235–269, 2003. The canonical exposition: the JVM verifier is literally abstract interpretation over (stack, locals), and §3 formalizes the lattice and join rules. [[PDF]](https://xavierleroy.org/publi/bytecode-verification-JAR.pdf) [[DOI]](https://doi.org/10.1023/A:1025055424017)
+- Xavier Leroy, **"Bytecode verification on Java smart cards"**, *Software: Practice and Experience* 32(4):319–340, 2002. Same core ideas in a resource-constrained setting — particularly relevant for restricted target hardware. [[PDF]](https://xavierleroy.org/publi/oncard-verifier-spe.pdf) [[DOI]](https://doi.org/10.1002/spe.438)
+- Raja Vallée-Rai, Phong Co, Etienne Gagnon, Laurie Hendren, Patrick Lam, Vijay Sundaresan, **"Soot — a Java bytecode optimization framework"**, *CASCON* 1999. Production-scale framework for lowering JVM bytecode through multiple IRs (Baf → Jimple → Shimple/SSA). Good case study in making the abstract interpretation engineerable. [[PDF]](https://patricklam.ca/papers/99.cascon.soot.pdf) [[ACM]](https://dl.acm.org/doi/10.5555/781995.782008)
+- Etienne Gagnon, Laurie Hendren, Guillaume Marceau, **"Efficient inference of static types for Java bytecode"**, *SAS* 2000. The type-inference side of the Soot approach — the specific dataflow analysis that lifts stack/local slots to static types. [[Springer]](https://link.springer.com/chapter/10.1007/978-3-540-45099-3_11)
+
+**SSA construction (what you do once you have the abstract state):**
+
+- Ron Cytron, Jeanne Ferrante, Barry K. Rosen, Mark N. Wegman, F. Kenneth Zadeck, **"Efficiently computing static single assignment form and the control dependence graph"**, *ACM TOPLAS* 13(4):451–490, 1991. The classic dominance-frontier construction. [[ACM]](https://dl.acm.org/doi/10.1145/115372.115320)
+- Preston Briggs, Keith D. Cooper, Timothy J. Harvey, L. Taylor Simpson, **"Practical improvements to the construction and destruction of static single assignment form"**, *Software: Practice and Experience* 28(8):859–881, 1998. Often what modern compilers actually implement — simpler than Cytron et al. and often faster. [[PDF]](https://web.eecs.umich.edu/~mahlke/courses/583w23/reading/briggs_spe_98.pdf) [[Wiley]](https://onlinelibrary.wiley.com/doi/abs/10.1002/\(SICI\)1097-024X\(19980710\)28:8%3C859::AID-SPE188%3E3.0.CO;2-8)
+
+**Foundations:**
+
+- Patrick Cousot, Radhia Cousot, **"Abstract interpretation: a unified lattice model for static analysis of programs by construction or approximation of fixpoints"**, *POPL* 1977. Foundational. Worth re-reading specifically for the "abstract domain = concrete semantic state" framing — a stack machine's state naturally includes the stack. [[PDF]](https://www.di.ens.fr/~cousot/publications.www/CousotCousot-POPL-77-ACM-p238--252-1977.pdf) [[ACM]](https://dl.acm.org/doi/10.1145/512950.512973)
+- Flemming Nielson, Hanne Riis Nielson, Chris Hankin, **_Principles of Program Analysis_**, Springer, 1999. Textbook; the dataflow-analysis chapters walk through abstract interpretation over stack machines as a worked example. Easier entry than the papers cold. [[Springer]](https://link.springer.com/book/10.1007/978-3-662-03811-6)
+- Thomas Reps, Susan Horwitz, Mooly Sagiv, **"Precise interprocedural dataflow analysis via graph reachability"**, *POPL* 1995. IFDS framework. Not immediately needed; relevant if interprocedural analysis over bytecode is ever required. [[PDF]](https://pages.cs.wisc.edu/~fischer/cs701.f14/popl95.pdf) [[ACM]](https://dl.acm.org/doi/10.1145/199448.199462)
+
+**Modern, production reference:**
+
+- Andreas Haas et al., **"Bringing the Web up to Speed with WebAssembly"**, *PLDI* 2017. Wasm design document; Section 2.1 discusses why they mandated structured control flow, which dodges the unstructured-CFG complexity in the bytecode-to-SSA pipeline. [[PDF]](https://people.mpi-sws.org/~rossberg/papers/Haas,%20Rossberg,%20Schuff,%20Titzer,%20Gohman,%20Wagner,%20Zakai,%20Bastien,%20Holman%20-%20Bringing%20the%20Web%20up%20to%20Speed%20with%20WebAssembly.pdf) [[ACM]](https://dl.acm.org/doi/10.1145/3062341.3062363)
+- **Cranelift** — production Rust compiler backend that lowers Wasm (stack machine) to CLIF (SSA IR with block arguments instead of phi nodes). Source is readable and idiomatic; a useful real-world reference for a Rust-adjacent codebase. [[cranelift.dev]](https://cranelift.dev/) [[source]](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift)
+
+### Recommendation for when branching is added to Bloqade Lanes bytecode
+
+**Strongly prefer structured control flow** (`if` / `loop` / `call` blocks with statically known stack deltas, à la WebAssembly) over unstructured `goto`. Structured control flow makes the stack shape at every boundary statically determinable without a full CFG fixpoint — the decoder remains a forward pass plus local merges at block exits, not a full abstract-interpretation engine. This is exactly why Wasm mandated it, and the Haas et al. paper above explains the reasoning. Unstructured branches force the full dataflow-fixpoint machinery from Leroy 2003 and Soot.
+
+Decisions we will want to make when we pick this up:
+
+1. **Structured vs unstructured branching in the bytecode format.** Take the Wasm position if possible.
+2. **Abstract stack lattice** — what does "same stack shape" mean? Per-slot types (like JVM), or full symbolic equality, or something in between?
+3. **SSA flavor of the output IR** — phi nodes (Cytron 1991) vs block arguments (Cranelift, MLIR). Bloqade Lanes' host framework (Kirin) is block-argument-based, so that's probably the straightforward choice.
+4. **Error taxonomy** — unreachable-code handling, unbalanced-stack at join, type-widened joins, etc.
