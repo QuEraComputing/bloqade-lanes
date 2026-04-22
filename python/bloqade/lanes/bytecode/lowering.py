@@ -73,7 +73,7 @@ class BytecodeDecoder:
             raise LoweringError(idx, name, tuple(self.stack), "unknown opcode")
         handler(idx, instr)
 
-    def _visit_return_(self, idx: int, instr: "Instruction") -> None:
+    def _visit_return(self, idx: int, instr: "Instruction") -> None:
         self.block.stmts.append(stack_move.Return())
 
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
@@ -153,7 +153,7 @@ class BytecodeDecoder:
         locs = self._pop_n(idx, instr, instr.arity())
         self.block.stmts.append(stack_move.Fill(locations=tuple(locs)))
 
-    def _visit_move_(self, idx: int, instr: "Instruction") -> None:
+    def _visit_move(self, idx: int, instr: "Instruction") -> None:
         lanes = self._pop_n(idx, instr, instr.arity())
         self.block.stmts.append(stack_move.Move(lanes=tuple(lanes)))
 
