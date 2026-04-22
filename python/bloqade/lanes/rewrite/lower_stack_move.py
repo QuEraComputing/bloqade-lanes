@@ -343,6 +343,38 @@ class LowerStackMove(RewriteRule):
         self.state = new.result
         to_delete.append(stmt)
 
+    def _rewrite_Measure(
+        self, stmt: stack_move.Measure, to_delete: list[ir.Statement]
+    ) -> None:
+        from bloqade.lanes.bytecode import LocationAddress, ZoneAddress
+
+        assert self.state is not None
+        # Lift each location SSA operand back to its bytecode-native
+        # LocationAddress attribute value. Deduplicate by zone_id,
+        # preserving first-seen order.
+        locs = self._lift_attrs(stmt.locations, LocationAddress)
+        seen_zone_ids: list[int] = []
+        for loc in locs:
+            if loc.zone_id not in seen_zone_ids:
+                seen_zone_ids.append(loc.zone_id)
+        # Synthesise a move.ConstZone per distinct zone to provide SSA
+        # operands for the new multi-zone move.Measure. Same cross-module
+        # type mismatch as the CZ handler — move.ConstZone is typed
+        # against the encoding wrapper but accepts the Rust-native
+        # ZoneAddress at runtime.
+        zone_ssa: list[ir.SSAValue] = []
+        for zid in seen_zone_ids:
+            cz = move.ConstZone(value=cast(EncodingZoneAddress, ZoneAddress(zid)))
+            cz.insert_before(stmt)
+            zone_ssa.append(cz.result)
+        new = move.Measure(self.state, zones=tuple(zone_ssa))
+        new.insert_before(stmt)
+        self.state = new.result
+        # Redirect MeasurementFuture consumers from the stack_move result
+        # to the new move.Measure result.
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
     def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
         from bloqade.lanes.bytecode import ZoneAddress
 

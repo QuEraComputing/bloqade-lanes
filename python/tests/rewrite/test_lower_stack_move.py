@@ -169,3 +169,26 @@ def test_cz_lowers_with_attribute_zone():
     Walk(LowerStackMove()).rewrite(block)
     mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
     assert mcz.zone_address == ZoneAddress(0)
+
+
+def test_measure_single_zone_emits_single_zone_measure():
+    cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
+    cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    m = stack_move.Measure(locations=(cl0.result, cl1.result))
+    block = _build_stack_move_block([cl0, cl1, m, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mm = next(s for s in block.stmts if isinstance(s, move.Measure))
+    # One zone (both locs are in zone 0).
+    assert len(mm.zones) == 1
+
+
+def test_measure_multi_zone_dedups():
+    # Two locations in zone 0, one in zone 1. Expect 2 zone SSA values.
+    cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
+    cl1 = stack_move.ConstLoc(value=LocationAddress(1, 0, 0))
+    cl2 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    m = stack_move.Measure(locations=(cl0.result, cl1.result, cl2.result))
+    block = _build_stack_move_block([cl0, cl1, cl2, m, stack_move.Return()])
+    Walk(LowerStackMove()).rewrite(block)
+    mm = next(s for s in block.stmts if isinstance(s, move.Measure))
+    assert len(mm.zones) == 2

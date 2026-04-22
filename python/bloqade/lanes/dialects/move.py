@@ -33,6 +33,16 @@ class EmitsState(ir.Trait):
 
 
 @statement(dialect=dialect)
+class ConstZone(ir.Statement):
+    """Constant ZoneAddress producing an SSA value. Emitted by
+    lower_stack_move to feed the multi-zone move.Measure statement."""
+
+    traits = frozenset({lowering.FromPythonCall()})
+    value: ZoneAddress = info.attribute()
+    result: ir.ResultValue = info.result(ZoneAddressType)
+
+
+@statement(dialect=dialect)
 class Load(ir.Statement):
     """Load a previously stored atom state."""
 
