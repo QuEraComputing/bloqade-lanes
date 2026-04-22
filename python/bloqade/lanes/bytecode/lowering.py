@@ -157,6 +157,32 @@ class BytecodeDecoder:
         lanes = self._pop_n(idx, instr, instr.arity())
         self.block.stmts.append(stack_move.Move(lanes=tuple(lanes)))
 
+    def _visit_local_r(self, idx: int, instr: "Instruction") -> None:
+        phi = self._pop_or_raise(idx, instr)
+        theta = self._pop_or_raise(idx, instr)
+        locs = self._pop_n(idx, instr, instr.arity())
+        self.block.stmts.append(
+            stack_move.LocalR(phi=phi, theta=theta, locations=tuple(locs))
+        )
+
+    def _visit_local_rz(self, idx: int, instr: "Instruction") -> None:
+        theta = self._pop_or_raise(idx, instr)
+        locs = self._pop_n(idx, instr, instr.arity())
+        self.block.stmts.append(stack_move.LocalRz(theta=theta, locations=tuple(locs)))
+
+    def _visit_global_r(self, idx: int, instr: "Instruction") -> None:
+        phi = self._pop_or_raise(idx, instr)
+        theta = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.GlobalR(phi=phi, theta=theta))
+
+    def _visit_global_rz(self, idx: int, instr: "Instruction") -> None:
+        theta = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.GlobalRz(theta=theta))
+
+    def _visit_cz(self, idx: int, instr: "Instruction") -> None:
+        zone = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.CZ(zone=zone))
+
     def _finalize(self, kernel_name: str) -> ir.Method:
         region = ir.Region(blocks=self.block)
         function = func.Function(

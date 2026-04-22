@@ -115,3 +115,35 @@ def test_decode_move_consumes_arity_lanes():
     mv = next(s for s in block.stmts if isinstance(s, stack_move.Move))
     lane = next(s for s in block.stmts if isinstance(s, stack_move.ConstLane))
     assert mv.lanes == (lane.result,)
+
+
+def test_decode_local_r():
+    block = _decode(
+        [
+            Instruction.const_loc(0, 0, 0),  # loc
+            Instruction.const_float(0.1),  # theta
+            Instruction.const_float(0.2),  # phi
+            Instruction.local_r(1),
+        ]
+    )
+    r = next(s for s in block.stmts if isinstance(s, stack_move.LocalR))
+    floats = [s for s in block.stmts if isinstance(s, stack_move.ConstFloat)]
+    locs = [s for s in block.stmts if isinstance(s, stack_move.ConstLoc)]
+    # bytecode pops phi first, then theta, then locations (per .pyi docstring)
+    assert r.phi is floats[1].result
+    assert r.theta is floats[0].result
+    assert r.locations == (locs[0].result,)
+
+
+def test_decode_global_rz():
+    block = _decode([Instruction.const_float(0.5), Instruction.global_rz()])
+    rz = next(s for s in block.stmts if isinstance(s, stack_move.GlobalRz))
+    cf = next(s for s in block.stmts if isinstance(s, stack_move.ConstFloat))
+    assert rz.theta is cf.result
+
+
+def test_decode_cz():
+    block = _decode([Instruction.const_zone(0), Instruction.cz()])
+    cz = next(s for s in block.stmts if isinstance(s, stack_move.CZ))
+    cz_zone = next(s for s in block.stmts if isinstance(s, stack_move.ConstZone))
+    assert cz.zone is cz_zone.result
