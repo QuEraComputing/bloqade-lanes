@@ -469,7 +469,14 @@ git commit -m "feat(stack_move): add Measure/AwaitMeasure/Return/Halt"
 
 - [ ] **Step 1: Write implementation**
 
-Append to `python/bloqade/lanes/dialects/stack_move.py`:
+Append to `python/bloqade/lanes/dialects/stack_move.py`. Import the annotation result types from `bloqade.decoders.dialects.annotate.types` — `SetDetector` produces a `Detector` and `SetObservable` produces an `Observable`, matching the target `annotate` dialect's function signatures:
+
+```python
+# Add near the top of the file, with the other imports:
+from bloqade.decoders.dialects.annotate.types import DetectorType, ObservableType
+```
+
+Then append the statement definitions:
 
 ```python
 # ── Arrays ─────────────────────────────────────────────────────────────
@@ -495,14 +502,20 @@ class GetItem(ir.Statement):
 
 @statement(dialect=dialect)
 class SetDetector(ir.Statement):
+    """Build a detector record from the top-of-stack array. Matches
+    annotate.SetDetector's signature — produces a Detector."""
     traits = frozenset({lowering.FromPythonCall()})
     array: ir.SSAValue = info.argument(type=ArrayType)
+    result: ir.ResultValue = info.result(DetectorType)
 
 
 @statement(dialect=dialect)
 class SetObservable(ir.Statement):
+    """Build an observable record from the top-of-stack array. Matches
+    annotate.SetObservable's signature — produces an Observable."""
     traits = frozenset({lowering.FromPythonCall()})
     array: ir.SSAValue = info.argument(type=ArrayType)
+    result: ir.ResultValue = info.result(ObservableType)
 ```
 
 - [ ] **Step 2: Verify module imports cleanly**
@@ -1189,11 +1202,15 @@ Add to `BytecodeDecoder`:
 
     def _visit_set_detector(self, idx: int, instr: "Instruction") -> None:
         array = self._pop_or_raise(idx, instr)
-        self.block.stmts.append(stack_move.SetDetector(array=array))
+        stmt = stack_move.SetDetector(array=array)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
 
     def _visit_set_observable(self, idx: int, instr: "Instruction") -> None:
         array = self._pop_or_raise(idx, instr)
-        self.block.stmts.append(stack_move.SetObservable(array=array))
+        stmt = stack_move.SetObservable(array=array)
+        self.block.stmts.append(stmt)
+        self.stack.append(stmt.result)
 
     def _visit_halt(self, idx: int, instr: "Instruction") -> None:
         self.block.stmts.append(stack_move.Halt())
@@ -1990,14 +2007,18 @@ Add to `LowerStackMove`. Exact target-dialect construction arguments must match 
         # doesn't carry visualisation metadata.
         empty_coords = ilist.New(values=())
         self.target_block.stmts.append(empty_coords)
-        self.target_block.stmts.append(
-            annotate.SetDetector(measurements=measurements, coordinates=empty_coords.result)
+        new = annotate.SetDetector(
+            measurements=measurements, coordinates=empty_coords.result,
         )
+        self.target_block.stmts.append(new)
+        self.ssa_to_target[stmt.result] = new.result
 
     def _rewrite_SetObservable(self, stmt: stack_move.SetObservable) -> None:
         from bloqade.decoders.dialects import annotate
         measurements = self.ssa_to_target[stmt.array]
-        self.target_block.stmts.append(annotate.SetObservable(measurements=measurements))
+        new = annotate.SetObservable(measurements=measurements)
+        self.target_block.stmts.append(new)
+        self.ssa_to_target[stmt.result] = new.result
 ```
 
 Note: the `ilist.New` and indexing statements' exact constructor signatures need to be verified against the Kirin source (see `python/bloqade/lanes/dialects/move.py` neighbour imports and Kirin's `kirin.dialects.ilist` and `kirin.dialects.py.indexing`). Adjust during implementation.
