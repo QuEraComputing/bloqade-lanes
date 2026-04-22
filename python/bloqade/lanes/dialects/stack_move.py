@@ -86,3 +86,24 @@ class Swap(ir.Statement):
     in_bot: ir.SSAValue = info.argument()
     out_top: ir.ResultValue = info.result()
     out_bot: ir.ResultValue = info.result()
+
+
+# ── Atom operations ────────────────────────────────────────────────────
+
+
+@statement(dialect=dialect)
+class InitialFill(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
+
+
+@statement(dialect=dialect)
+class Fill(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
+
+
+@statement(dialect=dialect)
+class Move(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall()})
+    lanes: tuple[ir.SSAValue, ...] = info.argument(type=LaneAddressType)
