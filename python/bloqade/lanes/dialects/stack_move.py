@@ -1,5 +1,7 @@
 """stack_move dialect — 1:1 SSA image of the bytecode."""
 
+import typing
+
 from bloqade.decoders.dialects.annotate.types import DetectorType, ObservableType
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
@@ -23,6 +25,30 @@ ZoneAddressType = types.PyClass(ZoneAddress)
 T = types.TypeVar("T")
 TopType = types.TypeVar("TopType")
 BottomType = types.TypeVar("BottomType")
+
+# Type variables for the parameterised ArrayType — used by NewArray (result
+# type) and GetItem (array element type flows through to result).
+ElemType = types.TypeVar("ElemType")
+Dim0Type = types.TypeVar("Dim0Type")
+Dim1Type = types.TypeVar("Dim1Type")
+
+
+# Mapping from bytecode type_tag byte (see
+# crates/bloqade-lanes-bytecode-core/src/bytecode/value.rs) to the Kirin
+# element type used when building NewArray's parameterised result type.
+# For TAG_ARRAY_REF (nested array), we use the parameterised ArrayType
+# with three Any slots — element shape is not tracked across nesting.
+TYPE_TAG: dict[int, types.TypeAttribute] = {
+    0: types.Float,
+    1: types.Int,
+    2: ArrayType[types.Any, types.Any, types.Any],
+    3: LocationAddressType,
+    4: LaneAddressType,
+    5: ZoneAddressType,
+    6: MeasurementFutureType,
+    7: DetectorType,
+    8: ObservableType,
+}
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -203,21 +229,57 @@ class Halt(ir.Statement):
 # ── Arrays ─────────────────────────────────────────────────────────────
 
 
-@statement(dialect=dialect)
+@statement(dialect=dialect, init=False)
 class NewArray(ir.Statement):
+    """Create an array.
+
+    Bytecode stack effect: doesn't pop (empty-array placeholder).  Python
+    construction accepts ``values=()`` in that case or a non-empty tuple
+    when authoring stack_move IR directly from Python.
+
+    The result type is a fully-parameterised ``ArrayType[ElemType,
+    Literal[dim0], Literal[dim1]]`` derived from the ``type_tag`` byte
+    (via ``TYPE_TAG``) and the two dimension attributes.
+    """
+
     traits = frozenset({lowering.FromPythonCall()})
+    values: tuple[ir.SSAValue, ...]
     type_tag: int = info.attribute()
     dim0: int = info.attribute()
     dim1: int = info.attribute()
-    result: ir.ResultValue = info.result(ArrayType)
+    result: ir.ResultValue = info.result(ArrayType[ElemType, Dim0Type, Dim1Type])
+
+    def __init__(
+        self,
+        values: typing.Sequence[ir.SSAValue],
+        type_tag: int,
+        dim0: int,
+        dim1: int,
+    ) -> None:
+        elem_type = TYPE_TAG[type_tag]
+        result_type = ArrayType[
+            elem_type,
+            types.Literal(dim0),
+            types.Literal(dim1),
+        ]
+        super().__init__(
+            args=tuple(values),
+            args_slice={"values": slice(0, len(values))},
+            result_types=(result_type,),
+            attributes={
+                "type_tag": ir.PyAttr(type_tag),
+                "dim0": ir.PyAttr(dim0),
+                "dim1": ir.PyAttr(dim1),
+            },
+        )
 
 
 @statement(dialect=dialect)
 class GetItem(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    array: ir.SSAValue = info.argument(type=ArrayType)
+    array: ir.SSAValue = info.argument(type=ArrayType[ElemType, types.Any, types.Any])
     indices: tuple[ir.SSAValue, ...] = info.argument(type=types.Int)
-    result: ir.ResultValue = info.result()  # element type is context-dependent
+    result: ir.ResultValue = info.result(ElemType)
 
 
 # ── Annotations (detectors / observables) ──────────────────────────────

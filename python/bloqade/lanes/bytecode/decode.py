@@ -266,6 +266,7 @@ class BytecodeDecoder:
 
     def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
         stmt = stack_move.NewArray(
+            values=(),
             type_tag=instr.type_tag(),
             dim0=instr.dim0(),
             dim1=instr.dim1(),

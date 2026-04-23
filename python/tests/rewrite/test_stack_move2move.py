@@ -231,7 +231,7 @@ def test_await_measure_lowers_without_error():
 def test_new_array_lowers_to_ilist_new():
     from kirin.dialects import ilist
 
-    na = stack_move.NewArray(type_tag=0, dim0=4, dim1=0)
+    na = stack_move.NewArray(values=(), type_tag=0, dim0=4, dim1=0)
     block = _build_stack_move_block([na])
     Walk(RewriteStackMoveToMove()).rewrite(block)
     assert any(isinstance(s, ilist.New) for s in block.stmts)
@@ -240,7 +240,7 @@ def test_new_array_lowers_to_ilist_new():
 def test_set_detector_lowers_to_annotate():
     from bloqade.decoders.dialects import annotate
 
-    na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
+    na = stack_move.NewArray(values=(), type_tag=0, dim0=1, dim1=0)
     sd = stack_move.SetDetector(array=na.result)
     block = _build_stack_move_block([na, sd])
     Walk(RewriteStackMoveToMove()).rewrite(block)
@@ -250,7 +250,7 @@ def test_set_detector_lowers_to_annotate():
 def test_set_observable_lowers_to_annotate():
     from bloqade.decoders.dialects import annotate
 
-    na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
+    na = stack_move.NewArray(values=(), type_tag=0, dim0=1, dim1=0)
     so = stack_move.SetObservable(array=na.result)
     block = _build_stack_move_block([na, so])
     Walk(RewriteStackMoveToMove()).rewrite(block)

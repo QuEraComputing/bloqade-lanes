@@ -346,12 +346,12 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import ilist
 
-        # Empty-list placeholder for both 1-D and 2-D arrays. v1 lowering
-        # does not materialise element values; any downstream GetItem will
-        # operate on this empty ilist and rely on later passes to populate
-        # or resolve elements. Adjust once array-element provenance is
-        # wired through the stack_move layer.
-        new = ilist.New(values=())
+        # Forward element SSA operands directly into the ilist.New; for
+        # the bytecode decoder this is an empty tuple (new_array has no
+        # stack effect), but for Python-authored stack_move IR values may
+        # be non-empty and must flow through so downstream GetItem lookups
+        # resolve correctly.
+        new = ilist.New(values=tuple(stmt.values))
         new.insert_before(stmt)
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
