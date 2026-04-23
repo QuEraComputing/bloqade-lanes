@@ -174,6 +174,7 @@ class Move(interp.MethodTable):
     ):
         current_state = frame.get(stmt.current_state)
         interp_.current_state = current_state
+        interp_.final_measurement_count += 1
 
         if not isinstance(current_state, AtomState):
             return (MoveExecution.bottom(),)
@@ -185,7 +186,12 @@ class Move(interp.MethodTable):
                 if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
                     result[loc_addr] = qubit_id
 
-        return (MeasureFuture(results),)
+        return (
+            MeasureFuture(
+                results=results,
+                measurement_count=interp_.final_measurement_count,
+            ),
+        )
 
     @interp.impl(move.ConstZone)
     def const_zone_impl(
@@ -230,7 +236,13 @@ class Move(interp.MethodTable):
         # move.Measure has two results: (new_state, future). Measurement
         # observes the state but does not reshape it on the Python
         # analysis side, so we thread ``current_state`` forward unchanged.
-        return (current_state, MeasureFuture(results))
+        return (
+            current_state,
+            MeasureFuture(
+                results=results,
+                measurement_count=interp_.final_measurement_count,
+            ),
+        )
 
     @interp.impl(move.Store)
     def store_impl(

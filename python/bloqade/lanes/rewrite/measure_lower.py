@@ -5,59 +5,70 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from kirin import ir
+from kirin.analysis.forward import ForwardFrame
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
+from bloqade.lanes.analysis.atom.lattice import MeasureFuture, MoveExecution
 from bloqade.lanes.dialects import move
-
-
-class MeasureLowerError(RuntimeError):
-    """Raised when the measure_lower invariants are violated."""
 
 
 @dataclass
 class MeasureLower(RewriteRule):
     """Lower move.Measure stmts to move.EndMeasure.
 
-    Requires the program-wide count of final measurements (from
-    AtomAnalysis). Enforces:
+    Driven by an AtomAnalysis frame: each move.Measure's ``future`` SSA
+    result is looked up in the frame, and the associated
+    ``MeasureFuture`` lattice element supplies both the measurement
+    ordinal (``measurement_count``) and the set of zones actually
+    observed (the keys of ``results``, whose iteration order mirrors
+    insertion order and therefore the original zone order).
 
-    1. Each move.Measure covers exactly one zone (read directly from
-       the ``zone_addresses`` attribute on the node).
-    2. The program contains exactly one final measurement.
+    The rewrite gives up silently (returns ``RewriteResult()`` with
+    ``has_done_something=False``) when:
+
+    1. The frame has no ``MeasureFuture`` for the node's future SSA.
+    2. ``measurement_count`` on that future != 1 — the move.Measure is
+       not the first/only final measurement in the program.
+    3. ``len(results)`` on that future != 1 — the measurement spans
+       multiple zones.
+
+    Validating these invariants as hard errors is the job of dedicated
+    validation passes that run between dialect transformations; rewrite
+    rules just attempt the rewrite and back off when preconditions
+    aren't met.
     """
 
-    final_measurement_count: int
+    frame: ForwardFrame[MoveExecution]
 
     @classmethod
     def from_method(cls, method: ir.Method, arch_spec) -> "MeasureLower":
         """Build a MeasureLower by running AtomAnalysis on the given method.
 
-        Populates ``final_measurement_count`` from
-        ``AtomInterpreter.final_measurement_count``.
+        Stashes the returned ForwardFrame so that ``rewrite_Statement``
+        can look up each ``move.Measure``'s future to get both the
+        measurement ordinal and zone set from the ``MeasureFuture``
+        lattice element.
         """
         from bloqade.lanes.analysis.atom import AtomInterpreter
 
         interp = AtomInterpreter(method.dialects, arch_spec=arch_spec)
-        interp.run(method)
-        return cls(final_measurement_count=interp.final_measurement_count)
+        frame, _ = interp.run(method)
+        return cls(frame=frame)
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, move.Measure):
             return RewriteResult()
-        if self.final_measurement_count != 1:
-            raise MeasureLowerError(
-                f"expected exactly one final measurement, "
-                f"found {self.final_measurement_count}"
-            )
-        if len(node.zone_addresses) != 1:
-            raise MeasureLowerError(
-                f"move.Measure spans {len(node.zone_addresses)} zones; "
-                f"expected exactly 1"
-            )
-        (zone_addr,) = node.zone_addresses
+        future = self.frame.entries.get(node.future)
+        if not isinstance(future, MeasureFuture):
+            return RewriteResult()
+        if future.measurement_count != 1:
+            return RewriteResult()
+        zones = tuple(future.results.keys())
+        if len(zones) != 1:
+            return RewriteResult()
         replacement = move.EndMeasure(
             current_state=node.current_state,
-            zone_addresses=(zone_addr,),
+            zone_addresses=zones,
         )
         node.replace_by(replacement)
         return RewriteResult(has_done_something=True)

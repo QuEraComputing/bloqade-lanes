@@ -1,36 +1,83 @@
-import pytest
 from kirin import ir, types
+from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func
 from kirin.rewrite import Walk
 
 from bloqade.lanes._prelude import kernel
+from bloqade.lanes.analysis.atom.lattice import MeasureFuture
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout.encoding import ZoneAddress
-from bloqade.lanes.rewrite.measure_lower import MeasureLower, MeasureLowerError
+from bloqade.lanes.rewrite.measure_lower import MeasureLower
+
+
+def _rule_with_future(stmt: move.Measure, future: MeasureFuture) -> MeasureLower:
+    """Build a MeasureLower whose frame maps ``stmt.future`` to ``future``.
+
+    Used by the isolated-IR tests that exercise the rewrite without
+    going through a full AtomAnalysis run. The frame's code node is
+    unused by the rewrite — we pass ``stmt`` just to satisfy the
+    ForwardFrame(code: Statement) constructor.
+    """
+    frame: ForwardFrame = ForwardFrame(stmt)
+    frame.entries[stmt.future] = future
+    return MeasureLower(frame=frame)
 
 
 def test_single_zone_measure_rewrites_to_endmeasure():
     state = ir.TestValue()
-    m = move.Measure(current_state=state, zone_addresses=(ZoneAddress(0),))
+    zone = ZoneAddress(0)
+    m = move.Measure(current_state=state, zone_addresses=(zone,))
     block = ir.Block([m])
-    rule = MeasureLower(final_measurement_count=1)
+    rule = _rule_with_future(m, MeasureFuture(results={zone: {}}, measurement_count=1))
     Walk(rule).rewrite(block)
     # m has been replaced by a move.EndMeasure in place.
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
     assert any(isinstance(s, move.EndMeasure) for s in block.stmts)
 
 
-def test_multi_zone_measure_raises():
+def test_multi_zone_measure_is_skipped():
+    """Rewrite gives up — no EndMeasure, Measure kept as-is."""
     state = ir.TestValue()
+    zone0, zone1 = ZoneAddress(0), ZoneAddress(1)
     m = move.Measure(
         current_state=state,
-        zone_addresses=(ZoneAddress(0), ZoneAddress(1)),
+        zone_addresses=(zone0, zone1),
     )
     block = ir.Block([m])
-    rule = MeasureLower(final_measurement_count=1)
-    with pytest.raises(MeasureLowerError):
-        Walk(rule).rewrite(block)
+    rule = _rule_with_future(
+        m,
+        MeasureFuture(results={zone0: {}, zone1: {}}, measurement_count=1),
+    )
+    Walk(rule).rewrite(block)
+    assert any(isinstance(s, move.Measure) for s in block.stmts)
+    assert not any(isinstance(s, move.EndMeasure) for s in block.stmts)
+
+
+def test_non_first_final_measurement_is_skipped():
+    """Rewrite gives up — move.Measure left untouched when it isn't
+    the first/only final measurement in the program."""
+    state = ir.TestValue()
+    zone = ZoneAddress(0)
+    m = move.Measure(current_state=state, zone_addresses=(zone,))
+    block = ir.Block([m])
+    rule = _rule_with_future(m, MeasureFuture(results={zone: {}}, measurement_count=2))
+    Walk(rule).rewrite(block)
+    assert any(isinstance(s, move.Measure) for s in block.stmts)
+    assert not any(isinstance(s, move.EndMeasure) for s in block.stmts)
+
+
+def test_missing_future_is_skipped():
+    """Rewrite gives up — move.Measure left untouched when the frame
+    has no MeasureFuture for its future SSA."""
+    state = ir.TestValue()
+    m = move.Measure(current_state=state, zone_addresses=(ZoneAddress(0),))
+    block = ir.Block([m])
+    frame: ForwardFrame = ForwardFrame(m)
+    rule = MeasureLower(frame=frame)
+    Walk(rule).rewrite(block)
+    assert any(isinstance(s, move.Measure) for s in block.stmts)
+    assert not any(isinstance(s, move.EndMeasure) for s in block.stmts)
 
 
 def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:

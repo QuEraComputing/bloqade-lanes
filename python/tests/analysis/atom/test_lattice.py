@@ -28,10 +28,12 @@ def test_atomstate_structural_and_subset():
 
 
 def test_measurefuture_copy_and_subset():
-    mf1 = lattice.MeasureFuture({})  # empty results
-    mf2 = lattice.MeasureFuture({})
+    mf1 = lattice.MeasureFuture({}, measurement_count=1)  # empty results
+    mf2 = lattice.MeasureFuture({}, measurement_count=1)
+    mf3 = lattice.MeasureFuture({}, measurement_count=2)
     assert mf1.copy() == mf1
     assert mf1.is_subseteq_MeasureFuture(mf2)
+    assert not mf1.is_subseteq_MeasureFuture(mf3)
 
 
 def test_measureresult_copy_and_subset():
