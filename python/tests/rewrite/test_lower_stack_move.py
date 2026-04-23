@@ -2,9 +2,9 @@ from kirin import ir
 from kirin.dialects import py
 from kirin.rewrite import Walk
 
-from bloqade.lanes.bytecode import LocationAddress
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.layout.encoding import (
+    LocationAddress,
     LocationAddress as EncodingLocationAddress,
     ZoneAddress as EncodingZoneAddress,
 )
@@ -90,16 +90,16 @@ def test_swap_permutes_uses():
 
 def test_fill_lowers_to_move_fill_with_attribute_locations():
     a0 = LocationAddress(0, 0, 0)
-    a1 = LocationAddress(0, 0, 1)
+    a1 = LocationAddress(0, 1, 0)
     cl0 = stack_move.ConstLoc(value=a0)
     cl1 = stack_move.ConstLoc(value=a1)
     fill = stack_move.Fill(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, fill, stack_move.Return()])
     Walk(LowerStackMove()).rewrite(block)
     mf = next(s for s in block.stmts if isinstance(s, move.Fill))
-    # LowerStackMove wraps the raw Rust ``bytecode.LocationAddress`` into
-    # the encoding-layer wrapper so downstream AtomAnalysis (which reads
-    # ._inner off the wrapper) works.
+    # stack_move.ConstLoc now stores encoding-layer LocationAddress values
+    # directly (matching the move dialect convention), so the rewrite just
+    # forwards them to move.Fill.
     assert mf.location_addresses == (
         EncodingLocationAddress(0, 0, 0),
         EncodingLocationAddress(0, 1, 0),
@@ -133,7 +133,7 @@ def test_local_r_lowers_with_attribute_lifting():
 
 def test_local_rz_lowers_with_attribute_lifting():
     cf_theta = stack_move.ConstFloat(value=0.3)
-    cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    cl = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     lr = stack_move.LocalRz(theta=cf_theta.result, locations=(cl.result,))
     block = _build_stack_move_block([cf_theta, cl, lr, stack_move.Return()])
     Walk(LowerStackMove()).rewrite(block)
@@ -141,8 +141,7 @@ def test_local_rz_lowers_with_attribute_lifting():
     rot_const = mr.rotation_angle.owner
     assert isinstance(rot_const, py.Constant)
     assert rot_const.value.unwrap() == 0.3
-    # native LocationAddress(zone=0, word=0, site=1) → encoding
-    # EncodingLocationAddress(word_id=0, site_id=1, zone_id=0).
+    # encoding LocationAddress(word_id=0, site_id=1, zone_id=0).
     assert mr.location_addresses == (EncodingLocationAddress(0, 1, 0),)
 
 
@@ -173,7 +172,7 @@ def test_global_rz_lowers_with_attribute_lifting():
 
 
 def test_cz_lowers_with_attribute_zone():
-    from bloqade.lanes.bytecode import ZoneAddress
+    from bloqade.lanes.layout.encoding import ZoneAddress
 
     cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
     cz = stack_move.CZ(zone=cz_zone.result)
@@ -186,7 +185,7 @@ def test_cz_lowers_with_attribute_zone():
 
 def test_measure_single_zone_emits_single_zone_measure():
     cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
-    cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    cl1 = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     m = stack_move.Measure(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, m, stack_move.Return()])
     Walk(LowerStackMove()).rewrite(block)
@@ -198,8 +197,8 @@ def test_measure_single_zone_emits_single_zone_measure():
 def test_measure_multi_zone_dedups():
     # Two locations in zone 0, one in zone 1. Expect 2 zone SSA values.
     cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
-    cl1 = stack_move.ConstLoc(value=LocationAddress(1, 0, 0))
-    cl2 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
+    cl2 = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     m = stack_move.Measure(locations=(cl0.result, cl1.result, cl2.result))
     block = _build_stack_move_block([cl0, cl1, cl2, m, stack_move.Return()])
     Walk(LowerStackMove()).rewrite(block)

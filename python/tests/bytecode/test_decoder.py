@@ -1,13 +1,11 @@
 from bloqade.lanes.bytecode import (
     Instruction,
-    LaneAddress,
-    LocationAddress,
     MoveType,
     Program,
-    ZoneAddress,
 )
 from bloqade.lanes.bytecode.lowering import load_program
 from bloqade.lanes.dialects import stack_move
+from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 
 def test_empty_program_returns_method_with_empty_body():
@@ -47,7 +45,7 @@ def test_decode_const_loc():
 def test_decode_const_lane():
     block = _decode([Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0)])
     stmt = next(s for s in block.stmts if isinstance(s, stack_move.ConstLane))
-    assert stmt.value == LaneAddress(MoveType.SITE, 0, 0, 0, 0)
+    assert stmt.value == LaneAddress(MoveType.SITE, 0, 0, 0)
 
 
 def test_decode_const_zone():

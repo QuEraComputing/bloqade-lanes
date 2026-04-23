@@ -9,6 +9,7 @@ from kirin import ir, types
 from kirin.dialects import func
 
 from bloqade.lanes.dialects import stack_move
+from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 if TYPE_CHECKING:
     from bloqade.lanes.bytecode import Instruction, Program
@@ -87,17 +88,19 @@ class BytecodeDecoder:
         self.stack.append(stmt.result)
 
     def _visit_const_loc(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstLoc(value=instr.location_address())
+        stmt = stack_move.ConstLoc(
+            value=LocationAddress.from_inner(instr.location_address())
+        )
         self.block.stmts.append(stmt)
         self.stack.append(stmt.result)
 
     def _visit_const_lane(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstLane(value=instr.lane_address())
+        stmt = stack_move.ConstLane(value=LaneAddress.from_inner(instr.lane_address()))
         self.block.stmts.append(stmt)
         self.stack.append(stmt.result)
 
     def _visit_const_zone(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstZone(value=instr.zone_address())
+        stmt = stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
         self.block.stmts.append(stmt)
         self.stack.append(stmt.result)
 
