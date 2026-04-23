@@ -117,14 +117,9 @@ def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:
         location_addresses=(move.LocationAddress(0, 0),),
     )
     block.stmts.append(fill)
-    zone_ssa: list[ir.SSAValue] = []
-    for zone in zones:
-        cz = move.ConstZone(value=zone)
-        block.stmts.append(cz)
-        zone_ssa.append(cz.result)
-    measure = move.Measure(current_state=fill.result, zones=tuple(zone_ssa))
+    measure = move.Measure(current_state=fill.result, zone_addresses=zones)
     block.stmts.append(measure)
-    block.stmts.append(move.Store(fill.result))
+    block.stmts.append(move.Store(measure.result))
     none_stmt = func.ConstantNone()
     block.stmts.append(none_stmt)
     block.stmts.append(func.Return(none_stmt.result))

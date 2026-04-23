@@ -17,9 +17,8 @@ def test_minimal_program_runs_end_to_end():
     """Bytecode Program -> stack_move IR -> multi-dialect IR with EndMeasure.
 
     Asserts the full expected block structure after both rewrites:
-    move.Load, move.Fill (InitialFill lowers to Fill), move.ConstZone
-    (orphaned after measure_lower), move.EndMeasure, ilist.New
-    (AwaitMeasure stub), move.Store, func.Return.
+    move.Load, move.Fill (InitialFill lowers to Fill), move.EndMeasure,
+    ilist.New (AwaitMeasure stub), move.Store, func.Return.
     """
     prog = Program(
         version=(1, 0),
@@ -58,7 +57,6 @@ def test_minimal_program_runs_end_to_end():
     expected_types = [
         move.Load,
         move.Fill,
-        move.ConstZone,
         move.EndMeasure,
         ilist.New,
         move.Store,
@@ -72,9 +70,6 @@ def test_minimal_program_runs_end_to_end():
 
     fill = next(s for s in stmts if isinstance(s, move.Fill))
     assert fill.location_addresses == (LocationAddress(0, 0, 0),)
-
-    const_zone = next(s for s in stmts if isinstance(s, move.ConstZone))
-    assert const_zone.value == ZoneAddress(0)
 
     end_measure = next(s for s in stmts if isinstance(s, move.EndMeasure))
     assert end_measure.zone_addresses == (ZoneAddress(0),)

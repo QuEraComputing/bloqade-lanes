@@ -6,19 +6,15 @@ from kirin.rewrite import Walk
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move
+from bloqade.lanes.layout.encoding import ZoneAddress
 from bloqade.lanes.rewrite.measure_lower import MeasureLower, MeasureLowerError
 
 
 def test_single_zone_measure_rewrites_to_endmeasure():
     state = ir.TestValue()
-    zone = ir.TestValue()
-    m = move.Measure(current_state=state, zones=(zone,))
+    m = move.Measure(current_state=state, zone_addresses=(ZoneAddress(0),))
     block = ir.Block([m])
-    # For this test we mock the analysis result — in real usage MeasureLower
-    # is constructed via MeasureLower.from_method which runs AtomAnalysis.
-    zone_sets: dict[move.Measure, frozenset[int]] = {}
-    zone_sets[m] = frozenset({0})
-    rule = MeasureLower(zone_sets=zone_sets, final_measurement_count=1)
+    rule = MeasureLower(final_measurement_count=1)
     Walk(rule).rewrite(block)
     # m has been replaced by a move.EndMeasure in place.
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
@@ -27,12 +23,12 @@ def test_single_zone_measure_rewrites_to_endmeasure():
 
 def test_multi_zone_measure_raises():
     state = ir.TestValue()
-    z0, z1 = ir.TestValue(), ir.TestValue()
-    m = move.Measure(current_state=state, zones=(z0, z1))
+    m = move.Measure(
+        current_state=state,
+        zone_addresses=(ZoneAddress(0), ZoneAddress(1)),
+    )
     block = ir.Block([m])
-    zone_sets: dict[move.Measure, frozenset[int]] = {}
-    zone_sets[m] = frozenset({0, 1})
-    rule = MeasureLower(zone_sets=zone_sets, final_measurement_count=1)
+    rule = MeasureLower(final_measurement_count=1)
     with pytest.raises(MeasureLowerError):
         Walk(rule).rewrite(block)
 
@@ -53,14 +49,9 @@ def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:
         location_addresses=(move.LocationAddress(0, 0),),
     )
     block.stmts.append(fill)
-    zone_ssa: list[ir.SSAValue] = []
-    for zone in zones:
-        cz = move.ConstZone(value=zone)
-        block.stmts.append(cz)
-        zone_ssa.append(cz.result)
-    measure = move.Measure(current_state=fill.result, zones=tuple(zone_ssa))
+    measure = move.Measure(current_state=fill.result, zone_addresses=zones)
     block.stmts.append(measure)
-    block.stmts.append(move.Store(fill.result))
+    block.stmts.append(move.Store(measure.result))
     none_stmt = func.ConstantNone()
     block.stmts.append(none_stmt)
     block.stmts.append(func.Return(none_stmt.result))

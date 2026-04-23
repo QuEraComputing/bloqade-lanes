@@ -307,33 +307,35 @@ class RewriteStackMoveToMove(RewriteRule):
     @_rewrite.register(stack_move.Measure)
     def _(self, stmt: stack_move.Measure, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
-        # Zones are direct operands now (matching the Rust validator's
-        # sim_measure: pop `arity` zones, push `arity` futures).
-        # Deduplicate zone ids, preserving first-seen order, so
-        # move.Measure receives the distinct set.
+        # Zones are direct operands on stack_move.Measure (matching the
+        # Rust validator's sim_measure: pop `arity` zones, push `arity`
+        # futures). Lift each zone SSA operand back to its ZoneAddress
+        # attribute and deduplicate by zone id, preserving first-seen
+        # order, so move.Measure receives the distinct set as an
+        # attribute tuple.
         zone_attrs = self._lift_attrs(stmt.zones, ZoneAddress)
         seen_zone_ids: list[int] = []
         for zone in zone_attrs:
             if zone.zone_id not in seen_zone_ids:
                 seen_zone_ids.append(zone.zone_id)
-        # Synthesise a move.ConstZone per distinct zone to provide SSA
-        # operands for the multi-zone move.Measure.
-        zone_ssa: list[ir.SSAValue] = []
-        for zid in seen_zone_ids:
-            cz = move.ConstZone(value=ZoneAddress(zid))
-            cz.insert_before(stmt)
-            zone_ssa.append(cz.result)
-        new = move.Measure(self.state, zones=tuple(zone_ssa))
+        distinct_zones = tuple(ZoneAddress(zid) for zid in seen_zone_ids)
+
+        # Emit move.Measure with the attribute-tuple zones. move.Measure
+        # is a StatefulStatement subclass, so it produces two results:
+        # the inherited new-state (threaded forward) and the measurement
+        # future.
+        new = move.Measure(self.state, zone_addresses=distinct_zones)
         new.insert_before(stmt)
         self.state = new.result
+
         # stack_move.Measure produces `arity` MeasurementFutureType
         # results (one per input zone), while move.Measure produces a
-        # single MeasurementFutureType covering all distinct zones.
+        # single measurement future covering all distinct zones.
         # Redirect every per-zone future to the single move.Measure
-        # result — safe under measure_lower's single-final-measurement
+        # future — safe under measure_lower's single-final-measurement
         # invariant (no two consumers survive lowering).
         for stmt_result in stmt.results:
-            stmt_result.replace_by(new.result)
+            stmt_result.replace_by(new.future)
         to_delete.append(stmt)
 
     @_rewrite.register(stack_move.AwaitMeasure)
@@ -342,9 +344,10 @@ class RewriteStackMoveToMove(RewriteRule):
 
         # v1 stub: emit an empty ilist as a placeholder for the measurement
         # result array. The future operand (stmt.future) is already rewired
-        # to the move.Measure result by _rewrite_Measure, but it's dropped
-        # here — proper lowering would need per-location GetFutureResult
-        # expansion, which isn't wired up in this PR. See follow-up issue.
+        # to the move.Measure.future result by _rewrite_Measure, but it's
+        # dropped here — proper lowering would need per-location
+        # GetFutureResult expansion, which isn't wired up in this PR. See
+        # follow-up issue.
         placeholder = ilist.New(values=())
         placeholder.insert_before(stmt)
         stmt.result.replace_by(placeholder.result)

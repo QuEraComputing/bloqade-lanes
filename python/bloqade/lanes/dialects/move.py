@@ -139,15 +139,19 @@ class EndMeasure(ir.Statement):
 
 
 @statement(dialect=dialect)
-class Measure(ir.Statement):
+class Measure(StatefulStatement):
     """Multi-zone measurement produced by stack_move2move. Consumed by
     measure_lower, which validates single-zone + single-final-measurement
-    invariants and rewrites to EndMeasure."""
+    invariants and rewrites to EndMeasure.
 
-    traits = frozenset({lowering.FromPythonCall(), ConsumesState(True)})
-    current_state: ir.SSAValue = info.argument(StateType)
-    zones: tuple[ir.SSAValue, ...] = info.argument(type=ZoneAddressType)
-    result: ir.ResultValue = info.result(MeasurementFutureType)
+    Inherits ``current_state`` input and ``result: StateType`` output from
+    ``StatefulStatement`` (state-threading). Adds ``zone_addresses`` as a
+    compile-time attribute tuple and ``future`` as the measurement-future
+    result value.
+    """
+
+    zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
+    future: ir.ResultValue = info.result(MeasurementFutureType)
 
 
 @statement(dialect=dialect)

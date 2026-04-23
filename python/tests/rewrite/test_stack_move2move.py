@@ -203,13 +203,14 @@ def test_measure_single_zone_emits_single_zone_measure():
     block = _build_stack_move_block([cz0, cz1, m])
     Walk(RewriteStackMoveToMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
-    # One zone (both operands are zone 0).
-    assert len(mm.zones) == 1
+    # One zone (both operands are zone 0) — zones now live on the
+    # zone_addresses attribute, not SSA operands.
+    assert mm.zone_addresses == (EncodingZoneAddress(0),)
 
 
 def test_measure_multi_zone_dedups():
-    # Three zone operands, two of which share zone_id=0. Expect 2 distinct
-    # zone SSA values after dedup.
+    # Three zone operands, two of which share zone_id=0. Expect 2
+    # distinct zone addresses in the attribute tuple after dedup.
     cz0 = stack_move.ConstZone(value=EncodingZoneAddress(0))
     cz1 = stack_move.ConstZone(value=EncodingZoneAddress(0))
     cz2 = stack_move.ConstZone(value=EncodingZoneAddress(1))
@@ -217,7 +218,7 @@ def test_measure_multi_zone_dedups():
     block = _build_stack_move_block([cz0, cz1, cz2, m])
     Walk(RewriteStackMoveToMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
-    assert len(mm.zones) == 2
+    assert mm.zone_addresses == (EncodingZoneAddress(0), EncodingZoneAddress(1))
 
 
 def test_await_measure_lowers_without_error():
