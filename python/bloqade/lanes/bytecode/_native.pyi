@@ -1542,6 +1542,100 @@ class Instruction:
         """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
         ...
 
+    def op_name(self) -> str:
+        """Lowercase snake_case opcode name matching the bytecode text-format
+        parser's canonical names (see
+        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+
+        Factory methods use trailing underscores for Python-keyword conflicts
+        (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
+        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        """
+        ...
+
+    def arity(self) -> int:
+        """Arity field for opcodes that carry one.
+
+        Valid on ``initial_fill``, ``fill``, ``move``, ``local_r``,
+        ``local_rz``, ``measure``.
+
+        Raises:
+            RuntimeError: If called on an opcode without an arity field.
+        """
+        ...
+
+    def float_value(self) -> float:
+        """Value attribute of a ``const_float`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def int_value(self) -> int:
+        """Value attribute of a ``const_int`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def location_address(self) -> LocationAddress:
+        """Decoded address of a ``const_loc`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def lane_address(self) -> LaneAddress:
+        """Decoded address of a ``const_lane`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def zone_address(self) -> ZoneAddress:
+        """Decoded address of a ``const_zone`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def type_tag(self) -> int:
+        """Type tag attribute of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim0(self) -> int:
+        """First dimension of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim1(self) -> int:
+        """Second dimension of a ``new_array`` instruction (0 for 1-D).
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def ndims(self) -> int:
+        """Number of index dimensions of a ``get_item`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
 
