@@ -30,6 +30,21 @@ def _make_empty_block() -> ir.Block:
     return ir.Block(argtypes=(types.MethodType,))
 
 
+class StackUnderflowError(Exception):
+    """Raised by ``StackMachineFrame`` when a pop operation would fail.
+
+    Carries a snapshot of the stack at the point of failure and how many
+    values the operation required. The decoder catches this at the
+    ``_visit`` dispatcher and rewraps into ``DecodingError`` with
+    instruction context (index + opcode name).
+    """
+
+    def __init__(self, snapshot: tuple[ir.SSAValue, ...], required: int) -> None:
+        self.snapshot = snapshot
+        self.required = required
+        super().__init__(f"stack underflow: need {required}, have {len(snapshot)}")
+
+
 @dataclass
 class StackMachineFrame:
     """Tracks IR construction state during bytecode decoding.
@@ -71,15 +86,48 @@ class StackMachineFrame:
         self.stack.append(value)
 
     def pop_value(self) -> ir.SSAValue:
-        """Pop the top of the virtual stack. Raises IndexError on underflow."""
+        """Pop the top of the virtual stack.
+
+        Raises:
+            StackUnderflowError: when the stack is empty.
+        """
+        if not self.stack:
+            raise StackUnderflowError(snapshot=self.snapshot(), required=1)
         return self.stack.pop()
 
+    def pop_n(self, n: int) -> list[ir.SSAValue]:
+        """Pop ``n`` values from the top of the stack.
+
+        Returns them in bottom-to-top order so the caller can pass them
+        as a tuple matching the 'top-of-stack = last argument' convention.
+
+        Raises:
+            StackUnderflowError: when the stack has fewer than ``n`` values.
+        """
+        if len(self.stack) < n:
+            raise StackUnderflowError(snapshot=self.snapshot(), required=n)
+        popped = [self.stack.pop() for _ in range(n)]
+        popped.reverse()
+        return popped
+
     def peek_value(self) -> ir.SSAValue:
-        """Return the top of the stack without popping. Raises on empty."""
+        """Return the top-of-stack SSA value without popping.
+
+        Raises:
+            StackUnderflowError: when the stack is empty.
+        """
+        if not self.stack:
+            raise StackUnderflowError(snapshot=self.snapshot(), required=1)
         return self.stack[-1]
 
     def swap_values(self) -> None:
-        """Swap the top two values on the stack in place."""
+        """Swap the top two values on the virtual stack in place.
+
+        Raises:
+            StackUnderflowError: when the stack has fewer than 2 values.
+        """
+        if len(self.stack) < 2:
+            raise StackUnderflowError(snapshot=self.snapshot(), required=2)
         self.stack[-1], self.stack[-2] = self.stack[-2], self.stack[-1]
 
     def snapshot(self) -> tuple[ir.SSAValue, ...]:
@@ -138,10 +186,13 @@ class BytecodeDecoder:
         handler = getattr(self, f"_visit_{name}", None)
         if handler is None:
             raise DecodingError(idx, name, self.frame.snapshot(), "unknown opcode")
-        handler(idx, instr)
+        try:
+            handler(idx, instr)
+        except StackUnderflowError as e:
+            raise DecodingError(idx, name, e.snapshot, str(e)) from e
 
     def _visit_return(self, idx: int, instr: "Instruction") -> None:
-        value = self._pop_or_raise(idx, instr)
+        value = self.frame.pop_value()
         self.frame.push(stack_move.Return(value=value))
 
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
@@ -167,64 +218,40 @@ class BytecodeDecoder:
             stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
         )
 
-    def _pop_or_raise(self, idx: int, instr: "Instruction") -> ir.SSAValue:
-        if self.frame.depth() == 0:
-            raise DecodingError(
-                idx, instr.op_name(), self.frame.snapshot(), "stack underflow"
-            )
-        return self.frame.pop_value()
-
     def _visit_pop(self, idx: int, instr: "Instruction") -> None:
-        value = self._pop_or_raise(idx, instr)
+        value = self.frame.pop_value()
         self.frame.push(stack_move.Pop(value=value))
 
     def _visit_dup(self, idx: int, instr: "Instruction") -> None:
-        if self.frame.depth() == 0:
-            raise DecodingError(idx, "dup", self.frame.snapshot(), "stack underflow")
         top = self.frame.peek_value()
         self.frame.push(stack_move.Dup(value=top))
 
     def _visit_swap(self, idx: int, instr: "Instruction") -> None:
-        in_top = self._pop_or_raise(idx, instr)
-        in_bot = self._pop_or_raise(idx, instr)
+        in_top = self.frame.pop_value()
+        in_bot = self.frame.pop_value()
         # Swap declares results as (out_top, out_bot); auto-push in reverse
         # declaration order pushes out_bot first then out_top, leaving
         # out_top on top — matching the previous explicit behaviour.
         self.frame.push(stack_move.Swap(in_top=in_top, in_bot=in_bot))
 
-    def _pop_n(self, idx: int, instr: "Instruction", n: int) -> list[ir.SSAValue]:
-        """Pop n values from the stack, newest first. Returns them in
-        bottom-to-top order so the caller can pass them as a tuple
-        matching 'top-of-stack = last argument' convention."""
-        if self.frame.depth() < n:
-            raise DecodingError(
-                idx,
-                instr.op_name(),
-                self.frame.snapshot(),
-                f"stack underflow (need {n}, have {self.frame.depth()})",
-            )
-        popped = [self.frame.pop_value() for _ in range(n)]
-        popped.reverse()  # now in bottom-to-top order
-        return popped
-
     def _visit_initial_fill(self, idx: int, instr: "Instruction") -> None:
-        locs = self._pop_n(idx, instr, instr.arity())
+        locs = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.InitialFill(locations=tuple(locs)))
 
     def _visit_fill(self, idx: int, instr: "Instruction") -> None:
-        locs = self._pop_n(idx, instr, instr.arity())
+        locs = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.Fill(locations=tuple(locs)))
 
     def _visit_move(self, idx: int, instr: "Instruction") -> None:
-        lanes = self._pop_n(idx, instr, instr.arity())
+        lanes = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.Move(lanes=tuple(lanes)))
 
     def _visit_local_r(self, idx: int, instr: "Instruction") -> None:
         # bytecode pops phi first (top of stack), then theta; after rename,
         # these map to axis_angle and rotation_angle respectively.
-        axis_angle = self._pop_or_raise(idx, instr)
-        rotation_angle = self._pop_or_raise(idx, instr)
-        locs = self._pop_n(idx, instr, instr.arity())
+        axis_angle = self.frame.pop_value()
+        rotation_angle = self.frame.pop_value()
+        locs = self.frame.pop_n(instr.arity())
         self.frame.push(
             stack_move.LocalR(
                 axis_angle=axis_angle,
@@ -235,8 +262,8 @@ class BytecodeDecoder:
 
     def _visit_local_rz(self, idx: int, instr: "Instruction") -> None:
         # bytecode pops theta (top of stack) -> rotation_angle after rename.
-        rotation_angle = self._pop_or_raise(idx, instr)
-        locs = self._pop_n(idx, instr, instr.arity())
+        rotation_angle = self.frame.pop_value()
+        locs = self.frame.pop_n(instr.arity())
         self.frame.push(
             stack_move.LocalRz(rotation_angle=rotation_angle, locations=tuple(locs))
         )
@@ -244,23 +271,23 @@ class BytecodeDecoder:
     def _visit_global_r(self, idx: int, instr: "Instruction") -> None:
         # bytecode pops phi first (top of stack), then theta; after rename,
         # these map to axis_angle and rotation_angle respectively.
-        axis_angle = self._pop_or_raise(idx, instr)
-        rotation_angle = self._pop_or_raise(idx, instr)
+        axis_angle = self.frame.pop_value()
+        rotation_angle = self.frame.pop_value()
         self.frame.push(
             stack_move.GlobalR(axis_angle=axis_angle, rotation_angle=rotation_angle)
         )
 
     def _visit_global_rz(self, idx: int, instr: "Instruction") -> None:
         # bytecode pops theta (top of stack) -> rotation_angle after rename.
-        rotation_angle = self._pop_or_raise(idx, instr)
+        rotation_angle = self.frame.pop_value()
         self.frame.push(stack_move.GlobalRz(rotation_angle=rotation_angle))
 
     def _visit_cz(self, idx: int, instr: "Instruction") -> None:
-        zone = self._pop_or_raise(idx, instr)
+        zone = self.frame.pop_value()
         self.frame.push(stack_move.CZ(zone=zone))
 
     def _visit_measure(self, idx: int, instr: "Instruction") -> None:
-        locs = self._pop_n(idx, instr, instr.arity())
+        locs = self.frame.pop_n(instr.arity())
         self.frame.push(stack_move.Measure(locations=tuple(locs)))
 
     def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
@@ -270,7 +297,7 @@ class BytecodeDecoder:
         # is required because the bytecode's `await_measure` re-pushes the
         # future, not because AwaitMeasure has an SSA result to auto-push
         # (it has none).
-        future = self._pop_or_raise(idx, instr)
+        future = self.frame.pop_value()
         self.frame.push(stack_move.AwaitMeasure(future=future))
         self.frame.push_value(future)
 
@@ -286,16 +313,16 @@ class BytecodeDecoder:
 
     def _visit_get_item(self, idx: int, instr: "Instruction") -> None:
         ndims = instr.ndims()
-        indices = self._pop_n(idx, instr, ndims)
-        array = self._pop_or_raise(idx, instr)
+        indices = self.frame.pop_n(ndims)
+        array = self.frame.pop_value()
         self.frame.push(stack_move.GetItem(array=array, indices=tuple(indices)))
 
     def _visit_set_detector(self, idx: int, instr: "Instruction") -> None:
-        array = self._pop_or_raise(idx, instr)
+        array = self.frame.pop_value()
         self.frame.push(stack_move.SetDetector(array=array))
 
     def _visit_set_observable(self, idx: int, instr: "Instruction") -> None:
-        array = self._pop_or_raise(idx, instr)
+        array = self.frame.pop_value()
         self.frame.push(stack_move.SetObservable(array=array))
 
     def _visit_halt(self, idx: int, instr: "Instruction") -> None:
