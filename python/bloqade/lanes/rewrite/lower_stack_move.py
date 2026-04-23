@@ -89,11 +89,10 @@ class LowerStackMove(RewriteRule):
 
         assert self.state is not None
         move.Store(self.state).insert_before(stmt)
-        # AtomInterpreter.func_return dereferences stmt.value; emit a
-        # ConstantNone to provide a return operand.
-        none_stmt = func.ConstantNone()
-        none_stmt.insert_before(stmt)
-        func.Return(none_stmt.result).insert_before(stmt)
+        # The stack_move.Return.value operand has already been rewired by
+        # earlier replace_by calls on its defining Const* / stack op, so
+        # we can thread it directly through to func.Return.
+        func.Return(stmt.value).insert_before(stmt)
         to_delete.append(stmt)
 
     def _rewrite_Halt(

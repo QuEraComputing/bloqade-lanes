@@ -9,16 +9,24 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 
 
 def test_empty_program_returns_method_with_empty_body():
-    prog = Program(version=(1, 0), instructions=[Instruction.return_()])
+    # stack_move.Return now consumes an SSA operand, so we push a dummy
+    # const_int(0) before the return to satisfy the virtual-stack invariant.
+    prog = Program(
+        version=(1, 0),
+        instructions=[Instruction.const_int(0), Instruction.return_()],
+    )
     method = load_program(prog)
     assert method.sym_name == "main"
-    # Body should have one statement (stack_move.Return), no other statements.
+    # Body should have two statements: the dummy ConstInt and stack_move.Return.
     block = method.callable_region.blocks[0]
-    assert len(block.stmts) == 1
+    assert len(block.stmts) == 2
 
 
 def _decode(instructions):
-    prog = Program(version=(1, 0), instructions=instructions + [Instruction.return_()])
+    prog = Program(
+        version=(1, 0),
+        instructions=[*instructions, Instruction.const_int(0), Instruction.return_()],
+    )
     return load_program(prog).callable_region.blocks[0]
 
 

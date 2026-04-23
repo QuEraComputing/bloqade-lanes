@@ -180,7 +180,10 @@ class AwaitMeasure(ir.Statement):
 
 @statement(dialect=dialect)
 class Return(ir.Statement):
+    """Return the top-of-stack value from the current program."""
+
     traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
+    value: ir.SSAValue = info.argument()
 
 
 @statement(dialect=dialect)

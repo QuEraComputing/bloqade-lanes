@@ -75,7 +75,8 @@ class BytecodeDecoder:
         handler(idx, instr)
 
     def _visit_return(self, idx: int, instr: "Instruction") -> None:
-        self.block.stmts.append(stack_move.Return())
+        value = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.Return(value=value))
 
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
         stmt = stack_move.ConstFloat(value=instr.float_value())

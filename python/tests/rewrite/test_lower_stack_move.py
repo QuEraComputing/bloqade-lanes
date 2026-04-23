@@ -12,14 +12,26 @@ from bloqade.lanes.rewrite.lower_stack_move import LowerStackMove
 
 
 def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
+    """Append ``stmts`` to a fresh block and terminate it with a dummy
+    ``stack_move.ConstInt(0)`` + ``stack_move.Return`` pair so every block
+    has a value on the virtual stack for the terminator to consume.
+
+    Tests pre-date stack_move.Return gaining its ``value`` operand; rather
+    than threading an explicit terminator through each call site, the helper
+    synthesises one here.
+    """
     block = ir.Block()
     for stmt in stmts:
         block.stmts.append(stmt)
+    ret_sentinel = stack_move.ConstInt(value=0)
+    block.stmts.append(ret_sentinel)
+    block.stmts.append(stack_move.Return(value=ret_sentinel.result))
     return block
 
 
 def test_empty_block_emits_load_and_func_return():
-    block = _build_stack_move_block([stack_move.Return()])
+    # _build_stack_move_block synthesises a trailing ConstInt(0) + Return.
+    block = _build_stack_move_block([])
     result = Walk(LowerStackMove()).rewrite(block)
     assert result.has_done_something
     # Expect a move.Load at block start and a func.Return; the stack_move
@@ -30,7 +42,7 @@ def test_empty_block_emits_load_and_func_return():
 
 def test_const_float_emits_py_constant_and_tracks_value():
     cf = stack_move.ConstFloat(value=1.5)
-    block = _build_stack_move_block([cf, stack_move.Return()])
+    block = _build_stack_move_block([cf])
     rule = LowerStackMove()
     Walk(rule).rewrite(block)
     # py.Constant statement emitted with value 1.5.
@@ -45,7 +57,7 @@ def test_const_float_emits_py_constant_and_tracks_value():
 def test_const_loc_tracks_attribute_value():
     addr = LocationAddress(0, 0, 0)
     cl = stack_move.ConstLoc(value=addr)
-    block = _build_stack_move_block([cl, stack_move.Return()])
+    block = _build_stack_move_block([cl])
     rule = LowerStackMove()
     Walk(rule).rewrite(block)
     # The stack_move SSA is mapped to its raw attribute (for lifting into
@@ -56,7 +68,7 @@ def test_const_loc_tracks_attribute_value():
 def test_pop_is_dropped():
     cf = stack_move.ConstFloat(value=1.0)
     pop = stack_move.Pop(value=cf.result)
-    block = _build_stack_move_block([cf, pop, stack_move.Return()])
+    block = _build_stack_move_block([cf, pop])
     Walk(LowerStackMove()).rewrite(block)
     # No target statement for Pop, and the original stack_move.Pop is gone.
     assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
@@ -67,7 +79,7 @@ def test_dup_redirects_uses_to_input():
     dup = stack_move.Dup(value=cf.result)
     # Downstream consumer that references Dup's result.
     consumer = stack_move.Pop(value=dup.result)
-    block = _build_stack_move_block([cf, dup, consumer, stack_move.Return()])
+    block = _build_stack_move_block([cf, dup, consumer])
     Walk(LowerStackMove()).rewrite(block)
     # Dup is gone; Pop is also lowered away.
     assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
@@ -82,7 +94,7 @@ def test_swap_permutes_uses():
     # something observable.
     p_top = stack_move.Pop(value=sw.out_top)
     p_bot = stack_move.Pop(value=sw.out_bot)
-    block = _build_stack_move_block([a, b, sw, p_top, p_bot, stack_move.Return()])
+    block = _build_stack_move_block([a, b, sw, p_top, p_bot])
     Walk(LowerStackMove()).rewrite(block)
     # Swap is gone.
     assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)
@@ -94,7 +106,7 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
     cl0 = stack_move.ConstLoc(value=a0)
     cl1 = stack_move.ConstLoc(value=a1)
     fill = stack_move.Fill(locations=(cl0.result, cl1.result))
-    block = _build_stack_move_block([cl0, cl1, fill, stack_move.Return()])
+    block = _build_stack_move_block([cl0, cl1, fill])
     Walk(LowerStackMove()).rewrite(block)
     mf = next(s for s in block.stmts if isinstance(s, move.Fill))
     # stack_move.ConstLoc now stores encoding-layer LocationAddress values
@@ -115,7 +127,7 @@ def test_local_r_lowers_with_attribute_lifting():
         theta=cf_theta.result,
         locations=(cl.result,),
     )
-    block = _build_stack_move_block([cf_theta, cf_phi, cl, lr, stack_move.Return()])
+    block = _build_stack_move_block([cf_theta, cf_phi, cl, lr])
     Walk(LowerStackMove()).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.LocalR))
     # move.LocalR stores rotation angles as SSA values (axis_angle maps to
@@ -135,7 +147,7 @@ def test_local_rz_lowers_with_attribute_lifting():
     cf_theta = stack_move.ConstFloat(value=0.3)
     cl = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     lr = stack_move.LocalRz(theta=cf_theta.result, locations=(cl.result,))
-    block = _build_stack_move_block([cf_theta, cl, lr, stack_move.Return()])
+    block = _build_stack_move_block([cf_theta, cl, lr])
     Walk(LowerStackMove()).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.LocalRz))
     rot_const = mr.rotation_angle.owner
@@ -149,7 +161,7 @@ def test_global_r_lowers_with_attribute_lifting():
     cf_theta = stack_move.ConstFloat(value=0.4)
     cf_phi = stack_move.ConstFloat(value=0.5)
     gr = stack_move.GlobalR(phi=cf_phi.result, theta=cf_theta.result)
-    block = _build_stack_move_block([cf_theta, cf_phi, gr, stack_move.Return()])
+    block = _build_stack_move_block([cf_theta, cf_phi, gr])
     Walk(LowerStackMove()).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.GlobalR))
     axis_const = mr.axis_angle.owner
@@ -163,7 +175,7 @@ def test_global_r_lowers_with_attribute_lifting():
 def test_global_rz_lowers_with_attribute_lifting():
     cf_theta = stack_move.ConstFloat(value=0.6)
     gr = stack_move.GlobalRz(theta=cf_theta.result)
-    block = _build_stack_move_block([cf_theta, gr, stack_move.Return()])
+    block = _build_stack_move_block([cf_theta, gr])
     Walk(LowerStackMove()).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.GlobalRz))
     rot_const = mr.rotation_angle.owner
@@ -176,7 +188,7 @@ def test_cz_lowers_with_attribute_zone():
 
     cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
     cz = stack_move.CZ(zone=cz_zone.result)
-    block = _build_stack_move_block([cz_zone, cz, stack_move.Return()])
+    block = _build_stack_move_block([cz_zone, cz])
     Walk(LowerStackMove()).rewrite(block)
     mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
     # LowerStackMove wraps native ZoneAddress into the encoding wrapper.
@@ -187,7 +199,7 @@ def test_measure_single_zone_emits_single_zone_measure():
     cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
     cl1 = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     m = stack_move.Measure(locations=(cl0.result, cl1.result))
-    block = _build_stack_move_block([cl0, cl1, m, stack_move.Return()])
+    block = _build_stack_move_block([cl0, cl1, m])
     Walk(LowerStackMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     # One zone (both locs are in zone 0).
@@ -200,7 +212,7 @@ def test_measure_multi_zone_dedups():
     cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
     cl2 = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     m = stack_move.Measure(locations=(cl0.result, cl1.result, cl2.result))
-    block = _build_stack_move_block([cl0, cl1, cl2, m, stack_move.Return()])
+    block = _build_stack_move_block([cl0, cl1, cl2, m])
     Walk(LowerStackMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     assert len(mm.zones) == 2
@@ -212,7 +224,7 @@ def test_await_measure_lowers_without_error():
     cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
     m = stack_move.Measure(locations=(cl.result,))
     aw = stack_move.AwaitMeasure(future=m.result)
-    block = _build_stack_move_block([cl, m, aw, stack_move.Return()])
+    block = _build_stack_move_block([cl, m, aw])
     Walk(LowerStackMove()).rewrite(block)  # should not raise
 
 
@@ -220,7 +232,7 @@ def test_new_array_lowers_to_ilist_new():
     from kirin.dialects import ilist
 
     na = stack_move.NewArray(type_tag=0, dim0=4, dim1=0)
-    block = _build_stack_move_block([na, stack_move.Return()])
+    block = _build_stack_move_block([na])
     Walk(LowerStackMove()).rewrite(block)
     assert any(isinstance(s, ilist.New) for s in block.stmts)
 
@@ -230,7 +242,7 @@ def test_set_detector_lowers_to_annotate():
 
     na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
     sd = stack_move.SetDetector(array=na.result)
-    block = _build_stack_move_block([na, sd, stack_move.Return()])
+    block = _build_stack_move_block([na, sd])
     Walk(LowerStackMove()).rewrite(block)
     assert any(isinstance(s, annotate.stmts.SetDetector) for s in block.stmts)
 
@@ -240,6 +252,6 @@ def test_set_observable_lowers_to_annotate():
 
     na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
     so = stack_move.SetObservable(array=na.result)
-    block = _build_stack_move_block([na, so, stack_move.Return()])
+    block = _build_stack_move_block([na, so])
     Walk(LowerStackMove()).rewrite(block)
     assert any(isinstance(s, annotate.stmts.SetObservable) for s in block.stmts)
