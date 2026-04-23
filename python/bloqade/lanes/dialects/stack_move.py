@@ -61,35 +61,35 @@ TYPE_TAG: dict[int, types.TypeAttribute] = {
 
 @statement(dialect=dialect)
 class ConstFloat(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: float = info.attribute()
     result: ir.ResultValue = info.result(types.Float)
 
 
 @statement(dialect=dialect)
 class ConstInt(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: int = info.attribute()
     result: ir.ResultValue = info.result(types.Int)
 
 
 @statement(dialect=dialect)
 class ConstLoc(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: LocationAddress = info.attribute()
     result: ir.ResultValue = info.result(LocationAddressType)
 
 
 @statement(dialect=dialect)
 class ConstLane(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: LaneAddress = info.attribute()
     result: ir.ResultValue = info.result(LaneAddressType)
 
 
 @statement(dialect=dialect)
 class ConstZone(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ZoneAddress = info.attribute()
     result: ir.ResultValue = info.result(ZoneAddressType)
 
@@ -101,7 +101,7 @@ class ConstZone(ir.Statement):
 class Pop(ir.Statement):
     """Pop and discard the top of the virtual stack."""
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ir.SSAValue = info.argument(types.Any)
 
 
@@ -111,7 +111,7 @@ class Dup(ir.Statement):
     preserved as an explicit op to give downstream passes a hook for
     non-cloning invariants."""
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ir.SSAValue = info.argument(T)
     result: ir.ResultValue = info.result(T)
 
@@ -120,7 +120,7 @@ class Dup(ir.Statement):
 class Swap(ir.Statement):
     """Swap the top two virtual-stack values. out_top ≡ in_bot; out_bot ≡ in_top."""
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     in_top: ir.SSAValue = info.argument(TopType)
     in_bot: ir.SSAValue = info.argument(BottomType)
     out_top: ir.ResultValue = info.result(BottomType)
@@ -304,7 +304,7 @@ class GetItem(ir.Statement):
     later, the same way the Rust validator defers to type simulation.
     """
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     array: ir.SSAValue = info.argument(type=ArrayType[ElemType, types.Any, types.Any])
     indices: tuple[ir.SSAValue, ...] = info.argument(type=types.Int)
     result: ir.ResultValue = info.result(ElemType)
