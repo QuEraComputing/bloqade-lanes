@@ -209,17 +209,22 @@ class Measure(ir.Statement):
 @statement(dialect=dialect)
 class AwaitMeasure(ir.Statement):
     """Synchronisation — consumes a measurement future (linear) and
-    produces an array ref of measurement results.
+    produces a 1-D array of measurement results.
 
     Matches the bytecode's `await_measure`: pops a measure future,
-    pushes an array ref containing the measurement results. The
-    element type is MeasurementResult; shape is unknown until actual
-    measurement resolution (hence Any/Any dimensions)."""
+    pushes an array ref containing the measurement results.
+
+    Result type is ``ArrayType[MeasurementResultType, Any, Literal(0)]``,
+    a 1-D array in the bytecode convention (``dim1 == 0``). Element
+    ordering is defined by the ArchSpec: for each zone covered by the
+    originating measurement (in order), the results appear in the
+    order produced by ``arch_spec.yield_zone_locations(zone)``.
+    """
 
     traits = frozenset({lowering.FromPythonCall()})
     future: ir.SSAValue = info.argument(type=MeasurementFutureType)
     result: ir.ResultValue = info.result(
-        ArrayType[MeasurementResultType, types.Any, types.Any]
+        ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
     )
 
 

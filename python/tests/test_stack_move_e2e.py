@@ -18,7 +18,8 @@ def test_minimal_program_runs_end_to_end():
 
     Asserts the full expected block structure after both rewrites:
     move.Load, move.Fill (InitialFill lowers to Fill), move.EndMeasure,
-    ilist.New (AwaitMeasure stub), move.Store, func.Return.
+    move.GetFutureResult*N (one per location yielded by the ArchSpec
+    for zone 0), ilist.New (AwaitMeasure bundle), move.Store, func.Return.
     """
     prog = Program(
         version=(1, 0),
@@ -32,13 +33,15 @@ def test_minimal_program_runs_end_to_end():
         ],
     )
 
+    arch_spec = get_arch_spec()
+
     # Stage 1: decode bytecode -> stack_move IR.
     method = load_program(prog)
 
     # Stage 2: lower stack_move -> multi-dialect IR. Walk can operate
     # directly on the method's top-level Function statement — no need to
     # dig out the block.
-    Walk(RewriteStackMoveToMove()).rewrite(method.code)
+    Walk(RewriteStackMoveToMove(arch_spec=arch_spec)).rewrite(method.code)
 
     # The method's dialect group still points at the decoder's
     # stack_move+func group; AtomInterpreter needs the full move-pipeline
@@ -46,7 +49,7 @@ def test_minimal_program_runs_end_to_end():
     method.dialects = kernel
 
     # Stage 3: measure_lower.
-    rule = MeasureLower.from_method(method, arch_spec=get_arch_spec())
+    rule = MeasureLower.from_method(method, arch_spec=arch_spec)
     Walk(rule).rewrite(method.code)
 
     # Assert the full block structure (types, order, and key attribute
@@ -54,14 +57,12 @@ def test_minimal_program_runs_end_to_end():
     block = method.callable_region.blocks[0]
     stmts = list(block.stmts)
 
-    expected_types = [
-        move.Load,
-        move.Fill,
-        move.EndMeasure,
-        ilist.New,
-        move.Store,
-        func.Return,
-    ]
+    expected_zone_locs = list(arch_spec.yield_zone_locations(ZoneAddress(0)))
+    expected_types = (
+        [move.Load, move.Fill, move.EndMeasure]
+        + [move.GetFutureResult] * len(expected_zone_locs)
+        + [ilist.New, move.Store, func.Return]
+    )
     assert [
         type(s) for s in stmts
     ] == expected_types, (
@@ -73,3 +74,9 @@ def test_minimal_program_runs_end_to_end():
 
     end_measure = next(s for s in stmts if isinstance(s, move.EndMeasure))
     assert end_measure.zone_addresses == (ZoneAddress(0),)
+
+    # GetFutureResults are ordered by ArchSpec iteration and all share
+    # the same zone_address (zone 0).
+    gfrs = [s for s in stmts if isinstance(s, move.GetFutureResult)]
+    assert [g.location_address for g in gfrs] == expected_zone_locs
+    assert all(g.zone_address == ZoneAddress(0) for g in gfrs)

@@ -22,6 +22,7 @@ from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.utils import no_none_elements_tuple
 
@@ -33,6 +34,13 @@ T = TypeVar("T")
 @dataclass
 class RewriteStackMoveToMove(RewriteRule):
     """Rewrite a stack_move block into a multi-dialect block in place.
+
+    Constructor args:
+    - arch_spec: required. AwaitMeasure lowering iterates
+      ``arch_spec.yield_zone_locations(zone)`` for each zone on the
+      originating move.Measure to emit the GetFutureResult chain that
+      materialises the 1-D measurement-result array (element order is
+      defined by the ArchSpec).
 
     Mutable state on the rule instance, carried across the walk:
     - ssa_to_attr: stack_move SSA → raw Python attribute value (float,
@@ -51,6 +59,7 @@ class RewriteStackMoveToMove(RewriteRule):
     `next_use.replace_by(current_use)` pattern.
     """
 
+    arch_spec: ArchSpec
     ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
     state: ir.SSAValue | None = None
 
@@ -342,15 +351,32 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.AwaitMeasure, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import ilist
 
-        # v1 stub: emit an empty ilist as a placeholder for the measurement
-        # result array. The future operand (stmt.future) is already rewired
-        # to the move.Measure.future result by _rewrite_Measure, but it's
-        # dropped here — proper lowering would need per-location
-        # GetFutureResult expansion, which isn't wired up in this PR. See
-        # follow-up issue.
-        placeholder = ilist.New(values=())
-        placeholder.insert_before(stmt)
-        stmt.result.replace_by(placeholder.result)
+        # The future operand was rewired by _rewrite_Measure to point at
+        # the new move.Measure.future, so its owner is the move.Measure
+        # whose zone_addresses attribute tells us which zones were
+        # measured.
+        measure_stmt = stmt.future.owner
+        if not isinstance(measure_stmt, move.Measure):
+            return
+
+        # Flatten the 1-D result array: for each measured zone, emit a
+        # GetFutureResult per location yielded by the ArchSpec. Element
+        # order is zones-then-locations, both in their natural ArchSpec
+        # iteration order (documented on stack_move.AwaitMeasure).
+        results: list[ir.SSAValue] = []
+        for zone in measure_stmt.zone_addresses:
+            for loc in self.arch_spec.yield_zone_locations(zone):
+                g = move.GetFutureResult(
+                    measurement_future=stmt.future,
+                    zone_address=zone,
+                    location_address=loc,
+                )
+                g.insert_before(stmt)
+                results.append(g.result)
+
+        arr = ilist.New(values=tuple(results))
+        arr.insert_before(stmt)
+        stmt.result.replace_by(arr.result)
         to_delete.append(stmt)
 
     # ── Arrays / annotations ──────────────────────────────────────────
@@ -359,15 +385,31 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import ilist
 
-        # Forward element SSA operands directly into the ilist.New. The
-        # bytecode's new_array pops dim0 * max(dim1, 1) values as the
-        # array's initial elements (per the Rust validator) — they've
-        # already been rewired by earlier replace_by calls on their
-        # defining Const* / ilist.New / py.Constant predecessors, so
-        # stmt.values points at valid target-dialect SSA values.
-        new = ilist.New(values=tuple(stmt.values))
-        new.insert_before(stmt)
-        stmt.result.replace_by(new.result)
+        # ArrayType[ElemType, Dim0, Dim1] lowers to:
+        #   - IList[ElemType, Dim0]              when Dim1 == 0 (1-D)
+        #   - IList[IList[ElemType, Dim1], Dim0] when Dim1 >  0 (2-D)
+        #
+        # ``stmt.values`` holds dim0 * max(dim1, 1) element SSAs in
+        # row-major order (outer index 0..dim0, inner index 0..dim1 per
+        # row) — pop_n returns them bottom-to-top, which matches the
+        # push order used by the program. For 2-D we slice into rows
+        # and bundle each row into its own inner ilist.New, then wrap
+        # the rows in an outer ilist.New.
+        values = tuple(stmt.values)
+        if stmt.dim1 == 0:
+            new = ilist.New(values=values)
+            new.insert_before(stmt)
+            stmt.result.replace_by(new.result)
+        else:
+            row_results: list[ir.SSAValue] = []
+            for row in range(stmt.dim0):
+                row_values = values[row * stmt.dim1 : (row + 1) * stmt.dim1]
+                inner = ilist.New(values=row_values)
+                inner.insert_before(stmt)
+                row_results.append(inner.result)
+            outer = ilist.New(values=tuple(row_results))
+            outer.insert_before(stmt)
+            stmt.result.replace_by(outer.result)
         to_delete.append(stmt)
 
     @_rewrite.register(stack_move.GetItem)

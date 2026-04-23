@@ -70,5 +70,15 @@ class MeasureLower(RewriteRule):
             current_state=node.current_state,
             zone_addresses=zones,
         )
-        node.replace_by(replacement)
+        replacement.insert_before(node)
+        # move.Measure has two results (state, future) but move.EndMeasure
+        # has only one (future). Rewire each explicitly — a bare
+        # ``replace_by`` would positionally zip state→future and leave the
+        # future result dangling.
+        #
+        # EndMeasure terminates the state chain, so forward the input state
+        # to any residual state consumers (e.g. a trailing move.Store).
+        node.result.replace_by(node.current_state)
+        node.future.replace_by(replacement.result)
+        node.delete()
         return RewriteResult(has_done_something=True)

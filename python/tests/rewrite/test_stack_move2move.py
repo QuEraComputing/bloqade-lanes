@@ -2,6 +2,7 @@ from kirin import ir
 from kirin.dialects import py
 from kirin.rewrite import Walk
 
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.layout.encoding import (
     LocationAddress,
@@ -9,6 +10,8 @@ from bloqade.lanes.layout.encoding import (
     ZoneAddress as EncodingZoneAddress,
 )
 from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
+
+_ARCH = get_arch_spec()
 
 
 def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
@@ -32,7 +35,7 @@ def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
 def test_empty_block_emits_load_and_func_return():
     # _build_stack_move_block synthesises a trailing ConstInt(0) + Return.
     block = _build_stack_move_block([])
-    result = Walk(RewriteStackMoveToMove()).rewrite(block)
+    result = Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     assert result.has_done_something
     # Expect a move.Load at block start and a func.Return; the stack_move
     # Return should have been deleted.
@@ -43,7 +46,7 @@ def test_empty_block_emits_load_and_func_return():
 def test_const_float_emits_py_constant_and_tracks_value():
     cf = stack_move.ConstFloat(value=1.5)
     block = _build_stack_move_block([cf])
-    rule = RewriteStackMoveToMove()
+    rule = RewriteStackMoveToMove(arch_spec=_ARCH)
     Walk(rule).rewrite(block)
     # py.Constant statement emitted with value 1.5.
     py_const = next(s for s in block.stmts if isinstance(s, py.Constant))
@@ -58,7 +61,7 @@ def test_const_loc_tracks_attribute_value():
     addr = LocationAddress(0, 0, 0)
     cl = stack_move.ConstLoc(value=addr)
     block = _build_stack_move_block([cl])
-    rule = RewriteStackMoveToMove()
+    rule = RewriteStackMoveToMove(arch_spec=_ARCH)
     Walk(rule).rewrite(block)
     # The stack_move SSA is mapped to its raw attribute (for lifting into
     # downstream move.* attributes).
@@ -69,7 +72,7 @@ def test_pop_is_dropped():
     cf = stack_move.ConstFloat(value=1.0)
     pop = stack_move.Pop(value=cf.result)
     block = _build_stack_move_block([cf, pop])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     # No target statement for Pop, and the original stack_move.Pop is gone.
     assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
 
@@ -80,7 +83,7 @@ def test_dup_redirects_uses_to_input():
     # Downstream consumer that references Dup's result.
     consumer = stack_move.Pop(value=dup.result)
     block = _build_stack_move_block([cf, dup, consumer])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     # Dup is gone; Pop is also lowered away.
     assert not any(isinstance(s, stack_move.Dup) for s in block.stmts)
     assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
@@ -95,7 +98,7 @@ def test_swap_permutes_uses():
     p_top = stack_move.Pop(value=sw.out_top)
     p_bot = stack_move.Pop(value=sw.out_bot)
     block = _build_stack_move_block([a, b, sw, p_top, p_bot])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     # Swap is gone.
     assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)
 
@@ -107,7 +110,7 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
     cl1 = stack_move.ConstLoc(value=a1)
     fill = stack_move.Fill(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, fill])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mf = next(s for s in block.stmts if isinstance(s, move.Fill))
     # stack_move.ConstLoc now stores encoding-layer LocationAddress values
     # directly (matching the move dialect convention), so the rewrite just
@@ -128,7 +131,7 @@ def test_local_r_lowers_with_attribute_lifting():
         locations=(cl.result,),
     )
     block = _build_stack_move_block([cf_theta, cf_phi, cl, lr])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.LocalR))
     # move.LocalR stores rotation angles as SSA values; axis_angle and
     # rotation_angle pass through from the stack_move statement. The SSA
@@ -148,7 +151,7 @@ def test_local_rz_lowers_with_attribute_lifting():
     cl = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
     lr = stack_move.LocalRz(rotation_angle=cf_theta.result, locations=(cl.result,))
     block = _build_stack_move_block([cf_theta, cl, lr])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.LocalRz))
     rot_const = mr.rotation_angle.owner
     assert isinstance(rot_const, py.Constant)
@@ -162,7 +165,7 @@ def test_global_r_lowers_with_attribute_lifting():
     cf_phi = stack_move.ConstFloat(value=0.5)
     gr = stack_move.GlobalR(axis_angle=cf_phi.result, rotation_angle=cf_theta.result)
     block = _build_stack_move_block([cf_theta, cf_phi, gr])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.GlobalR))
     axis_const = mr.axis_angle.owner
     rot_const = mr.rotation_angle.owner
@@ -176,7 +179,7 @@ def test_global_rz_lowers_with_attribute_lifting():
     cf_theta = stack_move.ConstFloat(value=0.6)
     gr = stack_move.GlobalRz(rotation_angle=cf_theta.result)
     block = _build_stack_move_block([cf_theta, gr])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.GlobalRz))
     rot_const = mr.rotation_angle.owner
     assert isinstance(rot_const, py.Constant)
@@ -189,7 +192,7 @@ def test_cz_lowers_with_attribute_zone():
     cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
     cz = stack_move.CZ(zone=cz_zone.result)
     block = _build_stack_move_block([cz_zone, cz])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
     # RewriteStackMoveToMove wraps native ZoneAddress into the encoding wrapper.
     assert mcz.zone_address == EncodingZoneAddress(0)
@@ -201,7 +204,7 @@ def test_measure_single_zone_emits_single_zone_measure():
     cz1 = stack_move.ConstZone(value=EncodingZoneAddress(0))
     m = stack_move.Measure(zones=(cz0.result, cz1.result))
     block = _build_stack_move_block([cz0, cz1, m])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     # One zone (both operands are zone 0) — zones now live on the
     # zone_addresses attribute, not SSA operands.
@@ -216,20 +219,36 @@ def test_measure_multi_zone_dedups():
     cz2 = stack_move.ConstZone(value=EncodingZoneAddress(1))
     m = stack_move.Measure(zones=(cz0.result, cz1.result, cz2.result))
     block = _build_stack_move_block([cz0, cz1, cz2, m])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     assert mm.zone_addresses == (EncodingZoneAddress(0), EncodingZoneAddress(1))
 
 
-def test_await_measure_lowers_without_error():
-    # Smoke: await_measure after measure lowers cleanly. AwaitMeasure is
-    # pure synchronisation in stack_move — no target-dialect emission.
+def test_await_measure_lowers_to_getfutureresult_chain():
+    # AwaitMeasure expands to one move.GetFutureResult per location in
+    # each measured zone (order defined by the ArchSpec), then an
+    # ilist.New bundling the results.
+    from kirin.dialects import ilist
+
     cz = stack_move.ConstZone(value=EncodingZoneAddress(0))
     m = stack_move.Measure(zones=(cz.result,))
-    # measure(arity=1) has one future result; await_measure consumes it.
     aw = stack_move.AwaitMeasure(future=m.results[0])
     block = _build_stack_move_block([cz, m, aw])
-    Walk(RewriteStackMoveToMove()).rewrite(block)  # should not raise
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+
+    expected_locs = list(_ARCH.yield_zone_locations(EncodingZoneAddress(0)))
+    gfrs = [s for s in block.stmts if isinstance(s, move.GetFutureResult)]
+    assert len(gfrs) == len(expected_locs)
+    assert [g.location_address for g in gfrs] == expected_locs
+    assert all(g.zone_address == EncodingZoneAddress(0) for g in gfrs)
+    # A single ilist.New bundles the GetFutureResult outputs in order.
+    ilist_news = [s for s in block.stmts if isinstance(s, ilist.New)]
+    # The measurement ilist.New is the one whose values are the GetFutureResult
+    # results.
+    bundle = next(
+        n for n in ilist_news if tuple(n.values) == tuple(g.result for g in gfrs)
+    )
+    assert len(bundle.values) == len(expected_locs)
 
 
 def test_new_array_lowers_to_ilist_new():
@@ -237,8 +256,39 @@ def test_new_array_lowers_to_ilist_new():
 
     na = stack_move.NewArray(values=(), type_tag=0, dim0=4, dim1=0)
     block = _build_stack_move_block([na])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     assert any(isinstance(s, ilist.New) for s in block.stmts)
+
+
+def test_new_array_2d_preserves_nested_structure():
+    """ArrayType[ElemType, Dim0, Dim1] with Dim1>0 lowers to an outer
+    ilist.New containing ``dim0`` inner ilist.News (each of length
+    ``dim1``) — the 2-D shape is preserved as nested ilists."""
+    from kirin.dialects import ilist
+
+    # Six element values laid out row-major: row0=[c0,c1], row1=[c2,c3],
+    # row2=[c4,c5].
+    consts = [stack_move.ConstInt(value=i) for i in range(6)]
+    na = stack_move.NewArray(
+        values=tuple(c.result for c in consts),
+        type_tag=0,
+        dim0=3,
+        dim1=2,
+    )
+    block = _build_stack_move_block([*consts, na])
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
+
+    ilist_news = [s for s in block.stmts if isinstance(s, ilist.New)]
+    # Three inner ilists of length 2 (the rows) + one outer ilist of
+    # length 3 (the rows wrapped). Empty block terminator synthesises
+    # no ilist.News.
+    assert len(ilist_news) == 4
+    inners = [n for n in ilist_news if len(n.values) == 2]
+    outers = [n for n in ilist_news if len(n.values) == 3]
+    assert len(inners) == 3
+    assert len(outers) == 1
+    # Outer's values are exactly the inner ilist results, in row order.
+    assert tuple(outers[0].values) == tuple(inner.result for inner in inners)
 
 
 def test_set_detector_lowers_to_annotate():
@@ -247,7 +297,7 @@ def test_set_detector_lowers_to_annotate():
     na = stack_move.NewArray(values=(), type_tag=0, dim0=1, dim1=0)
     sd = stack_move.SetDetector(array=na.result)
     block = _build_stack_move_block([na, sd])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     assert any(isinstance(s, annotate.stmts.SetDetector) for s in block.stmts)
 
 
@@ -257,5 +307,5 @@ def test_set_observable_lowers_to_annotate():
     na = stack_move.NewArray(values=(), type_tag=0, dim0=1, dim1=0)
     so = stack_move.SetObservable(array=na.result)
     block = _build_stack_move_block([na, so])
-    Walk(RewriteStackMoveToMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove(arch_spec=_ARCH)).rewrite(block)
     assert any(isinstance(s, annotate.stmts.SetObservable) for s in block.stmts)
