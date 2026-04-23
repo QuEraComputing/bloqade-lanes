@@ -87,6 +87,20 @@ class RewriteStackMoveToMove(RewriteRule):
         # still reference the const_loc result when const_loc.delete() runs.
         for stmt in reversed(to_delete):
             stmt.delete()
+
+        # Close out state threading: emit a final move.Store(state) just
+        # before the block's terminator so the state boundary is paired
+        # with the move.Load inserted at block start. Terminator handlers
+        # (Return/Halt) only emit the terminator itself; the Store lives
+        # here so it is guaranteed regardless of which terminator — or
+        # whether any stack_move terminator — is present.
+        assert self.state is not None
+        store = move.Store(self.state)
+        terminator = node.last_stmt
+        if terminator is None:
+            node.stmts.append(store)
+        else:
+            store.insert_before(terminator)
         return RewriteResult(has_done_something=True)
 
     @singledispatchmethod
@@ -98,11 +112,10 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.Return, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import func
 
-        assert self.state is not None
-        move.Store(self.state).insert_before(stmt)
         # The stack_move.Return.value operand has already been rewired by
         # earlier replace_by calls on its defining Const* / stack op, so
-        # we can thread it directly through to func.Return.
+        # we can thread it directly through to func.Return. The final
+        # move.Store(state) is inserted by rewrite_Block after the walk.
         func.Return(stmt.value).insert_before(stmt)
         to_delete.append(stmt)
 
@@ -110,8 +123,8 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.Halt, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import func
 
-        assert self.state is not None
-        move.Store(self.state).insert_before(stmt)
+        # The final move.Store(state) is inserted by rewrite_Block after
+        # the walk.
         none_stmt = func.ConstantNone()
         none_stmt.insert_before(stmt)
         func.Return(none_stmt.result).insert_before(stmt)
