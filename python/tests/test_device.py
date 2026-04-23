@@ -1,6 +1,8 @@
 import math
 from typing import Any
+from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from bloqade.decoders.dialects import annotate
 from kirin.dialects import ilist
@@ -10,6 +12,7 @@ from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.device import (
     DetectorResult,
     GeminiLogicalSimulator,
+    GeminiLogicalSimulatorTask,
     Result,
 )
 from bloqade.lanes.noise_model import generate_logical_noise_model
@@ -207,6 +210,23 @@ def _steane_matrices(num_qubits: int):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("run_detectors", [False, True])
+def test_logical_x_observable_is_one(run_detectors: bool):
+    m2dets, m2obs = _steane_matrices(1)
+
+    @gemini_logical.kernel(aggressive_unroll=True)
+    def logical_x():
+        reg = qubit.qalloc(1)
+        squin.x(reg[0])
+        gemini_logical.terminal_measure(reg)
+
+    task = GeminiLogicalSimulator().task(logical_x, m2dets=m2dets, m2obs=m2obs)
+    result = task.run(10, with_noise=False, run_detectors=run_detectors)
+
+    assert all(all(obs) for obs in result.observables)
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "use_dets, use_obs",
     [(True, True), (True, False), (False, True)],
@@ -278,3 +298,72 @@ def test_cudaq_kernel_integration(use_dets: bool, use_obs: bool):
         assert len(result.observables) == 10
         assert all(len(obs) == len(m2obs[0]) for obs in result.observables)
         assert all(isinstance(b, bool) for obs in result.observables for b in obs)
+
+
+def _mock_task(*, is_clifford: bool) -> MagicMock:
+    task = MagicMock()
+    task.tsim_circuit.is_clifford = is_clifford
+    task.noiseless_tsim_circuit.is_clifford = is_clifford
+    task.fidelity_bounds.return_value = (0.5, 0.9)
+    return task
+
+
+def test_run_clifford_uses_stim_sampler():
+    task = _mock_task(is_clifford=True)
+    samples = np.array([[True, False]])
+    task.tsim_circuit.stim_circuit.compile_sampler.return_value.sample.return_value = (
+        samples
+    )
+
+    result = GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
+
+    task.tsim_circuit.stim_circuit.compile_sampler.assert_called_once_with()
+    task.measurement_sampler.sample.assert_not_called()
+    assert isinstance(result, Result)
+    assert result._raw_measurements == samples.tolist()
+
+
+def test_run_non_clifford_uses_measurement_sampler():
+    task = _mock_task(is_clifford=False)
+    task.measurement_sampler.sample.return_value = np.array([[True]])
+
+    GeminiLogicalSimulatorTask.run(task, shots=1, with_noise=True)
+
+    task.measurement_sampler.sample.assert_called_once_with(shots=1)
+    task.tsim_circuit.stim_circuit.compile_sampler.assert_not_called()
+
+
+def test_run_detectors_clifford_converts_via_m2d():
+    task = _mock_task(is_clifford=True)
+    samples = np.array([[True, False]])
+    detectors, observables = np.array([[True]]), np.array([[False]])
+    task.tsim_circuit.stim_circuit.compile_sampler.return_value.sample.return_value = (
+        samples
+    )
+    m2d = task.tsim_circuit.compile_m2d_converter.return_value
+    m2d.convert.return_value = (detectors, observables)
+
+    result = GeminiLogicalSimulatorTask._run_detectors(task, shots=1, with_noise=True)
+
+    task.tsim_circuit.compile_m2d_converter.assert_called_once_with(
+        skip_reference_sample=True
+    )
+    task.detector_sampler.sample.assert_not_called()
+    assert isinstance(result, DetectorResult)
+    assert result._detectors == detectors.tolist()
+    assert result._observables == observables.tolist()
+
+
+def test_run_detectors_non_clifford_uses_detector_sampler():
+    task = _mock_task(is_clifford=False)
+    task.detector_sampler.sample.return_value = (
+        np.array([[True]]),
+        np.array([[False]]),
+    )
+
+    GeminiLogicalSimulatorTask._run_detectors(task, shots=1, with_noise=True)
+
+    task.detector_sampler.sample.assert_called_once_with(
+        shots=1, separate_observables=True
+    )
+    task.tsim_circuit.compile_m2d_converter.assert_not_called()
