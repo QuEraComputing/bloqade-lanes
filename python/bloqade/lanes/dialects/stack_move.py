@@ -7,7 +7,8 @@ from bloqade.decoders.dialects.annotate.types import (
     MeasurementResultType,
     ObservableType,
 )
-from kirin import ir, lowering, types
+from kirin import interp, ir, lowering, types
+from kirin.analysis import const, typeinfer
 from kirin.decl import info, statement
 
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
@@ -346,3 +347,32 @@ class SetObservable(ir.Statement):
         type=ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
     )
     result: ir.ResultValue = info.result(ObservableType)
+
+
+# ── Type inference ─────────────────────────────────────────────────────
+
+
+@dialect.register(key="typeinfer")
+class TypeInfer(interp.MethodTable):
+    @interp.impl(Return)
+    def return_(
+        self,
+        interp_: "typeinfer.TypeInference",
+        frame: "interp.Frame[types.TypeAttribute]",
+        stmt: Return,
+    ) -> "interp.ReturnValue":
+        if (
+            isinstance(hint := stmt.value.hints.get("const"), const.Value)
+            and hint.data is not None
+        ):
+            return interp.ReturnValue(types.Literal(hint.data, frame.get(stmt.value)))
+        return interp.ReturnValue(frame.get(stmt.value))
+
+    @interp.impl(Halt)
+    def halt(
+        self,
+        interp_: "typeinfer.TypeInference",
+        frame: "interp.Frame[types.TypeAttribute]",
+        stmt: Halt,
+    ) -> "interp.ReturnValue":
+        return interp.ReturnValue(types.NoneType)
