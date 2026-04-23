@@ -135,9 +135,10 @@ def test_decode_local_r():
     r = next(s for s in block.stmts if isinstance(s, stack_move.LocalR))
     floats = [s for s in block.stmts if isinstance(s, stack_move.ConstFloat)]
     locs = [s for s in block.stmts if isinstance(s, stack_move.ConstLoc)]
-    # bytecode pops phi first, then theta, then locations (per .pyi docstring)
-    assert r.phi is floats[1].result
-    assert r.theta is floats[0].result
+    # bytecode pops phi first, then theta, then locations (per .pyi docstring);
+    # these map to axis_angle and rotation_angle on the stack_move statement.
+    assert r.axis_angle is floats[1].result
+    assert r.rotation_angle is floats[0].result
     assert r.locations == (locs[0].result,)
 
 
@@ -145,7 +146,7 @@ def test_decode_global_rz():
     block = _decode([Instruction.const_float(0.5), Instruction.global_rz()])
     rz = next(s for s in block.stmts if isinstance(s, stack_move.GlobalRz))
     cf = next(s for s in block.stmts if isinstance(s, stack_move.ConstFloat))
-    assert rz.theta is cf.result
+    assert rz.rotation_angle is cf.result
 
 
 def test_decode_cz():

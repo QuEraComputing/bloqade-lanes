@@ -162,26 +162,40 @@ class BytecodeDecoder:
         self.block.stmts.append(stack_move.Move(lanes=tuple(lanes)))
 
     def _visit_local_r(self, idx: int, instr: "Instruction") -> None:
-        phi = self._pop_or_raise(idx, instr)
-        theta = self._pop_or_raise(idx, instr)
+        # bytecode pops phi first (top of stack), then theta; after rename,
+        # these map to axis_angle and rotation_angle respectively.
+        axis_angle = self._pop_or_raise(idx, instr)
+        rotation_angle = self._pop_or_raise(idx, instr)
         locs = self._pop_n(idx, instr, instr.arity())
         self.block.stmts.append(
-            stack_move.LocalR(phi=phi, theta=theta, locations=tuple(locs))
+            stack_move.LocalR(
+                axis_angle=axis_angle,
+                rotation_angle=rotation_angle,
+                locations=tuple(locs),
+            )
         )
 
     def _visit_local_rz(self, idx: int, instr: "Instruction") -> None:
-        theta = self._pop_or_raise(idx, instr)
+        # bytecode pops theta (top of stack) -> rotation_angle after rename.
+        rotation_angle = self._pop_or_raise(idx, instr)
         locs = self._pop_n(idx, instr, instr.arity())
-        self.block.stmts.append(stack_move.LocalRz(theta=theta, locations=tuple(locs)))
+        self.block.stmts.append(
+            stack_move.LocalRz(rotation_angle=rotation_angle, locations=tuple(locs))
+        )
 
     def _visit_global_r(self, idx: int, instr: "Instruction") -> None:
-        phi = self._pop_or_raise(idx, instr)
-        theta = self._pop_or_raise(idx, instr)
-        self.block.stmts.append(stack_move.GlobalR(phi=phi, theta=theta))
+        # bytecode pops phi first (top of stack), then theta; after rename,
+        # these map to axis_angle and rotation_angle respectively.
+        axis_angle = self._pop_or_raise(idx, instr)
+        rotation_angle = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(
+            stack_move.GlobalR(axis_angle=axis_angle, rotation_angle=rotation_angle)
+        )
 
     def _visit_global_rz(self, idx: int, instr: "Instruction") -> None:
-        theta = self._pop_or_raise(idx, instr)
-        self.block.stmts.append(stack_move.GlobalRz(theta=theta))
+        # bytecode pops theta (top of stack) -> rotation_angle after rename.
+        rotation_angle = self._pop_or_raise(idx, instr)
+        self.block.stmts.append(stack_move.GlobalRz(rotation_angle=rotation_angle))
 
     def _visit_cz(self, idx: int, instr: "Instruction") -> None:
         zone = self._pop_or_raise(idx, instr)

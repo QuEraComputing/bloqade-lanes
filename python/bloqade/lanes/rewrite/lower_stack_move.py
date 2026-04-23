@@ -118,7 +118,7 @@ class LowerStackMove(RewriteRule):
         # the new py.Constant result in place.
         stmt.result.replace_by(out.result)
         # Consumers that need the raw float as an attribute (e.g.
-        # _rewrite_LocalR building a theta= kwarg) look up ssa_to_attr.
+        # _rewrite_LocalR building a rotation_angle= kwarg) look up ssa_to_attr.
         # The key is the new SSA, because replace_by rewired the operands
         # stored on downstream statements to point there.
         self.ssa_to_attr[out.result] = stmt.value
@@ -261,16 +261,17 @@ class LowerStackMove(RewriteRule):
         self, stmt: stack_move.LocalR, to_delete: list[ir.Statement]
     ) -> None:
         assert self.state is not None
-        # stack_move.LocalR uses phi/theta SSA args + locations SSA tuple;
-        # move.LocalR takes axis_angle/rotation_angle as SSA and
-        # location_addresses as an attribute tuple. The phi/theta SSAs
-        # were rewired to the new py.Constant results by _rewrite_ConstFloat
-        # (via replace_by), so we can forward them directly.
+        # stack_move.LocalR and move.LocalR share axis_angle/rotation_angle
+        # SSA args; stack_move additionally carries locations as an SSA
+        # tuple, which lowers to move.LocalR's location_addresses attribute.
+        # The angle SSAs were rewired to the new py.Constant results by
+        # _rewrite_ConstFloat (via replace_by), so we can forward them
+        # directly.
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.LocalR(
             self.state,
-            axis_angle=stmt.phi,
-            rotation_angle=stmt.theta,
+            axis_angle=stmt.axis_angle,
+            rotation_angle=stmt.rotation_angle,
             location_addresses=addrs,
         )
         new.insert_before(stmt)
@@ -284,7 +285,7 @@ class LowerStackMove(RewriteRule):
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.LocalRz(
             self.state,
-            rotation_angle=stmt.theta,
+            rotation_angle=stmt.rotation_angle,
             location_addresses=addrs,
         )
         new.insert_before(stmt)
@@ -297,8 +298,8 @@ class LowerStackMove(RewriteRule):
         assert self.state is not None
         new = move.GlobalR(
             self.state,
-            axis_angle=stmt.phi,
-            rotation_angle=stmt.theta,
+            axis_angle=stmt.axis_angle,
+            rotation_angle=stmt.rotation_angle,
         )
         new.insert_before(stmt)
         self.state = new.result
@@ -308,7 +309,7 @@ class LowerStackMove(RewriteRule):
         self, stmt: stack_move.GlobalRz, to_delete: list[ir.Statement]
     ) -> None:
         assert self.state is not None
-        new = move.GlobalRz(self.state, rotation_angle=stmt.theta)
+        new = move.GlobalRz(self.state, rotation_angle=stmt.rotation_angle)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)

@@ -123,29 +123,29 @@ class Move(ir.Statement):
 @statement(dialect=dialect)
 class LocalR(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    phi: ir.SSAValue = info.argument(type=types.Float)
-    theta: ir.SSAValue = info.argument(type=types.Float)
+    axis_angle: ir.SSAValue = info.argument(type=types.Float)
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
 
 @statement(dialect=dialect)
 class LocalRz(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    theta: ir.SSAValue = info.argument(type=types.Float)
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
 
 @statement(dialect=dialect)
 class GlobalR(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    phi: ir.SSAValue = info.argument(type=types.Float)
-    theta: ir.SSAValue = info.argument(type=types.Float)
+    axis_angle: ir.SSAValue = info.argument(type=types.Float)
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
 class GlobalRz(ir.Statement):
     traits = frozenset({lowering.FromPythonCall()})
-    theta: ir.SSAValue = info.argument(type=types.Float)
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
 @statement(dialect=dialect)
