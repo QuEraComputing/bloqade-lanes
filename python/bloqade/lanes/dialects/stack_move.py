@@ -8,7 +8,7 @@ from bloqade.decoders.dialects.annotate.types import (
     ObservableType,
 )
 from kirin import interp, ir, lowering, types
-from kirin.analysis import const, typeinfer
+from kirin.analysis import typeinfer
 from kirin.decl import info, statement
 
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
@@ -361,11 +361,11 @@ class TypeInfer(interp.MethodTable):
         frame: "interp.Frame[types.TypeAttribute]",
         stmt: Return,
     ) -> "interp.ReturnValue":
-        if (
-            isinstance(hint := stmt.value.hints.get("const"), const.Value)
-            and hint.data is not None
-        ):
-            return interp.ReturnValue(types.Literal(hint.data, frame.get(stmt.value)))
+        # No const narrowing: no stack_move statement has a constant
+        # interpreter / const-prop method registered, so the ``"const"``
+        # hint on any stack_move-produced SSA value is always Unknown.
+        # The branch would be dead code. Propagate the inferred type
+        # from the frame directly.
         return interp.ReturnValue(frame.get(stmt.value))
 
     @interp.impl(Halt)
