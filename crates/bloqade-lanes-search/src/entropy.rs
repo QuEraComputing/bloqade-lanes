@@ -299,6 +299,25 @@ fn trace_buffer_node_ids(buffer: &[ScoredResumeState]) -> Vec<u32> {
     ranked.into_iter().map(|entry| entry.node_id.0).collect()
 }
 
+fn best_untried_moveset_score(
+    es: &EntropyState,
+    config: &Config,
+    occupied: &HashSet<u64>,
+    ctx: &SearchContext,
+    params: &EntropyParams,
+) -> Option<f64> {
+    es.candidate_cache
+        .iter()
+        .filter_map(|(moveset, candidate_cfg, _)| {
+            let move_key = moveset.encoded_lanes().to_vec();
+            if es.tried_moves.contains(&move_key) || es.failed_candidates.contains(&move_key) {
+                return None;
+            }
+            Some(score_moveset(config, candidate_cfg, occupied, ctx, params))
+        })
+        .max_by(|a, b| a.total_cmp(b))
+}
+
 // ── Candidate generation (entropy-weighted) ────────────────────────
 
 /// Score and generate ranked candidate movesets with entropy-weighted scoring.
@@ -1223,14 +1242,20 @@ pub fn entropy_search(
             occupied.insert(loc.encode());
         }
         let moveset_score = score_moveset(current_cfg, child_cfg, &occupied, ctx, params);
-        resume_buffer_insert(
-            &mut resume_buffer,
-            child_id,
-            moveset_score,
-            child_depth,
-            resume_capacity,
-            &mut resume_insert_order,
-        );
+        resume_buffer_discard(&mut resume_buffer, current);
+        if let Some(next_best_score) = entropy_map
+            .get(&current)
+            .and_then(|es| best_untried_moveset_score(es, current_cfg, &occupied, ctx, params))
+        {
+            resume_buffer_insert(
+                &mut resume_buffer,
+                current,
+                next_best_score,
+                graph.depth(current),
+                resume_capacity,
+                &mut resume_insert_order,
+            );
+        }
 
         if let Some(t) = trace.as_mut() {
             let parent_cfg = Some(config_as_trace_tuples(graph.config(current)));
@@ -1586,6 +1611,22 @@ mod tests {
             ..EntropyParams::default()
         };
         assert_eq!(params.max_goal_candidates.saturating_sub(1), 3);
+    }
+
+    #[test]
+    fn resume_buffer_reinsertion_refreshes_score_and_dedupes_node() {
+        let mut buffer = Vec::new();
+        let mut next_order = 0_u64;
+        let parent = NodeId(42);
+
+        resume_buffer_insert(&mut buffer, parent, 1.0, 3, 3, &mut next_order);
+        resume_buffer_insert(&mut buffer, NodeId(9), 2.0, 3, 3, &mut next_order);
+        // Reinsert same parent with a better move score.
+        resume_buffer_insert(&mut buffer, parent, 5.0, 3, 3, &mut next_order);
+
+        // Node id is de-duplicated and priority is refreshed.
+        assert_eq!(buffer.iter().filter(|e| e.node_id == parent).count(), 1);
+        assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(parent));
     }
 
     #[test]
