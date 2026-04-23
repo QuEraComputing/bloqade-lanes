@@ -307,16 +307,17 @@ class RewriteStackMoveToMove(RewriteRule):
     @_rewrite.register(stack_move.Measure)
     def _(self, stmt: stack_move.Measure, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
-        # Lift each location SSA operand to its encoding-layer wrapper
-        # (AtomStateData consumers read ._inner off the wrapper).
-        # Deduplicate zone ids, preserving first-seen order.
-        locs = self._lift_attrs(stmt.locations, LocationAddress)
+        # Zones are direct operands now (matching the Rust validator's
+        # sim_measure: pop `arity` zones, push `arity` futures).
+        # Deduplicate zone ids, preserving first-seen order, so
+        # move.Measure receives the distinct set.
+        zone_attrs = self._lift_attrs(stmt.zones, ZoneAddress)
         seen_zone_ids: list[int] = []
-        for loc in locs:
-            if loc.zone_id not in seen_zone_ids:
-                seen_zone_ids.append(loc.zone_id)
+        for zone in zone_attrs:
+            if zone.zone_id not in seen_zone_ids:
+                seen_zone_ids.append(zone.zone_id)
         # Synthesise a move.ConstZone per distinct zone to provide SSA
-        # operands for the new multi-zone move.Measure.
+        # operands for the multi-zone move.Measure.
         zone_ssa: list[ir.SSAValue] = []
         for zid in seen_zone_ids:
             cz = move.ConstZone(value=ZoneAddress(zid))
@@ -325,9 +326,14 @@ class RewriteStackMoveToMove(RewriteRule):
         new = move.Measure(self.state, zones=tuple(zone_ssa))
         new.insert_before(stmt)
         self.state = new.result
-        # Redirect MeasurementFuture consumers from the stack_move result
-        # to the new move.Measure result.
-        stmt.result.replace_by(new.result)
+        # stack_move.Measure produces `arity` MeasurementFutureType
+        # results (one per input zone), while move.Measure produces a
+        # single MeasurementFutureType covering all distinct zones.
+        # Redirect every per-zone future to the single move.Measure
+        # result — safe under measure_lower's single-final-measurement
+        # invariant (no two consumers survive lowering).
+        for stmt_result in stmt.results:
+            stmt_result.replace_by(new.result)
         to_delete.append(stmt)
 
     @_rewrite.register(stack_move.AwaitMeasure)

@@ -287,8 +287,9 @@ class BytecodeDecoder:
         self.frame.push(stack_move.CZ(zone=zone))
 
     def _visit_measure(self, idx: int, instr: "Instruction") -> None:
-        locs = self.frame.pop_n(instr.arity())
-        self.frame.push(stack_move.Measure(locations=tuple(locs)))
+        zones = self.frame.pop_n(instr.arity())
+        # Auto-push produces `arity` futures in reverse declaration order.
+        self.frame.push(stack_move.Measure(zones=tuple(zones)))
 
     def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
         future = self.frame.pop_value()

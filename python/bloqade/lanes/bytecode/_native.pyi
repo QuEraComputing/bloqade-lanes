@@ -1446,12 +1446,13 @@ class Instruction:
 
     @staticmethod
     def measure(arity: int) -> Instruction:
-        """Measure atoms at ``arity`` locations.
+        """Measure atoms in ``arity`` zones.
 
-        Pops ``arity`` location addresses from the stack.
+        Pops ``arity`` zone addresses from the stack; pushes ``arity``
+        measure futures (one per zone).
 
         Args:
-            arity (int): Number of locations to measure.
+            arity (int): Number of zones to measure.
 
         Returns:
             Instruction: The measure instruction.

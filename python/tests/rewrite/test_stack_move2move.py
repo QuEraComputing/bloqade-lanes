@@ -196,23 +196,25 @@ def test_cz_lowers_with_attribute_zone():
 
 
 def test_measure_single_zone_emits_single_zone_measure():
-    cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
-    cl1 = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
-    m = stack_move.Measure(locations=(cl0.result, cl1.result))
-    block = _build_stack_move_block([cl0, cl1, m])
+    # Two zone operands both with zone_id=0: dedup collapses to one.
+    cz0 = stack_move.ConstZone(value=EncodingZoneAddress(0))
+    cz1 = stack_move.ConstZone(value=EncodingZoneAddress(0))
+    m = stack_move.Measure(zones=(cz0.result, cz1.result))
+    block = _build_stack_move_block([cz0, cz1, m])
     Walk(RewriteStackMoveToMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
-    # One zone (both locs are in zone 0).
+    # One zone (both operands are zone 0).
     assert len(mm.zones) == 1
 
 
 def test_measure_multi_zone_dedups():
-    # Two locations in zone 0, one in zone 1. Expect 2 zone SSA values.
-    cl0 = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
-    cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
-    cl2 = stack_move.ConstLoc(value=LocationAddress(0, 1, 0))
-    m = stack_move.Measure(locations=(cl0.result, cl1.result, cl2.result))
-    block = _build_stack_move_block([cl0, cl1, cl2, m])
+    # Three zone operands, two of which share zone_id=0. Expect 2 distinct
+    # zone SSA values after dedup.
+    cz0 = stack_move.ConstZone(value=EncodingZoneAddress(0))
+    cz1 = stack_move.ConstZone(value=EncodingZoneAddress(0))
+    cz2 = stack_move.ConstZone(value=EncodingZoneAddress(1))
+    m = stack_move.Measure(zones=(cz0.result, cz1.result, cz2.result))
+    block = _build_stack_move_block([cz0, cz1, cz2, m])
     Walk(RewriteStackMoveToMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     assert len(mm.zones) == 2
@@ -221,10 +223,11 @@ def test_measure_multi_zone_dedups():
 def test_await_measure_lowers_without_error():
     # Smoke: await_measure after measure lowers cleanly. AwaitMeasure is
     # pure synchronisation in stack_move — no target-dialect emission.
-    cl = stack_move.ConstLoc(value=LocationAddress(0, 0, 0))
-    m = stack_move.Measure(locations=(cl.result,))
-    aw = stack_move.AwaitMeasure(future=m.result)
-    block = _build_stack_move_block([cl, m, aw])
+    cz = stack_move.ConstZone(value=EncodingZoneAddress(0))
+    m = stack_move.Measure(zones=(cz.result,))
+    # measure(arity=1) has one future result; await_measure consumes it.
+    aw = stack_move.AwaitMeasure(future=m.results[0])
+    block = _build_stack_move_block([cz, m, aw])
     Walk(RewriteStackMoveToMove()).rewrite(block)  # should not raise
 
 

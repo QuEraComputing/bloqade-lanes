@@ -157,10 +157,10 @@ def test_decode_cz():
 
 
 def test_decode_measure():
-    block = _decode([Instruction.const_loc(0, 0, 0), Instruction.measure(1)])
+    block = _decode([Instruction.const_zone(0), Instruction.measure(1)])
     m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
-    loc = next(s for s in block.stmts if isinstance(s, stack_move.ConstLoc))
-    assert m.locations == (loc.result,)
+    zone_const = next(s for s in block.stmts if isinstance(s, stack_move.ConstZone))
+    assert m.zones == (zone_const.result,)
 
 
 def test_decode_await_measure():
@@ -169,14 +169,16 @@ def test_decode_await_measure():
     # the AwaitMeasure result onto the virtual stack.
     block = _decode(
         [
-            Instruction.const_loc(0, 0, 0),
+            Instruction.const_zone(0),
             Instruction.measure(1),
             Instruction.await_measure(),
         ]
     )
     aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
     m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
-    assert aw.future is m.result
+    # measure(arity=1) produces a single future, which is the only
+    # stack_move.Measure result available for await_measure to consume.
+    assert aw.future is m.results[0]
     # AwaitMeasure now produces an array-ref result (measurement results).
     assert aw.result is not None
 

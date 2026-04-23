@@ -18,7 +18,7 @@ def test_minimal_program_runs_end_to_end():
         instructions=[
             Instruction.const_loc(0, 0, 0),
             Instruction.initial_fill(1),
-            Instruction.const_loc(0, 0, 0),
+            Instruction.const_zone(0),
             Instruction.measure(1),
             Instruction.await_measure(),
             Instruction.return_(),

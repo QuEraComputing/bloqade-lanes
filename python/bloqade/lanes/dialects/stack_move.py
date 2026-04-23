@@ -187,14 +187,22 @@ class CZ(ir.Statement):
 # ── Measurement ────────────────────────────────────────────────────────
 
 
-@statement(dialect=dialect)
+@statement(dialect=dialect, init=False)
 class Measure(ir.Statement):
-    """Matches bytecode `measure(arity)` — takes location SSA values.
-    Zone grouping happens during stack_move2move."""
+    """Matches bytecode `measure(arity)`: pops `arity` zone values and
+    pushes `arity` measure futures. Zone grouping (dedup of distinct
+    zones when lowering to move.Measure) happens in stack_move2move."""
 
     traits = frozenset({lowering.FromPythonCall()})
-    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
-    result: ir.ResultValue = info.result(MeasurementFutureType)
+    zones: tuple[ir.SSAValue, ...]
+
+    def __init__(self, zones: typing.Sequence[ir.SSAValue]) -> None:
+        arity = len(zones)
+        super().__init__(
+            args=tuple(zones),
+            args_slice={"zones": slice(0, arity)},
+            result_types=(MeasurementFutureType,) * arity,
+        )
 
 
 @statement(dialect=dialect)
