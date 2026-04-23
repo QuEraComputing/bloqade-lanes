@@ -15,6 +15,7 @@ RewriteLoadStore.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import singledispatchmethod
 from typing import Any, TypeVar
 
 from kirin import ir
@@ -67,12 +68,9 @@ class RewriteStackMoveToMove(RewriteRule):
         for stmt in list(node.stmts):
             if stmt is load:
                 continue
-            handler = getattr(self, f"_rewrite_{type(stmt).__name__}", None)
-            if handler is None:
-                # Non-stack_move statements (e.g. existing py.Constant) pass
-                # through unchanged.
-                continue
-            handler(stmt, to_delete)
+            # Non-stack_move statements (e.g. existing py.Constant) pass
+            # through unchanged via the singledispatchmethod base case.
+            self._rewrite(stmt, to_delete)
 
         # Delete in reverse order: consumers before producers so that when
         # a Const* stmt is deleted its result already has no uses. Without
@@ -82,9 +80,13 @@ class RewriteStackMoveToMove(RewriteRule):
             stmt.delete()
         return RewriteResult(has_done_something=True)
 
-    def _rewrite_Return(
-        self, stmt: stack_move.Return, to_delete: list[ir.Statement]
-    ) -> None:
+    @singledispatchmethod
+    def _rewrite(self, stmt: ir.Statement, to_delete: list[ir.Statement]) -> None:
+        """Default: non-stack_move statements pass through unchanged."""
+        pass
+
+    @_rewrite.register(stack_move.Return)
+    def _(self, stmt: stack_move.Return, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import func
 
         assert self.state is not None
@@ -95,9 +97,8 @@ class RewriteStackMoveToMove(RewriteRule):
         func.Return(stmt.value).insert_before(stmt)
         to_delete.append(stmt)
 
-    def _rewrite_Halt(
-        self, stmt: stack_move.Halt, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.Halt)
+    def _(self, stmt: stack_move.Halt, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import func
 
         assert self.state is not None
@@ -107,9 +108,8 @@ class RewriteStackMoveToMove(RewriteRule):
         func.Return(none_stmt.result).insert_before(stmt)
         to_delete.append(stmt)
 
-    def _rewrite_ConstFloat(
-        self, stmt: stack_move.ConstFloat, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.ConstFloat)
+    def _(self, stmt: stack_move.ConstFloat, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import py
 
         out = py.Constant(stmt.value)
@@ -124,9 +124,8 @@ class RewriteStackMoveToMove(RewriteRule):
         self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
-    def _rewrite_ConstInt(
-        self, stmt: stack_move.ConstInt, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.ConstInt)
+    def _(self, stmt: stack_move.ConstInt, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import py
 
         out = py.Constant(stmt.value)
@@ -135,42 +134,40 @@ class RewriteStackMoveToMove(RewriteRule):
         self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
-    def _rewrite_ConstLoc(
-        self, stmt: stack_move.ConstLoc, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.ConstLoc)
+    def _(self, stmt: stack_move.ConstLoc, to_delete: list[ir.Statement]) -> None:
         # Address constants stay as decoder attributes — downstream move.*
         # statements take them as attribute values, not SSA operands.
         # We track the raw attribute value for later attribute lifting.
         self.ssa_to_attr[stmt.result] = stmt.value
         to_delete.append(stmt)
 
-    def _rewrite_ConstLane(
-        self, stmt: stack_move.ConstLane, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.ConstLane)
+    def _(self, stmt: stack_move.ConstLane, to_delete: list[ir.Statement]) -> None:
         self.ssa_to_attr[stmt.result] = stmt.value
         to_delete.append(stmt)
 
-    def _rewrite_ConstZone(
-        self, stmt: stack_move.ConstZone, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.ConstZone)
+    def _(self, stmt: stack_move.ConstZone, to_delete: list[ir.Statement]) -> None:
         self.ssa_to_attr[stmt.result] = stmt.value
         to_delete.append(stmt)
 
-    def _rewrite_Pop(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
+    @_rewrite.register(stack_move.Pop)
+    def _(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
         # Pop collapses — no target emission. The popped SSA value remains
         # on its definition; if nothing else references it, it becomes
         # dead and a later DCE pass cleans it up.
         to_delete.append(stmt)
 
-    def _rewrite_Dup(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
+    @_rewrite.register(stack_move.Dup)
+    def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
         # Dup is a semantic identity — redirect all uses of the result to
         # the input in place.
         stmt.result.replace_by(stmt.value)
         to_delete.append(stmt)
 
-    def _rewrite_Swap(
-        self, stmt: stack_move.Swap, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.Swap)
+    def _(self, stmt: stack_move.Swap, to_delete: list[ir.Statement]) -> None:
         # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
         stmt.out_top.replace_by(stmt.in_bot)
         stmt.out_bot.replace_by(stmt.in_top)
@@ -221,9 +218,8 @@ class RewriteStackMoveToMove(RewriteRule):
 
     # ── Atom operations ───────────────────────────────────────────────
 
-    def _rewrite_InitialFill(
-        self, stmt: stack_move.InitialFill, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.InitialFill)
+    def _(self, stmt: stack_move.InitialFill, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
         # move dialect has no InitialFill — both stack_move.InitialFill
@@ -235,9 +231,8 @@ class RewriteStackMoveToMove(RewriteRule):
         self.state = new.result
         to_delete.append(stmt)
 
-    def _rewrite_Fill(
-        self, stmt: stack_move.Fill, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.Fill)
+    def _(self, stmt: stack_move.Fill, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.Fill(self.state, location_addresses=addrs)
@@ -245,9 +240,8 @@ class RewriteStackMoveToMove(RewriteRule):
         self.state = new.result
         to_delete.append(stmt)
 
-    def _rewrite_Move(
-        self, stmt: stack_move.Move, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.Move)
+    def _(self, stmt: stack_move.Move, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         lanes = self._lift_attrs(stmt.lanes, LaneAddress)
         new = move.Move(self.state, lanes=lanes)
@@ -257,9 +251,8 @@ class RewriteStackMoveToMove(RewriteRule):
 
     # ── Gates ─────────────────────────────────────────────────────────
 
-    def _rewrite_LocalR(
-        self, stmt: stack_move.LocalR, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.LocalR)
+    def _(self, stmt: stack_move.LocalR, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         # stack_move.LocalR and move.LocalR share axis_angle/rotation_angle
         # SSA args; stack_move additionally carries locations as an SSA
@@ -278,9 +271,8 @@ class RewriteStackMoveToMove(RewriteRule):
         self.state = new.result
         to_delete.append(stmt)
 
-    def _rewrite_LocalRz(
-        self, stmt: stack_move.LocalRz, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.LocalRz)
+    def _(self, stmt: stack_move.LocalRz, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
         new = move.LocalRz(
@@ -292,9 +284,8 @@ class RewriteStackMoveToMove(RewriteRule):
         self.state = new.result
         to_delete.append(stmt)
 
-    def _rewrite_GlobalR(
-        self, stmt: stack_move.GlobalR, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.GlobalR)
+    def _(self, stmt: stack_move.GlobalR, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         new = move.GlobalR(
             self.state,
@@ -305,18 +296,16 @@ class RewriteStackMoveToMove(RewriteRule):
         self.state = new.result
         to_delete.append(stmt)
 
-    def _rewrite_GlobalRz(
-        self, stmt: stack_move.GlobalRz, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.GlobalRz)
+    def _(self, stmt: stack_move.GlobalRz, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         new = move.GlobalRz(self.state, rotation_angle=stmt.rotation_angle)
         new.insert_before(stmt)
         self.state = new.result
         to_delete.append(stmt)
 
-    def _rewrite_Measure(
-        self, stmt: stack_move.Measure, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.Measure)
+    def _(self, stmt: stack_move.Measure, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         # Lift each location SSA operand to its encoding-layer wrapper
         # (AtomStateData consumers read ._inner off the wrapper).
@@ -341,9 +330,8 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
-    def _rewrite_AwaitMeasure(
-        self, stmt: stack_move.AwaitMeasure, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.AwaitMeasure)
+    def _(self, stmt: stack_move.AwaitMeasure, to_delete: list[ir.Statement]) -> None:
         # AwaitMeasure is pure synchronisation in stack_move (no result).
         # In the existing move pipeline, measurement values are extracted
         # via GetFutureResult per (zone, location); for v1 we emit nothing
@@ -354,9 +342,8 @@ class RewriteStackMoveToMove(RewriteRule):
 
     # ── Arrays / annotations ──────────────────────────────────────────
 
-    def _rewrite_NewArray(
-        self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.NewArray)
+    def _(self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import ilist
 
         # Empty-list placeholder for both 1-D and 2-D arrays. v1 lowering
@@ -369,9 +356,8 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
-    def _rewrite_GetItem(
-        self, stmt: stack_move.GetItem, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.GetItem)
+    def _(self, stmt: stack_move.GetItem, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects.py import indexing
 
         # Chained single-dim indexing: for each index SSA, emit
@@ -385,9 +371,8 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(current)
         to_delete.append(stmt)
 
-    def _rewrite_SetDetector(
-        self, stmt: stack_move.SetDetector, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.SetDetector)
+    def _(self, stmt: stack_move.SetDetector, to_delete: list[ir.Statement]) -> None:
         from bloqade.decoders.dialects import annotate
         from kirin.dialects import ilist
 
@@ -404,9 +389,8 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
-    def _rewrite_SetObservable(
-        self, stmt: stack_move.SetObservable, to_delete: list[ir.Statement]
-    ) -> None:
+    @_rewrite.register(stack_move.SetObservable)
+    def _(self, stmt: stack_move.SetObservable, to_delete: list[ir.Statement]) -> None:
         from bloqade.decoders.dialects import annotate
 
         new = annotate.stmts.SetObservable(measurements=stmt.array)
@@ -414,7 +398,8 @@ class RewriteStackMoveToMove(RewriteRule):
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
 
-    def _rewrite_CZ(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
+    @_rewrite.register(stack_move.CZ)
+    def _(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         (zone,) = self._lift_attrs((stmt.zone,), ZoneAddress)
         new = move.CZ(self.state, zone_address=zone)
