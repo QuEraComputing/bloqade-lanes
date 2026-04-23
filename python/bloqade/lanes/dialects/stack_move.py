@@ -293,19 +293,35 @@ class GetItem(ir.Statement):
 
 @statement(dialect=dialect)
 class SetDetector(ir.Statement):
-    """Build a detector record from the top-of-stack array. Matches
-    annotate.SetDetector's signature — produces a Detector."""
+    """Build a detector record from a 1-D array of measurement results.
+    Matches annotate.SetDetector's signature — produces a Detector.
+
+    The array type is tightened to require MeasurementResult elements
+    (the output of AwaitMeasure) and a 1-D shape (dim1=0 per the
+    bytecode convention). Validation of this constraint is the job
+    of type-inference passes, not the decoder.
+    """
 
     traits = frozenset({lowering.FromPythonCall()})
-    array: ir.SSAValue = info.argument(type=ArrayType)
+    array: ir.SSAValue = info.argument(
+        type=ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
+    )
     result: ir.ResultValue = info.result(DetectorType)
 
 
 @statement(dialect=dialect)
 class SetObservable(ir.Statement):
-    """Build an observable record from the top-of-stack array. Matches
-    annotate.SetObservable's signature — produces an Observable."""
+    """Build an observable record from a 1-D array of measurement results.
+    Matches annotate.SetObservable's signature — produces an Observable.
+
+    The array type is tightened to require MeasurementResult elements
+    and a 1-D shape (dim1=0 per the bytecode convention). Validation
+    of this constraint is the job of type-inference passes, not the
+    decoder.
+    """
 
     traits = frozenset({lowering.FromPythonCall()})
-    array: ir.SSAValue = info.argument(type=ArrayType)
+    array: ir.SSAValue = info.argument(
+        type=ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
+    )
     result: ir.ResultValue = info.result(ObservableType)
