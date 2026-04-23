@@ -1,4 +1,4 @@
-"""lower_stack_move — in-place rewrite from stack_move → multi-dialect IR.
+"""stack_move2move — in-place rewrite from stack_move → multi-dialect IR.
 
 Extends Kirin's RewriteRule with a rewrite_Block handler that walks the
 block's statements once and, for each stack_move statement, inserts the
@@ -30,8 +30,8 @@ T = TypeVar("T")
 
 
 @dataclass
-class LowerStackMove(RewriteRule):
-    """Lower a stack_move block into a multi-dialect block in place.
+class RewriteStackMoveToMove(RewriteRule):
+    """Rewrite a stack_move block into a multi-dialect block in place.
 
     Mutable state on the rule instance, carried across the walk:
     - ssa_to_attr: stack_move SSA → raw Python attribute value (float,

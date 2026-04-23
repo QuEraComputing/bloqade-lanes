@@ -39,7 +39,7 @@ This work is the **first instance of a bytecode decoder framework** for Bloqade 
 
 - A new Kirin dialect `stack_move` with one SSA-using statement per bytecode instruction, including `Pop`, `Dup`, `Swap` as explicit SSA ops.
 - A decoder that translates a `Program` instruction-by-instruction into a `stack_move`-dialect `ir.Method`, simulating a virtual stack of SSA values during decoding.
-- A rewrite pass `lower_stack_move` that does per-statement mechanical translation from `stack_move` into target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`), eliminating `Pop`/`Dup`/`Swap` along the way.
+- A rewrite pass `stack_move2move` that does per-statement mechanical translation from `stack_move` into target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`), eliminating `Pop`/`Dup`/`Swap` along the way.
 - A new multi-zone `move.Measure` statement (target of the rewrite).
 - Extensions to `AtomAnalysis` that track measurement zone sets and whether the program performs a single final measurement.
 - A new `move → move` rewrite pass `measure_lower` that uses the extended analysis to validate preconditions and lower `move.Measure` into the existing `move.EndMeasure`.
@@ -54,7 +54,7 @@ This work is the **first instance of a bytecode decoder framework** for Bloqade 
 ## Architecture
 
 ```text
-┌─────────────┐  load_program   ┌──────────────┐  lower_stack_move    ┌──────────┐  measure_lower     ┌──────────┐
+┌─────────────┐  load_program   ┌──────────────┐  stack_move2move    ┌──────────┐  measure_lower     ┌──────────┐
 │  Program    │────────────────▶│  stack_move  │─────────────────────▶│  multi-  │───────────────────▶│  move    │
 │  (Rust)     │ (virtual SSA    │  ir.Method   │  (per-statement      │ dialect  │  (analysis +       │  (old,   │
 └─────────────┘  stack, emits   │  (SSA with   │   mechanical         │ IR       │   rewrite pass)    │  EndMea-)│
@@ -170,7 +170,7 @@ class AwaitMeasure(ir.Statement):
     result: ir.ResultValue = info.result(BitstringType)
 ```
 
-`Measure` takes **location** operands here (matching the bytecode's pop shape). Zone grouping happens in `lower_stack_move`.
+`Measure` takes **location** operands here (matching the bytecode's pop shape). Zone grouping happens in `stack_move2move`.
 
 **Arrays and data:**
 
@@ -204,7 +204,7 @@ class Halt(ir.Statement):
     pass  # lowered to Return(None)
 ```
 
-### 2. `python/bloqade/lanes/bytecode/lowering.py`
+### 2. `python/bloqade/lanes/bytecode/decode.py`
 
 The decoder maintains a **virtual stack of SSA values** while walking the bytecode. Each bytecode instruction is dispatched to a per-opcode handler that reads/mutates the virtual stack and emits a `stack_move` statement with the right SSA operands.
 
@@ -263,7 +263,7 @@ def load_program(
     """Decode a bytecode Program into a stack_move ir.Method."""
 ```
 
-`load_program` returns a `stack_move` method. Callers run the `lower_stack_move` rewrite and the rest of the pipeline explicitly.
+`load_program` returns a `stack_move` method. Callers run the `stack_move2move` rewrite and the rest of the pipeline explicitly.
 
 A `DecodeError` exception carries the offending instruction index, opcode, and virtual-stack snapshot.
 
@@ -279,14 +279,14 @@ class Measure(StatefulStatement):
     result: ir.ResultValue = info.result(MeasurementFutureType)
 ```
 
-This is produced by `lower_stack_move` and consumed by `measure_lower`. `EndMeasure` stays unchanged.
+This is produced by `stack_move2move` and consumed by `measure_lower`. `EndMeasure` stays unchanged.
 
-### 4. `python/bloqade/lanes/rewrite/lower_stack_move.py`
+### 4. `python/bloqade/lanes/rewrite/stack_move2move.py`
 
 **Mechanical per-statement rewrite.** Because `stack_move` is already SSA, the rewrite is a straightforward statement-by-statement translation into target dialects — no virtual stack to simulate, no SSA construction.
 
 ```python
-class LowerStackMove:
+class RewriteStackMoveToMove:
     state: ir.SSAValue  # threaded StateType for stateful move ops
     # SSA-value map: stack_move SSA value → target-dialect SSA value
     mapping: dict[ir.SSAValue, ir.SSAValue]
@@ -346,23 +346,23 @@ New `move → move` rewrite. Runs `AtomAnalysis`, then:
 
 - **Bytecode `measure(arity)`** — pops `arity` location addresses.
 - **Decoder** — pops `arity` SSA location values and emits `stack_move.Measure(*locs)` with those SSA operands.
-- **`lower_stack_move`** — reads each location operand's defining `ConstLoc`, extracts the zone id, deduplicates, synthesizes one `move.ConstZone` per distinct zone, and emits a single `move.Measure(state, *zones)`.
+- **`stack_move2move`** — reads each location operand's defining `ConstLoc`, extracts the zone id, deduplicates, synthesizes one `move.ConstZone` per distinct zone, and emits a single `move.Measure(state, *zones)`.
 - **`measure_lower`** — enforces single-zone-per-measure + single-final-measurement invariants and rewrites to `move.EndMeasure`.
 
 ## Error handling
 
 - **Decoder (`DecodeError`)**: stack underflow, operand type mismatch (e.g. `fill` consumed a non-`LocationAddressType` value), non-empty virtual stack at `Return`/`Halt`, unknown opcode. Carries the offending instruction index, opcode, and a snapshot of the virtual stack at failure.
-- **`lower_stack_move`**: should be infallible on well-typed `stack_move` IR; any failure indicates a decoder bug.
+- **`stack_move2move`**: should be infallible on well-typed `stack_move` IR; any failure indicates a decoder bug.
 - **`measure_lower`**: descriptive errors for multi-zone measurements or multiple final measurements.
 
 ## Testing strategy
 
 - **Decoder unit tests**, one per opcode. Build a minimal `Program`, decode, assert the resulting `stack_move` IR shape — operand SSA bindings, result types, stack ops in place.
 - **Decoder error tests** for each `DecodeError` case.
-- **`lower_stack_move` unit tests**, one per statement family. Small `stack_move` inputs; verify target-dialect output IR, state threading, `Pop`/`Dup`/`Swap` collapsing, zone grouping for `Measure`.
+- **`stack_move2move` unit tests**, one per statement family. Small `stack_move` inputs; verify target-dialect output IR, state threading, `Pop`/`Dup`/`Swap` collapsing, zone grouping for `Measure`.
 - **Analysis unit tests** for the new `AtomAnalysis` methods.
 - **`measure_lower` unit tests** — valid and invalid cases.
-- **End-to-end test** — a small `Program` → `load_program` → `lower_stack_move` → `measure_lower` → an existing downstream pass.
+- **End-to-end test** — a small `Program` → `load_program` → `stack_move2move` → `measure_lower` → an existing downstream pass.
 
 ## File layout summary
 
@@ -376,7 +376,7 @@ python/bloqade/lanes/
 ├── analysis/atom/
 │   └── impl.py                          # EDIT — abstract interpretation for move.Measure
 └── rewrite/
-    ├── lower_stack_move.py              # NEW — per-statement mechanical rewrite
+    ├── stack_move2move.py              # NEW — per-statement mechanical rewrite
     └── measure_lower.py                 # NEW — move→move rewrite with analysis gate
 ```
 
@@ -386,7 +386,7 @@ python/bloqade/lanes/
 
 ## Planned follow-up: sub-dialect decomposition (the bytecode decoder framework)
 
-The initial draft above treats `stack_move` as one monolithic dialect for prototyping speed. Once the mechanics are validated, the natural next step is to **group the instructions into sub-dialects** along the boundaries they already have, and then **decompose the decoder and `lower_stack_move` into composable per-sub-dialect chunks**. This is the point at which the implementation stops being a one-off and becomes the **bytecode decoder framework** the v1 prototype is paving the way for.
+The initial draft above treats `stack_move` as one monolithic dialect for prototyping speed. Once the mechanics are validated, the natural next step is to **group the instructions into sub-dialects** along the boundaries they already have, and then **decompose the decoder and `stack_move2move` into composable per-sub-dialect chunks**. This is the point at which the implementation stops being a one-off and becomes the **bytecode decoder framework** the v1 prototype is paving the way for.
 
 A provisional grouping:
 
@@ -404,7 +404,7 @@ A provisional grouping:
 Framework goals:
 
 - **Composable decoding.** Each sub-dialect owns a decoding handler for its opcodes; the top-level `BytecodeDecoder` is a dispatch that consults registered handlers. Adding a new instruction family (or swapping one out for a different target dialect) is a localized change.
-- **Composable rewrites.** `lower_stack_move` decomposes into a chain of per-sub-dialect rewrite chunks, each of which knows how to consume its own statements and emit into a specific target dialect.
+- **Composable rewrites.** `stack_move2move` decomposes into a chain of per-sub-dialect rewrite chunks, each of which knows how to consume its own statements and emit into a specific target dialect.
 - **Independent testability.** Each sub-dialect + its handler + its rewrite chunk is a unit that can be tested in isolation.
 - **Reuse beyond bytecode.** Sub-dialects like `stack_move.stack` or `stack_move.constants` are shape-agnostic; other stack-oriented frontends that share their abstractions can reuse them directly.
 

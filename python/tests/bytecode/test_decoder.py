@@ -3,7 +3,7 @@ from bloqade.lanes.bytecode import (
     MoveType,
     Program,
 )
-from bloqade.lanes.bytecode.lowering import load_program
+from bloqade.lanes.bytecode.decode import load_program
 from bloqade.lanes.dialects import stack_move
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
@@ -87,9 +87,9 @@ def test_decode_swap_permutes_top_two():
 def test_decode_pop_underflow_raises():
     import pytest
 
-    from bloqade.lanes.bytecode.lowering import LoweringError
+    from bloqade.lanes.bytecode.decode import DecodingError
 
-    with pytest.raises(LoweringError):
+    with pytest.raises(DecodingError):
         _decode([Instruction.pop()])
 
 

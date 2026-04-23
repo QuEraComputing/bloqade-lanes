@@ -160,7 +160,7 @@ class CZ(ir.Statement):
 @statement(dialect=dialect)
 class Measure(ir.Statement):
     """Matches bytecode `measure(arity)` — takes location SSA values.
-    Zone grouping happens during lower_stack_move."""
+    Zone grouping happens during stack_move2move."""
 
     traits = frozenset({lowering.FromPythonCall()})
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)

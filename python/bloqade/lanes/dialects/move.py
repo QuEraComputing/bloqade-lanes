@@ -35,7 +35,7 @@ class EmitsState(ir.Trait):
 @statement(dialect=dialect)
 class ConstZone(ir.Statement):
     """Constant ZoneAddress producing an SSA value. Emitted by
-    lower_stack_move to feed the multi-zone move.Measure statement."""
+    stack_move2move to feed the multi-zone move.Measure statement."""
 
     traits = frozenset({lowering.FromPythonCall()})
     value: ZoneAddress = info.attribute()
@@ -140,7 +140,7 @@ class EndMeasure(ir.Statement):
 
 @statement(dialect=dialect)
 class Measure(ir.Statement):
-    """Multi-zone measurement produced by lower_stack_move. Consumed by
+    """Multi-zone measurement produced by stack_move2move. Consumed by
     measure_lower, which validates single-zone + single-final-measurement
     invariants and rewrites to EndMeasure."""
 

@@ -106,7 +106,7 @@ def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:
     """Build a move IR method by hand exercising move.Measure.
 
     There is no Python-level callable exposed for move.Measure (it is
-    emitted by lower_stack_move, not written by users), so we assemble
+    emitted by stack_move2move, not written by users), so we assemble
     the IR directly.
     """
     block = ir.Block(argtypes=(types.MethodType,))

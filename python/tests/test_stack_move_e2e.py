@@ -5,10 +5,10 @@ from kirin.rewrite import Walk
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode import Instruction, Program
-from bloqade.lanes.bytecode.lowering import load_program
+from bloqade.lanes.bytecode.decode import load_program
 from bloqade.lanes.dialects import move
-from bloqade.lanes.rewrite.lower_stack_move import LowerStackMove
 from bloqade.lanes.rewrite.measure_lower import MeasureLower
+from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
 
 
 def test_minimal_program_runs_end_to_end():
@@ -30,7 +30,7 @@ def test_minimal_program_runs_end_to_end():
     block = method.callable_region.blocks[0]
 
     # Stage 2: lower stack_move -> multi-dialect IR (in place).
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
 
     # The method's dialect group still points at the decoder's
     # stack_move+func group; AtomInterpreter needs the full move-pipeline

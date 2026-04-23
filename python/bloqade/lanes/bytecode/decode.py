@@ -29,7 +29,7 @@ def _make_empty_block() -> ir.Block:
 
 @dataclass
 class StackMachineFrame:
-    """Virtual stack + current block during bytecode -> stack_move lowering.
+    """Virtual stack + current block during bytecode -> stack_move decoding.
 
     Mirrors the role of ``kirin.lowering.Frame`` but specialised for the
     simpler bytecode decoder use case: a single basic block, a
@@ -72,7 +72,7 @@ class StackMachineFrame:
 
 
 @dataclass
-class LoweringError(Exception):
+class DecodingError(Exception):
     """Raised when the decoder fails.
 
     Carries the offending instruction's index, opcode, and a snapshot of
@@ -86,7 +86,7 @@ class LoweringError(Exception):
 
     def __str__(self) -> str:
         return (
-            f"LoweringError at instruction {self.instruction_index} "
+            f"DecodingError at instruction {self.instruction_index} "
             f"({self.opcode_name}): {self.reason} "
             f"[stack depth={len(self.stack_snapshot)}]"
         )
@@ -118,7 +118,7 @@ class BytecodeDecoder:
         name = instr.op_name()
         handler = getattr(self, f"_visit_{name}", None)
         if handler is None:
-            raise LoweringError(idx, name, self.frame.snapshot(), "unknown opcode")
+            raise DecodingError(idx, name, self.frame.snapshot(), "unknown opcode")
         handler(idx, instr)
 
     def _visit_return(self, idx: int, instr: "Instruction") -> None:
@@ -154,7 +154,7 @@ class BytecodeDecoder:
 
     def _pop_or_raise(self, idx: int, instr: "Instruction") -> ir.SSAValue:
         if self.frame.depth() == 0:
-            raise LoweringError(
+            raise DecodingError(
                 idx, instr.op_name(), self.frame.snapshot(), "stack underflow"
             )
         return self.frame.pop_value()
@@ -165,7 +165,7 @@ class BytecodeDecoder:
 
     def _visit_dup(self, idx: int, instr: "Instruction") -> None:
         if self.frame.depth() == 0:
-            raise LoweringError(idx, "dup", self.frame.snapshot(), "stack underflow")
+            raise DecodingError(idx, "dup", self.frame.snapshot(), "stack underflow")
         top = self.frame.peek_value()
         stmt = stack_move.Dup(value=top)
         self.frame.append(stmt)
@@ -186,7 +186,7 @@ class BytecodeDecoder:
         bottom-to-top order so the caller can pass them as a tuple
         matching 'top-of-stack = last argument' convention."""
         if self.frame.depth() < n:
-            raise LoweringError(
+            raise DecodingError(
                 idx,
                 instr.op_name(),
                 self.frame.snapshot(),

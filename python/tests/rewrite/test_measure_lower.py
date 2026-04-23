@@ -42,7 +42,7 @@ def _build_measure_method(zones: tuple[move.ZoneAddress, ...]) -> ir.Method:
 
     Mirrors the helper in ``tests/analysis/atom/test_atom_interpreter.py`` —
     there is no Python-level callable exposed for ``move.Measure`` since it is
-    emitted by ``lower_stack_move`` rather than written by users, so we
+    emitted by ``stack_move2move`` rather than written by users, so we
     assemble the IR directly.
     """
     block = ir.Block(argtypes=(types.MethodType,))
