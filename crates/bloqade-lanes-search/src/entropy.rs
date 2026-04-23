@@ -299,6 +299,58 @@ fn trace_buffer_node_ids(buffer: &[ScoredResumeState]) -> Vec<u32> {
     ranked.into_iter().map(|entry| entry.node_id.0).collect()
 }
 
+fn approx_layer_time_us(moveset: &MoveSet, index: &LaneIndex) -> f64 {
+    moveset
+        .encoded_lanes()
+        .iter()
+        .map(|&lane_bits| {
+            let lane = LaneAddr::decode_u64(lane_bits);
+            index.lane_duration_us(&lane).unwrap_or(1.0)
+        })
+        .fold(0.0_f64, f64::max)
+}
+
+fn approx_path_time_us(graph: &SearchGraph, goal_id: NodeId, index: &LaneIndex) -> f64 {
+    graph
+        .reconstruct_path(goal_id)
+        .into_iter()
+        .map(|moveset| approx_layer_time_us(&moveset, index))
+        .sum()
+}
+
+fn path_lexicographic_key(graph: &SearchGraph, goal_id: NodeId) -> Vec<Vec<u64>> {
+    graph
+        .reconstruct_path(goal_id)
+        .into_iter()
+        .map(|moveset| moveset.encoded_lanes().to_vec())
+        .collect()
+}
+
+fn select_best_goal_with_tiebreak(
+    found_goals: &[NodeId],
+    graph: &SearchGraph,
+    index: &LaneIndex,
+) -> Option<NodeId> {
+    let min_depth = found_goals.iter().map(|&id| graph.depth(id)).min()?;
+    found_goals
+        .iter()
+        .copied()
+        .filter(|&id| graph.depth(id) == min_depth)
+        .map(|id| {
+            (
+                id,
+                approx_path_time_us(graph, id, index),
+                path_lexicographic_key(graph, id),
+            )
+        })
+        .min_by(|a, b| {
+            a.1.total_cmp(&b.1)
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| a.0.0.cmp(&b.0.0))
+        })
+        .map(|(id, _, _)| id)
+}
+
 fn best_untried_moveset_score(
     es: &EntropyState,
     config: &Config,
@@ -1339,8 +1391,10 @@ pub fn entropy_search(
         current = child_id; // descend
     }
 
-    // Return shallowest goal.
-    let best = found_goals.into_iter().min_by_key(|&id| graph.depth(id));
+    // Return the best goal by:
+    // 1) shallowest depth, 2) lowest approximate path move time,
+    // 3) lexicographic path key (deterministic), 4) node id (deterministic).
+    let best = select_best_goal_with_tiebreak(&found_goals, &graph, ctx.index);
     SearchResult {
         goal: best,
         nodes_expanded,
@@ -1401,10 +1455,26 @@ fn get_next_candidate(
 mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::types::TransportPath;
 
     fn make_index() -> LaneIndex {
         let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
             serde_json::from_str(example_arch_json()).unwrap();
+        LaneIndex::new(spec)
+    }
+
+    fn make_index_with_paths(paths: Vec<(LaneAddr, Vec<[f64; 2]>)>) -> LaneIndex {
+        let mut spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+            serde_json::from_str(example_arch_json()).unwrap();
+        spec.paths = Some(
+            paths
+                .into_iter()
+                .map(|(lane, waypoints)| TransportPath {
+                    lane: lane.encode_u64(),
+                    waypoints,
+                })
+                .collect(),
+        );
         LaneIndex::new(spec)
     }
 
@@ -1473,6 +1543,148 @@ mod tests {
         let r = run_entropy([(0, loc(0, 0))], [(0, loc(1, 5))], Some(1000));
         assert!(r.goal.is_some());
         assert!(r.solution_path().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn final_goal_tiebreak_prefers_lower_approx_move_time() {
+        let l_a1 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let l_a2 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 1,
+            bus_id: 0,
+        };
+        let l_b1 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 2,
+            bus_id: 0,
+        };
+        let l_b2 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 3,
+            bus_id: 0,
+        };
+        let index = make_index_with_paths(vec![
+            (l_a1, vec![[0.0, 0.0], [1.0, 0.0]]),
+            (l_a2, vec![[0.0, 0.0], [1.0, 0.0]]),
+            (l_b1, vec![[0.0, 0.0], [50.0, 0.0]]),
+            (l_b2, vec![[0.0, 0.0], [50.0, 0.0]]),
+        ]);
+
+        let mut graph = SearchGraph::new(Config::new([(0, loc(0, 0))]).unwrap());
+        let (a_mid, _) = graph.insert(
+            graph.root(),
+            MoveSet::new([l_a1]),
+            Config::new([(0, loc(0, 1))]).unwrap(),
+            1.0,
+        );
+        let (a_goal, _) = graph.insert(
+            a_mid,
+            MoveSet::new([l_a2]),
+            Config::new([(0, loc(0, 2))]).unwrap(),
+            2.0,
+        );
+        let (b_mid, _) = graph.insert(
+            graph.root(),
+            MoveSet::new([l_b1]),
+            Config::new([(0, loc(0, 3))]).unwrap(),
+            1.0,
+        );
+        let (b_goal, _) = graph.insert(
+            b_mid,
+            MoveSet::new([l_b2]),
+            Config::new([(0, loc(0, 4))]).unwrap(),
+            2.0,
+        );
+
+        let best = select_best_goal_with_tiebreak(&[b_goal, a_goal], &graph, &index);
+        assert_eq!(best, Some(a_goal));
+    }
+
+    #[test]
+    fn final_goal_tiebreak_uses_lexicographic_path_when_time_ties() {
+        let l_a1 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 0,
+        };
+        let l_a2 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 1,
+            bus_id: 0,
+        };
+        let l_b1 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+            bus_id: 1,
+        };
+        let l_b2 = LaneAddr {
+            direction: Direction::Forward,
+            move_type: MoveType::SiteBus,
+            zone_id: 0,
+            word_id: 0,
+            site_id: 2,
+            bus_id: 1,
+        };
+        let index = make_index_with_paths(vec![
+            (l_a1, vec![[0.0, 0.0], [5.0, 0.0]]),
+            (l_a2, vec![[0.0, 0.0], [5.0, 0.0]]),
+            (l_b1, vec![[0.0, 0.0], [5.0, 0.0]]),
+            (l_b2, vec![[0.0, 0.0], [5.0, 0.0]]),
+        ]);
+
+        let mut graph = SearchGraph::new(Config::new([(0, loc(0, 0))]).unwrap());
+        let (a_mid, _) = graph.insert(
+            graph.root(),
+            MoveSet::new([l_a1]),
+            Config::new([(0, loc(0, 1))]).unwrap(),
+            1.0,
+        );
+        let (a_goal, _) = graph.insert(
+            a_mid,
+            MoveSet::new([l_a2]),
+            Config::new([(0, loc(0, 2))]).unwrap(),
+            2.0,
+        );
+        let (b_mid, _) = graph.insert(
+            graph.root(),
+            MoveSet::new([l_b1]),
+            Config::new([(0, loc(0, 3))]).unwrap(),
+            1.0,
+        );
+        let (b_goal, _) = graph.insert(
+            b_mid,
+            MoveSet::new([l_b2]),
+            Config::new([(0, loc(0, 4))]).unwrap(),
+            2.0,
+        );
+
+        let best = select_best_goal_with_tiebreak(&[b_goal, a_goal], &graph, &index);
+        assert_eq!(best, Some(a_goal));
     }
 
     #[test]
