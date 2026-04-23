@@ -11,6 +11,7 @@ use crate::astar::SearchResult;
 use crate::config::{Config, ConfigError};
 use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
+use crate::entropy::EntropyTrace;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
@@ -86,6 +87,8 @@ pub struct SolveResult {
     pub cost: f64,
     /// Number of deadlocks encountered during search.
     pub deadlocks: u32,
+    /// Optional entropy-search trace payload for visualization/debugging.
+    pub entropy_trace: Option<EntropyTrace>,
 }
 
 /// Grouping of search-tuning parameters for [`MoveSolver::solve`].
@@ -113,6 +116,8 @@ pub struct SolveOptions {
     pub deadlock_policy: DeadlockPolicy,
     /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
     pub w_t: f64,
+    /// Collect entropy-step trace payload when using entropy strategy.
+    pub collect_entropy_trace: bool,
 }
 
 impl Default for SolveOptions {
@@ -127,6 +132,7 @@ impl Default for SolveOptions {
             lookahead: false,
             deadlock_policy: DeadlockPolicy::Skip,
             w_t: 0.05,
+            collect_entropy_trace: false,
         }
     }
 }
@@ -207,6 +213,7 @@ impl MoveSolver {
             lookahead,
             deadlock_policy,
             w_t,
+            collect_entropy_trace,
         } = *opts;
 
         let root = Config::new(initial)?;
@@ -264,6 +271,7 @@ impl MoveSolver {
                         nodes_expanded: result.nodes_expanded,
                         cost,
                         deadlocks,
+                        entropy_trace: None,
                     }
                 }
                 None => {
@@ -280,6 +288,7 @@ impl MoveSolver {
                         nodes_expanded: result.nodes_expanded,
                         cost: 0.0,
                         deadlocks,
+                        entropy_trace: None,
                     }
                 }
             }
@@ -345,6 +354,11 @@ impl MoveSolver {
                         w_t,
                         ..crate::entropy::EntropyParams::default()
                     };
+                    let mut entropy_trace = if collect_entropy_trace {
+                        Some(EntropyTrace::default())
+                    } else {
+                        None
+                    };
                     let result = crate::entropy::entropy_search(
                         root.clone(),
                         &goal_obj,
@@ -353,8 +367,11 @@ impl MoveSolver {
                         max_expansions,
                         None,
                         seed,
+                        entropy_trace.as_mut(),
                     );
-                    extract(result, 0, max_expansions)
+                    let mut solve = extract(result, 0, max_expansions);
+                    solve.entropy_trace = entropy_trace;
+                    solve
                 }
             }
         };
@@ -733,5 +750,32 @@ mod tests {
         assert_eq!(ids_result.status, SolveStatus::Solved);
         assert_eq!(cascade_result.status, SolveStatus::Solved);
         assert!(cascade_result.cost <= ids_result.cost);
+    }
+
+    #[test]
+    fn entropy_strategy_can_collect_trace() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve(
+                [(0, loc(0, 0))],
+                [(0, loc(0, 5))],
+                std::iter::empty(),
+                Some(100),
+                &SolveOptions {
+                    strategy: Strategy::Entropy,
+                    w_t: 0.0,
+                    collect_entropy_trace: true,
+                    ..SolveOptions::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        let trace = result
+            .entropy_trace
+            .as_ref()
+            .expect("entropy trace should be populated");
+        assert_eq!(trace.root_node_id, 0);
+        assert!(!trace.steps.is_empty(), "trace should include step events");
     }
 }

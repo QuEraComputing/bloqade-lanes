@@ -15,12 +15,47 @@ def default_strategy_configs() -> tuple[StrategyConfig, ...]:
     """Return the default strategy matrix for V1 benchmarks."""
     return (
         StrategyConfig(
-            strategy_id="rust_entropy",
+            strategy_id="rust_entropy_10",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
                 arch_spec=physical.get_arch_spec(),
-                traversal=RustPlacementTraversal(strategy="entropy"),
+                traversal=RustPlacementTraversal(
+                    strategy="entropy", max_goal_candidates=10, max_expansions=2000
+                ),
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_entropy_5",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(
+                    strategy="entropy", max_goal_candidates=5, max_expansions=2000
+                ),
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_entropy_1",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(
+                    strategy="entropy", max_goal_candidates=1, max_expansions=1000
+                ),
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="rust_entropy_20",
+            backend="rust",
+            generator_id="rust_solver",
+            build_placement_strategy=lambda: PhysicalPlacementStrategy(
+                arch_spec=physical.get_arch_spec(),
+                traversal=RustPlacementTraversal(
+                    strategy="entropy", max_goal_candidates=20, max_expansions=2000
+                ),
             ),
         ),
         StrategyConfig(

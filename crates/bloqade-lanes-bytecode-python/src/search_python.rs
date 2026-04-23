@@ -96,6 +96,15 @@ impl PySolveResult {
         self.inner.deadlocks
     }
 
+    /// Optional entropy trace payload as JSON (present when requested).
+    #[getter]
+    fn entropy_trace_json(&self) -> Option<String> {
+        self.inner
+            .entropy_trace
+            .as_ref()
+            .map(|trace| trace.to_json())
+    }
+
     fn __repr__(&self) -> String {
         let status = match self.inner.status {
             SolveStatus::Solved => "solved",
@@ -164,7 +173,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, strategy="astar", top_c=3, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy="skip", w_t=0.05, collect_entropy_trace=false))]
     #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
@@ -182,6 +191,7 @@ impl PyMoveSolver {
         lookahead: bool,
         deadlock_policy: &str,
         w_t: f64,
+        collect_entropy_trace: bool,
     ) -> PyResult<PySolveResult> {
         // Validate: check for duplicate qubit IDs in target.
         {
@@ -287,6 +297,7 @@ impl PyMoveSolver {
             lookahead,
             deadlock_policy: dl_policy,
             w_t,
+            collect_entropy_trace,
         };
 
         // Release the GIL during search (pure Rust, no Python objects needed).

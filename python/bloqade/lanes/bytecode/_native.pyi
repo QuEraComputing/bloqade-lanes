@@ -948,6 +948,11 @@ class SolveResult:
         """Number of deadlocks encountered during search."""
         ...
 
+    @property
+    def entropy_trace_json(self) -> Optional[str]:
+        """Optional entropy trace payload as JSON when tracing is enabled."""
+        ...
+
     def __repr__(self) -> str: ...
 
 @final
@@ -991,6 +996,7 @@ class MoveSolver:
         lookahead: bool = False,
         deadlock_policy: Literal["skip", "move_blockers"] = "skip",
         w_t: float = 0.05,
+        collect_entropy_trace: bool = False,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
