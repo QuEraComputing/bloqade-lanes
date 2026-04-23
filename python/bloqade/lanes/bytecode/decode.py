@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from kirin import ir, types
 from kirin.dialects import func
@@ -13,6 +13,9 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 
 if TYPE_CHECKING:
     from bloqade.lanes.bytecode import Instruction, Program
+
+
+T = TypeVar("T", bound=ir.Statement)
 
 
 def _make_empty_block() -> ir.Block:
@@ -29,21 +32,29 @@ def _make_empty_block() -> ir.Block:
 
 @dataclass
 class StackMachineFrame:
-    """Virtual stack + current block during bytecode -> stack_move decoding.
+    """Tracks IR construction state during bytecode decoding.
 
-    Mirrors the role of ``kirin.lowering.Frame`` but specialised for the
-    simpler bytecode decoder use case: a single basic block, a
-    monotonically-growing stack of SSA values.
+    Mirrors ``kirin.lowering.Frame``'s shape for the bytecode case:
+    a single basic block wrapped in a Region, plus a virtual stack
+    of SSA values.
     """
 
-    block: ir.Block = field(default_factory=_make_empty_block)
+    current_region: ir.Region = field(init=False)
+    current_block: ir.Block = field(init=False)
     stack: list[ir.SSAValue] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.current_block = _make_empty_block()
+        self.current_region = ir.Region(blocks=self.current_block)
 
     # -- Statement emission --
 
-    def append(self, stmt: ir.Statement) -> None:
-        """Append a statement to the block."""
-        self.block.stmts.append(stmt)
+    def push(self, stmt: T) -> T:
+        """Append a statement to the current block and return it so callers
+        can chain ``.expect_one_result()`` (for single-result stmts) or
+        ``.results`` / named result fields (for multi-result stmts)."""
+        self.current_block.stmts.append(stmt)
+        return stmt
 
     # -- Stack manipulation --
 
@@ -123,34 +134,39 @@ class BytecodeDecoder:
 
     def _visit_return(self, idx: int, instr: "Instruction") -> None:
         value = self._pop_or_raise(idx, instr)
-        self.frame.append(stack_move.Return(value=value))
+        self.frame.push(stack_move.Return(value=value))
 
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstFloat(value=instr.float_value())
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.ConstFloat(value=instr.float_value())
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_const_int(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstInt(value=instr.int_value())
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.ConstInt(value=instr.int_value())
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_const_loc(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstLoc(
-            value=LocationAddress.from_inner(instr.location_address())
-        )
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.ConstLoc(
+                value=LocationAddress.from_inner(instr.location_address())
+            )
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_const_lane(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstLane(value=LaneAddress.from_inner(instr.lane_address()))
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.ConstLane(value=LaneAddress.from_inner(instr.lane_address()))
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_const_zone(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _pop_or_raise(self, idx: int, instr: "Instruction") -> ir.SSAValue:
         if self.frame.depth() == 0:
@@ -161,21 +177,19 @@ class BytecodeDecoder:
 
     def _visit_pop(self, idx: int, instr: "Instruction") -> None:
         value = self._pop_or_raise(idx, instr)
-        self.frame.append(stack_move.Pop(value=value))
+        self.frame.push(stack_move.Pop(value=value))
 
     def _visit_dup(self, idx: int, instr: "Instruction") -> None:
         if self.frame.depth() == 0:
             raise DecodingError(idx, "dup", self.frame.snapshot(), "stack underflow")
         top = self.frame.peek_value()
-        stmt = stack_move.Dup(value=top)
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(stack_move.Dup(value=top)).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_swap(self, idx: int, instr: "Instruction") -> None:
         in_top = self._pop_or_raise(idx, instr)
         in_bot = self._pop_or_raise(idx, instr)
-        stmt = stack_move.Swap(in_top=in_top, in_bot=in_bot)
-        self.frame.append(stmt)
+        stmt = self.frame.push(stack_move.Swap(in_top=in_top, in_bot=in_bot))
         # Convention: top-of-stack last. out_bot ≡ in_top (goes below);
         # out_top ≡ in_bot (goes on top).
         self.frame.push_value(stmt.out_bot)
@@ -198,15 +212,15 @@ class BytecodeDecoder:
 
     def _visit_initial_fill(self, idx: int, instr: "Instruction") -> None:
         locs = self._pop_n(idx, instr, instr.arity())
-        self.frame.append(stack_move.InitialFill(locations=tuple(locs)))
+        self.frame.push(stack_move.InitialFill(locations=tuple(locs)))
 
     def _visit_fill(self, idx: int, instr: "Instruction") -> None:
         locs = self._pop_n(idx, instr, instr.arity())
-        self.frame.append(stack_move.Fill(locations=tuple(locs)))
+        self.frame.push(stack_move.Fill(locations=tuple(locs)))
 
     def _visit_move(self, idx: int, instr: "Instruction") -> None:
         lanes = self._pop_n(idx, instr, instr.arity())
-        self.frame.append(stack_move.Move(lanes=tuple(lanes)))
+        self.frame.push(stack_move.Move(lanes=tuple(lanes)))
 
     def _visit_local_r(self, idx: int, instr: "Instruction") -> None:
         # bytecode pops phi first (top of stack), then theta; after rename,
@@ -214,7 +228,7 @@ class BytecodeDecoder:
         axis_angle = self._pop_or_raise(idx, instr)
         rotation_angle = self._pop_or_raise(idx, instr)
         locs = self._pop_n(idx, instr, instr.arity())
-        self.frame.append(
+        self.frame.push(
             stack_move.LocalR(
                 axis_angle=axis_angle,
                 rotation_angle=rotation_angle,
@@ -226,7 +240,7 @@ class BytecodeDecoder:
         # bytecode pops theta (top of stack) -> rotation_angle after rename.
         rotation_angle = self._pop_or_raise(idx, instr)
         locs = self._pop_n(idx, instr, instr.arity())
-        self.frame.append(
+        self.frame.push(
             stack_move.LocalRz(rotation_angle=rotation_angle, locations=tuple(locs))
         )
 
@@ -235,24 +249,25 @@ class BytecodeDecoder:
         # these map to axis_angle and rotation_angle respectively.
         axis_angle = self._pop_or_raise(idx, instr)
         rotation_angle = self._pop_or_raise(idx, instr)
-        self.frame.append(
+        self.frame.push(
             stack_move.GlobalR(axis_angle=axis_angle, rotation_angle=rotation_angle)
         )
 
     def _visit_global_rz(self, idx: int, instr: "Instruction") -> None:
         # bytecode pops theta (top of stack) -> rotation_angle after rename.
         rotation_angle = self._pop_or_raise(idx, instr)
-        self.frame.append(stack_move.GlobalRz(rotation_angle=rotation_angle))
+        self.frame.push(stack_move.GlobalRz(rotation_angle=rotation_angle))
 
     def _visit_cz(self, idx: int, instr: "Instruction") -> None:
         zone = self._pop_or_raise(idx, instr)
-        self.frame.append(stack_move.CZ(zone=zone))
+        self.frame.push(stack_move.CZ(zone=zone))
 
     def _visit_measure(self, idx: int, instr: "Instruction") -> None:
         locs = self._pop_n(idx, instr, instr.arity())
-        stmt = stack_move.Measure(locations=tuple(locs))
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.Measure(locations=tuple(locs))
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
         # Treats await_measure as pure synchronisation — takes the future off
@@ -261,49 +276,52 @@ class BytecodeDecoder:
         # against the Rust source and adjust if the bytecode actually pops
         # the future permanently.
         future = self._pop_or_raise(idx, instr)
-        self.frame.append(stack_move.AwaitMeasure(future=future))
+        self.frame.push(stack_move.AwaitMeasure(future=future))
         self.frame.push_value(future)
 
     def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
-        stmt = stack_move.NewArray(
-            values=(),
-            type_tag=instr.type_tag(),
-            dim0=instr.dim0(),
-            dim1=instr.dim1(),
-        )
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.NewArray(
+                values=(),
+                type_tag=instr.type_tag(),
+                dim0=instr.dim0(),
+                dim1=instr.dim1(),
+            )
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_get_item(self, idx: int, instr: "Instruction") -> None:
         ndims = instr.ndims()
         indices = self._pop_n(idx, instr, ndims)
         array = self._pop_or_raise(idx, instr)
-        stmt = stack_move.GetItem(array=array, indices=tuple(indices))
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.GetItem(array=array, indices=tuple(indices))
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_set_detector(self, idx: int, instr: "Instruction") -> None:
         array = self._pop_or_raise(idx, instr)
-        stmt = stack_move.SetDetector(array=array)
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.SetDetector(array=array)
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_set_observable(self, idx: int, instr: "Instruction") -> None:
         array = self._pop_or_raise(idx, instr)
-        stmt = stack_move.SetObservable(array=array)
-        self.frame.append(stmt)
-        self.frame.push_value(stmt.result)
+        result = self.frame.push(
+            stack_move.SetObservable(array=array)
+        ).expect_one_result()
+        self.frame.push_value(result)
 
     def _visit_halt(self, idx: int, instr: "Instruction") -> None:
-        self.frame.append(stack_move.Halt())
+        self.frame.push(stack_move.Halt())
 
     def _finalize(self, kernel_name: str) -> ir.Method:
-        region = ir.Region(blocks=self.frame.block)
         function = func.Function(
             sym_name=kernel_name,
             signature=func.Signature((), types.NoneType),
             slots=(),
-            body=region,
+            body=self.frame.current_region,
         )
         dialects = ir.DialectGroup([stack_move.dialect, func.dialect])
         return ir.Method(
