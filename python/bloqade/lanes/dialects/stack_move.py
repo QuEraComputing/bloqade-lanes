@@ -194,7 +194,7 @@ class Measure(ir.Statement):
     zones when lowering to move.Measure) happens in stack_move2move."""
 
     traits = frozenset({lowering.FromPythonCall()})
-    zones: tuple[ir.SSAValue, ...]
+    zones: tuple[ir.SSAValue, ...] = info.argument(type=ZoneAddressType)
 
     def __init__(self, zones: typing.Sequence[ir.SSAValue]) -> None:
         arity = len(zones)
