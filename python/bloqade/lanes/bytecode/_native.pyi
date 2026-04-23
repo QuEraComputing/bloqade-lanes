@@ -1473,6 +1473,9 @@ class Instruction:
     def new_array(type_tag: int, dim0: int, dim1: int = 0) -> Instruction:
         """Create a new array.
 
+        Pops ``dim0 * max(dim1, 1)`` values of any type from the stack
+        (the array's initial elements) and pushes a new array reference.
+
         Args:
             type_tag (int): Element type tag.
             dim0 (int): First dimension size (must be > 0).

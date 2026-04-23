@@ -184,14 +184,27 @@ def test_decode_await_measure():
 
 
 def test_decode_new_array():
-    block = _decode([Instruction.new_array(type_tag=0, dim0=4)])
+    block = _decode(
+        [
+            Instruction.const_float(0.0),
+            Instruction.const_float(1.0),
+            Instruction.const_float(2.0),
+            Instruction.const_float(3.0),
+            Instruction.new_array(type_tag=0, dim0=4),
+        ]
+    )
     na = next(s for s in block.stmts if isinstance(s, stack_move.NewArray))
     assert na.dim0 == 4
+    assert len(na.values) == 4
 
 
 def test_decode_get_item():
     block = _decode(
         [
+            Instruction.const_float(0.0),
+            Instruction.const_float(1.0),
+            Instruction.const_float(2.0),
+            Instruction.const_float(3.0),
             Instruction.new_array(type_tag=0, dim0=4),
             Instruction.const_int(2),
             Instruction.get_item(1),

@@ -298,12 +298,16 @@ class BytecodeDecoder:
         self.frame.push(stack_move.AwaitMeasure(future=future))
 
     def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
+        dim0 = instr.dim0()
+        dim1 = instr.dim1()
+        count = dim0 * max(dim1, 1)
+        values = self.frame.pop_n(count)
         self.frame.push(
             stack_move.NewArray(
-                values=(),
+                values=tuple(values),
                 type_tag=instr.type_tag(),
-                dim0=instr.dim0(),
-                dim1=instr.dim1(),
+                dim0=dim0,
+                dim1=dim1,
             )
         )
 
