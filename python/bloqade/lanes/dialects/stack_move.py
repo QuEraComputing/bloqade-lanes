@@ -282,6 +282,19 @@ class NewArray(ir.Statement):
 
 @statement(dialect=dialect)
 class GetItem(ir.Statement):
+    """Index into an array — pops ``len(indices)`` indices and the array,
+    pushes the element of type ``ElemType``.
+
+    Arrays are bounded at 2-D by the bytecode's ``new_array`` construction
+    (only ``dim0`` and ``dim1`` fields), so ``len(indices) ∈ {1, 2}`` for
+    well-formed programs — one index for a 1-D array (``dim1 == 0``), two
+    indices for a 2-D array (``dim1 > 0``). This invariant is implicit
+    rather than encoded in the dialect type: splitting into ``GetItem1D``
+    / ``GetItem2D`` would break the 1:1 bytecode-to-statement mapping the
+    dialect commits to. A type-inference pass can enforce the invariant
+    later, the same way the Rust validator defers to type simulation.
+    """
+
     traits = frozenset({lowering.FromPythonCall()})
     array: ir.SSAValue = info.argument(type=ArrayType[ElemType, types.Any, types.Any])
     indices: tuple[ir.SSAValue, ...] = info.argument(type=types.Int)
