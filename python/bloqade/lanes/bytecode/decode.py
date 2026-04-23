@@ -50,10 +50,18 @@ class StackMachineFrame:
     # -- Statement emission --
 
     def push(self, stmt: T) -> T:
-        """Append a statement to the current block and return it so callers
-        can chain ``.expect_one_result()`` (for single-result stmts) or
-        ``.results`` / named result fields (for multi-result stmts)."""
+        """Append a statement to the current block and push its results onto
+        the virtual stack.
+
+        Results are pushed in reverse declaration order — the first-declared
+        result (highest on the stack per the dialect convention) ends up on
+        top after pushing. For Swap this means out_top (declared first) sits
+        above out_bot (declared second). For single-result statements there
+        is only one result, so the reversed iteration is a no-op.
+        """
         self.current_block.stmts.append(stmt)
+        for result in reversed(list(stmt.results)):
+            self.stack.append(result)
         return stmt
 
     # -- Stack manipulation --
@@ -137,36 +145,27 @@ class BytecodeDecoder:
         self.frame.push(stack_move.Return(value=value))
 
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
-        result = self.frame.push(
-            stack_move.ConstFloat(value=instr.float_value())
-        ).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.ConstFloat(value=instr.float_value()))
 
     def _visit_const_int(self, idx: int, instr: "Instruction") -> None:
-        result = self.frame.push(
-            stack_move.ConstInt(value=instr.int_value())
-        ).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.ConstInt(value=instr.int_value()))
 
     def _visit_const_loc(self, idx: int, instr: "Instruction") -> None:
-        result = self.frame.push(
+        self.frame.push(
             stack_move.ConstLoc(
                 value=LocationAddress.from_inner(instr.location_address())
             )
-        ).expect_one_result()
-        self.frame.push_value(result)
+        )
 
     def _visit_const_lane(self, idx: int, instr: "Instruction") -> None:
-        result = self.frame.push(
+        self.frame.push(
             stack_move.ConstLane(value=LaneAddress.from_inner(instr.lane_address()))
-        ).expect_one_result()
-        self.frame.push_value(result)
+        )
 
     def _visit_const_zone(self, idx: int, instr: "Instruction") -> None:
-        result = self.frame.push(
+        self.frame.push(
             stack_move.ConstZone(value=ZoneAddress.from_inner(instr.zone_address()))
-        ).expect_one_result()
-        self.frame.push_value(result)
+        )
 
     def _pop_or_raise(self, idx: int, instr: "Instruction") -> ir.SSAValue:
         if self.frame.depth() == 0:
@@ -183,17 +182,15 @@ class BytecodeDecoder:
         if self.frame.depth() == 0:
             raise DecodingError(idx, "dup", self.frame.snapshot(), "stack underflow")
         top = self.frame.peek_value()
-        result = self.frame.push(stack_move.Dup(value=top)).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.Dup(value=top))
 
     def _visit_swap(self, idx: int, instr: "Instruction") -> None:
         in_top = self._pop_or_raise(idx, instr)
         in_bot = self._pop_or_raise(idx, instr)
-        stmt = self.frame.push(stack_move.Swap(in_top=in_top, in_bot=in_bot))
-        # Convention: top-of-stack last. out_bot ≡ in_top (goes below);
-        # out_top ≡ in_bot (goes on top).
-        self.frame.push_value(stmt.out_bot)
-        self.frame.push_value(stmt.out_top)
+        # Swap declares results as (out_top, out_bot); auto-push in reverse
+        # declaration order pushes out_bot first then out_top, leaving
+        # out_top on top — matching the previous explicit behaviour.
+        self.frame.push(stack_move.Swap(in_top=in_top, in_bot=in_bot))
 
     def _pop_n(self, idx: int, instr: "Instruction", n: int) -> list[ir.SSAValue]:
         """Pop n values from the stack, newest first. Returns them in
@@ -264,54 +261,42 @@ class BytecodeDecoder:
 
     def _visit_measure(self, idx: int, instr: "Instruction") -> None:
         locs = self._pop_n(idx, instr, instr.arity())
-        result = self.frame.push(
-            stack_move.Measure(locations=tuple(locs))
-        ).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.Measure(locations=tuple(locs)))
 
     def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
         # Treats await_measure as pure synchronisation — takes the future off
         # the top of the virtual stack, pushes it back so subsequent GetItem
-        # calls can access measurement values. Verify the exact stack effect
-        # against the Rust source and adjust if the bytecode actually pops
-        # the future permanently.
+        # calls can access measurement values. The explicit push_value below
+        # is required because the bytecode's `await_measure` re-pushes the
+        # future, not because AwaitMeasure has an SSA result to auto-push
+        # (it has none).
         future = self._pop_or_raise(idx, instr)
         self.frame.push(stack_move.AwaitMeasure(future=future))
         self.frame.push_value(future)
 
     def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
-        result = self.frame.push(
+        self.frame.push(
             stack_move.NewArray(
                 values=(),
                 type_tag=instr.type_tag(),
                 dim0=instr.dim0(),
                 dim1=instr.dim1(),
             )
-        ).expect_one_result()
-        self.frame.push_value(result)
+        )
 
     def _visit_get_item(self, idx: int, instr: "Instruction") -> None:
         ndims = instr.ndims()
         indices = self._pop_n(idx, instr, ndims)
         array = self._pop_or_raise(idx, instr)
-        result = self.frame.push(
-            stack_move.GetItem(array=array, indices=tuple(indices))
-        ).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.GetItem(array=array, indices=tuple(indices)))
 
     def _visit_set_detector(self, idx: int, instr: "Instruction") -> None:
         array = self._pop_or_raise(idx, instr)
-        result = self.frame.push(
-            stack_move.SetDetector(array=array)
-        ).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.SetDetector(array=array))
 
     def _visit_set_observable(self, idx: int, instr: "Instruction") -> None:
         array = self._pop_or_raise(idx, instr)
-        result = self.frame.push(
-            stack_move.SetObservable(array=array)
-        ).expect_one_result()
-        self.frame.push_value(result)
+        self.frame.push(stack_move.SetObservable(array=array))
 
     def _visit_halt(self, idx: int, instr: "Instruction") -> None:
         self.frame.push(stack_move.Halt())
