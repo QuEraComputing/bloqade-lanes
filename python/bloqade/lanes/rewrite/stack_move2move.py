@@ -356,11 +356,12 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]) -> None:
         from kirin.dialects import ilist
 
-        # Forward element SSA operands directly into the ilist.New; for
-        # the bytecode decoder this is an empty tuple (new_array has no
-        # stack effect), but for Python-authored stack_move IR values may
-        # be non-empty and must flow through so downstream GetItem lookups
-        # resolve correctly.
+        # Forward element SSA operands directly into the ilist.New. The
+        # bytecode's new_array pops dim0 * max(dim1, 1) values as the
+        # array's initial elements (per the Rust validator) — they've
+        # already been rewired by earlier replace_by calls on their
+        # defining Const* / ilist.New / py.Constant predecessors, so
+        # stmt.values points at valid target-dialect SSA values.
         new = ilist.New(values=tuple(stmt.values))
         new.insert_before(stmt)
         stmt.result.replace_by(new.result)

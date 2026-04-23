@@ -1463,6 +1463,10 @@ class Instruction:
     def await_measure() -> Instruction:
         """Block until the most recent measurement completes.
 
+        Pops one measurement future from the stack (linear consumption)
+        and pushes one array reference holding the resolved measurement
+        results.
+
         Returns:
             Instruction: The await_measure instruction.
         """
@@ -1505,6 +1509,9 @@ class Instruction:
     def set_detector() -> Instruction:
         """Build a detector record from the top-of-stack array.
 
+        Pops one array reference from the stack and pushes one
+        detector reference.
+
         Returns:
             Instruction: The set_detector instruction.
         """
@@ -1513,6 +1520,9 @@ class Instruction:
     @staticmethod
     def set_observable() -> Instruction:
         """Build an observable record from the top-of-stack array.
+
+        Pops one array reference from the stack and pushes one
+        observable reference.
 
         Returns:
             Instruction: The set_observable instruction.
@@ -1523,6 +1533,8 @@ class Instruction:
     @staticmethod
     def return_() -> Instruction:
         """Return from the current program.
+
+        Pops one value of any type from the stack as the return value.
 
         Returns:
             Instruction: The return instruction.
