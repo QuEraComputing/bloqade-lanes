@@ -15,6 +15,7 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
+from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import MoveSolver
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
@@ -49,6 +50,19 @@ if TYPE_CHECKING:
 
 
 OnSearchStep = Callable[[str, "ConfigurationNode", "StepInfo"], None]
+
+_STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
+    "astar": _native.SearchStrategy.ASTAR,
+    "dfs": _native.SearchStrategy.DFS,
+    "bfs": _native.SearchStrategy.BFS,
+    "greedy": _native.SearchStrategy.GREEDY,
+    "ids": _native.SearchStrategy.IDS,
+    "cascade": _native.SearchStrategy.CASCADE_IDS,
+    "cascade-ids": _native.SearchStrategy.CASCADE_IDS,
+    "cascade-dfs": _native.SearchStrategy.CASCADE_DFS,
+    "cascade-entropy": _native.SearchStrategy.CASCADE_ENTROPY,
+    "entropy": _native.SearchStrategy.ENTROPY,
+}
 
 
 class PlacementTraversalABC(abc.ABC):
@@ -433,34 +447,31 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             self._traced_target = dict(candidates[0])
             self._traced_rust_trace_json = None
 
-        initial = [
-            (qid, loc.zone_id, loc.word_id, loc.site_id)
-            for qid, loc in ctx.placement.items()
-        ]
-        blocked = [(loc.zone_id, loc.word_id, loc.site_id) for loc in state.occupied]
         solver = self._get_rust_solver()
+        initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
+        blocked_native = [loc._inner for loc in state.occupied]
+        opts = _native.SolveOptions(
+            strategy=_STRATEGY_MAP[self.traversal.strategy],
+            top_c=self.traversal.top_c,
+            max_movesets_per_group=self.traversal.max_movesets_per_group,
+            max_goal_candidates=self.traversal.max_goal_candidates,
+            collect_entropy_trace=(
+                should_trace and self.traversal.collect_entropy_trace
+            ),
+        )
 
         remaining = self.traversal.max_expansions
         winning_result = None
         for candidate in candidates:
             if remaining is not None and remaining <= 0:
                 break
-            target_tuples = [
-                (qid, loc.zone_id, loc.word_id, loc.site_id)
-                for qid, loc in candidate.items()
-            ]
+            target_native = {qid: loc._inner for qid, loc in candidate.items()}
             result = solver.solve(
-                initial,
-                target_tuples,
-                blocked,
+                initial_native,
+                target_native,
+                blocked_native,
                 max_expansions=remaining,
-                strategy=self.traversal.strategy,
-                top_c=self.traversal.top_c,
-                max_movesets_per_group=self.traversal.max_movesets_per_group,
-                max_goal_candidates=self.traversal.max_goal_candidates,
-                collect_entropy_trace=(
-                    should_trace and self.traversal.collect_entropy_trace
-                ),
+                options=opts,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:
@@ -492,7 +503,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         )
 
         goal_map = {
-            qid: LocationAddress(w, s, z) for qid, z, w, s in winning_result.goal_config
+            qid: LocationAddress(loc.word_id, loc.site_id, loc.zone_id)
+            for qid, loc in winning_result.goal_config.items()
         }
         goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
         move_count = tuple(
