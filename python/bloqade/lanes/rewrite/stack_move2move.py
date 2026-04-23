@@ -332,12 +332,16 @@ class RewriteStackMoveToMove(RewriteRule):
 
     @_rewrite.register(stack_move.AwaitMeasure)
     def _(self, stmt: stack_move.AwaitMeasure, to_delete: list[ir.Statement]) -> None:
-        # AwaitMeasure is pure synchronisation in stack_move (no result).
-        # In the existing move pipeline, measurement values are extracted
-        # via GetFutureResult per (zone, location); for v1 we emit nothing
-        # here, and any downstream GetItem on the future is handled in
-        # _rewrite_GetItem below. Adjust if AwaitMeasure actually needs a
-        # target emission (e.g. a barrier or fence) per the Rust source.
+        from kirin.dialects import ilist
+
+        # v1 stub: emit an empty ilist as a placeholder for the measurement
+        # result array. The future operand (stmt.future) is already rewired
+        # to the move.Measure result by _rewrite_Measure, but it's dropped
+        # here — proper lowering would need per-location GetFutureResult
+        # expansion, which isn't wired up in this PR. See follow-up issue.
+        placeholder = ilist.New(values=())
+        placeholder.insert_before(stmt)
+        stmt.result.replace_by(placeholder.result)
         to_delete.append(stmt)
 
     # ── Arrays / annotations ──────────────────────────────────────────

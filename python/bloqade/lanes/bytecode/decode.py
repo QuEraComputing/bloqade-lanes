@@ -291,15 +291,10 @@ class BytecodeDecoder:
         self.frame.push(stack_move.Measure(locations=tuple(locs)))
 
     def _visit_await_measure(self, idx: int, instr: "Instruction") -> None:
-        # Treats await_measure as pure synchronisation — takes the future off
-        # the top of the virtual stack, pushes it back so subsequent GetItem
-        # calls can access measurement values. The explicit push_value below
-        # is required because the bytecode's `await_measure` re-pushes the
-        # future, not because AwaitMeasure has an SSA result to auto-push
-        # (it has none).
         future = self.frame.pop_value()
+        # Bytecode consumes the future (linear) and pushes an array ref
+        # of measurement results. frame.push auto-pushes the result.
         self.frame.push(stack_move.AwaitMeasure(future=future))
-        self.frame.push_value(future)
 
     def _visit_new_array(self, idx: int, instr: "Instruction") -> None:
         self.frame.push(

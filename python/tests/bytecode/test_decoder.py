@@ -164,7 +164,9 @@ def test_decode_measure():
 
 
 def test_decode_await_measure():
-    # measure pushes a future; await_measure consumes it and pushes it back.
+    # measure pushes a future; await_measure consumes it (linear) and
+    # pushes an array ref of measurement results — frame.push auto-pushes
+    # the AwaitMeasure result onto the virtual stack.
     block = _decode(
         [
             Instruction.const_loc(0, 0, 0),
@@ -175,6 +177,8 @@ def test_decode_await_measure():
     aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
     m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
     assert aw.future is m.result
+    # AwaitMeasure now produces an array-ref result (measurement results).
+    assert aw.result is not None
 
 
 def test_decode_new_array():

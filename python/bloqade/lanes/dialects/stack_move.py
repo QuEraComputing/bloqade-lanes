@@ -2,7 +2,11 @@
 
 import typing
 
-from bloqade.decoders.dialects.annotate.types import DetectorType, ObservableType
+from bloqade.decoders.dialects.annotate.types import (
+    DetectorType,
+    MeasurementResultType,
+    ObservableType,
+)
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
 
@@ -195,17 +199,19 @@ class Measure(ir.Statement):
 
 @statement(dialect=dialect)
 class AwaitMeasure(ir.Statement):
-    """Synchronisation — blocks until the most recent measurement completes.
+    """Synchronisation — consumes a measurement future (linear) and
+    produces an array ref of measurement results.
 
-    The bytecode docs state 'block until the most recent measurement
-    completes' with no documented stack effect. We treat this as a pure
-    synchronisation op: takes a MeasurementFuture, produces no result.
-    Extracting per-location measurement values is done via subsequent
-    GetItem calls on the future. Confirm against the Rust source before
-    implementation — adjust if the actual stack effect differs."""
+    Matches the bytecode's `await_measure`: pops a measure future,
+    pushes an array ref containing the measurement results. The
+    element type is MeasurementResult; shape is unknown until actual
+    measurement resolution (hence Any/Any dimensions)."""
 
     traits = frozenset({lowering.FromPythonCall()})
     future: ir.SSAValue = info.argument(type=MeasurementFutureType)
+    result: ir.ResultValue = info.result(
+        ArrayType[MeasurementResultType, types.Any, types.Any]
+    )
 
 
 # ── Control flow ───────────────────────────────────────────────────────
