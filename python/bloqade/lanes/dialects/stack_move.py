@@ -17,6 +17,13 @@ LaneAddressType = types.PyClass(LaneAddress)
 ZoneAddressType = types.PyClass(ZoneAddress)
 # ArrayType and MeasurementFutureType come from bloqade.lanes.types.
 
+# Type variables for stack-manipulation invariants:
+#   Dup preserves the top-of-stack type (T → T).
+#   Swap permutes the top two types ((TopType, BottomType) → (BottomType, TopType)).
+T = types.TypeVar("T")
+TopType = types.TypeVar("TopType")
+BottomType = types.TypeVar("BottomType")
+
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -64,7 +71,7 @@ class Pop(ir.Statement):
     """Pop and discard the top of the virtual stack."""
 
     traits = frozenset({lowering.FromPythonCall()})
-    value: ir.SSAValue = info.argument()
+    value: ir.SSAValue = info.argument(types.Any)
 
 
 @statement(dialect=dialect)
@@ -74,8 +81,8 @@ class Dup(ir.Statement):
     non-cloning invariants."""
 
     traits = frozenset({lowering.FromPythonCall()})
-    value: ir.SSAValue = info.argument()
-    result: ir.ResultValue = info.result()
+    value: ir.SSAValue = info.argument(T)
+    result: ir.ResultValue = info.result(T)
 
 
 @statement(dialect=dialect)
@@ -83,10 +90,10 @@ class Swap(ir.Statement):
     """Swap the top two virtual-stack values. out_top ≡ in_bot; out_bot ≡ in_top."""
 
     traits = frozenset({lowering.FromPythonCall()})
-    in_top: ir.SSAValue = info.argument()
-    in_bot: ir.SSAValue = info.argument()
-    out_top: ir.ResultValue = info.result()
-    out_bot: ir.ResultValue = info.result()
+    in_top: ir.SSAValue = info.argument(TopType)
+    in_bot: ir.SSAValue = info.argument(BottomType)
+    out_top: ir.ResultValue = info.result(BottomType)
+    out_bot: ir.ResultValue = info.result(TopType)
 
 
 # ── Atom operations ────────────────────────────────────────────────────
