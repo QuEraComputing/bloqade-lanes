@@ -219,3 +219,18 @@ def test_decode_halt():
     method = load_program(prog)
     block = method.callable_region.blocks[0]
     assert any(isinstance(s, stack_move.Halt) for s in block.stmts)
+
+
+def test_load_program_infers_return_type():
+    # load_program runs Kirin's TypeInfer pass after decoding, so the
+    # method's return_type should be narrowed from the default types.Any.
+    from kirin import types
+
+    prog = Program(
+        version=(1, 0),
+        instructions=[Instruction.const_int(0), Instruction.return_()],
+    )
+    method = load_program(prog)
+    assert (
+        method.return_type != types.Any
+    ), f"expected narrowed return type, got {method.return_type}"

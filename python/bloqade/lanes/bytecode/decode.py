@@ -345,6 +345,16 @@ class BytecodeDecoder:
 
 
 def load_program(program: "Program", kernel_name: str = "main") -> ir.Method:
-    """Decode a bytecode Program into a stack_move ir.Method."""
+    """Decode a bytecode Program into a stack_move ir.Method and run
+    Kirin's type-inference pass on the result.
+
+    The returned method carries inferred types on every SSA value,
+    including the method's overall return type -- useful for downstream
+    passes (analysis, rewrites) that rely on type information.
+    """
+    from kirin.passes.typeinfer import TypeInfer
+
     decoder = BytecodeDecoder()
-    return decoder.decode(program, kernel_name)
+    method = decoder.decode(program, kernel_name)
+    TypeInfer(method.dialects).unsafe_run(method)
+    return method
