@@ -192,8 +192,11 @@ class BytecodeDecoder:
             raise DecodingError(idx, name, e.snapshot, str(e)) from e
 
     def _visit_return(self, idx: int, instr: "Instruction") -> None:
+        # The bytecode ``return`` opcode has no stack_move counterpart —
+        # it maps directly to ``func.Return`` (overlap with the kirin.basic
+        # dialect group's ``func`` dialect). The decoder emits it here.
         value = self.frame.pop_value()
-        self.frame.push(stack_move.Return(value=value))
+        self.frame.push(func.Return(value))
 
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
         self.frame.push(stack_move.ConstFloat(value=instr.float_value()))
@@ -326,7 +329,15 @@ class BytecodeDecoder:
         self.frame.push(stack_move.SetObservable(array=array))
 
     def _visit_halt(self, idx: int, instr: "Instruction") -> None:
-        self.frame.push(stack_move.Halt())
+        # The bytecode ``halt`` opcode has no stack_move counterpart —
+        # it maps directly to a ``func.ConstantNone`` + ``func.Return``
+        # pair (overlap with kirin.basic's ``func`` dialect). The
+        # ConstantNone result is consumed inline by func.Return and
+        # never observed via the virtual stack, so we bypass ``push``
+        # here and append the statements directly.
+        none = func.ConstantNone()
+        self.frame.current_block.stmts.append(none)
+        self.frame.current_block.stmts.append(func.Return(none.result))
 
     def _finalize(self, kernel_name: str) -> ir.Method:
         function = func.Function(

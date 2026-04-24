@@ -33,6 +33,8 @@ This is the "linear IR" style — categorical / explicit-structure rather than t
 
 This work is the **first instance of a bytecode decoder framework** for Bloqade Lanes. The v1 implementation ships as one monolithic dialect + one rewrite to get something small and end-to-end running. Once the boundaries are validated in practice, the dialect decomposes into sub-dialects, the decoder decomposes into registered per-sub-dialect handlers, and the rewrite decomposes into composable per-sub-dialect rewrite chunks (see §"Planned follow-up: sub-dialect decomposition" below).
 
+**Alignment with `kirin.prelude.basic`.** Where a bytecode opcode overlaps semantically with a statement already provided by the `kirin.prelude.basic` dialect group (the `func` dialect in particular), we do **not** re-implement it in `stack_move` — the decoder emits the basic-dialect statement directly. Concretely, `return` and `halt` lower at decode time into `func.Return` and `func.ConstantNone` + `func.Return`, so `stack_move` has no `Return` / `Halt` statements and the rewrite has no handlers for them. This keeps the dialect focused on what's *genuinely new* (atom-specific ops, stack semantics, bytecode-level address types) and avoids duplicating Kirin machinery. Non-overlapping constants/indexing (`ConstFloat`, `ConstInt`, `GetItem`) are kept in `stack_move` because their lowered shapes carry bytecode-specific metadata (address/zone types tracked via `ssa_to_attr`, multi-dimensional `GetItem` chained through `ndims`) that the basic dialect doesn't encode.
+
 ## Scope
 
 **In scope (v1):**
@@ -228,20 +230,23 @@ class SetObservable(ir.Statement):
     result: ir.ResultValue = info.result(ObservableType)
 ```
 
-**Control flow:**
+**Control flow:** No dedicated stack_move statements — the bytecode
+`return` and `halt` opcodes overlap directly with `func.Return` and
+`func.ConstantNone` + `func.Return` from `kirin.prelude.basic`'s
+`func` dialect. The decoder emits those statements directly:
 
-```python
-class Return(ir.Statement):
-    # Required non-optional return operand — Return always pops one
-    # stack value as the return value (matches the bytecode's
-    # `return_` opcode). Halt is the no-return counterpart.
-    traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
-    value: ir.SSAValue = info.argument()
+- `return` → pops one SSA value from the virtual stack, emits
+  `func.Return(value)`.
+- `halt` → emits `func.ConstantNone` + `func.Return(none.result)` as
+  a pair (the ConstantNone result is consumed inline, not via the
+  virtual stack).
 
-class Halt(ir.Statement):
-    # No operand — lowers to a func.ConstantNone + func.Return pair.
-    traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
-```
+Keeping these overlapping statements out of `stack_move` means the
+`stack_move2move` rewrite doesn't need Return/Halt handlers either;
+`func.*` statements fall through its singledispatchmethod base case
+and reach the target IR unchanged. The closing `move.Store(state)`
+is still inserted by `rewrite_Block` just before whatever terminator
+the block ends with.
 
 ### 2. `python/bloqade/lanes/bytecode/decode.py`
 
@@ -364,8 +369,8 @@ class RewriteStackMoveToMove(RewriteRule):
 | `GetItem` | chained `py.indexing.GetItem` (one per index; last result replaces the stack_move.GetItem result) |
 | `SetDetector(arr)` | `annotate.SetDetector(arr, empty_coords)` |
 | `SetObservable(arr)` | `annotate.SetObservable(arr)` |
-| `Return(value)` | `func.Return(value)` — the closing `move.Store(state)` is emitted by `rewrite_Block`, not here |
-| `Halt` | `func.ConstantNone` + `func.Return(none.result)` — the closing `move.Store(state)` is emitted by `rewrite_Block`, not here |
+
+(`return` and `halt` bytecode opcodes are lowered **at decode time** into `func.Return` / `func.ConstantNone + func.Return` respectively — they have no `stack_move` statement, so the rewrite has no handler for them.)
 
 `Pop`/`Dup`/`Swap` all collapse during rewrite: `Pop` produces no target statement (its operand may become dead); `Dup` and `Swap` redirect their result SSA values back to their inputs via `replace_by`. The linear-IR shape lives in `stack_move` only.
 
@@ -444,7 +449,8 @@ A provisional grouping:
 | `stack_move.measure` | `Measure`, `AwaitMeasure` |
 | `stack_move.array` | `NewArray`, `GetItem` |
 | `stack_move.annotate` | `SetDetector`, `SetObservable` |
-| `stack_move.control` | `Return`, `Halt` |
+
+(Control flow — `return`, `halt` — is handled by `kirin.prelude.basic`'s `func` dialect directly; no sub-dialect needed.)
 
 Framework goals:
 

@@ -16,19 +16,21 @@ _ARCH = get_arch_spec()
 
 def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
     """Append ``stmts`` to a fresh block and terminate it with a dummy
-    ``stack_move.ConstInt(0)`` + ``stack_move.Return`` pair so every block
-    has a value on the virtual stack for the terminator to consume.
+    ``stack_move.ConstInt(0)`` + ``func.Return`` pair so every block has
+    a valid terminator.
 
-    Tests pre-date stack_move.Return gaining its ``value`` operand; rather
-    than threading an explicit terminator through each call site, the helper
-    synthesises one here.
+    Since the ``return`` bytecode opcode overlaps with ``func.Return``
+    from the kirin.basic dialect group, the decoder emits ``func.Return``
+    directly — and so does this helper.
     """
+    from kirin.dialects import func
+
     block = ir.Block()
     for stmt in stmts:
         block.stmts.append(stmt)
     ret_sentinel = stack_move.ConstInt(value=0)
     block.stmts.append(ret_sentinel)
-    block.stmts.append(stack_move.Return(value=ret_sentinel.result))
+    block.stmts.append(func.Return(ret_sentinel.result))
     return block
 
 
@@ -40,7 +42,12 @@ def test_empty_block_emits_load_and_func_return():
     # Expect a move.Load at block start and a func.Return; the stack_move
     # Return should have been deleted.
     assert any(isinstance(s, move.Load) for s in block.stmts)
-    assert not any(isinstance(s, stack_move.Return) for s in block.stmts)
+    # The helper already terminates the block with func.Return — the
+    # rewrite passes it through unchanged, so the block ends with
+    # move.Store(state) + func.Return after rewrite.
+    from kirin.dialects import func
+
+    assert any(isinstance(s, func.Return) for s in block.stmts)
 
 
 def test_const_float_emits_py_constant_and_tracks_value():

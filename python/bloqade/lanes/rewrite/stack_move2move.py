@@ -108,27 +108,14 @@ class RewriteStackMoveToMove(RewriteRule):
         """Default: non-stack_move statements pass through unchanged."""
         pass
 
-    @_rewrite.register(stack_move.Return)
-    def _(self, stmt: stack_move.Return, to_delete: list[ir.Statement]) -> None:
-        from kirin.dialects import func
-
-        # The stack_move.Return.value operand has already been rewired by
-        # earlier replace_by calls on its defining Const* / stack op, so
-        # we can thread it directly through to func.Return. The final
-        # move.Store(state) is inserted by rewrite_Block after the walk.
-        func.Return(stmt.value).insert_before(stmt)
-        to_delete.append(stmt)
-
-    @_rewrite.register(stack_move.Halt)
-    def _(self, stmt: stack_move.Halt, to_delete: list[ir.Statement]) -> None:
-        from kirin.dialects import func
-
-        # The final move.Store(state) is inserted by rewrite_Block after
-        # the walk.
-        none_stmt = func.ConstantNone()
-        none_stmt.insert_before(stmt)
-        func.Return(none_stmt.result).insert_before(stmt)
-        to_delete.append(stmt)
+    # Note: no handlers for Return / Halt. The decoder emits
+    # ``func.Return`` and ``func.ConstantNone`` + ``func.Return``
+    # directly (overlap with kirin.basic's ``func`` dialect), so those
+    # statements reach the rewrite already in target form and fall
+    # through the singledispatchmethod base case. The closing
+    # ``move.Store(state)`` is inserted by ``rewrite_Block`` just before
+    # the block's terminator, regardless of whether the terminator
+    # originated from the decoder or from this rewrite.
 
     @_rewrite.register(stack_move.ConstFloat)
     def _(self, stmt: stack_move.ConstFloat, to_delete: list[ir.Statement]) -> None:

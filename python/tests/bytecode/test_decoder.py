@@ -1,3 +1,5 @@
+from kirin.dialects import func
+
 from bloqade.lanes.bytecode import (
     Instruction,
     MoveType,
@@ -9,17 +11,19 @@ from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddr
 
 
 def test_empty_program_returns_method_with_empty_body():
-    # stack_move.Return now consumes an SSA operand, so we push a dummy
-    # const_int(0) before the return to satisfy the virtual-stack invariant.
+    # ``return`` lowers directly to ``func.Return`` (overlap with the
+    # kirin.basic dialect group), so we push a dummy const_int(0)
+    # before return to satisfy the virtual-stack invariant.
     prog = Program(
         version=(1, 0),
         instructions=[Instruction.const_int(0), Instruction.return_()],
     )
     method = load_program(prog)
     assert method.sym_name == "main"
-    # Body should have two statements: the dummy ConstInt and stack_move.Return.
+    # Body should have two statements: the dummy ConstInt and func.Return.
     block = method.callable_region.blocks[0]
     assert len(block.stmts) == 2
+    assert any(isinstance(s, func.Return) for s in block.stmts)
 
 
 def _decode(instructions):
@@ -218,7 +222,10 @@ def test_decode_halt():
     prog = Program(version=(1, 0), instructions=[Instruction.halt()])
     method = load_program(prog)
     block = method.callable_region.blocks[0]
-    assert any(isinstance(s, stack_move.Halt) for s in block.stmts)
+    # ``halt`` lowers to ``func.ConstantNone`` + ``func.Return`` directly
+    # (overlap with kirin.basic's func dialect).
+    assert any(isinstance(s, func.ConstantNone) for s in block.stmts)
+    assert any(isinstance(s, func.Return) for s in block.stmts)
 
 
 def test_load_program_infers_return_type():

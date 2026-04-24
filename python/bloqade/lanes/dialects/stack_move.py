@@ -7,8 +7,7 @@ from bloqade.decoders.dialects.annotate.types import (
     MeasurementResultType,
     ObservableType,
 )
-from kirin import interp, ir, lowering, types
-from kirin.analysis import typeinfer
+from kirin import ir, lowering, types
 from kirin.decl import info, statement
 
 from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
@@ -229,21 +228,11 @@ class AwaitMeasure(ir.Statement):
 
 
 # ── Control flow ───────────────────────────────────────────────────────
-
-
-@statement(dialect=dialect)
-class Return(ir.Statement):
-    """Return the top-of-stack value from the current program."""
-
-    traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
-    value: ir.SSAValue = info.argument()
-
-
-@statement(dialect=dialect)
-class Halt(ir.Statement):
-    """Lowered to func.Return(None) alongside Return."""
-
-    traits = frozenset({lowering.FromPythonCall(), ir.IsTerminator()})
+#
+# The bytecode ``return`` and ``halt`` opcodes have no stack_move
+# counterpart — they overlap with ``kirin.dialects.func`` in the basic
+# dialect group, so the decoder emits ``func.Return`` directly (for
+# ``return``) and ``func.ConstantNone`` + ``func.Return`` (for ``halt``).
 
 
 # ── Arrays ─────────────────────────────────────────────────────────────
@@ -354,30 +343,8 @@ class SetObservable(ir.Statement):
     result: ir.ResultValue = info.result(ObservableType)
 
 
-# ── Type inference ─────────────────────────────────────────────────────
-
-
-@dialect.register(key="typeinfer")
-class TypeInfer(interp.MethodTable):
-    @interp.impl(Return)
-    def return_(
-        self,
-        interp_: "typeinfer.TypeInference",
-        frame: "interp.Frame[types.TypeAttribute]",
-        stmt: Return,
-    ) -> "interp.ReturnValue":
-        # No const narrowing: no stack_move statement has a constant
-        # interpreter / const-prop method registered, so the ``"const"``
-        # hint on any stack_move-produced SSA value is always Unknown.
-        # The branch would be dead code. Propagate the inferred type
-        # from the frame directly.
-        return interp.ReturnValue(frame.get(stmt.value))
-
-    @interp.impl(Halt)
-    def halt(
-        self,
-        interp_: "typeinfer.TypeInference",
-        frame: "interp.Frame[types.TypeAttribute]",
-        stmt: Halt,
-    ) -> "interp.ReturnValue":
-        return interp.ReturnValue(types.NoneType)
+# No stack_move TypeInfer methods needed — ``return`` and ``halt``
+# bytecode opcodes lower to ``func.Return`` / ``func.ConstantNone`` +
+# ``func.Return``, whose type-inference methods come from the ``func``
+# dialect itself. Every other stack_move statement's result type is
+# fully determined by its declaration.
