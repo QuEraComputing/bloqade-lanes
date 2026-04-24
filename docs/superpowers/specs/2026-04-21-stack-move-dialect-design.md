@@ -1,7 +1,7 @@
 # `stack_move` Dialect — Design
 
-**Date**: 2026-04-21
-**Status**: Draft
+**Date**: 2026-04-21 (updated 2026-04-24 to reflect implementation)
+**Status**: Draft — reflects shipped implementation on `feat/stack-move-impl`
 **Tracking issue**: #248 (scope revised — see below)
 **Companion doc**: [2026-04-21-bytecode-to-ssa-lowering.md](./2026-04-21-bytecode-to-ssa-lowering.md)
 
@@ -33,16 +33,18 @@ This is the "linear IR" style — categorical / explicit-structure rather than t
 
 This work is the **first instance of a bytecode decoder framework** for Bloqade Lanes. The v1 implementation ships as one monolithic dialect + one rewrite to get something small and end-to-end running. Once the boundaries are validated in practice, the dialect decomposes into sub-dialects, the decoder decomposes into registered per-sub-dialect handlers, and the rewrite decomposes into composable per-sub-dialect rewrite chunks (see §"Planned follow-up: sub-dialect decomposition" below).
 
+**Alignment with `kirin.prelude.basic`.** Where a bytecode opcode overlaps semantically with a statement already provided by the `kirin.prelude.basic` dialect group (the `func` dialect in particular), we do **not** re-implement it in `stack_move` — the decoder emits the basic-dialect statement directly. Concretely, `return` and `halt` lower at decode time into `func.Return` and `func.ConstantNone` + `func.Return`, so `stack_move` has no `Return` / `Halt` statements and the rewrite has no handlers for them. This keeps the dialect focused on what's *genuinely new* (atom-specific ops, stack semantics, bytecode-level address types) and avoids duplicating Kirin machinery. Non-overlapping constants/indexing (`ConstFloat`, `ConstInt`, `GetItem`) are kept in `stack_move` because their lowered shapes carry bytecode-specific metadata (address/zone types tracked via `ssa_to_attr`, multi-dimensional `GetItem` chained through `ndims`) that the basic dialect doesn't encode.
+
 ## Scope
 
 **In scope (v1):**
 
 - A new Kirin dialect `stack_move` with one SSA-using statement per bytecode instruction, including `Pop`, `Dup`, `Swap` as explicit SSA ops.
 - A decoder that translates a `Program` instruction-by-instruction into a `stack_move`-dialect `ir.Method`, simulating a virtual stack of SSA values during decoding.
-- A rewrite pass `lower_stack_move` that does per-statement mechanical translation from `stack_move` into target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`), eliminating `Pop`/`Dup`/`Swap` along the way.
-- A new multi-zone `move.Measure` statement (target of the rewrite).
-- Extensions to `AtomAnalysis` that track measurement zone sets and whether the program performs a single final measurement.
-- A new `move → move` rewrite pass `measure_lower` that uses the extended analysis to validate preconditions and lower `move.Measure` into the existing `move.EndMeasure`.
+- A rewrite pass `stack_move2move` (`RewriteStackMoveToMove`) that does per-statement mechanical translation from `stack_move` into target dialects (`move`, `ilist`, `py.constant`, `py.indexing`, `annotate`, `func`), eliminating `Pop`/`Dup`/`Swap` along the way. Requires an `ArchSpec` (consumed by the `AwaitMeasure` lowering).
+- A new multi-zone stateful `move.Measure` statement (target of the rewrite).
+- Extensions to `AtomAnalysis`: the `MeasureFuture` lattice element carries a `measurement_count` ordinal populated from the running final-measurement count.
+- A new `move → move` rewrite pass `measure_lower` that reads each `move.Measure`'s `future` SSA from an analysis `ForwardFrame` and lowers it into `move.EndMeasure` when the preconditions hold. Precondition failures cause the rewrite to give up silently (no exception) — validation is a dedicated-pass concern, not a rewrite-rule concern.
 
 **Out of scope (follow-ups):**
 
@@ -54,7 +56,7 @@ This work is the **first instance of a bytecode decoder framework** for Bloqade 
 ## Architecture
 
 ```text
-┌─────────────┐  load_program   ┌──────────────┐  lower_stack_move    ┌──────────┐  measure_lower     ┌──────────┐
+┌─────────────┐  load_program   ┌──────────────┐  stack_move2move    ┌──────────┐  measure_lower     ┌──────────┐
 │  Program    │────────────────▶│  stack_move  │─────────────────────▶│  multi-  │───────────────────▶│  move    │
 │  (Rust)     │ (virtual SSA    │  ir.Method   │  (per-statement      │ dialect  │  (analysis +       │  (old,   │
 └─────────────┘  stack, emits   │  (SSA with   │   mechanical         │ IR       │   rewrite pass)    │  EndMea-)│
@@ -73,47 +75,57 @@ New Kirin dialect. **Every statement uses SSA operands and results.** No state t
 
 **Types:**
 
-- `LocationAddressType`, `LaneAddressType`, `ZoneAddressType`, `MeasurementFutureType`, `BitstringType`, `ArrayType`
+- `LocationAddressType`, `LaneAddressType`, `ZoneAddressType` — address wrappers in `bloqade.lanes.layout.encoding`.
+- `MeasurementFutureType`, `MeasurementResultType`, `DetectorType`, `ObservableType` — from `bloqade.decoders.dialects.annotate.types`.
+- `ArrayType` — parameterised as `ArrayType[ElemType, Dim0Type, Dim1Type]` where `Dim1Type == Literal(0)` means 1-D (by the bytecode convention).
 - Existing kirin types are reused for `FloatType`, `IntType`.
 
-**Constants** (attribute + SSA result):
+**Constants** (attribute + SSA result; all marked `ir.Pure()` so CSE/DCE passes can collapse duplicates and drop dead constants after the rewrite):
 
 ```python
 class ConstFloat(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: float = info.attribute()
     result: ir.ResultValue = info.result(FloatType)
 
 class ConstInt(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: int = info.attribute()
     result: ir.ResultValue = info.result(IntType)
 
 class ConstLoc(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: LocationAddress = info.attribute()
     result: ir.ResultValue = info.result(LocationAddressType)
 
 class ConstLane(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: LaneAddress = info.attribute()
     result: ir.ResultValue = info.result(LaneAddressType)
 
 class ConstZone(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ZoneAddress = info.attribute()
     result: ir.ResultValue = info.result(ZoneAddressType)
 ```
 
-**Stack manipulation** (explicit SSA inputs/outputs):
+**Stack manipulation** (explicit SSA inputs/outputs; also `ir.Pure()`):
 
 ```python
 class Pop(ir.Statement):
     # consumes 1 SSA value, produces none
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ir.SSAValue = info.argument()
 
 class Dup(ir.Statement):
     # semantic identity — result ≡ value — but preserved as explicit op
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     value: ir.SSAValue = info.argument()
     result: ir.ResultValue = info.result()
 
 class Swap(ir.Statement):
     # permutation — out_top ≡ in_bot, out_bot ≡ in_top
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     in_top: ir.SSAValue = info.argument()
     in_bot: ir.SSAValue = info.argument()
     out_top: ir.ResultValue = info.result()
@@ -135,124 +147,144 @@ class Move(ir.Statement):
     lanes: tuple[ir.SSAValue, ...] = info.argument(type=LaneAddressType)
 ```
 
-**Gates:**
+**Gates** (argument names match the `move` dialect — `axis_angle` / `rotation_angle` rather than `phi` / `theta`):
 
 ```python
 class LocalR(ir.Statement):
-    phi: ir.SSAValue = info.argument(type=FloatType)
-    theta: ir.SSAValue = info.argument(type=FloatType)
+    axis_angle: ir.SSAValue = info.argument(type=FloatType)
+    rotation_angle: ir.SSAValue = info.argument(type=FloatType)
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
 class LocalRz(ir.Statement):
-    theta: ir.SSAValue = info.argument(type=FloatType)
+    rotation_angle: ir.SSAValue = info.argument(type=FloatType)
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
 class GlobalR(ir.Statement):
-    phi: ir.SSAValue = info.argument(type=FloatType)
-    theta: ir.SSAValue = info.argument(type=FloatType)
+    axis_angle: ir.SSAValue = info.argument(type=FloatType)
+    rotation_angle: ir.SSAValue = info.argument(type=FloatType)
 
 class GlobalRz(ir.Statement):
-    theta: ir.SSAValue = info.argument(type=FloatType)
+    rotation_angle: ir.SSAValue = info.argument(type=FloatType)
 
 class CZ(ir.Statement):
     zone: ir.SSAValue = info.argument(type=ZoneAddressType)
 ```
 
-**Measurement:**
+**Measurement** (matches the Rust validator's `sim_measure`: pops `arity` zones and pushes `arity` futures):
 
 ```python
 class Measure(ir.Statement):
-    locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
-    result: ir.ResultValue = info.result(MeasurementFutureType)
+    # arity zones popped; arity MeasurementFutureType results pushed —
+    # one per zone. The per-zone futures are fanned to the single
+    # move.Measure future in stack_move2move via replace_by.
+    zones: tuple[ir.SSAValue, ...] = info.argument(type=ZoneAddressType)
+    # results declared dynamically in __init__:
+    #   result_types=(MeasurementFutureType,) * arity
 
 class AwaitMeasure(ir.Statement):
+    # Consumes the future (linear) and pushes a 1-D array of
+    # measurement results. Element order is defined by the ArchSpec
+    # (flattened zones × yield_zone_locations), documented on the
+    # stack_move2move AwaitMeasure handler.
+    traits = frozenset({lowering.FromPythonCall()})
     future: ir.SSAValue = info.argument(type=MeasurementFutureType)
-    result: ir.ResultValue = info.result(BitstringType)
+    result: ir.ResultValue = info.result(
+        ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
+    )
 ```
 
-`Measure` takes **location** operands here (matching the bytecode's pop shape). Zone grouping happens in `lower_stack_move`.
+`Measure` takes **zones** directly as SSA operands (not locations — the bytecode `measure(arity)` opcode pops zone addresses). Zone deduplication happens in `stack_move2move` when lowering to the single-future `move.Measure`.
 
 **Arrays and data:**
 
 ```python
 class NewArray(ir.Statement):
+    # Result type is the fully-parameterised ArrayType[ElemType,
+    # Literal(dim0), Literal(dim1)] built from the type_tag byte (via
+    # the TYPE_TAG table) and the two dimension attributes.
     type_tag: int = info.attribute()
     dim0: int = info.attribute()
     dim1: int = info.attribute()  # 0 when 1-D
-    result: ir.ResultValue = info.result(ArrayType)
+    values: tuple[ir.SSAValue, ...]  # dim0 * max(dim1, 1) elements
+    result: ir.ResultValue = info.result(ArrayType[ElemType, Dim0Type, Dim1Type])
 
 class GetItem(ir.Statement):
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
     array: ir.SSAValue = info.argument(type=ArrayType)
     indices: tuple[ir.SSAValue, ...] = info.argument(type=IntType)
     result: ir.ResultValue = info.result()  # element type
 
 class SetDetector(ir.Statement):
-    array: ir.SSAValue = info.argument(type=ArrayType)
+    # 1-D array input (dim1=0 per the bytecode convention); validation
+    # of the shape/element type is a type-inference concern, not a
+    # decoder concern.
+    array: ir.SSAValue = info.argument(
+        type=ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
+    )
+    result: ir.ResultValue = info.result(DetectorType)
 
 class SetObservable(ir.Statement):
-    array: ir.SSAValue = info.argument(type=ArrayType)
+    array: ir.SSAValue = info.argument(
+        type=ArrayType[MeasurementResultType, types.Any, types.Literal(0)]
+    )
+    result: ir.ResultValue = info.result(ObservableType)
 ```
 
-**Control flow:**
+**Control flow:** No dedicated stack_move statements — the bytecode
+`return` and `halt` opcodes overlap directly with `func.Return` and
+`func.ConstantNone` + `func.Return` from `kirin.prelude.basic`'s
+`func` dialect. The decoder emits those statements directly:
+
+- `return` → pops one SSA value from the virtual stack, emits
+  `func.Return(value)`.
+- `halt` → emits `func.ConstantNone` + `func.Return(none.result)` as
+  a pair (the ConstantNone result is consumed inline, not via the
+  virtual stack).
+
+Keeping these overlapping statements out of `stack_move` means the
+`stack_move2move` rewrite doesn't need Return/Halt handlers either;
+`func.*` statements fall through its singledispatchmethod base case
+and reach the target IR unchanged. The closing `move.Store(state)`
+is still inserted by `rewrite_Block` just before whatever terminator
+the block ends with.
+
+### 2. `python/bloqade/lanes/bytecode/decode.py`
+
+The decoder maintains a **virtual stack of SSA values** (a `StackMachineFrame`, mirroring Kirin's `lowering.Frame` idiom) while walking the bytecode. Each bytecode instruction is dispatched to a per-opcode handler that reads/mutates the virtual stack and emits a `stack_move` statement with the right SSA operands.
 
 ```python
-class Return(ir.Statement):
-    # optional return operand (None for Halt)
-    value: ir.SSAValue | None = info.argument(default=None)
-
-class Halt(ir.Statement):
-    pass  # lowered to Return(None)
-```
-
-### 2. `python/bloqade/lanes/bytecode/lowering.py`
-
-The decoder maintains a **virtual stack of SSA values** while walking the bytecode. Each bytecode instruction is dispatched to a per-opcode handler that reads/mutates the virtual stack and emits a `stack_move` statement with the right SSA operands.
-
-```python
-class BytecodeDecoder:
+@dataclass
+class StackMachineFrame:
+    current_region: ir.Region
+    current_block: ir.Block
     stack: list[ir.SSAValue]
-    block: ir.Block
+
+    def push(self, stmt: T) -> T:
+        """Append a statement to the current block and push its
+        results onto the virtual stack in reverse declaration order."""
+        ...
+
+    def pop_value(self) -> ir.SSAValue: ...
+    def pop_n(self, n: int) -> list[ir.SSAValue]: ...
+
+
+class BytecodeDecoder:
+    frame: StackMachineFrame
 
     def decode(self, program: Program, kernel_name: str) -> ir.Method:
         for idx, instruction in enumerate(program.instructions):
             try:
                 self._visit(instruction)
-            except _StackError as e:
-                raise DecodeError.from_context(idx, instruction, self.stack, e)
+            except StackUnderflowError as e:
+                raise DecodingError.from_context(idx, instruction, e)
         return self._finalize(kernel_name)
 
-    def _visit(self, instr: Instruction) -> None:
-        # dispatch by opcode
-        ...
+    def _visit_const_loc(self, idx, instr):
+        self.frame.push(stack_move.ConstLoc(value=instr.location_address()))
 
-    def _visit_const_loc(self, instr):
-        stmt = stack_move.ConstLoc(value=instr.location_address())
-        self.block.stmts.append(stmt)
-        self.stack.append(stmt.result)
-
-    def _visit_dup(self, instr):
-        top = self.stack[-1]
-        stmt = stack_move.Dup(value=top)
-        self.block.stmts.append(stmt)
-        self.stack.append(stmt.result)
-
-    def _visit_swap(self, instr):
-        in_top, in_bot = self.stack.pop(), self.stack.pop()
-        stmt = stack_move.Swap(in_top=in_top, in_bot=in_bot)
-        self.block.stmts.append(stmt)
-        # new top first — matches "top-of-stack last argument" convention
-        self.stack.append(stmt.out_bot)
-        self.stack.append(stmt.out_top)
-
-    def _visit_pop(self, instr):
-        top = self.stack.pop()
-        self.block.stmts.append(stack_move.Pop(value=top))
-
-    def _visit_fill(self, instr):
-        locs = [self.stack.pop() for _ in range(instr.arity)]
-        locs.reverse()
-        self._check_type(locs, LocationAddressType)
-        self.block.stmts.append(stack_move.Fill(locations=tuple(locs)))
+    def _visit_fill(self, idx, instr):
+        locs = self.frame.pop_n(instr.arity())
+        self.frame.push(stack_move.Fill(locations=tuple(locs)))
 
     # … one handler per opcode …
 
@@ -260,12 +292,13 @@ def load_program(
     program: Program,
     kernel_name: str = "main",
 ) -> ir.Method:
-    """Decode a bytecode Program into a stack_move ir.Method."""
+    """Decode a bytecode Program into a stack_move ir.Method and run a
+    TypeInfer pass to populate SSA types."""
 ```
 
-`load_program` returns a `stack_move` method. Callers run the `lower_stack_move` rewrite and the rest of the pipeline explicitly.
+`load_program` returns a `stack_move` method with concrete SSA types (the decoder runs `kirin.passes.typeinfer.TypeInfer` before returning). Callers run the `stack_move2move` rewrite and the rest of the pipeline explicitly.
 
-A `DecodeError` exception carries the offending instruction index, opcode, and virtual-stack snapshot.
+A `DecodingError` exception wraps stack-underflow failures with the offending instruction index, opcode, and virtual-stack snapshot.
 
 ### 3. New statement in old `move` dialect
 
@@ -273,111 +306,128 @@ A multi-zone stateful measurement, alongside the existing `EndMeasure`:
 
 ```python
 class Measure(StatefulStatement):
-    traits = frozenset({lowering.FromPythonCall(), ConsumesState(True)})
-    current_state: ir.SSAValue = info.argument(StateType)
-    zones: tuple[ir.SSAValue, ...] = info.argument(type=ZoneAddressType)
-    result: ir.ResultValue = info.result(MeasurementFutureType)
+    # StatefulStatement inherits current_state: StateType input and a
+    # result: StateType output, giving Measure two results overall:
+    # the threaded state and the measurement future. zone_addresses
+    # is a compile-time attribute tuple of plain Python ZoneAddress
+    # values (not an SSA operand) — matching the shape of other move
+    # statements such as CZ / EndMeasure.
+    zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
+    future: ir.ResultValue = info.result(MeasurementFutureType)
 ```
 
-This is produced by `lower_stack_move` and consumed by `measure_lower`. `EndMeasure` stays unchanged.
+This is produced by `stack_move2move` and consumed by `measure_lower`. `EndMeasure` stays unchanged.
 
-### 4. `python/bloqade/lanes/rewrite/lower_stack_move.py`
+### 4. `python/bloqade/lanes/rewrite/stack_move2move.py`
 
-**Mechanical per-statement rewrite.** Because `stack_move` is already SSA, the rewrite is a straightforward statement-by-statement translation into target dialects — no virtual stack to simulate, no SSA construction.
+**Mechanical per-statement rewrite** (`RewriteStackMoveToMove`). Because `stack_move` is already SSA, the rewrite is a straightforward in-place statement-by-statement translation into target dialects — no separate target block, no full SSA reconstruction. The rewrite uses Kirin's `old_ssa.replace_by(new_ssa)` idiom to redirect SSA uses and collects source statements into a deletion list walked at the end.
 
 ```python
-class LowerStackMove:
-    state: ir.SSAValue  # threaded StateType for stateful move ops
-    # SSA-value map: stack_move SSA value → target-dialect SSA value
-    mapping: dict[ir.SSAValue, ir.SSAValue]
-    target_block: ir.Block
+@dataclass
+class RewriteStackMoveToMove(RewriteRule):
+    # Required. Consumed by the AwaitMeasure lowering to iterate
+    # arch_spec.yield_zone_locations(zone) for each zone on the
+    # originating move.Measure.
+    arch_spec: ArchSpec
+    # stack_move SSA → raw Python attribute value (float, int,
+    # LocationAddress, LaneAddress, ZoneAddress) — used to lift
+    # SSA operands back to target-dialect attributes (addresses,
+    # rotation angles).
+    ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
+    # Current StateType SSA value threaded through move.* stateful ops.
+    state: ir.SSAValue | None = None
 
-    def run(self, source_block: ir.Block) -> ir.Block:
-        self.state = self._emit_initial_state()
-        for stmt in source_block.stmts:
-            self._rewrite(stmt)
-        return self.target_block
-
-    def _rewrite(self, stmt: ir.Statement) -> None:
-        # dispatch by statement type
+    def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        # 1. Insert move.Load at block start to source StateType.
+        # 2. Walk stmts, dispatch to per-type handlers that emit target
+        #    statements via insert_before and accumulate source stmts
+        #    into a deletion list.
+        # 3. Reverse-order deletion so consumers are removed before
+        #    their producers.
+        # 4. Insert the closing move.Store(state) just before the
+        #    block's terminator — the state-boundary Store lives here
+        #    (not in the Return/Halt handlers), so it's emitted
+        #    regardless of which terminator (if any) is present.
         ...
 ```
 
-**Per-statement behavior (abridged):**
+**Per-statement behavior:**
 
-| `stack_move` statement | Target-dialect emission |
+| `stack_move` statement | Target emission |
 |---|---|
-| `ConstFloat` / `ConstInt` | `py.constant.Constant` |
-| `ConstLoc` / `ConstLane` / `ConstZone` | `move.Const*` with matching result |
+| `ConstFloat` / `ConstInt` | `py.Constant` (value forwarded into `ssa_to_attr` for downstream attribute lifting) |
+| `ConstLoc` / `ConstLane` / `ConstZone` | no target stmt — raw value recorded in `ssa_to_attr`; downstream `move.*` ops lift it back as an attribute |
 | `Pop` | nothing (dropped; operand becomes dead or is DCE'd) |
-| `Dup` | map result to same target SSA value as input (identity in target IR) |
-| `Swap` | map results (reordering is purely a decoder concept; no target statement) |
-| `InitialFill` / `Fill` / `Move` | `move.InitialFill` / `move.Fill` / `move.Move` with state threading |
+| `Dup` | `stmt.result.replace_by(stmt.value)` — identity, no target stmt |
+| `Swap` | `out_top.replace_by(in_bot)`, `out_bot.replace_by(in_top)` — permutation, no target stmt |
+| `InitialFill` / `Fill` | `move.Fill` (both `stack_move.InitialFill` and `stack_move.Fill` lower to `move.Fill`; the distinction exists only at the bytecode/stack_move layer for validation) |
+| `Move` | `move.Move` with lifted `lanes` attribute |
 | `LocalR` / `LocalRz` / `GlobalR` / `GlobalRz` / `CZ` | `move.LocalR` / `move.LocalRz` / `move.GlobalR` / `move.GlobalRz` / `move.CZ` with state threading |
-| `Measure(*locs)` | dedup zones from `locs` via `ConstLoc` chase; synthesize `move.ConstZone` per distinct zone; emit `move.Measure(state, *zones)` |
-| `AwaitMeasure(future)` | `move.AwaitMeasure(future)` |
-| `NewArray` | `ilist.New` (1-D) or nested `ilist.New` (2-D) |
-| `GetItem` | chained `py.indexing.GetItem` |
+| `Measure(*zones)` | Lift each zone SSA to its `ZoneAddress` attribute, dedup by zone_id (preserving first-seen order); emit `move.Measure(state, zone_addresses=distinct_zones)`; fan each per-zone future result to the single `move.Measure.future` via `replace_by` |
+| `AwaitMeasure(future)` | Chase `future.owner` to the originating `move.Measure` (whose `zone_addresses` attribute tells us which zones were measured); emit one `move.GetFutureResult(future, zone, loc)` per `(zone, loc)` from `arch_spec.yield_zone_locations(zone)`; bundle the results in an `ilist.New` and redirect the AwaitMeasure result |
+| `NewArray` | `ilist.New` (1-D when `dim1 == 0`) or `dim0` inner `ilist.New`s wrapped in an outer `ilist.New` (2-D, matching `IList[IList[ElemType, Dim1], Dim0]`) |
+| `GetItem` | chained `py.indexing.GetItem` (one per index; last result replaces the stack_move.GetItem result) |
 | `SetDetector(arr)` | `annotate.SetDetector(arr, empty_coords)` |
 | `SetObservable(arr)` | `annotate.SetObservable(arr)` |
-| `Return(val?)` | `func.Return(val?)` |
-| `Halt` | `func.Return(None)` |
 
-`Pop`/`Dup`/`Swap` all collapse during rewrite: `Pop` produces no target statement (its operand may become dead); `Dup` and `Swap` map their result SSA values back to the same target-dialect SSA values as their inputs. The linear-IR shape lives in `stack_move` only.
+(`return` and `halt` bytecode opcodes are lowered **at decode time** into `func.Return` / `func.ConstantNone + func.Return` respectively — they have no `stack_move` statement, so the rewrite has no handler for them.)
+
+`Pop`/`Dup`/`Swap` all collapse during rewrite: `Pop` produces no target statement (its operand may become dead); `Dup` and `Swap` redirect their result SSA values back to their inputs via `replace_by`. The linear-IR shape lives in `stack_move` only.
 
 ### 5. `AtomAnalysis` extensions
 
-Abstract interpretation methods for `move.Measure`. The analysis tracks:
+Abstract interpretation methods for `move.Measure` and `move.EndMeasure`. The analysis tracks:
 
-- The zone set measured at each `move.Measure` site.
-- Whether the program contains **exactly one** `move.Measure` (program-wide, across all reachable control flow).
+- The zone set and per-location qubit occupancy measured at each site, stored on the `MeasureFuture` lattice element's `results: dict[ZoneAddress, dict[LocationAddress, int]]` field (dict iteration order preserves zone insertion order).
+- A `measurement_count: int` ordinal populated on every `MeasureFuture` the analysis produces, taken from the running `final_measurement_count` counter on the interpreter after it is incremented. For programs with a single final measurement, the one `MeasureFuture` has `measurement_count == 1`; programs with more than one measurement produce futures with counts 2, 3, …
 
-Consumed by `measure_lower`.
+`MeasureLower` consumes the `ForwardFrame` returned by the analysis — it does not read pass-object fields.
 
 ### 6. `python/bloqade/lanes/rewrite/measure_lower.py`
 
-New `move → move` rewrite. Runs `AtomAnalysis`, then:
+New `move → move` rewrite. Runs `AtomAnalysis`, stashes the returned `ForwardFrame`, then for each `move.Measure` statement looks up its `future` SSA in the frame, reads the associated `MeasureFuture` lattice element, and decides whether to rewrite:
 
-- Asserts every `move.Measure` covers exactly one zone — else descriptive error.
-- Asserts the program contains exactly one final measurement — else descriptive error.
-- Rewrites `move.Measure(state, zone)` → `move.EndMeasure(state)` with the zone promoted back into an attribute.
+- Rewrite proceeds iff the future exists in the frame, `measurement_count == 1`, **and** the future's `results` dict has exactly one key (exactly one zone observed).
+- On rewrite: emit `move.EndMeasure(current_state, zone_addresses=tuple(results.keys()))` just before `move.Measure`; rewire state uses via `node.result.replace_by(node.current_state)` (forward the input state through any residual state consumers); rewire future uses via `node.future.replace_by(replacement.result)`; delete the original `move.Measure`.
+- If any precondition fails the rewrite **gives up silently** — returns `RewriteResult(has_done_something=False)` without touching the IR. Validation is a dedicated-pass concern, not a rewrite-rule concern; `MeasureLower` does not raise.
 
 ## Measure semantics
 
-- **Bytecode `measure(arity)`** — pops `arity` location addresses.
-- **Decoder** — pops `arity` SSA location values and emits `stack_move.Measure(*locs)` with those SSA operands.
-- **`lower_stack_move`** — reads each location operand's defining `ConstLoc`, extracts the zone id, deduplicates, synthesizes one `move.ConstZone` per distinct zone, and emits a single `move.Measure(state, *zones)`.
-- **`measure_lower`** — enforces single-zone-per-measure + single-final-measurement invariants and rewrites to `move.EndMeasure`.
+- **Bytecode `measure(arity)`** — pops `arity` zone addresses and pushes `arity` measurement futures (one per zone), matching the Rust validator's `sim_measure`.
+- **Decoder** — pops `arity` SSA zone values and emits `stack_move.Measure(zones=tuple(zones))` with dynamic `result_types=(MeasurementFutureType,) * arity`.
+- **`stack_move2move`** — lifts each zone SSA operand to its `ZoneAddress` attribute via `ssa_to_attr`, dedups by `zone_id` (preserving first-seen order), and emits a single `move.Measure(state, zone_addresses=distinct_zones)`. Every per-zone future from `stack_move.Measure` is fanned to the single `move.Measure.future` result via `replace_by`.
+- **`measure_lower`** — rewrites `move.Measure` → `move.EndMeasure` when the analysis frame confirms single-zone + single-final-measurement; otherwise silently defers.
 
 ## Error handling
 
-- **Decoder (`DecodeError`)**: stack underflow, operand type mismatch (e.g. `fill` consumed a non-`LocationAddressType` value), non-empty virtual stack at `Return`/`Halt`, unknown opcode. Carries the offending instruction index, opcode, and a snapshot of the virtual stack at failure.
-- **`lower_stack_move`**: should be infallible on well-typed `stack_move` IR; any failure indicates a decoder bug.
-- **`measure_lower`**: descriptive errors for multi-zone measurements or multiple final measurements.
+- **Decoder (`DecodingError`)**: wraps stack underflow failures with the offending instruction index, opcode, and a snapshot of the virtual stack at failure.
+- **`stack_move2move`**: should be infallible on well-typed `stack_move` IR; any failure indicates a decoder bug. Per-statement handlers that can't produce a valid lowering (e.g. an AwaitMeasure whose future doesn't trace back to a `move.Measure`) return without modifying the IR.
+- **`measure_lower`**: never raises. Validation of "exactly one final measurement" and "exactly one zone per measurement" is the job of a dedicated validation pass that runs between dialect transformations; the rewrite just defers when preconditions fail.
 
 ## Testing strategy
 
 - **Decoder unit tests**, one per opcode. Build a minimal `Program`, decode, assert the resulting `stack_move` IR shape — operand SSA bindings, result types, stack ops in place.
 - **Decoder error tests** for each `DecodeError` case.
-- **`lower_stack_move` unit tests**, one per statement family. Small `stack_move` inputs; verify target-dialect output IR, state threading, `Pop`/`Dup`/`Swap` collapsing, zone grouping for `Measure`.
+- **`stack_move2move` unit tests**, one per statement family. Small `stack_move` inputs; verify target-dialect output IR, state threading, `Pop`/`Dup`/`Swap` collapsing, zone grouping for `Measure`.
 - **Analysis unit tests** for the new `AtomAnalysis` methods.
 - **`measure_lower` unit tests** — valid and invalid cases.
-- **End-to-end test** — a small `Program` → `load_program` → `lower_stack_move` → `measure_lower` → an existing downstream pass.
+- **End-to-end test** — a small `Program` → `load_program` → `stack_move2move` → `measure_lower` → an existing downstream pass.
 
 ## File layout summary
 
 ```
 python/bloqade/lanes/
 ├── bytecode/
-│   └── lowering.py                      # NEW — BytecodeDecoder + load_program
+│   └── decode.py                        # NEW — BytecodeDecoder + StackMachineFrame + load_program
 ├── dialects/
-│   ├── move.py                          # EDIT — add Measure(*zones) stmt
+│   ├── move.py                          # EDIT — add multi-zone Measure stmt (StatefulStatement)
 │   └── stack_move.py                    # NEW — new dialect (all bytecode opcodes, SSA)
 ├── analysis/atom/
-│   └── impl.py                          # EDIT — abstract interpretation for move.Measure
+│   ├── lattice.py                       # EDIT — MeasureFuture gains measurement_count ordinal
+│   └── impl.py                          # EDIT — abstract interpretation for move.Measure / EndMeasure
 └── rewrite/
-    ├── lower_stack_move.py              # NEW — per-statement mechanical rewrite
-    └── measure_lower.py                 # NEW — move→move rewrite with analysis gate
+    ├── stack_move2move.py               # NEW — RewriteStackMoveToMove (per-statement in-place rewrite; requires ArchSpec)
+    └── measure_lower.py                 # NEW — move→move rewrite reading an analysis ForwardFrame
 ```
 
 ## Prerequisites
@@ -386,7 +436,7 @@ python/bloqade/lanes/
 
 ## Planned follow-up: sub-dialect decomposition (the bytecode decoder framework)
 
-The initial draft above treats `stack_move` as one monolithic dialect for prototyping speed. Once the mechanics are validated, the natural next step is to **group the instructions into sub-dialects** along the boundaries they already have, and then **decompose the decoder and `lower_stack_move` into composable per-sub-dialect chunks**. This is the point at which the implementation stops being a one-off and becomes the **bytecode decoder framework** the v1 prototype is paving the way for.
+The initial draft above treats `stack_move` as one monolithic dialect for prototyping speed. Once the mechanics are validated, the natural next step is to **group the instructions into sub-dialects** along the boundaries they already have, and then **decompose the decoder and `stack_move2move` into composable per-sub-dialect chunks**. This is the point at which the implementation stops being a one-off and becomes the **bytecode decoder framework** the v1 prototype is paving the way for.
 
 A provisional grouping:
 
@@ -399,12 +449,13 @@ A provisional grouping:
 | `stack_move.measure` | `Measure`, `AwaitMeasure` |
 | `stack_move.array` | `NewArray`, `GetItem` |
 | `stack_move.annotate` | `SetDetector`, `SetObservable` |
-| `stack_move.control` | `Return`, `Halt` |
+
+(Control flow — `return`, `halt` — is handled by `kirin.prelude.basic`'s `func` dialect directly; no sub-dialect needed.)
 
 Framework goals:
 
 - **Composable decoding.** Each sub-dialect owns a decoding handler for its opcodes; the top-level `BytecodeDecoder` is a dispatch that consults registered handlers. Adding a new instruction family (or swapping one out for a different target dialect) is a localized change.
-- **Composable rewrites.** `lower_stack_move` decomposes into a chain of per-sub-dialect rewrite chunks, each of which knows how to consume its own statements and emit into a specific target dialect.
+- **Composable rewrites.** `stack_move2move` decomposes into a chain of per-sub-dialect rewrite chunks, each of which knows how to consume its own statements and emit into a specific target dialect.
 - **Independent testability.** Each sub-dialect + its handler + its rewrite chunk is a unit that can be tested in isolation.
 - **Reuse beyond bytecode.** Sub-dialects like `stack_move.stack` or `stack_move.constants` are shape-agnostic; other stack-oriented frontends that share their abstractions can reuse them directly.
 

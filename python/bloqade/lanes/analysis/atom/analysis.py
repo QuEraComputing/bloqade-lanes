@@ -57,6 +57,8 @@ class AtomInterpreter(Forward[MoveExecution]):
     )
     _detectors: list[MoveExecution] = field(init=False, default_factory=list)
     _observables: list[MoveExecution] = field(init=False, default_factory=list)
+    measure_sites: list[dict] = field(init=False, default_factory=list)
+    final_measurement_count: int = field(init=False, default=0)
     keys = ("atom",)
 
     def __post_init__(self):
@@ -66,6 +68,8 @@ class AtomInterpreter(Forward[MoveExecution]):
         self.current_state = AtomState()
         self._detectors.clear()
         self._observables.clear()
+        self.measure_sites.clear()
+        self.final_measurement_count = 0
         return super().initialize()
 
     def method_self(self, method) -> MoveExecution:

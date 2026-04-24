@@ -4,7 +4,7 @@
 
 **Goal:** Add Rust-backed `Program` bytecode as a first-class input to the Bloqade Lanes compiler pipeline via a new `stack_move` dialect, a bespoke decoder, and a rewrite pipeline into the existing `move` dialect.
 
-**Architecture:** Bytecode `Program` → `BytecodeDecoder` (linear-IR SSA, virtual stack) → `stack_move` `ir.Method` → `lower_stack_move` rewrite → `move` IR (with new multi-zone `move.Measure`) → `measure_lower` rewrite (validates invariants via extended `AtomAnalysis`) → `move.EndMeasure` / existing downstream pipeline.
+**Architecture:** Bytecode `Program` → `BytecodeDecoder` (linear-IR SSA, virtual stack) → `stack_move` `ir.Method` → `stack_move2move` rewrite → `move` IR (with new multi-zone `move.Measure`) → `measure_lower` rewrite (validates invariants via extended `AtomAnalysis`) → `move.EndMeasure` / existing downstream pipeline.
 
 **Tech Stack:** Kirin IR framework (`kirin-toolchain`), Rust-backed PyO3 bytecode bindings (`bloqade.lanes.bytecode._native`), existing `move` dialect and `AtomAnalysis`.
 
@@ -27,15 +27,15 @@ Phase 0 below adds the PyO3 operand accessors that Phase B needs. With Phase 0 l
 | File | Responsibility |
 |---|---|
 | `python/bloqade/lanes/dialects/stack_move.py` | The `stack_move` dialect: types + one statement per bytecode opcode with explicit SSA operands/results (Variant 2 / linear-IR style). |
-| `python/bloqade/lanes/bytecode/lowering.py` | `BytecodeDecoder` class + `load_program()` entry point + `DecodeError` exception. |
-| `python/bloqade/lanes/rewrite/lower_stack_move.py` | `LowerStackMove` rewrite: mechanical per-statement translation from `stack_move` → `move` / `ilist` / `py.constant` / `py.indexing` / `annotate` / `func`. Also inserts state threading. |
+| `python/bloqade/lanes/bytecode/decode.py` | `BytecodeDecoder` class + `load_program()` entry point + `DecodeError` exception. |
+| `python/bloqade/lanes/rewrite/stack_move2move.py` | `RewriteStackMoveToMove` rewrite: mechanical per-statement translation from `stack_move` → `move` / `ilist` / `py.constant` / `py.indexing` / `annotate` / `func`. Also inserts state threading. |
 | `python/bloqade/lanes/rewrite/measure_lower.py` | `MeasureLower` rewrite: runs `AtomAnalysis`, enforces single-zone + single-final-measurement invariants, rewrites `move.Measure` → `move.EndMeasure`. |
 | `python/tests/dialects/__init__.py` | New test package. |
 | `python/tests/dialects/test_stack_move.py` | Smoke tests that every `stack_move` statement can be constructed with the expected fields/traits. |
 | `python/tests/bytecode/test_decoder.py` | Per-opcode decoder unit tests + error tests. |
-| `python/tests/rewrite/test_lower_stack_move.py` | Per-statement-family rewrite tests. |
+| `python/tests/rewrite/test_stack_move2move.py` | Per-statement-family rewrite tests. |
 | `python/tests/rewrite/test_measure_lower.py` | `measure_lower` unit tests (valid + invalid cases). |
-| `python/tests/test_stack_move_e2e.py` | End-to-end test: `Program` → `load_program` → `lower_stack_move` → `measure_lower` → existing downstream pass. |
+| `python/tests/test_stack_move_e2e.py` | End-to-end test: `Program` → `load_program` → `stack_move2move` → `measure_lower` → existing downstream pass. |
 
 **Modified files:**
 
@@ -995,7 +995,7 @@ Append to `python/bloqade/lanes/dialects/stack_move.py`:
 @statement(dialect=dialect)
 class Measure(ir.Statement):
     """Matches bytecode `measure(arity)` — takes location SSA values.
-    Zone grouping happens during lower_stack_move."""
+    Zone grouping happens during stack_move2move."""
     traits = frozenset({lowering.FromPythonCall()})
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
     result: ir.ResultValue = info.result(MeasurementFutureType)
@@ -1133,7 +1133,7 @@ Phase B depends on the PyO3 accessor prerequisite noted at the top. Each decoder
 ### Task B1: Create decoder skeleton + smoke test
 
 **Files:**
-- Create: `python/bloqade/lanes/bytecode/lowering.py`
+- Create: `python/bloqade/lanes/bytecode/decode.py`
 - Create: `python/tests/bytecode/test_decoder.py`
 
 - [ ] **Step 1: Write failing test**
@@ -1142,7 +1142,7 @@ Create `python/tests/bytecode/test_decoder.py`:
 
 ```python
 from bloqade.lanes.bytecode import Instruction, Program
-from bloqade.lanes.bytecode.lowering import load_program
+from bloqade.lanes.bytecode.decode import load_program
 
 
 def test_empty_program_returns_method_with_empty_body():
@@ -1164,7 +1164,7 @@ Expected: FAIL with `ModuleNotFoundError` on `lowering`.
 
 - [ ] **Step 3: Write implementation**
 
-Create `python/bloqade/lanes/bytecode/lowering.py`:
+Create `python/bloqade/lanes/bytecode/decode.py`:
 
 ```python
 """BytecodeDecoder — syntactic Program → stack_move ir.Method."""
@@ -1274,7 +1274,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/bytecode/lowering.py python/tests/bytecode/test_decoder.py
+git add python/bloqade/lanes/bytecode/decode.py python/tests/bytecode/test_decoder.py
 git commit -m "feat(bytecode): add BytecodeDecoder skeleton with return handler"
 ```
 
@@ -1283,7 +1283,7 @@ git commit -m "feat(bytecode): add BytecodeDecoder skeleton with return handler"
 ### Task B2: Decode constants (ConstFloat/Int/Loc/Lane/Zone)
 
 **Files:**
-- Modify: `python/bloqade/lanes/bytecode/lowering.py`
+- Modify: `python/bloqade/lanes/bytecode/decode.py`
 - Modify: `python/tests/bytecode/test_decoder.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1344,7 +1344,7 @@ Expected: FAIL with `DecodeError(... unknown opcode)` for each.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `BytecodeDecoder` in `python/bloqade/lanes/bytecode/lowering.py`:
+Add to `BytecodeDecoder` in `python/bloqade/lanes/bytecode/decode.py`:
 
 ```python
     def _visit_const_float(self, idx: int, instr: "Instruction") -> None:
@@ -1384,7 +1384,7 @@ Expected: all constant decoding tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/bytecode/lowering.py python/tests/bytecode/test_decoder.py
+git add python/bloqade/lanes/bytecode/decode.py python/tests/bytecode/test_decoder.py
 git commit -m "feat(bytecode): decode constant instructions"
 ```
 
@@ -1393,7 +1393,7 @@ git commit -m "feat(bytecode): decode constant instructions"
 ### Task B3: Decode stack ops (Pop/Dup/Swap)
 
 **Files:**
-- Modify: `python/bloqade/lanes/bytecode/lowering.py`
+- Modify: `python/bloqade/lanes/bytecode/decode.py`
 - Modify: `python/tests/bytecode/test_decoder.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1423,7 +1423,7 @@ def test_decode_swap_permutes_top_two():
 
 def test_decode_pop_underflow_raises():
     import pytest
-    from bloqade.lanes.bytecode.lowering import DecodeError
+    from bloqade.lanes.bytecode.decode import DecodeError
     with pytest.raises(DecodeError):
         _decode([Instruction.pop()])
 ```
@@ -1482,7 +1482,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/bytecode/lowering.py python/tests/bytecode/test_decoder.py
+git add python/bloqade/lanes/bytecode/decode.py python/tests/bytecode/test_decoder.py
 git commit -m "feat(bytecode): decode Pop/Dup/Swap with stack-underflow detection"
 ```
 
@@ -1491,7 +1491,7 @@ git commit -m "feat(bytecode): decode Pop/Dup/Swap with stack-underflow detectio
 ### Task B4: Decode atom ops (InitialFill/Fill/Move)
 
 **Files:**
-- Modify: `python/bloqade/lanes/bytecode/lowering.py`
+- Modify: `python/bloqade/lanes/bytecode/decode.py`
 - Modify: `python/tests/bytecode/test_decoder.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1578,7 +1578,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/bytecode/lowering.py python/tests/bytecode/test_decoder.py
+git add python/bloqade/lanes/bytecode/decode.py python/tests/bytecode/test_decoder.py
 git commit -m "feat(bytecode): decode atom operations (InitialFill/Fill/Move)"
 ```
 
@@ -1587,7 +1587,7 @@ git commit -m "feat(bytecode): decode atom operations (InitialFill/Fill/Move)"
 ### Task B5: Decode gates (LocalR/LocalRz/GlobalR/GlobalRz/CZ)
 
 **Files:**
-- Modify: `python/bloqade/lanes/bytecode/lowering.py`
+- Modify: `python/bloqade/lanes/bytecode/decode.py`
 - Modify: `python/tests/bytecode/test_decoder.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1678,7 +1678,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/bytecode/lowering.py python/tests/bytecode/test_decoder.py
+git add python/bloqade/lanes/bytecode/decode.py python/tests/bytecode/test_decoder.py
 git commit -m "feat(bytecode): decode gate instructions"
 ```
 
@@ -1687,7 +1687,7 @@ git commit -m "feat(bytecode): decode gate instructions"
 ### Task B6: Decode measurement, arrays, annotations, halt
 
 **Files:**
-- Modify: `python/bloqade/lanes/bytecode/lowering.py`
+- Modify: `python/bloqade/lanes/bytecode/decode.py`
 - Modify: `python/tests/bytecode/test_decoder.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -1810,7 +1810,7 @@ Expected: all decoder tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/bytecode/lowering.py python/tests/bytecode/test_decoder.py
+git add python/bloqade/lanes/bytecode/decode.py python/tests/bytecode/test_decoder.py
 git commit -m "feat(bytecode): decode measurement, arrays, annotations, halt"
 ```
 
@@ -1871,7 +1871,7 @@ ZoneAddressType = types.PyClass("ZoneAddress")
 
 @statement(dialect=dialect)
 class Measure(ir.Statement):
-    """Multi-zone measurement produced by lower_stack_move. Consumed by
+    """Multi-zone measurement produced by stack_move2move. Consumed by
     measure_lower, which validates single-zone + single-final-measurement
     invariants and rewrites to EndMeasure."""
     traits = frozenset({lowering.FromPythonCall(), ConsumesState(True)})
@@ -1897,31 +1897,31 @@ git commit -m "feat(move): add multi-zone SSA-based Measure statement"
 
 ---
 
-## Phase D — `lower_stack_move` Rewrite
+## Phase D — `stack_move2move` Rewrite
 
 ### Task D1: Skeleton + state-threading infrastructure
 
 **Files:**
-- Create: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Create: `python/tests/rewrite/test_lower_stack_move.py`
+- Create: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Create: `python/tests/rewrite/test_stack_move2move.py`
 
 This rewrite follows Kirin's `RewriteRule` interface (see `kirin/rewrite/abc.py` — `RewriteRule` with specialised `rewrite_Region` / `rewrite_Block` / `rewrite_Statement` handlers, all returning `RewriteResult`; IR mutation is in-place via `insert_before`, `replace_by`, `delete` on statements). The existing `bloqade-lanes` rewrites in `python/bloqade/lanes/rewrite/` (e.g. `state.py::RewriteLoadStore`, `place2move.py::InsertMoves`) show the same pattern and are the reference to match.
 
-For `LowerStackMove` we override `rewrite_Block` because:
+For `RewriteStackMoveToMove` we override `rewrite_Block` because:
 1. We need to insert the initial `move.Load()` once per block at the start.
 2. State threading + attribute lifting across statements requires walk-order processing that's natural at block level.
 3. Matches `RewriteLoadStore` which also processes an entire block in one pass.
 
 - [ ] **Step 1: Write failing smoke test**
 
-Create `python/tests/rewrite/test_lower_stack_move.py`:
+Create `python/tests/rewrite/test_stack_move2move.py`:
 
 ```python
 from kirin import ir
 from kirin.rewrite import Walk
 
 from bloqade.lanes.dialects import move, stack_move
-from bloqade.lanes.rewrite.lower_stack_move import LowerStackMove
+from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
 
 
 def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
@@ -1933,7 +1933,7 @@ def _build_stack_move_block(stmts: list[ir.Statement]) -> ir.Block:
 
 def test_empty_block_emits_load_and_func_return():
     block = _build_stack_move_block([stack_move.Return()])
-    result = Walk(LowerStackMove()).rewrite(block)
+    result = Walk(RewriteStackMoveToMove()).rewrite(block)
     assert result.has_done_something
     # Expect a move.Load at block start and a func.Return; the stack_move
     # Return should have been deleted.
@@ -1944,17 +1944,17 @@ def test_empty_block_emits_load_and_func_return():
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` on `lower_stack_move`.
+Expected: FAIL with `ModuleNotFoundError` on `stack_move2move`.
 
 - [ ] **Step 3: Write implementation**
 
-Create `python/bloqade/lanes/rewrite/lower_stack_move.py`:
+Create `python/bloqade/lanes/rewrite/stack_move2move.py`:
 
 ```python
-"""lower_stack_move — in-place rewrite from stack_move → multi-dialect IR.
+"""stack_move2move — in-place rewrite from stack_move → multi-dialect IR.
 
 Extends Kirin's RewriteRule with a rewrite_Block handler that walks the
 block's statements once and, for each stack_move statement, inserts the
@@ -1983,7 +1983,7 @@ T = TypeVar("T")
 
 
 @dataclass
-class LowerStackMove(RewriteRule):
+class RewriteStackMoveToMove(RewriteRule):
     """Lower a stack_move block into a multi-dialect block in place.
 
     Mutable state on the rule instance, carried across the walk:
@@ -2046,7 +2046,7 @@ class LowerStackMove(RewriteRule):
 - [ ] **Step 4: Run test**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS.
@@ -2054,8 +2054,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move skeleton (RewriteRule + state init + Return/Halt)"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move skeleton (RewriteRule + state init + Return/Halt)"
 ```
 
 ---
@@ -2063,8 +2063,8 @@ git commit -m "feat(rewrite): lower_stack_move skeleton (RewriteRule + state ini
 ### Task D2: Rewrite constants (attribute tracking + target Const emission)
 
 **Files:**
-- Modify: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Modify: `python/tests/rewrite/test_lower_stack_move.py`
+- Modify: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Modify: `python/tests/rewrite/test_stack_move2move.py`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2078,7 +2078,7 @@ from bloqade.lanes.bytecode import LocationAddress
 def test_const_float_emits_py_constant_and_tracks_value():
     cf = stack_move.ConstFloat(value=1.5)
     block = _build_stack_move_block([cf, stack_move.Return()])
-    rule = LowerStackMove()
+    rule = RewriteStackMoveToMove()
     Walk(rule).rewrite(block)
     # py.Constant statement emitted with value 1.5.
     py_const = next(s for s in block.stmts if isinstance(s, py.Constant))
@@ -2093,7 +2093,7 @@ def test_const_loc_tracks_attribute_value():
     addr = LocationAddress(0, 0, 0)
     cl = stack_move.ConstLoc(value=addr)
     block = _build_stack_move_block([cl, stack_move.Return()])
-    rule = LowerStackMove()
+    rule = RewriteStackMoveToMove()
     Walk(rule).rewrite(block)
     # The stack_move SSA is mapped to its raw attribute (for lifting into
     # downstream move.* attributes).
@@ -2103,14 +2103,14 @@ def test_const_loc_tracks_attribute_value():
 - [ ] **Step 2: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`. Each handler takes the source statement and the `to_delete` list passed down from `rewrite_Block`; emission is via `insert_before` on the original statement:
+Add to `RewriteStackMoveToMove`. Each handler takes the source statement and the `to_delete` list passed down from `rewrite_Block`; emission is via `insert_before` on the original statement:
 
 ```python
     def _rewrite_ConstFloat(self, stmt: stack_move.ConstFloat, to_delete: list) -> None:
@@ -2154,7 +2154,7 @@ Add to `LowerStackMove`. Each handler takes the source statement and the `to_del
 - [ ] **Step 4: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS.
@@ -2162,8 +2162,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move handles constants"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move handles constants"
 ```
 
 ---
@@ -2171,8 +2171,8 @@ git commit -m "feat(rewrite): lower_stack_move handles constants"
 ### Task D3: Rewrite stack ops (collapse)
 
 **Files:**
-- Modify: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Modify: `python/tests/rewrite/test_lower_stack_move.py`
+- Modify: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Modify: `python/tests/rewrite/test_stack_move2move.py`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2183,7 +2183,7 @@ def test_pop_is_dropped():
     cf = stack_move.ConstFloat(value=1.0)
     pop = stack_move.Pop(value=cf.result)
     block = _build_stack_move_block([cf, pop, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     # No target statement for Pop, and the original stack_move.Pop is gone.
     assert not any(isinstance(s, stack_move.Pop) for s in block.stmts)
 
@@ -2194,7 +2194,7 @@ def test_dup_redirects_uses_to_input():
     # Downstream consumer that references Dup's result.
     consumer = stack_move.Pop(value=dup.result)
     block = _build_stack_move_block([cf, dup, consumer, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     # Dup is gone; any consumer that referenced dup.result now references
     # the py.Constant that cf.result was replaced by. stack_move.Pop is
     # also lowered away.
@@ -2211,7 +2211,7 @@ def test_swap_permutes_uses():
     p_top = stack_move.Pop(value=sw.out_top)
     p_bot = stack_move.Pop(value=sw.out_bot)
     block = _build_stack_move_block([a, b, sw, p_top, p_bot, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     # Swap is gone — its outputs' uses have been redirected to the
     # permuted inputs by replace_by.
     assert not any(isinstance(s, stack_move.Swap) for s in block.stmts)
@@ -2220,14 +2220,14 @@ def test_swap_permutes_uses():
 - [ ] **Step 2: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`:
+Add to `RewriteStackMoveToMove`:
 
 ```python
     def _rewrite_Pop(self, stmt: stack_move.Pop, to_delete: list) -> None:
@@ -2252,7 +2252,7 @@ Add to `LowerStackMove`:
 - [ ] **Step 4: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS.
@@ -2260,8 +2260,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move collapses Pop/Dup/Swap"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move collapses Pop/Dup/Swap"
 ```
 
 ---
@@ -2269,8 +2269,8 @@ git commit -m "feat(rewrite): lower_stack_move collapses Pop/Dup/Swap"
 ### Task D4: Rewrite atom operations with attribute lifting + state threading
 
 **Files:**
-- Modify: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Modify: `python/tests/rewrite/test_lower_stack_move.py`
+- Modify: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Modify: `python/tests/rewrite/test_stack_move2move.py`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2284,7 +2284,7 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
     cl1 = stack_move.ConstLoc(value=a1)
     fill = stack_move.Fill(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, fill, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     mf = next(s for s in block.stmts if isinstance(s, move.Fill))
     assert mf.location_addresses == (a0, a1)
 ```
@@ -2292,14 +2292,14 @@ def test_fill_lowers_to_move_fill_with_attribute_locations():
 - [ ] **Step 2: Run test**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py::test_fill_lowers_to_move_fill_with_attribute_locations -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py::test_fill_lowers_to_move_fill_with_attribute_locations -v
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`:
+Add to `RewriteStackMoveToMove`:
 
 ```python
     def _try_lift(self, v: ir.SSAValue, attr_type: type[T]) -> T | None:
@@ -2382,7 +2382,7 @@ Note: the exact keyword arguments (`location_addresses=`, `lanes=`, etc.) for ex
 - [ ] **Step 4: Run test**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS.
@@ -2390,8 +2390,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move lifts Fill/Move/InitialFill with state threading"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move lifts Fill/Move/InitialFill with state threading"
 ```
 
 ---
@@ -2399,8 +2399,8 @@ git commit -m "feat(rewrite): lower_stack_move lifts Fill/Move/InitialFill with 
 ### Task D5: Rewrite gates
 
 **Files:**
-- Modify: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Modify: `python/tests/rewrite/test_lower_stack_move.py`
+- Modify: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Modify: `python/tests/rewrite/test_stack_move2move.py`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2417,7 +2417,7 @@ def test_local_r_lowers_with_attribute_lifting():
         locations=(cl.result,),
     )
     block = _build_stack_move_block([cf_theta, cf_phi, cl, lr, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     mr = next(s for s in block.stmts if isinstance(s, move.LocalR))
     assert mr.phi == 0.2
     assert mr.theta == 0.1
@@ -2429,7 +2429,7 @@ def test_cz_lowers_with_attribute_zone():
     cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
     cz = stack_move.CZ(zone=cz_zone.result)
     block = _build_stack_move_block([cz_zone, cz, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     mcz = next(s for s in block.stmts if isinstance(s, move.CZ))
     assert mcz.zone_address == ZoneAddress(0)
 ```
@@ -2437,14 +2437,14 @@ def test_cz_lowers_with_attribute_zone():
 - [ ] **Step 2: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`:
+Add to `RewriteStackMoveToMove`:
 
 ```python
     def _rewrite_LocalR(self, stmt: stack_move.LocalR, to_delete: list) -> None:
@@ -2495,7 +2495,7 @@ Add to `LowerStackMove`:
 - [ ] **Step 4: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS.
@@ -2503,8 +2503,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move handles gate statements"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move handles gate statements"
 ```
 
 ---
@@ -2512,8 +2512,8 @@ git commit -m "feat(rewrite): lower_stack_move handles gate statements"
 ### Task D6: Rewrite Measure — dedup zones + emit new `move.Measure`
 
 **Files:**
-- Modify: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Modify: `python/tests/rewrite/test_lower_stack_move.py`
+- Modify: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Modify: `python/tests/rewrite/test_stack_move2move.py`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2525,7 +2525,7 @@ def test_measure_single_zone_emits_single_zone_measure():
     cl1 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
     m = stack_move.Measure(locations=(cl0.result, cl1.result))
     block = _build_stack_move_block([cl0, cl1, m, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     # One zone (both locs are in zone 0).
     assert len(mm.zones) == 1
@@ -2538,7 +2538,7 @@ def test_measure_multi_zone_dedups():
     cl2 = stack_move.ConstLoc(value=LocationAddress(0, 0, 1))
     m = stack_move.Measure(locations=(cl0.result, cl1.result, cl2.result))
     block = _build_stack_move_block([cl0, cl1, cl2, m, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     mm = next(s for s in block.stmts if isinstance(s, move.Measure))
     assert len(mm.zones) == 2
 ```
@@ -2546,14 +2546,14 @@ def test_measure_multi_zone_dedups():
 - [ ] **Step 2: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`:
+Add to `RewriteStackMoveToMove`:
 
 ```python
     def _rewrite_Measure(self, stmt: stack_move.Measure, to_delete: list) -> None:
@@ -2584,7 +2584,7 @@ Note: this assumes a `move.ConstZone(value=ZoneAddress)` statement exists in `mo
 - [ ] **Step 4: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS.
@@ -2592,8 +2592,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move deduplicates zones for Measure"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move deduplicates zones for Measure"
 ```
 
 ---
@@ -2601,8 +2601,8 @@ git commit -m "feat(rewrite): lower_stack_move deduplicates zones for Measure"
 ### Task D7: Rewrite AwaitMeasure, arrays, annotations
 
 **Files:**
-- Modify: `python/bloqade/lanes/rewrite/lower_stack_move.py`
-- Modify: `python/tests/rewrite/test_lower_stack_move.py`
+- Modify: `python/bloqade/lanes/rewrite/stack_move2move.py`
+- Modify: `python/tests/rewrite/test_stack_move2move.py`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2616,14 +2616,14 @@ def test_await_measure_lowers_without_error():
     m = stack_move.Measure(locations=(cl.result,))
     aw = stack_move.AwaitMeasure(future=m.result)
     block = _build_stack_move_block([cl, m, aw, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)  # should not raise
+    Walk(RewriteStackMoveToMove()).rewrite(block)  # should not raise
 
 
 def test_new_array_lowers_to_ilist_new():
     from kirin.dialects import ilist
     na = stack_move.NewArray(type_tag=0, dim0=4, dim1=0)
     block = _build_stack_move_block([na, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     assert any(isinstance(s, ilist.New) for s in block.stmts)
 
 
@@ -2632,7 +2632,7 @@ def test_set_detector_lowers_to_annotate():
     na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
     sd = stack_move.SetDetector(array=na.result)
     block = _build_stack_move_block([na, sd, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     assert any(isinstance(s, annotate.SetDetector) for s in block.stmts)
 
 
@@ -2641,21 +2641,21 @@ def test_set_observable_lowers_to_annotate():
     na = stack_move.NewArray(type_tag=0, dim0=1, dim1=0)
     so = stack_move.SetObservable(array=na.result)
     block = _build_stack_move_block([na, so, stack_move.Return()])
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
     assert any(isinstance(s, annotate.SetObservable) for s in block.stmts)
 ```
 
 - [ ] **Step 2: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Write implementation**
 
-Add to `LowerStackMove`. Exact target-dialect construction arguments must match what the existing `ilist.New`, `py.indexing.GetItem`, `annotate.SetDetector`, and `annotate.SetObservable` constructors expect; check the Kirin / bloqade-decoders source.
+Add to `RewriteStackMoveToMove`. Exact target-dialect construction arguments must match what the existing `ilist.New`, `py.indexing.GetItem`, `annotate.SetDetector`, and `annotate.SetObservable` constructors expect; check the Kirin / bloqade-decoders source.
 
 ```python
     def _rewrite_AwaitMeasure(self, stmt: stack_move.AwaitMeasure, to_delete: list) -> None:
@@ -2719,7 +2719,7 @@ Note: the `ilist.New` and indexing statements' exact constructor signatures need
 - [ ] **Step 4: Run tests**
 
 ```bash
-uv run pytest python/tests/rewrite/test_lower_stack_move.py -v
+uv run pytest python/tests/rewrite/test_stack_move2move.py -v
 ```
 
 Expected: PASS (you may need to loosen or refine the tests to match the exact target-dialect constructor shapes).
@@ -2727,8 +2727,8 @@ Expected: PASS (you may need to loosen or refine the tests to match the exact ta
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/lanes/rewrite/lower_stack_move.py python/tests/rewrite/test_lower_stack_move.py
-git commit -m "feat(rewrite): lower_stack_move handles arrays/annotations/await"
+git add python/bloqade/lanes/rewrite/stack_move2move.py python/tests/rewrite/test_stack_move2move.py
+git commit -m "feat(rewrite): stack_move2move handles arrays/annotations/await"
 ```
 
 ---
@@ -3061,8 +3061,8 @@ Create `python/tests/test_stack_move_e2e.py`:
 """End-to-end: bytecode Program → decode → lower → measure_lower → transversal."""
 
 from bloqade.lanes.bytecode import Instruction, LocationAddress, MoveType, Program, ZoneAddress
-from bloqade.lanes.bytecode.lowering import load_program
-from bloqade.lanes.rewrite.lower_stack_move import LowerStackMove
+from bloqade.lanes.bytecode.decode import load_program
+from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
 from bloqade.lanes.rewrite.measure_lower import MeasureLower
 
 
@@ -3115,7 +3115,7 @@ def test_minimal_program_runs_end_to_end():
 
     # Lower to the move dialect in place.
     from kirin.rewrite import Walk
-    Walk(LowerStackMove()).rewrite(block)
+    Walk(RewriteStackMoveToMove()).rewrite(block)
 
     # Apply measure_lower (also in place).
     arch_spec = _build_arch_spec()

@@ -113,12 +113,16 @@ class AtomState(MoveExecution):
 @dataclass
 class MeasureFuture(MoveExecution):
     results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]]
+    measurement_count: int
 
     def copy(self):
-        return MeasureFuture(self.results.copy())
+        return MeasureFuture(self.results.copy(), self.measurement_count)
 
     def is_subseteq_MeasureFuture(self, elem: "MeasureFuture") -> bool:
-        return self.results == elem.results
+        return (
+            self.results == elem.results
+            and self.measurement_count == elem.measurement_count
+        )
 
 
 @final

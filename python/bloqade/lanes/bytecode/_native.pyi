@@ -1446,12 +1446,13 @@ class Instruction:
 
     @staticmethod
     def measure(arity: int) -> Instruction:
-        """Measure atoms at ``arity`` locations.
+        """Measure atoms in ``arity`` zones.
 
-        Pops ``arity`` location addresses from the stack.
+        Pops ``arity`` zone addresses from the stack; pushes ``arity``
+        measure futures (one per zone).
 
         Args:
-            arity (int): Number of locations to measure.
+            arity (int): Number of zones to measure.
 
         Returns:
             Instruction: The measure instruction.
@@ -1462,6 +1463,10 @@ class Instruction:
     def await_measure() -> Instruction:
         """Block until the most recent measurement completes.
 
+        Pops one measurement future from the stack (linear consumption)
+        and pushes one array reference holding the resolved measurement
+        results.
+
         Returns:
             Instruction: The await_measure instruction.
         """
@@ -1471,6 +1476,9 @@ class Instruction:
     @staticmethod
     def new_array(type_tag: int, dim0: int, dim1: int = 0) -> Instruction:
         """Create a new array.
+
+        Pops ``dim0 * max(dim1, 1)`` values of any type from the stack
+        (the array's initial elements) and pushes a new array reference.
 
         Args:
             type_tag (int): Element type tag.
@@ -1501,6 +1509,9 @@ class Instruction:
     def set_detector() -> Instruction:
         """Build a detector record from the top-of-stack array.
 
+        Pops one array reference from the stack and pushes one
+        detector reference.
+
         Returns:
             Instruction: The set_detector instruction.
         """
@@ -1509,6 +1520,9 @@ class Instruction:
     @staticmethod
     def set_observable() -> Instruction:
         """Build an observable record from the top-of-stack array.
+
+        Pops one array reference from the stack and pushes one
+        observable reference.
 
         Returns:
             Instruction: The set_observable instruction.
@@ -1519,6 +1533,8 @@ class Instruction:
     @staticmethod
     def return_() -> Instruction:
         """Return from the current program.
+
+        Pops one value of any type from the stack as the return value.
 
         Returns:
             Instruction: The return instruction.
