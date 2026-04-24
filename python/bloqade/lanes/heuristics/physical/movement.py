@@ -14,7 +14,7 @@ from bloqade.lanes.analysis.placement import (
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode._native import EntropyTrace, MoveSolver
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
     TargetContext,
@@ -110,7 +110,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
-    _traced_rust_trace_json: str | None = field(default=None, init=False, repr=False)
+    _traced_rust_entropy_trace: EntropyTrace | None = field(
+        default=None, init=False, repr=False
+    )
     _resolved_target_generator: TargetGeneratorABC | None = field(
         default=None, init=False, repr=False
     )
@@ -195,8 +197,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         return self._rust_nodes_expanded_total
 
     @property
-    def traced_rust_trace_json(self) -> str | None:
-        return self._traced_rust_trace_json
+    def traced_rust_entropy_trace(self) -> EntropyTrace | None:
+        return self._traced_rust_entropy_trace
 
     def _cz_placements_rust(
         self,
@@ -251,7 +253,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             if result.status == "solved":
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:
-                    self._traced_rust_trace_json = result.entropy_trace_json
+                    self._traced_rust_entropy_trace = result.entropy_trace
                 break
 
         self._cz_counter += 1

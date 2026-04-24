@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
+use bloqade_lanes_search::entropy::{EntropyTrace, EntropyTraceStep};
 use bloqade_lanes_search::solve::{
     InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
 };
@@ -241,13 +242,15 @@ impl PySolveResult {
         self.inner.deadlocks
     }
 
-    /// Optional entropy trace payload as JSON (present when requested).
+    /// Optional entropy trace (present when `collect_entropy_trace=True`).
     #[getter]
-    fn entropy_trace_json(&self) -> Option<String> {
+    fn entropy_trace(&self) -> Option<PyEntropyTrace> {
         self.inner
             .entropy_trace
             .as_ref()
-            .map(|trace| trace.to_json())
+            .map(|trace| PyEntropyTrace {
+                inner: trace.clone(),
+            })
     }
 
     fn __repr__(&self) -> String {
@@ -263,6 +266,160 @@ impl PySolveResult {
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
+        )
+    }
+}
+
+// ── Entropy trace ──
+
+/// Entropy-search trace, recorded when `SolveOptions.collect_entropy_trace=True`.
+#[pyclass(
+    name = "EntropyTrace",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyEntropyTrace {
+    inner: EntropyTrace,
+}
+
+#[pymethods]
+impl PyEntropyTrace {
+    #[getter]
+    fn root_node_id(&self) -> u32 {
+        self.inner.root_node_id
+    }
+
+    #[getter]
+    fn best_buffer_size(&self) -> u32 {
+        self.inner.best_buffer_size
+    }
+
+    #[getter]
+    fn steps(&self) -> Vec<PyEntropyTraceStep> {
+        self.inner
+            .steps
+            .iter()
+            .map(|s| PyEntropyTraceStep { inner: s.clone() })
+            .collect()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.steps.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EntropyTrace(root_node_id={}, best_buffer_size={}, steps={})",
+            self.inner.root_node_id,
+            self.inner.best_buffer_size,
+            self.inner.steps.len(),
+        )
+    }
+}
+
+/// One step in an entropy-search trace.
+#[pyclass(
+    name = "EntropyTraceStep",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyEntropyTraceStep {
+    inner: EntropyTraceStep,
+}
+
+#[pymethods]
+impl PyEntropyTraceStep {
+    #[getter]
+    fn event(&self) -> String {
+        self.inner.event.clone()
+    }
+
+    #[getter]
+    fn node_id(&self) -> u32 {
+        self.inner.node_id
+    }
+
+    #[getter]
+    fn parent_node_id(&self) -> Option<u32> {
+        self.inner.parent_node_id
+    }
+
+    #[getter]
+    fn depth(&self) -> u32 {
+        self.inner.depth
+    }
+
+    #[getter]
+    fn entropy(&self) -> u32 {
+        self.inner.entropy
+    }
+
+    #[getter]
+    fn unresolved_count(&self) -> u32 {
+        self.inner.unresolved_count
+    }
+
+    #[getter]
+    #[allow(clippy::type_complexity)]
+    fn moveset(&self) -> Option<Vec<(u8, u8, u32, u32, u32, u32)>> {
+        self.inner.moveset.clone()
+    }
+
+    #[getter]
+    #[allow(clippy::type_complexity)]
+    fn candidate_movesets(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+        self.inner.candidate_movesets.clone()
+    }
+
+    #[getter]
+    fn candidate_index(&self) -> Option<u32> {
+        self.inner.candidate_index
+    }
+
+    #[getter]
+    fn reason(&self) -> Option<String> {
+        self.inner.reason.clone()
+    }
+
+    #[getter]
+    fn state_seen_node_id(&self) -> Option<u32> {
+        self.inner.state_seen_node_id
+    }
+
+    #[getter]
+    fn no_valid_moves_qubit(&self) -> Option<u32> {
+        self.inner.no_valid_moves_qubit
+    }
+
+    #[getter]
+    fn trigger_node_id(&self) -> Option<u32> {
+        self.inner.trigger_node_id
+    }
+
+    #[getter]
+    fn configuration(&self) -> Vec<(u32, u32, u32, u32)> {
+        self.inner.configuration.clone()
+    }
+
+    #[getter]
+    fn parent_configuration(&self) -> Option<Vec<(u32, u32, u32, u32)>> {
+        self.inner.parent_configuration.clone()
+    }
+
+    #[getter]
+    fn moveset_score(&self) -> Option<f64> {
+        self.inner.moveset_score
+    }
+
+    #[getter]
+    fn best_buffer_node_ids(&self) -> Vec<u32> {
+        self.inner.best_buffer_node_ids.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EntropyTraceStep(event='{}', node_id={}, depth={}, entropy={})",
+            self.inner.event, self.inner.node_id, self.inner.depth, self.inner.entropy,
         )
     }
 }

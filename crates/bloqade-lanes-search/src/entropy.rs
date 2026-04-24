@@ -15,11 +15,6 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
-use serde::Serialize;
-
 use crate::aod_grid::BusGridContext;
 use crate::astar::SearchResult;
 use crate::config::Config;
@@ -32,9 +27,12 @@ use crate::ordering::{
     cmp_triplet_entry_tiebreak,
 };
 use crate::traits::Goal;
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 /// Trace payload for entropy visualization/replay.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct EntropyTrace {
     pub root_node_id: u32,
     pub best_buffer_size: u32,
@@ -42,7 +40,7 @@ pub struct EntropyTrace {
 }
 
 /// One entropy-search step snapshot.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct EntropyTraceStep {
     pub event: String,
     pub node_id: u32,
@@ -61,26 +59,6 @@ pub struct EntropyTraceStep {
     pub parent_configuration: Option<Vec<(u32, u32, u32, u32)>>,
     pub moveset_score: Option<f64>,
     pub best_buffer_node_ids: Vec<u32>,
-}
-
-impl EntropyTrace {
-    pub fn to_json(&self) -> String {
-        #[derive(Serialize)]
-        struct EntropyTraceJson<'a> {
-            version: u8,
-            root_node_id: u32,
-            best_buffer_size: u32,
-            steps: &'a [EntropyTraceStep],
-        }
-
-        serde_json::to_string(&EntropyTraceJson {
-            version: 1,
-            root_node_id: self.root_node_id,
-            best_buffer_size: self.best_buffer_size,
-            steps: &self.steps,
-        })
-        .expect("failed to serialize entropy trace to JSON")
-    }
 }
 
 // ── Parameters ─────────────────────────────────────────────────────
