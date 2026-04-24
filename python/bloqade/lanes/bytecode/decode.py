@@ -190,6 +190,15 @@ class BytecodeDecoder:
             handler(idx, instr)
         except StackUnderflowError as e:
             raise DecodingError(idx, name, e.snapshot, str(e)) from e
+        except DecodingError:
+            # Already carries instruction context — don't double-wrap.
+            raise
+        except Exception as e:
+            # Any other handler-level failure (invalid ``type_tag`` on
+            # NewArray, operand type mismatch, etc.) should still surface
+            # with instruction context so debugging doesn't require a full
+            # stack trace through Rust/PyO3.
+            raise DecodingError(idx, name, self.frame.snapshot(), str(e)) from e
 
     def _visit_return(self, idx: int, instr: "Instruction") -> None:
         # The bytecode ``return`` opcode has no stack_move counterpart —
@@ -340,9 +349,13 @@ class BytecodeDecoder:
         self.frame.current_block.stmts.append(func.Return(none.result))
 
     def _finalize(self, kernel_name: str) -> ir.Method:
+        # Signature return type is ``types.Any`` rather than ``NoneType``
+        # because the bytecode ``return`` opcode pops and returns an
+        # arbitrary value — the subsequent TypeInfer pass narrows this to
+        # the actual returned SSA value's type.
         function = func.Function(
             sym_name=kernel_name,
-            signature=func.Signature((), types.NoneType),
+            signature=func.Signature((), types.Any),
             slots=(),
             body=self.frame.current_region,
         )

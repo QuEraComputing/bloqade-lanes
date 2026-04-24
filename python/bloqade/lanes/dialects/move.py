@@ -34,8 +34,14 @@ class EmitsState(ir.Trait):
 
 @statement(dialect=dialect)
 class ConstZone(ir.Statement):
-    """Constant ZoneAddress producing an SSA value. Emitted by
-    stack_move2move to feed the multi-zone move.Measure statement."""
+    """Constant ZoneAddress producing an SSA value.
+
+    The current stack_move2move rewrite does not emit ConstZone — zones
+    are lifted into ``move.Measure.zone_addresses`` / ``move.CZ.zone_address``
+    as compile-time attributes instead. ConstZone stays in the dialect for
+    frontends that produce ``move`` IR directly and need a zone address as
+    an SSA value.
+    """
 
     traits = frozenset({lowering.FromPythonCall()})
     value: ZoneAddress = info.attribute()

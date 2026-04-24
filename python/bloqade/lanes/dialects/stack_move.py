@@ -265,7 +265,13 @@ class NewArray(ir.Statement):
         dim0: int,
         dim1: int,
     ) -> None:
-        elem_type = TYPE_TAG[type_tag]
+        elem_type = TYPE_TAG.get(type_tag)
+        if elem_type is None:
+            supported = ", ".join(str(tag) for tag in sorted(TYPE_TAG))
+            raise ValueError(
+                f"Unsupported NewArray type_tag {type_tag!r}; "
+                f"supported tags are: {supported}"
+            )
         result_type = ArrayType[
             elem_type,
             types.Literal(dim0),
