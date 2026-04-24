@@ -31,8 +31,8 @@ from tqdm import tqdm
 from bloqade.lanes.arch.builder import build_arch
 from bloqade.lanes.arch.topology import (
     DiagonalWordTopology,
-    HypercubeWordTopology,
     HypercubeSiteTopology,
+    HypercubeWordTopology,
 )
 from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy, SolveOptions
@@ -42,9 +42,7 @@ from bloqade.lanes.layout.arch import ArchSpec
 # ── Architecture ────────────────────────────────────────────────────
 
 
-def make_arch(
-    num_rows: int, num_cols: int = 2, sites_per_word: int = 16
-) -> ArchSpec:
+def make_arch(num_rows: int, num_cols: int = 2, sites_per_word: int = 16) -> ArchSpec:
     """Build a scalable physical architecture."""
     if num_cols == 2:
         word_topo = DiagonalWordTopology()
@@ -91,12 +89,10 @@ def generate_problem(
     n_words = len(arch.words)
     home_sites = list(arch._inner.zone_by_id(0).site_buses[0].src)
 
-    home_locs = [
-        LocationAddress(w, s) for w in range(n_words) for s in home_sites
-    ]
-    assert n_qubits <= len(home_locs), (
-        f"n_qubits ({n_qubits}) exceeds available home sites ({len(home_locs)})"
-    )
+    home_locs = [LocationAddress(w, s) for w in range(n_words) for s in home_sites]
+    assert n_qubits <= len(
+        home_locs
+    ), f"n_qubits ({n_qubits}) exceeds available home sites ({len(home_locs)})"
 
     chosen = rng.sample(home_locs, n_qubits)
     placement = dict(enumerate(chosen))
@@ -120,8 +116,11 @@ def generate_problem(
         partner_key = (partner.word_id, partner.site_id)
         if partner_key in occupied and partner_key not in vacated:
             occupant = next(
-                (q for q, loc in placement.items()
-                 if (loc.word_id, loc.site_id) == partner_key),
+                (
+                    q
+                    for q, loc in placement.items()
+                    if (loc.word_id, loc.site_id) == partner_key
+                ),
                 None,
             )
             if occupant is not None and occupant not in used:
@@ -140,9 +139,7 @@ def generate_problem(
         if partner is not None:
             target_config[c_qid] = partner
 
-    blocked = frozenset(
-        placement[qid] for qid in range(n_qubits) if qid not in used
-    )
+    blocked = frozenset(placement[qid] for qid in range(n_qubits) if qid not in used)
 
     return RoutingProblem(
         arch=arch,
@@ -190,7 +187,6 @@ def solve_rust(
     """Run the Rust MoveSolver with the given strategy config."""
     opts = SolveOptions(
         strategy=_BENCH_STRATEGY_MAP[strat.strategy],
-        top_c=strat.top_c,
         max_movesets_per_group=strat.max_movesets_per_group,
         weight=strat.weight,
         restarts=strat.restarts,
@@ -210,7 +206,8 @@ def solve_rust(
     if result.status == "solved":
         n_atom_moves = sum(len(layer) for layer in result.move_layers)
         return SolveResult(
-            solved=True, time_s=dt,
+            solved=True,
+            time_s=dt,
             n_move_layers=len(result.move_layers),
             n_atom_moves=n_atom_moves,
             status="solved",
@@ -232,7 +229,6 @@ class StrategyConfig:
     restarts: int = 1
     lookahead: bool = False
     deadlock_policy: str = "skip"
-    top_c: int = 3
     max_movesets_per_group: int = 3
 
 
@@ -260,26 +256,54 @@ STRATEGIES: dict[str, StrategyConfig] = {
     "ids-base": StrategyConfig("ids-base", strategy="ids"),
     "ids-la": StrategyConfig("ids-la", strategy="ids", lookahead=True),
     "ids-r28": StrategyConfig("ids-r28", strategy="ids", restarts=RESTARTS),
-    "ids-r28-la": StrategyConfig("ids-r28-la", strategy="ids", restarts=RESTARTS, lookahead=True),
+    "ids-r28-la": StrategyConfig(
+        "ids-r28-la", strategy="ids", restarts=RESTARTS, lookahead=True
+    ),
     # Entropy variants
     "entropy-base": StrategyConfig("entropy-base", strategy="entropy"),
     "entropy-la": StrategyConfig("entropy-la", strategy="entropy", lookahead=True),
     "entropy-r28": StrategyConfig("entropy-r28", strategy="entropy", restarts=RESTARTS),
-    "entropy-r28-la": StrategyConfig("entropy-r28-la", strategy="entropy", restarts=RESTARTS, lookahead=True),
-    # Expander param variants (ids-r28 base, varying top_c / max_movesets_per_group)
-    "ids-r28-tc10": StrategyConfig("ids-r28-tc10", strategy="ids", restarts=RESTARTS, top_c=10),
-    "ids-r28-mmg10": StrategyConfig("ids-r28-mmg10", strategy="ids", restarts=RESTARTS, max_movesets_per_group=10),
-    "ids-r28-tc10-mmg10": StrategyConfig("ids-r28-tc10-mmg10", strategy="ids", restarts=RESTARTS, top_c=10, max_movesets_per_group=10),
+    "entropy-r28-la": StrategyConfig(
+        "entropy-r28-la", strategy="entropy", restarts=RESTARTS, lookahead=True
+    ),
+    "ids-r28-mmg10": StrategyConfig(
+        "ids-r28-mmg10", strategy="ids", restarts=RESTARTS, max_movesets_per_group=10
+    ),
     # Deadlock policy variants
-    "ids-r28-mb": StrategyConfig("ids-r28-mb", strategy="ids", restarts=RESTARTS, deadlock_policy="move_blockers"),
-    "ids-r28-la-mb": StrategyConfig("ids-r28-la-mb", strategy="ids", restarts=RESTARTS, lookahead=True, deadlock_policy="move_blockers"),
+    "ids-r28-mb": StrategyConfig(
+        "ids-r28-mb", strategy="ids", restarts=RESTARTS, deadlock_policy="move_blockers"
+    ),
+    "ids-r28-la-mb": StrategyConfig(
+        "ids-r28-la-mb",
+        strategy="ids",
+        restarts=RESTARTS,
+        lookahead=True,
+        deadlock_policy="move_blockers",
+    ),
     # Cascade variants (higher budget for the A* refinement phase)
-    "cascade-ids-r28": StrategyConfig("cascade-ids-r28", strategy="cascade-ids", restarts=RESTARTS, max_expansions=5000),
-    "cascade-ids-r28-la": StrategyConfig("cascade-ids-r28-la", strategy="cascade-ids", restarts=RESTARTS, lookahead=True, max_expansions=5000),
+    "cascade-ids-r28": StrategyConfig(
+        "cascade-ids-r28",
+        strategy="cascade-ids",
+        restarts=RESTARTS,
+        max_expansions=5000,
+    ),
+    "cascade-ids-r28-la": StrategyConfig(
+        "cascade-ids-r28-la",
+        strategy="cascade-ids",
+        restarts=RESTARTS,
+        lookahead=True,
+        max_expansions=5000,
+    ),
     # A* variants (10x budget to give A* a fair chance)
-    "astar-w1": StrategyConfig("astar-w1", strategy="astar", weight=1.0, max_expansions=5000),
-    "astar-w30": StrategyConfig("astar-w30", strategy="astar", weight=30.0, max_expansions=5000),
-    "astar-w300": StrategyConfig("astar-w300", strategy="astar", weight=300.0, max_expansions=5000),
+    "astar-w1": StrategyConfig(
+        "astar-w1", strategy="astar", weight=1.0, max_expansions=5000
+    ),
+    "astar-w30": StrategyConfig(
+        "astar-w30", strategy="astar", weight=30.0, max_expansions=5000
+    ),
+    "astar-w300": StrategyConfig(
+        "astar-w300", strategy="astar", weight=300.0, max_expansions=5000
+    ),
 }
 
 
@@ -314,14 +338,20 @@ ALL_EXPERIMENTS: dict[str, Experiment] = {
         name="exp1c_ids_vs_entropy",
         description="IDS vs Entropy",
         strategy_names=[
-            "ids-base", "ids-la", "ids-r28", "ids-r28-la",
-            "entropy-base", "entropy-la", "entropy-r28", "entropy-r28-la",
+            "ids-base",
+            "ids-la",
+            "ids-r28",
+            "ids-r28-la",
+            "entropy-base",
+            "entropy-la",
+            "entropy-r28",
+            "entropy-r28-la",
         ],
     ),
     "exp2": Experiment(
         name="exp2_expander_params",
-        description="Expander Parameters (top_c, max_movesets_per_group)",
-        strategy_names=["ids-r28", "ids-r28-tc10", "ids-r28-mmg10", "ids-r28-tc10-mmg10"],
+        description="Expander Parameters (max_movesets_per_group)",
+        strategy_names=["ids-r28", "ids-r28-mmg10"],
     ),
     "exp3": Experiment(
         name="exp3_deadlock_policy",
@@ -331,12 +361,23 @@ ALL_EXPERIMENTS: dict[str, Experiment] = {
     "exp4": Experiment(
         name="exp4_cascade",
         description="Cascade vs No Cascade (IDS)",
-        strategy_names=["ids-r28", "cascade-ids-r28", "ids-r28-la", "cascade-ids-r28-la"],
+        strategy_names=[
+            "ids-r28",
+            "cascade-ids-r28",
+            "ids-r28-la",
+            "cascade-ids-r28-la",
+        ],
     ),
     "exp5": Experiment(
         name="exp5_weighted_astar",
         description="Weighted A* vs IDS vs Entropy",
-        strategy_names=["astar-w1", "astar-w30", "astar-w300", "ids-base", "entropy-base"],
+        strategy_names=[
+            "astar-w1",
+            "astar-w30",
+            "astar-w300",
+            "ids-base",
+            "entropy-base",
+        ],
     ),
 }
 
@@ -344,9 +385,16 @@ ALL_EXPERIMENTS: dict[str, Experiment] = {
 # ── Benchmark runner ────────────────────────────────────────────────
 
 CSV_COLUMNS = [
-    "arch", "strategy",
-    "n_qubits", "n_cz_pairs", "trial",
-    "solved", "time_s", "n_move_layers", "n_atom_moves", "status",
+    "arch",
+    "strategy",
+    "n_qubits",
+    "n_cz_pairs",
+    "trial",
+    "solved",
+    "time_s",
+    "n_move_layers",
+    "n_atom_moves",
+    "status",
 ]
 
 
@@ -395,7 +443,9 @@ def run_benchmarks(
         csv_paths.append(csv_path)
 
         print(f"\n{'='*60}")
-        print(f"  Architecture: {arch_name} ({len(arch.words)}w x {arch_cfg.sites_per_word}s)")
+        print(
+            f"  Architecture: {arch_name} ({len(arch.words)}w x {arch_cfg.sites_per_word}s)"
+        )
         print(f"  Strategies: {len(strat_list)}")
         print(f"  Qubit counts: {qubit_counts}")
         print(f"  Trials: {n_trials}")
@@ -419,7 +469,9 @@ def run_benchmarks(
             for n_q in qubit_counts:
                 n_pairs = max(1, int(n_q * cz_fraction / 2))
                 rng = random.Random(seed)
-                problems = [generate_problem(arch, n_q, n_pairs, rng) for _ in range(n_trials)]
+                problems = [
+                    generate_problem(arch, n_q, n_pairs, rng) for _ in range(n_trials)
+                ]
 
                 for strat_name in strat_list:
                     strat = STRATEGIES[strat_name]
@@ -435,18 +487,20 @@ def run_benchmarks(
                     for trial_idx, p in enumerate(problems):
                         r = solve_rust(p, rust_solver, strat)
 
-                        writer.writerow({
-                            "arch": arch_name,
-                            "strategy": strat_name,
-                            "n_qubits": n_q,
-                            "n_cz_pairs": p.n_cz_pairs,
-                            "trial": trial_idx,
-                            "solved": int(r.solved),
-                            "time_s": f"{r.time_s:.6f}",
-                            "n_move_layers": r.n_move_layers,
-                            "n_atom_moves": r.n_atom_moves,
-                            "status": r.status,
-                        })
+                        writer.writerow(
+                            {
+                                "arch": arch_name,
+                                "strategy": strat_name,
+                                "n_qubits": n_q,
+                                "n_cz_pairs": p.n_cz_pairs,
+                                "trial": trial_idx,
+                                "solved": int(r.solved),
+                                "time_s": f"{r.time_s:.6f}",
+                                "n_move_layers": r.n_move_layers,
+                                "n_atom_moves": r.n_atom_moves,
+                                "status": r.status,
+                            }
+                        )
                         if r.solved:
                             solved_count += 1
 
@@ -466,15 +520,24 @@ def run_benchmarks(
 
 # ── Main ────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run routing benchmark experiments")
     parser.add_argument(
-        "experiments", nargs="*", default=list(ALL_EXPERIMENTS.keys()),
+        "experiments",
+        nargs="*",
+        default=list(ALL_EXPERIMENTS.keys()),
         help=f"Experiments to run (default: all). Choices: {', '.join(ALL_EXPERIMENTS.keys())}",
     )
-    parser.add_argument("--trials", type=int, default=1000, help="Trials per (strategy, size)")
+    parser.add_argument(
+        "--trials", type=int, default=1000, help="Trials per (strategy, size)"
+    )
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
-    parser.add_argument("--output-dir", default=".benchmarking/results", help="Output directory for CSVs")
+    parser.add_argument(
+        "--output-dir",
+        default=".benchmarking/results",
+        help="Output directory for CSVs",
+    )
     args = parser.parse_args()
 
     selected: list[Experiment] = []
@@ -487,7 +550,9 @@ def main() -> None:
 
     t_start = time.perf_counter()
     paths = run_benchmarks(
-        selected, n_trials=args.trials, seed=args.seed,
+        selected,
+        n_trials=args.trials,
+        seed=args.seed,
         output_dir=args.output_dir,
     )
 

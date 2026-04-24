@@ -101,8 +101,6 @@ pub struct SolveResult {
 pub struct SolveOptions {
     /// Search strategy to use.
     pub strategy: Strategy,
-    /// Top bus options per qubit in the heuristic expander.
-    pub top_c: usize,
     /// Max movesets generated per bus group.
     pub max_movesets_per_group: usize,
     /// Number of goal candidates to collect before stopping entropy search.
@@ -125,7 +123,6 @@ impl Default for SolveOptions {
     fn default() -> Self {
         Self {
             strategy: Strategy::AStar,
-            top_c: 3,
             max_movesets_per_group: 3,
             max_goal_candidates: 3,
             weight: 1.0,
@@ -206,7 +203,6 @@ impl MoveSolver {
     ) -> Result<SolveResult, ConfigError> {
         let SolveOptions {
             strategy,
-            top_c,
             max_movesets_per_group,
             max_goal_candidates,
             weight,
@@ -216,6 +212,10 @@ impl MoveSolver {
             w_t,
             collect_entropy_trace,
         } = *opts;
+        // Defensive normalization: Python validates these to be >= 1, but
+        // Rust callers can still construct SolveOptions directly.
+        let max_movesets_per_group = max_movesets_per_group.max(1);
+        let max_goal_candidates = max_goal_candidates.max(1);
 
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -252,7 +252,7 @@ impl MoveSolver {
 
         // Build a generator with the given seed and deadlock policy.
         let make_generator = |seed: u64, policy: DeadlockPolicy| {
-            HeuristicGenerator::new(top_c)
+            HeuristicGenerator::new()
                 .with_deadlock_policy(policy)
                 .with_lookahead(lookahead)
                 .with_seed(seed)
@@ -348,7 +348,6 @@ impl MoveSolver {
                 }
                 InnerStrategy::Entropy => {
                     let entropy_params = crate::entropy::EntropyParams {
-                        top_c,
                         max_movesets_per_group,
                         max_goal_candidates,
                         lookahead,

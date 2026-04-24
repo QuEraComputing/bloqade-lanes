@@ -32,7 +32,6 @@ from bloqade.lanes.search.traversal.step_info import (
 )
 from bloqade.lanes.search.tree import ConfigurationTree, ExpansionStatus
 
-DEFAULT_ENTROPY_INCREMENT = 1
 DEFAULT_REVERSION_STEPS = 1
 
 
@@ -58,13 +57,12 @@ class _SearchNode:
 
     def bump_entropy(
         self,
-        delta_e: int,
         reason: str = "entropy",
         no_valid_moves_qubit: int | None = None,
         state_seen_node_id: int | None = None,
     ) -> None:
         """Increment entropy and record the reason for the bump."""
-        self.entropy += delta_e
+        self.entropy += 1
         self.last_entropy_bump_reason = reason
         self.last_no_valid_moves_qubit = no_valid_moves_qubit
         self.last_state_seen_node_id = state_seen_node_id
@@ -555,7 +553,7 @@ class EntropyGuidedSearch:
                 if ancestor.parent is None and ancestor_sn.entropy >= self.params.e_max:
                     break
 
-                ancestor_sn.bump_entropy(DEFAULT_ENTROPY_INCREMENT)
+                ancestor_sn.bump_entropy()
                 self.debug.revert(ancestor, ancestor_sn, sn)
                 current_node = ancestor
                 continue
@@ -567,7 +565,6 @@ class EntropyGuidedSearch:
                     current_node
                 )
                 sn.bump_entropy(
-                    DEFAULT_ENTROPY_INCREMENT,
                     "no-valid-moves",
                     no_valid_moves_qubit=no_valid_qid,
                 )
@@ -595,7 +592,6 @@ class EntropyGuidedSearch:
                     )
 
                 sn.bump_entropy(
-                    DEFAULT_ENTROPY_INCREMENT,
                     reason,
                     no_valid_moves_qubit=no_valid_qid,
                     state_seen_node_id=seen_node_id,

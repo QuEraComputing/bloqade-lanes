@@ -945,7 +945,6 @@ class SolveOptions:
     def __init__(
         self,
         strategy: SearchStrategy = SearchStrategy.ASTAR,
-        top_c: int = 3,
         max_movesets_per_group: int = 3,
         max_goal_candidates: int = 3,
         weight: float = 1.0,
@@ -957,8 +956,6 @@ class SolveOptions:
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
-    @property
-    def top_c(self) -> int: ...
     @property
     def max_movesets_per_group(self) -> int: ...
     @property

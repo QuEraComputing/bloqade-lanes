@@ -458,10 +458,9 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, top_c=3, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false))]
     fn new(
         strategy: PySearchStrategy,
-        top_c: usize,
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
         weight: f64,
@@ -471,6 +470,16 @@ impl PySolveOptions {
         w_t: f64,
         collect_entropy_trace: bool,
     ) -> PyResult<Self> {
+        if max_movesets_per_group == 0 {
+            return Err(PyValueError::new_err(
+                "max_movesets_per_group must be an integer >= 1",
+            ));
+        }
+        if max_goal_candidates == 0 {
+            return Err(PyValueError::new_err(
+                "max_goal_candidates must be an integer >= 1",
+            ));
+        }
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
                 "weight must be a finite float greater than 0.0",
@@ -484,7 +493,6 @@ impl PySolveOptions {
         Ok(Self {
             inner: SolveOptions {
                 strategy: strategy.to_rs(),
-                top_c,
                 max_movesets_per_group,
                 max_goal_candidates,
                 weight,
@@ -500,11 +508,6 @@ impl PySolveOptions {
     #[getter]
     fn strategy(&self) -> PySearchStrategy {
         PySearchStrategy::from_rs(&self.inner.strategy)
-    }
-
-    #[getter]
-    fn top_c(&self) -> usize {
-        self.inner.top_c
     }
 
     #[getter]
@@ -549,9 +552,8 @@ impl PySolveOptions {
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, top_c={}, weight={}, restarts={}, deadlock_policy={})",
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={})",
             self.strategy().name(),
-            self.inner.top_c,
             self.inner.weight,
             self.inner.restarts,
             self.deadlock_policy().name(),

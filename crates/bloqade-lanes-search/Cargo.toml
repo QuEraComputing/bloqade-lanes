@@ -10,4 +10,5 @@ name = "bloqade_lanes_search"
 bloqade-lanes-bytecode-core = { path = "../bloqade-lanes-bytecode-core" }
 rand = { version = "0.9", features = ["small_rng"] }
 rayon = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"

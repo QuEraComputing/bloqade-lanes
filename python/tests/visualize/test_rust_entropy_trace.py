@@ -1,31 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
 
-
-def _load_adapter():
-    repo_root = Path(__file__).resolve().parents[3]
-    adapter_path = (
-        repo_root
-        / "python"
-        / "bloqade"
-        / "lanes"
-        / "visualize"
-        / "rust_entropy_trace.py"
-    )
-    spec = importlib.util.spec_from_file_location("_rust_entropy_trace", adapter_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+from bloqade.lanes.visualize import rust_entropy_trace as module
 
 
 def test_load_rust_entropy_trace_parses_payload() -> None:
-    module = _load_adapter()
     payload = json.dumps(
         {
             "version": 1,

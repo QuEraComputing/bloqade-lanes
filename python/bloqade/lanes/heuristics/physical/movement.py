@@ -207,7 +207,6 @@ class RustPlacementTraversal:
         "cascade-entropy",
         "entropy",
     ] = "astar"
-    top_c: int = 3
     max_movesets_per_group: int = 3
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
@@ -452,7 +451,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         blocked_native = [loc._inner for loc in state.occupied]
         opts = _native.SolveOptions(
             strategy=_STRATEGY_MAP[self.traversal.strategy],
-            top_c=self.traversal.top_c,
             max_movesets_per_group=self.traversal.max_movesets_per_group,
             max_goal_candidates=self.traversal.max_goal_candidates,
             collect_entropy_trace=(

@@ -18,6 +18,7 @@ use std::hash::{Hash, Hasher};
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use serde::Serialize;
 
 use crate::aod_grid::BusGridContext;
 use crate::astar::SearchResult;
@@ -33,7 +34,7 @@ use crate::ordering::{
 use crate::traits::Goal;
 
 /// Trace payload for entropy visualization/replay.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct EntropyTrace {
     pub root_node_id: u32,
     pub best_buffer_size: u32,
@@ -41,7 +42,7 @@ pub struct EntropyTrace {
 }
 
 /// One entropy-search step snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EntropyTraceStep {
     pub event: String,
     pub node_id: u32,
@@ -64,35 +65,21 @@ pub struct EntropyTraceStep {
 
 impl EntropyTrace {
     pub fn to_json(&self) -> String {
-        let mut steps = Vec::with_capacity(self.steps.len());
-        for step in &self.steps {
-            steps.push(serde_json::json!({
-                "event": step.event,
-                "node_id": step.node_id,
-                "parent_node_id": step.parent_node_id,
-                "depth": step.depth,
-                "entropy": step.entropy,
-                "unresolved_count": step.unresolved_count,
-                "moveset": step.moveset,
-                "candidate_movesets": step.candidate_movesets,
-                "candidate_index": step.candidate_index,
-                "reason": step.reason,
-                "state_seen_node_id": step.state_seen_node_id,
-                "no_valid_moves_qubit": step.no_valid_moves_qubit,
-                "trigger_node_id": step.trigger_node_id,
-                "configuration": step.configuration,
-                "parent_configuration": step.parent_configuration,
-                "moveset_score": step.moveset_score,
-                "best_buffer_node_ids": step.best_buffer_node_ids,
-            }));
+        #[derive(Serialize)]
+        struct EntropyTraceJson<'a> {
+            version: u8,
+            root_node_id: u32,
+            best_buffer_size: u32,
+            steps: &'a [EntropyTraceStep],
         }
-        serde_json::json!({
-            "version": 1,
-            "root_node_id": self.root_node_id,
-            "best_buffer_size": self.best_buffer_size,
-            "steps": steps,
+
+        serde_json::to_string(&EntropyTraceJson {
+            version: 1,
+            root_node_id: self.root_node_id,
+            best_buffer_size: self.best_buffer_size,
+            steps: &self.steps,
         })
-        .to_string()
+        .expect("failed to serialize entropy trace to JSON")
     }
 }
 
@@ -110,10 +97,8 @@ pub struct EntropyParams {
     pub beta: f64,
     pub gamma: f64,
     // Search control.
-    pub top_c: usize,
     pub max_candidates: usize,
     pub reversion_steps: u32,
-    pub delta_e: u32,
     pub e_max: u32,
     pub max_goal_candidates: usize,
     // Expander settings.
@@ -133,10 +118,8 @@ impl Default for EntropyParams {
             alpha: 80.0,
             beta: 3.0,
             gamma: 3.1,
-            top_c: 3,
             max_candidates: 4,
             reversion_steps: 1,
-            delta_e: 1,
             e_max: 4,
             max_goal_candidates: 3,
             max_movesets_per_group: 3,
@@ -1100,7 +1083,7 @@ pub fn entropy_search(
 
             let new_ancestor_entropy = {
                 let ancestor_es = entropy_map.entry(ancestor).or_default();
-                ancestor_es.entropy += params.delta_e;
+                ancestor_es.entropy += 1;
                 ancestor_es.entropy
             };
             if let Some(t) = trace.as_mut() {
@@ -1147,7 +1130,7 @@ pub fn entropy_search(
         let Some((candidate_idx, move_set, new_config, cost)) = candidate else {
             // No candidates available — bump entropy.
             let current_es = entropy_map.entry(current).or_default();
-            current_es.entropy += params.delta_e;
+            current_es.entropy += 1;
             let no_valid_qid =
                 first_unresolved_qubit_without_valid_move(graph.config(current), ctx);
             if let Some(t) = trace.as_mut() {
@@ -1247,7 +1230,7 @@ pub fn entropy_search(
             // Transposition: config seen at equal or better cost.
             let es = entropy_map.entry(current).or_default();
             es.failed_candidates.insert(move_key.clone());
-            es.entropy += params.delta_e;
+            es.entropy += 1;
             if let Some(t) = trace.as_mut() {
                 let cfg = graph.config(current);
                 let parent_cfg = graph
@@ -1858,7 +1841,6 @@ mod tests {
         let params = EntropyParams {
             w_d: 0.0,
             w_m: 0.0,
-            top_c: 8,
             max_movesets_per_group: 8,
             ..EntropyParams::default()
         };
@@ -1912,7 +1894,6 @@ mod tests {
             targets: &target_encoded,
         };
         let params = EntropyParams {
-            top_c: 4,
             max_movesets_per_group: 4,
             ..EntropyParams::default()
         };

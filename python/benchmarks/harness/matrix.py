@@ -102,7 +102,6 @@ def default_strategy_configs() -> tuple[StrategyConfig, ...]:
                 arch_spec=physical.get_arch_spec(),
                 traversal=RustPlacementTraversal(
                     strategy="greedy",
-                    top_c=50,
                     max_movesets_per_group=50,
                     max_expansions=1000,
                 ),
