@@ -4,6 +4,7 @@ from bloqade.test_utils import assert_nodes
 from kirin import ir, types
 from kirin.dialects import func, ilist, py
 from kirin.rewrite import Walk
+from kirin.rewrite.dce import DeadCodeElimination
 
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
@@ -45,6 +46,13 @@ def test_minimal_program_runs_end_to_end():
     # directly on the method's top-level Function statement — no need to
     # dig out the block.
     Walk(RewriteStackMoveToMove(arch_spec=arch_spec)).rewrite(method.code)
+
+    # Stage 2b: DCE sweeps away stack_move.Const{Loc,Lane,Zone} stmts
+    # left behind by stack_move2move. The rewrite lifts their attribute
+    # values into downstream move.* attributes via ``_lift_attrs`` but
+    # intentionally doesn't touch the defining statements — DCE removes
+    # them once the consumer edges are gone.
+    Walk(DeadCodeElimination()).rewrite(method.code)
 
     # The method's dialect group still points at the decoder's
     # stack_move+func group; AtomInterpreter needs the full move-pipeline
@@ -187,6 +195,11 @@ def test_realistic_cz_sandwich_runs_end_to_end():
     # ── Run the full pipeline ─────────────────────────────────────────
     method = load_program(Program(version=(1, 0), instructions=instrs))
     Walk(RewriteStackMoveToMove(arch_spec=arch_spec)).rewrite(method.code)
+    # DCE sweeps away stack_move.Const{Loc,Lane,Zone} stmts that were
+    # left in place by stack_move2move — their attribute values have
+    # been lifted into downstream move.* attributes and the SSAs have
+    # no remaining uses.
+    Walk(DeadCodeElimination()).rewrite(method.code)
     method.dialects = kernel
     Walk(MeasureLower.from_method(method, arch_spec=arch_spec)).rewrite(method.code)
 
@@ -222,7 +235,13 @@ def test_realistic_cz_sandwich_runs_end_to_end():
 
     # State threading: each stateful op consumes the previous state and
     # produces the next one. ``current_state`` tracks the most recent
-    # StateType SSA value as we build the expected block.
+    # StateType SSA value as we build the expected block. Address
+    # constants (ConstLoc/ConstLane/ConstZone) are *not* emitted in the
+    # target IR — stack_move2move reads their values off the defining
+    # statement via ``_lift_attrs`` and then a DCE pass removes the
+    # orphaned stack_move.Const* stmts before we build the expected
+    # block. ``measure_lower`` forwards the state from ``move4`` to the
+    # trailing ``move.Store``.
     load = move.Load()
     fill = move.Fill(
         load.result,
@@ -239,8 +258,6 @@ def test_realistic_cz_sandwich_runs_end_to_end():
     move3 = move.Move(move2.result, lanes=atoms_23_forward)
     cz2 = move.CZ(move3.result, zone_address=zone0)
     move4 = move.Move(cz2.result, lanes=atoms_23_backward)
-    # measure_lower rewrote move.Measure -> move.EndMeasure and forwarded
-    # the state from move4 to the trailing move.Store.
     end_measure = move.EndMeasure(current_state=move4.result, zone_addresses=(zone0,))
 
     # AwaitMeasure expands to one move.GetFutureResult per location

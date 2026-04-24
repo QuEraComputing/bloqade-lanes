@@ -64,15 +64,23 @@ def test_const_float_emits_py_constant_and_tracks_value():
     assert rule.ssa_to_attr[py_const.result] == 1.5
 
 
-def test_const_loc_tracks_attribute_value():
+def test_const_loc_is_left_untouched_for_dce():
+    # Address constants are intentionally *not* rewritten — stack_move2move
+    # leaves ConstLoc / ConstLane / ConstZone in place so a downstream DCE
+    # pass can sweep them up once their attribute values have been lifted
+    # into consumer move.* statements (via ``_lift_attrs``). The rewrite
+    # rule's ``_try_lift`` reads ``.value`` off the defining stmt rather
+    # than looking it up in ``ssa_to_attr``.
     addr = LocationAddress(0, 0, 0)
     cl = stack_move.ConstLoc(value=addr)
     block = _build_stack_move_block([cl])
     rule = RewriteStackMoveToMove(arch_spec=_ARCH)
     Walk(rule).rewrite(block)
-    # The stack_move SSA is mapped to its raw attribute (for lifting into
-    # downstream move.* attributes).
-    assert rule.ssa_to_attr[cl.result] == addr
+    # ConstLoc was not deleted and does not appear in ssa_to_attr.
+    assert any(isinstance(s, stack_move.ConstLoc) for s in block.stmts)
+    assert cl.result not in rule.ssa_to_attr
+    # _try_lift resolves the address off the defining stmt's ``.value``.
+    assert rule._try_lift(cl.result, LocationAddress) == addr
 
 
 def test_pop_is_dropped():

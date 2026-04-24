@@ -90,17 +90,15 @@ class RewriteStackMoveToMove(RewriteRule):
 
         # Close out state threading: emit a final move.Store(state) just
         # before the block's terminator so the state boundary is paired
-        # with the move.Load inserted at block start. Terminator handlers
-        # (Return/Halt) only emit the terminator itself; the Store lives
-        # here so it is guaranteed regardless of which terminator — or
-        # whether any stack_move terminator — is present.
+        # with the move.Load inserted at block start. The Store lives
+        # here rather than in the Return/Halt handlers so it is emitted
+        # regardless of which terminator is present.
+        #
+        # Well-formed blocks always end with an IsTerminator stmt, so
+        # node.last_stmt is the terminator.
         assert self.state is not None
-        store = move.Store(self.state)
-        terminator = node.last_stmt
-        if terminator is None:
-            node.stmts.append(store)
-        else:
-            store.insert_before(terminator)
+        assert node.last_stmt is not None
+        move.Store(self.state).insert_before(node.last_stmt)
         return RewriteResult(has_done_something=True)
 
     @singledispatchmethod
@@ -143,24 +141,6 @@ class RewriteStackMoveToMove(RewriteRule):
         self.ssa_to_attr[out.result] = stmt.value
         to_delete.append(stmt)
 
-    @_rewrite.register(stack_move.ConstLoc)
-    def _(self, stmt: stack_move.ConstLoc, to_delete: list[ir.Statement]) -> None:
-        # Address constants stay as decoder attributes — downstream move.*
-        # statements take them as attribute values, not SSA operands.
-        # We track the raw attribute value for later attribute lifting.
-        self.ssa_to_attr[stmt.result] = stmt.value
-        to_delete.append(stmt)
-
-    @_rewrite.register(stack_move.ConstLane)
-    def _(self, stmt: stack_move.ConstLane, to_delete: list[ir.Statement]) -> None:
-        self.ssa_to_attr[stmt.result] = stmt.value
-        to_delete.append(stmt)
-
-    @_rewrite.register(stack_move.ConstZone)
-    def _(self, stmt: stack_move.ConstZone, to_delete: list[ir.Statement]) -> None:
-        self.ssa_to_attr[stmt.result] = stmt.value
-        to_delete.append(stmt)
-
     @_rewrite.register(stack_move.Pop)
     def _(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
         # Pop collapses — no target emission. The popped SSA value remains
@@ -187,8 +167,28 @@ class RewriteStackMoveToMove(RewriteRule):
     def _try_lift(self, v: ir.SSAValue, attr_type: type[T]) -> T | None:
         """Look up an SSA value's backing attribute and return it if its
         concrete type matches ``attr_type``; otherwise return None (for both
-        missing-mapping and wrong-type cases)."""
-        data = self.ssa_to_attr.get(v)
+        missing-mapping and wrong-type cases).
+
+        Two resolution paths depending on how the SSA was produced:
+
+        1. Scalar constants (ConstFloat / ConstInt) are rewritten to
+           ``py.Constant`` and the raw Python value is recorded in
+           ``ssa_to_attr`` under the new ``py.Constant`` result — fast
+           dict lookup.
+        2. Address constants (ConstLoc / ConstLane / ConstZone) are
+           intentionally *not* rewritten (they're left in place for DCE
+           to clean up afterwards), so they never appear in
+           ``ssa_to_attr``. Fall back to walking the SSA def chain and
+           reading ``.value`` directly off the defining statement.
+        """
+        data: Any = self.ssa_to_attr.get(v)
+        if data is None and isinstance(v, ir.ResultValue):
+            owner = v.owner
+            if isinstance(
+                owner,
+                (stack_move.ConstLoc, stack_move.ConstLane, stack_move.ConstZone),
+            ):
+                data = owner.value
         if data is None:
             return None
         return data if isinstance(data, attr_type) else None
@@ -197,33 +197,24 @@ class RewriteStackMoveToMove(RewriteRule):
         self,
         ssa_values: tuple[ir.SSAValue, ...],
         attr_type: type[T],
-    ) -> tuple[T, ...]:
+    ) -> tuple[T, ...] | None:
         """Resolve each stack_move SSA operand to its backing Python-class
         attribute value, verifying the concrete type matches ``attr_type``.
 
-        Raises:
-            RuntimeError: if an SSA operand isn't attribute-backed (i.e.
-                didn't come from a stack_move.Const*), or if its attribute
-                has a type that doesn't match ``attr_type``.
+        Returns the fully-resolved tuple on success; returns ``None`` if
+        *any* operand fails to lift (either because it doesn't trace back
+        to a Const* statement, or because its attribute type doesn't match
+        ``attr_type``). Callers should give up the rewrite when the lift
+        fails — rewrite rules don't raise on precondition failure; they
+        back off and let a later pass (or explicit validation) surface
+        the issue.
         """
         raws: tuple[T | None, ...] = tuple(
             self._try_lift(v, attr_type) for v in ssa_values
         )
         if no_none_elements_tuple(raws):
             return raws
-        for v, r in zip(ssa_values, raws):
-            if r is None:
-                if v not in self.ssa_to_attr:
-                    raise RuntimeError(
-                        f"no attribute mapping for {v}: operand must "
-                        f"trace back to a Const* statement"
-                    )
-                raise RuntimeError(
-                    f"attribute type mismatch for {v}: expected "
-                    f"{attr_type.__name__}"
-                )
-        # Unreachable: the loop above raises on any None encountered.
-        raise RuntimeError("_lift_attrs: unreachable")
+        return None
 
     # ── Atom operations ───────────────────────────────────────────────
 
@@ -231,6 +222,8 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.InitialFill, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
         # move dialect has no InitialFill — both stack_move.InitialFill
         # and stack_move.Fill lower to move.Fill. The InitialFill
         # distinction exists only at the bytecode/stack_move layer for
@@ -244,6 +237,8 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.Fill, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
         new = move.Fill(self.state, location_addresses=addrs)
         new.insert_before(stmt)
         self.state = new.result
@@ -253,6 +248,8 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.Move, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         lanes = self._lift_attrs(stmt.lanes, LaneAddress)
+        if lanes is None:
+            return
         new = move.Move(self.state, lanes=lanes)
         new.insert_before(stmt)
         self.state = new.result
@@ -270,6 +267,8 @@ class RewriteStackMoveToMove(RewriteRule):
         # _rewrite_ConstFloat (via replace_by), so we can forward them
         # directly.
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
         new = move.LocalR(
             self.state,
             axis_angle=stmt.axis_angle,
@@ -284,6 +283,8 @@ class RewriteStackMoveToMove(RewriteRule):
     def _(self, stmt: stack_move.LocalRz, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
         addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
         new = move.LocalRz(
             self.state,
             rotation_angle=stmt.rotation_angle,
@@ -323,6 +324,8 @@ class RewriteStackMoveToMove(RewriteRule):
         # order, so move.Measure receives the distinct set as an
         # attribute tuple.
         zone_attrs = self._lift_attrs(stmt.zones, ZoneAddress)
+        if zone_attrs is None:
+            return
         seen_zone_ids: list[int] = []
         for zone in zone_attrs:
             if zone.zone_id not in seen_zone_ids:
@@ -457,7 +460,10 @@ class RewriteStackMoveToMove(RewriteRule):
     @_rewrite.register(stack_move.CZ)
     def _(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
         assert self.state is not None
-        (zone,) = self._lift_attrs((stmt.zone,), ZoneAddress)
+        zones = self._lift_attrs((stmt.zone,), ZoneAddress)
+        if zones is None:
+            return
+        (zone,) = zones
         new = move.CZ(self.state, zone_address=zone)
         new.insert_before(stmt)
         self.state = new.result
