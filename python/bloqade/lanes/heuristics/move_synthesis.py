@@ -1,16 +1,15 @@
 """Move synthesis: layout transition to move layers.
 
 Given an architecture spec and two concrete states (before/after layouts),
-computes the sequence of move layers. Uses ArchSpec.get_lane_address()
-for lane lookup instead of hardcoded bus arithmetic.
+computes the sequence of move layers using the Rust MoveSolver.
 """
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
+from bloqade.lanes.bytecode import _native
+from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.heuristics.physical.movement import _convert_move_layers
 from bloqade.lanes.layout.path import PathFinder
-from bloqade.lanes.search import ConfigurationNode, ConfigurationTree
-
-from .physical.placement import EntropyPlacementTraversal
 
 
 def _intra_word_moves(
@@ -46,29 +45,27 @@ def _compute_move_layers(
     state_before: ConcreteState,
     state_after: ConcreteState,
 ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
-    """Compute move layers from state_before to state_after.
+    """Compute move layers from state_before to state_after via the Rust MoveSolver."""
+    initial_native = {qid: loc._inner for qid, loc in enumerate(state_before.layout)}
+    target_native = {qid: loc._inner for qid, loc in enumerate(state_after.layout)}
+    blocked_native = [loc._inner for loc in state_before.occupied]
 
-    For each qubit that needs to move, finds the path from source to
-    destination. Single-hop moves (direct bus connection) are batched
-    by bus_id. Multi-hop moves are sequenced individually using PathFinder.
-    """
-    target = {
-        atom_id: dst
-        for (atom_id, src), dst in zip(
-            enumerate(state_before.layout), state_after.layout
-        )
-        if src != dst
-    }
-    root_node = ConfigurationNode(
-        dict(enumerate(state_before.layout)), external_occupied=state_before.occupied
+    solver = MoveSolver.from_arch_spec(arch_spec._inner)
+    opts = _native.SolveOptions(
+        strategy=_native.SearchStrategy.ENTROPY,
+        max_movesets_per_group=3,
+        max_goal_candidates=3,
+        collect_entropy_trace=False,
     )
-    tree = ConfigurationTree(arch_spec, root_node, state_before.occupied)
-
-    traversal = EntropyPlacementTraversal()
-    result = traversal.path_to_target_config(tree=tree, target=target)
-
-    assert result.goal_node, "no solution found"
-    return result.goal_nodes[0].to_move_program()
+    result = solver.solve(
+        initial_native,
+        target_native,
+        blocked_native,
+        max_expansions=None,
+        options=opts,
+    )
+    assert result.status == "solved", "no solution found"
+    return _convert_move_layers(result.move_layers)
 
 
 # Public API
