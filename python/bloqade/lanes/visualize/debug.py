@@ -32,7 +32,6 @@ class StaticDebuggerController(DebuggerController):
         if not self.updated:
             self.step_index = min(self.step_index + 1, self.num_steps - 1)
             self.sync_slider(self.step_index)
-            self.ax.cla()
             self.updated = True
 
     def on_prev(self, event):
@@ -40,7 +39,6 @@ class StaticDebuggerController(DebuggerController):
         if not self.updated:
             self.step_index = max(self.step_index - 1, 0)
             self.sync_slider(self.step_index)
-            self.ax.cla()
             self.updated = True
 
     def on_slider_change(self, value):
@@ -54,7 +52,6 @@ class StaticDebuggerController(DebuggerController):
         if new_index == self.step_index:
             return
         self.step_index = new_index
-        self.ax.cla()
         self.updated = True
         self.waiting = False
 
@@ -76,6 +73,7 @@ class StaticDebuggerController(DebuggerController):
 
     def run(self):
         while self.running:
+            self.ax.cla()
             self.draw(self.step_index)
             while self.waiting:
                 plt.pause(0.01)
@@ -108,7 +106,6 @@ class AnimatorController(DebuggerController):
             if not self.updated:
                 self.step_index = min(self.step_index + 1, self.num_steps - 1)
                 self.sync_slider(self.step_index)
-                self.ax.cla()
                 self.updated = True
         else:
             self.animation_step = 1
@@ -119,7 +116,6 @@ class AnimatorController(DebuggerController):
             if not self.updated:
                 self.step_index = max(self.step_index - 1, 0)
                 self.sync_slider(self.step_index)
-                self.ax.cla()
                 self.updated = True
         else:
             self.animation_step = -1
@@ -136,7 +132,6 @@ class AnimatorController(DebuggerController):
         self.step_index = new_index
         # Slider jumps go forward into the new step's animation.
         self.animation_step = 1
-        self.ax.cla()
         self.updated = True
         self.waiting = False
 
@@ -150,6 +145,7 @@ class AnimatorController(DebuggerController):
 
     def run(self):
         while self.running:
+            self.ax.cla()
             self.num_frames, renderer = self.get_renderer(self.step_index)
             self.animation_step_index = (
                 0 if self.animation_step == 1 else self.num_frames

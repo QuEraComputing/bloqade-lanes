@@ -314,8 +314,8 @@ impl PyMoveSolver {
     fn solve(
         &self,
         py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
-        target: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        target: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
@@ -361,7 +361,7 @@ impl PyMoveSolver {
     fn solve_with_generator(
         &self,
         py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         controls: Vec<u32>,
         targets: Vec<u32>,
@@ -407,7 +407,7 @@ impl PyMoveSolver {
     #[pyo3(signature = (initial, controls, targets, generator=None))]
     fn generate_candidates(
         &self,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         controls: Vec<u32>,
         targets: Vec<u32>,
         generator: Option<&PyDefaultTargetGenerator>,
