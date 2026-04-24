@@ -1593,12 +1593,13 @@ class Instruction:
 
     @staticmethod
     def measure(arity: int) -> Instruction:
-        """Measure atoms at ``arity`` locations.
+        """Measure atoms in ``arity`` zones.
 
-        Pops ``arity`` location addresses from the stack.
+        Pops ``arity`` zone addresses from the stack; pushes ``arity``
+        measure futures (one per zone).
 
         Args:
-            arity (int): Number of locations to measure.
+            arity (int): Number of zones to measure.
 
         Returns:
             Instruction: The measure instruction.
@@ -1609,6 +1610,10 @@ class Instruction:
     def await_measure() -> Instruction:
         """Block until the most recent measurement completes.
 
+        Pops one measurement future from the stack (linear consumption)
+        and pushes one array reference holding the resolved measurement
+        results.
+
         Returns:
             Instruction: The await_measure instruction.
         """
@@ -1618,6 +1623,9 @@ class Instruction:
     @staticmethod
     def new_array(type_tag: int, dim0: int, dim1: int = 0) -> Instruction:
         """Create a new array.
+
+        Pops ``dim0 * max(dim1, 1)`` values of any type from the stack
+        (the array's initial elements) and pushes a new array reference.
 
         Args:
             type_tag (int): Element type tag.
@@ -1648,6 +1656,9 @@ class Instruction:
     def set_detector() -> Instruction:
         """Build a detector record from the top-of-stack array.
 
+        Pops one array reference from the stack and pushes one
+        detector reference.
+
         Returns:
             Instruction: The set_detector instruction.
         """
@@ -1656,6 +1667,9 @@ class Instruction:
     @staticmethod
     def set_observable() -> Instruction:
         """Build an observable record from the top-of-stack array.
+
+        Pops one array reference from the stack and pushes one
+        observable reference.
 
         Returns:
             Instruction: The set_observable instruction.
@@ -1666,6 +1680,8 @@ class Instruction:
     @staticmethod
     def return_() -> Instruction:
         """Return from the current program.
+
+        Pops one value of any type from the stack as the return value.
 
         Returns:
             Instruction: The return instruction.
@@ -1687,6 +1703,100 @@ class Instruction:
     @property
     def opcode(self) -> int:
         """Packed 16-bit opcode: ``(instruction_code << 8) | device_code``."""
+        ...
+
+    def op_name(self) -> str:
+        """Lowercase snake_case opcode name matching the bytecode text-format
+        parser's canonical names (see
+        ``crates/bloqade-lanes-bytecode-core/src/bytecode/text.rs``).
+
+        Factory methods use trailing underscores for Python-keyword conflicts
+        (``Instruction.move_()``, ``Instruction.return_()``), but ``op_name``
+        returns the parser-canonical bare names: ``"move"`` and ``"return"``.
+        """
+        ...
+
+    def arity(self) -> int:
+        """Arity field for opcodes that carry one.
+
+        Valid on ``initial_fill``, ``fill``, ``move``, ``local_r``,
+        ``local_rz``, ``measure``.
+
+        Raises:
+            RuntimeError: If called on an opcode without an arity field.
+        """
+        ...
+
+    def float_value(self) -> float:
+        """Value attribute of a ``const_float`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def int_value(self) -> int:
+        """Value attribute of a ``const_int`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def location_address(self) -> LocationAddress:
+        """Decoded address of a ``const_loc`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def lane_address(self) -> LaneAddress:
+        """Decoded address of a ``const_lane`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def zone_address(self) -> ZoneAddress:
+        """Decoded address of a ``const_zone`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def type_tag(self) -> int:
+        """Type tag attribute of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim0(self) -> int:
+        """First dimension of a ``new_array`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def dim1(self) -> int:
+        """Second dimension of a ``new_array`` instruction (0 for 1-D).
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
+        ...
+
+    def ndims(self) -> int:
+        """Number of index dimensions of a ``get_item`` instruction.
+
+        Raises:
+            RuntimeError: If called on any other opcode.
+        """
         ...
 
     def __repr__(self) -> str: ...

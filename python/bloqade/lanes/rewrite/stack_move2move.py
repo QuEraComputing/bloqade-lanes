@@ -1,0 +1,470 @@
+"""stack_move2move — in-place rewrite from stack_move → multi-dialect IR.
+
+Extends Kirin's RewriteRule with a rewrite_Block handler that walks the
+block's statements once and, for each stack_move statement, inserts the
+corresponding target-dialect statement(s) via insert_before and deletes
+the original. State threading is woven in along the way: move.Load at
+block start initialises the StateType SSA value, each stateful move.*
+op consumes the current state and produces a new one, and move.Store +
+func.Return close out the block.
+
+Follows the same pattern as python/bloqade/lanes/rewrite/state.py's
+RewriteLoadStore.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from functools import singledispatchmethod
+from typing import Any, TypeVar
+
+from kirin import ir
+from kirin.rewrite.abc import RewriteResult, RewriteRule
+
+from bloqade.lanes.dialects import move, stack_move
+from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.utils import no_none_elements_tuple
+
+# Generic TypeVar used by the _lift_attrs helper to propagate the concrete
+# attribute type through runtime isinstance checks.
+T = TypeVar("T")
+
+
+@dataclass
+class RewriteStackMoveToMove(RewriteRule):
+    """Rewrite a stack_move block into a multi-dialect block in place.
+
+    Constructor args:
+    - arch_spec: required. AwaitMeasure lowering iterates
+      ``arch_spec.yield_zone_locations(zone)`` for each zone on the
+      originating move.Measure to emit the GetFutureResult chain that
+      materialises the 1-D measurement-result array (element order is
+      defined by the ArchSpec).
+
+    Mutable state on the rule instance, carried across the walk:
+    - ssa_to_attr: stack_move SSA → raw Python attribute value (float,
+      int, LocationAddress, LaneAddress, ZoneAddress) for operands that
+      need to be lifted into target-dialect attributes (addresses,
+      rotation angles). SSA-to-attribute can't be expressed through SSA
+      rewiring because attributes aren't SSA values, so we carry an
+      explicit mapping. The value type is Any because the lifted values
+      span heterogeneous scalar and address types.
+    - state: the current StateType SSA value in the target IR.
+
+    For SSA-valued outputs (arrays, futures, detectors, observables,
+    constants that emit py.Constant), we use the Kirin idiom
+    `old_ssa.replace_by(new_ssa)` to redirect all uses in place — no
+    second mapping needed. This matches state.RewriteLoadStore's
+    `next_use.replace_by(current_use)` pattern.
+    """
+
+    arch_spec: ArchSpec
+    ssa_to_attr: dict[ir.SSAValue, Any] = field(default_factory=dict)
+    state: ir.SSAValue | None = None
+
+    def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        # Insert the initial move.Load at block start.
+        load = move.Load()
+        first = next(iter(node.stmts), None)
+        if first is None:
+            node.stmts.append(load)
+        else:
+            load.insert_before(first)
+        self.state = load.result
+
+        to_delete: list[ir.Statement] = []
+        for stmt in list(node.stmts):
+            if stmt is load:
+                continue
+            # Non-stack_move statements (e.g. existing py.Constant) pass
+            # through unchanged via the singledispatchmethod base case.
+            self._rewrite(stmt, to_delete)
+
+        # Delete in reverse order: consumers before producers so that when
+        # a Const* stmt is deleted its result already has no uses. Without
+        # this, e.g. stack_move.Fill(locations=(const_loc.result,)) would
+        # still reference the const_loc result when const_loc.delete() runs.
+        for stmt in reversed(to_delete):
+            stmt.delete()
+
+        # Close out state threading: emit a final move.Store(state) just
+        # before the block's terminator so the state boundary is paired
+        # with the move.Load inserted at block start. The Store lives
+        # here rather than in the Return/Halt handlers so it is emitted
+        # regardless of which terminator is present.
+        #
+        # Well-formed blocks always end with an IsTerminator stmt, so
+        # node.last_stmt is the terminator.
+        assert self.state is not None
+        assert node.last_stmt is not None
+        move.Store(self.state).insert_before(node.last_stmt)
+        return RewriteResult(has_done_something=True)
+
+    @singledispatchmethod
+    def _rewrite(self, stmt: ir.Statement, to_delete: list[ir.Statement]) -> None:
+        """Default: non-stack_move statements pass through unchanged."""
+        pass
+
+    # Note: no handlers for Return / Halt. The decoder emits
+    # ``func.Return`` and ``func.ConstantNone`` + ``func.Return``
+    # directly (overlap with kirin.basic's ``func`` dialect), so those
+    # statements reach the rewrite already in target form and fall
+    # through the singledispatchmethod base case. The closing
+    # ``move.Store(state)`` is inserted by ``rewrite_Block`` just before
+    # the block's terminator, regardless of whether the terminator
+    # originated from the decoder or from this rewrite.
+
+    @_rewrite.register(stack_move.ConstFloat)
+    def _(self, stmt: stack_move.ConstFloat, to_delete: list[ir.Statement]) -> None:
+        from kirin.dialects import py
+
+        out = py.Constant(stmt.value)
+        out.insert_before(stmt)
+        # Redirect all SSA uses of the old stack_move.ConstFloat result to
+        # the new py.Constant result in place.
+        stmt.result.replace_by(out.result)
+        # Consumers that need the raw float as an attribute (e.g.
+        # _rewrite_LocalR building a rotation_angle= kwarg) look up ssa_to_attr.
+        # The key is the new SSA, because replace_by rewired the operands
+        # stored on downstream statements to point there.
+        self.ssa_to_attr[out.result] = stmt.value
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.ConstInt)
+    def _(self, stmt: stack_move.ConstInt, to_delete: list[ir.Statement]) -> None:
+        from kirin.dialects import py
+
+        out = py.Constant(stmt.value)
+        out.insert_before(stmt)
+        stmt.result.replace_by(out.result)
+        self.ssa_to_attr[out.result] = stmt.value
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.Pop)
+    def _(self, stmt: stack_move.Pop, to_delete: list[ir.Statement]) -> None:
+        # Pop collapses — no target emission. The popped SSA value remains
+        # on its definition; if nothing else references it, it becomes
+        # dead and a later DCE pass cleans it up.
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.Dup)
+    def _(self, stmt: stack_move.Dup, to_delete: list[ir.Statement]) -> None:
+        # Dup is a semantic identity — redirect all uses of the result to
+        # the input in place.
+        stmt.result.replace_by(stmt.value)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.Swap)
+    def _(self, stmt: stack_move.Swap, to_delete: list[ir.Statement]) -> None:
+        # Swap is a permutation — out_top ≡ in_bot, out_bot ≡ in_top.
+        stmt.out_top.replace_by(stmt.in_bot)
+        stmt.out_bot.replace_by(stmt.in_top)
+        to_delete.append(stmt)
+
+    # ── Attribute lifting ─────────────────────────────────────────────
+
+    def _try_lift(self, v: ir.SSAValue, attr_type: type[T]) -> T | None:
+        """Look up an SSA value's backing attribute and return it if its
+        concrete type matches ``attr_type``; otherwise return None (for both
+        missing-mapping and wrong-type cases).
+
+        Two resolution paths depending on how the SSA was produced:
+
+        1. Scalar constants (ConstFloat / ConstInt) are rewritten to
+           ``py.Constant`` and the raw Python value is recorded in
+           ``ssa_to_attr`` under the new ``py.Constant`` result — fast
+           dict lookup.
+        2. Address constants (ConstLoc / ConstLane / ConstZone) are
+           intentionally *not* rewritten (they're left in place for DCE
+           to clean up afterwards), so they never appear in
+           ``ssa_to_attr``. Fall back to walking the SSA def chain and
+           reading ``.value`` directly off the defining statement.
+        """
+        data: Any = self.ssa_to_attr.get(v)
+        if data is None and isinstance(v, ir.ResultValue):
+            owner = v.owner
+            if isinstance(
+                owner,
+                (stack_move.ConstLoc, stack_move.ConstLane, stack_move.ConstZone),
+            ):
+                data = owner.value
+        if data is None:
+            return None
+        return data if isinstance(data, attr_type) else None
+
+    def _lift_attrs(
+        self,
+        ssa_values: tuple[ir.SSAValue, ...],
+        attr_type: type[T],
+    ) -> tuple[T, ...] | None:
+        """Resolve each stack_move SSA operand to its backing Python-class
+        attribute value, verifying the concrete type matches ``attr_type``.
+
+        Returns the fully-resolved tuple on success; returns ``None`` if
+        *any* operand fails to lift (either because it doesn't trace back
+        to a Const* statement, or because its attribute type doesn't match
+        ``attr_type``). Callers should give up the rewrite when the lift
+        fails — rewrite rules don't raise on precondition failure; they
+        back off and let a later pass (or explicit validation) surface
+        the issue.
+        """
+        raws: tuple[T | None, ...] = tuple(
+            self._try_lift(v, attr_type) for v in ssa_values
+        )
+        if no_none_elements_tuple(raws):
+            return raws
+        return None
+
+    # ── Atom operations ───────────────────────────────────────────────
+
+    @_rewrite.register(stack_move.InitialFill)
+    def _(self, stmt: stack_move.InitialFill, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
+        # move dialect has no InitialFill — both stack_move.InitialFill
+        # and stack_move.Fill lower to move.Fill. The InitialFill
+        # distinction exists only at the bytecode/stack_move layer for
+        # validation (InitialFillNotFirstError).
+        new = move.Fill(self.state, location_addresses=addrs)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.Fill)
+    def _(self, stmt: stack_move.Fill, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
+        new = move.Fill(self.state, location_addresses=addrs)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.Move)
+    def _(self, stmt: stack_move.Move, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        lanes = self._lift_attrs(stmt.lanes, LaneAddress)
+        if lanes is None:
+            return
+        new = move.Move(self.state, lanes=lanes)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    # ── Gates ─────────────────────────────────────────────────────────
+
+    @_rewrite.register(stack_move.LocalR)
+    def _(self, stmt: stack_move.LocalR, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        # stack_move.LocalR and move.LocalR share axis_angle/rotation_angle
+        # SSA args; stack_move additionally carries locations as an SSA
+        # tuple, which lowers to move.LocalR's location_addresses attribute.
+        # The angle SSAs were rewired to the new py.Constant results by
+        # _rewrite_ConstFloat (via replace_by), so we can forward them
+        # directly.
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
+        new = move.LocalR(
+            self.state,
+            axis_angle=stmt.axis_angle,
+            rotation_angle=stmt.rotation_angle,
+            location_addresses=addrs,
+        )
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.LocalRz)
+    def _(self, stmt: stack_move.LocalRz, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        addrs = self._lift_attrs(stmt.locations, LocationAddress)
+        if addrs is None:
+            return
+        new = move.LocalRz(
+            self.state,
+            rotation_angle=stmt.rotation_angle,
+            location_addresses=addrs,
+        )
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.GlobalR)
+    def _(self, stmt: stack_move.GlobalR, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        new = move.GlobalR(
+            self.state,
+            axis_angle=stmt.axis_angle,
+            rotation_angle=stmt.rotation_angle,
+        )
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.GlobalRz)
+    def _(self, stmt: stack_move.GlobalRz, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        new = move.GlobalRz(self.state, rotation_angle=stmt.rotation_angle)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.Measure)
+    def _(self, stmt: stack_move.Measure, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        # Zones are direct operands on stack_move.Measure (matching the
+        # Rust validator's sim_measure: pop `arity` zones, push `arity`
+        # futures). Lift each zone SSA operand back to its ZoneAddress
+        # attribute and deduplicate by zone id, preserving first-seen
+        # order, so move.Measure receives the distinct set as an
+        # attribute tuple.
+        zone_attrs = self._lift_attrs(stmt.zones, ZoneAddress)
+        if zone_attrs is None:
+            return
+        seen_zone_ids: list[int] = []
+        for zone in zone_attrs:
+            if zone.zone_id not in seen_zone_ids:
+                seen_zone_ids.append(zone.zone_id)
+        distinct_zones = tuple(ZoneAddress(zid) for zid in seen_zone_ids)
+
+        # Emit move.Measure with the attribute-tuple zones. move.Measure
+        # is a StatefulStatement subclass, so it produces two results:
+        # the inherited new-state (threaded forward) and the measurement
+        # future.
+        new = move.Measure(self.state, zone_addresses=distinct_zones)
+        new.insert_before(stmt)
+        self.state = new.result
+
+        # stack_move.Measure produces `arity` MeasurementFutureType
+        # results (one per input zone), while move.Measure produces a
+        # single measurement future covering all distinct zones.
+        # Redirect every per-zone future to the single move.Measure
+        # future — safe under measure_lower's single-final-measurement
+        # invariant (no two consumers survive lowering).
+        for stmt_result in stmt.results:
+            stmt_result.replace_by(new.future)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.AwaitMeasure)
+    def _(self, stmt: stack_move.AwaitMeasure, to_delete: list[ir.Statement]) -> None:
+        from kirin.dialects import ilist
+
+        # The future operand was rewired by _rewrite_Measure to point at
+        # the new move.Measure.future, so its owner is the move.Measure
+        # whose zone_addresses attribute tells us which zones were
+        # measured.
+        measure_stmt = stmt.future.owner
+        if not isinstance(measure_stmt, move.Measure):
+            return
+
+        # Flatten the 1-D result array: for each measured zone, emit a
+        # GetFutureResult per location yielded by the ArchSpec. Element
+        # order is zones-then-locations, both in their natural ArchSpec
+        # iteration order (documented on stack_move.AwaitMeasure).
+        results: list[ir.SSAValue] = []
+        for zone in measure_stmt.zone_addresses:
+            for loc in self.arch_spec.yield_zone_locations(zone):
+                g = move.GetFutureResult(
+                    measurement_future=stmt.future,
+                    zone_address=zone,
+                    location_address=loc,
+                )
+                g.insert_before(stmt)
+                results.append(g.result)
+
+        arr = ilist.New(values=tuple(results))
+        arr.insert_before(stmt)
+        stmt.result.replace_by(arr.result)
+        to_delete.append(stmt)
+
+    # ── Arrays / annotations ──────────────────────────────────────────
+
+    @_rewrite.register(stack_move.NewArray)
+    def _(self, stmt: stack_move.NewArray, to_delete: list[ir.Statement]) -> None:
+        from kirin.dialects import ilist
+
+        # ArrayType[ElemType, Dim0, Dim1] lowers to:
+        #   - IList[ElemType, Dim0]              when Dim1 == 0 (1-D)
+        #   - IList[IList[ElemType, Dim1], Dim0] when Dim1 >  0 (2-D)
+        #
+        # ``stmt.values`` holds dim0 * max(dim1, 1) element SSAs in
+        # row-major order (outer index 0..dim0, inner index 0..dim1 per
+        # row) — pop_n returns them bottom-to-top, which matches the
+        # push order used by the program. For 2-D we slice into rows
+        # and bundle each row into its own inner ilist.New, then wrap
+        # the rows in an outer ilist.New.
+        values = tuple(stmt.values)
+        if stmt.dim1 == 0:
+            new = ilist.New(values=values)
+            new.insert_before(stmt)
+            stmt.result.replace_by(new.result)
+        else:
+            row_results: list[ir.SSAValue] = []
+            for row in range(stmt.dim0):
+                row_values = values[row * stmt.dim1 : (row + 1) * stmt.dim1]
+                inner = ilist.New(values=row_values)
+                inner.insert_before(stmt)
+                row_results.append(inner.result)
+            outer = ilist.New(values=tuple(row_results))
+            outer.insert_before(stmt)
+            stmt.result.replace_by(outer.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.GetItem)
+    def _(self, stmt: stack_move.GetItem, to_delete: list[ir.Statement]) -> None:
+        from kirin.dialects.py import indexing
+
+        # Chained single-dim indexing: for each index SSA, emit
+        # py.indexing.GetItem(obj=current, index=idx). The final result
+        # replaces the stack_move.GetItem result for all downstream uses.
+        current = stmt.array
+        for idx_ssa in stmt.indices:
+            gi = indexing.GetItem(obj=current, index=idx_ssa)
+            gi.insert_before(stmt)
+            current = gi.result
+        stmt.result.replace_by(current)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.SetDetector)
+    def _(self, stmt: stack_move.SetDetector, to_delete: list[ir.Statement]) -> None:
+        from bloqade.decoders.dialects import annotate
+        from kirin.dialects import ilist
+
+        # annotate.SetDetector requires a coordinates ilist; v1 emits an
+        # empty ilist. If coordinate provenance is added to stack_move
+        # later, thread it through here.
+        empty_coords = ilist.New(values=())
+        empty_coords.insert_before(stmt)
+        new = annotate.stmts.SetDetector(
+            measurements=stmt.array,
+            coordinates=empty_coords.result,
+        )
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.SetObservable)
+    def _(self, stmt: stack_move.SetObservable, to_delete: list[ir.Statement]) -> None:
+        from bloqade.decoders.dialects import annotate
+
+        new = annotate.stmts.SetObservable(measurements=stmt.array)
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(stack_move.CZ)
+    def _(self, stmt: stack_move.CZ, to_delete: list[ir.Statement]) -> None:
+        assert self.state is not None
+        zones = self._lift_attrs((stmt.zone,), ZoneAddress)
+        if zones is None:
+            return
+        (zone,) = zones
+        new = move.CZ(self.state, zone_address=zone)
+        new.insert_before(stmt)
+        self.state = new.result
+        to_delete.append(stmt)
