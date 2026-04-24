@@ -8,7 +8,7 @@ from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import MoveSolver
-from bloqade.lanes.heuristics.physical.movement import _convert_move_layers
+from bloqade.lanes.heuristics.physical.movement import convert_move_layers
 from bloqade.lanes.layout.path import PathFinder
 
 
@@ -40,17 +40,24 @@ def _intra_word_moves(
     return [tuple(lanes) for lanes in bus_moves.values()] + multi_hop_lanes
 
 
-def _compute_move_layers(
+def compute_move_layers(
     arch_spec: layout.ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
+    solver: MoveSolver | None = None,
 ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
-    """Compute move layers from state_before to state_after via the Rust MoveSolver."""
+    """Compute move layers from state_before to state_after via the Rust MoveSolver.
+
+    If ``solver`` is provided, it is reused instead of constructing a fresh
+    ``MoveSolver`` — callers that invoke this repeatedly with the same
+    ``arch_spec`` should cache a solver and pass it in.
+    """
     initial_native = {qid: loc._inner for qid, loc in enumerate(state_before.layout)}
     target_native = {qid: loc._inner for qid, loc in enumerate(state_after.layout)}
     blocked_native = [loc._inner for loc in state_before.occupied]
 
-    solver = MoveSolver.from_arch_spec(arch_spec._inner)
+    if solver is None:
+        solver = MoveSolver.from_arch_spec(arch_spec._inner)
     opts = _native.SolveOptions(
         strategy=_native.SearchStrategy.ENTROPY,
         max_movesets_per_group=3,
@@ -64,30 +71,33 @@ def _compute_move_layers(
         max_expansions=None,
         options=opts,
     )
-    assert result.status == "solved", "no solution found"
-    return _convert_move_layers(result.move_layers)
-
-
-# Public API
-compute_move_layers = _compute_move_layers
+    if result.status != "solved":
+        raise RuntimeError(f"move synthesis failed with status={result.status!r}")
+    return convert_move_layers(result.move_layers)
 
 
 def move_to_entangle(
     arch_spec: layout.ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
+    solver: MoveSolver | None = None,
 ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
     """Synthesize move layers from current layout to CZ entangling layout."""
-    return state_after, compute_move_layers(arch_spec, state_before, state_after)
+    return state_after, compute_move_layers(
+        arch_spec, state_before, state_after, solver=solver
+    )
 
 
 def move_to_left(
     arch_spec: layout.ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
+    solver: MoveSolver | None = None,
 ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
     """Synthesize move layers from CZ layout to post-CZ return layout."""
-    forward_layers = compute_move_layers(arch_spec, state_after, state_before)
+    forward_layers = compute_move_layers(
+        arch_spec, state_after, state_before, solver=solver
+    )
     reverse_layers = tuple(
         tuple(lane.reverse() for lane in move_lanes[::-1])
         for move_lanes in forward_layers[::-1]

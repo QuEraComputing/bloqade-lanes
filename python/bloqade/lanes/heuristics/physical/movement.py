@@ -48,7 +48,7 @@ _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
 _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
 
 
-def _convert_move_layers(
+def convert_move_layers(
     raw_layers: list[list[tuple[int, int, int, int, int, int]]],
 ) -> tuple[tuple[LaneAddress, ...], ...]:
     """Convert Rust solver move_layers to Python LaneAddress tuples."""
@@ -269,7 +269,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         if winning_result is None:
             return AtomState.bottom()
 
-        move_layers = _convert_move_layers(winning_result.move_layers)
+        move_layers = convert_move_layers(winning_result.move_layers)
 
         goal_map = {
             qid: LocationAddress(loc.word_id, loc.site_id, loc.zone_id)
