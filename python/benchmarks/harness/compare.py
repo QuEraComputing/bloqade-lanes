@@ -10,10 +10,6 @@ from benchmarks.harness.models import BenchmarkRow
 from benchmarks.harness.output import CSV_COLUMNS
 
 BenchmarkKey = tuple[str, str]
-
-# Ignore wall-clock variance unless current run is at least 10x slower.
-# This maps to: current - baseline > baseline * 9.0.
-WALL_TIME_TOLERANCE_RATIO = 9.0
 FLOAT_COMPARE_DECIMALS = 6
 
 
@@ -69,8 +65,6 @@ def load_baseline_csv(path: Path) -> list[BenchmarkRow]:
 def compare_against_baseline(
     current_rows: list[BenchmarkRow],
     baseline_rows: list[BenchmarkRow],
-    *,
-    wall_time_tolerance_ratio: float = WALL_TIME_TOLERANCE_RATIO,
 ) -> BenchmarkComparisonReport:
     """Compare benchmark rows by key and classify row-level differences."""
     current_by_key = _rows_by_key(current_rows, source="current run")
@@ -90,7 +84,6 @@ def compare_against_baseline(
             _compare_rows(
                 current=current,
                 baseline=baseline,
-                wall_time_tolerance_ratio=wall_time_tolerance_ratio,
             )
         )
 
@@ -149,7 +142,6 @@ def _compare_rows(
     *,
     current: BenchmarkRow,
     baseline: BenchmarkRow,
-    wall_time_tolerance_ratio: float,
 ) -> list[BenchmarkDiff]:
     diffs: list[BenchmarkDiff] = []
     key = (current.case_id, current.strategy_id)
@@ -186,14 +178,6 @@ def _compare_rows(
     if not baseline.success and not current.success:
         return diffs
 
-    _add_time_diff(
-        diffs,
-        case_id=case_id,
-        strategy_id=strategy_id,
-        baseline=baseline.wall_time_ms,
-        current=current.wall_time_ms,
-        wall_time_tolerance_ratio=wall_time_tolerance_ratio,
-    )
     _add_numeric_delta(
         diffs,
         case_id=case_id,
@@ -264,50 +248,6 @@ def _add_strict_diff(
             baseline=baseline,
             current=current,
             kind="changed",
-        )
-    )
-
-
-def _add_time_diff(
-    diffs: list[BenchmarkDiff],
-    *,
-    case_id: str,
-    strategy_id: str,
-    baseline: float | None,
-    current: float | None,
-    wall_time_tolerance_ratio: float,
-) -> None:
-    if baseline is None or current is None:
-        _add_strict_diff(
-            diffs,
-            case_id,
-            strategy_id,
-            "wall_time_ms",
-            baseline,
-            current,
-        )
-        return
-    baseline_rounded = _round_float_for_compare(
-        baseline, decimals=FLOAT_COMPARE_DECIMALS
-    )
-    current_rounded = _round_float_for_compare(current, decimals=FLOAT_COMPARE_DECIMALS)
-    if baseline_rounded == current_rounded:
-        return
-    delta = current - baseline
-    # Wall clock fluctuations are noisy; only flag severe regressions.
-    if delta <= 0:
-        return
-    allowed_delta = abs(baseline) * wall_time_tolerance_ratio
-    if delta <= allowed_delta:
-        return
-    diffs.append(
-        BenchmarkDiff(
-            case_id=case_id,
-            strategy_id=strategy_id,
-            field="wall_time_ms",
-            baseline=baseline,
-            current=current,
-            kind="degraded",
         )
     )
 

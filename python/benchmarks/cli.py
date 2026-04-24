@@ -8,7 +8,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from benchmarks.harness import (
-    WALL_TIME_TOLERANCE_RATIO,
     BenchmarkRunner,
     compare_against_baseline,
     default_strategy_configs,
@@ -74,7 +73,6 @@ def main() -> int:
         report = compare_against_baseline(
             rows,
             baseline_rows,
-            wall_time_tolerance_ratio=WALL_TIME_TOLERANCE_RATIO,
         )
         print()
         print(render_comparison_report(report))

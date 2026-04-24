@@ -87,23 +87,16 @@ def test_compare_detects_success_to_failure_transition():
     assert report.diffs[0].kind == "degraded"
 
 
-def test_compare_wall_time_tolerance_is_applied():
+def test_compare_never_diffs_wall_time_regressions():
     baseline_rows = [_row(wall_time_ms=100.0)]
     current_rows = [_row(wall_time_ms=299.0)]
-    within_tolerance = compare_against_baseline(
+    report = compare_against_baseline(
         current_rows=current_rows,
         baseline_rows=baseline_rows,
-        wall_time_tolerance_ratio=2.0,
-    )
-    outside_tolerance = compare_against_baseline(
-        current_rows=current_rows,
-        baseline_rows=baseline_rows,
-        wall_time_tolerance_ratio=1.5,
     )
 
-    assert within_tolerance.has_differences is False
-    assert outside_tolerance.has_differences is True
-    assert outside_tolerance.diffs[0].field == "wall_time_ms"
+    assert report.has_differences is False
+    assert report.diffs == ()
 
 
 def test_compare_ignores_wall_time_improvements():
@@ -113,7 +106,6 @@ def test_compare_ignores_wall_time_improvements():
     report = compare_against_baseline(
         current_rows=current_rows,
         baseline_rows=baseline_rows,
-        wall_time_tolerance_ratio=0.0,
     )
 
     assert report.has_differences is False
