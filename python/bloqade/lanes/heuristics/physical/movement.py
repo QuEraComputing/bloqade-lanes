@@ -16,7 +16,7 @@ from bloqade.lanes.analysis.placement import (
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode._native import EntropyTrace, MoveSolver
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
     TargetContext,
@@ -207,9 +207,10 @@ class RustPlacementTraversal:
         "cascade-entropy",
         "entropy",
     ] = "astar"
-    top_c: int = 3
     max_movesets_per_group: int = 3
+    max_goal_candidates: int = 3
     max_expansions: int | None = 300
+    collect_entropy_trace: bool = False
 
 
 @dataclass
@@ -230,6 +231,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     )
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _traced_rust_entropy_trace: EntropyTrace | None = field(
+        default=None, init=False, repr=False
+    )
     _resolved_target_generator: TargetGeneratorABC | None = field(
         default=None, init=False, repr=False
     )
@@ -407,6 +411,10 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         """Total Rust solver node expansions for this strategy instance."""
         return self._rust_nodes_expanded_total
 
+    @property
+    def traced_rust_entropy_trace(self) -> EntropyTrace | None:
+        return self._traced_rust_entropy_trace
+
     _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
     _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
 
@@ -427,14 +435,29 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             cz_stage_index=self._cz_counter,
         )
         candidates = self._build_candidates(ctx)
+        tree = ConfigurationTree.from_initial_placement(
+            self.arch_spec,
+            ctx.placement,
+            blocked_locations=state.occupied,
+        )
+        should_trace = (
+            self._trace_cz_index is None or self._cz_counter == self._trace_cz_index
+        )
+        if should_trace:
+            self._traced_tree = tree
+            self._traced_target = dict(candidates[0])
+            self._traced_rust_entropy_trace = None
 
         solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
         blocked_native = [loc._inner for loc in state.occupied]
         opts = _native.SolveOptions(
             strategy=_STRATEGY_MAP[self.traversal.strategy],
-            top_c=self.traversal.top_c,
             max_movesets_per_group=self.traversal.max_movesets_per_group,
+            max_goal_candidates=self.traversal.max_goal_candidates,
+            collect_entropy_trace=(
+                should_trace and self.traversal.collect_entropy_trace
+            ),
         )
 
         remaining = self.traversal.max_expansions
@@ -455,6 +478,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 remaining -= int(result.nodes_expanded)
             if result.status == "solved":
                 winning_result = result
+                if should_trace and self.traversal.collect_entropy_trace:
+                    self._traced_rust_entropy_trace = result.entropy_trace
                 break
 
         self._cz_counter += 1

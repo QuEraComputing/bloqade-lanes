@@ -11,6 +11,7 @@ use crate::astar::SearchResult;
 use crate::config::{Config, ConfigError};
 use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
+use crate::entropy::EntropyTrace;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
@@ -87,6 +88,8 @@ pub struct SolveResult {
     pub cost: f64,
     /// Number of deadlocks encountered during search.
     pub deadlocks: u32,
+    /// Optional entropy-search trace payload for visualization/debugging.
+    pub entropy_trace: Option<EntropyTrace>,
 }
 
 /// Grouping of search-tuning parameters for [`MoveSolver::solve`].
@@ -98,10 +101,10 @@ pub struct SolveResult {
 pub struct SolveOptions {
     /// Search strategy to use.
     pub strategy: Strategy,
-    /// Top bus options per qubit in the heuristic expander.
-    pub top_c: usize,
     /// Max movesets generated per bus group.
     pub max_movesets_per_group: usize,
+    /// Number of goal candidates to collect before stopping entropy search.
+    pub max_goal_candidates: usize,
     /// Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     pub weight: f64,
     /// Number of parallel restarts with perturbed scoring (1 = no restarts).
@@ -112,19 +115,22 @@ pub struct SolveOptions {
     pub deadlock_policy: DeadlockPolicy,
     /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
     pub w_t: f64,
+    /// Collect entropy-step trace payload when using entropy strategy.
+    pub collect_entropy_trace: bool,
 }
 
 impl Default for SolveOptions {
     fn default() -> Self {
         Self {
             strategy: Strategy::AStar,
-            top_c: 3,
             max_movesets_per_group: 3,
+            max_goal_candidates: 3,
             weight: 1.0,
             restarts: 1,
             lookahead: false,
             deadlock_policy: DeadlockPolicy::Skip,
             w_t: 0.05,
+            collect_entropy_trace: false,
         }
     }
 }
@@ -197,14 +203,19 @@ impl MoveSolver {
     ) -> Result<SolveResult, ConfigError> {
         let SolveOptions {
             strategy,
-            top_c,
             max_movesets_per_group,
+            max_goal_candidates,
             weight,
             restarts,
             lookahead,
             deadlock_policy,
             w_t,
+            collect_entropy_trace,
         } = *opts;
+        // Defensive normalization: Python validates these to be >= 1, but
+        // Rust callers can still construct SolveOptions directly.
+        let max_movesets_per_group = max_movesets_per_group.max(1);
+        let max_goal_candidates = max_goal_candidates.max(1);
 
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -241,7 +252,7 @@ impl MoveSolver {
 
         // Build a generator with the given seed and deadlock policy.
         let make_generator = |seed: u64, policy: DeadlockPolicy| {
-            HeuristicGenerator::new(top_c)
+            HeuristicGenerator::new()
                 .with_deadlock_policy(policy)
                 .with_lookahead(lookahead)
                 .with_seed(seed)
@@ -261,6 +272,7 @@ impl MoveSolver {
                         nodes_expanded: result.nodes_expanded,
                         cost,
                         deadlocks,
+                        entropy_trace: None,
                     }
                 }
                 None => {
@@ -277,6 +289,7 @@ impl MoveSolver {
                         nodes_expanded: result.nodes_expanded,
                         cost: 0.0,
                         deadlocks,
+                        entropy_trace: None,
                     }
                 }
             }
@@ -335,11 +348,16 @@ impl MoveSolver {
                 }
                 InnerStrategy::Entropy => {
                     let entropy_params = crate::entropy::EntropyParams {
-                        top_c,
                         max_movesets_per_group,
+                        max_goal_candidates,
                         lookahead,
                         w_t,
                         ..crate::entropy::EntropyParams::default()
+                    };
+                    let mut entropy_trace = if collect_entropy_trace {
+                        Some(EntropyTrace::default())
+                    } else {
+                        None
                     };
                     let result = crate::entropy::entropy_search(
                         root.clone(),
@@ -349,8 +367,11 @@ impl MoveSolver {
                         max_expansions,
                         None,
                         seed,
+                        entropy_trace.as_mut(),
                     );
-                    extract(result, 0, max_expansions)
+                    let mut solve = extract(result, 0, max_expansions);
+                    solve.entropy_trace = entropy_trace;
+                    solve
                 }
             }
         };
@@ -581,6 +602,7 @@ impl MoveSolver {
                     nodes_expanded: 0,
                     cost: 0.0,
                     deadlocks: 0,
+                    entropy_trace: None,
                 },
                 candidate_index: None,
                 total_expansions: 0,
@@ -650,6 +672,7 @@ impl MoveSolver {
                 nodes_expanded: 0,
                 cost: 0.0,
                 deadlocks: 0,
+                entropy_trace: None,
             }
         });
 
@@ -965,5 +988,32 @@ mod tests {
         let initial = vec![(0, loc(0, 0)), (1, loc(1, 0))];
         let candidates = solver.generate_candidates(&initial, &[0], &[1], &DefaultTargetGenerator);
         assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
+    fn entropy_strategy_can_collect_trace() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve(
+                [(0, loc(0, 0))],
+                [(0, loc(0, 5))],
+                std::iter::empty(),
+                Some(100),
+                &SolveOptions {
+                    strategy: Strategy::Entropy,
+                    w_t: 0.0,
+                    collect_entropy_trace: true,
+                    ..SolveOptions::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        let trace = result
+            .entropy_trace
+            .as_ref()
+            .expect("entropy trace should be populated");
+        assert_eq!(trace.root_node_id, 0);
+        assert!(!trace.steps.is_empty(), "trace should include step events");
     }
 }

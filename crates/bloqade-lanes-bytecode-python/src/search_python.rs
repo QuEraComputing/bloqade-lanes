@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
+use bloqade_lanes_search::entropy::{EntropyTrace, EntropyTraceStep};
 use bloqade_lanes_search::solve::{
     InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
 };
@@ -241,6 +242,17 @@ impl PySolveResult {
         self.inner.deadlocks
     }
 
+    /// Optional entropy trace (present when `collect_entropy_trace=True`).
+    #[getter]
+    fn entropy_trace(&self) -> Option<PyEntropyTrace> {
+        self.inner
+            .entropy_trace
+            .as_ref()
+            .map(|trace| PyEntropyTrace {
+                inner: trace.clone(),
+            })
+    }
+
     fn __repr__(&self) -> String {
         let status = match self.inner.status {
             SolveStatus::Solved => "solved",
@@ -254,6 +266,160 @@ impl PySolveResult {
             self.inner.cost,
             self.inner.nodes_expanded,
             self.inner.deadlocks,
+        )
+    }
+}
+
+// ── Entropy trace ──
+
+/// Entropy-search trace, recorded when `SolveOptions.collect_entropy_trace=True`.
+#[pyclass(
+    name = "EntropyTrace",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyEntropyTrace {
+    inner: EntropyTrace,
+}
+
+#[pymethods]
+impl PyEntropyTrace {
+    #[getter]
+    fn root_node_id(&self) -> u32 {
+        self.inner.root_node_id
+    }
+
+    #[getter]
+    fn best_buffer_size(&self) -> u32 {
+        self.inner.best_buffer_size
+    }
+
+    #[getter]
+    fn steps(&self) -> Vec<PyEntropyTraceStep> {
+        self.inner
+            .steps
+            .iter()
+            .map(|s| PyEntropyTraceStep { inner: s.clone() })
+            .collect()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.steps.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EntropyTrace(root_node_id={}, best_buffer_size={}, steps={})",
+            self.inner.root_node_id,
+            self.inner.best_buffer_size,
+            self.inner.steps.len(),
+        )
+    }
+}
+
+/// One step in an entropy-search trace.
+#[pyclass(
+    name = "EntropyTraceStep",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyEntropyTraceStep {
+    inner: EntropyTraceStep,
+}
+
+#[pymethods]
+impl PyEntropyTraceStep {
+    #[getter]
+    fn event(&self) -> String {
+        self.inner.event.clone()
+    }
+
+    #[getter]
+    fn node_id(&self) -> u32 {
+        self.inner.node_id
+    }
+
+    #[getter]
+    fn parent_node_id(&self) -> Option<u32> {
+        self.inner.parent_node_id
+    }
+
+    #[getter]
+    fn depth(&self) -> u32 {
+        self.inner.depth
+    }
+
+    #[getter]
+    fn entropy(&self) -> u32 {
+        self.inner.entropy
+    }
+
+    #[getter]
+    fn unresolved_count(&self) -> u32 {
+        self.inner.unresolved_count
+    }
+
+    #[getter]
+    #[allow(clippy::type_complexity)]
+    fn moveset(&self) -> Option<Vec<(u8, u8, u32, u32, u32, u32)>> {
+        self.inner.moveset.clone()
+    }
+
+    #[getter]
+    #[allow(clippy::type_complexity)]
+    fn candidate_movesets(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+        self.inner.candidate_movesets.clone()
+    }
+
+    #[getter]
+    fn candidate_index(&self) -> Option<u32> {
+        self.inner.candidate_index
+    }
+
+    #[getter]
+    fn reason(&self) -> Option<String> {
+        self.inner.reason.clone()
+    }
+
+    #[getter]
+    fn state_seen_node_id(&self) -> Option<u32> {
+        self.inner.state_seen_node_id
+    }
+
+    #[getter]
+    fn no_valid_moves_qubit(&self) -> Option<u32> {
+        self.inner.no_valid_moves_qubit
+    }
+
+    #[getter]
+    fn trigger_node_id(&self) -> Option<u32> {
+        self.inner.trigger_node_id
+    }
+
+    #[getter]
+    fn configuration(&self) -> Vec<(u32, u32, u32, u32)> {
+        self.inner.configuration.clone()
+    }
+
+    #[getter]
+    fn parent_configuration(&self) -> Option<Vec<(u32, u32, u32, u32)>> {
+        self.inner.parent_configuration.clone()
+    }
+
+    #[getter]
+    fn moveset_score(&self) -> Option<f64> {
+        self.inner.moveset_score
+    }
+
+    #[getter]
+    fn best_buffer_node_ids(&self) -> Vec<u32> {
+        self.inner.best_buffer_node_ids.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EntropyTraceStep(event='{}', node_id={}, depth={}, entropy={})",
+            self.inner.event, self.inner.node_id, self.inner.depth, self.inner.entropy,
         )
     }
 }
@@ -449,17 +615,28 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, top_c=3, max_movesets_per_group=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false))]
     fn new(
         strategy: PySearchStrategy,
-        top_c: usize,
         max_movesets_per_group: usize,
+        max_goal_candidates: usize,
         weight: f64,
         restarts: u32,
         lookahead: bool,
         deadlock_policy: PyDeadlockPolicy,
         w_t: f64,
+        collect_entropy_trace: bool,
     ) -> PyResult<Self> {
+        if max_movesets_per_group == 0 {
+            return Err(PyValueError::new_err(
+                "max_movesets_per_group must be an integer >= 1",
+            ));
+        }
+        if max_goal_candidates == 0 {
+            return Err(PyValueError::new_err(
+                "max_goal_candidates must be an integer >= 1",
+            ));
+        }
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
                 "weight must be a finite float greater than 0.0",
@@ -473,13 +650,14 @@ impl PySolveOptions {
         Ok(Self {
             inner: SolveOptions {
                 strategy: strategy.to_rs(),
-                top_c,
                 max_movesets_per_group,
+                max_goal_candidates,
                 weight,
                 restarts,
                 lookahead,
                 deadlock_policy: deadlock_policy.to_rs(),
                 w_t,
+                collect_entropy_trace,
             },
         })
     }
@@ -490,13 +668,13 @@ impl PySolveOptions {
     }
 
     #[getter]
-    fn top_c(&self) -> usize {
-        self.inner.top_c
+    fn max_movesets_per_group(&self) -> usize {
+        self.inner.max_movesets_per_group
     }
 
     #[getter]
-    fn max_movesets_per_group(&self) -> usize {
-        self.inner.max_movesets_per_group
+    fn max_goal_candidates(&self) -> usize {
+        self.inner.max_goal_candidates
     }
 
     #[getter]
@@ -524,11 +702,15 @@ impl PySolveOptions {
         self.inner.w_t
     }
 
+    #[getter]
+    fn collect_entropy_trace(&self) -> bool {
+        self.inner.collect_entropy_trace
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, top_c={}, weight={}, restarts={}, deadlock_policy={})",
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={})",
             self.strategy().name(),
-            self.inner.top_c,
             self.inner.weight,
             self.inner.restarts,
             self.deadlock_policy().name(),

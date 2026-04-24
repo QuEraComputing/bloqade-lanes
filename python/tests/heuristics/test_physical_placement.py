@@ -156,7 +156,6 @@ def test_rust_traversal_default_params():
     # deadlock_policy, w_t once they are threaded through to RustPlacementTraversal.
     t = RustPlacementTraversal()
     assert t.strategy == "astar"
-    assert t.top_c == 3
     assert t.max_movesets_per_group == 3
     assert t.max_expansions == 300
 

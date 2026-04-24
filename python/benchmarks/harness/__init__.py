@@ -1,7 +1,6 @@
 """Public benchmark harness helpers."""
 
 from benchmarks.harness.compare import (
-    WALL_TIME_TOLERANCE_RATIO,
     BenchmarkComparisonReport,
     BenchmarkDiff,
     compare_against_baseline,
@@ -22,7 +21,6 @@ __all__ = [
     "BenchmarkComparisonReport",
     "BenchmarkDiff",
     "CSV_COLUMNS",
-    "WALL_TIME_TOLERANCE_RATIO",
     "compare_against_baseline",
     "default_strategy_configs",
     "load_baseline_csv",

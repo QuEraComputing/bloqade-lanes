@@ -68,7 +68,7 @@ fn cmp_candidates(a: &(i32, MoveSet, Config), b: &(i32, MoveSet, Config)) -> Ord
 ///
 /// For each node:
 /// 1. Score each (qubit, bus, direction) by distance improvement (O(1) lookup).
-/// 2. Per qubit: keep top C bus options.
+/// 2. Keep all positive-scoring bus options (or one fallback if none are positive).
 /// 3. Group by bus triplet.
 /// 4. Per group: generate multiple movesets by varying the lead qubit.
 /// 5. Sort by total distance improvement.
@@ -76,13 +76,11 @@ fn cmp_candidates(a: &(i32, MoveSet, Config), b: &(i32, MoveSet, Config)) -> Ord
 /// Typically produces 5-15 candidates per expansion, vs hundreds from
 /// the exhaustive generator.
 ///
-/// Configuration fields (`top_c`, `deadlock_policy`, `lookahead`, `seed`) are
+/// Configuration fields (`deadlock_policy`, `lookahead`, `seed`) are
 /// stored on the struct. Problem-specific data (`index`, `blocked`, `targets`,
 /// `dist_table`) come from [`SearchContext`] passed to [`MoveGenerator::generate`].
 #[derive(Debug)]
 pub struct HeuristicGenerator {
-    /// Top bus options to keep per qubit.
-    top_c: usize,
     /// Policy for deadlock escape.
     deadlock_policy: DeadlockPolicy,
     /// Enable 2-step lookahead scoring.
@@ -94,10 +92,9 @@ pub struct HeuristicGenerator {
 }
 
 impl HeuristicGenerator {
-    /// Create a new generator with the given top-C parameter.
-    pub fn new(top_c: usize) -> Self {
+    /// Create a new heuristic generator.
+    pub fn new() -> Self {
         Self {
-            top_c,
             deadlock_policy: DeadlockPolicy::AllMoves,
             lookahead: false,
             seed: 0,
@@ -311,7 +308,7 @@ impl MoveGenerator for HeuristicGenerator {
             }
         }
 
-        // Step 3: per qubit, keep top C triples.
+        // Step 3: retain all scored triples.
         let mut per_qubit: BTreeMap<u32, Vec<(TripletKey, ScoredTriple)>> = BTreeMap::new();
         for entry in all_scores {
             per_qubit.entry(entry.1.qubit_id).or_default().push(entry);
@@ -322,7 +319,6 @@ impl MoveGenerator for HeuristicGenerator {
 
         for entries in per_qubit.values_mut() {
             entries.sort_by(cmp_scored_triples);
-            entries.truncate(self.top_c);
             for e in entries.iter() {
                 if e.1.score > 0 {
                     has_positive = true;
@@ -499,7 +495,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
         // Heuristic generator path.
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -529,7 +525,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -551,7 +547,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked: HashSet<u64> = [loc(0, 5).encode()].into_iter().collect();
@@ -573,7 +569,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -600,7 +596,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -619,7 +615,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 5))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -637,7 +633,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 5))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         // Block site 0 (the target) so no move reaches it.
@@ -666,7 +662,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
 
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
@@ -710,7 +706,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
 
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
@@ -746,7 +742,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -776,7 +772,7 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
 
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
@@ -816,7 +812,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3).with_deadlock_policy(DeadlockPolicy::Skip);
+        let generator = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::Skip);
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -845,7 +841,7 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
 
         let generator =
-            HeuristicGenerator::new(3).with_deadlock_policy(DeadlockPolicy::MoveBlockers);
+            HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::MoveBlockers);
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -866,7 +862,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 5))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3);
+        let generator = HeuristicGenerator::new();
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -892,7 +888,7 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
 
-        let generator = HeuristicGenerator::new(3).with_lookahead(true);
+        let generator = HeuristicGenerator::new().with_lookahead(true);
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
         let blocked = HashSet::new();
@@ -922,8 +918,8 @@ mod tests {
         let h = HopDistanceHeuristic::new(targets.clone(), &table);
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
-        let generator_no_la = HeuristicGenerator::new(3);
-        let generator_la = HeuristicGenerator::new(3).with_lookahead(true);
+        let generator_no_la = HeuristicGenerator::new();
+        let generator_la = HeuristicGenerator::new().with_lookahead(true);
 
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
@@ -1039,8 +1035,8 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
 
-        let generator1 = HeuristicGenerator::new(3).with_seed(42);
-        let generator2 = HeuristicGenerator::new(3).with_seed(123);
+        let generator1 = HeuristicGenerator::new().with_seed(42);
+        let generator2 = HeuristicGenerator::new().with_seed(123);
 
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
@@ -1078,8 +1074,8 @@ mod tests {
         let table = make_table(&targets, &index);
         let config = Config::new([(0, loc(0, 0))]).unwrap();
 
-        let generator1 = HeuristicGenerator::new(3).with_seed(0);
-        let generator2 = HeuristicGenerator::new(3).with_seed(0);
+        let generator1 = HeuristicGenerator::new().with_seed(0);
+        let generator2 = HeuristicGenerator::new().with_seed(0);
 
         let target_encoded: Vec<(u32, u64)> =
             targets.iter().map(|&(q, l)| (q, l.encode())).collect();
