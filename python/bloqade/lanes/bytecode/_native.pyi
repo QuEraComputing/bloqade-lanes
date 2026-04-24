@@ -1,6 +1,6 @@
 """Type stubs for the _native PyO3 extension module."""
 
-from typing import Literal, Optional, final
+from typing import Optional, final
 
 from bloqade.lanes.bytecode.exceptions import (
     LaneGroupError,
@@ -905,6 +905,73 @@ class ArchSpec:
 # ── Move Solver ──
 
 @final
+class SearchStrategy:
+    """Search strategy for the move solver."""
+
+    ASTAR: SearchStrategy
+    DFS: SearchStrategy
+    BFS: SearchStrategy
+    GREEDY: SearchStrategy
+    IDS: SearchStrategy
+    CASCADE_IDS: SearchStrategy
+    CASCADE_DFS: SearchStrategy
+    CASCADE_ENTROPY: SearchStrategy
+    ENTROPY: SearchStrategy
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __int__(self) -> int: ...
+
+@final
+class DeadlockPolicy:
+    """Deadlock handling policy for the move solver."""
+
+    SKIP: DeadlockPolicy
+    MOVE_BLOCKERS: DeadlockPolicy
+    ALL_MOVES: DeadlockPolicy
+
+    @property
+    def name(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __int__(self) -> int: ...
+
+@final
+class SolveOptions:
+    """Search-tuning parameters for MoveSolver."""
+
+    def __init__(
+        self,
+        strategy: SearchStrategy = SearchStrategy.ASTAR,
+        top_c: int = 3,
+        max_movesets_per_group: int = 3,
+        weight: float = 1.0,
+        restarts: int = 1,
+        lookahead: bool = False,
+        deadlock_policy: DeadlockPolicy = DeadlockPolicy.SKIP,
+        w_t: float = 0.05,
+    ) -> None: ...
+    @property
+    def strategy(self) -> SearchStrategy: ...
+    @property
+    def top_c(self) -> int: ...
+    @property
+    def max_movesets_per_group(self) -> int: ...
+    @property
+    def weight(self) -> float: ...
+    @property
+    def restarts(self) -> int: ...
+    @property
+    def lookahead(self) -> bool: ...
+    @property
+    def deadlock_policy(self) -> DeadlockPolicy: ...
+    @property
+    def w_t(self) -> float: ...
+    def __repr__(self) -> str: ...
+
+@final
 class SolveResult:
     """Result of a move synthesis solve.
 
@@ -926,8 +993,8 @@ class SolveResult:
         ...
 
     @property
-    def goal_config(self) -> list[tuple[int, int, int, int]]:
-        """Goal configuration as (qubit_id, zone_id, word_id, site_id) tuples.
+    def goal_config(self) -> dict[int, LocationAddress]:
+        """Goal configuration as qubit_id -> LocationAddress mapping.
 
         Equals the initial configuration when ``status`` is not ``"solved"``.
         """
@@ -967,49 +1034,121 @@ class MoveSolver:
 
     def solve(
         self,
-        initial: list[tuple[int, int, int, int]],
-        target: list[tuple[int, int, int, int]],
-        blocked: list[tuple[int, int, int]],
+        initial: dict[int, LocationAddress],
+        target: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
         max_expansions: Optional[int] = None,
-        strategy: Literal[
-            "astar",
-            "dfs",
-            "bfs",
-            "greedy",
-            "ids",
-            "cascade",
-            "cascade-ids",
-            "cascade-dfs",
-            "cascade-entropy",
-            "entropy",
-        ] = "astar",
-        top_c: int = 3,
-        max_movesets_per_group: int = 3,
-        weight: float = 1.0,
-        restarts: int = 1,
-        lookahead: bool = False,
-        deadlock_policy: Literal["skip", "move_blockers"] = "skip",
-        w_t: float = 0.05,
+        options: SolveOptions | None = None,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
         Args:
-            initial: List of (qubit_id, zone_id, word_id, site_id) starting positions.
-            target: List of (qubit_id, zone_id, word_id, site_id) desired positions.
-            blocked: List of (zone_id, word_id, site_id) immovable obstacle locations.
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            target: Mapping of qubit_id to LocationAddress for desired positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
-            strategy: Search strategy string.
-            top_c: Top bus options per qubit in the heuristic expander.
-            max_movesets_per_group: Max movesets per bus group.
-            weight: Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
-            restarts: Number of parallel restarts with perturbed scoring (1 = no restarts).
-            lookahead: Enable 2-step lookahead scoring.
-            deadlock_policy: Deadlock handling: "skip" or "move_blockers".
-            w_t: Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
+            options: Search-tuning parameters. Defaults to SolveOptions().
 
         Returns:
             SolveResult with status indicating outcome.
         """
+        ...
+
+    def solve_with_generator(
+        self,
+        initial: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        generator: DefaultTargetGenerator | None = None,
+        max_expansions: Optional[int] = None,
+        options: SolveOptions | None = None,
+    ) -> MultiSolveResult:
+        """Solve using a target generator with shared expansion budget.
+
+        Args:
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
+            controls: Control qubit IDs for the CZ gate layer.
+            targets: Target qubit IDs for the CZ gate layer.
+            generator: Rust-side target generator (currently must be None).
+            max_expansions: Total expansion budget across all candidates.
+            options: Search-tuning parameters. Defaults to SolveOptions().
+
+        Returns:
+            MultiSolveResult with per-candidate debug info.
+        """
+        ...
+
+    def generate_candidates(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        generator: DefaultTargetGenerator | None = None,
+    ) -> list[dict[int, LocationAddress]]:
+        """Generate and validate candidate targets without solving.
+
+        Returns only validated candidates as qubit_id -> LocationAddress mappings.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class DefaultTargetGenerator:
+    """Default target generator: moves control qubits to CZ blockade partners."""
+
+    def __init__(self) -> None: ...
+    def __repr__(self) -> str: ...
+
+@final
+class MultiSolveResult:
+    """Result of a multi-candidate solve via ``MoveSolver.solve_with_generator()``."""
+
+    @property
+    def status(self) -> str:
+        """Status of the winning solve."""
+        ...
+
+    @property
+    def candidate_index(self) -> int | None:
+        """Index of the winning candidate, or None if all failed."""
+        ...
+
+    @property
+    def total_expansions(self) -> int:
+        """Total nodes expanded across all candidates."""
+        ...
+
+    @property
+    def candidates_tried(self) -> int:
+        """Number of candidates attempted."""
+        ...
+
+    @property
+    def attempts(self) -> list[dict[str, object]]:
+        """Per-candidate attempt details."""
+        ...
+
+    @property
+    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+        """Move layers from the winning candidate."""
+        ...
+
+    @property
+    def goal_config(self) -> dict[int, LocationAddress]:
+        """Goal configuration from the winning candidate."""
+        ...
+
+    @property
+    def cost(self) -> float:
+        """Path cost from the winning candidate."""
+        ...
+
+    @property
+    def deadlocks(self) -> int:
+        """Deadlocks from the winning candidate."""
         ...
 
     def __repr__(self) -> str: ...
