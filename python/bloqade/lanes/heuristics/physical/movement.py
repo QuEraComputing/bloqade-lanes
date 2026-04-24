@@ -113,6 +113,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _traced_rust_entropy_trace: EntropyTrace | None = field(
         default=None, init=False, repr=False
     )
+    _traced_target: dict[int, LocationAddress] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _resolved_target_generator: TargetGeneratorABC | None = field(
         default=None, init=False, repr=False
     )
@@ -200,6 +203,10 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     def traced_rust_entropy_trace(self) -> EntropyTrace | None:
         return self._traced_rust_entropy_trace
 
+    @property
+    def traced_target(self) -> dict[int, LocationAddress]:
+        return dict(self._traced_target)
+
     def _cz_placements_rust(
         self,
         state: ConcreteState,
@@ -220,7 +227,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             self._trace_cz_index is None or self._cz_counter == self._trace_cz_index
         )
         if should_trace:
-            self._traced_rust_trace_json = None
+            self._traced_target = dict(candidates[0])
+            self._traced_rust_entropy_trace = None
 
         solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
