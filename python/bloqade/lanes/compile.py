@@ -1,4 +1,5 @@
 import io
+from collections.abc import Sequence
 
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
@@ -8,6 +9,7 @@ from bloqade.lanes import visualize
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
+from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
@@ -21,6 +23,7 @@ from bloqade.lanes.upstream import squin_to_move
 __all__ = [
     "compile_squin_to_move",
     "compile_squin_to_move_and_visualize",
+    "compile_squin_to_move_best",
     "compile_to_physical_squin_noise_model",
     "compile_to_stim_program",
 ]
@@ -49,6 +52,59 @@ def compile_squin_to_move(
         insert_return_moves=insert_return_moves,
         no_raise=no_raise,
     )
+
+
+def _count_move_events(mt: ir.Method) -> int:
+    """Count move.Move statements in a compiled move-dialect method.
+
+    One move.Move statement corresponds to one AOD shot; the total is the
+    comparison metric used by :func:`compile_squin_to_move_best`.
+    """
+    return sum(1 for stmt in mt.callable_region.walk() if isinstance(stmt, move.Move))
+
+
+def compile_squin_to_move_best(
+    mt: ir.Method,
+    strategies: Sequence[tuple[str, PlacementStrategyABC]],
+    no_raise: bool = True,
+    layout_heuristic: LayoutHeuristicABC | None = None,
+    insert_return_moves: bool = True,
+) -> tuple[ir.Method, str]:
+    """Compile with each ``(label, strategy)`` and return the one producing
+    the fewest :class:`move.Move` events.
+
+    Ties are resolved by earliest-in-list (caller-controlled preference).
+    The returned ``label`` names the winning strategy.
+
+    The three intra-stage heuristics
+    (:class:`DefaultTargetGenerator`,
+    :class:`CongestionAwareTargetGenerator`,
+    :class:`AODClusterTargetGenerator`) each win on different circuit
+    shapes. Racing all three and keeping the best covers the per-circuit
+    variation without designing a meta-heuristic.
+    """
+    if not strategies:
+        raise ValueError("compile_squin_to_move_best requires at least one strategy")
+
+    best_mt: ir.Method | None = None
+    best_events = -1
+    best_label = ""
+    for label, strategy in strategies:
+        compiled = compile_squin_to_move(
+            mt,
+            no_raise=no_raise,
+            layout_heuristic=layout_heuristic,
+            placement_strategy=strategy,
+            insert_return_moves=insert_return_moves,
+        )
+        events = _count_move_events(compiled)
+        # strict-less keeps the earliest on ties.
+        if best_mt is None or events < best_events:
+            best_mt = compiled
+            best_events = events
+            best_label = label
+    assert best_mt is not None
+    return best_mt, best_label
 
 
 def compile_squin_to_move_and_visualize(

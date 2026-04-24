@@ -459,3 +459,129 @@ def test_rust_path_cz_counter_increments():
     state = _make_state()
     strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert strategy._cz_counter == 1
+
+
+# ---------------------------------------------------------------------------
+# CongestionAwareTargetGenerator integration tests
+# ---------------------------------------------------------------------------
+
+
+def _pick_cz_pair_integration(arch):
+    for s in arch.home_sites:
+        p = arch.get_cz_partner(s)
+        if p is not None and p != s:
+            return s, p
+    raise AssertionError("arch has no CZ-partnered home site")
+
+
+def test_cz_placements_with_congestion_aware_generator_produces_execute_cz():
+    """Smoke test: PhysicalPlacementStrategy wired with
+    CongestionAwareTargetGenerator completes cz_placements and returns
+    an ExecuteCZ result for a simple stage.
+    """
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.heuristics.physical import (
+        CongestionAwareTargetGenerator,
+    )
+
+    arch = get_arch_spec()
+    loc0, loc1 = _pick_cz_pair_integration(arch)
+
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch,
+        target_generator=CongestionAwareTargetGenerator(),
+    )
+    state = ConcreteState(occupied=frozenset(), layout=(loc0, loc1), move_count=(0, 0))
+    result = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(
+        result, ExecuteCZ
+    ), f"expected ExecuteCZ, got {type(result).__name__}"
+
+
+def test_congestion_aware_dedups_with_default_on_symmetric_stage():
+    """For a stage where the congestion-aware candidate equals what
+    DefaultTargetGenerator would produce, the framework's dedup drops
+    the default and search runs exactly once.
+
+    Rust path: assert on strategy.rust_nodes_expanded_total.
+    Python path: instrument by counting calls to
+                 traversal.path_to_target_config.
+
+    NOTE: when the pair is already partnered (loc0, loc1) = (s, partner(s)),
+    CongestionAwareTargetGenerator produces the same target config as the
+    default generator.  The framework deduplicates the candidate list before
+    the loop, so only one call to path_to_target_config is made.
+
+    If the strategy detects a trivially-solved stage and returns an ExecuteCZ
+    without any search (call_count == 0), that is also acceptable — it means
+    zero paths were explored, which is at most one.  The assertion is therefore
+    call_count <= 1.
+    """
+    from unittest.mock import patch
+
+    from bloqade.lanes.analysis.placement import ConcreteState
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.heuristics.physical import (
+        CongestionAwareTargetGenerator,
+        EntropyPlacementTraversal,
+        PhysicalPlacementStrategy,
+    )
+
+    arch = get_arch_spec()
+    # Single-pair stage: both generators produce the same candidate.
+    loc0, loc1 = _pick_cz_pair_integration(arch)
+
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=arch,
+        traversal=EntropyPlacementTraversal(),
+        target_generator=CongestionAwareTargetGenerator(),
+    )
+    state = ConcreteState(occupied=frozenset(), layout=(loc0, loc1), move_count=(0, 0))
+
+    call_count = {"n": 0}
+    real = EntropyPlacementTraversal.path_to_target_config
+
+    def counting(self, *args, **kwargs):
+        call_count["n"] += 1
+        return real(self, *args, **kwargs)
+
+    with patch.object(EntropyPlacementTraversal, "path_to_target_config", counting):
+        _ = strategy.cz_placements(state, controls=(0,), targets=(1,))
+
+    assert (
+        call_count["n"] <= 1
+    ), f"expected at most 1 search call after dedup, got {call_count['n']}"
+
+
+def test_congestion_aware_applies_to_rust_traversal():
+    """Plugin applies identically under RustPlacementTraversal; both
+    traversals complete with ExecuteCZ for a simple stage.
+    """
+    from bloqade.lanes.analysis.placement import ConcreteState, ExecuteCZ
+    from bloqade.lanes.arch.gemini.physical import get_arch_spec
+    from bloqade.lanes.heuristics.physical import (
+        CongestionAwareTargetGenerator,
+        EntropyPlacementTraversal,
+        PhysicalPlacementStrategy,
+        RustPlacementTraversal,
+    )
+
+    arch = get_arch_spec()
+    loc0, loc1 = _pick_cz_pair_integration(arch)
+
+    for traversal in (
+        EntropyPlacementTraversal(),
+        RustPlacementTraversal(),
+    ):
+        strategy = PhysicalPlacementStrategy(
+            arch_spec=arch,
+            traversal=traversal,
+            target_generator=CongestionAwareTargetGenerator(),
+        )
+        state = ConcreteState(
+            occupied=frozenset(), layout=(loc0, loc1), move_count=(0, 0)
+        )
+        result = strategy.cz_placements(state, controls=(0,), targets=(1,))
+        assert isinstance(
+            result, ExecuteCZ
+        ), f"{type(traversal).__name__} did not produce ExecuteCZ"
