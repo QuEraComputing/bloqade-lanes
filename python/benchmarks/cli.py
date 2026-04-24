@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,6 +21,10 @@ from benchmarks.harness import (
 from benchmarks.harness.models import BenchmarkJob
 from benchmarks.kernels import select_benchmark_cases
 
+from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
+from bloqade.lanes.layout.arch import ArchSpec
+
 MAX_LOGICAL_QUBITS = 10
 
 
@@ -35,7 +40,19 @@ def main() -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    strategies = default_strategy_configs()
+    try:
+        arch_spec_pairs = _resolve_arch_specs(args.arch_spec)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    strategies = tuple(
+        cfg
+        for (arch_id, arch) in arch_spec_pairs
+        for cfg in default_strategy_configs(
+            arch_spec_factory=(lambda arch=arch: arch),
+            arch_spec_id=arch_id,
+        )
+    )
     jobs = expand_benchmark_jobs(
         cases,
         strategies,
@@ -144,6 +161,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "When provided, any difference from baseline returns non-zero."
         ),
     )
+    parser.add_argument(
+        "--arch-spec",
+        nargs="+",
+        default=None,
+        help=(
+            "Path(s) to archspec JSON file(s). When omitted, uses the built-in "
+            "physical archspec (id='builtin'). Each file's filename stem is used "
+            "as its id in output rows; stem collisions across paths are an error."
+        ),
+    )
     return parser
 
 
@@ -213,6 +240,48 @@ def _infer_case_qubit_count(case_id: str) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+def _resolve_arch_specs(
+    paths: list[str] | None,
+) -> list[tuple[str, ArchSpec]]:
+    """Resolve --arch-spec paths into (id, ArchSpec) pairs.
+
+    Returns a single ("builtin", built-in archspec) pair when paths is None
+    or empty. Each path's identifier is its filename stem. Paths are loaded
+    eagerly; schema errors and stem collisions surface before any benchmark
+    runs.
+    """
+    if not paths:
+        return [("builtin", physical.get_arch_spec())]
+
+    stems = [Path(p).stem for p in paths]
+    counts = Counter(stems)
+    duplicates = sorted({stem for stem, n in counts.items() if n > 1})
+    if duplicates:
+        colliding = [
+            path for path, stem in zip(paths, stems, strict=True) if stem in duplicates
+        ]
+        raise ValueError(
+            "duplicate --arch-spec filename stem across paths: "
+            f"{sorted(set(colliding))}"
+        )
+
+    resolved: list[tuple[str, ArchSpec]] = []
+    for path_str, stem in zip(paths, stems, strict=True):
+        path = Path(path_str)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"Cannot read --arch-spec file '{path}': {exc}") from exc
+        try:
+            rust_spec = _RustArchSpec.from_json(text)
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse --arch-spec file '{path}': {exc}"
+            ) from exc
+        resolved.append((stem, ArchSpec(rust_spec)))
+    return resolved
 
 
 if __name__ == "__main__":

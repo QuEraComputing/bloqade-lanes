@@ -9,7 +9,7 @@ from pathlib import Path
 from benchmarks.harness.models import BenchmarkRow
 from benchmarks.harness.output import CSV_COLUMNS
 
-BenchmarkKey = tuple[str, str]
+BenchmarkKey = tuple[str, str, str]
 FLOAT_COMPARE_DECIMALS = 6
 
 
@@ -19,6 +19,7 @@ class BenchmarkDiff:
 
     case_id: str
     strategy_id: str
+    arch_spec_id: str
     field: str
     baseline: object
     current: object
@@ -26,7 +27,7 @@ class BenchmarkDiff:
 
     @property
     def key(self) -> BenchmarkKey:
-        return (self.case_id, self.strategy_id)
+        return (self.case_id, self.strategy_id, self.arch_spec_id)
 
 
 @dataclass(frozen=True)
@@ -52,14 +53,19 @@ def load_baseline_csv(path: Path) -> list[BenchmarkRow]:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None:
             raise ValueError(f"Baseline CSV '{path}' is missing a header row.")
-        if tuple(reader.fieldnames) != CSV_COLUMNS:
-            expected = ", ".join(CSV_COLUMNS)
-            actual = ", ".join(reader.fieldnames)
-            raise ValueError(
-                f"Baseline CSV '{path}' has unexpected columns. "
-                f"Expected: {expected}. Found: {actual}."
-            )
-        return [_parse_row(row) for row in reader]
+        fieldnames = tuple(reader.fieldnames)
+        legacy_columns = tuple(c for c in CSV_COLUMNS if c != "arch_spec_id")
+        if fieldnames == CSV_COLUMNS:
+            return [_parse_row(row) for row in reader]
+        if fieldnames == legacy_columns:
+            # Baselines produced before arch_spec_id existed map to "builtin".
+            return [_parse_row({**row, "arch_spec_id": "builtin"}) for row in reader]
+        expected = ", ".join(CSV_COLUMNS)
+        actual = ", ".join(reader.fieldnames)
+        raise ValueError(
+            f"Baseline CSV '{path}' has unexpected columns. "
+            f"Expected: {expected}. Found: {actual}."
+        )
 
 
 def compare_against_baseline(
@@ -99,12 +105,14 @@ def render_comparison_report(report: BenchmarkComparisonReport) -> str:
     lines: list[str] = ["comparison results"]
     if report.missing_from_baseline:
         lines.append("matrix mismatch: rows missing from baseline")
-        for case_id, strategy_id in report.missing_from_baseline:
-            lines.append(f"  ! {case_id}/{strategy_id} only in current run")
+        for case_id, strategy_id, arch_spec_id in report.missing_from_baseline:
+            lines.append(
+                f"  ! {case_id}/{strategy_id}/{arch_spec_id} only in current run"
+            )
     if report.missing_from_current:
         lines.append("matrix mismatch: rows missing from current run")
-        for case_id, strategy_id in report.missing_from_current:
-            lines.append(f"  ! {case_id}/{strategy_id} only in baseline")
+        for case_id, strategy_id, arch_spec_id in report.missing_from_current:
+            lines.append(f"  ! {case_id}/{strategy_id}/{arch_spec_id} only in baseline")
 
     if report.diffs:
         lines.append("row differences")
@@ -113,7 +121,8 @@ def render_comparison_report(report: BenchmarkComparisonReport) -> str:
                 diff.kind, "!"
             )
             lines.append(
-                f"  {marker} {diff.case_id}/{diff.strategy_id} {diff.field}: "
+                f"  {marker} {diff.case_id}/{diff.strategy_id}/{diff.arch_spec_id} "
+                f"{diff.field}: "
                 f"baseline={diff.baseline!r} current={diff.current!r} ({diff.kind})"
             )
 
@@ -127,12 +136,12 @@ def _rows_by_key(
 ) -> dict[BenchmarkKey, BenchmarkRow]:
     indexed: dict[BenchmarkKey, BenchmarkRow] = {}
     for row in rows:
-        key = (row.case_id, row.strategy_id)
+        key = (row.case_id, row.strategy_id, row.arch_spec_id)
         if key in indexed:
-            case_id, strategy_id = key
+            case_id, strategy_id, arch_spec_id = key
             raise ValueError(
-                f"Duplicate row for case_id='{case_id}', strategy_id='{strategy_id}' "
-                f"in {source}."
+                f"Duplicate row for case_id='{case_id}', strategy_id='{strategy_id}', "
+                f"arch_spec_id='{arch_spec_id}' in {source}."
             )
         indexed[key] = row
     return indexed
@@ -144,16 +153,24 @@ def _compare_rows(
     baseline: BenchmarkRow,
 ) -> list[BenchmarkDiff]:
     diffs: list[BenchmarkDiff] = []
-    key = (current.case_id, current.strategy_id)
-    case_id, strategy_id = key
+    case_id = current.case_id
+    strategy_id = current.strategy_id
+    arch_spec_id = current.arch_spec_id
 
     _add_strict_diff(
-        diffs, case_id, strategy_id, "backend", baseline.backend, current.backend
+        diffs,
+        case_id,
+        strategy_id,
+        arch_spec_id,
+        "backend",
+        baseline.backend,
+        current.backend,
     )
     _add_strict_diff(
         diffs,
         case_id,
         strategy_id,
+        arch_spec_id,
         "generator_id",
         baseline.generator_id,
         current.generator_id,
@@ -167,6 +184,7 @@ def _compare_rows(
             BenchmarkDiff(
                 case_id=case_id,
                 strategy_id=strategy_id,
+                arch_spec_id=arch_spec_id,
                 field="success",
                 baseline=baseline.success,
                 current=current.success,
@@ -182,6 +200,7 @@ def _compare_rows(
         diffs,
         case_id=case_id,
         strategy_id=strategy_id,
+        arch_spec_id=arch_spec_id,
         field="move_count_events",
         baseline=baseline.move_count_events,
         current=current.move_count_events,
@@ -191,6 +210,7 @@ def _compare_rows(
         diffs,
         case_id=case_id,
         strategy_id=strategy_id,
+        arch_spec_id=arch_spec_id,
         field="move_count_lanes",
         baseline=baseline.move_count_lanes,
         current=current.move_count_lanes,
@@ -200,6 +220,7 @@ def _compare_rows(
         diffs,
         case_id=case_id,
         strategy_id=strategy_id,
+        arch_spec_id=arch_spec_id,
         field="estimated_fidelity",
         baseline=baseline.estimated_fidelity,
         current=current.estimated_fidelity,
@@ -210,6 +231,7 @@ def _compare_rows(
         diffs,
         case_id=case_id,
         strategy_id=strategy_id,
+        arch_spec_id=arch_spec_id,
         field="nodes_explored",
         baseline=baseline.nodes_explored,
         current=current.nodes_explored,
@@ -219,13 +241,20 @@ def _compare_rows(
         diffs,
         case_id=case_id,
         strategy_id=strategy_id,
+        arch_spec_id=arch_spec_id,
         field="max_depth_reached",
         baseline=baseline.max_depth_reached,
         current=current.max_depth_reached,
         lower_is_better=True,
     )
     _add_strict_diff(
-        diffs, case_id, strategy_id, "notes", baseline.notes, current.notes
+        diffs,
+        case_id,
+        strategy_id,
+        arch_spec_id,
+        "notes",
+        baseline.notes,
+        current.notes,
     )
     return diffs
 
@@ -234,6 +263,7 @@ def _add_strict_diff(
     diffs: list[BenchmarkDiff],
     case_id: str,
     strategy_id: str,
+    arch_spec_id: str,
     field: str,
     baseline: object,
     current: object,
@@ -244,6 +274,7 @@ def _add_strict_diff(
         BenchmarkDiff(
             case_id=case_id,
             strategy_id=strategy_id,
+            arch_spec_id=arch_spec_id,
             field=field,
             baseline=baseline,
             current=current,
@@ -257,6 +288,7 @@ def _add_numeric_delta(
     *,
     case_id: str,
     strategy_id: str,
+    arch_spec_id: str,
     field: str,
     baseline: int | float | None,
     current: int | float | None,
@@ -264,7 +296,9 @@ def _add_numeric_delta(
     float_compare_decimals: int | None = None,
 ) -> None:
     if baseline is None or current is None:
-        _add_strict_diff(diffs, case_id, strategy_id, field, baseline, current)
+        _add_strict_diff(
+            diffs, case_id, strategy_id, arch_spec_id, field, baseline, current
+        )
         return
     baseline_cmp = baseline
     current_cmp = current
@@ -283,6 +317,7 @@ def _add_numeric_delta(
         BenchmarkDiff(
             case_id=case_id,
             strategy_id=strategy_id,
+            arch_spec_id=arch_spec_id,
             field=field,
             baseline=baseline,
             current=current,
@@ -308,6 +343,7 @@ def _parse_row(raw: dict[str, str]) -> BenchmarkRow:
         estimated_fidelity=_parse_optional_float(raw["estimated_fidelity"]),
         nodes_explored=_parse_optional_int(raw["nodes_explored"]),
         max_depth_reached=_parse_optional_int(raw["max_depth_reached"]),
+        arch_spec_id=raw["arch_spec_id"],
         notes=raw["notes"],
     )
 

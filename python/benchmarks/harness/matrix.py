@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfig
 
 from bloqade.lanes.arch.gemini import physical
@@ -9,103 +11,123 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+from bloqade.lanes.layout.arch import ArchSpec
 
 
-def default_strategy_configs() -> tuple[StrategyConfig, ...]:
-    """Return the default strategy matrix for V1 benchmarks."""
+def default_strategy_configs(
+    arch_spec_factory: Callable[[], ArchSpec] | None = None,
+    arch_spec_id: str = "builtin",
+) -> tuple[StrategyConfig, ...]:
+    """Return the default strategy matrix for V1 benchmarks.
+
+    The factory is invoked once per `StrategyConfig.build_placement_strategy`
+    call, matching the lazy construction semantics of the original built-in
+    archspec. When `arch_spec_factory` is None, defaults to the built-in
+    physical archspec.
+    """
+    factory = arch_spec_factory or physical.get_arch_spec
     return (
         StrategyConfig(
             strategy_id="rust_entropy_1",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(
                     strategy="entropy", max_goal_candidates=1, max_expansions=2000
                 ),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_entropy_5",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(
                     strategy="entropy", max_goal_candidates=5, max_expansions=2000
                 ),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_entropy_10",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(
                     strategy="entropy", max_goal_candidates=10, max_expansions=2000
                 ),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_entropy_20",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(
                     strategy="entropy", max_goal_candidates=20, max_expansions=2000
                 ),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_astar",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(strategy="astar"),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_ids",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(strategy="ids"),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_dfs",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(strategy="dfs"),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_bfs",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(strategy="bfs"),
             ),
+            arch_spec_id=arch_spec_id,
         ),
         StrategyConfig(
             strategy_id="rust_greedy",
             backend="rust",
             generator_id="rust_solver",
             build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=physical.get_arch_spec(),
+                arch_spec=factory(),
                 traversal=RustPlacementTraversal(
                     strategy="greedy",
                     max_movesets_per_group=50,
                     max_expansions=1000,
                 ),
             ),
+            arch_spec_id=arch_spec_id,
             notes=(
                 "first-solution Rust solve (non-optimal); "
                 "Rust solver nodes_explored captured from solver output"

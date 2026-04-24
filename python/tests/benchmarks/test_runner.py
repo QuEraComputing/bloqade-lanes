@@ -158,6 +158,50 @@ def test_estimate_fidelity_runs_for_physical_mode(monkeypatch):
     assert fidelity == expected_fidelity
 
 
+def test_run_jobs_stamps_arch_spec_id_from_strategy(monkeypatch):
+    runner = BenchmarkRunner()
+
+    class _FakeRegion:
+        def walk(self):
+            return ()
+
+    class _FakeMoveMethod:
+        callable_region = _FakeRegion()
+
+    def _fake_squin_to_move(*args, **kwargs):
+        return _FakeMoveMethod()
+
+    monkeypatch.setattr("benchmarks.harness.runner.squin_to_move", _fake_squin_to_move)
+    monkeypatch.setattr(BenchmarkRunner, "_estimate_fidelity", lambda self, job: 1.0)
+
+    @dataclass
+    class _FakePlacement:
+        arch_spec: object
+
+    jobs = [
+        BenchmarkJob(
+            case=BenchmarkCase(
+                case_id="ghz_4",
+                kernel=cast(ir.Method, object()),
+                logical_initialize=False,
+            ),
+            strategy=StrategyConfig(
+                strategy_id="rust_astar",
+                backend="rust",
+                generator_id="rust_solver",
+                build_placement_strategy=lambda: cast(
+                    PlacementStrategyABC, _FakePlacement(arch_spec=object())
+                ),
+                arch_spec_id=arch_id,
+            ),
+        )
+        for arch_id in ("full", "simple")
+    ]
+
+    rows = runner.run_jobs(jobs)
+    assert [row.arch_spec_id for row in rows] == ["full", "simple"]
+
+
 def test_compile_reads_rust_nodes_from_strategy(monkeypatch):
     runner = BenchmarkRunner()
 
