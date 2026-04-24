@@ -248,13 +248,15 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     )
     state = _make_state()
 
+    from bloqade.lanes.bytecode._native import LocationAddress as NativeLoc
+
     class _FakeResult:
         status = "solved"
         nodes_expanded = 1
         # move_layers format: list[list[tuple[dir, move_type, zone, word, site, bus]]]
         # move_type=2 is MoveType.ZONE — the variant that was missing from _MT_MAP
         move_layers = [[(0, 2, 0, 0, 0, 0)]]
-        goal_config = [(0, 0, 0, 0), (1, 0, 1, 0)]
+        goal_config = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
 
     class _FakeSolver:
         def solve(self, *_args, **_kwargs):
