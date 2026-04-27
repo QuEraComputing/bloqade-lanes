@@ -123,7 +123,7 @@ def test_steane_two_patterns_matches_raw():
     )
 
 
-# ── 3x pattern (4 qubits, triggers the X-flip bug today) ───────────────
+# ── 3x pattern (4 qubits, previously triggered the X-flip bug pre-#559) ─
 
 
 @squin.kernel
