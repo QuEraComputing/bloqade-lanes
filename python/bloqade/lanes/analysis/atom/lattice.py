@@ -129,12 +129,16 @@ class MeasureFuture(MoveExecution):
 @dataclass
 class MeasureResult(MoveExecution):
     qubit_id: int
+    location_address: layout.LocationAddress
 
     def copy(self):
-        return MeasureResult(self.qubit_id)
+        return MeasureResult(self.qubit_id, self.location_address)
 
     def is_subseteq_MeasureResult(self, elem: "MeasureResult") -> bool:
-        return self.qubit_id == elem.qubit_id
+        return (
+            self.qubit_id == elem.qubit_id
+            and self.location_address == elem.location_address
+        )
 
 
 @final

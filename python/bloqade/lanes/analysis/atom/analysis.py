@@ -78,6 +78,31 @@ class AtomInterpreter(Forward[MoveExecution]):
     def eval_fallback(self, frame: ForwardFrame[MoveExecution], node: ir.Statement):
         return tuple(MoveExecution.bottom() for _ in node.results)
 
+    def get_shot_remapping(self, method: ir.Method) -> list[list[int]] | None:
+        """Run the analysis on ``method`` and return the per-logical-qubit
+        Zone-0 bitstring index table, or ``None`` if the analysis output
+        couldn't be refined into the expected nested-ilist-of-MeasureResult
+        shape.
+
+        Convenience wrapper around the standalone
+        ``bloqade.lanes.analysis.atom._shot_remapping.get_shot_remapping``;
+        see that function's docstring for the contract on the analysis
+        output shape, the meaning of the returned indices, and the
+        conditions under which ``None`` is returned.
+
+        The method's return value is expected to refine to
+        ``IListResult[IListResult[MeasureResult]]`` — the shape produced
+        by lowering a logical ``terminal_measure`` (or any kernel that
+        returns a nested ilist of measurement results) through the
+        atom-analysis chain. Callers (typically the compiler service)
+        are responsible for surfacing a diagnostic when ``None`` is
+        returned.
+        """
+        from ._shot_remapping import get_shot_remapping
+
+        _, output = self.run(method)
+        return get_shot_remapping(output, self.arch_spec)
+
     def get_post_processing(
         self, method: ir.Method[..., RetType]
     ) -> PostProcessing[RetType]:
