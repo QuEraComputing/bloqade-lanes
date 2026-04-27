@@ -130,24 +130,12 @@ def test_show_calls_plt_show(small_arch_spec: ArchSpec) -> None:
         assert mock_show.called
 
 
-# ── ArchSpec shim contract ──
-
-
-def test_archspec_shims_match_visualizer(small_arch_spec: ArchSpec) -> None:
-    """ArchSpec.x_bounds / y_bounds / path_bounds must equal the
-    ArchVisualizer results."""
-    viz = ArchVisualizer(small_arch_spec)
-    assert small_arch_spec.x_bounds == viz.x_bounds
-    assert small_arch_spec.y_bounds == viz.y_bounds
-    assert small_arch_spec.path_bounds() == viz.path_bounds()
-
-
-def test_archspec_plot_shim_routes_through_visualizer(
+def test_archvisualizer_plot_called_directly(
     small_arch_spec: ArchSpec,
 ) -> None:
     mock_ax = MagicMock()
     with patch.object(ArchVisualizer, "plot", return_value=mock_ax) as mock_plot:
-        result = small_arch_spec.plot(mock_ax, show_words=[0])
+        result = ArchVisualizer(small_arch_spec).plot(mock_ax, show_words=[0])
         mock_plot.assert_called_once()
         assert mock_plot.call_args.args == (mock_ax,)
         assert mock_plot.call_args.kwargs["show_words"] == [0]

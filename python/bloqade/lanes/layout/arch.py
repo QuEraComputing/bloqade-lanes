@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from bloqade.lanes.bytecode.exceptions import LaneGroupError, LocationGroupError
-    from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
 class ArchSpec(RustWrapper[_RustArchSpec]):
@@ -329,67 +328,11 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
             return (self.get_position(src), self.get_position(dst))
         return path
 
-    # ── Visualization shims ────────────────────────────────────────
-    # The real implementations live in ``bloqade.lanes.visualize.arch``
-    # via :class:`ArchVisualizer`. These shims preserve the historical
-    # ``arch_spec.<method>()`` call sites.  A single deferred-import
-    # helper builds the visualizer and caches bounds on it, so repeated
-    # access to ``x_bounds``/``y_bounds`` avoids recomputation.
-
-    @cached_property
-    def _visualizer(self) -> ArchVisualizer:
-        from bloqade.lanes.visualize.arch import ArchVisualizer
-
-        return ArchVisualizer(self)
-
-    def path_bounds(self) -> tuple[float, float, float, float]:
-        return self._visualizer.path_bounds()
-
-    @property
-    def x_bounds(self) -> tuple[float, float]:
-        return self._visualizer.x_bounds
-
-    @property
-    def y_bounds(self) -> tuple[float, float]:
-        return self._visualizer.y_bounds
-
     def get_position(self, location: LocationAddress) -> tuple[float, float]:
         pos = self._inner.location_position(location._inner)
         if pos is None:
             raise ValueError(f"Invalid location address: {location!r}")
         return pos
-
-    def plot(
-        self,
-        ax=None,  # type: ignore[no-untyped-def]
-        show_words: Sequence[int] = (),
-        show_site_bus: Sequence[int] = (),
-        show_word_bus: Sequence[int] = (),
-        **scatter_kwargs,  # type: ignore[no-untyped-def]
-    ):  # type: ignore[no-untyped-def]
-        return self._visualizer.plot(
-            ax,
-            show_words=show_words,
-            show_site_bus=show_site_bus,
-            show_word_bus=show_word_bus,
-            **scatter_kwargs,
-        )
-
-    def show(
-        self,
-        ax=None,  # type: ignore[no-untyped-def]
-        show_words: Sequence[int] = (),
-        show_intra: Sequence[int] = (),
-        show_inter: Sequence[int] = (),
-        **scatter_kwargs,  # type: ignore[no-untyped-def]
-    ):  # type: ignore[no-untyped-def]
-        self._visualizer.show(
-            ax,
-            show_words=show_words,
-            show_intra=show_intra,
-            show_inter=show_inter,
-            **scatter_kwargs,
-        )
 
     def check_location_group(
         self, locations: Sequence[LocationAddress]

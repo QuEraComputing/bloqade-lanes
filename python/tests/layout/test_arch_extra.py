@@ -17,6 +17,7 @@ from bloqade.lanes.layout.encoding import (
     ZoneAddress,
 )
 from bloqade.lanes.layout.word import Word
+from bloqade.lanes.visualize.arch import ArchVisualizer
 
 word = Word(sites=((0, 0), (1, 0)))
 
@@ -58,7 +59,9 @@ def test_show_with_mocked_pyplot():
     ):
         mock_ax = MagicMock()
         mock_gca.return_value = mock_ax
-        arch_spec.show(ax=mock_ax, show_words=[0], show_intra=[0], show_inter=[0])
+        ArchVisualizer(arch_spec).show(
+            ax=mock_ax, show_words=[0], show_intra=[0], show_inter=[0]
+        )
         # Check that plot was called (either on ax or pyplot)
         assert mock_ax.plot.called or mock_plot.called
         # Check that plt.show was called
@@ -86,11 +89,12 @@ def test_get_path_and_position():
 
 
 def test_path_bounds_x_y_bounds():
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
+    viz = ArchVisualizer(arch_spec)
+    x_min, x_max, y_min, y_max = viz.path_bounds()
     assert x_min <= x_max
     assert y_min <= y_max
-    x_min2, x_max2 = arch_spec.x_bounds
-    y_min2, y_max2 = arch_spec.y_bounds
+    x_min2, x_max2 = viz.x_bounds
+    y_min2, y_max2 = viz.y_bounds
     assert x_min2 <= x_max2
     assert y_min2 <= y_max2
 
