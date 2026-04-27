@@ -274,11 +274,15 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
     def yield_zone_locations(
         self, zone_address: ZoneAddress
     ) -> Iterator[LocationAddress]:
-        """Yield all location addresses in a given zone address.
+        """Yield ``LocationAddress``es in the canonical zone-bitstring iteration order.
 
-        Yields all words for the given zone_id. The Python heuristic layer
-        addresses qubits with a single zone_id (typically 0) for all words,
-        so this must iterate over every word to find all qubits.
+        This is the layout that ``get_zone_index(loc, zone_address)``
+        numbers: every ``(word, site)`` pair in the architecture, tagged
+        with ``zone_address``, walked in word-major then site-major order.
+        The iterator visits every word — ``zone_address`` is the tag
+        stamped onto each yielded address (and the grid through which
+        downstream calls like ``get_position`` interpret it), not a
+        membership filter.
         """
         zone_id = zone_address.zone_id
         for word_id in range(len(self.words)):
