@@ -3,7 +3,7 @@
 Hand-builds a small ``ArchSpec`` with a known Zone-0 location order and
 checks that the standalone shot-remapping function projects nested
 ``IListResult[IListResult[MeasureResult]]`` values onto the expected
-indices into the architecture's Zone-0 bitstring.
+flat list of indices into the architecture's Zone-0 bitstring.
 """
 
 import pytest
@@ -79,20 +79,21 @@ def test_zone0_location_order_matches_arch_iteration():
 
 
 def test_single_logical_qubit():
-    """One logical qubit at sites 0 and 1: remapping yields [[0, 1]]."""
+    """One logical qubit at sites 0 and 1: remapping yields [0, 1]."""
     return_value = _ll(_ll(_mr(0, 0), _mr(0, 1)))
-    assert get_shot_remapping(return_value, _ARCH) == [[0, 1]]
+    assert get_shot_remapping(return_value, _ARCH) == [0, 1]
 
 
 def test_two_logical_qubits_skipping_a_site():
-    """Two logical qubits using sites 0/2 and 1/3: skipping one site
-    in between exercises that the table reports the *Zone-0* index, not
-    a packed enumeration."""
+    """Two logical qubits using sites 0/2 and 1/3: the result is the
+    flat row-major concatenation, and skipping a site in between
+    exercises that the table reports the *Zone-0* index, not a packed
+    enumeration."""
     return_value = _ll(
         _ll(_mr(0, 0), _mr(0, 2)),
         _ll(_mr(1, 1), _mr(1, 3)),
     )
-    assert get_shot_remapping(return_value, _ARCH) == [[0, 2], [1, 3]]
+    assert get_shot_remapping(return_value, _ARCH) == [0, 2, 1, 3]
 
 
 def test_outer_not_ilist_returns_none():
@@ -128,8 +129,9 @@ def test_unknown_location_address_returns_none():
 
 def test_empty_logical_blocks():
     """Empty inner lists (no physical qubits) are valid; an empty
-    outer list is also valid (no logical qubits)."""
-    assert get_shot_remapping(_ll(_ll(), _ll()), _ARCH) == [[], []]
+    outer list is also valid (no logical qubits). Both flatten to
+    an empty list."""
+    assert get_shot_remapping(_ll(_ll(), _ll()), _ARCH) == []
     assert get_shot_remapping(_ll(), _ARCH) == []
 
 
@@ -140,8 +142,8 @@ def test_empty_logical_blocks():
 def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
     """End-to-end: compile a Steane logical kernel that returns its
     ``terminal_measure`` value, then run ``AtomInterpreter.get_shot_remapping``
-    on the lowered move kernel and assert the table has the expected
-    Steane shape and no overlapping indices."""
+    on the lowered move kernel and assert the flat index list has the
+    expected Steane size and no overlapping indices."""
     from bloqade import qubit, squin
     from bloqade.gemini import logical as gemini_logical
     from bloqade.lanes.analysis.atom import AtomInterpreter
@@ -171,19 +173,16 @@ def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
 
     # Steane [[7,1,3]] encodes one logical qubit into seven physical
     # qubits; ``terminal_measure`` over ``num_logical`` logical qubits
-    # yields an outer list of length ``num_logical`` with seven
-    # ``MeasureResult``s each.
-    assert len(remapping) == num_logical
-    assert all(len(per_qubit) == 7 for per_qubit in remapping)
+    # yields a flat list of length ``num_logical * 7``.
+    assert len(remapping) == num_logical * 7
 
     # No two physical qubits map to the same Zone-0 index.
-    flat = [idx for per_qubit in remapping for idx in per_qubit]
-    assert len(set(flat)) == len(
-        flat
-    ), f"physical qubit indices overlap across logical blocks: {remapping}"
+    assert len(set(remapping)) == len(
+        remapping
+    ), f"physical qubit indices overlap: {remapping}"
 
     # All indices fall inside the Zone-0 bitstring.
     zone0_size = sum(1 for _ in arch_spec.yield_zone_locations(ZoneAddress(0)))
     assert all(
-        0 <= idx < zone0_size for idx in flat
-    ), f"index out of Zone-0 range [0, {zone0_size}): {flat}"
+        0 <= idx < zone0_size for idx in remapping
+    ), f"index out of Zone-0 range [0, {zone0_size}): {remapping}"

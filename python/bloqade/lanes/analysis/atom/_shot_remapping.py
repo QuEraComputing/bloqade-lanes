@@ -5,14 +5,16 @@ bit per ``LocationAddress`` in ``arch_spec.yield_zone_locations(
 ZoneAddress(0))``, including bits for sites that no atom is ever
 moved into. Downstream post-processing (detector / observable
 synthesis, user-level result reconstruction) operates on a *per-
-measurement* array — typically shape ``(n_shots, n_measurements)``
+measurement* flat array — typically shape ``(n_shots, n_measurements)``
 — that's been projected out of the full bitstring at exactly the
-sites the program actually measures.
+sites the program actually measures, in the order the post-processing
+callable expects.
 
 This module provides the bridge: given the analysis output for a
 ``terminal_measure`` (or equivalent) ``IListResult[IListResult[
-MeasureResult]]`` value, plus the architecture spec, build the
-``logical_mapping[i]`` index table the original #98 spec called for.
+MeasureResult]]`` value, plus the architecture spec, produce a flat
+list of Zone-0 bitstring indices whose order matches the per-
+measurement array consumed by ``generate_post_processing``.
 
 See: issue #563.
 """
@@ -28,9 +30,9 @@ from .lattice import IListResult, MeasureResult, MoveExecution
 def get_shot_remapping(
     return_value: MoveExecution,
     arch_spec: ArchSpec,
-) -> list[list[int]] | None:
+) -> list[int] | None:
     """Project an analysis ``IListResult[IListResult[MeasureResult]]``
-    value onto the corresponding Zone-0 bitstring indices.
+    value onto a flat list of Zone-0 bitstring indices.
 
     Args:
         return_value: lattice value for the SSA result of a
@@ -38,16 +40,19 @@ def get_shot_remapping(
             shape produced by lowering a logical-qubit measurement
             through the atom-analysis chain). The outer ``IListResult``
             indexes logical qubits; each inner ``IListResult`` indexes
-            the physical qubits making up that logical block.
+            the physical qubits making up that logical block. The
+            nested structure is walked in row-major order; the result
+            is flat.
         arch_spec: architecture spec; ``arch_spec.yield_zone_locations(
             ZoneAddress(0))`` defines the canonical Zone-0 bitstring
             layout that hardware shots are reported against.
 
     Returns:
-        ``list[list[int]]`` where ``result[i][j]`` is the position in
-        the Zone-0 bitstring corresponding to the ``j``-th physical
-        qubit of the ``i``-th logical qubit, **or** ``None`` if the
-        mapping cannot be derived. Reasons the mapping may fail:
+        ``list[int]`` whose ``k``-th entry is the Zone-0 bitstring
+        index for the ``k``-th physical measurement in row-major order
+        across the nested ``IListResult[IListResult[MeasureResult]]``,
+        **or** ``None`` if the mapping cannot be derived. Reasons the
+        mapping may fail:
 
         - ``return_value`` (or any nested element) does not have the
           expected ``IListResult[IListResult[MeasureResult]]`` shape
@@ -66,11 +71,10 @@ def get_shot_remapping(
     if not isinstance(return_value, IListResult):
         return None
 
-    remapping: list[list[int]] = []
+    remapping: list[int] = []
     for logical in return_value.data:
         if not isinstance(logical, IListResult):
             return None
-        per_qubit: list[int] = []
         for physical in logical.data:
             if not isinstance(physical, MeasureResult):
                 return None
@@ -80,6 +84,5 @@ def get_shot_remapping(
             idx = arch_spec.get_zone_index(physical.location_address, zone0)
             if idx is None:
                 return None
-            per_qubit.append(idx)
-        remapping.append(per_qubit)
+            remapping.append(idx)
     return remapping

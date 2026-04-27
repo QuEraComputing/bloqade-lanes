@@ -79,10 +79,11 @@ class AtomInterpreter(Forward[MoveExecution]):
     def eval_fallback(self, frame: ForwardFrame[MoveExecution], node: ir.Statement):
         return tuple(MoveExecution.bottom() for _ in node.results)
 
-    def get_shot_remapping(self, method: ir.Method) -> list[list[int]] | None:
-        """Run the analysis on ``method`` and return the per-logical-qubit
-        Zone-0 bitstring index table, or ``None`` if the analysis output
-        couldn't be refined into the expected nested-ilist-of-MeasureResult
+    def get_shot_remapping(self, method: ir.Method) -> list[int] | None:
+        """Run the analysis on ``method`` and return the flat Zone-0
+        bitstring index list (in row-major order over the nested
+        IListResult[IListResult[MeasureResult]] return shape), or
+        ``None`` if the analysis output couldn't be refined into that
         shape.
 
         Convenience wrapper around the standalone
