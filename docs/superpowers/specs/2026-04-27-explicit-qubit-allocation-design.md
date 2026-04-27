@@ -76,10 +76,18 @@ User-facing allocation primitive. Lives in `bloqade.gemini.logical.dialects.oper
 @statement(dialect=operations)
 class NewAt(ir.Statement):
     name = "new_at"
-    zone_id: ir.SSAValue   # int
-    word_id: ir.SSAValue   # int
-    site_id: ir.SSAValue   # int
-    qubit:   ir.ResultValue[QubitType]
+    traits = frozenset({...}) #include python lowering trait
+    zone_id: ir.SSAValue = info.argument(types.Int)
+    word_id: ir.SSAValue = info.argument(types.Int)
+    site_id: ir.SSAValue = info.argument(types.Int)
+    qubit:   ir.ResultValue = info.result(QubitType) # import from bloqad.types
+
+# stub for lowering
+
+@wraps(NewAt)
+def new_at(zone_id: int, word_id: int, site_id: int) -> Qubit # import from bloqad.types
+    ...
+
 ```
 
 - Three runtime SSA int args.
@@ -173,6 +181,10 @@ Both 3.1 and 3.2 run on the gemini IR before any lowering to the place dialect.
 ## §4 — Place→Move consumer refactor
 
 `InsertInitialize` and `InsertFill` (in `python/bloqade/lanes/rewrite/place2move.py`) currently consume the analysis frame. After §2.4 establishes the post-resolve invariant, they read attributes directly.
+
+Note for implementer: for all rewrite rules. If the rewrite can't happen because of whatever reason
+The rewrite rule should simply return with `RewriteResult(has_done_something=False)` intead of throwing
+An exception. For examples look at the existing rewrite rules for how to do this in an idomatic way.
 
 ### 4.1 — `InsertInitialize` (revised)
 
