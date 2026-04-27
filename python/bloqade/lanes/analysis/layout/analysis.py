@@ -17,22 +17,25 @@ class LayoutHeuristicABC(abc.ABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, LocationAddress] | None = None,
     ) -> tuple[LocationAddress, ...]:
         """
         Compute the initial qubit layout from circuit stages.
 
         Args:
             all_qubits: Tuple of logical qubit indices to be mapped.
-            stages: List of circuit stages, where each stage is a tuple of (control, target)
-                qubit pairs representing two-qubit gates. For example:
-                [
-                    ((control1, target1), (control2, target2)),  # stage 1
-                    ((control3, target3),),                      # stage 2
-                    ...
-                ]
+            stages: List of circuit stages, where each stage is a tuple of
+                (control, target) qubit pairs representing two-qubit gates.
+            pinned: Map from logical qubit ID to pre-pinned LocationAddress.
+                Implementations MUST place each pinned qubit at its requested
+                address and MUST NOT use any address in pinned.values() for
+                un-pinned qubits. None or empty preserves previous behavior.
 
         Returns:
-            A tuple of LocationAddress objects mapping logical qubit indices to physical locations.
+            A tuple of LocationAddress objects mapping logical qubit indices
+            to physical locations. Pinned IDs return their pinned address;
+            un-pinned IDs return the heuristic's choice. Raises if no legal
+            layout exists.
         """
         ...  # pragma: no cover
 
@@ -65,7 +68,9 @@ class LayoutAnalysis(Forward):
         return EmptyLattice.bottom()
 
     def process_results(self):
-        layout = self.heuristic.compute_layout(self.all_qubits, self.stages)
+        layout = self.heuristic.compute_layout(
+            self.all_qubits, self.stages, pinned=None
+        )
         return layout
 
     def get_layout_no_raise(self, method: ir.Method):

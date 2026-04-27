@@ -79,6 +79,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
         edges: dict[tuple[int, int], float] = {}
 
@@ -109,6 +110,7 @@ class LogicalLayoutHeuristicRecencyWeighted(LogicalLayoutHeuristic):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
         if self.layout_lookahead_layers is None:
             considered_layers = stages

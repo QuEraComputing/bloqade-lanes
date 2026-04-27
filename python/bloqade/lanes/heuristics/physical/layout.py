@@ -435,6 +435,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
         qubits = tuple(sorted(all_qubits))
         cz_layers = _to_cz_layers(stages)

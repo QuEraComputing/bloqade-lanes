@@ -31,6 +31,7 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
         _ = stages
         qubits = tuple(sorted(all_qubits))
