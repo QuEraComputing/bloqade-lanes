@@ -15,6 +15,8 @@ from bloqade.lanes.analysis.atom import (
     IListResult,
     MeasureResult,
     ShotRemappingDiagnostic,
+    ShotRemappingErr,
+    ShotRemappingOk,
     Value,
 )
 from bloqade.lanes.analysis.atom._shot_remapping import get_shot_remapping
@@ -84,9 +86,8 @@ def test_single_logical_qubit():
     """One logical qubit at sites 0 and 1: remapping yields [0, 1]."""
     return_value = _ll(_ll(_mr(0, 0), _mr(0, 1)))
     result = get_shot_remapping(return_value, _ARCH)
-    assert result.ok
-    assert result.diagnostic is None
-    assert result.get() == [0, 1]
+    assert isinstance(result, ShotRemappingOk)
+    assert result.mapping == [0, 1]
 
 
 def test_two_logical_qubits_skipping_a_site():
@@ -99,19 +100,18 @@ def test_two_logical_qubits_skipping_a_site():
         _ll(_mr(1, 1), _mr(1, 3)),
     )
     result = get_shot_remapping(return_value, _ARCH)
-    assert result.ok
-    assert result.get() == [0, 2, 1, 3]
+    assert isinstance(result, ShotRemappingOk)
+    assert result.mapping == [0, 2, 1, 3]
 
 
 def test_outer_not_ilist_returns_diagnostic():
     """A non-IListResult outer (e.g. ``Bottom``) means the analysis
     didn't refine the SSA value past the bottom of the lattice; the
-    function gives up and returns a diagnostic identifying the bad
-    outer value."""
+    function gives up and returns ``ShotRemappingErr`` identifying
+    the bad outer value."""
     bottom = Bottom()
     result = get_shot_remapping(bottom, _ARCH)
-    assert not result.ok
-    assert result.mapping is None
+    assert isinstance(result, ShotRemappingErr)
     assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
     assert "outer" in result.diagnostic.message
     assert result.diagnostic.offending_value is bottom
@@ -123,8 +123,7 @@ def test_inner_not_ilist_returns_diagnostic():
     bad_logical = _mr(0, 0)
     return_value = _ll(bad_logical)  # outer ilist of MeasureResult, no nesting
     result = get_shot_remapping(return_value, _ARCH)
-    assert not result.ok
-    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert isinstance(result, ShotRemappingErr)
     assert "logical[0]" in result.diagnostic.message
     assert result.diagnostic.offending_value is bad_logical
 
@@ -135,8 +134,7 @@ def test_innermost_not_measureresult_returns_diagnostic():
     bad_physical = Value(False)
     return_value = _ll(_ll(_mr(0, 0), bad_physical))
     result = get_shot_remapping(return_value, _ARCH)
-    assert not result.ok
-    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert isinstance(result, ShotRemappingErr)
     assert "logical[0].physical[1]" in result.diagnostic.message
     assert result.diagnostic.offending_value is bad_physical
 
@@ -148,8 +146,7 @@ def test_unknown_location_address_returns_diagnostic():
     out_of_arch = LocationAddress(99, 0, 0)
     return_value = _ll(_ll(MeasureResult(0, out_of_arch)))
     result = get_shot_remapping(return_value, _ARCH)
-    assert not result.ok
-    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert isinstance(result, ShotRemappingErr)
     assert "logical[0].physical[0]" in result.diagnostic.message
     assert "Zone-0" in result.diagnostic.message
     assert result.diagnostic.offending_value == out_of_arch
@@ -160,19 +157,11 @@ def test_empty_logical_blocks():
     outer list is also valid (no logical qubits). Both produce an
     empty mapping."""
     empty_inner = get_shot_remapping(_ll(_ll(), _ll()), _ARCH)
-    assert empty_inner.ok
-    assert empty_inner.get() == []
+    assert isinstance(empty_inner, ShotRemappingOk)
+    assert empty_inner.mapping == []
     empty_outer = get_shot_remapping(_ll(), _ARCH)
-    assert empty_outer.ok
-    assert empty_outer.get() == []
-
-
-def test_get_raises_on_failure():
-    """``ShotMappingResult.get()`` raises a ``RuntimeError`` carrying
-    the diagnostic when the mapping is unavailable."""
-    result = get_shot_remapping(Bottom(), _ARCH)
-    with pytest.raises(RuntimeError, match="ShotMappingResult"):
-        result.get()
+    assert isinstance(empty_outer, ShotRemappingOk)
+    assert empty_outer.mapping == []
 
 
 # ── Integration: end-to-end via compile_squin_to_move ──────────────────
@@ -182,8 +171,9 @@ def test_get_raises_on_failure():
 def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
     """End-to-end: compile a Steane logical kernel that returns its
     ``terminal_measure`` value, then run ``AtomInterpreter.get_shot_remapping``
-    on the lowered move kernel and assert the flat index list has the
-    expected Steane size and no overlapping indices."""
+    on the lowered move kernel and assert the flat index list matches
+    the analysis output's measurement-leaf count and has no overlapping
+    indices."""
     from bloqade import qubit, squin
     from bloqade.gemini import logical as gemini_logical
     from bloqade.lanes.analysis.atom import AtomInterpreter
@@ -206,16 +196,24 @@ def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
     result = interp.get_shot_remapping(physical_move)
 
     # The analysis must refine to a concrete remapping for this
-    # well-formed Steane kernel; a failure here would indicate an
-    # analysis or pipeline regression rather than legitimate
-    # soft-fail behaviour.
-    assert result.ok, f"unexpected diagnostic: {result.diagnostic}"
-    remapping = result.get()
+    # well-formed kernel; an Err here would indicate an analysis or
+    # pipeline regression rather than legitimate soft-fail behaviour.
+    assert isinstance(
+        result, ShotRemappingOk
+    ), f"unexpected diagnostic: {getattr(result, 'diagnostic', None)}"
+    remapping = result.mapping
 
-    # Steane [[7,1,3]] encodes one logical qubit into seven physical
-    # qubits; ``terminal_measure`` over ``num_logical`` logical qubits
-    # yields a flat list of length ``num_logical * 7``.
-    assert len(remapping) == num_logical * 7
+    # The remapping length should equal the number of MeasureResult
+    # leaves in the analysis output. Re-run the analysis here to
+    # derive the expected length from the output shape rather than
+    # hard-coding the code's block size, so the assertion stays
+    # honest if the encoder changes.
+    _, output = interp.run(physical_move)
+    assert isinstance(output, IListResult)
+    expected_len = sum(
+        len(logical.data) for logical in output.data if isinstance(logical, IListResult)
+    )
+    assert len(remapping) == expected_len
 
     # No two physical qubits map to the same Zone-0 index.
     assert len(set(remapping)) == len(

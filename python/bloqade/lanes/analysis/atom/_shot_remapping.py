@@ -55,38 +55,34 @@ class ShotRemappingDiagnostic:
 
 
 @dataclass(frozen=True)
-class ShotMappingResult:
-    """Result of computing the Zone-0 bitstring index list for a
-    move kernel's ``terminal_measure`` SSA value.
+class ShotRemappingOk:
+    """Successful shot-remapping result.
 
-    On success ``mapping`` holds the flat list of indices and
-    ``diagnostic`` is ``None``. On failure ``mapping`` is ``None``
-    and ``diagnostic`` carries the debug context.
+    ``mapping`` is the flat list of Zone-0 bitstring indices in
+    row-major order over the input
+    ``IListResult[IListResult[MeasureResult]]`` analysis output.
+    Index directly into the post-processing flat array.
     """
 
-    mapping: list[int] | None
-    diagnostic: ShotRemappingDiagnostic | None = None
+    mapping: list[int]
 
-    @property
-    def ok(self) -> bool:
-        """``True`` iff the mapping was derived successfully."""
-        return self.mapping is not None
 
-    def get(self) -> list[int]:
-        """Return the mapping or raise ``RuntimeError`` (carrying the
-        diagnostic) if the computation failed."""
-        if self.mapping is None:
-            raise RuntimeError(
-                f"ShotMappingResult: mapping unavailable; "
-                f"diagnostic: {self.diagnostic}"
-            )
-        return self.mapping
+@dataclass(frozen=True)
+class ShotRemappingErr:
+    """Failed shot-remapping result.
+
+    ``diagnostic`` carries the contextual message and the offending
+    lattice value or address, aimed at the compiler developer
+    debugging the failed lowering.
+    """
+
+    diagnostic: ShotRemappingDiagnostic
 
 
 def get_shot_remapping(
     return_value: MoveExecution,
     arch_spec: ArchSpec,
-) -> ShotMappingResult:
+) -> ShotRemappingOk | ShotRemappingErr:
     """Project an analysis ``IListResult[IListResult[MeasureResult]]``
     value onto a flat list of Zone-0 bitstring indices.
 
@@ -101,17 +97,23 @@ def get_shot_remapping(
             is flat.
         arch_spec: architecture spec; ``arch_spec.yield_zone_locations(
             ZoneAddress(0))`` defines the canonical Zone-0 bitstring
-            layout that hardware shots are reported against.
+            layout that hardware shots are reported against. Must
+            contain at least one zone (``zone 0`` is the projection
+            target).
 
     Returns:
-        ``ShotMappingResult`` whose ``mapping`` is the flat list of
-        Zone-0 indices in row-major order on success, or ``None`` with
-        a populated ``diagnostic`` on failure. Failure modes:
+        ``ShotRemappingOk`` carrying the flat list of Zone-0 indices
+        on success, or ``ShotRemappingErr`` carrying a
+        ``ShotRemappingDiagnostic`` on failure. Failure modes:
 
-        - ``return_value`` (or any nested element) does not have the
-          expected ``IListResult[IListResult[MeasureResult]]`` shape
-          — most often a sign that the analysis didn't refine the
-          lattice value past ``Bottom`` / ``Unknown``.
+        - ``return_value`` is not an ``IListResult`` (any other
+          ``MoveExecution`` lattice element — ``Bottom``, ``Unknown``,
+          ``Value``, ``MeasureFuture``, ``MeasureResult``,
+          ``DetectorResult``, ``ObservableResult``, ``TupleResult``).
+        - Any element of the outer ``IListResult.data`` is not itself
+          an ``IListResult`` (same set of rejected types as above).
+        - Any element of an inner ``IListResult.data`` is not a
+          ``MeasureResult``.
         - A ``MeasureResult.location_address`` resolves outside
           ``arch_spec``'s Zone-0 iteration — i.e. the analysis and
           arch spec disagree about hardware layout.
@@ -120,11 +122,18 @@ def get_shot_remapping(
         developers, not end users; failures here indicate pipeline
         regressions rather than malformed kernels.
     """
+    # Zone-0 is the projection target. ``ArchSpec.get_zone_index``
+    # returns ``None`` both for addresses outside Zone-0 *and* when
+    # the spec has no Zone-0 at all; assert the second case up front
+    # so the diagnostic's "address is not in Zone-0" wording stays
+    # truthful.
+    assert (
+        len(arch_spec.zones) > 0
+    ), "arch spec invariant violation: no zones (zone 0 expected)"
     zone0 = ZoneAddress(0)
 
     if not isinstance(return_value, IListResult):
-        return ShotMappingResult(
-            mapping=None,
+        return ShotRemappingErr(
             diagnostic=ShotRemappingDiagnostic(
                 message=(
                     "outer return value did not refine to IListResult; "
@@ -137,8 +146,7 @@ def get_shot_remapping(
     remapping: list[int] = []
     for i, logical in enumerate(return_value.data):
         if not isinstance(logical, IListResult):
-            return ShotMappingResult(
-                mapping=None,
+            return ShotRemappingErr(
                 diagnostic=ShotRemappingDiagnostic(
                     message=(
                         f"logical[{i}] did not refine to IListResult; "
@@ -149,8 +157,7 @@ def get_shot_remapping(
             )
         for j, physical in enumerate(logical.data):
             if not isinstance(physical, MeasureResult):
-                return ShotMappingResult(
-                    mapping=None,
+                return ShotRemappingErr(
                     diagnostic=ShotRemappingDiagnostic(
                         message=(
                             f"logical[{i}].physical[{j}] did not refine "
@@ -163,8 +170,7 @@ def get_shot_remapping(
             # and returns ``None`` for addresses outside Zone-0.
             idx = arch_spec.get_zone_index(physical.location_address, zone0)
             if idx is None:
-                return ShotMappingResult(
-                    mapping=None,
+                return ShotRemappingErr(
                     diagnostic=ShotRemappingDiagnostic(
                         message=(
                             f"logical[{i}].physical[{j}]: "
@@ -175,4 +181,4 @@ def get_shot_remapping(
                     ),
                 )
             remapping.append(idx)
-    return ShotMappingResult(mapping=remapping)
+    return ShotRemappingOk(mapping=remapping)
