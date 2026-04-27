@@ -2,14 +2,19 @@
 # %matplotlib inline
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.layout import ArchSpec
+from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
 def show_lanes(arch: ArchSpec):
     from matplotlib import pyplot as plt
 
     f, axs = plt.subplots(1, 2, figsize=(12, 5))
-    arch.plot(show_words=range(min(4, len(arch.words))), show_site_bus=(0,), ax=axs[0])
-    arch.plot(show_words=range(min(4, len(arch.words))), show_word_bus=(0,), ax=axs[1])
+    ArchVisualizer(arch).plot(
+        show_words=range(min(4, len(arch.words))), show_site_bus=(0,), ax=axs[0]
+    )
+    ArchVisualizer(arch).plot(
+        show_words=range(min(4, len(arch.words))), show_word_bus=(0,), ax=axs[1]
+    )
     axs[0].set_title("site bus 0")
     axs[1].set_title("word bus 0")
     plt.show()

@@ -87,10 +87,11 @@ print(initial_layout)
 
 # %%
 from bloqade.lanes.arch.gemini.logical import get_arch_spec  # noqa: E402
+from bloqade.lanes.visualize.arch import ArchVisualizer  # noqa: E402
 
 logical_arch = get_arch_spec()
 
-ax = logical_arch.plot(show_words=(0, 1))
+ax = ArchVisualizer(logical_arch).plot(show_words=(0, 1))
 
 pos_0 = logical_arch.get_position(initial_layout[0])
 pos_1 = logical_arch.get_position(initial_layout[1])
