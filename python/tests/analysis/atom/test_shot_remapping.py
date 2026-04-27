@@ -3,7 +3,8 @@
 Hand-builds a small ``ArchSpec`` with a known Zone-0 location order and
 checks that the standalone shot-remapping function projects nested
 ``IListResult[IListResult[MeasureResult]]`` values onto the expected
-flat list of indices into the architecture's Zone-0 bitstring.
+flat list of indices into the architecture's Zone-0 bitstring,
+emitting structured diagnostics on the soft-fail paths.
 """
 
 import pytest
@@ -13,6 +14,7 @@ from bloqade.lanes.analysis.atom import (
     Bottom,
     IListResult,
     MeasureResult,
+    ShotRemappingDiagnostic,
     Value,
 )
 from bloqade.lanes.analysis.atom._shot_remapping import get_shot_remapping
@@ -81,7 +83,10 @@ def test_zone0_location_order_matches_arch_iteration():
 def test_single_logical_qubit():
     """One logical qubit at sites 0 and 1: remapping yields [0, 1]."""
     return_value = _ll(_ll(_mr(0, 0), _mr(0, 1)))
-    assert get_shot_remapping(return_value, _ARCH) == [0, 1]
+    result = get_shot_remapping(return_value, _ARCH)
+    assert result.ok
+    assert result.diagnostic is None
+    assert result.get() == [0, 1]
 
 
 def test_two_logical_qubits_skipping_a_site():
@@ -93,46 +98,81 @@ def test_two_logical_qubits_skipping_a_site():
         _ll(_mr(0, 0), _mr(0, 2)),
         _ll(_mr(1, 1), _mr(1, 3)),
     )
-    assert get_shot_remapping(return_value, _ARCH) == [0, 2, 1, 3]
+    result = get_shot_remapping(return_value, _ARCH)
+    assert result.ok
+    assert result.get() == [0, 2, 1, 3]
 
 
-def test_outer_not_ilist_returns_none():
+def test_outer_not_ilist_returns_diagnostic():
     """A non-IListResult outer (e.g. ``Bottom``) means the analysis
     didn't refine the SSA value past the bottom of the lattice; the
-    function gives up and returns ``None`` (callers handle the
-    diagnostic)."""
-    assert get_shot_remapping(Bottom(), _ARCH) is None
+    function gives up and returns a diagnostic identifying the bad
+    outer value."""
+    bottom = Bottom()
+    result = get_shot_remapping(bottom, _ARCH)
+    assert not result.ok
+    assert result.mapping is None
+    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert "outer" in result.diagnostic.message
+    assert result.diagnostic.offending_value is bottom
 
 
-def test_inner_not_ilist_returns_none():
-    """Each logical entry must itself be an IListResult; otherwise
-    return ``None``."""
-    return_value = _ll(_mr(0, 0))  # outer ilist of MeasureResult, no nesting
-    assert get_shot_remapping(return_value, _ARCH) is None
+def test_inner_not_ilist_returns_diagnostic():
+    """Each logical entry must itself be an IListResult; otherwise the
+    diagnostic identifies which logical block went wrong."""
+    bad_logical = _mr(0, 0)
+    return_value = _ll(bad_logical)  # outer ilist of MeasureResult, no nesting
+    result = get_shot_remapping(return_value, _ARCH)
+    assert not result.ok
+    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert "logical[0]" in result.diagnostic.message
+    assert result.diagnostic.offending_value is bad_logical
 
 
-def test_innermost_not_measureresult_returns_none():
-    """Innermost element must be a ``MeasureResult``; anything else
-    means the analysis didn't refine that operand. Return ``None``."""
-    return_value = _ll(_ll(_mr(0, 0), Value(False)))
-    assert get_shot_remapping(return_value, _ARCH) is None
+def test_innermost_not_measureresult_returns_diagnostic():
+    """Innermost element must be a ``MeasureResult``; the diagnostic
+    points at the offending physical index."""
+    bad_physical = Value(False)
+    return_value = _ll(_ll(_mr(0, 0), bad_physical))
+    result = get_shot_remapping(return_value, _ARCH)
+    assert not result.ok
+    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert "logical[0].physical[1]" in result.diagnostic.message
+    assert result.diagnostic.offending_value is bad_physical
 
 
-def test_unknown_location_address_returns_none():
+def test_unknown_location_address_returns_diagnostic():
     """A ``MeasureResult`` whose ``location_address`` isn't in the
     architecture's Zone-0 iteration is a sign of analysis/arch
-    disagreement; return ``None`` rather than raising."""
+    disagreement; return a diagnostic carrying the offending address."""
     out_of_arch = LocationAddress(99, 0, 0)
     return_value = _ll(_ll(MeasureResult(0, out_of_arch)))
-    assert get_shot_remapping(return_value, _ARCH) is None
+    result = get_shot_remapping(return_value, _ARCH)
+    assert not result.ok
+    assert isinstance(result.diagnostic, ShotRemappingDiagnostic)
+    assert "logical[0].physical[0]" in result.diagnostic.message
+    assert "Zone-0" in result.diagnostic.message
+    assert result.diagnostic.offending_value == out_of_arch
 
 
 def test_empty_logical_blocks():
     """Empty inner lists (no physical qubits) are valid; an empty
-    outer list is also valid (no logical qubits). Both flatten to
-    an empty list."""
-    assert get_shot_remapping(_ll(_ll(), _ll()), _ARCH) == []
-    assert get_shot_remapping(_ll(), _ARCH) == []
+    outer list is also valid (no logical qubits). Both produce an
+    empty mapping."""
+    empty_inner = get_shot_remapping(_ll(_ll(), _ll()), _ARCH)
+    assert empty_inner.ok
+    assert empty_inner.get() == []
+    empty_outer = get_shot_remapping(_ll(), _ARCH)
+    assert empty_outer.ok
+    assert empty_outer.get() == []
+
+
+def test_get_raises_on_failure():
+    """``ShotMappingResult.get()`` raises a ``RuntimeError`` carrying
+    the diagnostic when the mapping is unavailable."""
+    result = get_shot_remapping(Bottom(), _ARCH)
+    with pytest.raises(RuntimeError, match="ShotMappingResult"):
+        result.get()
 
 
 # ── Integration: end-to-end via compile_squin_to_move ──────────────────
@@ -163,13 +203,14 @@ def test_get_shot_remapping_end_to_end_via_compile_squin_to_move():
     physical_move = compile_squin_to_move(main, transversal_rewrite=True)
 
     interp = AtomInterpreter(physical_move.dialects, arch_spec=arch_spec)
-    remapping = interp.get_shot_remapping(physical_move)
+    result = interp.get_shot_remapping(physical_move)
 
     # The analysis must refine to a concrete remapping for this
-    # well-formed Steane kernel; ``None`` here would indicate an
+    # well-formed Steane kernel; a failure here would indicate an
     # analysis or pipeline regression rather than legitimate
     # soft-fail behaviour.
-    assert remapping is not None
+    assert result.ok, f"unexpected diagnostic: {result.diagnostic}"
+    remapping = result.get()
 
     # Steane [[7,1,3]] encodes one logical qubit into seven physical
     # qubits; ``terminal_measure`` over ``num_logical`` logical qubits

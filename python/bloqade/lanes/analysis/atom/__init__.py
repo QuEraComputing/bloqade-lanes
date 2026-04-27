@@ -1,4 +1,8 @@
 from . import impl as impl
+from ._shot_remapping import (
+    ShotMappingResult as ShotMappingResult,
+    ShotRemappingDiagnostic as ShotRemappingDiagnostic,
+)
 from .analysis import (
     AtomInterpreter as AtomInterpreter,
     PostProcessing as PostProcessing,

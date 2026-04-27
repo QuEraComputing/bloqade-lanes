@@ -21,16 +21,72 @@ See: issue #563.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import ZoneAddress
+from bloqade.lanes.layout.encoding import LocationAddress, ZoneAddress
 
 from .lattice import IListResult, MeasureResult, MoveExecution
+
+
+@dataclass(frozen=True)
+class ShotRemappingDiagnostic:
+    """Compiler-developer-facing diagnostic emitted when
+    ``get_shot_remapping`` cannot derive a Zone-0 index list.
+
+    A failure here indicates an analysis or pipeline regression
+    rather than a user error — the user supplied a kernel, the
+    compiler service lowered it, and somewhere along the way the
+    analysis output drifted away from the expected
+    ``IListResult[IListResult[MeasureResult]]`` shape (or pointed
+    to a hardware location the architecture doesn't know about).
+    The fields below carry enough context for a compiler developer
+    to find the offending pass.
+
+    Attributes:
+        message: human-readable description with the failure path
+            baked in (e.g. ``"logical[2].physical[5]: …"``).
+        offending_value: the lattice value or address that triggered
+            the failure.
+    """
+
+    message: str
+    offending_value: MoveExecution | LocationAddress
+
+
+@dataclass(frozen=True)
+class ShotMappingResult:
+    """Result of computing the Zone-0 bitstring index list for a
+    move kernel's ``terminal_measure`` SSA value.
+
+    On success ``mapping`` holds the flat list of indices and
+    ``diagnostic`` is ``None``. On failure ``mapping`` is ``None``
+    and ``diagnostic`` carries the debug context.
+    """
+
+    mapping: list[int] | None
+    diagnostic: ShotRemappingDiagnostic | None = None
+
+    @property
+    def ok(self) -> bool:
+        """``True`` iff the mapping was derived successfully."""
+        return self.mapping is not None
+
+    def get(self) -> list[int]:
+        """Return the mapping or raise ``RuntimeError`` (carrying the
+        diagnostic) if the computation failed."""
+        if self.mapping is None:
+            raise RuntimeError(
+                f"ShotMappingResult: mapping unavailable; "
+                f"diagnostic: {self.diagnostic}"
+            )
+        return self.mapping
 
 
 def get_shot_remapping(
     return_value: MoveExecution,
     arch_spec: ArchSpec,
-) -> list[int] | None:
+) -> ShotMappingResult:
     """Project an analysis ``IListResult[IListResult[MeasureResult]]``
     value onto a flat list of Zone-0 bitstring indices.
 
@@ -48,11 +104,9 @@ def get_shot_remapping(
             layout that hardware shots are reported against.
 
     Returns:
-        ``list[int]`` whose ``k``-th entry is the Zone-0 bitstring
-        index for the ``k``-th physical measurement in row-major order
-        across the nested ``IListResult[IListResult[MeasureResult]]``,
-        **or** ``None`` if the mapping cannot be derived. Reasons the
-        mapping may fail:
+        ``ShotMappingResult`` whose ``mapping`` is the flat list of
+        Zone-0 indices in row-major order on success, or ``None`` with
+        a populated ``diagnostic`` on failure. Failure modes:
 
         - ``return_value`` (or any nested element) does not have the
           expected ``IListResult[IListResult[MeasureResult]]`` shape
@@ -62,27 +116,63 @@ def get_shot_remapping(
           ``arch_spec``'s Zone-0 iteration — i.e. the analysis and
           arch spec disagree about hardware layout.
 
-        Callers are expected to surface a meaningful diagnostic when
-        ``None`` is returned; this function does not raise on either
-        condition.
+        The diagnostic is aimed at the compiler service / compiler
+        developers, not end users; failures here indicate pipeline
+        regressions rather than malformed kernels.
     """
     zone0 = ZoneAddress(0)
 
     if not isinstance(return_value, IListResult):
-        return None
+        return ShotMappingResult(
+            mapping=None,
+            diagnostic=ShotRemappingDiagnostic(
+                message=(
+                    "outer return value did not refine to IListResult; "
+                    f"got {type(return_value).__name__}"
+                ),
+                offending_value=return_value,
+            ),
+        )
 
     remapping: list[int] = []
-    for logical in return_value.data:
+    for i, logical in enumerate(return_value.data):
         if not isinstance(logical, IListResult):
-            return None
-        for physical in logical.data:
+            return ShotMappingResult(
+                mapping=None,
+                diagnostic=ShotRemappingDiagnostic(
+                    message=(
+                        f"logical[{i}] did not refine to IListResult; "
+                        f"got {type(logical).__name__}"
+                    ),
+                    offending_value=logical,
+                ),
+            )
+        for j, physical in enumerate(logical.data):
             if not isinstance(physical, MeasureResult):
-                return None
+                return ShotMappingResult(
+                    mapping=None,
+                    diagnostic=ShotRemappingDiagnostic(
+                        message=(
+                            f"logical[{i}].physical[{j}] did not refine "
+                            f"to MeasureResult; got {type(physical).__name__}"
+                        ),
+                        offending_value=physical,
+                    ),
+                )
             # ``ArchSpec.get_zone_index`` is O(1) via the Rust backend
-            # and returns ``None`` for addresses outside Zone-0 — which
-            # propagates as the "give up" signal here.
+            # and returns ``None`` for addresses outside Zone-0.
             idx = arch_spec.get_zone_index(physical.location_address, zone0)
             if idx is None:
-                return None
+                return ShotMappingResult(
+                    mapping=None,
+                    diagnostic=ShotRemappingDiagnostic(
+                        message=(
+                            f"logical[{i}].physical[{j}]: "
+                            f"location_address {physical.location_address} "
+                            "is not in Zone-0 of the arch spec"
+                        ),
+                        offending_value=physical.location_address,
+                    ),
+                )
             remapping.append(idx)
-    return remapping
+    return ShotMappingResult(mapping=remapping)

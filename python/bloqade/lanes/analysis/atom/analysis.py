@@ -79,26 +79,29 @@ class AtomInterpreter(Forward[MoveExecution]):
     def eval_fallback(self, frame: ForwardFrame[MoveExecution], node: ir.Statement):
         return tuple(MoveExecution.bottom() for _ in node.results)
 
-    def get_shot_remapping(self, method: ir.Method) -> list[int] | None:
+    def get_shot_remapping(
+        self, method: ir.Method
+    ) -> _shot_remapping.ShotMappingResult:
         """Run the analysis on ``method`` and return the flat Zone-0
         bitstring index list (in row-major order over the nested
-        IListResult[IListResult[MeasureResult]] return shape), or
-        ``None`` if the analysis output couldn't be refined into that
-        shape.
+        ``IListResult[IListResult[MeasureResult]]`` return shape) wrapped
+        in a ``ShotMappingResult``. On failure, the result carries a
+        ``ShotRemappingDiagnostic`` instead of a mapping.
 
         Convenience wrapper around the standalone
         ``bloqade.lanes.analysis.atom._shot_remapping.get_shot_remapping``;
         see that function's docstring for the contract on the analysis
         output shape, the meaning of the returned indices, and the
-        conditions under which ``None`` is returned.
+        diagnostic emitted on failure.
 
         The method's return value is expected to refine to
         ``IListResult[IListResult[MeasureResult]]`` — the shape produced
         by lowering a logical ``terminal_measure`` (or any kernel that
         returns a nested ilist of measurement results) through the
         atom-analysis chain. Callers (typically the compiler service)
-        are responsible for surfacing a diagnostic when ``None`` is
-        returned.
+        are responsible for surfacing the diagnostic in the failure
+        case; a failure here is a compiler-pipeline regression, not a
+        user error.
         """
         _, output = self.run(method)
         return _shot_remapping.get_shot_remapping(output, self.arch_spec)
