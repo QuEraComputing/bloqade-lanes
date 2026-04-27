@@ -10,6 +10,7 @@ from typing_extensions import Self
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.utils import no_none_elements_tuple
 
+from . import _shot_remapping
 from ._post_processing import constructor_function
 from .lattice import AtomState, MoveExecution
 
@@ -77,6 +78,44 @@ class AtomInterpreter(Forward[MoveExecution]):
 
     def eval_fallback(self, frame: ForwardFrame[MoveExecution], node: ir.Statement):
         return tuple(MoveExecution.bottom() for _ in node.results)
+
+    def get_shot_remapping(
+        self, method: ir.Method, *, no_raise: bool = True
+    ) -> _shot_remapping.ShotRemappingOk | _shot_remapping.ShotRemappingErr:
+        """Run the analysis on ``method`` and return the flat Zone-0
+        bitstring index list (in row-major order over the nested
+        ``IListResult[IListResult[MeasureResult]]`` return shape) as a
+        ``ShotRemappingOk``. On failure, returns ``ShotRemappingErr``
+        carrying a ``ShotRemappingDiagnostic``.
+
+        Convenience wrapper around the standalone
+        ``bloqade.lanes.analysis.atom._shot_remapping.get_shot_remapping``;
+        see that function's docstring for the contract on the analysis
+        output shape, the meaning of the returned indices, and the
+        diagnostic emitted on failure.
+
+        ``method``'s return value is expected to refine to
+        ``IListResult[IListResult[MeasureResult]]`` — the shape produced
+        by lowering a logical ``terminal_measure`` (or any kernel that
+        returns a nested ilist of measurement results) through the
+        atom-analysis chain. Callers (typically the compiler service)
+        are responsible for surfacing the diagnostic in the failure
+        case; a failure here is a compiler-pipeline regression, not a
+        user error.
+
+        Args:
+            method: kirin method to analyse.
+            no_raise: when ``True`` (default), an analysis crash is
+                caught by ``Forward.run_no_raise`` and falls through
+                into the standard ``ShotRemappingErr`` path with the
+                ``Bottom`` lattice as the offending value, so callers
+                see a single failure shape. Flip to ``False`` when
+                debugging an analysis-side bug to let the original
+                exception propagate.
+        """
+        run_method = self.run_no_raise if no_raise else self.run
+        _, output = run_method(method)
+        return _shot_remapping.get_shot_remapping(output, self.arch_spec)
 
     def get_post_processing(
         self, method: ir.Method[..., RetType]

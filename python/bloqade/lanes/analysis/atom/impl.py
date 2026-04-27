@@ -278,7 +278,7 @@ class Move(interp.MethodTable):
         if qubit_id is None:
             return (Bottom(),)
 
-        return (MeasureResult(qubit_id),)
+        return (MeasureResult(qubit_id, stmt.location_address),)
 
 
 @py.constant.dialect.register(key="atom")

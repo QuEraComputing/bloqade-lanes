@@ -443,7 +443,8 @@ def test_insert_measurements():
     }
 
     frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
-        gate_node, entries={gate_node.result: atom.MeasureResult(0)}
+        gate_node,
+        entries={gate_node.result: atom.MeasureResult(0, layout.LocationAddress(0, 0))},
     )
 
     rule = gates.InsertMeasurements(
