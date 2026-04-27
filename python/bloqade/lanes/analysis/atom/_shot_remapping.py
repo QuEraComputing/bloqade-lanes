@@ -19,13 +19,10 @@ See: issue #563.
 
 from __future__ import annotations
 
-from bloqade.lanes.analysis.atom.lattice import (
-    IListResult,
-    MeasureResult,
-    MoveExecution,
-)
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import ZoneAddress
+
+from .lattice import IListResult, MeasureResult, MoveExecution
 
 
 def get_shot_remapping(

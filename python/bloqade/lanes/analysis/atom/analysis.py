@@ -10,6 +10,7 @@ from typing_extensions import Self
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.utils import no_none_elements_tuple
 
+from . import _shot_remapping
 from ._post_processing import constructor_function
 from .lattice import AtomState, MoveExecution
 
@@ -98,10 +99,8 @@ class AtomInterpreter(Forward[MoveExecution]):
         are responsible for surfacing a diagnostic when ``None`` is
         returned.
         """
-        from ._shot_remapping import get_shot_remapping
-
         _, output = self.run(method)
-        return get_shot_remapping(output, self.arch_spec)
+        return _shot_remapping.get_shot_remapping(output, self.arch_spec)
 
     def get_post_processing(
         self, method: ir.Method[..., RetType]

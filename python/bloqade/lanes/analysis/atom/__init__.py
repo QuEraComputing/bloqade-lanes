@@ -1,5 +1,4 @@
 from . import impl as impl
-from ._shot_remapping import get_shot_remapping as get_shot_remapping
 from .analysis import (
     AtomInterpreter as AtomInterpreter,
     PostProcessing as PostProcessing,

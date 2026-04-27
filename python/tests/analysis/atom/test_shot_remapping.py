@@ -14,8 +14,8 @@ from bloqade.lanes.analysis.atom import (
     IListResult,
     MeasureResult,
     Value,
-    get_shot_remapping,
 )
+from bloqade.lanes.analysis.atom._shot_remapping import get_shot_remapping
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
