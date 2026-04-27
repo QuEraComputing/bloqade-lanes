@@ -103,11 +103,7 @@ class ExhaustiveMoveGenerator:
         unique_xs: set[float] = set()
         unique_ys: set[float] = set()
         for loc in src_locs:
-            pos = tree.arch_spec.get_position(loc)
-            assert (
-                pos is not None
-            ), f"location {loc!r} has no position in this architecture"
-            x, y = pos
+            x, y = tree.arch_spec.get_position(loc)
             pos_to_loc[(x, y)] = loc
             unique_xs.add(x)
             unique_ys.add(y)
@@ -128,11 +124,7 @@ class ExhaustiveMoveGenerator:
             loc_to_lane[loc] = lane
 
             if loc in occupied:
-                endpoints = tree.arch_spec.get_endpoints(lane)
-                assert (
-                    endpoints is not None
-                ), f"lane {lane!r} has no endpoints in this architecture"
-                _, dst = endpoints
+                _, dst = tree.arch_spec.get_endpoints(lane)
                 if dst in occupied:
                     invalid_locs.add(loc)
 

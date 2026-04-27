@@ -95,11 +95,7 @@ class HeuristicMoveGenerator:
     ) -> bool:
         """Reject rectangles that include any invalid occupied source."""
         for lane in moveset:
-            endpoints = tree.arch_spec.get_endpoints(lane)
-            assert (
-                endpoints is not None
-            ), f"lane {lane!r} has no endpoints in this architecture"
-            src, _ = endpoints
+            src, _ = tree.arch_spec.get_endpoints(lane)
             if src in invalid_sources:
                 return False
             qid = node.get_qubit_at(src)
@@ -132,11 +128,7 @@ class HeuristicMoveGenerator:
         lane = tree.lane_for_source(mt, bus_id, direction, current)
         if lane is None:
             return None
-        endpoints = tree.arch_spec.get_endpoints(lane)
-        assert (
-            endpoints is not None
-        ), f"lane {lane!r} has no endpoints in this architecture"
-        _, dst = endpoints
+        _, dst = tree.arch_spec.get_endpoints(lane)
         occupied = node.occupied_locations | tree.blocked_locations
         if dst in occupied:
             return None

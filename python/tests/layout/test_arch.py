@@ -93,9 +93,7 @@ def test_get_lane_address_word_move_forward():
     assert lane is not None
     assert lane.move_type == MoveType.WORD
     assert lane.direction == Direction.FORWARD
-    endpoints = arch_spec.get_endpoints(lane)
-    assert endpoints is not None
-    got_src, got_dst = endpoints
+    got_src, got_dst = arch_spec.get_endpoints(lane)
     assert (got_src, got_dst) == (src, dst)
 
 
@@ -109,9 +107,7 @@ def test_get_lane_address_word_move_backward():
     backward_lane = arch_spec.get_lane_address(dst, src)
     assert backward_lane is not None
     assert backward_lane.direction == Direction.BACKWARD
-    endpoints = arch_spec.get_endpoints(backward_lane)
-    assert endpoints is not None
-    got_src, got_dst = endpoints
+    got_src, got_dst = arch_spec.get_endpoints(backward_lane)
     assert (got_src, got_dst) == (dst, src)
 
 
@@ -124,9 +120,7 @@ def test_get_lane_address_word_move():
     assert lane is not None
     assert lane.move_type == MoveType.WORD
     assert lane.direction == Direction.FORWARD
-    endpoints = arch_spec.get_endpoints(lane)
-    assert endpoints is not None
-    got_src, got_dst = endpoints
+    got_src, got_dst = arch_spec.get_endpoints(lane)
     assert (got_src, got_dst) == (src, dst)
 
 
@@ -152,9 +146,7 @@ def test_get_lane_address_roundtrip():
                             bus_id=bus_id,
                             direction=direction,
                         )
-                        endpoints = arch_spec.get_endpoints(lane)
-                        assert endpoints is not None
-                        src, dst = endpoints
+                        src, dst = arch_spec.get_endpoints(lane)
                         looked_up = arch_spec.get_lane_address(src, dst)
                         assert looked_up is not None
                         assert looked_up == lane
@@ -169,9 +161,7 @@ def test_get_lane_address_roundtrip():
                             bus_id=bus_id,
                             direction=direction,
                         )
-                        endpoints = arch_spec.get_endpoints(lane)
-                        assert endpoints is not None
-                        src, dst = endpoints
+                        src, dst = arch_spec.get_endpoints(lane)
                         looked_up = arch_spec.get_lane_address(src, dst)
                         assert looked_up is not None
                         assert looked_up == lane

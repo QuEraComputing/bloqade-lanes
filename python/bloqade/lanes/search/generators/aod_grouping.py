@@ -94,11 +94,7 @@ class BusContext:
                     for w in zone.words_with_site_buses:
                         for s in bus.src:
                             lane = LaneAddress(move_type, w, s, bus_id, direction, zid)
-                            endpoints = arch_spec.get_endpoints(lane)
-                            assert (
-                                endpoints is not None
-                            ), f"lane {lane!r} has no endpoints in this architecture"
-                            src, _ = endpoints
+                            src, _ = arch_spec.get_endpoints(lane)
                             src_locs.append(src)
                             src_to_lane[src] = lane
             else:
@@ -107,20 +103,13 @@ class BusContext:
                     for w in bus.src:
                         for s in zone.sites_with_word_buses:
                             lane = LaneAddress(move_type, w, s, bus_id, direction, zid)
-                            endpoints = arch_spec.get_endpoints(lane)
-                            assert (
-                                endpoints is not None
-                            ), f"lane {lane!r} has no endpoints in this architecture"
-                            src, _ = endpoints
+                            src, _ = arch_spec.get_endpoints(lane)
                             src_locs.append(src)
                             src_to_lane[src] = lane
 
         pos_to_loc: dict[tuple[float, float], LocationAddress] = {}
         for loc in src_locs:
             pos = arch_spec.get_position(loc)
-            assert (
-                pos is not None
-            ), f"location {loc!r} has no position in this architecture"
             pos_to_loc[pos] = loc
 
         # Track source locations whose destination is occupied. `is_valid_rect`
@@ -130,11 +119,7 @@ class BusContext:
             lane = src_to_lane.get(loc)
             if lane is None:
                 continue
-            endpoints = arch_spec.get_endpoints(lane)
-            assert (
-                endpoints is not None
-            ), f"lane {lane!r} has no endpoints in this architecture"
-            _, dst = endpoints
+            _, dst = arch_spec.get_endpoints(lane)
             if dst in occupied:
                 collision.add(loc)
 
@@ -176,14 +161,8 @@ class BusContext:
 
     def lane_position(self, lane: LaneAddress) -> tuple[float, float]:
         """Get the physical (x, y) position of a lane's source."""
-        endpoints = self.arch_spec.get_endpoints(lane)
-        assert (
-            endpoints is not None
-        ), f"lane {lane!r} has no endpoints in this architecture"
-        src, _ = endpoints
-        pos = self.arch_spec.get_position(src)
-        assert pos is not None, f"location {src!r} has no position in this architecture"
-        return pos
+        src, _ = self.arch_spec.get_endpoints(lane)
+        return self.arch_spec.get_position(src)
 
     # --- Grid construction ---
 
@@ -199,14 +178,9 @@ class BusContext:
            Clusters that cannot merge are marked solved and removed from
            the active set so they don't slow down later rounds.
         """
-        mover_srcs: list[LocationAddress] = []
-        for lane in entries.values():
-            ep = self.arch_spec.get_endpoints(lane)
-            assert (
-                ep is not None
-            ), f"lane {lane!r} has no endpoints in this architecture"
-            mover_srcs.append(ep[0])
-        movers = set(mover_srcs)
+        movers = set(
+            src for src, _ in map(self.arch_spec.get_endpoints, entries.values())
+        )
         clusters = self.greedy_init(entries, movers)
         solved = self.merge_clusters(clusters, movers)
 

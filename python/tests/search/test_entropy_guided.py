@@ -490,9 +490,7 @@ def test_ancestor_revisit_maps_to_state_seen_with_real_tree_outcome():
                     yield frozenset({first_lane})
                 return
             for lane in tree.valid_lanes(node, direction=Direction.BACKWARD):
-                endpoints = tree.arch_spec.get_endpoints(lane)
-                assert endpoints is not None
-                src, dst = endpoints
+                src, dst = tree.arch_spec.get_endpoints(lane)
                 if src == loc and dst == LocationAddress(0, 0):
                     yield frozenset({lane})
                     return

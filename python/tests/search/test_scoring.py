@@ -61,9 +61,7 @@ def test_mobility_at_weights_legal_lanes_by_post_lane_distance(monkeypatch):
 
     legal_dsts: list[LocationAddress] = []
     for lane in tree.outgoing_lanes(position):
-        endpoints = tree.arch_spec.get_endpoints(lane)
-        assert endpoints is not None
-        _, dst = endpoints
+        _, dst = tree.arch_spec.get_endpoints(lane)
         if dst not in occupied:
             legal_dsts.append(dst)
 
@@ -166,9 +164,7 @@ def test_score_all_qubit_bus_pairs_excludes_blocked_destinations():
             None,
         )
         assert lane is not None
-        endpoints = tree.arch_spec.get_endpoints(lane)
-        assert endpoints is not None
-        _, dst = endpoints
+        _, dst = tree.arch_spec.get_endpoints(lane)
         assert dst not in blocked
 
 

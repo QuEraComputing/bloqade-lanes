@@ -269,11 +269,7 @@ class Metrics:
         for stmt in move_mt.callable_region.walk():
             if isinstance(stmt, move.Move):
                 for lane in stmt.lanes:
-                    endpoints = self.arch_spec.get_endpoints(lane)
-                    assert (
-                        endpoints is not None
-                    ), f"lane {lane!r} has no endpoints in this architecture"
-                    src, dst = endpoints
+                    src, dst = self.arch_spec.get_endpoints(lane)
                     qubit_id = qubit_by_location.pop(src, None)
                     if qubit_id is None:
                         continue

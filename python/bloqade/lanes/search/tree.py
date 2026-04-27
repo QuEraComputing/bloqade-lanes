@@ -109,11 +109,7 @@ class ConfigurationTree:
                                         direction,
                                         zone_id,
                                     )
-                                    _ep = self.arch_spec.get_endpoints(lane)
-                                    assert (
-                                        _ep is not None
-                                    ), f"lane {lane!r} has no endpoints in this architecture"
-                                    src, _ = _ep
+                                    src, _ = self.arch_spec.get_endpoints(lane)
                                     lanes_for_key.append(lane)
                                     outgoing[src].append(lane)
                         else:
@@ -127,11 +123,7 @@ class ConfigurationTree:
                                         direction,
                                         zone_id,
                                     )
-                                    _ep = self.arch_spec.get_endpoints(lane)
-                                    assert (
-                                        _ep is not None
-                                    ), f"lane {lane!r} has no endpoints in this architecture"
-                                    src, _ = _ep
+                                    src, _ = self.arch_spec.get_endpoints(lane)
                                     lanes_for_key.append(lane)
                                     outgoing[src].append(lane)
 
@@ -213,11 +205,7 @@ class ConfigurationTree:
             direction=direction,
             zone_id=source.zone_id,
         ):
-            endpoints = self.arch_spec.get_endpoints(lane)
-            assert (
-                endpoints is not None
-            ), f"lane {lane!r} has no endpoints in this architecture"
-            src, _ = endpoints
+            src, _ = self.arch_spec.get_endpoints(lane)
             if src == source:
                 return lane
         return None
@@ -268,11 +256,7 @@ class ConfigurationTree:
             if direction is not None and d != direction:
                 continue
             for lane in lanes:
-                endpoints = self.arch_spec.get_endpoints(lane)
-                assert (
-                    endpoints is not None
-                ), f"lane {lane!r} has no endpoints in this architecture"
-                src, dst = endpoints
+                src, dst = self.arch_spec.get_endpoints(lane)
                 if src in occupied and dst not in occupied and dst not in blocked:
                     yield lane
 
@@ -351,19 +335,17 @@ class ConfigurationTree:
         blocked = self.blocked_locations
 
         for lane in move_set:
-            endpoints = self.arch_spec.get_endpoints(lane)
-            if endpoints is None:
-                msg = (
-                    f"Invalid lane address {lane!r}: no endpoints in this architecture"
-                )
+            try:
+                src, dst = self.arch_spec.get_endpoints(lane)
+            except Exception as e:
+                msg = f"Invalid lane address {lane!r}: {e}"
                 if strict:
-                    raise InvalidMoveError(msg)
+                    raise InvalidMoveError(msg) from e
                 return ExpansionOutcome(
                     move_set=move_set,
                     status=ExpansionStatus.INVALID_LANE,
                     error_message=msg,
                 )
-            src, dst = endpoints
 
             qid = node.get_qubit_at(src)
             if qid is None:

@@ -403,12 +403,9 @@ class StateArtist:
     ) -> tuple[list[int], list[int], list[int]]:
         moving_atom_data: list[tuple[int, int, int]] = []
         for qubit in move_execution.data.prev_lanes.keys():
-            loc = move_execution.data.qubit_to_locations[qubit]
-            pos = self.arch_spec.get_position(loc)
-            assert (
-                pos is not None
-            ), f"location {loc!r} has no position in this architecture"
-            x, y = pos
+            x, y = self.arch_spec.get_position(
+                move_execution.data.qubit_to_locations[qubit]
+            )
             if x in last_xs and y in last_ys:
                 moving_atom_data.append((last_xs.index(x), last_ys.index(y), qubit))
 
@@ -421,15 +418,11 @@ class StateArtist:
     def _get_stationary_positions(
         self, move_execution: AtomState
     ) -> tuple[list[float], list[float], list[int]]:
-        stationary_atom_data = []
-        for qubit, location in move_execution.data.qubit_to_locations.items():
-            if qubit in move_execution.data.prev_lanes.keys():
-                continue
-            pos = self.arch_spec.get_position(location)
-            assert (
-                pos is not None
-            ), f"location {location!r} has no position in this architecture"
-            stationary_atom_data.append((*pos, qubit))
+        stationary_atom_data = [
+            (*self.arch_spec.get_position(location), qubit)
+            for qubit, location in move_execution.data.qubit_to_locations.items()
+            if qubit not in move_execution.data.prev_lanes.keys()
+        ]
         if len(stationary_atom_data) == 0:
             return [], [], []
 
@@ -531,13 +524,10 @@ class StateArtist:
                 )
 
     def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
-        positions = []
-        for location in stmt.location_addresses:
-            pos = self.arch_spec.get_position(location)
-            assert (
-                pos is not None
-            ), f"location {location!r} has no position in this architecture"
-            positions.append(pos)
+        positions = list(
+            self.arch_spec.get_position(location)
+            for location in stmt.location_addresses
+        )
         x_pos, y_pos = zip(*positions) if len(positions) > 0 else ([], [])
         self.ax.scatter(x_pos, y_pos, color=color, **self.plot_params.gate_spot_args)
 
@@ -584,11 +574,9 @@ class StateArtist:
             for site_id in range(len(word.site_indices)):
                 from bloqade.lanes.layout.encoding import LocationAddress
 
-                loc = LocationAddress(word_id, site_id, zone_id)
-                pos = self.arch_spec.get_position(loc)
-                assert (
-                    pos is not None
-                ), f"location {loc!r} has no position in this architecture"
+                pos = self.arch_spec.get_position(
+                    LocationAddress(word_id, site_id, zone_id)
+                )
                 y_min = min(y_min, pos[1])
                 y_max = max(y_max, pos[1])
 
