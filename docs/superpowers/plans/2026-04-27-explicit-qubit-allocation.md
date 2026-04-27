@@ -44,11 +44,7 @@ The per-task reviews catch implementation slips; the per-phase checkpoints catch
 | `python/bloqade/gemini/logical/validation/new_at.py` | Per-stmt method-table impl (const + range checks) registered against `"move.address.validation"` |
 | `python/bloqade/gemini/logical/validation/duplicates.py` | Cross-statement duplicate-address validation pass |
 | `python/bloqade/lanes/rewrite/resolve_pinned.py` | The `ResolvePinnedAddresses` rewrite |
-| `python/tests/dialects/place/__init__.py` | Test package init |
-| `python/tests/dialects/place/test_new_logical_qubit.py` | Round-trip the new attribute |
 | `python/tests/rewrite/test_resolve_pinned.py` | Tests for `ResolvePinnedAddresses` |
-| `python/tests/gemini/dialects/__init__.py` | Test package init |
-| `python/tests/gemini/dialects/test_new_at.py` | Tests for the new statement |
 | `python/tests/gemini/validation/__init__.py` | Test package init |
 | `python/tests/gemini/validation/test_new_at_validation.py` | Tests for per-stmt + duplicate-address validation |
 | `python/tests/integration/__init__.py` | Test package init |
@@ -88,54 +84,12 @@ The smallest possible change: add an optional attribute. No behavior change yet.
 
 ### Task A1: Add `location_address` attribute to `place.NewLogicalQubit`
 
+> **No test file for this task** — Kirin's statement infrastructure is stable; tests that just verify attribute construction/round-tripping exercise the framework, not our code. The attribute starts mattering once rewrites/analyses read it (Phase B onward), and those phases have meaningful tests.
+
 **Files:**
 - Modify: `python/bloqade/lanes/dialects/place.py:36-51`
-- Create: `python/tests/dialects/place/__init__.py` (empty)
-- Create: `python/tests/dialects/place/test_new_logical_qubit.py`
 
-- [ ] **Step 1: Write the failing test**
-
-Create `python/tests/dialects/place/__init__.py` (empty file).
-
-Create `python/tests/dialects/place/test_new_logical_qubit.py`:
-
-```python
-from kirin import ir, types
-from kirin.dialects import py
-
-from bloqade.lanes.dialects import place
-from bloqade.lanes.layout.encoding import LocationAddress
-
-
-def _make_zero() -> ir.SSAValue:
-    return py.Constant(0.0).result
-
-
-def test_new_logical_qubit_default_location_address_is_none():
-    stmt = place.NewLogicalQubit(_make_zero(), _make_zero(), _make_zero())
-    assert stmt.location_address is None
-
-
-def test_new_logical_qubit_accepts_location_address():
-    addr = LocationAddress(0, 1, 2)
-    stmt = place.NewLogicalQubit(
-        _make_zero(),
-        _make_zero(),
-        _make_zero(),
-        location_address=addr,
-    )
-    assert stmt.location_address == addr
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```
-uv run pytest python/tests/dialects/place/test_new_logical_qubit.py -v
-```
-
-Expected: FAIL — `NewLogicalQubit.__init__()` does not accept `location_address`.
-
-- [ ] **Step 3: Add the attribute**
+- [ ] **Step 1: Add the attribute**
 
 Modify `python/bloqade/lanes/dialects/place.py:36-51`:
 
@@ -167,15 +121,7 @@ Add the import at the top of the file (next to existing imports):
 from bloqade.lanes.layout.encoding import LocationAddress
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
-
-```
-uv run pytest python/tests/dialects/place/test_new_logical_qubit.py -v
-```
-
-Expected: PASS, both test cases.
-
-- [ ] **Step 5: Run the existing test corpus to confirm no regressions**
+- [ ] **Step 2: Run the existing test corpus to confirm no regressions**
 
 ```
 just test-python
@@ -183,10 +129,10 @@ just test-python
 
 Expected: all existing tests still pass. The default value of `None` means existing call sites are unaffected.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add python/bloqade/lanes/dialects/place.py python/tests/dialects/place/
+git add python/bloqade/lanes/dialects/place.py
 git commit -m "$(cat <<'EOF'
 feat(place): add optional location_address attribute to NewLogicalQubit
 
@@ -994,44 +940,14 @@ Add the user-facing statement and teach the existing rewrite chain to handle it.
 
 ### Task D1: Define `gemini.operations.NewAt` statement
 
+> **No standalone test file for this task** — Kirin's statement infrastructure is stable; tests that just verify a statement constructs and stores its args exercise the framework, not our code. The new statement starts mattering once the augmented rewrites in D2/D3 consume it, and those tasks have meaningful tests.
+
 **Files:**
 - Modify: `python/bloqade/gemini/logical/dialects/operations/stmts.py`
 - Modify: `python/bloqade/gemini/logical/dialects/operations/__init__.py`
 - Create: `python/bloqade/gemini/logical/dialects/operations/_new_at_lowering.py`
-- Create: `python/tests/gemini/dialects/__init__.py` (empty)
-- Create: `python/tests/gemini/dialects/test_new_at.py`
 
-- [ ] **Step 1: Write the failing test**
-
-Create `python/tests/gemini/dialects/test_new_at.py`:
-
-```python
-from kirin import ir, types
-from kirin.dialects import py
-
-from bloqade.gemini.logical.dialects.operations import stmts
-
-
-def test_new_at_takes_three_int_args_and_produces_qubit():
-    z = py.Constant(0).result
-    w = py.Constant(1).result
-    s = py.Constant(2).result
-    stmt = stmts.NewAt(zone_id=z, word_id=w, site_id=s)
-    assert stmt.zone_id is z
-    assert stmt.word_id is w
-    assert stmt.site_id is s
-    assert stmt.qubit.type.is_subseteq(types.Any)  # produces a qubit-typed result
-```
-
-- [ ] **Step 2: Run to verify it fails**
-
-```
-uv run pytest python/tests/gemini/dialects/test_new_at.py -v
-```
-
-Expected: FAIL — `stmts.NewAt` does not exist.
-
-- [ ] **Step 3: Add the statement**
+- [ ] **Step 1: Add the statement**
 
 Append to `python/bloqade/gemini/logical/dialects/operations/stmts.py`:
 
@@ -1052,7 +968,7 @@ class NewAt(ir.Statement):
     qubit: ir.ResultValue = info.result(QubitType)
 ```
 
-- [ ] **Step 4: Add the Python lowering interface**
+- [ ] **Step 2: Add the Python lowering interface**
 
 Create `python/bloqade/gemini/logical/dialects/operations/_new_at_lowering.py`:
 
@@ -1073,7 +989,7 @@ def new_at(zone_id: int, word_id: int, site_id: int) -> Qubit:
     ...
 ```
 
-- [ ] **Step 5: Re-export from the package init**
+- [ ] **Step 3: Re-export from the package init**
 
 Modify `python/bloqade/gemini/logical/dialects/operations/__init__.py`:
 
@@ -1084,15 +1000,7 @@ from ._interface import terminal_measure as terminal_measure
 from ._new_at_lowering import new_at as new_at
 ```
 
-- [ ] **Step 6: Run tests to verify it passes**
-
-```
-uv run pytest python/tests/gemini/dialects/test_new_at.py -v
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Run the full corpus**
+- [ ] **Step 4: Run the full corpus to confirm no regressions**
 
 ```
 just test-python
@@ -1100,10 +1008,10 @@ just test-python
 
 Expected: all pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add python/bloqade/gemini/logical/dialects/operations/ python/tests/gemini/dialects/
+git add python/bloqade/gemini/logical/dialects/operations/
 git commit -m "feat(gemini): add operations.new_at statement for pinned-qubit allocation"
 ```
 
