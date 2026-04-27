@@ -1,4 +1,4 @@
-from .arch import ArchSpec as ArchSpec, BusDescriptor as BusDescriptor
+from .arch import ArchSpec as ArchSpec
 from .encoding import (
     Direction as Direction,
     LaneAddress as LaneAddress,
