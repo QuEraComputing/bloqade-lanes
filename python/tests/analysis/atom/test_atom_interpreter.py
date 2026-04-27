@@ -44,7 +44,9 @@ def test_atom_interpreter_simple():
 
     interp = atom.AtomInterpreter(kernel, arch_spec=get_arch_spec())
     frame, result = interp.run(main)
-    assert result == atom.MeasureResult(qubit_id=0)
+    assert result == atom.MeasureResult(
+        qubit_id=0, location_address=move.LocationAddress(1, 0)
+    )
 
 
 def test_get_post_processing():
