@@ -13,6 +13,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     PlacementAnalysis,
 )
+from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")
@@ -41,6 +42,9 @@ class NewLogicalQubit(ir.Statement):
         theta (float): Angle for rotation around the Y axis
         phi (float): angle for rotation around the Z axis
         lam (float): angle for rotation around the Z axis
+        location_address (LocationAddress | None): Pinned physical address; None means
+            the layout heuristic chooses. After ResolvePinnedAddresses runs, this is
+            never None in well-formed IR.
 
     """
 
@@ -48,6 +52,7 @@ class NewLogicalQubit(ir.Statement):
     theta: ir.SSAValue = info.argument(types.Float)
     phi: ir.SSAValue = info.argument(types.Float)
     lam: ir.SSAValue = info.argument(types.Float)
+    location_address: LocationAddress | None = info.attribute(default=None)
     result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
 
