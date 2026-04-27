@@ -181,37 +181,57 @@ class ArchSpecGeometry:
                 )
             bus = zone.site_buses[bus_id]
             for word_id in zone.words_with_site_buses:
-                for src_site, _dst_site in zip(bus.src, bus.dst):
+                for src_site, _dst_site in zip(bus.src, bus.dst, strict=True):
                     lane = LaneAddress(
                         move_type, word_id, src_site, bus_id, direction, zone_id
                     )
                     endpoints = self._inner.lane_endpoints(lane._inner)
-                    if endpoints is not None:
-                        src_loc, dst_loc = endpoints
-                        src_pos = self._inner.location_position(src_loc)
-                        dst_pos = self._inner.location_position(dst_loc)
-                        if src_pos is not None and dst_pos is not None:
-                            src_positions.append(src_pos)
-                            dst_positions.append(dst_pos)
+                    if endpoints is None:
+                        raise ValueError(
+                            f"lane {lane!r} has no endpoints in zone {zone_id}"
+                        )
+                    src_loc, dst_loc = endpoints
+                    src_pos = self._inner.location_position(src_loc)
+                    if src_pos is None:
+                        raise ValueError(
+                            f"location {src_loc!r} has no position in zone {zone_id}"
+                        )
+                    dst_pos = self._inner.location_position(dst_loc)
+                    if dst_pos is None:
+                        raise ValueError(
+                            f"location {dst_loc!r} has no position in zone {zone_id}"
+                        )
+                    src_positions.append(src_pos)
+                    dst_positions.append(dst_pos)
         elif move_type == MoveType.WORD:
             if bus_id < 0 or bus_id >= len(zone.word_buses):
                 raise ValueError(
                     f"word bus_id {bus_id} out of range [0, {len(zone.word_buses)})"
                 )
             bus = zone.word_buses[bus_id]
-            for src_word, _dst_word in zip(bus.src, bus.dst):
+            for src_word, _dst_word in zip(bus.src, bus.dst, strict=True):
                 for site_id in zone.sites_with_word_buses:
                     lane = LaneAddress(
                         move_type, src_word, site_id, bus_id, direction, zone_id
                     )
                     endpoints = self._inner.lane_endpoints(lane._inner)
-                    if endpoints is not None:
-                        src_loc, dst_loc = endpoints
-                        src_pos = self._inner.location_position(src_loc)
-                        dst_pos = self._inner.location_position(dst_loc)
-                        if src_pos is not None and dst_pos is not None:
-                            src_positions.append(src_pos)
-                            dst_positions.append(dst_pos)
+                    if endpoints is None:
+                        raise ValueError(
+                            f"lane {lane!r} has no endpoints in zone {zone_id}"
+                        )
+                    src_loc, dst_loc = endpoints
+                    src_pos = self._inner.location_position(src_loc)
+                    if src_pos is None:
+                        raise ValueError(
+                            f"location {src_loc!r} has no position in zone {zone_id}"
+                        )
+                    dst_pos = self._inner.location_position(dst_loc)
+                    if dst_pos is None:
+                        raise ValueError(
+                            f"location {dst_loc!r} has no position in zone {zone_id}"
+                        )
+                    src_positions.append(src_pos)
+                    dst_positions.append(dst_pos)
         else:
             raise ValueError(f"Unsupported move_type: {move_type}")
 
