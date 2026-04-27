@@ -97,7 +97,9 @@ def test_collision_filtered_by_generator():
     for ms in gen.generate(tree.root, tree):
         for lane in ms:
             if lane.word_id == 0 and lane.site_id == 0 and lane.bus_id == 0:
-                src, dst = arch_spec.get_endpoints(lane)
+                endpoints = arch_spec.get_endpoints(lane)
+                assert endpoints is not None
+                src, dst = endpoints
                 if tree.root.is_occupied(src):
                     assert not tree.root.is_occupied(dst)
 
@@ -123,7 +125,9 @@ def test_try_move_set_reports_transposition_for_ancestor_revisit():
 
     backward_lane = None
     for lane in tree.valid_lanes(first.child, direction=Direction.BACKWARD):
-        src, dst = tree.arch_spec.get_endpoints(lane)
+        endpoints = tree.arch_spec.get_endpoints(lane)
+        assert endpoints is not None
+        src, dst = endpoints
         if src == LocationAddress(1, 0) and dst == LocationAddress(0, 0):
             backward_lane = lane
             break
@@ -313,7 +317,9 @@ def test_valid_lanes_returns_nonempty():
     assert len(lanes) > 0
     # All lanes should have occupied src and unoccupied dst
     for lane in lanes:
-        src, dst = tree.arch_spec.get_endpoints(lane)
+        endpoints = tree.arch_spec.get_endpoints(lane)
+        assert endpoints is not None
+        src, dst = endpoints
         assert tree.root.is_occupied(src)
         assert not tree.root.is_occupied(dst)
 
@@ -330,7 +336,9 @@ def test_valid_lanes_excludes_blocked_destinations():
     lanes = frozenset(tree.valid_lanes(tree.root))
     assert len(lanes) > 0
     for lane in lanes:
-        _, dst = tree.arch_spec.get_endpoints(lane)
+        endpoints = tree.arch_spec.get_endpoints(lane)
+        assert endpoints is not None
+        _, dst = endpoints
         assert dst not in blocked
 
 
@@ -393,5 +401,7 @@ def test_valid_lanes_no_collisions():
     word_lanes = list(tree.valid_lanes(tree.root, move_type=MoveType.WORD))
     # All valid lanes must have unoccupied destinations
     for lane in word_lanes:
-        src, dst = tree.arch_spec.get_endpoints(lane)
+        endpoints = tree.arch_spec.get_endpoints(lane)
+        assert endpoints is not None
+        src, dst = endpoints
         assert not tree.root.is_occupied(dst)

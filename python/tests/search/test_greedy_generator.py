@@ -151,8 +151,12 @@ def test_from_tree_backward_word_bus_uses_backward_sources():
     )
 
     # These are backward-source words for word bus 9 in logical Gemini.
-    assert tree.arch_spec.get_position(LocationAddress(3, 0)) in ctx.pos_to_loc
-    assert tree.arch_spec.get_position(LocationAddress(7, 0)) in ctx.pos_to_loc
+    pos_3_0 = tree.arch_spec.get_position(LocationAddress(3, 0))
+    assert pos_3_0 is not None
+    assert pos_3_0 in ctx.pos_to_loc
+    pos_7_0 = tree.arch_spec.get_position(LocationAddress(7, 0))
+    assert pos_7_0 is not None
+    assert pos_7_0 in ctx.pos_to_loc
 
 
 # --- BusContext.rect_to_lanes ---
@@ -302,7 +306,9 @@ def test_generate_qubit_not_in_target_is_ignored():
 
     for ms in moves:
         for lane in ms:
-            src, _ = tree.arch_spec.get_endpoints(lane)
+            endpoints = tree.arch_spec.get_endpoints(lane)
+            assert endpoints is not None
+            src, _ = endpoints
             # Only qubit 0 (zone 0, word 0) should be moving
             assert src.word_id == 0
 
@@ -332,7 +338,9 @@ def test_generate_no_destination_collisions():
     occupied = tree.root.occupied_locations | tree.blocked_locations
     for grid in gen.generate(tree.root, tree):
         for lane in grid:
-            src, dst = tree.arch_spec.get_endpoints(lane)
+            endpoints = tree.arch_spec.get_endpoints(lane)
+            assert endpoints is not None
+            src, dst = endpoints
             if src in occupied:
                 assert (
                     dst not in occupied

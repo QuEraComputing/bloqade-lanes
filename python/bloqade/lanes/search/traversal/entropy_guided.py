@@ -364,7 +364,11 @@ class EntropyGuidedSearch:
 
             has_valid_lane = False
             for lane in self.tree.outgoing_lanes(current_loc):
-                _, dst = self.tree.arch_spec.get_endpoints(lane)
+                endpoints = self.tree.arch_spec.get_endpoints(lane)
+                assert (
+                    endpoints is not None
+                ), f"lane {lane!r} has no endpoints in this architecture"
+                _, dst = endpoints
                 if dst not in occupied:
                     has_valid_lane = True
                     break

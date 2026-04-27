@@ -324,15 +324,30 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         lane_address: LaneAddress,
     ) -> tuple[tuple[float, float], ...]:
         if (path := self.paths.get(lane_address)) is None:
-            src, dst = self.get_endpoints(lane_address)
-            return (self.get_position(src), self.get_position(dst))
+            endpoints = self.get_endpoints(lane_address)
+            assert (
+                endpoints is not None
+            ), f"lane {lane_address!r} has no endpoints in this architecture"
+            src, dst = endpoints
+            src_pos = self.get_position(src)
+            assert (
+                src_pos is not None
+            ), f"location {src!r} has no position in this architecture"
+            dst_pos = self.get_position(dst)
+            assert (
+                dst_pos is not None
+            ), f"location {dst!r} has no position in this architecture"
+            return (src_pos, dst_pos)
         return path
 
-    def get_position(self, location: LocationAddress) -> tuple[float, float]:
-        pos = self._inner.location_position(location._inner)
-        if pos is None:
-            raise ValueError(f"Invalid location address: {location!r}")
-        return pos
+    def get_position(self, location: LocationAddress) -> tuple[float, float] | None:
+        """Resolve ``location`` to its physical (x, y) position.
+
+        Returns ``None`` when ``location`` doesn't correspond to a valid
+        site under the zone its ``zone_id`` selects (matches the Rust
+        ``location_position`` contract).
+        """
+        return self._inner.location_position(location._inner)
 
     def check_location_group(
         self, locations: Sequence[LocationAddress]
@@ -370,10 +385,15 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
 
     def get_endpoints(
         self, lane_address: LaneAddress
-    ) -> tuple[LocationAddress, LocationAddress]:
+    ) -> tuple[LocationAddress, LocationAddress] | None:
+        """Resolve ``lane_address`` to its (src, dst) location pair.
+
+        Returns ``None`` when the lane is not a valid lane in the
+        architecture (matches the Rust ``lane_endpoints`` contract).
+        """
         result = self._inner.lane_endpoints(lane_address._inner)
         if result is None:
-            raise ValueError(f"Invalid lane address: {lane_address!r}")
+            return None
         rust_src, rust_dst = result
         return (
             LocationAddress.from_inner(rust_src),

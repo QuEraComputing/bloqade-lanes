@@ -130,7 +130,11 @@ class CandidateScorer:
         """
         mobility = 0.0
         for lane in tree.outgoing_lanes(position):
-            _, dst = tree.arch_spec.get_endpoints(lane)
+            endpoints = tree.arch_spec.get_endpoints(lane)
+            assert (
+                endpoints is not None
+            ), f"lane {lane!r} has no endpoints in this architecture"
+            _, dst = endpoints
             if dst in occupied:
                 continue
             d_after = self._distance_to_target(dst, target_loc, tree)
@@ -179,7 +183,11 @@ class CandidateScorer:
                 mt = lane.move_type
                 bus_id = lane.bus_id
                 direction = lane.direction
-                _, dst = tree.arch_spec.get_endpoints(lane)
+                endpoints = tree.arch_spec.get_endpoints(lane)
+                assert (
+                    endpoints is not None
+                ), f"lane {lane!r} has no endpoints in this architecture"
+                _, dst = endpoints
                 if dst in occupied:
                     continue
                 d_key = (qid, dst)
@@ -252,7 +260,11 @@ class CandidateScorer:
                     invalid_sources: set[LocationAddress] = set()
 
                     for lane in tree.lanes_for(mt, bus_id, direction):
-                        src, dst = tree.arch_spec.get_endpoints(lane)
+                        endpoints = tree.arch_spec.get_endpoints(lane)
+                        assert (
+                            endpoints is not None
+                        ), f"lane {lane!r} has no endpoints in this architecture"
+                        src, dst = endpoints
                         qid = node.get_qubit_at(src)
                         if qid is None:
                             continue
@@ -300,7 +312,11 @@ class CandidateScorer:
         moved_qubits: list[tuple[int, LocationAddress, LocationAddress]] = []
 
         for lane in moveset:
-            src, dst = tree.arch_spec.get_endpoints(lane)
+            endpoints = tree.arch_spec.get_endpoints(lane)
+            assert (
+                endpoints is not None
+            ), f"lane {lane!r} has no endpoints in this architecture"
+            src, dst = endpoints
             qid = node.get_qubit_at(src)
             if qid is None:
                 continue

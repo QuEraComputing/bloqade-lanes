@@ -11,7 +11,9 @@ from bloqade.lanes.bytecode._native import (
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
+    LaneAddress,
     LocationAddress,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
     ZoneAddress,
@@ -83,7 +85,9 @@ def test_get_path_and_position():
     )
     path = arch_spec.get_path(lane)
     assert isinstance(path, tuple)
-    src, dst = arch_spec.get_endpoints(lane)
+    endpoints = arch_spec.get_endpoints(lane)
+    assert endpoints is not None
+    src, dst = endpoints
     pos_src = arch_spec.get_position(src)
     assert isinstance(pos_src, tuple)
 
@@ -103,13 +107,17 @@ def test_get_endpoints_word_and_site():
     lane_site = SiteLaneAddress(
         zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
     )
-    src, dst = arch_spec.get_endpoints(lane_site)
+    endpoints_site = arch_spec.get_endpoints(lane_site)
+    assert endpoints_site is not None
+    src, dst = endpoints_site
     assert isinstance(src, LocationAddress)
     assert isinstance(dst, LocationAddress)
     lane_word = WordLaneAddress(
         zone_id=0, word_id=0, site_id=0, bus_id=0, direction=Direction.FORWARD
     )
-    src2, dst2 = arch_spec.get_endpoints(lane_word)
+    endpoints_word = arch_spec.get_endpoints(lane_word)
+    assert endpoints_word is not None
+    src2, dst2 = endpoints_word
     assert isinstance(src2, LocationAddress)
     assert isinstance(dst2, LocationAddress)
 
@@ -160,3 +168,23 @@ def test_capability_flags_from_components():
     )
     assert spec.feed_forward is True
     assert spec.atom_reloading is True
+
+
+def test_get_position_returns_none_for_invalid_address():
+    """get_position should match the Rust optional-returning contract."""
+    bogus_word = len(arch_spec.words) + 99
+    invalid_loc = LocationAddress(word_id=bogus_word, site_id=0, zone_id=0)
+    assert arch_spec.get_position(invalid_loc) is None
+
+
+def test_get_endpoints_returns_none_for_invalid_lane():
+    """get_endpoints should match the Rust optional-returning contract."""
+    invalid_lane = LaneAddress(
+        MoveType.SITE,
+        word_id=999,
+        site_id=0,
+        bus_id=0,
+        direction=Direction.FORWARD,
+        zone_id=0,
+    )
+    assert arch_spec.get_endpoints(invalid_lane) is None

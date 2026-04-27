@@ -32,11 +32,19 @@ class MoveOp:
 
     @cached_property
     def src_position(self) -> tuple[float, float]:
-        return self.arch_spec.get_position(self.src)
+        pos = self.arch_spec.get_position(self.src)
+        assert (
+            pos is not None
+        ), f"location {self.src!r} has no position in this architecture"
+        return pos
 
     @cached_property
     def dst_position(self) -> tuple[float, float]:
-        return self.arch_spec.get_position(self.dst)
+        pos = self.arch_spec.get_position(self.dst)
+        assert (
+            pos is not None
+        ), f"location {self.dst!r} has no position in this architecture"
+        return pos
 
 
 def check_conflict(m0: MoveOp, m1: MoveOp):
