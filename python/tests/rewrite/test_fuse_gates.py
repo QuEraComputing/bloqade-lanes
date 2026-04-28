@@ -329,3 +329,36 @@ def test_cz_three_way_fusion_preserves_control_target_order():
     assert merged.qubits == (0, 1, 2, 4, 5, 6)
     assert merged.controls == (0, 1, 2)
     assert merged.targets == (4, 5, 6)
+
+
+# ---------------------------------------------------------------------------
+# N-way fusion in a single pass
+# ---------------------------------------------------------------------------
+
+
+def test_four_adjacent_r_collapse_in_one_pass():
+    """Four adjacent fusable R statements collapse to one in a single rewrite invocation."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
+    body_block.stmts.append(r2)
+    r3 = place.R(r2.state_after, axis_angle=axis, rotation_angle=angle, qubits=(2, 3))
+    body_block.stmts.append(r3)
+    r4 = place.R(r3.state_after, axis_angle=axis, rotation_angle=angle, qubits=(4,))
+    body_block.stmts.append(r4)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert len(body_stmts) == 1
+    merged = body_stmts[0]
+    assert isinstance(merged, place.R)
+    assert merged.qubits == (0, 1, 2, 3, 4)
+    assert merged.state_before is entry_state
