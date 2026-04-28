@@ -59,6 +59,12 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 @dataclass
 class LogicalPlacementMethods:
     arch_spec: layout.ArchSpec
+    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
+
+    def _get_rust_solver(self) -> MoveSolver:
+        if self._rust_solver is None:
+            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
+        return self._rust_solver
 
     def desired_cz_layout(
         self,
@@ -164,12 +170,6 @@ class LogicalPlacementMethods:
 @dataclass
 class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrategyABC):
     arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
-    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
-
-    def _get_rust_solver(self) -> MoveSolver:
-        if self._rust_solver is None:
-            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
-        return self._rust_solver
 
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
@@ -193,18 +193,12 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         tuple[layout.LocationAddress, layout.LocationAddress],
         tuple[layout.LaneAddress, ...] | None,
     ] = field(default_factory=dict, init=False, repr=False)
-    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     top_bus_signatures: int = 6
     bus_reward_rho: float = 0.7
 
     def __post_init__(self):
         assert_single_cz_zone(self.arch_spec, type(self).__name__)
         self._path_finder = PathFinder(self.arch_spec)
-
-    def _get_rust_solver(self) -> MoveSolver:
-        if self._rust_solver is None:
-            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
-        return self._rust_solver
 
     def _lane_sig(
         self, lane: layout.LaneAddress

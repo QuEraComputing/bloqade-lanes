@@ -89,11 +89,35 @@ class RustPlacementTraversal:
         "cascade-dfs",
         "cascade-entropy",
         "entropy",
-    ] = "astar"
+    ] = "entropy"
     max_movesets_per_group: int = 3
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
     collect_entropy_trace: bool = False
+
+
+def solve_options_from_traversal(
+    traversal: RustPlacementTraversal,
+    *,
+    collect_entropy_trace: bool | None = None,
+) -> _native.SolveOptions:
+    """Build native ``SolveOptions`` from a ``RustPlacementTraversal``.
+
+    Shared by ``PhysicalPlacementStrategy`` and ``move_synthesis`` so the
+    two callsites cannot drift on default knob values. ``collect_entropy_trace``
+    overrides the traversal's flag when set; this is used by
+    ``_cz_placements_rust`` to gate trace capture by stage.
+    """
+    return _native.SolveOptions(
+        strategy=_STRATEGY_MAP[traversal.strategy],
+        max_movesets_per_group=traversal.max_movesets_per_group,
+        max_goal_candidates=traversal.max_goal_candidates,
+        collect_entropy_trace=(
+            traversal.collect_entropy_trace
+            if collect_entropy_trace is None
+            else collect_entropy_trace
+        ),
+    )
 
 
 @dataclass
@@ -101,9 +125,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     """Physical placement strategy backed by the Rust MoveSolver."""
 
     arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
-    traversal: RustPlacementTraversal = field(
-        default_factory=lambda: RustPlacementTraversal(strategy="entropy")
-    )
+    traversal: RustPlacementTraversal = field(default_factory=RustPlacementTraversal)
     target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None
 
     _cz_counter: int = field(default=0, init=False, repr=False)
@@ -233,10 +255,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
         blocked_native = [loc._inner for loc in state.occupied]
-        opts = _native.SolveOptions(
-            strategy=_STRATEGY_MAP[self.traversal.strategy],
-            max_movesets_per_group=self.traversal.max_movesets_per_group,
-            max_goal_candidates=self.traversal.max_goal_candidates,
+        opts = solve_options_from_traversal(
+            self.traversal,
             collect_entropy_trace=(
                 should_trace and self.traversal.collect_entropy_trace
             ),
@@ -257,6 +277,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:
+                # Invariant: the Rust solver expands ≥ 1 node per call (even
+                # when unsolvable), so the shared budget makes forward progress
+                # across candidates and this loop terminates.
                 remaining -= int(result.nodes_expanded)
             if result.status == "solved":
                 winning_result = result

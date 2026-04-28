@@ -42,7 +42,7 @@ def test_rust_traversal_default_params():
     # TODO: add assertions for weight, restarts, lookahead,
     # deadlock_policy, w_t once they are threaded through to RustPlacementTraversal.
     t = RustPlacementTraversal()
-    assert t.strategy == "astar"
+    assert t.strategy == "entropy"
     assert t.max_movesets_per_group == 3
     assert t.max_expansions == 300
 
