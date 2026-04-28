@@ -4,6 +4,9 @@
 //! [`MoveSolver`] is constructed once per architecture (parsing JSON and
 //! building indexes) and can then solve multiple placement problems.
 
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
+
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use rayon::prelude::*;
 
@@ -11,6 +14,7 @@ use crate::astar::SearchResult;
 use crate::config::{Config, ConfigError};
 use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
+use crate::entangling::{self, WordPairDistances};
 use crate::entropy::EntropyTrace;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::generators::HeuristicGenerator;
@@ -465,6 +469,18 @@ where
     }
 }
 
+/// Cached architecture-dependent data for [`MoveSolver::solve_entangling`].
+///
+/// All fields depend only on the architecture (lane index), not on per-call
+/// data (initial positions, CZ pairs). Built once on first
+/// `solve_entangling` call and reused for all subsequent calls.
+pub(crate) struct EntanglingCache {
+    pub ent_set: HashSet<(u64, u64)>,
+    pub partner_map: HashMap<u64, u64>,
+    pub dist_table: Arc<DistanceTable>,
+    pub wpd: WordPairDistances,
+}
+
 /// Reusable move synthesis solver.
 ///
 /// Constructed once per architecture — parses the arch spec JSON and builds
@@ -473,9 +489,17 @@ where
 ///
 /// Works for both physical and logical architectures (same interface,
 /// different arch spec JSON).
-#[derive(Debug)]
 pub struct MoveSolver {
     index: LaneIndex,
+    entangling_cache: OnceLock<EntanglingCache>,
+}
+
+impl std::fmt::Debug for MoveSolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MoveSolver")
+            .field("index", &self.index)
+            .finish_non_exhaustive()
+    }
 }
 
 impl MoveSolver {
@@ -487,17 +511,45 @@ impl MoveSolver {
         let arch_spec = serde_json::from_str(json)?;
         Ok(Self {
             index: LaneIndex::new(arch_spec),
+            entangling_cache: OnceLock::new(),
         })
     }
 
     /// Construct from an existing [`LaneIndex`].
     pub fn from_index(index: LaneIndex) -> Self {
-        Self { index }
+        Self {
+            index,
+            entangling_cache: OnceLock::new(),
+        }
     }
 
     /// Access the underlying lane index.
     pub fn index(&self) -> &LaneIndex {
         &self.index
+    }
+
+    /// Get or build the cached entangling precomputation.
+    fn entangling_cache(&self) -> &EntanglingCache {
+        self.entangling_cache.get_or_init(|| {
+            let arch = self.index.arch_spec();
+            let word_pairs = entangling::enumerate_word_pairs(arch);
+            let ent_locs = entangling::all_entangling_locations(arch);
+            let ent_set = entangling::build_entangling_set(arch);
+            let partner_map = entangling::build_partner_map(&ent_set);
+            // Always include time distances — callers with w_t=0.0 just
+            // ignore them (hop-count fields are separate).
+            let dist_table = Arc::new(
+                DistanceTable::new(&ent_locs, &self.index).with_time_distances(&self.index),
+            );
+            let wpd =
+                entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+            EntanglingCache {
+                ent_set,
+                partner_map,
+                dist_table,
+                wpd,
+            }
+        })
     }
 
     /// Solve a move synthesis problem.
@@ -614,7 +666,6 @@ impl MoveSolver {
         max_expansions: Option<u32>,
         opts: &SolveOptions,
     ) -> Result<SolveResult, ConfigError> {
-        use crate::entangling;
         use crate::goals::EntanglingConstraintGoal;
         use crate::heuristic::PairDistanceHeuristic;
 
@@ -622,36 +673,20 @@ impl MoveSolver {
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
         let arch = self.index.arch_spec();
 
-        // Enumerate entangling structure from the architecture.
-        let word_pairs = entangling::enumerate_word_pairs(arch);
-        let ent_locs = entangling::all_entangling_locations(arch);
-        let ent_set = entangling::build_entangling_set(arch);
-        let partner_map = entangling::build_partner_map(&ent_set);
+        // Reuse cached architecture-dependent data (built on first call).
+        let cache = self.entangling_cache();
+        let dist_table = cache.dist_table.clone(); // Arc clone (cheap)
 
-        // Use Arc for the distance table so it can be shared with
-        // LooseTargetGenerator when dynamic_targets is enabled.
-        let dist_table = std::sync::Arc::new(if opts.w_t > 0.0 {
-            DistanceTable::new(&ent_locs, &self.index).with_time_distances(&self.index)
-        } else {
-            DistanceTable::new(&ent_locs, &self.index)
-        });
-
-        // Precompute per-word-pair minimum distances.
-        let wpd = entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
-
-        // Build heuristic closures.
-        let heuristic = PairDistanceHeuristic::new(cz_pairs, &wpd);
+        // Per-call: heuristic, goal, greedy assignment.
+        let heuristic = PairDistanceHeuristic::new(cz_pairs, &cache.wpd);
         let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
         let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
 
-        // Build goal.
-        let goal = EntanglingConstraintGoal::new(cz_pairs, ent_set);
+        let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
 
-        // Greedy pre-assignment for ctx.targets (guides HeuristicGenerator).
         let greedy_targets = entangling::greedy_assign_pairs(cz_pairs, &root, arch, &dist_table, 0);
 
-        let blocked_encoded: std::collections::HashSet<u64> =
-            blocked_locs.iter().map(|l| l.encode()).collect();
+        let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
         let ctx = SearchContext {
             index: &self.index,
             dist_table: &dist_table,
@@ -676,7 +711,7 @@ impl MoveSolver {
         let mut result = if opts.dynamic_targets {
             use crate::generators::LooseTargetGenerator;
 
-            let arch_arc = std::sync::Arc::new(arch.clone());
+            let arch_arc = Arc::new(arch.clone());
             let dt_arc = dist_table.clone(); // Arc clone (cheap)
             let recompute_interval = opts.recompute_interval;
 
@@ -685,6 +720,7 @@ impl MoveSolver {
                 let inner = HeuristicGenerator::new()
                     .with_deadlock_policy(policy)
                     .with_lookahead(lookahead)
+                    .with_top_c(3)
                     .with_seed(seed);
                 LooseTargetGenerator::new(
                     inner,
@@ -711,6 +747,7 @@ impl MoveSolver {
                 HeuristicGenerator::new()
                     .with_deadlock_policy(policy)
                     .with_lookahead(lookahead)
+                    .with_top_c(3)
                     .with_seed(seed)
             };
 
@@ -728,10 +765,12 @@ impl MoveSolver {
 
         // Post-solve cleanup: move spectator qubits out of accidental CZ positions.
         if result.status == SolveStatus::Solved {
-            let cz_qubit_set: std::collections::HashSet<u32> =
-                cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
-            let accidental =
-                entangling::find_accidental_cz(&result.goal_config, &cz_qubit_set, &partner_map);
+            let cz_qubit_set: HashSet<u32> = cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+            let accidental = entangling::find_accidental_cz(
+                &result.goal_config,
+                &cz_qubit_set,
+                &cache.partner_map,
+            );
 
             if !accidental.is_empty() {
                 let mut cleanup_targets: Vec<(u32, LocationAddr)> =
