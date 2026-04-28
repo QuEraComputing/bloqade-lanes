@@ -1,6 +1,9 @@
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
+from bloqade.lanes.heuristics.physical.loose_goal import (
+    LooseGoalPlacementStrategy,
+)
 from bloqade.lanes.heuristics.physical.movement import (
     BFSPlacementTraversal,
     EntropyPlacementTraversal,
@@ -24,6 +27,7 @@ __all__ = [
     "DefaultTargetGenerator",
     "EntropyPlacementTraversal",
     "GreedyPlacementTraversal",
+    "LooseGoalPlacementStrategy",
     "PhysicalLayoutHeuristicGraphPartitionCenterOut",
     "PhysicalPlacementStrategy",
     "PlacementTraversalABC",

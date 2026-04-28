@@ -953,6 +953,8 @@ class SolveOptions:
         deadlock_policy: DeadlockPolicy = DeadlockPolicy.SKIP,
         w_t: float = 0.05,
         collect_entropy_trace: bool = False,
+        dynamic_targets: bool = False,
+        recompute_interval: int = 1,
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
@@ -972,6 +974,10 @@ class SolveOptions:
     def w_t(self) -> float: ...
     @property
     def collect_entropy_trace(self) -> bool: ...
+    @property
+    def dynamic_targets(self) -> bool: ...
+    @property
+    def recompute_interval(self) -> int: ...
     def __repr__(self) -> str: ...
 
 @final
@@ -1140,6 +1146,32 @@ class MoveSolver:
 
         Returns:
             MultiSolveResult with per-candidate debug info.
+        """
+        ...
+
+    def solve_entangling(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: Optional[int] = None,
+        options: SolveOptions | None = None,
+    ) -> SolveResult:
+        """Solve a loose-goal entangling placement + routing problem.
+
+        Instead of fixed target locations, receives CZ pair constraints and
+        simultaneously discovers both the entangling placement and routing.
+
+        Args:
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+                entangling positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
+            max_expansions: Optional limit on node expansions.
+            options: Search-tuning parameters. Defaults to SolveOptions().
+
+        Returns:
+            SolveResult with the discovered entangling placement.
         """
         ...
 

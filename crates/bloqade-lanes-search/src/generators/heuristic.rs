@@ -91,6 +91,12 @@ pub struct HeuristicGenerator {
     deadlock_count: Cell<u32>,
 }
 
+impl Default for HeuristicGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeuristicGenerator {
     /// Create a new heuristic generator.
     pub fn new() -> Self {
@@ -253,9 +259,51 @@ impl MoveGenerator for HeuristicGenerator {
             })
             .collect();
 
-        if unresolved.is_empty() {
+        // Step 1b: identify spectator qubits in accidental CZ positions.
+        // A spectator is at an accidental CZ if it's NOT a target qubit,
+        // occupies an entangling position, and the partner site is occupied
+        // by another non-target qubit.
+        let target_qubits: HashSet<u32> = ctx.targets.iter().map(|&(qid, _)| qid).collect();
+        let arch_spec = ctx.index.arch_spec();
+        let mut accidental_cz_qubits: Vec<(u32, u64)> = Vec::new();
+        let mut accidental_seen: HashSet<u64> = HashSet::new();
+
+        for (qid, loc) in config.iter() {
+            if target_qubits.contains(&qid) {
+                continue;
+            }
+            if let Some(partner_loc) = arch_spec.get_cz_partner(&loc) {
+                let partner_enc = partner_loc.encode();
+                if let Some(other_qid) = config.qubit_at(partner_loc)
+                    && !target_qubits.contains(&other_qid)
+                {
+                    // Both are spectators at partner sites.
+                    // Only move one — the one not yet seen.
+                    let loc_enc = loc.encode();
+                    if !accidental_seen.contains(&loc_enc)
+                        && !accidental_seen.contains(&partner_enc)
+                    {
+                        // Pick the higher qubit ID to move.
+                        if qid > other_qid {
+                            accidental_cz_qubits.push((qid, loc_enc));
+                            accidental_seen.insert(loc_enc);
+                        } else {
+                            accidental_cz_qubits.push((other_qid, partner_enc));
+                            accidental_seen.insert(partner_enc);
+                        }
+                    }
+                }
+            }
+        }
+
+        if unresolved.is_empty() && accidental_cz_qubits.is_empty() {
             return;
         }
+
+        // Build set of contested destinations: target locations that other
+        // qubits still need to reach. Moving through these creates future
+        // deadlocks, so we apply a soft penalty.
+        let contested: HashSet<u64> = unresolved.iter().map(|&(_, _, t)| t).collect();
 
         // Step 2: score (qubit, bus triplet) pairs.
         let mut all_scores: Vec<(TripletKey, ScoredTriple)> = Vec::new();
@@ -283,6 +331,14 @@ impl MoveGenerator for HeuristicGenerator {
                     .map_or(i32::MAX, |d| d as i32);
                 let mut score = d_now - d_after;
 
+                // Penalize moving to another qubit's unresolved target.
+                // This avoids routing through destinations that will cause
+                // future deadlocks. Soft penalty: never makes positive
+                // scores negative.
+                if score > 0 && dst_enc != target_enc && contested.contains(&dst_enc) {
+                    score -= 1;
+                }
+
                 // 2-step lookahead: replace score with combined 2-step score.
                 if self.lookahead {
                     score = self.lookahead_score(
@@ -301,6 +357,34 @@ impl MoveGenerator for HeuristicGenerator {
                     ScoredTriple {
                         qubit_id: qid,
                         score,
+                        lane_encoded: lane.encode_u64(),
+                        dst_encoded: dst_enc,
+                    },
+                ));
+            }
+        }
+
+        // Step 2b: collect accidental CZ spectator escapes separately.
+        // These are kept out of the main filtering so they don't
+        // steal candidate slots from CZ routing moves. They'll be merged
+        // back after filtering, piggybacking on existing bus triplet groups.
+        let mut spectator_escapes: Vec<(TripletKey, ScoredTriple)> = Vec::new();
+        for &(qid, loc_enc) in &accidental_cz_qubits {
+            let loc = LocationAddr::decode(loc_enc);
+            for &lane in ctx.index.outgoing_lanes(loc) {
+                let Some((_, dst)) = ctx.index.endpoints(&lane) else {
+                    continue;
+                };
+                let dst_enc = dst.encode();
+                if occupied.contains(&dst_enc) {
+                    continue;
+                }
+                let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+                spectator_escapes.push((
+                    triplet_key,
+                    ScoredTriple {
+                        qubit_id: qid,
+                        score: 1, // any move away is an improvement
                         lane_encoded: lane.encode_u64(),
                         dst_encoded: dst_enc,
                     },
@@ -327,12 +411,98 @@ impl MoveGenerator for HeuristicGenerator {
             }
         }
 
-        // Fallback: if no positive scores, keep only the single best entry.
+        // Fallback: if no positive scores, keep the top few entries so IDS
+        // has multiple branches to explore on jump-back. A single entry
+        // leads to a single path that may deadlock again; keeping 3 gives
+        // the search enough diversity to find non-monotonic routes (e.g.,
+        // on hypercube topologies where shortest paths aren't monotonic).
         if !has_positive {
             selected.sort_by(cmp_scored_triples);
-            selected.truncate(1);
+            // Keep a small fallback set when no positive-scoring moves exist.
+            selected.truncate(3);
         } else {
             selected.retain(|e| e.1.score > 0);
+        }
+
+        // Step 3b: merge spectator escapes that piggyback on selected triplets.
+        // Only add escapes whose bus triplet is already represented in the
+        // selected CZ routing moves, so they can share an AOD grid without
+        // stealing candidate slots.
+        if !spectator_escapes.is_empty() {
+            let selected_keys: HashSet<TripletKey> = selected.iter().map(|e| e.0).collect();
+            let mut added_any = false;
+            for entry in spectator_escapes {
+                if selected_keys.contains(&entry.0) {
+                    selected.push(entry);
+                    added_any = true;
+                }
+            }
+            // If no piggyback possible but there are accidental CZ qubits,
+            // add the single best spectator escape so it still gets resolved.
+            if !added_any && !accidental_cz_qubits.is_empty() {
+                // Re-collect (moved out above), pick best by score.
+                // Since all have score=1, any will do — generate one escape
+                // for the first accidental qubit.
+                let (qid, loc_enc) = accidental_cz_qubits[0];
+                let loc = LocationAddr::decode(loc_enc);
+                for &lane in ctx.index.outgoing_lanes(loc) {
+                    let Some((_, dst)) = ctx.index.endpoints(&lane) else {
+                        continue;
+                    };
+                    let dst_enc = dst.encode();
+                    if occupied.contains(&dst_enc) {
+                        continue;
+                    }
+                    let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
+                    selected.push((
+                        triplet_key,
+                        ScoredTriple {
+                            qubit_id: qid,
+                            score: 1,
+                            lane_encoded: lane.encode_u64(),
+                            dst_encoded: dst_enc,
+                        },
+                    ));
+                    break; // one escape is enough
+                }
+            }
+        }
+
+        // Step 3c: pair-coordinated boosting.
+        // When both qubits of a CZ pair have positive-score entries on the
+        // same bus triplet, boost those entries so they're more likely to
+        // end up in the same AOD grid (coordinated pair movement).
+        if let Some(pairs) = ctx.cz_pairs {
+            // Build qubit → set of selected triplet keys.
+            let mut keys_by_qubit: HashMap<u32, HashSet<TripletKey>> = HashMap::new();
+            for entry in &selected {
+                keys_by_qubit
+                    .entry(entry.1.qubit_id)
+                    .or_default()
+                    .insert(entry.0);
+            }
+
+            // Find shared triplet keys for each CZ pair.
+            let mut boost_set: HashSet<(TripletKey, u32)> = HashSet::new();
+            for &(qa, qb) in pairs {
+                if let (Some(keys_a), Some(keys_b)) =
+                    (keys_by_qubit.get(&qa), keys_by_qubit.get(&qb))
+                {
+                    for key in keys_a.intersection(keys_b) {
+                        boost_set.insert((*key, qa));
+                        boost_set.insert((*key, qb));
+                    }
+                }
+            }
+
+            // Apply +1 boost to coordinated entries.
+            if !boost_set.is_empty() {
+                for entry in &mut selected {
+                    if boost_set.contains(&(entry.0, entry.1.qubit_id)) {
+                        entry.1.score += 1;
+                    }
+                }
+            }
         }
 
         // Step 4: group by bus triplet.
@@ -482,6 +652,7 @@ mod tests {
             dist_table,
             blocked,
             targets,
+            cz_pairs: None,
         }
     }
 
@@ -972,7 +1143,7 @@ mod tests {
 
     #[test]
     fn scored_triple_tie_break_is_deterministic() {
-        let mut entries = vec![
+        let mut entries = [
             (
                 (1, 2, 3),
                 ScoredTriple {
@@ -1015,7 +1186,7 @@ mod tests {
     fn candidate_tie_break_uses_moveset_then_config() {
         let cfg_a = Config::new([(0, loc(0, 1))]).unwrap();
         let cfg_b = Config::new([(0, loc(0, 2))]).unwrap();
-        let mut candidates = vec![
+        let mut candidates = [
             (5, MoveSet::from_encoded(vec![9]), cfg_b),
             (5, MoveSet::from_encoded(vec![3]), cfg_a),
         ];

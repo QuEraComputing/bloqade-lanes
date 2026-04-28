@@ -172,6 +172,18 @@ impl DistanceTable {
     pub fn fastest_lane_us(&self) -> Option<f64> {
         self.fastest_lane_us
     }
+
+    /// Iterate over all `(source_encoded, hop_distance)` pairs for a given target.
+    ///
+    /// Calls `f(source_encoded, distance)` for every reachable source.
+    /// Does nothing if `target_encoded` is unknown.
+    pub fn for_each_source(&self, target_encoded: u64, mut f: impl FnMut(u64, u32)) {
+        if let Some(sources) = self.distance_to.get(&target_encoded) {
+            for (&src, &d) in sources {
+                f(src, d);
+            }
+        }
+    }
 }
 
 /// Dijkstra priority queue entry (min-heap by cost).
@@ -303,6 +315,94 @@ impl<'a> HopDistanceHeuristic<'a> {
     #[deprecated(note = "use estimate_max() or estimate_sum() directly")]
     pub fn estimate(&self, config: &Config) -> f64 {
         self.estimate_max(config)
+    }
+}
+
+// ── PairDistanceHeuristic ──────────────────────────────────────────
+
+/// Heuristic for loose-goal search based on per-word-pair minimum distances.
+///
+/// For each CZ pair `(qa, qb)`, finds the cheapest entangling word pair
+/// using precomputed [`WordPairDistances`]. The cost for a word pair is
+/// `max(min_dist_to_word_a[qa_loc], min_dist_to_word_b[qb_loc])`, capturing
+/// that both qubits must reach the same word pair.
+///
+/// Per-node cost is O(pairs × word_pairs), with word_pairs typically 1-4.
+pub struct PairDistanceHeuristic<'a> {
+    pairs: Vec<(u32, u32)>,
+    word_pair_dists: &'a crate::entangling::WordPairDistances,
+}
+
+impl<'a> PairDistanceHeuristic<'a> {
+    /// Create from CZ pairs and precomputed word-pair distances.
+    pub fn new(
+        pairs: &[(u32, u32)],
+        word_pair_dists: &'a crate::entangling::WordPairDistances,
+    ) -> Self {
+        Self {
+            pairs: pairs.to_vec(),
+            word_pair_dists,
+        }
+    }
+
+    /// Admissible heuristic: max over all pairs of min achievable cost.
+    ///
+    /// For each CZ pair, tries both qubit-to-word assignments on each word
+    /// pair and takes the best. Then returns the max across all CZ pairs.
+    pub fn estimate_max(&self, config: &Config) -> f64 {
+        let mut max_pair_cost: u32 = 0;
+        for &(qa, qb) in &self.pairs {
+            let cost = self.min_pair_cost(qa, qb, config);
+            if cost == u32::MAX {
+                return f64::INFINITY;
+            }
+            max_pair_cost = max_pair_cost.max(cost);
+        }
+        max_pair_cost as f64
+    }
+
+    /// Sum heuristic: sum over all pairs of min achievable cost.
+    ///
+    /// Not admissible (overestimates due to bus parallelism), but gives
+    /// better ordering for IDS/DFS.
+    pub fn estimate_sum(&self, config: &Config) -> f64 {
+        let mut total: u32 = 0;
+        for &(qa, qb) in &self.pairs {
+            let cost = self.min_pair_cost(qa, qb, config);
+            if cost == u32::MAX {
+                return f64::INFINITY;
+            }
+            total = total.saturating_add(cost);
+        }
+        total as f64
+    }
+
+    /// Min cost for a single CZ pair across all word pairs and both assignments.
+    fn min_pair_cost(&self, qa: u32, qb: u32, config: &Config) -> u32 {
+        let Some(loc_a) = config.location_of(qa) else {
+            return u32::MAX;
+        };
+        let Some(loc_b) = config.location_of(qb) else {
+            return u32::MAX;
+        };
+        let a_enc = loc_a.encode();
+        let b_enc = loc_b.encode();
+
+        let mut min_cost = u32::MAX;
+        for (_wp, dist_a, dist_b) in self.word_pair_dists.iter() {
+            // Assignment 1: qa → word_a, qb → word_b
+            let d_a1 = dist_a.get(&a_enc).copied().unwrap_or(u32::MAX);
+            let d_b1 = dist_b.get(&b_enc).copied().unwrap_or(u32::MAX);
+            let cost1 = d_a1.max(d_b1);
+            min_cost = min_cost.min(cost1);
+
+            // Assignment 2: qa → word_b, qb → word_a
+            let d_a2 = dist_b.get(&a_enc).copied().unwrap_or(u32::MAX);
+            let d_b2 = dist_a.get(&b_enc).copied().unwrap_or(u32::MAX);
+            let cost2 = d_a2.max(d_b2);
+            min_cost = min_cost.min(cost2);
+        }
+        min_cost
     }
 }
 
@@ -474,6 +574,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
 
         let generator = ExhaustiveGenerator::new(None, None);
@@ -501,6 +602,133 @@ mod tests {
         assert!(
             estimate <= actual_cost,
             "heuristic {estimate} should not exceed actual cost {actual_cost}"
+        );
+    }
+
+    // ── PairDistanceHeuristic ──
+
+    fn make_pair_heuristic(
+        index: &LaneIndex,
+    ) -> (DistanceTable, crate::entangling::WordPairDistances) {
+        let arch = index.arch_spec();
+        let locs = crate::entangling::all_entangling_locations(arch);
+        let dist_table = DistanceTable::new(&locs, index);
+        let word_pairs = crate::entangling::enumerate_word_pairs(arch);
+        let wpd =
+            crate::entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+        (dist_table, wpd)
+    }
+
+    #[test]
+    fn pair_heuristic_zero_at_goal() {
+        let index = make_index();
+        let (_dt, wpd) = make_pair_heuristic(&index);
+        let h = PairDistanceHeuristic::new(&[(0, 1)], &wpd);
+        // Both qubits already at valid entangling positions.
+        let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
+        assert_eq!(h.estimate_max(&config), 0.0);
+    }
+
+    #[test]
+    fn pair_heuristic_nonzero_away_from_goal() {
+        let index = make_index();
+        let (_dt, wpd) = make_pair_heuristic(&index);
+        let h = PairDistanceHeuristic::new(&[(0, 1)], &wpd);
+        // q0 on word 0 site 0, q1 on word 0 site 0 — same word, need to
+        // move q1 to word 1 (site bus + word bus).
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+        assert!(
+            h.estimate_max(&config) >= 1.0,
+            "both on same word should need at least 1 hop: {}",
+            h.estimate_max(&config)
+        );
+    }
+
+    #[test]
+    fn pair_heuristic_missing_qubit() {
+        let index = make_index();
+        let (_dt, wpd) = make_pair_heuristic(&index);
+        let h = PairDistanceHeuristic::new(&[(0, 1)], &wpd);
+        let config = Config::new([(0, loc(0, 5))]).unwrap();
+        assert_eq!(h.estimate_max(&config), f64::INFINITY);
+    }
+
+    #[test]
+    fn pair_heuristic_sum_ge_max() {
+        let index = make_index();
+        let (_dt, wpd) = make_pair_heuristic(&index);
+        let h = PairDistanceHeuristic::new(&[(0, 1), (2, 3)], &wpd);
+        let config = Config::new([
+            (0, loc(0, 0)),
+            (1, loc(1, 0)),
+            (2, loc(0, 1)),
+            (3, loc(1, 1)),
+        ])
+        .unwrap();
+        assert!(h.estimate_sum(&config) >= h.estimate_max(&config));
+    }
+
+    #[test]
+    fn pair_heuristic_admissible() {
+        // Verify h <= actual cost by solving with A*.
+        use crate::context::{SearchContext, SearchState};
+        use crate::cost::UniformCost;
+        use crate::frontier::{self, PriorityFrontier};
+        use crate::generators::exhaustive::ExhaustiveGenerator;
+        use crate::goals::EntanglingConstraintGoal;
+        use crate::scorers::DistanceScorer;
+        use std::collections::HashSet;
+
+        let index = make_index();
+        let arch = index.arch_spec();
+        let eset = crate::entangling::build_entangling_set(arch);
+        let locs = crate::entangling::all_entangling_locations(arch);
+        let dist_table = DistanceTable::new(&locs, &index);
+        let word_pairs = crate::entangling::enumerate_word_pairs(arch);
+        let wpd =
+            crate::entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+
+        let cz_pairs = [(0u32, 1u32)];
+        let h = PairDistanceHeuristic::new(&cz_pairs, &wpd);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
+        let estimate = h.estimate_max(&config);
+
+        // Solve with A* to get actual cost.
+        let goal = EntanglingConstraintGoal::new(&cz_pairs, eset);
+        let target_encoded =
+            crate::entangling::greedy_assign_pairs(&cz_pairs, &config, arch, &dist_table, 0);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let generator = ExhaustiveGenerator::new(None, None);
+        let scorer = DistanceScorer;
+        let cost_fn = UniformCost;
+        let mut f = PriorityFrontier::astar(|cfg: &Config| h.estimate_max(cfg), 1.0);
+
+        let result = frontier::run_search(
+            config,
+            &generator,
+            &scorer,
+            &cost_fn,
+            &goal,
+            &mut f,
+            &ctx,
+            &mut SearchState::default(),
+            &mut NoOpObserver,
+            Some(5000),
+            None,
+        );
+
+        assert!(result.goal.is_some(), "should find a solution");
+        let actual_cost = result.graph.g_score(result.goal.unwrap());
+        assert!(
+            estimate <= actual_cost,
+            "pair heuristic {estimate} should not exceed actual cost {actual_cost}"
         );
     }
 }

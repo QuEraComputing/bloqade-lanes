@@ -210,6 +210,8 @@ class RustPlacementTraversal:
     max_movesets_per_group: int = 3
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
+    restarts: int = 1
+    lookahead: bool = False
     collect_entropy_trace: bool = False
 
 
@@ -455,6 +457,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             strategy=_STRATEGY_MAP[self.traversal.strategy],
             max_movesets_per_group=self.traversal.max_movesets_per_group,
             max_goal_candidates=self.traversal.max_goal_candidates,
+            restarts=self.traversal.restarts,
+            lookahead=self.traversal.lookahead,
             collect_entropy_trace=(
                 should_trace and self.traversal.collect_entropy_trace
             ),

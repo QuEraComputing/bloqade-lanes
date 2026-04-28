@@ -35,6 +35,15 @@ pub fn lane(word: u32, site: u32, bus: u32) -> LaneAddr {
     }
 }
 
+/// Full three-word, two-zone architecture JSON for tests.
+///
+/// Loaded from `examples/arch/full.json`. Zone 0 has entangling pair [0, 1]
+/// with 9 site buses and 1 word bus. Zone 1 is storage-only (no buses).
+#[allow(dead_code)]
+pub fn full_arch_json() -> &'static str {
+    include_str!("../../../examples/arch/full.json")
+}
+
 /// Example two-word architecture JSON for tests.
 ///
 /// Zone-centric schema: words at top level, zones own grids and buses.

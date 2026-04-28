@@ -22,7 +22,7 @@ use crate::lane_index::LaneIndex;
 use crate::observer::NoOpObserver;
 use crate::scorers::DistanceScorer;
 use crate::target_generator::{TargetContext, TargetGenerator, validate_candidate};
-use crate::traits::MoveGenerator;
+use crate::traits::{Goal, Heuristic, MoveGenerator};
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +117,21 @@ pub struct SolveOptions {
     pub w_t: f64,
     /// Collect entropy-step trace payload when using entropy strategy.
     pub collect_entropy_trace: bool,
+    /// Whether to recompute per-qubit targets dynamically on every node
+    /// expansion in [`MoveSolver::solve_entangling`].
+    ///
+    /// `false` (default): use a static greedy pre-assignment computed once.
+    /// `true`: recompute targets per expansion, avoiding premature qubit
+    /// "sleep" at the cost of O(pairs × word_pairs) extra per node.
+    ///
+    /// Ignored by [`MoveSolver::solve`] (always uses fixed targets).
+    pub dynamic_targets: bool,
+    /// How often to recompute targets when `dynamic_targets` is true.
+    ///
+    /// `1` = every expansion (most fresh, most expensive).
+    /// `10-50` = periodic recomputation (good balance).
+    /// Only used by [`MoveSolver::solve_entangling`]; ignored by [`MoveSolver::solve`].
+    pub recompute_interval: u32,
 }
 
 impl Default for SolveOptions {
@@ -131,6 +146,321 @@ impl Default for SolveOptions {
             deadlock_policy: DeadlockPolicy::Skip,
             w_t: 0.05,
             collect_entropy_trace: false,
+            dynamic_targets: false,
+            recompute_interval: 1,
+        }
+    }
+}
+
+// ── Shared helpers ────────────────────────────────────────────────
+
+/// Extract a [`SolveResult`] from a [`SearchResult`].
+fn extract(result: SearchResult, deadlocks: u32, max_exp: Option<u32>) -> SolveResult {
+    match result.goal {
+        Some(goal_id) => {
+            let move_layers = result.solution_path().unwrap_or_default();
+            let goal_config = result.graph.config(goal_id).clone();
+            let cost = result.graph.g_score(goal_id);
+            SolveResult {
+                status: SolveStatus::Solved,
+                move_layers,
+                goal_config,
+                nodes_expanded: result.nodes_expanded,
+                cost,
+                deadlocks,
+                entropy_trace: None,
+            }
+        }
+        None => {
+            let root_config = result.graph.config(result.graph.root()).clone();
+            let status = if max_exp.is_some_and(|max| result.nodes_expanded >= max) {
+                SolveStatus::BudgetExceeded
+            } else {
+                SolveStatus::Unsolvable
+            };
+            SolveResult {
+                status,
+                move_layers: Vec::new(),
+                goal_config: root_config,
+                nodes_expanded: result.nodes_expanded,
+                cost: 0.0,
+                deadlocks,
+                entropy_trace: None,
+            }
+        }
+    }
+}
+
+/// Pick the best result from multiple restarts (prefer solved, then lowest cost).
+fn pick_best(results: Vec<SolveResult>) -> SolveResult {
+    results
+        .into_iter()
+        .min_by(|a, b| {
+            let a_solved = a.status == SolveStatus::Solved;
+            let b_solved = b.status == SolveStatus::Solved;
+            b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
+        })
+        .expect("non-empty results")
+}
+
+/// Shared strategy dispatch + restart logic.
+///
+/// Both [`MoveSolver::solve`] and [`MoveSolver::solve_entangling`] delegate
+/// here after constructing their specific goal, heuristic, and generator.
+#[allow(clippy::too_many_arguments)]
+fn run_with_components<Go, Gen, Hmax, Hsum, MkGen>(
+    root: Config,
+    goal: &Go,
+    make_generator: MkGen,
+    h_max: Hmax,
+    h_sum: Hsum,
+    ctx: &SearchContext,
+    max_expansions: Option<u32>,
+    opts: &SolveOptions,
+) -> SolveResult
+where
+    Go: Goal + Sync,
+    Gen: MoveGenerator,
+    Hmax: Heuristic + Copy + Sync,
+    Hsum: Heuristic + Copy + Sync,
+    MkGen: Fn(u64, DeadlockPolicy) -> Gen + Sync,
+{
+    let strategy = opts.strategy;
+    let weight = opts.weight;
+    let restarts = opts.restarts;
+    let deadlock_policy = opts.deadlock_policy;
+    let max_movesets_per_group = opts.max_movesets_per_group;
+    let max_goal_candidates = opts.max_goal_candidates;
+    let collect_entropy_trace = opts.collect_entropy_trace;
+
+    let scorer = DistanceScorer;
+    let cost_fn = UniformCost;
+
+    // Helper: run a single inner strategy with the given seed and budget.
+    let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
+        match inner {
+            InnerStrategy::Ids => {
+                let move_gen = make_generator(seed, deadlock_policy);
+                let mut f = IdsFrontier::new(h_sum);
+                let result = frontier::run_search(
+                    root.clone(),
+                    &move_gen,
+                    &scorer,
+                    &cost_fn,
+                    goal,
+                    &mut f,
+                    ctx,
+                    &mut SearchState::default(),
+                    &mut NoOpObserver,
+                    budget,
+                    None,
+                );
+                extract(result, move_gen.deadlock_count(), budget)
+            }
+            InnerStrategy::Dfs => {
+                let move_gen = make_generator(seed, deadlock_policy);
+                let mut f = DfsFrontier::new(h_sum);
+                let result = frontier::run_search(
+                    root.clone(),
+                    &move_gen,
+                    &scorer,
+                    &cost_fn,
+                    goal,
+                    &mut f,
+                    ctx,
+                    &mut SearchState::default(),
+                    &mut NoOpObserver,
+                    budget,
+                    None,
+                );
+                extract(result, move_gen.deadlock_count(), budget)
+            }
+            InnerStrategy::Entropy => {
+                let entropy_params = crate::entropy::EntropyParams {
+                    max_movesets_per_group,
+                    max_goal_candidates,
+                    lookahead: opts.lookahead,
+                    w_t: opts.w_t,
+                    ..crate::entropy::EntropyParams::default()
+                };
+                let mut entropy_trace = if collect_entropy_trace {
+                    Some(EntropyTrace::default())
+                } else {
+                    None
+                };
+                let result = crate::entropy::entropy_search(
+                    root.clone(),
+                    goal,
+                    &entropy_params,
+                    ctx,
+                    budget,
+                    None,
+                    seed,
+                    entropy_trace.as_mut(),
+                );
+                let mut solve = extract(result, 0, budget);
+                solve.entropy_trace = entropy_trace;
+                solve
+            }
+        }
+    };
+
+    // Helper: run inner strategy with parallel restarts, return best.
+    let run_inner_with_restarts = |inner: InnerStrategy| -> SolveResult {
+        if restarts <= 1 {
+            run_inner(inner, 0, max_expansions)
+        } else {
+            let results: Vec<SolveResult> = (0..restarts)
+                .into_par_iter()
+                .map(|i| run_inner(inner, i as u64 + 1, max_expansions))
+                .collect();
+            pick_best(results)
+        }
+    };
+
+    // ── Cascade: inner restarts + single A* refinement ─────────
+    if let Strategy::Cascade { inner } = strategy {
+        let inner_result = run_inner_with_restarts(inner);
+
+        if inner_result.status != SolveStatus::Solved {
+            return inner_result;
+        }
+
+        let max_depth = Some(inner_result.cost.ceil() as u32);
+        let astar_move_gen = make_generator(0, DeadlockPolicy::MoveBlockers);
+        let mut astar_f = PriorityFrontier::astar(h_max, weight);
+        let astar_result = frontier::run_search(
+            root.clone(),
+            &astar_move_gen,
+            &scorer,
+            &cost_fn,
+            goal,
+            &mut astar_f,
+            ctx,
+            &mut SearchState::default(),
+            &mut NoOpObserver,
+            max_expansions,
+            max_depth,
+        );
+        let astar_solve = extract(
+            astar_result,
+            astar_move_gen.deadlock_count(),
+            max_expansions,
+        );
+
+        if astar_solve.status == SolveStatus::Solved {
+            return pick_best(vec![inner_result, astar_solve]);
+        }
+        return inner_result;
+    }
+
+    // ── Non-cascade strategies ─────────────────────────────────
+
+    let run_once = |seed: u64, budget: Option<u32>| -> SolveResult {
+        match strategy {
+            Strategy::Entropy => run_inner(InnerStrategy::Entropy, seed, budget),
+            Strategy::Ids => run_inner(InnerStrategy::Ids, seed, budget),
+            Strategy::HeuristicDfs => run_inner(InnerStrategy::Dfs, seed, budget),
+            _ => {
+                let move_gen = make_generator(seed, DeadlockPolicy::MoveBlockers);
+                let result = run_strategy_v2(
+                    strategy,
+                    root.clone(),
+                    &move_gen,
+                    &scorer,
+                    &cost_fn,
+                    goal,
+                    ctx,
+                    h_max,
+                    budget,
+                    weight,
+                );
+                extract(result, move_gen.deadlock_count(), budget)
+            }
+        }
+    };
+
+    if restarts <= 1 {
+        run_once(0, max_expansions)
+    } else {
+        let results: Vec<SolveResult> = (0..restarts)
+            .into_par_iter()
+            .map(|i| run_once(i as u64 + 1, max_expansions))
+            .collect();
+        pick_best(results)
+    }
+}
+
+/// Dispatch to the appropriate frontier-based search strategy.
+#[allow(clippy::too_many_arguments)]
+fn run_strategy_v2<Go, Gen, Hmax>(
+    strategy: Strategy,
+    root: Config,
+    generator: &Gen,
+    scorer: &DistanceScorer,
+    cost_fn: &UniformCost,
+    goal: &Go,
+    ctx: &SearchContext<'_>,
+    heuristic_fn: Hmax,
+    max_expansions: Option<u32>,
+    weight: f64,
+) -> SearchResult
+where
+    Go: Goal,
+    Gen: MoveGenerator,
+    Hmax: Heuristic + Copy,
+{
+    match strategy {
+        Strategy::AStar => {
+            let mut f = PriorityFrontier::astar(heuristic_fn, weight);
+            frontier::run_search(
+                root,
+                generator,
+                scorer,
+                cost_fn,
+                goal,
+                &mut f,
+                ctx,
+                &mut SearchState::default(),
+                &mut NoOpObserver,
+                max_expansions,
+                None,
+            )
+        }
+        Strategy::Bfs => {
+            let mut f = BfsFrontier::new();
+            frontier::run_search(
+                root,
+                generator,
+                scorer,
+                cost_fn,
+                goal,
+                &mut f,
+                ctx,
+                &mut SearchState::default(),
+                &mut NoOpObserver,
+                max_expansions,
+                None,
+            )
+        }
+        Strategy::GreedyBestFirst => {
+            let mut f = PriorityFrontier::greedy(heuristic_fn);
+            frontier::run_search(
+                root,
+                generator,
+                scorer,
+                cost_fn,
+                goal,
+                &mut f,
+                ctx,
+                &mut SearchState::default(),
+                &mut NoOpObserver,
+                max_expansions,
+                None,
+            )
+        }
+        _ => {
+            unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
         }
     }
 }
@@ -201,22 +531,6 @@ impl MoveSolver {
         max_expansions: Option<u32>,
         opts: &SolveOptions,
     ) -> Result<SolveResult, ConfigError> {
-        let SolveOptions {
-            strategy,
-            max_movesets_per_group,
-            max_goal_candidates,
-            weight,
-            restarts,
-            lookahead,
-            deadlock_policy,
-            w_t,
-            collect_entropy_trace,
-        } = *opts;
-        // Defensive normalization: Python validates these to be >= 1, but
-        // Rust callers can still construct SolveOptions directly.
-        let max_movesets_per_group = max_movesets_per_group.max(1);
-        let max_goal_candidates = max_goal_candidates.max(1);
-
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -227,20 +541,16 @@ impl MoveSolver {
 
         // Build distance table and heuristic (shared across restarts).
         let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
-        let dist_table = if w_t > 0.0 {
+        let dist_table = if opts.w_t > 0.0 {
             DistanceTable::new(&target_locs, &self.index).with_time_distances(&self.index)
         } else {
             DistanceTable::new(&target_locs, &self.index)
         };
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
-        // Max heuristic (admissible) for A*/Greedy, sum heuristic for IDS/DFS ordering.
         let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
         let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
 
-        // Build trait objects for the v2 search API.
         let goal_obj = AllAtTarget::new(&target_encoded);
-        let scorer = DistanceScorer;
-        let cost_fn = UniformCost;
         let blocked_encoded: std::collections::HashSet<u64> =
             blocked_locs.iter().map(|l| l.encode()).collect();
         let ctx = SearchContext {
@@ -248,9 +558,10 @@ impl MoveSolver {
             dist_table: &dist_table,
             blocked: &blocked_encoded,
             targets: &target_encoded,
+            cz_pairs: None,
         };
 
-        // Build a generator with the given seed and deadlock policy.
+        let lookahead = opts.lookahead;
         let make_generator = |seed: u64, policy: DeadlockPolicy| {
             HeuristicGenerator::new()
                 .with_deadlock_policy(policy)
@@ -258,280 +569,218 @@ impl MoveSolver {
                 .with_seed(seed)
         };
 
-        // Extract a SolveResult from a SearchResult.
-        let extract = |result: SearchResult, deadlocks: u32, max_exp: Option<u32>| -> SolveResult {
-            match result.goal {
-                Some(goal_id) => {
-                    let move_layers = result.solution_path().unwrap_or_default();
-                    let goal_config = result.graph.config(goal_id).clone();
-                    let cost = result.graph.g_score(goal_id);
-                    SolveResult {
-                        status: SolveStatus::Solved,
-                        move_layers,
-                        goal_config,
-                        nodes_expanded: result.nodes_expanded,
-                        cost,
-                        deadlocks,
-                        entropy_trace: None,
-                    }
-                }
-                None => {
-                    let root_config = result.graph.config(result.graph.root()).clone();
-                    let status = if max_exp.is_some_and(|max| result.nodes_expanded >= max) {
-                        SolveStatus::BudgetExceeded
-                    } else {
-                        SolveStatus::Unsolvable
-                    };
-                    SolveResult {
-                        status,
-                        move_layers: Vec::new(),
-                        goal_config: root_config,
-                        nodes_expanded: result.nodes_expanded,
-                        cost: 0.0,
-                        deadlocks,
-                        entropy_trace: None,
-                    }
-                }
-            }
-        };
-
-        // Helper: pick best result (prefer solved, then lowest cost).
-        let pick_best = |results: Vec<SolveResult>| -> SolveResult {
-            results
-                .into_iter()
-                .min_by(|a, b| {
-                    let a_solved = a.status == SolveStatus::Solved;
-                    let b_solved = b.status == SolveStatus::Solved;
-                    b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
-                })
-                .expect("non-empty results")
-        };
-
-        // Helper: run a single inner strategy with the given seed.
-        let run_inner = |inner: InnerStrategy, seed: u64| -> SolveResult {
-            match inner {
-                InnerStrategy::Ids => {
-                    let move_gen = make_generator(seed, deadlock_policy);
-                    let mut f = IdsFrontier::new(h_sum);
-                    let result = frontier::run_search(
-                        root.clone(),
-                        &move_gen,
-                        &scorer,
-                        &cost_fn,
-                        &goal_obj,
-                        &mut f,
-                        &ctx,
-                        &mut SearchState::default(),
-                        &mut NoOpObserver,
-                        max_expansions,
-                        None,
-                    );
-                    extract(result, move_gen.deadlock_count(), max_expansions)
-                }
-                InnerStrategy::Dfs => {
-                    let move_gen = make_generator(seed, deadlock_policy);
-                    let mut f = DfsFrontier::new(h_sum);
-                    let result = frontier::run_search(
-                        root.clone(),
-                        &move_gen,
-                        &scorer,
-                        &cost_fn,
-                        &goal_obj,
-                        &mut f,
-                        &ctx,
-                        &mut SearchState::default(),
-                        &mut NoOpObserver,
-                        max_expansions,
-                        None,
-                    );
-                    extract(result, move_gen.deadlock_count(), max_expansions)
-                }
-                InnerStrategy::Entropy => {
-                    let entropy_params = crate::entropy::EntropyParams {
-                        max_movesets_per_group,
-                        max_goal_candidates,
-                        lookahead,
-                        w_t,
-                        ..crate::entropy::EntropyParams::default()
-                    };
-                    let mut entropy_trace = if collect_entropy_trace {
-                        Some(EntropyTrace::default())
-                    } else {
-                        None
-                    };
-                    let result = crate::entropy::entropy_search(
-                        root.clone(),
-                        &goal_obj,
-                        &entropy_params,
-                        &ctx,
-                        max_expansions,
-                        None,
-                        seed,
-                        entropy_trace.as_mut(),
-                    );
-                    let mut solve = extract(result, 0, max_expansions);
-                    solve.entropy_trace = entropy_trace;
-                    solve
-                }
-            }
-        };
-
-        // Helper: run inner strategy with parallel restarts, return best.
-        let run_inner_with_restarts = |inner: InnerStrategy| -> SolveResult {
-            if restarts <= 1 {
-                run_inner(inner, 0)
-            } else {
-                let results: Vec<SolveResult> = (0..restarts)
-                    .into_par_iter()
-                    .map(|i| run_inner(inner, i as u64 + 1))
-                    .collect();
-                pick_best(results)
-            }
-        };
-
-        // ── Cascade: inner restarts + single A* refinement ─────────
-        if let Strategy::Cascade { inner } = strategy {
-            // Phase 1: run inner strategy with restarts.
-            let inner_result = run_inner_with_restarts(inner);
-
-            if inner_result.status != SolveStatus::Solved {
-                return Ok(inner_result);
-            }
-
-            // Phase 2: single weighted A* bounded by inner cost.
-            let max_depth = Some(inner_result.cost.ceil() as u32);
-            let astar_move_gen = make_generator(0, DeadlockPolicy::MoveBlockers);
-            let mut astar_f = PriorityFrontier::astar(h_max, weight);
-            let astar_result = frontier::run_search(
-                root.clone(),
-                &astar_move_gen,
-                &scorer,
-                &cost_fn,
-                &goal_obj,
-                &mut astar_f,
-                &ctx,
-                &mut SearchState::default(),
-                &mut NoOpObserver,
-                max_expansions,
-                max_depth,
-            );
-            let astar_solve = extract(
-                astar_result,
-                astar_move_gen.deadlock_count(),
-                max_expansions,
-            );
-
-            if astar_solve.status == SolveStatus::Solved {
-                return Ok(pick_best(vec![inner_result, astar_solve]));
-            }
-            return Ok(inner_result);
-        }
-
-        // ── Non-cascade strategies ─────────────────────────────────
-
-        // Run a single search with the given seed.
-        let run_once = |seed: u64| -> SolveResult {
-            match strategy {
-                Strategy::Entropy => run_inner(InnerStrategy::Entropy, seed),
-                Strategy::Ids => run_inner(InnerStrategy::Ids, seed),
-                Strategy::HeuristicDfs => run_inner(InnerStrategy::Dfs, seed),
-                _ => {
-                    let move_gen = make_generator(seed, DeadlockPolicy::MoveBlockers);
-                    let result = Self::run_strategy_v2(
-                        strategy,
-                        root.clone(),
-                        &move_gen,
-                        &scorer,
-                        &cost_fn,
-                        &goal_obj,
-                        &ctx,
-                        h_max,
-                        max_expansions,
-                        weight,
-                    );
-                    extract(result, move_gen.deadlock_count(), max_expansions)
-                }
-            }
-        };
-
-        if restarts <= 1 {
-            Ok(run_once(0))
-        } else {
-            let results: Vec<SolveResult> = (0..restarts)
-                .into_par_iter()
-                .map(|i| run_once(i as u64 + 1))
-                .collect();
-            Ok(pick_best(results))
-        }
+        Ok(run_with_components(
+            root,
+            &goal_obj,
+            make_generator,
+            h_max,
+            h_sum,
+            &ctx,
+            max_expansions,
+            opts,
+        ))
     }
 
-    /// Dispatch to the appropriate frontier-based search strategy (v2 trait API).
-    #[allow(clippy::too_many_arguments)]
-    fn run_strategy_v2(
-        strategy: Strategy,
-        root: Config,
-        generator: &HeuristicGenerator,
-        scorer: &DistanceScorer,
-        cost_fn: &UniformCost,
-        goal: &AllAtTarget,
-        ctx: &SearchContext<'_>,
-        heuristic_fn: impl crate::traits::Heuristic + Copy,
+    /// Solve a loose-goal entangling placement + routing problem.
+    ///
+    /// Instead of fixed target locations, the solver receives CZ pair
+    /// constraints and simultaneously discovers both the entangling
+    /// placement and the routing. The goal is satisfied when every
+    /// CZ pair occupies a valid entangling position (same zone,
+    /// entangling word pair, same site).
+    ///
+    /// # Arguments
+    ///
+    /// * `initial` — Starting qubit positions: `(qubit_id, location)` pairs.
+    /// * `cz_pairs` — Required CZ pairs: `(qubit_a, qubit_b)` that must
+    ///   end up at entangling positions.
+    /// * `blocked` — Locations occupied by external atoms (immovable obstacles).
+    /// * `max_expansions` — Optional limit on node expansions.
+    /// * `opts` — Search-tuning parameters (strategy, weight, restarts, etc.).
+    ///
+    /// # Returns
+    ///
+    /// A [`SolveResult`] whose [`goal_config`](SolveResult::goal_config)
+    /// contains the discovered entangling placement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if `initial` contains duplicate qubit IDs.
+    pub fn solve_entangling(
+        &self,
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        cz_pairs: &[(u32, u32)],
+        blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
-        weight: f64,
-    ) -> SearchResult {
-        match strategy {
-            Strategy::AStar => {
-                let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-                frontier::run_search(
-                    root,
-                    generator,
-                    scorer,
-                    cost_fn,
-                    goal,
-                    &mut f,
-                    ctx,
-                    &mut SearchState::default(),
-                    &mut NoOpObserver,
-                    max_expansions,
-                    None,
+        opts: &SolveOptions,
+    ) -> Result<SolveResult, ConfigError> {
+        use crate::entangling;
+        use crate::goals::EntanglingConstraintGoal;
+        use crate::heuristic::PairDistanceHeuristic;
+
+        let root = Config::new(initial)?;
+        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+        let arch = self.index.arch_spec();
+
+        // Enumerate entangling structure from the architecture.
+        let word_pairs = entangling::enumerate_word_pairs(arch);
+        let ent_locs = entangling::all_entangling_locations(arch);
+        let ent_set = entangling::build_entangling_set(arch);
+        let partner_map = entangling::build_partner_map(&ent_set);
+
+        // Use Arc for the distance table so it can be shared with
+        // LooseTargetGenerator when dynamic_targets is enabled.
+        let dist_table = std::sync::Arc::new(if opts.w_t > 0.0 {
+            DistanceTable::new(&ent_locs, &self.index).with_time_distances(&self.index)
+        } else {
+            DistanceTable::new(&ent_locs, &self.index)
+        });
+
+        // Precompute per-word-pair minimum distances.
+        let wpd = entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+
+        // Build heuristic closures.
+        let heuristic = PairDistanceHeuristic::new(cz_pairs, &wpd);
+        let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
+        let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
+
+        // Build goal.
+        let goal = EntanglingConstraintGoal::new(cz_pairs, ent_set);
+
+        // Greedy pre-assignment for ctx.targets (guides HeuristicGenerator).
+        let greedy_targets = entangling::greedy_assign_pairs(cz_pairs, &root, arch, &dist_table, 0);
+
+        let blocked_encoded: std::collections::HashSet<u64> =
+            blocked_locs.iter().map(|l| l.encode()).collect();
+        let ctx = SearchContext {
+            index: &self.index,
+            dist_table: &dist_table,
+            blocked: &blocked_encoded,
+            targets: &greedy_targets,
+            cz_pairs: Some(cz_pairs),
+        };
+
+        let lookahead = opts.lookahead;
+        // Loose-goal search needs at least MoveBlockers to handle blocking
+        // between qubits competing for entangling positions. Upgrade Skip
+        // to MoveBlockers; preserve AllMoves if explicitly requested.
+        let deadlock_policy = match opts.deadlock_policy {
+            DeadlockPolicy::Skip => DeadlockPolicy::MoveBlockers,
+            other => other,
+        };
+        let opts = &SolveOptions {
+            deadlock_policy,
+            ..opts.clone()
+        };
+
+        let mut result = if opts.dynamic_targets {
+            use crate::generators::LooseTargetGenerator;
+
+            let arch_arc = std::sync::Arc::new(arch.clone());
+            let dt_arc = dist_table.clone(); // Arc clone (cheap)
+            let recompute_interval = opts.recompute_interval;
+
+            let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
+            let make_generator = move |seed: u64, policy: DeadlockPolicy| {
+                let inner = HeuristicGenerator::new()
+                    .with_deadlock_policy(policy)
+                    .with_lookahead(lookahead)
+                    .with_seed(seed);
+                LooseTargetGenerator::new(
+                    inner,
+                    cz_pairs_owned.clone(),
+                    arch_arc.clone(),
+                    dt_arc.clone(),
+                    seed,
+                    recompute_interval,
                 )
-            }
-            Strategy::Bfs => {
-                let mut f = BfsFrontier::new();
-                frontier::run_search(
-                    root,
-                    generator,
-                    scorer,
-                    cost_fn,
-                    goal,
-                    &mut f,
-                    ctx,
-                    &mut SearchState::default(),
-                    &mut NoOpObserver,
+            };
+
+            run_with_components(
+                root,
+                &goal,
+                make_generator,
+                h_max,
+                h_sum,
+                &ctx,
+                max_expansions,
+                opts,
+            )
+        } else {
+            let make_generator = |seed: u64, policy: DeadlockPolicy| {
+                HeuristicGenerator::new()
+                    .with_deadlock_policy(policy)
+                    .with_lookahead(lookahead)
+                    .with_seed(seed)
+            };
+
+            run_with_components(
+                root,
+                &goal,
+                make_generator,
+                h_max,
+                h_sum,
+                &ctx,
+                max_expansions,
+                opts,
+            )
+        };
+
+        // Post-solve cleanup: move spectator qubits out of accidental CZ positions.
+        if result.status == SolveStatus::Solved {
+            let cz_qubit_set: std::collections::HashSet<u32> =
+                cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+            let accidental =
+                entangling::find_accidental_cz(&result.goal_config, &cz_qubit_set, &partner_map);
+
+            if !accidental.is_empty() {
+                let mut cleanup_targets: Vec<(u32, LocationAddr)> =
+                    result.goal_config.iter().collect();
+
+                for &(qid, move_loc) in &accidental {
+                    for &lane in self.index.outgoing_lanes(move_loc) {
+                        if let Some((_, dst)) = self.index.endpoints(&lane) {
+                            if result.goal_config.is_occupied(dst) {
+                                continue;
+                            }
+                            let safe = arch.get_cz_partner(&dst).is_none_or(|p| {
+                                !result.goal_config.is_occupied(p)
+                                    || cz_qubit_set.contains(
+                                        &result.goal_config.qubit_at(p).unwrap_or(u32::MAX),
+                                    )
+                            });
+                            if safe {
+                                if let Some(entry) =
+                                    cleanup_targets.iter_mut().find(|(q, _)| *q == qid)
+                                {
+                                    entry.1 = dst;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let cleanup_result = self.solve(
+                    result.goal_config.iter(),
+                    cleanup_targets,
+                    blocked_locs.iter().copied(),
                     max_expansions,
-                    None,
-                )
-            }
-            Strategy::GreedyBestFirst => {
-                let mut f = PriorityFrontier::greedy(heuristic_fn);
-                frontier::run_search(
-                    root,
-                    generator,
-                    scorer,
-                    cost_fn,
-                    goal,
-                    &mut f,
-                    ctx,
-                    &mut SearchState::default(),
-                    &mut NoOpObserver,
-                    max_expansions,
-                    None,
-                )
-            }
-            _ => {
-                unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
+                    opts,
+                );
+
+                if let Ok(cleanup) = cleanup_result
+                    && cleanup.status == SolveStatus::Solved
+                {
+                    result.move_layers.extend(cleanup.move_layers);
+                    result.goal_config = cleanup.goal_config;
+                    result.cost += cleanup.cost;
+                    result.nodes_expanded += cleanup.nodes_expanded;
+                }
             }
         }
+
+        Ok(result)
     }
 }
 
@@ -1015,5 +1264,166 @@ mod tests {
             .expect("entropy trace should be populated");
         assert_eq!(trace.root_node_id, 0);
         assert!(!trace.steps.is_empty(), "trace should include step events");
+    }
+
+    // ── solve_entangling tests ──
+
+    #[test]
+    fn solve_entangling_finds_solution() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve_entangling(
+                [(0, loc(0, 0)), (1, loc(1, 0))],
+                &[(0, 1)],
+                std::iter::empty(),
+                Some(5000),
+                &default_opts(),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        // Verify goal config satisfies the entangling constraint.
+        let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+            serde_json::from_str(example_arch_json()).unwrap();
+        let eset = crate::entangling::build_entangling_set(&arch);
+        let loc_a = result.goal_config.location_of(0).unwrap().encode();
+        let loc_b = result.goal_config.location_of(1).unwrap().encode();
+        assert!(
+            eset.contains(&(loc_a, loc_b)),
+            "goal config should satisfy entangling constraint"
+        );
+    }
+
+    #[test]
+    fn solve_entangling_already_at_goal() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        // Qubits already at entangling positions.
+        let result = solver
+            .solve_entangling(
+                [(0, loc(0, 5)), (1, loc(1, 5))],
+                &[(0, 1)],
+                std::iter::empty(),
+                Some(100),
+                &default_opts(),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        assert_eq!(result.cost, 0.0);
+        assert!(result.move_layers.is_empty());
+    }
+
+    #[test]
+    fn solve_entangling_multiple_pairs() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve_entangling(
+                [
+                    (0, loc(0, 0)),
+                    (1, loc(1, 0)),
+                    (2, loc(0, 1)),
+                    (3, loc(1, 1)),
+                ],
+                &[(0, 1), (2, 3)],
+                std::iter::empty(),
+                Some(10000),
+                &default_opts(),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        // Verify both pairs satisfy the constraint.
+        let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+            serde_json::from_str(example_arch_json()).unwrap();
+        let eset = crate::entangling::build_entangling_set(&arch);
+        for &(qa, qb) in &[(0u32, 1u32), (2, 3)] {
+            let la = result.goal_config.location_of(qa).unwrap().encode();
+            let lb = result.goal_config.location_of(qb).unwrap().encode();
+            assert!(
+                eset.contains(&(la, lb)),
+                "pair ({qa}, {qb}) should be at entangling positions"
+            );
+        }
+    }
+
+    #[test]
+    fn solve_entangling_spectator_qubits() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        // q0/q1 are a CZ pair, q2 is a spectator (not in any pair).
+        let result = solver
+            .solve_entangling(
+                [(0, loc(0, 0)), (1, loc(1, 0)), (2, loc(0, 3))],
+                &[(0, 1)],
+                std::iter::empty(),
+                Some(5000),
+                &default_opts(),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+        // Spectator q2 should remain at its initial position.
+        assert_eq!(result.goal_config.location_of(2), Some(loc(0, 3)));
+    }
+
+    #[test]
+    fn solve_entangling_with_ids() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve_entangling(
+                [(0, loc(0, 0)), (1, loc(1, 0))],
+                &[(0, 1)],
+                std::iter::empty(),
+                Some(5000),
+                &SolveOptions {
+                    strategy: Strategy::Ids,
+                    w_t: 0.0,
+                    ..SolveOptions::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+    }
+
+    #[test]
+    fn solve_entangling_dynamic_targets() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve_entangling(
+                [(0, loc(0, 0)), (1, loc(1, 0))],
+                &[(0, 1)],
+                std::iter::empty(),
+                Some(5000),
+                &SolveOptions {
+                    dynamic_targets: true,
+                    w_t: 0.0,
+                    ..SolveOptions::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
+    }
+
+    #[test]
+    fn solve_entangling_with_cascade() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let result = solver
+            .solve_entangling(
+                [(0, loc(0, 0)), (1, loc(1, 0))],
+                &[(0, 1)],
+                std::iter::empty(),
+                Some(5000),
+                &SolveOptions {
+                    strategy: Strategy::Cascade {
+                        inner: InnerStrategy::Ids,
+                    },
+                    w_t: 0.0,
+                    ..SolveOptions::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SolveStatus::Solved);
     }
 }

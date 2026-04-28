@@ -48,7 +48,9 @@ pub struct EntropyTraceStep {
     pub depth: u32,
     pub entropy: u32,
     pub unresolved_count: u32,
+    #[allow(clippy::type_complexity)]
     pub moveset: Option<Vec<(u8, u8, u32, u32, u32, u32)>>,
+    #[allow(clippy::type_complexity)]
     pub candidate_movesets: Vec<Vec<(u8, u8, u32, u32, u32, u32)>>,
     pub candidate_index: Option<u32>,
     pub reason: Option<String>,
@@ -948,6 +950,7 @@ fn sequential_fallback(
 ///
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
+#[allow(clippy::too_many_arguments)]
 pub fn entropy_search(
     root: Config,
     goal: &impl Goal,
@@ -1459,6 +1462,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         entropy_search(
             root,
@@ -1672,7 +1676,7 @@ mod tests {
 
     #[test]
     fn scored_entry_tie_break_is_deterministic() {
-        let mut entries = vec![
+        let mut entries = [
             (
                 (1, 2, 1),
                 ScoredEntry {
@@ -1815,6 +1819,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             w_d: 0.0,
@@ -1848,6 +1853,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 0,
@@ -1870,6 +1876,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 4,

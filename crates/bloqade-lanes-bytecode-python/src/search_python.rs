@@ -515,6 +515,7 @@ impl PyMoveSolver {
     /// Returns:
     ///     MultiSolveResult with per-candidate debug info.
     #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None))]
+    #[allow(clippy::too_many_arguments)]
     fn solve_with_generator(
         &self,
         py: Python<'_>,
@@ -591,6 +592,52 @@ impl PyMoveSolver {
             .collect())
     }
 
+    /// Solve a loose-goal entangling placement + routing problem.
+    ///
+    /// Instead of fixed target locations, the solver receives CZ pair
+    /// constraints and simultaneously discovers both the entangling
+    /// placement and the routing.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+    ///         entangling positions.
+    ///     blocked: List of LocationAddress for immovable obstacle locations.
+    ///     max_expansions: Optional limit on node expansions.
+    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
+    ///
+    /// Returns:
+    ///     SolveResult with the discovered entangling placement.
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None))]
+    fn solve_entangling(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        options: Option<&PySolveOptions>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_entangling(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &opts,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
     fn __repr__(&self) -> String {
         "MoveSolver(...)".to_string()
     }
@@ -615,7 +662,8 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false, dynamic_targets=false, recompute_interval=1))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
         max_movesets_per_group: usize,
@@ -626,6 +674,8 @@ impl PySolveOptions {
         deadlock_policy: PyDeadlockPolicy,
         w_t: f64,
         collect_entropy_trace: bool,
+        dynamic_targets: bool,
+        recompute_interval: u32,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -658,8 +708,20 @@ impl PySolveOptions {
                 deadlock_policy: deadlock_policy.to_rs(),
                 w_t,
                 collect_entropy_trace,
+                dynamic_targets,
+                recompute_interval,
             },
         })
+    }
+
+    #[getter]
+    fn dynamic_targets(&self) -> bool {
+        self.inner.dynamic_targets
+    }
+
+    #[getter]
+    fn recompute_interval(&self) -> u32 {
+        self.inner.recompute_interval
     }
 
     #[getter]

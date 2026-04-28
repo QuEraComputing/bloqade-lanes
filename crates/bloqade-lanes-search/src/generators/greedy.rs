@@ -150,6 +150,7 @@ mod tests {
             dist_table: &table,
             blocked: &blocked,
             targets: &target_enc,
+            cz_pairs: None,
         };
         let mut state = SearchState::default();
 
@@ -190,6 +191,7 @@ mod tests {
             dist_table: &table,
             blocked: &blocked,
             targets: &target_enc,
+            cz_pairs: None,
         };
         let mut state = SearchState::default();
 

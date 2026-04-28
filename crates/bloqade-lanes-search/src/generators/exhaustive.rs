@@ -265,6 +265,7 @@ mod tests {
             dist_table,
             blocked,
             targets,
+            cz_pairs: None,
         }
     }
 
