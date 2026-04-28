@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from functools import singledispatchmethod
 from typing import Callable
 
-from bloqade.analysis import address
 from kirin import ir
 from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
@@ -300,10 +299,16 @@ class RemoveNoOpStaticPlacements(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-@dataclass
 class InsertInitialize(RewriteRule):
-    address_entries: dict[ir.SSAValue, address.Address]
-    initial_layout: tuple[LocationAddress, ...]
+    """Emit move.LogicalInitialize for all NewLogicalQubits in a block,
+    with location_addresses, thetas, phis, lams collected directly from
+    each statement.  Non-NewLogicalQubit statements (e.g. angle constants)
+    are skipped.  The Load/LogicalInitialize/Store triple is inserted before
+    the statement that immediately follows the last NewLogicalQubit.
+
+    Pre-condition: every NewLogicalQubit has a non-None location_address
+    (established by ResolvePinnedAddresses).
+    """
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         stmt = node.first_stmt
@@ -311,33 +316,27 @@ class InsertInitialize(RewriteRule):
         phis: list[ir.SSAValue] = []
         lams: list[ir.SSAValue] = []
         location_addresses: list[LocationAddress] = []
+        insertion_point: ir.Statement | None = None
 
         while stmt is not None:
             if not isinstance(stmt, place.NewLogicalQubit):
                 stmt = stmt.next_stmt
                 continue
-
-            if not isinstance(
-                qubit_addr := self.address_entries.get(stmt.result),
-                address.AddressQubit,
-            ):
-                return RewriteResult()
-
-            if qubit_addr.data >= len(self.initial_layout):
-                return RewriteResult()
-
-            location_addresses.append(self.initial_layout[qubit_addr.data])
+            assert stmt.location_address is not None, (
+                "InsertInitialize expects post-ResolvePinnedAddresses IR, "
+                "but found NewLogicalQubit with location_address=None"
+            )
+            location_addresses.append(stmt.location_address)
             thetas.append(stmt.theta)
             phis.append(stmt.phi)
             lams.append(stmt.lam)
+            insertion_point = stmt.next_stmt
             stmt = stmt.next_stmt
-            if len(location_addresses) == len(self.initial_layout):
-                break
 
-        if stmt is None:
+        if insertion_point is None or len(location_addresses) == 0:
             return RewriteResult()
 
-        (current_state := move.Load()).insert_before(stmt)
+        (current_state := move.Load()).insert_before(insertion_point)
         (
             current_state := move.LogicalInitialize(
                 current_state.result,
@@ -346,8 +345,8 @@ class InsertInitialize(RewriteRule):
                 tuple(lams),
                 location_addresses=tuple(location_addresses),
             )
-        ).insert_before(stmt)
-        (move.Store(current_state.result)).insert_before(stmt)
+        ).insert_before(insertion_point)
+        (move.Store(current_state.result)).insert_before(insertion_point)
 
         return RewriteResult(has_done_something=True)
 

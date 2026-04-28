@@ -158,9 +158,7 @@ class PlaceToMove:
         rules: list[RewriteRule] = [place2move.InsertFill()]
         if self.logical_initialize:
             # Insert logical initialize operations based on the address frame and initial layout.
-            rules.append(
-                place2move.InsertInitialize(address_frame.entries, initial_layout)
-            )
+            rules.append(place2move.InsertInitialize())
 
         rules.extend(
             (

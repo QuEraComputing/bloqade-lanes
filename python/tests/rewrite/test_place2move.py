@@ -530,3 +530,84 @@ def test_insert_fill_none_location_address_raises():
     )
     with pytest.raises(AssertionError, match="location_address=None"):
         rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+
+
+# ---------------------------------------------------------------------------
+# InsertInitialize tests
+# ---------------------------------------------------------------------------
+
+
+def test_insert_initialize_emits_logical_initialize():
+    """InsertInitialize collects location_address, theta, phi, lam from two
+    NewLogicalQubit statements and emits move.LogicalInitialize before the
+    first non-NewLogicalQubit statement."""
+    addr0 = layout.LocationAddress(0, 0)
+    addr1 = layout.LocationAddress(0, 1)
+    angle = ir.TestValue()
+
+    nlq0 = place.NewLogicalQubit(angle, angle, angle)
+    nlq0.location_address = addr0
+    nlq1 = place.NewLogicalQubit(angle, angle, angle)
+    nlq1.location_address = addr1
+    terminator = py.Constant(42)
+
+    test_block = ir.Block([nlq0, nlq1, terminator])
+    rule = rewrite.Walk(place2move.InsertInitialize())
+    result = rule.rewrite(test_block)
+
+    assert result.has_done_something
+
+    # The block should now have: NLQ0, NLQ1, Load, LogicalInitialize, Store, Constant
+    stmt = test_block.first_stmt
+    assert isinstance(stmt, place.NewLogicalQubit)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, place.NewLogicalQubit)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, move.Load)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, move.LogicalInitialize)
+    assert stmt.location_addresses == (addr0, addr1)
+    assert stmt.thetas == (angle, angle)
+    assert stmt.phis == (angle, angle)
+    assert stmt.lams == (angle, angle)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, move.Store)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, py.Constant)
+
+
+def test_insert_initialize_empty_block_is_noop():
+    """InsertInitialize is a no-op when the block's first statement is not a
+    NewLogicalQubit (len(location_addresses) == 0 after the loop)."""
+    test_block = ir.Block([py.Constant(99)])
+    result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    assert not result.has_done_something
+
+
+def test_insert_initialize_all_nlq_no_terminator_is_noop():
+    """InsertInitialize is a no-op when the block contains only NewLogicalQubit
+    statements with no following non-NewLogicalQubit insertion point (stmt is
+    None after the loop)."""
+    angle = ir.TestValue()
+    nlq0 = place.NewLogicalQubit(angle, angle, angle)
+    nlq0.location_address = layout.LocationAddress(0, 0)
+    nlq1 = place.NewLogicalQubit(angle, angle, angle)
+    nlq1.location_address = layout.LocationAddress(0, 1)
+
+    test_block = ir.Block([nlq0, nlq1])
+    result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    assert not result.has_done_something
+
+
+def test_insert_initialize_none_location_address_raises():
+    """InsertInitialize asserts that location_address is non-None on every
+    NewLogicalQubit encountered — a None value indicates the post-
+    ResolvePinnedAddresses invariant has not been met."""
+    angle = ir.TestValue()
+    nlq = place.NewLogicalQubit(angle, angle, angle)
+    # deliberately leave location_address=None (the default)
+    terminator = py.Constant(0)
+
+    test_block = ir.Block([nlq, terminator])
+    with pytest.raises(AssertionError, match="location_address=None"):
+        rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
