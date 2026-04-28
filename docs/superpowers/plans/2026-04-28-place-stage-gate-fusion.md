@@ -1200,13 +1200,13 @@ git add python/tests/rewrite/test_fuse_gates.py
 git commit -m "test(rewrite): cover boundary stmts, idempotence, and degenerate bodies"
 ```
 
-- [ ] **Step 5: Run the full test suite to confirm no regressions**
+- [ ] **Step 5: Run the fast test suite to confirm no regressions**
 
 Run:
 ```bash
-uv run pytest python/tests
+uv run pytest python/tests -m "not slow"
 ```
-Expected: all tests pass; no regressions.
+Expected: all fast tests pass; no regressions. (`@pytest.mark.slow` tests are deferred to CI.)
 
 ---
 
