@@ -73,3 +73,38 @@ def test_single_statement_body_is_unchanged():
     body_stmts = list(sp.body.blocks[0].stmts)
     assert len(body_stmts) == 1
     assert body_stmts[0] is r
+
+
+# ---------------------------------------------------------------------------
+# Two-way R fusion (happy path)
+# ---------------------------------------------------------------------------
+
+
+def test_two_adjacent_r_fuses():
+    """Two R(state, axis=%a, angle=%φ, qubits=...) with disjoint qubits fuse.
+
+    The merged R has state_before from the first, qubits = concat in order,
+    same axis/angle SSA values; the second R is gone.
+    """
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1, 2))
+    body_block.stmts.append(r2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert len(body_stmts) == 1
+    merged = body_stmts[0]
+    assert isinstance(merged, place.R)
+    assert merged.qubits == (0, 1, 2)
+    assert merged.axis_angle is axis
+    assert merged.rotation_angle is angle
+    assert merged.state_before is entry_state
