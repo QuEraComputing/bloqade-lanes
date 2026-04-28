@@ -154,3 +154,17 @@ def test_non_constant_arg_skipped_silently():
     # Must not raise; the pass skips stmts whose args lack const hints.
     _, errors = dup_pass.run(kernel)
     assert errors == []
+
+
+def test_kernel_decorator_catches_duplicates():
+    """Default verify=True surfaces duplicate addresses at kernel-decoration time."""
+
+    with pytest.raises(ValidationErrorGroup) as exc_info:
+
+        @gemini.logical.kernel()
+        def kernel():
+            q0 = new_at(0, 0, 0)  # noqa: F841
+            q1 = new_at(0, 0, 0)  # same address — duplicate  # noqa: F841
+
+    errors = exc_info.value.errors
+    assert any("pinned by two" in str(e) for e in errors)

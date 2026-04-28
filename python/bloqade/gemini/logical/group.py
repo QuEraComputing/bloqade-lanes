@@ -89,12 +89,14 @@ def kernel(self):
             from ..analysis.measurement_validation import (
                 GeminiTerminalMeasurementValidation,
             )
+            from .validation import DuplicateAddressValidation
 
             validator = ValidationSuite(
                 [
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
+                    DuplicateAddressValidation,
                 ]
             )
             validation_result = validator.validate(mt)
