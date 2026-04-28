@@ -17,6 +17,11 @@ from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import place
 
+# Opcodes that are eligible for fusion. Other QuantumStmts (Initialize,
+# EndMeasure) and non-quantum statements (Yield, etc.) flush the current
+# group and do not start a new one.
+_FUSABLE_TYPES = (place.R, place.Rz)
+
 
 @dataclass
 class FuseAdjacentGates(rewrite_abc.RewriteRule):
@@ -31,25 +36,25 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
 
     def _fuse_block(self, block: ir.Block) -> bool:
         changed = False
-        group: list[place.R] = []
+        group: list[place.R | place.Rz] = []
 
         def flush() -> bool:
             if len(group) >= 2:
-                self._merge_group(group)
+                _merge_group(group)
                 group.clear()
                 return True
             group.clear()
             return False
 
         for stmt in list(block.stmts):
-            if not isinstance(stmt, place.R):
+            if not isinstance(stmt, _FUSABLE_TYPES):
                 if flush():
                     changed = True
                 continue
             if not group:
                 group.append(stmt)
                 continue
-            if self._can_extend_r(group, stmt):
+            if _can_extend(group, stmt):
                 group.append(stmt)
             else:
                 if flush():
@@ -59,31 +64,52 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
             changed = True
         return changed
 
-    @staticmethod
-    def _can_extend_r(group: list[place.R], stmt: place.R) -> bool:
-        head = group[0]
-        tail = group[-1]
-        if stmt.axis_angle is not head.axis_angle:
-            return False
-        if stmt.rotation_angle is not head.rotation_angle:
-            return False
-        # State-chain adjacency: the stmt's state input must be the tail's state output.
-        if stmt.state_before is not tail.state_after:
-            return False
-        existing_qubits = {q for s in group for q in s.qubits}
-        return existing_qubits.isdisjoint(stmt.qubits)
 
-    @staticmethod
-    def _merge_group(group: list[place.R]) -> None:
-        head = group[0]
-        tail = group[-1]
+def _can_extend(group: list[place.R | place.Rz], stmt: place.R | place.Rz) -> bool:
+    head = group[0]
+    tail = group[-1]
+    if type(stmt) is not type(head):
+        return False
+    # State-chain adjacency.
+    if stmt.state_before is not tail.state_after:
+        return False
+    if not _same_non_qubit_args(head, stmt):
+        return False
+    existing_qubits = {q for s in group for q in s.qubits}
+    return existing_qubits.isdisjoint(stmt.qubits)
+
+
+def _same_non_qubit_args(a: place.R | place.Rz, b: place.R | place.Rz) -> bool:
+    """SSA-identity comparison of non-qubit args. Assumes type(a) is type(b)."""
+    if isinstance(a, place.R):
+        assert isinstance(b, place.R)
+        return a.axis_angle is b.axis_angle and a.rotation_angle is b.rotation_angle
+    if isinstance(a, place.Rz):
+        assert isinstance(b, place.Rz)
+        return a.rotation_angle is b.rotation_angle
+    raise AssertionError(f"unfusable opcode in predicate: {type(a)}")
+
+
+def _merge_group(group: list[place.R | place.Rz]) -> None:
+    head = group[0]
+    tail = group[-1]
+    if isinstance(head, place.R):
         all_qubits = tuple(q for s in group for q in s.qubits)
-        merged = place.R(
+        merged: ir.Statement = place.R(
             head.state_before,
             axis_angle=head.axis_angle,
             rotation_angle=head.rotation_angle,
             qubits=all_qubits,
         )
-        tail.replace_by(merged)
-        for stmt in reversed(group[:-1]):
-            stmt.delete()
+    elif isinstance(head, place.Rz):
+        all_qubits = tuple(q for s in group for q in s.qubits)
+        merged = place.Rz(
+            head.state_before,
+            rotation_angle=head.rotation_angle,
+            qubits=all_qubits,
+        )
+    else:
+        raise AssertionError(f"unfusable opcode in merge: {type(head)}")
+    tail.replace_by(merged)
+    for stmt in reversed(group[:-1]):
+        stmt.delete()
