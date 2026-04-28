@@ -10,6 +10,7 @@ from bloqade.lanes.analysis import placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.encoding import LaneAddress
+from bloqade.lanes.utils import no_none_elements
 
 
 @dataclass
@@ -315,17 +316,13 @@ class InsertInitialize(RewriteRule):
         thetas: list[ir.SSAValue] = []
         phis: list[ir.SSAValue] = []
         lams: list[ir.SSAValue] = []
-        location_addresses: list[LocationAddress] = []
+        location_addresses: list[LocationAddress | None] = []
         insertion_point: ir.Statement | None = None
 
         while stmt is not None:
             if not isinstance(stmt, place.NewLogicalQubit):
                 stmt = stmt.next_stmt
                 continue
-            assert stmt.location_address is not None, (
-                "InsertInitialize expects post-ResolvePinnedAddresses IR, "
-                "but found NewLogicalQubit with location_address=None"
-            )
             location_addresses.append(stmt.location_address)
             thetas.append(stmt.theta)
             phis.append(stmt.phi)
@@ -334,6 +331,9 @@ class InsertInitialize(RewriteRule):
             stmt = stmt.next_stmt
 
         if insertion_point is None or len(location_addresses) == 0:
+            return RewriteResult()
+
+        if not no_none_elements(location_addresses):
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(insertion_point)
@@ -367,17 +367,16 @@ class InsertFill(RewriteRule):
         if first_stmt is None or isinstance(first_stmt, move.Fill):
             return RewriteResult()
 
-        location_addresses: list[LocationAddress] = []
+        location_addresses: list[LocationAddress | None] = []
         for stmt in node.body.walk():
             if not isinstance(stmt, place.NewLogicalQubit):
                 continue
-            assert stmt.location_address is not None, (
-                "InsertFill expects post-ResolvePinnedAddresses IR, "
-                "but found NewLogicalQubit with location_address=None"
-            )
             location_addresses.append(stmt.location_address)
 
         if not location_addresses:
+            return RewriteResult()
+
+        if not no_none_elements(location_addresses):
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(first_stmt)

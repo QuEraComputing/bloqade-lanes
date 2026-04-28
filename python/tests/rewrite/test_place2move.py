@@ -1,4 +1,3 @@
-import pytest
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite, types
 from kirin.dialects import func, py
@@ -512,10 +511,10 @@ def test_insert_fill_already_filled_is_noop():
     assert not result.has_done_something
 
 
-def test_insert_fill_none_location_address_raises():
-    """InsertFill asserts that location_address is non-None on every
-    NewLogicalQubit — a None value indicates the invariant established by
-    ResolvePinnedAddresses has not been met, which is a pipeline bug."""
+def test_insert_fill_none_location_address_is_noop():
+    """InsertFill gives up (returns no-op RewriteResult) when any NewLogicalQubit
+    has location_address=None — indicating the post-ResolvePinnedAddresses
+    invariant has not been met."""
     angle = ir.TestValue()
     nlq = place.NewLogicalQubit(angle, angle, angle)
     # deliberately leave location_address=None (the default)
@@ -528,8 +527,10 @@ def test_insert_fill_none_location_address_raises():
         slots=(),
         body=region,
     )
-    with pytest.raises(AssertionError, match="location_address=None"):
-        rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    result = rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    assert not result.has_done_something
+    # No move.Fill should have been inserted
+    assert not any(isinstance(s, move.Fill) for s in block.walk())
 
 
 # ---------------------------------------------------------------------------
@@ -599,9 +600,9 @@ def test_insert_initialize_all_nlq_no_terminator_is_noop():
     assert not result.has_done_something
 
 
-def test_insert_initialize_none_location_address_raises():
-    """InsertInitialize asserts that location_address is non-None on every
-    NewLogicalQubit encountered — a None value indicates the post-
+def test_insert_initialize_none_location_address_is_noop():
+    """InsertInitialize gives up (returns no-op RewriteResult) when any
+    NewLogicalQubit has location_address=None — indicating the post-
     ResolvePinnedAddresses invariant has not been met."""
     angle = ir.TestValue()
     nlq = place.NewLogicalQubit(angle, angle, angle)
@@ -609,5 +610,7 @@ def test_insert_initialize_none_location_address_raises():
     terminator = py.Constant(0)
 
     test_block = ir.Block([nlq, terminator])
-    with pytest.raises(AssertionError, match="location_address=None"):
-        rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    assert not result.has_done_something
+    # No move.LogicalInitialize should have been inserted
+    assert not any(isinstance(s, move.LogicalInitialize) for s in test_block.walk())
