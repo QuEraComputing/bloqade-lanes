@@ -69,19 +69,15 @@ from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
 
 
 def _wrap_in_static_placement(
-    body_stmts: list[ir.Statement],
-    entry_state: ir.SSAValue,
     body_block: ir.Block,
     num_qubits: int = 4,
 ) -> tuple[place.StaticPlacement, ir.Block]:
-    """Wrap a fully-built body block in a StaticPlacement and an outer block.
+    """Wrap a populated body block in a StaticPlacement and an outer block.
 
-    `body_block` should already contain `body_stmts` and have `entry_state`
-    as its block argument. Returns the StaticPlacement and the outer block
-    used as the rewrite target.
+    Caller is responsible for appending statements to ``body_block`` and for
+    setting up its entry-state block argument (see ``_new_body_block``).
+    Returns the StaticPlacement and the outer block used as the rewrite target.
     """
-    _ = body_stmts  # documented input; appended by caller
-    _ = entry_state
     sp_qubits = tuple(
         ir.TestValue(type=bloqade_types.QubitType) for _ in range(num_qubits)
     )
@@ -118,7 +114,7 @@ def test_single_statement_body_is_unchanged():
     r = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
     body_block.stmts.append(r)
 
-    sp, outer = _wrap_in_static_placement([r], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -174,7 +170,6 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
         return rewrite_abc.RewriteResult(has_done_something=changed)
 
     def _fuse_block(self, block: ir.Block) -> bool:
-        # Skeleton — no fusion logic yet. Filled in by Task 2.
         _ = block
         return False
 ```
@@ -227,7 +222,7 @@ def test_two_adjacent_r_fuses():
     r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1, 2))
     body_block.stmts.append(r2)
 
-    sp, outer = _wrap_in_static_placement([r1, r2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -393,7 +388,7 @@ def test_overlapping_qubits_does_not_fuse():
     r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1, 2))
     body_block.stmts.append(r2)
 
-    sp, outer = _wrap_in_static_placement([r1, r2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -414,7 +409,7 @@ def test_different_axis_ssa_does_not_fuse():
     r2 = place.R(r1.state_after, axis_angle=axis_b, rotation_angle=angle, qubits=(1,))
     body_block.stmts.append(r2)
 
-    sp, outer = _wrap_in_static_placement([r1, r2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -435,7 +430,7 @@ def test_different_rotation_angle_ssa_does_not_fuse():
     r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle_b, qubits=(1,))
     body_block.stmts.append(r2)
 
-    sp, outer = _wrap_in_static_placement([r1, r2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -461,7 +456,7 @@ def test_different_opcode_between_blocks_fusion():
     r2 = place.R(rz.state_after, axis_angle=axis, rotation_angle=angle_r, qubits=(2,))
     body_block.stmts.append(r2)
 
-    sp, outer = _wrap_in_static_placement([r1, rz, r2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -513,7 +508,7 @@ def test_two_adjacent_rz_fuses():
     rz2 = place.Rz(rz1.state_after, rotation_angle=angle, qubits=(1, 2))
     body_block.stmts.append(rz2)
 
-    sp, outer = _wrap_in_static_placement([rz1, rz2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -538,7 +533,7 @@ def test_rz_with_different_angle_does_not_fuse():
     rz2 = place.Rz(rz1.state_after, rotation_angle=angle_b, qubits=(1,))
     body_block.stmts.append(rz2)
 
-    sp, outer = _wrap_in_static_placement([rz1, rz2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -728,7 +723,7 @@ def test_two_adjacent_cz_fuses_with_reinterleaved_qubits():
     cz2 = place.CZ(cz1.state_after, qubits=(1, 3))
     body_block.stmts.append(cz2)
 
-    sp, outer = _wrap_in_static_placement([cz1, cz2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -753,7 +748,7 @@ def test_cz_overlapping_controls_does_not_fuse():
     cz2 = place.CZ(cz1.state_after, qubits=(0, 3))  # control=0, target=3 (overlaps)
     body_block.stmts.append(cz2)
 
-    sp, outer = _wrap_in_static_placement([cz1, cz2], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -773,7 +768,7 @@ def test_cz_three_way_fusion_preserves_control_target_order():
     cz3 = place.CZ(cz2.state_after, qubits=(2, 6))  # c=2, t=6
     body_block.stmts.append(cz3)
 
-    sp, outer = _wrap_in_static_placement([cz1, cz2, cz3], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -985,7 +980,7 @@ def test_four_adjacent_r_collapse_in_one_pass():
     r4 = place.R(r3.state_after, axis_angle=axis, rotation_angle=angle, qubits=(4,))
     body_block.stmts.append(r4)
 
-    sp, outer = _wrap_in_static_placement([r1, r2, r3, r4], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -1061,9 +1056,7 @@ def test_initialize_flushes_group_does_not_start_new_one():
     r4 = place.R(r3.state_after, axis_angle=axis, rotation_angle=angle, qubits=(4,))
     body_block.stmts.append(r4)
 
-    sp, outer = _wrap_in_static_placement(
-        [r1, r2, init, r3, r4], entry_state, body_block, num_qubits=5
-    )
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=5)
 
     result = _run(outer)
 
@@ -1092,9 +1085,7 @@ def test_endmeasure_flushes_preceding_group():
     em = place.EndMeasure(r2.state_after, qubits=(0, 1))
     body_block.stmts.append(em)
 
-    sp, outer = _wrap_in_static_placement(
-        [r1, r2, em], entry_state, body_block, num_qubits=2
-    )
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=2)
 
     result = _run(outer)
 
@@ -1123,7 +1114,7 @@ def test_idempotence_second_application_is_noop():
     r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
     body_block.stmts.append(r2)
 
-    _, outer = _wrap_in_static_placement([r1, r2], entry_state, body_block)
+    _, outer = _wrap_in_static_placement(body_block)
 
     result_first = _run(outer)
     assert result_first.has_done_something
@@ -1137,7 +1128,7 @@ def test_empty_body_is_unchanged():
     """An empty body is a no-op."""
     body_block, entry_state = _new_body_block()
 
-    sp, outer = _wrap_in_static_placement([], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 
@@ -1163,9 +1154,7 @@ def test_no_fusable_groups_is_unchanged():
     em = place.EndMeasure(init.state_after, qubits=(0,))
     body_block.stmts.append(em)
 
-    sp, outer = _wrap_in_static_placement(
-        [init, em], entry_state, body_block, num_qubits=1
-    )
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=1)
 
     result = _run(outer)
 
