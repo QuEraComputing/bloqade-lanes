@@ -453,8 +453,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
 
 # (move_type, zone_id, bus_id, direction) — the scheduler's batching key.
 # Lanes sharing this tuple are physically packable into one AOD shot (see
-# ArchSpec.check_lane_group in python/bloqade/lanes/layout/arch.py and
-# BusContext in python/bloqade/lanes/search/generators/aod_grouping.py).
+# ArchSpec.check_lane_group in python/bloqade/lanes/layout/arch.py).
 _AODSig = tuple[MoveType, int, int, layout.Direction]
 
 
