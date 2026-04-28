@@ -108,3 +108,96 @@ def test_two_adjacent_r_fuses():
     assert merged.axis_angle is axis
     assert merged.rotation_angle is angle
     assert merged.state_before is entry_state
+
+
+# ---------------------------------------------------------------------------
+# R-fusion: predicate negative cases
+# ---------------------------------------------------------------------------
+
+
+def test_overlapping_qubits_does_not_fuse():
+    """R(qubits=[0,1]) + R(qubits=[1,2]) overlap on qubit 1 → no fusion."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0, 1))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1, 2))
+    body_block.stmts.append(r2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert body_stmts == [r1, r2]
+
+
+def test_different_axis_ssa_does_not_fuse():
+    """Two R with different axis_angle SSA values → no fusion (SSA-identity)."""
+    body_block, entry_state = _new_body_block()
+    axis_a = ir.TestValue(type=kirin_types.Float)
+    axis_b = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis_a, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis_b, rotation_angle=angle, qubits=(1,))
+    body_block.stmts.append(r2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert body_stmts == [r1, r2]
+
+
+def test_different_rotation_angle_ssa_does_not_fuse():
+    """Two R with different rotation_angle SSA values → no fusion."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle_a = ir.TestValue(type=kirin_types.Float)
+    angle_b = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle_a, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle_b, qubits=(1,))
+    body_block.stmts.append(r2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert body_stmts == [r1, r2]
+
+
+def test_different_opcode_between_blocks_fusion():
+    """R; Rz; R does NOT fuse the two Rs even though their qubits are disjoint.
+
+    Strict adjacency: the Rz between them flushes the group.
+    """
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle_r = ir.TestValue(type=kirin_types.Float)
+    angle_rz = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle_r, qubits=(0,))
+    body_block.stmts.append(r1)
+    rz = place.Rz(r1.state_after, rotation_angle=angle_rz, qubits=(1,))
+    body_block.stmts.append(rz)
+    r2 = place.R(rz.state_after, axis_angle=axis, rotation_angle=angle_r, qubits=(2,))
+    body_block.stmts.append(r2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert body_stmts == [r1, rz, r2]
