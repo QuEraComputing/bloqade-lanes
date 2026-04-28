@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import rustworkx as rx
 
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import (
     Grid as _RustGrid,
     LocationAddress as _RustLocAddr,
@@ -25,7 +26,6 @@ from bloqade.lanes.bytecode._native import (
     Zone as _RustZone,
     ZoneBus as _RustZoneBus,
 )
-from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import Direction, LaneAddress, MoveType
 from bloqade.lanes.layout.word import Word
 

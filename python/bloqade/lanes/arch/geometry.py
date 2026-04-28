@@ -20,7 +20,7 @@ from bloqade.lanes.layout.encoding import Direction, LaneAddress, MoveType
 if TYPE_CHECKING:
     from bloqade.geometry.dialects.grid import Grid as GeoGrid
 
-    from bloqade.lanes.layout.arch import ArchSpec
+    from bloqade.lanes.arch.spec import ArchSpec
 
 
 @dataclass(frozen=True)
