@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from bloqade.lanes.bytecode._native import Grid as _RustGrid
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 
 from .imperative import ArchBuilder, ZoneBuilder
 from .word_factory import WordGrid, create_zone_words

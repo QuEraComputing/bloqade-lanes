@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING
 
 from bloqade.lanes.layout.word import Word
 
-from .blueprint import DeviceLayout, ZoneSpec
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from .blueprint import DeviceLayout, ZoneSpec
 
 
 @dataclass(frozen=True)

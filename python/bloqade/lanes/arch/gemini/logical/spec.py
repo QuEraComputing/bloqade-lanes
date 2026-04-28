@@ -1,5 +1,5 @@
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
-from bloqade.lanes.layout.arch import ArchSpec
 
 # Direct construction of the Gemini logical arch spec using the zone-centric
 # schema. Bypasses the builder to isolate the pipeline during migration.

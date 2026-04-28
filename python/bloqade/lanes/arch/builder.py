@@ -1,6 +1,6 @@
-"""TRANSITIONAL SHIM — see ``.superpowers/plans/2026-04-27-archspec-package-merge.md``
-(Stage 8) for the rationale. Removed in the final cleanup stage once all
-in-flight branches have rebased onto ``bloqade.lanes.arch.build.blueprint``.
+"""TRANSITIONAL SHIM for the move to ``bloqade.lanes.arch.build.blueprint``
+(issue #569, stage 8). Removed in the final cleanup stage once all
+in-flight branches have rebased onto the canonical path.
 """
 
 from bloqade.lanes.arch.build.blueprint import (
