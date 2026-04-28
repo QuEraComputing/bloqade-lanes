@@ -1,10 +1,12 @@
-from bloqade.lanes.arch.arch_builder import ArchBuilder, ZoneBuilder
-from bloqade.lanes.arch.builder import ArchResult, build_arch
-from bloqade.lanes.arch.geometry import ArchSpecGeometry, BusDescriptor
-from bloqade.lanes.arch.metrics import MoveMetricCalculator
-from bloqade.lanes.arch.path import PathFinder
-from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.arch.topology import (
+from bloqade.lanes.arch.build.blueprint import (
+    ArchBlueprint,
+    ArchResult,
+    DeviceLayout,
+    ZoneSpec,
+    build_arch,
+)
+from bloqade.lanes.arch.build.imperative import ArchBuilder, ZoneBuilder
+from bloqade.lanes.arch.build.topology import (
     AllToAllSiteTopology,
     DiagonalWordTopology,
     HypercubeSiteTopology,
@@ -15,8 +17,11 @@ from bloqade.lanes.arch.topology import (
     TransversalSiteTopology,
     WordTopology,
 )
-from bloqade.lanes.arch.word_factory import WordGrid, create_zone_words
-from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+from bloqade.lanes.arch.build.word_factory import WordGrid, create_zone_words
+from bloqade.lanes.arch.geometry import ArchSpecGeometry, BusDescriptor
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.arch.spec import ArchSpec
 
 __all__ = [
     "AllToAllSiteTopology",
