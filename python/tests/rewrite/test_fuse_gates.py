@@ -362,3 +362,146 @@ def test_four_adjacent_r_collapse_in_one_pass():
     assert isinstance(merged, place.R)
     assert merged.qubits == (0, 1, 2, 3, 4)
     assert merged.state_before is entry_state
+
+
+# ---------------------------------------------------------------------------
+# Boundary statements: Initialize and EndMeasure flush groups.
+# ---------------------------------------------------------------------------
+
+
+def test_initialize_flushes_group_does_not_start_new_one():
+    """An Initialize between two R groups flushes the first and does not start a new one.
+
+    Initialize takes its own state_before SSA value (the previous statement's
+    state_after) and produces a state_after; subsequent fusable statements
+    that thread through Initialize start a fresh group.
+    """
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+    init_theta = ir.TestValue(type=kirin_types.Float)
+    init_phi = ir.TestValue(type=kirin_types.Float)
+    init_lam = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
+    body_block.stmts.append(r2)
+    init = place.Initialize(
+        r2.state_after,
+        theta=init_theta,
+        phi=init_phi,
+        lam=init_lam,
+        qubits=(2,),
+    )
+    body_block.stmts.append(init)
+    r3 = place.R(init.state_after, axis_angle=axis, rotation_angle=angle, qubits=(3,))
+    body_block.stmts.append(r3)
+    r4 = place.R(r3.state_after, axis_angle=axis, rotation_angle=angle, qubits=(4,))
+    body_block.stmts.append(r4)
+
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=5)
+
+    result = _run(outer)
+
+    assert result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    # Expected: [merged(r1+r2), init, merged(r3+r4)]
+    assert len(body_stmts) == 3
+    merged_first, init_seen, merged_second = body_stmts
+    assert isinstance(merged_first, place.R)
+    assert merged_first.qubits == (0, 1)
+    assert init_seen is init
+    assert isinstance(merged_second, place.R)
+    assert merged_second.qubits == (3, 4)
+
+
+def test_endmeasure_flushes_preceding_group():
+    """An EndMeasure flushes a preceding R run; the EndMeasure itself is untouched."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
+    body_block.stmts.append(r2)
+    em = place.EndMeasure(r2.state_after, qubits=(0, 1))
+    body_block.stmts.append(em)
+
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=2)
+
+    result = _run(outer)
+
+    assert result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert len(body_stmts) == 2
+    merged, em_seen = body_stmts
+    assert isinstance(merged, place.R)
+    assert merged.qubits == (0, 1)
+    assert em_seen is em
+
+
+# ---------------------------------------------------------------------------
+# Idempotence and degenerate bodies.
+# ---------------------------------------------------------------------------
+
+
+def test_idempotence_second_application_is_noop():
+    """Running the rule a second time on already-fused IR returns has_done_something=False."""
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle = ir.TestValue(type=kirin_types.Float)
+
+    r1 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
+    body_block.stmts.append(r1)
+    r2 = place.R(r1.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
+    body_block.stmts.append(r2)
+
+    _, outer = _wrap_in_static_placement(body_block)
+
+    result_first = _run(outer)
+    assert result_first.has_done_something
+
+    # Second invocation: nothing more to do.
+    result_second = _run(outer)
+    assert not result_second.has_done_something
+
+
+def test_empty_body_is_unchanged():
+    """An empty body is a no-op."""
+    body_block, entry_state = _new_body_block()
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    assert list(sp.body.blocks[0].stmts) == []
+
+
+def test_no_fusable_groups_is_unchanged():
+    """A body of only non-fusable statements (Initialize + EndMeasure) is a no-op."""
+    body_block, entry_state = _new_body_block()
+    init_theta = ir.TestValue(type=kirin_types.Float)
+    init_phi = ir.TestValue(type=kirin_types.Float)
+    init_lam = ir.TestValue(type=kirin_types.Float)
+
+    init = place.Initialize(
+        entry_state,
+        theta=init_theta,
+        phi=init_phi,
+        lam=init_lam,
+        qubits=(0,),
+    )
+    body_block.stmts.append(init)
+    em = place.EndMeasure(init.state_after, qubits=(0,))
+    body_block.stmts.append(em)
+
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=1)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert body_stmts == [init, em]
