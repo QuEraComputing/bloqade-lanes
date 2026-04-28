@@ -352,23 +352,40 @@ class InsertInitialize(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-@dataclass
 class InsertFill(RewriteRule):
-    initial_layout: tuple[LocationAddress, ...]
+    """Emit move.Fill at function entry, with location_addresses collected
+    from place.NewLogicalQubit.location_address in allocation order.
+
+    Pre-condition: every NewLogicalQubit has a non-None location_address
+    (established by ResolvePinnedAddresses).
+    """
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, func.Function):
             return RewriteResult()
 
         first_stmt = node.body.blocks[0].first_stmt
-
         if first_stmt is None or isinstance(first_stmt, move.Fill):
+            return RewriteResult()
+
+        location_addresses: list[LocationAddress] = []
+        for stmt in node.body.walk():
+            if not isinstance(stmt, place.NewLogicalQubit):
+                continue
+            assert stmt.location_address is not None, (
+                "InsertFill expects post-ResolvePinnedAddresses IR, "
+                "but found NewLogicalQubit with location_address=None"
+            )
+            location_addresses.append(stmt.location_address)
+
+        if not location_addresses:
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(first_stmt)
         (
             current_state := move.Fill(
-                current_state.result, location_addresses=self.initial_layout
+                current_state.result,
+                location_addresses=tuple(location_addresses),
             )
         ).insert_before(first_stmt)
         move.Store(current_state.result).insert_before(first_stmt)

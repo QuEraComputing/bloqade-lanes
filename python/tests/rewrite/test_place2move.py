@@ -1,6 +1,7 @@
+import pytest
 from bloqade.test_utils import assert_nodes
-from kirin import ir, rewrite
-from kirin.dialects import py
+from kirin import ir, rewrite, types
+from kirin.dialects import func, py
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import (
@@ -418,3 +419,114 @@ def test_insert_measure():
     expected_block.print()
 
     assert_nodes(test_block, expected_block)
+
+
+# ---------------------------------------------------------------------------
+# InsertFill tests
+# ---------------------------------------------------------------------------
+
+
+def _make_function_with_qubits(
+    addresses: tuple[layout.LocationAddress, ...],
+) -> func.Function:
+    """Build a minimal func.Function whose body starts with NewLogicalQubit
+    statements, each pre-stamped with the given location_address values."""
+    angle = ir.TestValue()
+    stmts: list[ir.Statement] = []
+    for addr in addresses:
+        nlq = place.NewLogicalQubit(angle, angle, angle)
+        nlq.location_address = addr
+        stmts.append(nlq)
+
+    block = ir.Block(stmts)
+    region = ir.Region(block)
+    return func.Function(
+        sym_name="test_fn",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+
+
+def test_insert_fill_emits_fill_with_correct_addresses():
+    """InsertFill collects location_address from NewLogicalQubit statements
+    and emits a move.Fill with those addresses in IR-walk order."""
+    addr0 = layout.LocationAddress(0, 0)
+    addr1 = layout.LocationAddress(0, 1)
+
+    fn = _make_function_with_qubits((addr0, addr1))
+    rule = rewrite.Walk(place2move.InsertFill())
+    result = rule.rewrite(fn)
+
+    assert result.has_done_something
+
+    first_stmt = fn.body.blocks[0].first_stmt
+    assert isinstance(first_stmt, move.Load)
+
+    fill_stmt = first_stmt.next_stmt
+    assert isinstance(fill_stmt, move.Fill)
+    assert fill_stmt.location_addresses == (addr0, addr1)
+
+    store_stmt = fill_stmt.next_stmt
+    assert isinstance(store_stmt, move.Store)
+
+
+def test_insert_fill_no_qubits_is_noop():
+    """InsertFill is a no-op when the function body has no NewLogicalQubit
+    statements (i.e. no location_addresses to collect)."""
+    block = ir.Block([])
+    region = ir.Region(block)
+    fn = func.Function(
+        sym_name="empty_fn",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+    result = rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    assert not result.has_done_something
+
+
+def test_insert_fill_already_filled_is_noop():
+    """InsertFill is a no-op when the function body already begins with
+    a move.Fill statement (i.e. the fill was already emitted in a prior pass)."""
+    addr0 = layout.LocationAddress(0, 0)
+    angle = ir.TestValue()
+    nlq = place.NewLogicalQubit(angle, angle, angle)
+    nlq.location_address = addr0
+
+    # Construct the block so move.Fill is genuinely the first statement,
+    # which is the condition InsertFill checks to detect an already-filled func.
+    load_outer = move.Load()
+    fill = move.Fill(load_outer.result, location_addresses=(addr0,))
+    store_outer = move.Store(fill.result)
+
+    block = ir.Block([fill, store_outer, nlq])
+    region = ir.Region(block)
+    fn = func.Function(
+        sym_name="already_filled",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+    result = rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    assert not result.has_done_something
+
+
+def test_insert_fill_none_location_address_raises():
+    """InsertFill asserts that location_address is non-None on every
+    NewLogicalQubit — a None value indicates the invariant established by
+    ResolvePinnedAddresses has not been met, which is a pipeline bug."""
+    angle = ir.TestValue()
+    nlq = place.NewLogicalQubit(angle, angle, angle)
+    # deliberately leave location_address=None (the default)
+
+    block = ir.Block([nlq])
+    region = ir.Region(block)
+    fn = func.Function(
+        sym_name="unresolved_fn",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+    with pytest.raises(AssertionError, match="location_address=None"):
+        rewrite.Walk(place2move.InsertFill()).rewrite(fn)

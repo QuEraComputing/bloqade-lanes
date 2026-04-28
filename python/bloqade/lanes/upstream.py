@@ -155,7 +155,7 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run(out)
 
-        rules: list[RewriteRule] = [place2move.InsertFill(initial_layout)]
+        rules: list[RewriteRule] = [place2move.InsertFill()]
         if self.logical_initialize:
             # Insert logical initialize operations based on the address frame and initial layout.
             rules.append(
