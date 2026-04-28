@@ -482,7 +482,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         stages: list[tuple[tuple[int, int], ...]],
         pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
-        pinned = pinned or {}
+        pinned = {} if pinned is None else pinned
         if len(set(pinned.values())) < len(pinned):
             raise ValueError(
                 "pinned addresses must be unique; two qubit IDs share the same address"
