@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import Grid as _RustGrid
-from bloqade.lanes.layout.arch import ArchSpec
 
 from .arch_builder import ArchBuilder, ZoneBuilder
 from .topology import InterZoneTopology
