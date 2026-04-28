@@ -994,8 +994,8 @@ class SolveResult:
         ...
 
     @property
-    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
-        """Move layers as lists of (direction, move_type, zone_id, word_id, site_id, bus_id) tuples.
+    def move_layers(self) -> list[list[LaneAddress]]:
+        """Move layers as lists of LaneAddress objects.
 
         Empty when ``status`` is not ``"solved"``.
         """
@@ -1227,7 +1227,7 @@ class MultiSolveResult:
         ...
 
     @property
-    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+    def move_layers(self) -> list[list[LaneAddress]]:
         """Move layers from the winning candidate."""
         ...
 

@@ -8,6 +8,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+
+use crate::arch_python::PyLaneAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::entropy::{EntropyTrace, EntropyTraceStep};
 use bloqade_lanes_search::solve::{
@@ -188,27 +190,17 @@ impl PySolveResult {
 
     /// Move layers: list of move steps, each a list of lane address tuples.
     ///
-    /// Each lane is represented as `(direction, move_type, zone_id, word_id, site_id, bus_id)`
-    /// where direction is 0=Forward/1=Backward and move_type is 0=SiteBus/1=WordBus/2=ZoneBus.
+    /// Each lane is a ``LaneAddress`` with named attributes for direction,
+    /// move_type, zone_id, word_id, site_id, bus_id.
     #[getter]
-    #[allow(clippy::type_complexity)]
-    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+    fn move_layers(&self) -> Vec<Vec<PyLaneAddr>> {
         self.inner
             .move_layers
             .iter()
             .map(|ms| {
                 ms.decode()
                     .into_iter()
-                    .map(|lane| {
-                        (
-                            lane.direction as u8,
-                            lane.move_type as u8,
-                            lane.zone_id,
-                            lane.word_id,
-                            lane.site_id,
-                            lane.bus_id,
-                        )
-                    })
+                    .map(|lane| PyLaneAddr { inner: lane })
                     .collect()
             })
             .collect()
@@ -868,8 +860,7 @@ impl PyMultiSolveResult {
 
     /// Move layers from the winning candidate (same format as SolveResult.move_layers).
     #[getter]
-    #[allow(clippy::type_complexity)]
-    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+    fn move_layers(&self) -> Vec<Vec<PyLaneAddr>> {
         self.inner
             .result
             .move_layers
@@ -877,16 +868,7 @@ impl PyMultiSolveResult {
             .map(|ms| {
                 ms.decode()
                     .into_iter()
-                    .map(|lane| {
-                        (
-                            lane.direction as u8,
-                            lane.move_type as u8,
-                            lane.zone_id,
-                            lane.word_id,
-                            lane.site_id,
-                            lane.bus_id,
-                        )
-                    })
+                    .map(|lane| PyLaneAddr { inner: lane })
                     .collect()
             })
             .collect()

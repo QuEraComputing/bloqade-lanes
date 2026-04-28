@@ -22,16 +22,10 @@ from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import MoveSolver
 from bloqade.lanes.layout import (
-    Direction,
     LaneAddress,
     LocationAddress,
-    MoveType,
     ZoneAddress,
 )
-
-# Maps from native move-layer tuples to LaneAddress fields.
-_MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
-_DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
 
 
 @dataclass
@@ -141,17 +135,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
 
         # Convert move layers to LaneAddress tuples.
         move_layers = tuple(
-            tuple(
-                LaneAddress(
-                    _MT_MAP[mt],
-                    word,
-                    site,
-                    bus,
-                    _DIR_MAP[d],
-                    zone,
-                )
-                for d, mt, zone, word, site, bus in step
-            )
+            tuple(LaneAddress.from_inner(lane) for lane in step)
             for step in result.move_layers
         )
 

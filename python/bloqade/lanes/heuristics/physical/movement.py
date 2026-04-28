@@ -417,9 +417,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     def traced_rust_entropy_trace(self) -> EntropyTrace | None:
         return self._traced_rust_entropy_trace
 
-    _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
-    _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
-
     def _cz_placements_rust(
         self,
         state: ConcreteState,
@@ -492,17 +489,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             return AtomState.bottom()
 
         move_layers = tuple(
-            tuple(
-                LaneAddress(
-                    self._MT_MAP[mt],
-                    word,
-                    site,
-                    bus,
-                    self._DIR_MAP[d],
-                    zone,
-                )
-                for d, mt, zone, word, site, bus in step
-            )
+            tuple(LaneAddress.from_inner(lane) for lane in step)
             for step in winning_result.move_layers
         )
 
