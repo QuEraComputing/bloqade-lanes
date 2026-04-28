@@ -28,6 +28,8 @@ Cargo.lock
 # Distribution / packaging
 .Python
 build/
+# ...but the bloqade.lanes.arch.build subpackage is real source, not a build artefact:
+!python/bloqade/lanes/arch/build/
 develop-eggs/
 dist/
 downloads/
