@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import chain
 from typing import Callable
 
@@ -10,12 +10,14 @@ from bloqade.rewrite.passes.callgraph import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
+from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import LaneAddress
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 
@@ -36,6 +38,7 @@ def always_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
 class NativeToPlace:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
     logical_initialize: bool = True
+    arch_spec: ArchSpec | None = field(default=None)
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -55,6 +58,19 @@ class NativeToPlace:
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
+
+        if self.arch_spec is not None:
+            from bloqade.gemini.logical.validation import DuplicateAddressValidation
+            from bloqade.lanes.validation.address import Validation
+
+            errors: list[ir.ValidationError] = []
+            _, per_stmt_errors = Validation(arch_spec=self.arch_spec).run(out)
+            errors.extend(per_stmt_errors)
+            _, dup_errors = DuplicateAddressValidation().run(out)
+            errors.extend(dup_errors)
+            if errors:
+                message = f"Gemini IR validation failed with {len(errors)} error(s)"
+                raise ValidationErrorGroup(message, errors=errors)
 
         if self.logical_initialize:
             rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
@@ -239,9 +255,11 @@ def squin_to_move(
         ir.Method: The compiled move dialect method.
     """
 
+    arch_spec: ArchSpec | None = getattr(layout_heuristic, "arch_spec", None)
     out = NativeToPlace(
         merge_heuristic=merge_heuristic,
         logical_initialize=logical_initialize,
+        arch_spec=arch_spec,
     ).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
