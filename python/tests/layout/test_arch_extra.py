@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
@@ -11,12 +13,15 @@ from bloqade.lanes.bytecode._native import (
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
+    LaneAddress,
     LocationAddress,
+    MoveType,
     SiteLaneAddress,
     WordLaneAddress,
     ZoneAddress,
 )
 from bloqade.lanes.layout.word import Word
+from bloqade.lanes.visualize.arch import ArchVisualizer
 
 word = Word(sites=((0, 0), (1, 0)))
 
@@ -58,7 +63,9 @@ def test_show_with_mocked_pyplot():
     ):
         mock_ax = MagicMock()
         mock_gca.return_value = mock_ax
-        arch_spec.show(ax=mock_ax, show_words=[0], show_intra=[0], show_inter=[0])
+        ArchVisualizer(arch_spec).show(
+            ax=mock_ax, show_words=[0], show_intra=[0], show_inter=[0]
+        )
         # Check that plot was called (either on ax or pyplot)
         assert mock_ax.plot.called or mock_plot.called
         # Check that plt.show was called
@@ -86,11 +93,12 @@ def test_get_path_and_position():
 
 
 def test_path_bounds_x_y_bounds():
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
+    viz = ArchVisualizer(arch_spec)
+    x_min, x_max, y_min, y_max = viz.path_bounds()
     assert x_min <= x_max
     assert y_min <= y_max
-    x_min2, x_max2 = arch_spec.x_bounds
-    y_min2, y_max2 = arch_spec.y_bounds
+    x_min2, x_max2 = viz.x_bounds
+    y_min2, y_max2 = viz.y_bounds
     assert x_min2 <= x_max2
     assert y_min2 <= y_max2
 
@@ -156,3 +164,45 @@ def test_capability_flags_from_components():
     )
     assert spec.feed_forward is True
     assert spec.atom_reloading is True
+
+
+def test_try_get_position_returns_none_for_invalid_address():
+    """try_get_position should return None for invalid addresses."""
+    bogus_word = len(arch_spec.words) + 99
+    invalid_loc = LocationAddress(word_id=bogus_word, site_id=0, zone_id=0)
+    assert arch_spec.try_get_position(invalid_loc) is None
+
+
+def test_try_get_endpoints_returns_none_for_invalid_lane():
+    """try_get_endpoints should return None for invalid lanes."""
+    invalid_lane = LaneAddress(
+        MoveType.SITE,
+        word_id=999,
+        site_id=0,
+        bus_id=0,
+        direction=Direction.FORWARD,
+        zone_id=0,
+    )
+    assert arch_spec.try_get_endpoints(invalid_lane) is None
+
+
+def test_get_position_raises_for_invalid_address():
+    """get_position should raise ValueError for invalid addresses."""
+    bogus_word = len(arch_spec.words) + 99
+    invalid_loc = LocationAddress(word_id=bogus_word, site_id=0, zone_id=0)
+    with pytest.raises(ValueError):
+        arch_spec.get_position(invalid_loc)
+
+
+def test_get_endpoints_raises_for_invalid_lane():
+    """get_endpoints should raise ValueError for invalid lanes."""
+    invalid_lane = LaneAddress(
+        MoveType.SITE,
+        word_id=999,
+        site_id=0,
+        bus_id=0,
+        direction=Direction.FORWARD,
+        zone_id=0,
+    )
+    with pytest.raises(ValueError):
+        arch_spec.get_endpoints(invalid_lane)
