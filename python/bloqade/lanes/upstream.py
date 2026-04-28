@@ -17,7 +17,7 @@ from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.layout.encoding import LaneAddress
-from bloqade.lanes.rewrite import circuit2place, place2move, state
+from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 
 
 def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
@@ -120,6 +120,13 @@ class PlaceToMove:
                 out.dialects, self.layout_heuristic, address_frame.entries, all_qubits
             ).get_layout_no_raise(out)
 
+            rewrite.Walk(
+                resolve_pinned.ResolvePinnedAddresses(
+                    address_entries=address_frame.entries,
+                    initial_layout=initial_layout,
+                )
+            ).rewrite(out.code)
+
             placement_analysis = placement.PlacementAnalysis(
                 out.dialects,
                 initial_layout,
@@ -133,6 +140,14 @@ class PlaceToMove:
             initial_layout = layout.LayoutAnalysis(
                 out.dialects, self.layout_heuristic, address_frame.entries, all_qubits
             ).get_layout(out)
+
+            rewrite.Walk(
+                resolve_pinned.ResolvePinnedAddresses(
+                    address_entries=address_frame.entries,
+                    initial_layout=initial_layout,
+                )
+            ).rewrite(out.code)
+
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
                 initial_layout,
