@@ -1,5 +1,6 @@
 from bloqade.lanes.arch.arch_builder import ArchBuilder, ZoneBuilder
 from bloqade.lanes.arch.builder import ArchResult, build_arch
+from bloqade.lanes.arch.path import PathFinder
 from bloqade.lanes.arch.topology import (
     AllToAllSiteTopology,
     DiagonalWordTopology,
@@ -25,6 +26,7 @@ __all__ = [
     "HypercubeWordTopology",
     "InterZoneTopology",
     "MatchingTopology",
+    "PathFinder",
     "SiteTopology",
     "TransversalSiteTopology",
     "WordGrid",
