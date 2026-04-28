@@ -1,7 +1,7 @@
 import importlib.resources
 
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
-from bloqade.lanes.layout.arch import ArchSpec
 
 # Physical arch spec: 20 words x 8 sites, 1 zone, 32x5 grid.
 #

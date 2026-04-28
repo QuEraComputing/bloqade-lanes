@@ -6,7 +6,7 @@ from typing import Callable
 
 import rustworkx as nx
 
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.layout.encoding import (
     Direction,
     LaneAddress,
