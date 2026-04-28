@@ -19,6 +19,8 @@ from bloqade.lanes.arch.build.topology import (
 )
 from bloqade.lanes.arch.build.word_factory import WordGrid, create_zone_words
 from bloqade.lanes.arch.geometry import ArchSpecGeometry, BusDescriptor
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
+from bloqade.lanes.arch.path import PathFinder
 from bloqade.lanes.arch.spec import ArchSpec
 
 __all__ = [
@@ -35,6 +37,8 @@ __all__ = [
     "HypercubeWordTopology",
     "InterZoneTopology",
     "MatchingTopology",
+    "MoveMetricCalculator",
+    "PathFinder",
     "SiteTopology",
     "TransversalSiteTopology",
     "WordGrid",
