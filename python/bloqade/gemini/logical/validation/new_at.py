@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from kirin import interp, ir
-from kirin.analysis import const
 from kirin.analysis.forward import ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 
@@ -55,11 +54,12 @@ def _expect_const_int(
     node: ir.Statement,
     interpreter: _ValidationAnalysis,
 ) -> int | None:
-    """Read the const-prop hint for `value`. If absent or wrong type, emit a
-    ValidationError on `node` naming the arg and return None.
+    """Read the const value for `value` via the AbstractInterpreter API. If
+    absent or wrong type, emit a ValidationError on `node` naming the arg and
+    return None.
     """
-    hint = value.hints.get("const")
-    if not isinstance(hint, const.Value) or not isinstance(hint.data, int):
+    data = interpreter.maybe_const(value, int)
+    if data is None:
         interpreter.add_validation_error(
             node,
             ir.ValidationError(
@@ -68,5 +68,4 @@ def _expect_const_int(
                 "explicit allocation requires constant zone/word/site",
             ),
         )
-        return None
-    return hint.data
+    return data
