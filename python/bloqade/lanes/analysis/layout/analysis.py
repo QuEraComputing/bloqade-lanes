@@ -1,5 +1,6 @@
 import abc
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from bloqade.analysis import address
 from kirin import ir
@@ -8,9 +9,28 @@ from kirin.lattice import EmptyLattice
 
 from bloqade.lanes.layout.encoding import LocationAddress
 
+if TYPE_CHECKING:
+    from bloqade.lanes.layout.arch import ArchSpec
+
 
 @dataclass
 class LayoutHeuristicABC(abc.ABC):
+
+    def _validate_pinned_in_arch(
+        self,
+        pinned: dict[int, LocationAddress],
+        arch_spec: "ArchSpec",
+    ) -> None:
+        """Raise ValueError if any pinned address is not in the arch's home sites."""
+        home_sites = arch_spec.home_sites
+        bad = {addr for addr in pinned.values() if addr not in home_sites}
+        if bad:
+            sorted_bad = sorted(bad, key=lambda a: (a.word_id, a.site_id, a.zone_id))
+            raise ValueError(
+                f"pinned addresses are not valid home positions for this architecture: "
+                f"{sorted_bad}. "
+                f"Each pinned address must be one of the arch's home_sites."
+            )
 
     @abc.abstractmethod
     def compute_layout(
@@ -30,10 +50,9 @@ class LayoutHeuristicABC(abc.ABC):
                 Implementations MUST place each pinned qubit at its requested
                 address and MUST NOT use any address in pinned.values() for
                 un-pinned qubits. None or empty preserves previous behavior.
-                Values are assumed to be valid addresses for the architecture;
-                the caller is responsible for validating addresses against the
-                ArchSpec before invoking. Implementations MAY (but need not)
-                re-check duplicates and extra qubit-id keys.
+                All values in pinned MUST be valid home positions for the
+                architecture (i.e. present in arch_spec.home_sites); passing
+                an out-of-arch address raises ValueError.
 
         Returns:
             A tuple of LocationAddress objects mapping logical qubit indices

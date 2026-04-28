@@ -473,12 +473,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         else:
             q_to_location = {}
 
-        result: dict[int, layout.LocationAddress] = {}
-        for q in qubits:
-            if q in pinned:
-                result[q] = pinned[q]
-            else:
-                result[q] = q_to_location[q]
+        result = q_to_location | pinned
         return tuple(result[q] for q in qubits)
 
     def compute_layout(
@@ -497,6 +492,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
             raise ValueError(
                 f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
             )
+        self._validate_pinned_in_arch(pinned, self.arch_spec)
         qubits = tuple(sorted(all_qubits))
         cz_layers = _to_cz_layers(stages)
         return self._compute_layout_from_cz_layers(qubits, cz_layers, pinned)

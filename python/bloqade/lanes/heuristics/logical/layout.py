@@ -57,6 +57,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             raise ValueError(
                 f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
             )
+        self._validate_pinned_in_arch(pinned, self.arch_spec)
 
     def _compute_layout_from_weighted_edges(
         self,

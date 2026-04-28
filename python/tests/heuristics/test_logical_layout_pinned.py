@@ -162,3 +162,23 @@ def test_none_and_empty_pinned_produce_same_result(
 
     assert default_out == none_out, "pinned=None differs from default"
     assert default_out == empty_out, "pinned={} differs from default"
+
+
+# ---------------------------------------------------------------------------
+# Arch validation: pinned address outside arch home_sites → raises
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("heuristic", _heuristics(), ids=_heuristic_ids())
+def test_pinned_out_of_arch_address_raises(
+    heuristic: LogicalLayoutHeuristic,
+) -> None:
+    """Pinning a qubit to an address not in arch's home_sites raises ValueError."""
+    # word_id=999, site_id=999 is far outside any valid arch address.
+    bad_addr = LocationAddress(999, 999)
+    with pytest.raises(ValueError, match="not valid home positions"):
+        heuristic.compute_layout(
+            all_qubits=(0, 1, 2),
+            stages=[],
+            pinned={0: bad_addr},
+        )

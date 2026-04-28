@@ -185,3 +185,19 @@ def test_pinned_all_qubits_produces_exact_layout():
     )
 
     assert out == (pinned[0], pinned[1], pinned[2])
+
+
+def test_pinned_out_of_arch_address_raises():
+    """Pinning a qubit to an address not in arch's home_sites raises ValueError."""
+    strategy = PhysicalLayoutHeuristicGraphPartitionCenterOut(
+        arch_spec=_make_arch(),
+        max_words=1,
+    )
+    # word_id=999, site_id=999 is far outside any valid arch address.
+    bad_addr = LocationAddress(999, 999)
+    with pytest.raises(ValueError, match="not valid home positions"):
+        strategy.compute_layout(
+            all_qubits=(0, 1, 2),
+            stages=[],
+            pinned={0: bad_addr},
+        )

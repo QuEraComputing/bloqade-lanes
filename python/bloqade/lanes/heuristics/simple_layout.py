@@ -44,6 +44,7 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
             raise ValueError(
                 f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
             )
+        self._validate_pinned_in_arch(pinned, self.arch_spec)
         qubits = tuple(sorted(all_qubits))
 
         pinned_addresses: set[layout.LocationAddress] = set(pinned.values())
@@ -64,12 +65,5 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
                 "no legal positions remain"
             )
 
-        candidate_iter = iter(candidates)
-        result: dict[int, layout.LocationAddress] = {}
-        for q in qubits:
-            if q in pinned:
-                result[q] = pinned[q]
-            else:
-                result[q] = next(candidate_iter)
-
+        result = dict(zip(unpinned_qubits, candidates)) | pinned
         return tuple(result[q] for q in qubits)
