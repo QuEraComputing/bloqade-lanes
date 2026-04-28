@@ -34,9 +34,42 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
         pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
         _ = stages
+        pinned = pinned or {}
+        if len(set(pinned.values())) < len(pinned):
+            raise ValueError(
+                "pinned addresses must be unique; two qubit IDs share the same address"
+            )
+        extra_keys = set(pinned) - set(all_qubits)
+        if extra_keys:
+            raise ValueError(
+                f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
+            )
         qubits = tuple(sorted(all_qubits))
-        sites: list[layout.LocationAddress] = []
+
+        pinned_addresses: set[layout.LocationAddress] = set(pinned.values())
+
+        candidates: list[layout.LocationAddress] = []
         for word_id in self.home_word_ids:
             for site_id in range(self.sites_per_home_word):
-                sites.append(layout.LocationAddress(word_id, site_id))
-        return tuple(sites[: len(qubits)])
+                addr = layout.LocationAddress(word_id, site_id)
+                if addr not in pinned_addresses:
+                    candidates.append(addr)
+
+        unpinned_qubits = [q for q in qubits if q not in pinned]
+        if len(unpinned_qubits) > len(candidates):
+            raise ValueError(
+                f"layout heuristic cannot place {len(unpinned_qubits)} un-pinned qubits: "
+                f"arch provides {len(candidates) + len(pinned_addresses)} total sites, "
+                f"{len(pinned_addresses)} are pinned, leaving {len(candidates)} available; "
+                "no legal positions remain"
+            )
+
+        candidate_iter = iter(candidates)
+        result: dict[int, layout.LocationAddress] = {}
+        for q in qubits:
+            if q in pinned:
+                result[q] = pinned[q]
+            else:
+                result[q] = next(candidate_iter)
+
+        return tuple(result[q] for q in qubits)

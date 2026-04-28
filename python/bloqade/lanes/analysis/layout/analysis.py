@@ -30,6 +30,10 @@ class LayoutHeuristicABC(abc.ABC):
                 Implementations MUST place each pinned qubit at its requested
                 address and MUST NOT use any address in pinned.values() for
                 un-pinned qubits. None or empty preserves previous behavior.
+                Values are assumed to be valid addresses for the architecture;
+                the caller is responsible for validating addresses against the
+                ArchSpec before invoking. Implementations MAY (but need not)
+                re-check duplicates and extra qubit-id keys.
 
         Returns:
             A tuple of LocationAddress objects mapping logical qubit indices

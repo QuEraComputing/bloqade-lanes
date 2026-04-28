@@ -81,6 +81,10 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         stages: list[tuple[tuple[int, int], ...]],
         pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
+        if pinned:
+            raise NotImplementedError(
+                f"{type(self).__name__}.compute_layout does not yet support pinned addresses"
+            )
         edges: dict[tuple[int, int], float] = {}
 
         for control, target in chain.from_iterable(stages):
@@ -112,6 +116,10 @@ class LogicalLayoutHeuristicRecencyWeighted(LogicalLayoutHeuristic):
         stages: list[tuple[tuple[int, int], ...]],
         pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
+        if pinned:
+            raise NotImplementedError(
+                f"{type(self).__name__}.compute_layout does not yet support pinned addresses"
+            )
         if self.layout_lookahead_layers is None:
             considered_layers = stages
         else:

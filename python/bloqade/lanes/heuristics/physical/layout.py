@@ -437,6 +437,10 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         stages: list[tuple[tuple[int, int], ...]],
         pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
+        if pinned:
+            raise NotImplementedError(
+                f"{type(self).__name__}.compute_layout does not yet support pinned addresses"
+            )
         qubits = tuple(sorted(all_qubits))
         cz_layers = _to_cz_layers(stages)
         return self._compute_layout_from_cz_layers(qubits, cz_layers)
