@@ -1,13 +1,14 @@
-"""Tests for LayoutAnalysis._collect_pinned.
+"""Tests for LayoutAnalysis.location_addresses collection via method table.
 
-Focuses on the IR-walking logic that extracts pinned addresses from
-place.NewLogicalQubit statements. The heuristic invocation path is
-covered by Phase F integration tests.
+Verifies that the InitialLayoutMethods entry for place.NewLogicalQubit
+populates LayoutAnalysis.location_addresses during the forward analysis run.
+The heuristic invocation path is covered by Phase F integration tests.
 """
 
+import pytest
 from bloqade.analysis import address
-from kirin import ir, types
-from kirin.dialects import func
+from kirin import interp, ir, types
+from kirin.dialects import func, ssacfg
 
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.layout.analysis import LayoutHeuristicABC
@@ -15,7 +16,7 @@ from bloqade.lanes.dialects import place
 from bloqade.lanes.layout.encoding import LocationAddress
 
 # ---------------------------------------------------------------------------
-# Minimal stub heuristic (never called by _collect_pinned tests)
+# Minimal stub heuristic (never called by these unit tests)
 # ---------------------------------------------------------------------------
 
 
@@ -50,7 +51,7 @@ def _build_method(stmts: list[ir.Statement]) -> ir.Method:
         slots=(),
         body=region,
     )
-    dialects = ir.DialectGroup([func.dialect, place.dialect])
+    dialects = ir.DialectGroup([ssacfg.dialect, func.dialect, place.dialect])
     return ir.Method(dialects=dialects, code=fn, sym_name="main", arg_names=[])
 
 
@@ -63,7 +64,7 @@ def _make_analysis(
     address_entries: dict[ir.SSAValue, address.Address],
 ) -> LayoutAnalysis:
     """Return a LayoutAnalysis with the given address_entries pre-populated."""
-    dialects = ir.DialectGroup([func.dialect, place.dialect])
+    dialects = ir.DialectGroup([ssacfg.dialect, func.dialect, place.dialect])
     return LayoutAnalysis(
         dialects=dialects,
         heuristic=_StubHeuristic(),
@@ -77,8 +78,8 @@ def _make_analysis(
 # ---------------------------------------------------------------------------
 
 
-def test_collect_pinned_no_pinned_qubits():
-    """_collect_pinned returns {} when no NewLogicalQubit has a location_address."""
+def test_location_addresses_no_pinned_qubits():
+    """location_addresses is empty when no NewLogicalQubit has a location_address."""
     theta = ir.TestValue(type=types.Float)
     phi = ir.TestValue(type=types.Float)
     lam = ir.TestValue(type=types.Float)
@@ -94,14 +95,13 @@ def test_collect_pinned_no_pinned_qubits():
         q1.result: address.AddressQubit(1),
     }
     analysis = _make_analysis(address_entries)
+    analysis.run(method)
 
-    result = analysis._collect_pinned(method)
-
-    assert result == {}
+    assert analysis.location_addresses == {}
 
 
-def test_collect_pinned_mixed_pinned_and_unpinned():
-    """_collect_pinned returns only the pinned qubits, keyed by qubit ID."""
+def test_location_addresses_mixed_pinned_and_unpinned():
+    """location_addresses contains only pinned qubits, keyed by qubit ID."""
     theta = ir.TestValue(type=types.Float)
     phi = ir.TestValue(type=types.Float)
     lam = ir.TestValue(type=types.Float)
@@ -122,11 +122,33 @@ def test_collect_pinned_mixed_pinned_and_unpinned():
         q2.result: address.AddressQubit(2),
     }
     analysis = _make_analysis(address_entries)
+    analysis.run(method)
 
-    result = analysis._collect_pinned(method)
-
-    assert set(result.keys()) == {0, 2}
-    assert result[0] == pinned_addr
-    assert result[2] == q2_addr
+    assert set(analysis.location_addresses.keys()) == {0, 2}
+    assert analysis.location_addresses[0] == pinned_addr
+    assert analysis.location_addresses[2] == q2_addr
     # un-pinned qubit 1 must not appear
-    assert 1 not in result
+    assert 1 not in analysis.location_addresses
+
+
+def test_location_addresses_duplicate_address_raises():
+    """Two NewLogicalQubits pinned to the same LocationAddress raise ValueError."""
+    theta = ir.TestValue(type=types.Float)
+    phi = ir.TestValue(type=types.Float)
+    lam = ir.TestValue(type=types.Float)
+
+    shared_addr = LocationAddress(1, 2, 0)
+
+    q0 = place.NewLogicalQubit(theta, phi, lam, location_address=shared_addr)
+    q1 = place.NewLogicalQubit(theta, phi, lam, location_address=shared_addr)
+
+    method = _build_method([q0, q1])
+
+    address_entries: dict[ir.SSAValue, address.Address] = {
+        q0.result: address.AddressQubit(0),
+        q1.result: address.AddressQubit(1),
+    }
+    analysis = _make_analysis(address_entries)
+
+    with pytest.raises((ValueError, interp.InterpreterError), match=str(shared_addr)):
+        analysis.run(method)

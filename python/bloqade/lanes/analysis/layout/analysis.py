@@ -54,10 +54,14 @@ class LayoutAnalysis(Forward):
     all_qubits: tuple[int, ...]
     stages: list[tuple[tuple[int, int], ...]] = field(default_factory=list, init=False)
     global_address_stack: list[int] = field(default_factory=list, init=False)
+    location_addresses: dict[int, LocationAddress] = field(
+        default_factory=dict, init=False
+    )
 
     def initialize(self):
         self.stages.clear()
         self.global_address_stack.clear()
+        self.location_addresses.clear()
         return super().initialize()
 
     def eval_stmt_fallback(self, frame, stmt):
@@ -71,43 +75,21 @@ class LayoutAnalysis(Forward):
     def method_self(self, method: ir.Method):
         return EmptyLattice.bottom()
 
-    def _collect_pinned(self, method: ir.Method) -> dict[int, LocationAddress]:
-        """Walk the method's IR and collect pinned addresses from
-        place.NewLogicalQubit.location_address attributes.
-
-        Maps each pinned NewLogicalQubit's logical qubit ID (via address_entries)
-        to its location_address attribute value.
-        """
-        from bloqade.lanes.dialects import place  # local import to avoid cycle
-
-        pinned: dict[int, LocationAddress] = {}
-        for stmt in method.callable_region.walk():
-            if not isinstance(stmt, place.NewLogicalQubit):
-                continue
-            if stmt.location_address is None:
-                continue
-            addr_entry = self.address_entries.get(stmt.result)
-            if not isinstance(addr_entry, address.AddressQubit):
-                continue
-            pinned[addr_entry.data] = stmt.location_address
-        return pinned
-
-    def process_results(self, method: ir.Method):
-        pinned = self._collect_pinned(method)
+    def process_results(self):
         layout = self.heuristic.compute_layout(
-            self.all_qubits, self.stages, pinned=pinned
+            self.all_qubits, self.stages, pinned=self.location_addresses
         )
         return layout
 
     def get_layout_no_raise(self, method: ir.Method):
         """Get the layout for a given method."""
         self.run_no_raise(method)
-        return self.process_results(method)
+        return self.process_results()
 
     def get_layout(self, method: ir.Method):
         """Get the layout for a given method."""
         self.run(method)
-        return self.process_results(method)
+        return self.process_results()
 
     def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
         return tuple(EmptyLattice.bottom() for _ in node.results)

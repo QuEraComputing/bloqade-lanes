@@ -293,6 +293,27 @@ class PlacementMethods(interp.MethodTable):
 @dialect.register(key="place.layout")
 class InitialLayoutMethods(interp.MethodTable):
 
+    @interp.impl(NewLogicalQubit)
+    def new_logical_qubit(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: NewLogicalQubit,
+    ):
+        if stmt.location_address is None:
+            return (EmptyLattice.bottom(),)
+        addr_entry = _interp.address_entries.get(stmt.result)
+        if not isinstance(addr_entry, address.AddressQubit):
+            return (EmptyLattice.bottom(),)
+        qubit_id = addr_entry.data
+        pinned_values = _interp.location_addresses.values()
+        if stmt.location_address in pinned_values:
+            raise interp.InterpreterError(
+                f"Duplicate pinned location address: {stmt.location_address}"
+            )
+        _interp.location_addresses[qubit_id] = stmt.location_address
+        return (EmptyLattice.bottom(),)
+
     @interp.impl(CZ)
     def cz(
         self,
