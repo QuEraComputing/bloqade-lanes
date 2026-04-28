@@ -4,11 +4,13 @@ from kirin import ir, rewrite
 from kirin.analysis import const
 from kirin.dialects import ilist, py
 
+from bloqade import qubit
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.dialects import place
 from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.rewrite.circuit2place import (
+    InitializeNewQubits,
     MergePlacementRegions,
     RewriteLogicalInitializeToNewLogical,
     RewritePlaceOperations,
@@ -339,8 +341,6 @@ def test_new_at_with_const_args_produces_pinned_new_logical_qubit():
 
 def test_mixed_kernel_new_and_new_at():
     """Both qubit.stmts.New and NewAt in the same LogicalInitialize are both rewritten."""
-    from bloqade import qubit
-
     block = ir.Block()
 
     # un-pinned qubit
@@ -380,8 +380,6 @@ def test_mixed_kernel_new_and_new_at():
 
 def test_pure_qubit_new_regression():
     """All-qubit.stmts.New kernel produces no location_address (regression guard)."""
-    from bloqade import qubit
-
     block = ir.Block()
 
     plain_new = qubit.stmts.New()
@@ -434,6 +432,83 @@ def test_new_at_with_non_const_args_is_noop():
 
     stmts = list(block.stmts)
     # The NewAt should still be present (not replaced)
+    new_ats = [s for s in stmts if isinstance(s, gemini_stmts.NewAt)]
+    new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
+    assert len(new_ats) == 1, "NewAt should remain when const-prop hint is missing"
+    assert len(new_logical_qubits) == 0, "No NewLogicalQubit should be emitted"
+
+
+# ---------------------------------------------------------------------------
+# D3 tests — InitializeNewQubits handles bare NewAt (not wrapped in Initialize)
+# ---------------------------------------------------------------------------
+
+
+def test_initialize_new_qubits_bare_new_at_with_const_args():
+    """Bare NewAt (no enclosing Initialize) with const args → pinned NewLogicalQubit."""
+    block = ir.Block()
+
+    new_at = _make_const_new_at(zone=2, word=4, site=6)
+    for arg in (new_at.zone_id, new_at.word_id, new_at.site_id):
+        block.stmts.append(arg.owner)  # type: ignore[arg-type]
+    block.stmts.append(new_at)
+
+    rewrite.Walk(InitializeNewQubits()).rewrite(block)
+
+    stmts = list(block.stmts)
+    new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
+    assert (
+        len(new_logical_qubits) == 1
+    ), f"Expected 1 NewLogicalQubit, got {len(new_logical_qubits)}"
+
+    nq = new_logical_qubits[0]
+    expected_addr = LocationAddress(word_id=4, site_id=6, zone_id=2)
+    assert (
+        nq.location_address == expected_addr
+    ), f"Expected location_address={expected_addr!r}, got {nq.location_address!r}"
+
+    # The rewrite should have injected at least one py.Constant (the zero angle)
+    constants = [s for s in stmts if isinstance(s, py.Constant)]
+    assert (
+        len(constants) >= 1
+    ), "Expected a py.Constant to be injected for angle defaults"
+
+
+def test_initialize_new_qubits_bare_qubit_new_regression():
+    """Bare qubit.stmts.New → NewLogicalQubit with no location_address (regression guard)."""
+    block = ir.Block()
+
+    plain_new = qubit.stmts.New()
+    block.stmts.append(plain_new)
+
+    rewrite.Walk(InitializeNewQubits()).rewrite(block)
+
+    stmts = list(block.stmts)
+    new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
+    assert len(new_logical_qubits) == 1
+    assert new_logical_qubits[0].location_address is None
+
+
+def test_initialize_new_qubits_bare_new_at_non_const_is_noop():
+    """Bare NewAt with a non-constant arg is left in place (no crash, no replacement)."""
+    block = ir.Block()
+
+    non_const_zone = ir.TestValue()
+    c_word = py.Constant(0)
+    c_site = py.Constant(0)
+    c_word.result.hints["const"] = const.Value(0)
+    c_site.result.hints["const"] = const.Value(0)
+    block.stmts.append(c_word)
+    block.stmts.append(c_site)
+
+    new_at = gemini_stmts.NewAt(
+        zone_id=non_const_zone, word_id=c_word.result, site_id=c_site.result
+    )
+    block.stmts.append(new_at)
+
+    # Should not raise; should not replace the NewAt
+    rewrite.Walk(InitializeNewQubits()).rewrite(block)
+
+    stmts = list(block.stmts)
     new_ats = [s for s in stmts if isinstance(s, gemini_stmts.NewAt)]
     new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
     assert len(new_ats) == 1, "NewAt should remain when const-prop hint is missing"

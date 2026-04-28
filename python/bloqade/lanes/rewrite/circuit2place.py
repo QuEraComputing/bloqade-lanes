@@ -114,21 +114,39 @@ class CleanUpLogicalInitialize(abc.RewriteRule):
 
 
 class InitializeNewQubits(abc.RewriteRule):
-    """Rewrite NewLogical qubit allocations to Initialize statements."""
+    """Rewrite bare allocation statements (qubit.stmts.New or
+    gemini.operations.NewAt) to place.NewLogicalQubit with default
+    initialization angles (theta=phi=lam=0).
+    """
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
-        if not isinstance(node, qubit.stmts.New):
-            return abc.RewriteResult()
-
-        (zero := py.Constant(0.0)).insert_before(node)
-        node.replace_by(
-            place.NewLogicalQubit(
-                theta=zero.result,
-                phi=zero.result,
-                lam=zero.result,
+        if isinstance(node, qubit.stmts.New):
+            (zero := py.Constant(0.0)).insert_before(node)
+            node.replace_by(
+                place.NewLogicalQubit(
+                    theta=zero.result,
+                    phi=zero.result,
+                    lam=zero.result,
+                )
             )
-        )
-        return abc.RewriteResult(has_done_something=True)
+            return abc.RewriteResult(has_done_something=True)
+
+        if isinstance(node, gemini_stmts.NewAt):
+            addr = _resolve_location_from_new_at(node)
+            if addr is None:
+                return abc.RewriteResult()  # give up; non-constant args
+            (zero := py.Constant(0.0)).insert_before(node)
+            node.replace_by(
+                place.NewLogicalQubit(
+                    theta=zero.result,
+                    phi=zero.result,
+                    lam=zero.result,
+                    location_address=addr,
+                )
+            )
+            return abc.RewriteResult(has_done_something=True)
+
+        return abc.RewriteResult()
 
 
 @dataclass
