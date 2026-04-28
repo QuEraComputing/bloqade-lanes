@@ -51,19 +51,3 @@ class TerminalLogicalMeasurement(ir.Statement):
     result: ir.ResultValue = info.result(
         ilist.IListType[ilist.IListType[MeasurementResultType, types.Any], Len]
     )
-
-
-@statement(dialect=dialect)
-class NewAt(ir.Statement):
-    """Allocate a new logical qubit pinned to the given physical address.
-
-    The three int args MUST be compile-time constants (enforced by validation
-    in Phase E). The constant values are read by the circuit→place rewrite
-    chain (Phase D's D2/D3) and stamped into place.NewLogicalQubit.location_address.
-    """
-
-    traits = frozenset({lowering.FromPythonCall()})
-    zone_id: ir.SSAValue = info.argument(types.Int)
-    word_id: ir.SSAValue = info.argument(types.Int)
-    site_id: ir.SSAValue = info.argument(types.Int)
-    qubit: ir.ResultValue = info.result(QubitType)

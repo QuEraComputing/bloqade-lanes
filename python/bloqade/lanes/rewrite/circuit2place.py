@@ -8,6 +8,7 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
+from bloqade.gemini.common import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.dialects import place
 from bloqade.lanes.layout.encoding import LocationAddress
@@ -50,14 +51,14 @@ class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
 
         def is_alloc(
             owner: ir.Statement | ir.Block,
-        ) -> TypeGuard[qubit.stmts.New | gemini_stmts.NewAt]:
-            return isinstance(owner, (qubit.stmts.New, gemini_stmts.NewAt))
+        ) -> TypeGuard[qubit.stmts.New | gemini_common_stmts.NewAt]:
+            return isinstance(owner, (qubit.stmts.New, gemini_common_stmts.NewAt))
 
         alloc_stmts = tuple(filter(is_alloc, (q.owner for q in node.qubits)))
 
         any_replaced = False
         for alloc_stmt in alloc_stmts:
-            if isinstance(alloc_stmt, gemini_stmts.NewAt):
+            if isinstance(alloc_stmt, gemini_common_stmts.NewAt):
                 addr = _resolve_location_from_new_at(alloc_stmt)
                 if addr is None:
                     continue  # give up on this NewAt; const-prop didn't run / non-constant args
@@ -73,7 +74,7 @@ class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
 
 
 def _resolve_location_from_new_at(
-    node: gemini_stmts.NewAt,
+    node: gemini_common_stmts.NewAt,
 ) -> LocationAddress | None:
     """Read const-prop hints to build a LocationAddress from a NewAt's args.
 
@@ -131,7 +132,7 @@ class InitializeNewQubits(abc.RewriteRule):
             )
             return abc.RewriteResult(has_done_something=True)
 
-        if isinstance(node, gemini_stmts.NewAt):
+        if isinstance(node, gemini_common_stmts.NewAt):
             addr = _resolve_location_from_new_at(node)
             if addr is None:
                 return abc.RewriteResult()  # give up; non-constant args

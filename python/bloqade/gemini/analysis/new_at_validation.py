@@ -1,9 +1,9 @@
-"""Per-statement validation for gemini.operations.NewAt.
+"""Per-statement validation for ``gemini.common.NewAt``.
 
-Registered against the lanes validation interpreter key (`move.address.validation`).
+Registered against the lanes validation interpreter key (``move.address.validation``).
 The impl checks (1) const-foldability of the three SSA int args and (2) that the
 resulting LocationAddress is valid for the architecture (via the existing
-ArchSpec.check_location_group called by `_ValidationAnalysis.report_location_errors`).
+ArchSpec.check_location_group called by ``_ValidationAnalysis.report_location_errors``).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from kirin import interp, ir
 from kirin.analysis.forward import ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 
-from bloqade.gemini.logical.dialects.operations import dialect, stmts
+from bloqade.gemini.common import dialect, stmts
 
 if TYPE_CHECKING:
     from bloqade.lanes.validation.address import _ValidationAnalysis
@@ -29,9 +29,9 @@ class _NewAtValidation(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: stmts.NewAt,
     ):
-        # Both imports are lazy to avoid circular initialisation:
+        # Lazy import to avoid circular initialisation:
         # any bloqade.lanes.* import triggers bloqade.lanes.__init__, which
-        # imports bloqade.gemini.device → … → bloqade.gemini.logical (partially
+        # imports bloqade.gemini.device → … → bloqade.gemini (partially
         # initialised at registration time).
         from bloqade.lanes.layout.encoding import LocationAddress
 

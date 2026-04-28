@@ -10,7 +10,7 @@ import pytest
 from kirin.ir.exception import ValidationErrorGroup
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.dialects.operations import new_at
+from bloqade.gemini.common import new_at
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.upstream import squin_to_move

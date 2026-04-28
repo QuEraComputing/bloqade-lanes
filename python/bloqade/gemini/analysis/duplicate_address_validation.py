@@ -1,14 +1,14 @@
-"""Cross-statement validation: each NewAt's address must be unique.
+"""Cross-statement validation: each ``NewAt``'s address must be unique.
 
 Implemented as a Forward dataflow analysis with a method-table impl for
-`stmts.NewAt`. The impl pulls each address arg via `expect_const`, builds a
-`LocationAddress`, and accumulates a seen-map on the interpreter. A second
-NewAt pinning the same address records a `ValidationError`.
+``stmts.NewAt``. The impl pulls each address arg via ``expect_const``, builds a
+``LocationAddress``, and accumulates a seen-map on the interpreter. A second
+NewAt pinning the same address records a ``ValidationError``.
 
-Per-statement validation (E1's const-foldability + range) is the precondition;
-when an arg is non-const, `expect_const` raises `InterpreterError`. The
-`ValidationPass` wrapper uses `run_no_raise` so any duplicates collected before
-that point are still reported.
+Per-statement validation (const-foldability + range) is the precondition;
+when an arg is non-const, ``expect_const`` raises ``InterpreterError``. The
+``ValidationPass`` wrapper uses ``run_no_raise`` so any duplicates collected
+before that point are still reported.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
-from bloqade.gemini.logical.dialects.operations import dialect, stmts
+from bloqade.gemini.common import dialect, stmts
 
 if TYPE_CHECKING:
     from bloqade.lanes.layout.encoding import LocationAddress
@@ -78,7 +78,7 @@ class _NewAtDuplicateMethods(interp.MethodTable):
 
 @dataclass
 class DuplicateAddressValidation(ValidationPass):
-    """Report any pair of `gemini.operations.NewAt` statements that pin the
+    """Report any pair of ``gemini.common.NewAt`` statements that pin the
     same physical address.
     """
 

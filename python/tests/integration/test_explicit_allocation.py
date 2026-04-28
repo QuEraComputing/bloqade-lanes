@@ -1,9 +1,9 @@
 """End-to-end integration tests for explicit qubit allocation.
 
 These tests exercise the full ``squin_to_move`` pipeline with kernels that mix
-``squin.qalloc`` (un-pinned) and ``gemini.logical.dialects.operations.new_at``
-(pinned) qubits, and verify the resulting move IR carries the requested pinned
-addresses. Failure-mode tests confirm const-prop, over-constraining and
+``squin.qalloc`` (un-pinned) and ``gemini.common.new_at`` (pinned) qubits, and
+verify the resulting move IR carries the requested pinned addresses.
+Failure-mode tests confirm const-prop, over-constraining and
 semantic-illegality errors surface at compile time.
 """
 
@@ -13,7 +13,7 @@ from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.dialects.operations import new_at
+from bloqade.gemini.common import new_at
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome

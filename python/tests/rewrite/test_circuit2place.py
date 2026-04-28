@@ -5,6 +5,7 @@ from kirin.analysis import const
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
+from bloqade.gemini.common import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.dialects import place
@@ -291,7 +292,7 @@ def test_merge_regions():
     assert_nodes(test_block, expected_block)
 
 
-def _make_const_new_at(zone: int, word: int, site: int) -> gemini_stmts.NewAt:
+def _make_const_new_at(zone: int, word: int, site: int) -> gemini_common_stmts.NewAt:
     """Helper: build a NewAt whose three args carry const-prop hints."""
     c_zone = py.Constant(zone)
     c_word = py.Constant(word)
@@ -299,7 +300,7 @@ def _make_const_new_at(zone: int, word: int, site: int) -> gemini_stmts.NewAt:
     c_zone.result.hints["const"] = const.Value(zone)
     c_word.result.hints["const"] = const.Value(word)
     c_site.result.hints["const"] = const.Value(site)
-    new_at = gemini_stmts.NewAt(
+    new_at = gemini_common_stmts.NewAt(
         zone_id=c_zone.result, word_id=c_word.result, site_id=c_site.result
     )
     return new_at
@@ -414,7 +415,7 @@ def test_new_at_with_non_const_args_is_noop():
     block.stmts.append(c_word)
     block.stmts.append(c_site)
 
-    new_at = gemini_stmts.NewAt(
+    new_at = gemini_common_stmts.NewAt(
         zone_id=non_const_zone, word_id=c_word.result, site_id=c_site.result
     )
     block.stmts.append(new_at)
@@ -432,7 +433,7 @@ def test_new_at_with_non_const_args_is_noop():
 
     stmts = list(block.stmts)
     # The NewAt should still be present (not replaced)
-    new_ats = [s for s in stmts if isinstance(s, gemini_stmts.NewAt)]
+    new_ats = [s for s in stmts if isinstance(s, gemini_common_stmts.NewAt)]
     new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
     assert len(new_ats) == 1, "NewAt should remain when const-prop hint is missing"
     assert len(new_logical_qubits) == 0, "No NewLogicalQubit should be emitted"
@@ -500,7 +501,7 @@ def test_initialize_new_qubits_bare_new_at_non_const_is_noop():
     block.stmts.append(c_word)
     block.stmts.append(c_site)
 
-    new_at = gemini_stmts.NewAt(
+    new_at = gemini_common_stmts.NewAt(
         zone_id=non_const_zone, word_id=c_word.result, site_id=c_site.result
     )
     block.stmts.append(new_at)
@@ -509,7 +510,7 @@ def test_initialize_new_qubits_bare_new_at_non_const_is_noop():
     rewrite.Walk(InitializeNewQubits()).rewrite(block)
 
     stmts = list(block.stmts)
-    new_ats = [s for s in stmts if isinstance(s, gemini_stmts.NewAt)]
+    new_ats = [s for s in stmts if isinstance(s, gemini_common_stmts.NewAt)]
     new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
     assert len(new_ats) == 1, "NewAt should remain when const-prop hint is missing"
     assert len(new_logical_qubits) == 0, "No NewLogicalQubit should be emitted"

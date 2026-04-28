@@ -1,8 +1,8 @@
 """Demo: explicit qubit allocation.
 
 Pin two logical qubits to known physical addresses with
-``gemini.operations.new_at`` and let the layout heuristic place the rest.
-The compiled move IR's ``move.Fill`` carries the requested addresses for the
+``gemini.common.new_at`` and let the layout heuristic place the rest. The
+compiled move IR's ``move.Fill`` carries the requested addresses for the
 pinned qubits and heuristic-chosen addresses for the un-pinned qubits.
 """
 
@@ -10,7 +10,7 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.gemini.logical.dialects.operations import new_at
+from bloqade.gemini.common import new_at
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome

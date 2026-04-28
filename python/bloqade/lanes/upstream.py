@@ -60,7 +60,9 @@ class NativeToPlace:
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         if self.arch_spec is not None:
-            from bloqade.gemini.logical.validation import DuplicateAddressValidation
+            from bloqade.gemini.analysis.duplicate_address_validation import (
+                DuplicateAddressValidation,
+            )
             from bloqade.lanes.validation.address import Validation
 
             errors: list[ir.ValidationError] = []
