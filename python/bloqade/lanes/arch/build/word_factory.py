@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bloqade.lanes.layout.word import Word
+from bloqade.lanes.bytecode.word import Word
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
