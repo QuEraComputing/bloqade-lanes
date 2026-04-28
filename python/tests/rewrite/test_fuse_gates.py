@@ -22,19 +22,15 @@ from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
 
 
 def _wrap_in_static_placement(
-    body_stmts: list[ir.Statement],
-    entry_state: ir.SSAValue,
     body_block: ir.Block,
     num_qubits: int = 4,
 ) -> tuple[place.StaticPlacement, ir.Block]:
-    """Wrap a fully-built body block in a StaticPlacement and an outer block.
+    """Wrap a populated body block in a StaticPlacement and an outer block.
 
-    `body_block` should already contain `body_stmts` and have `entry_state`
-    as its block argument. Returns the StaticPlacement and the outer block
-    used as the rewrite target.
+    Caller is responsible for appending statements to ``body_block`` and for
+    setting up its entry-state block argument (see ``_new_body_block``).
+    Returns the StaticPlacement and the outer block used as the rewrite target.
     """
-    _ = body_stmts  # documented input; appended by caller
-    _ = entry_state
     sp_qubits = tuple(
         ir.TestValue(type=bloqade_types.QubitType) for _ in range(num_qubits)
     )
@@ -69,7 +65,7 @@ def test_single_statement_body_is_unchanged():
     r = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
     body_block.stmts.append(r)
 
-    sp, outer = _wrap_in_static_placement([r], entry_state, body_block)
+    sp, outer = _wrap_in_static_placement(body_block)
 
     result = _run(outer)
 

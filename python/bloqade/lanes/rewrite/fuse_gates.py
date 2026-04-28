@@ -31,6 +31,5 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
         return rewrite_abc.RewriteResult(has_done_something=changed)
 
     def _fuse_block(self, block: ir.Block) -> bool:
-        # Skeleton — no fusion logic yet. Filled in by Task 2.
         _ = block
         return False
