@@ -200,7 +200,9 @@ An exception. For examples look at the existing rewrite rules for how to do this
 
 ### 4.3 — `LayoutAnalysis.initial_layout` output
 
-No remaining production consumer in `place2move.py` once §4.1/§4.2 ship. **Drop it from the analysis output.** If it turns out to be useful for debugging or visualization later, it can be resurrected behind a debug flag.
+`LayoutAnalysis.process_results` continues to return the layout tuple, because `PlacementAnalysis` consumes it. What changes: `InsertInitialize` and `InsertFill` no longer take it as a parameter; they read `place.NewLogicalQubit.location_address` attributes directly. `PlacementAnalysis`'s consumption is unchanged.
+
+The original spec proposed dropping the analysis output entirely, but `PlacementAnalysis` (driven by `PlaceToMove.emit`) needs the full layout tuple to track where atoms move during gate execution. Removing it would require a parallel refactor of `PlacementAnalysis` that's out of scope for this design.
 
 ## §5 — `LayoutHeuristicABC` API change
 
