@@ -29,8 +29,17 @@ def _wrap_in_static_placement(
 
     Caller is responsible for appending statements to ``body_block`` and for
     setting up its entry-state block argument (see ``_new_body_block``).
+    Appends a ``place.Yield`` terminator threading the final state so the
+    body satisfies ``StaticPlacement.check()``.
     Returns the StaticPlacement and the outer block used as the rewrite target.
     """
+    last = body_block.last_stmt
+    if isinstance(last, place.QuantumStmt):
+        final_state = last.state_after
+    else:
+        final_state = body_block.args[0]
+    body_block.stmts.append(place.Yield(final_state))
+
     sp_qubits = tuple(
         ir.TestValue(type=bloqade_types.QubitType) for _ in range(num_qubits)
     )
@@ -49,6 +58,13 @@ def _new_body_block() -> tuple[ir.Block, ir.SSAValue]:
 def _run(outer_block: ir.Block) -> RewriteResult:
     """Apply Fixpoint(Walk(FuseAdjacentGates())) and return the result."""
     return rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(outer_block)
+
+
+def _body_stmts(sp: place.StaticPlacement) -> list[ir.Statement]:
+    """Return body statements excluding the trailing ``place.Yield`` terminator."""
+    stmts = list(sp.body.blocks[0].stmts)
+    assert stmts and isinstance(stmts[-1], place.Yield)
+    return stmts[:-1]
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +86,7 @@ def test_single_statement_body_is_unchanged():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 1
     assert body_stmts[0] is r
 
@@ -100,7 +116,7 @@ def test_two_adjacent_r_fuses():
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 1
     merged = body_stmts[0]
     assert isinstance(merged, place.R)
@@ -131,7 +147,7 @@ def test_overlapping_qubits_does_not_fuse():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [r1, r2]
 
 
@@ -152,7 +168,7 @@ def test_different_axis_ssa_does_not_fuse():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [r1, r2]
 
 
@@ -173,7 +189,7 @@ def test_different_rotation_angle_ssa_does_not_fuse():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [r1, r2]
 
 
@@ -199,7 +215,7 @@ def test_different_opcode_between_blocks_fusion():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [r1, rz, r2]
 
 
@@ -223,7 +239,7 @@ def test_two_adjacent_rz_fuses():
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 1
     merged = body_stmts[0]
     assert isinstance(merged, place.Rz)
@@ -248,7 +264,7 @@ def test_rz_with_different_angle_does_not_fuse():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [rz1, rz2]
 
 
@@ -277,7 +293,7 @@ def test_two_adjacent_cz_fuses_with_reinterleaved_qubits():
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 1
     merged = body_stmts[0]
     assert isinstance(merged, place.CZ)
@@ -302,7 +318,7 @@ def test_cz_overlapping_controls_does_not_fuse():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [cz1, cz2]
 
 
@@ -317,12 +333,12 @@ def test_cz_three_way_fusion_preserves_control_target_order():
     cz3 = place.CZ(cz2.state_after, qubits=(2, 6))  # c=2, t=6
     body_block.stmts.append(cz3)
 
-    sp, outer = _wrap_in_static_placement(body_block)
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=7)
 
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 1
     merged = body_stmts[0]
     assert isinstance(merged, place.CZ)
@@ -351,12 +367,12 @@ def test_four_adjacent_r_collapse_in_one_pass():
     r4 = place.R(r3.state_after, axis_angle=axis, rotation_angle=angle, qubits=(4,))
     body_block.stmts.append(r4)
 
-    sp, outer = _wrap_in_static_placement(body_block)
+    sp, outer = _wrap_in_static_placement(body_block, num_qubits=5)
 
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 1
     merged = body_stmts[0]
     assert isinstance(merged, place.R)
@@ -405,7 +421,7 @@ def test_initialize_flushes_group_does_not_start_new_one():
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     # Expected: [merged(r1+r2), init, merged(r3+r4)]
     assert len(body_stmts) == 3
     merged_first, init_seen, merged_second = body_stmts
@@ -434,7 +450,7 @@ def test_endmeasure_flushes_preceding_group():
     result = _run(outer)
 
     assert result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert len(body_stmts) == 2
     merged, em_seen = body_stmts
     assert isinstance(merged, place.R)
@@ -477,7 +493,7 @@ def test_empty_body_is_unchanged():
     result = _run(outer)
 
     assert not result.has_done_something
-    assert list(sp.body.blocks[0].stmts) == []
+    assert _body_stmts(sp) == []
 
 
 def test_no_fusable_groups_is_unchanged():
@@ -503,5 +519,5 @@ def test_no_fusable_groups_is_unchanged():
     result = _run(outer)
 
     assert not result.has_done_something
-    body_stmts = list(sp.body.blocks[0].stmts)
+    body_stmts = _body_stmts(sp)
     assert body_stmts == [init, em]
