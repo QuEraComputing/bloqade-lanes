@@ -8,6 +8,7 @@ from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
 from bloqade.gemini.logical.dialects.operations import new_at
+from bloqade.gemini.logical.validation import DuplicateAddressValidation
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
 from bloqade.lanes.layout.arch import ArchSpec
 from bloqade.lanes.validation.address import Validation
@@ -92,3 +93,64 @@ def test_valid_new_at_no_diagnostics():
     result = _make_validator().validate(kernel)
     # Should not raise.
     result.raise_if_invalid()
+
+
+# ---------------------------------------------------------------------------
+# DuplicateAddressValidation tests (E2)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_addresses_reported():
+    """Two new_at calls pinning the same (zone, word, site) produce an error."""
+
+    @gemini.logical.kernel(verify=False)
+    def kernel():
+        q0 = new_at(0, 0, 0)  # noqa: F841
+        q1 = new_at(0, 0, 0)  # same address — duplicate  # noqa: F841
+
+    dup_pass = DuplicateAddressValidation()
+    _, errors = dup_pass.run(kernel)
+    assert len(errors) >= 1
+    assert any("pinned by two" in str(e) for e in errors)
+
+
+def test_duplicate_via_constant_folded_args():
+    """new_at(0, 1+0, 2) and new_at(0, 1, 2) resolve to the same address after
+    const-fold and should be flagged as duplicates.
+    """
+
+    @gemini.logical.kernel(verify=False)
+    def kernel():
+        q0 = new_at(0, 1 + 0, 2)  # folds to (zone=0, word=1, site=2)  # noqa: F841
+        q1 = new_at(0, 1, 2)  # same resolved address  # noqa: F841
+
+    dup_pass = DuplicateAddressValidation()
+    _, errors = dup_pass.run(kernel)
+    assert len(errors) >= 1
+    assert any("pinned by two" in str(e) for e in errors)
+
+
+def test_distinct_addresses_no_error():
+    """Two new_at calls with distinct (zone, word, site) should produce no errors."""
+
+    @gemini.logical.kernel(verify=False)
+    def kernel():
+        q0 = new_at(0, 0, 0)  # noqa: F841
+        q1 = new_at(0, 0, 1)  # different site_id  # noqa: F841
+
+    dup_pass = DuplicateAddressValidation()
+    _, errors = dup_pass.run(kernel)
+    assert errors == []
+
+
+def test_non_constant_arg_skipped_silently():
+    """A new_at with a non-constant arg is silently skipped — no crash."""
+
+    @gemini.logical.kernel(verify=False)
+    def kernel(z: int):
+        q = new_at(z, 0, 0)  # z is not const — E1 handles this error  # noqa: F841
+
+    dup_pass = DuplicateAddressValidation()
+    # Must not raise; the pass skips stmts whose args lack const hints.
+    _, errors = dup_pass.run(kernel)
+    assert errors == []
