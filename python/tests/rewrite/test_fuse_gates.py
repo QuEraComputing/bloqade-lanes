@@ -250,3 +250,82 @@ def test_rz_with_different_angle_does_not_fuse():
     assert not result.has_done_something
     body_stmts = list(sp.body.blocks[0].stmts)
     assert body_stmts == [rz1, rz2]
+
+
+# ---------------------------------------------------------------------------
+# CZ fusion with controls-then-targets re-interleaving
+# ---------------------------------------------------------------------------
+
+
+def test_two_adjacent_cz_fuses_with_reinterleaved_qubits():
+    """Two CZ with disjoint qubits fuse; merged.qubits = controls0+controls1+targets0+targets1.
+
+    Verifies the controls-then-targets convention enforced by place.CZ.controls
+    and place.CZ.targets (which split qubits in half) is preserved.
+    """
+    body_block, entry_state = _new_body_block()
+
+    # CZ#0: controls=(0,), targets=(2,)  → qubits=(0, 2)
+    cz1 = place.CZ(entry_state, qubits=(0, 2))
+    body_block.stmts.append(cz1)
+    # CZ#1: controls=(1,), targets=(3,)  → qubits=(1, 3)
+    cz2 = place.CZ(cz1.state_after, qubits=(1, 3))
+    body_block.stmts.append(cz2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert len(body_stmts) == 1
+    merged = body_stmts[0]
+    assert isinstance(merged, place.CZ)
+    # merged.controls = (0, 1), merged.targets = (2, 3) → qubits = (0, 1, 2, 3)
+    assert merged.qubits == (0, 1, 2, 3)
+    assert merged.controls == (0, 1)
+    assert merged.targets == (2, 3)
+    assert merged.state_before is entry_state
+
+
+def test_cz_overlapping_controls_does_not_fuse():
+    """Two CZ sharing a control qubit do not fuse."""
+    body_block, entry_state = _new_body_block()
+
+    cz1 = place.CZ(entry_state, qubits=(0, 2))  # control=0, target=2
+    body_block.stmts.append(cz1)
+    cz2 = place.CZ(cz1.state_after, qubits=(0, 3))  # control=0, target=3 (overlaps)
+    body_block.stmts.append(cz2)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert not result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert body_stmts == [cz1, cz2]
+
+
+def test_cz_three_way_fusion_preserves_control_target_order():
+    """Three CZ statements collapse with all controls first, then all targets."""
+    body_block, entry_state = _new_body_block()
+
+    cz1 = place.CZ(entry_state, qubits=(0, 4))  # c=0, t=4
+    body_block.stmts.append(cz1)
+    cz2 = place.CZ(cz1.state_after, qubits=(1, 5))  # c=1, t=5
+    body_block.stmts.append(cz2)
+    cz3 = place.CZ(cz2.state_after, qubits=(2, 6))  # c=2, t=6
+    body_block.stmts.append(cz3)
+
+    sp, outer = _wrap_in_static_placement(body_block)
+
+    result = _run(outer)
+
+    assert result.has_done_something
+    body_stmts = list(sp.body.blocks[0].stmts)
+    assert len(body_stmts) == 1
+    merged = body_stmts[0]
+    assert isinstance(merged, place.CZ)
+    assert merged.qubits == (0, 1, 2, 4, 5, 6)
+    assert merged.controls == (0, 1, 2)
+    assert merged.targets == (4, 5, 6)

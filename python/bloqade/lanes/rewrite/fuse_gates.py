@@ -20,7 +20,7 @@ from bloqade.lanes.dialects import place
 # Opcodes that are eligible for fusion. Other QuantumStmts (Initialize,
 # EndMeasure) and non-quantum statements (Yield, etc.) flush the current
 # group and do not start a new one.
-_FUSABLE_TYPES = (place.R, place.Rz)
+_FUSABLE_TYPES = (place.R, place.Rz, place.CZ)
 
 
 @dataclass
@@ -36,7 +36,7 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
 
     def _fuse_block(self, block: ir.Block) -> bool:
         changed = False
-        group: list[place.R | place.Rz] = []
+        group: list[place.R | place.Rz | place.CZ] = []
 
         def flush() -> bool:
             if len(group) >= 2:
@@ -65,12 +65,14 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
         return changed
 
 
-def _can_extend(group: list[place.R | place.Rz], stmt: place.R | place.Rz) -> bool:
+def _can_extend(
+    group: list[place.R | place.Rz | place.CZ],
+    stmt: place.R | place.Rz | place.CZ,
+) -> bool:
     head = group[0]
     tail = group[-1]
     if type(stmt) is not type(head):
         return False
-    # State-chain adjacency.
     if stmt.state_before is not tail.state_after:
         return False
     if not _same_non_qubit_args(head, stmt):
@@ -79,7 +81,10 @@ def _can_extend(group: list[place.R | place.Rz], stmt: place.R | place.Rz) -> bo
     return existing_qubits.isdisjoint(stmt.qubits)
 
 
-def _same_non_qubit_args(a: place.R | place.Rz, b: place.R | place.Rz) -> bool:
+def _same_non_qubit_args(
+    a: place.R | place.Rz | place.CZ,
+    b: place.R | place.Rz | place.CZ,
+) -> bool:
     """SSA-identity comparison of non-qubit args. Assumes type(a) is type(b)."""
     if isinstance(a, place.R):
         assert isinstance(b, place.R)
@@ -87,10 +92,13 @@ def _same_non_qubit_args(a: place.R | place.Rz, b: place.R | place.Rz) -> bool:
     if isinstance(a, place.Rz):
         assert isinstance(b, place.Rz)
         return a.rotation_angle is b.rotation_angle
+    if isinstance(a, place.CZ):
+        # CZ has no non-qubit args.
+        return True
     raise AssertionError(f"unfusable opcode in predicate: {type(a)}")
 
 
-def _merge_group(group: list[place.R | place.Rz]) -> None:
+def _merge_group(group: list[place.R | place.Rz | place.CZ]) -> None:
     head = group[0]
     tail = group[-1]
     if isinstance(head, place.R):
@@ -108,8 +116,24 @@ def _merge_group(group: list[place.R | place.Rz]) -> None:
             rotation_angle=head.rotation_angle,
             qubits=all_qubits,
         )
+    elif isinstance(head, place.CZ):
+        # Re-interleave so place.CZ.controls (first half) and place.CZ.targets
+        # (second half) keep returning the right halves.
+        controls = tuple(c for s in group for c in _cz_controls(s))
+        targets = tuple(t for s in group for t in _cz_targets(s))
+        merged = place.CZ(head.state_before, qubits=controls + targets)
     else:
         raise AssertionError(f"unfusable opcode in merge: {type(head)}")
     tail.replace_by(merged)
     for stmt in reversed(group[:-1]):
         stmt.delete()
+
+
+def _cz_controls(stmt: place.R | place.Rz | place.CZ) -> tuple[int, ...]:
+    assert isinstance(stmt, place.CZ)
+    return stmt.controls
+
+
+def _cz_targets(stmt: place.R | place.Rz | place.CZ) -> tuple[int, ...]:
+    assert isinstance(stmt, place.CZ)
+    return stmt.targets
