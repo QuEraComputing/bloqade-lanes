@@ -10,17 +10,110 @@ See ``docs/superpowers/specs/2026-04-28-place-stage-gate-fusion-design.md``
 for the full design.
 """
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 from kirin import ir
 from kirin.rewrite import abc as rewrite_abc
 
 from bloqade.lanes.dialects import place
 
-# Opcodes that are eligible for fusion. Other QuantumStmts (Initialize,
-# EndMeasure) and non-quantum statements (Yield, etc.) flush the current
-# group and do not start a new one.
-_FUSABLE_TYPES = (place.R, place.Rz, place.CZ)
+T = TypeVar("T", place.R, place.Rz, place.CZ)
+
+
+class GateGroup(ABC, Generic[T]):
+    """A run of textually-adjacent fusable statements of one opcode.
+
+    Maintains ``all_qubits`` incrementally so disjointness checks are O(1)
+    per statement. Subclasses implement opcode-specific predicate bits
+    (non-qubit SSA arg comparison) and the merged-statement construction.
+    """
+
+    def __init__(self) -> None:
+        self.statements: list[T] = []
+        self.all_qubits: set[int] = set()
+
+    def append(self, stmt: T) -> None:
+        self.statements.append(stmt)
+        self.all_qubits.update(stmt.qubits)
+
+    def merge_in_place(self) -> bool:
+        """If the group has ≥2 stmts, replace the tail with one merged op
+        covering all qubits and delete the earlier statements. Returns True
+        iff a merge was performed.
+        """
+        if len(self.statements) < 2:
+            return False
+        merged = self._build_merged()
+        self.statements[-1].replace_by(merged)
+        for stmt in reversed(self.statements[:-1]):
+            stmt.delete()
+        return True
+
+    def _state_chain_ok(self, stmt: T) -> bool:
+        return stmt.state_before is self.statements[-1].state_after
+
+    def _qubits_disjoint(self, stmt: T) -> bool:
+        return self.all_qubits.isdisjoint(stmt.qubits)
+
+    @abstractmethod
+    def can_extend(self, stmt: T) -> bool: ...
+
+    @abstractmethod
+    def _build_merged(self) -> ir.Statement: ...
+
+
+class RGroup(GateGroup[place.R]):
+    def can_extend(self, stmt: place.R) -> bool:
+        head = self.statements[0]
+        return (
+            self._state_chain_ok(stmt)
+            and self._qubits_disjoint(stmt)
+            and stmt.axis_angle is head.axis_angle
+            and stmt.rotation_angle is head.rotation_angle
+        )
+
+    def _build_merged(self) -> place.R:
+        head = self.statements[0]
+        return place.R(
+            head.state_before,
+            axis_angle=head.axis_angle,
+            rotation_angle=head.rotation_angle,
+            qubits=tuple(q for s in self.statements for q in s.qubits),
+        )
+
+
+class RzGroup(GateGroup[place.Rz]):
+    def can_extend(self, stmt: place.Rz) -> bool:
+        head = self.statements[0]
+        return (
+            self._state_chain_ok(stmt)
+            and self._qubits_disjoint(stmt)
+            and stmt.rotation_angle is head.rotation_angle
+        )
+
+    def _build_merged(self) -> place.Rz:
+        head = self.statements[0]
+        return place.Rz(
+            head.state_before,
+            rotation_angle=head.rotation_angle,
+            qubits=tuple(q for s in self.statements for q in s.qubits),
+        )
+
+
+class CZGroup(GateGroup[place.CZ]):
+    def can_extend(self, stmt: place.CZ) -> bool:
+        # CZ has no non-qubit SSA args.
+        return self._state_chain_ok(stmt) and self._qubits_disjoint(stmt)
+
+    def _build_merged(self) -> place.CZ:
+        head = self.statements[0]
+        # Re-interleave so place.CZ.controls (first half of qubits) and
+        # place.CZ.targets (second half) keep returning the right halves.
+        controls = tuple(c for s in self.statements for c in s.controls)
+        targets = tuple(t for s in self.statements for t in s.targets)
+        return place.CZ(head.state_before, qubits=controls + targets)
 
 
 @dataclass
@@ -36,104 +129,38 @@ class FuseAdjacentGates(rewrite_abc.RewriteRule):
 
     def _fuse_block(self, block: ir.Block) -> bool:
         changed = False
-        group: list[place.R | place.Rz | place.CZ] = []
-
-        def flush() -> bool:
-            if len(group) >= 2:
-                _merge_group(group)
-                group.clear()
-                return True
-            group.clear()
-            return False
+        group: GateGroup | None = None
 
         for stmt in list(block.stmts):
-            if not isinstance(stmt, _FUSABLE_TYPES):
-                if flush():
+            if isinstance(stmt, place.R):
+                if isinstance(group, RGroup) and group.can_extend(stmt):
+                    group.append(stmt)
+                    continue
+                if group is not None and group.merge_in_place():
                     changed = True
-                continue
-            if not group:
+                group = RGroup()
                 group.append(stmt)
-                continue
-            if _can_extend(group, stmt):
+            elif isinstance(stmt, place.Rz):
+                if isinstance(group, RzGroup) and group.can_extend(stmt):
+                    group.append(stmt)
+                    continue
+                if group is not None and group.merge_in_place():
+                    changed = True
+                group = RzGroup()
+                group.append(stmt)
+            elif isinstance(stmt, place.CZ):
+                if isinstance(group, CZGroup) and group.can_extend(stmt):
+                    group.append(stmt)
+                    continue
+                if group is not None and group.merge_in_place():
+                    changed = True
+                group = CZGroup()
                 group.append(stmt)
             else:
-                if flush():
+                if group is not None and group.merge_in_place():
                     changed = True
-                group.append(stmt)
-        if flush():
+                group = None
+
+        if group is not None and group.merge_in_place():
             changed = True
         return changed
-
-
-def _can_extend(
-    group: list[place.R | place.Rz | place.CZ],
-    stmt: place.R | place.Rz | place.CZ,
-) -> bool:
-    head = group[0]
-    tail = group[-1]
-    if type(stmt) is not type(head):
-        return False
-    if stmt.state_before is not tail.state_after:
-        return False
-    if not _same_non_qubit_args(head, stmt):
-        return False
-    existing_qubits = {q for s in group for q in s.qubits}
-    return existing_qubits.isdisjoint(stmt.qubits)
-
-
-def _same_non_qubit_args(
-    a: place.R | place.Rz | place.CZ,
-    b: place.R | place.Rz | place.CZ,
-) -> bool:
-    """SSA-identity comparison of non-qubit args. Assumes type(a) is type(b)."""
-    if isinstance(a, place.R):
-        assert isinstance(b, place.R)
-        return a.axis_angle is b.axis_angle and a.rotation_angle is b.rotation_angle
-    if isinstance(a, place.Rz):
-        assert isinstance(b, place.Rz)
-        return a.rotation_angle is b.rotation_angle
-    if isinstance(a, place.CZ):
-        # CZ has no non-qubit args.
-        return True
-    raise AssertionError(f"unfusable opcode in predicate: {type(a)}")
-
-
-def _merge_group(group: list[place.R | place.Rz | place.CZ]) -> None:
-    head = group[0]
-    tail = group[-1]
-    if isinstance(head, place.R):
-        all_qubits = tuple(q for s in group for q in s.qubits)
-        merged: ir.Statement = place.R(
-            head.state_before,
-            axis_angle=head.axis_angle,
-            rotation_angle=head.rotation_angle,
-            qubits=all_qubits,
-        )
-    elif isinstance(head, place.Rz):
-        all_qubits = tuple(q for s in group for q in s.qubits)
-        merged = place.Rz(
-            head.state_before,
-            rotation_angle=head.rotation_angle,
-            qubits=all_qubits,
-        )
-    elif isinstance(head, place.CZ):
-        # Re-interleave so place.CZ.controls (first half) and place.CZ.targets
-        # (second half) keep returning the right halves.
-        controls = tuple(c for s in group for c in _cz_controls(s))
-        targets = tuple(t for s in group for t in _cz_targets(s))
-        merged = place.CZ(head.state_before, qubits=controls + targets)
-    else:
-        raise AssertionError(f"unfusable opcode in merge: {type(head)}")
-    tail.replace_by(merged)
-    for stmt in reversed(group[:-1]):
-        stmt.delete()
-
-
-def _cz_controls(stmt: place.R | place.Rz | place.CZ) -> tuple[int, ...]:
-    assert isinstance(stmt, place.CZ)
-    return stmt.controls
-
-
-def _cz_targets(stmt: place.R | place.Rz | place.CZ) -> tuple[int, ...]:
-    assert isinstance(stmt, place.CZ)
-    return stmt.targets
