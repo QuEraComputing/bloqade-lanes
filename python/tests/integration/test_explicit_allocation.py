@@ -65,3 +65,60 @@ def test_e2e_mixed_pinning():
     arch_spec = _LAYOUT.arch_spec
     _, errors = Validation(arch_spec=arch_spec).run(out)
     assert errors == [], f"post-compile validator reported errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# F2: regression gate — kernels with zero new_at compile unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_unannotated_kernel_unchanged():
+    """A 2-qubit Bell-state kernel with no new_at calls produces a stable move
+    IR shape. Assert characteristic counts + Fill addresses so any drift in
+    the un-pinned compile path surfaces as a test failure.
+
+    Captured against ``LogicalLayoutHeuristic`` + ``LogicalPlacementStrategyNoHome``
+    on the gemini logical arch spec.
+    """
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(2)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        gemini.logical.terminal_measure(reg)
+
+    out = _compile(kernel)
+
+    counts: dict[str, int] = {}
+    for s in out.callable_region.walk():
+        counts[type(s).__name__] = counts.get(type(s).__name__, 0) + 1
+
+    expected_counts = {
+        "CZ": 1,
+        "Constant": 3,
+        "ConstantNone": 1,
+        "ConvertToPhysicalMeasurements": 1,
+        "EndMeasure": 1,
+        "Fill": 1,
+        "GetFutureResult": 2,
+        "Load": 2,
+        "LocalR": 3,
+        "LocalRz": 2,
+        "LogicalInitialize": 1,
+        "Move": 4,
+        "Return": 1,
+        "Store": 11,
+    }
+    assert counts == expected_counts, (
+        f"un-pinned kernel statement counts drifted:\n"
+        f"  expected: {expected_counts}\n"
+        f"  actual:   {counts}"
+    )
+
+    fill_addrs = _collect_fill_addresses(out)
+    expected_fill = (
+        LocationAddress(word_id=0, site_id=0, zone_id=0),
+        LocationAddress(word_id=2, site_id=0, zone_id=0),
+    )
+    assert fill_addrs == expected_fill
