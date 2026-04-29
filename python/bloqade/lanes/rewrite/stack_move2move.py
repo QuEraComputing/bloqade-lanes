@@ -21,9 +21,9 @@ from typing import Any, TypeVar
 from kirin import ir
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, stack_move
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.utils import no_none_elements_tuple
 
 # Generic TypeVar used by the _lift_attrs helper to propagate the concrete

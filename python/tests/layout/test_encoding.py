@@ -1,6 +1,6 @@
 import pytest
 
-from bloqade.lanes.layout import encoding
+from bloqade.lanes.bytecode import encoding
 
 
 def test_direction_repr():

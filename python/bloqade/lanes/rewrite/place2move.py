@@ -7,9 +7,8 @@ from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout import LocationAddress
-from bloqade.lanes.layout.encoding import LaneAddress
 from bloqade.lanes.utils import no_none_elements
 
 

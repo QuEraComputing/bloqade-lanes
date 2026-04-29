@@ -33,7 +33,7 @@ class _NewAtValidation(interp.MethodTable):
         # any bloqade.lanes.* import triggers bloqade.lanes.__init__, which
         # imports bloqade.gemini.device → … → bloqade.gemini (partially
         # initialised at registration time).
-        from bloqade.lanes.layout.encoding import LocationAddress
+        from bloqade.lanes.bytecode.encoding import LocationAddress
 
         z = _expect_const_int(node.zone_id, "zone_id", node, _interp)
         w = _expect_const_int(node.word_id, "word_id", node, _interp)

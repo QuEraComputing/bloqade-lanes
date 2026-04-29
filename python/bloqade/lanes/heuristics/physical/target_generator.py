@@ -16,13 +16,19 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
-from bloqade.lanes.layout import LocationAddress, MoveType
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+)
 
 _PairSide = Literal["ctrl", "tgt"]
-_Path = tuple[tuple[layout.LaneAddress, ...], tuple[layout.LocationAddress, ...]]
-_LaneDirCounts = Counter[layout.Direction]
+_Path = tuple[tuple[LaneAddress, ...], tuple[LocationAddress, ...]]
+_LaneDirCounts = Counter[Direction]
 
 
 @dataclass(frozen=True)
@@ -32,7 +38,7 @@ class TargetContext:
     Composes ConcreteState to avoid duplicating lattice state fields.
     """
 
-    arch_spec: layout.ArchSpec
+    arch_spec: ArchSpec
     state: ConcreteState
     controls: tuple[int, ...]
     targets: tuple[int, ...]
@@ -148,7 +154,7 @@ def _validate_candidate(
 _LaneKey = tuple[MoveType, int, int, int, int]
 
 
-def _lane_key(lane: layout.LaneAddress) -> _LaneKey:
+def _lane_key(lane: LaneAddress) -> _LaneKey:
     """Direction-independent canonical key for a lane.
 
     A physical lane used FORWARD and BACKWARD is the same resource;
@@ -163,14 +169,12 @@ def _lane_key(lane: layout.LaneAddress) -> _LaneKey:
     )
 
 
-def _sum_base(path: _Path, pf: layout.PathFinder) -> float:
+def _sum_base(path: _Path, pf: PathFinder) -> float:
     """Sum of base (no-penalty) lane-duration cost over a path's lanes."""
     return sum(pf.metrics.get_lane_duration_cost(lane) for lane in path[0])
 
 
-def _sum_weighted(
-    path: _Path, weight_fn: Callable[[layout.LaneAddress], float]
-) -> float:
+def _sum_weighted(path: _Path, weight_fn: Callable[[LaneAddress], float]) -> float:
     """Sum of `weight_fn(lane)` over a path's lanes.
 
     Returns 0.0 for zero-length paths (empty lane tuple).
@@ -179,15 +183,15 @@ def _sum_weighted(
 
 
 def _probe_pair(
-    arch_spec: layout.ArchSpec,
-    pf: layout.PathFinder,
-    placement: Mapping[int, layout.LocationAddress],
+    arch_spec: ArchSpec,
+    pf: PathFinder,
+    placement: Mapping[int, LocationAddress],
     ctrl: int,
     tgt: int,
-    edge_weight: Callable[[layout.LaneAddress], float] | None = None,
+    edge_weight: Callable[[LaneAddress], float] | None = None,
 ) -> tuple[
-    layout.LocationAddress,
-    layout.LocationAddress,
+    LocationAddress,
+    LocationAddress,
     _Path | None,
     _Path | None,
 ]:
@@ -252,11 +256,11 @@ class _HasFactors(Protocol):
 
 
 def _make_weight_fn(
-    pf: layout.PathFinder,
+    pf: PathFinder,
     committed_lanes: dict[_LaneKey, _LaneDirCounts],
-    committed_sites: set[layout.LocationAddress],
+    committed_sites: set[LocationAddress],
     gen: _HasFactors,
-) -> Callable[[layout.LaneAddress], float]:
+) -> Callable[[LaneAddress], float]:
     """Closure over the running congestion state; passed to `find_path`.
 
     The two signals — direction reuse and shared-site crossings —
@@ -283,7 +287,7 @@ def _make_weight_fn(
 
     df = gen.direction_factor
 
-    def weight(lane: layout.LaneAddress) -> float:
+    def weight(lane: LaneAddress) -> float:
         base = pf.metrics.get_lane_duration_cost(lane)
         factor = 1.0
         counts = committed_lanes.get(_lane_key(lane))
@@ -301,12 +305,8 @@ def _make_weight_fn(
     return weight
 
 
-def _opposite(direction: layout.Direction) -> layout.Direction:
-    return (
-        layout.Direction.BACKWARD
-        if direction == layout.Direction.FORWARD
-        else layout.Direction.FORWARD
-    )
+def _opposite(direction: Direction) -> Direction:
+    return Direction.BACKWARD if direction == Direction.FORWARD else Direction.FORWARD
 
 
 @dataclass
@@ -320,11 +320,11 @@ class _GenerateState:
     penalise mixed-direction contention multiplicatively.
     """
 
-    arch_spec: layout.ArchSpec
-    pf: layout.PathFinder
-    working: dict[int, layout.LocationAddress]
+    arch_spec: ArchSpec
+    pf: PathFinder
+    working: dict[int, LocationAddress]
     committed_lanes: dict[_LaneKey, _LaneDirCounts]
-    committed_sites: set[layout.LocationAddress]
+    committed_sites: set[LocationAddress]
 
 
 @dataclass(frozen=True)
@@ -371,12 +371,12 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
                 f"non-negative; Dijkstra requires non-negative edge weights"
             )
 
-    def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+    def generate(self, ctx: TargetContext) -> list[dict[int, LocationAddress]]:
         placement = ctx.placement
         if not ctx.controls:
             return [dict(placement)]
 
-        pf = layout.PathFinder(ctx.arch_spec)
+        pf = PathFinder(ctx.arch_spec)
         state = _GenerateState(
             arch_spec=ctx.arch_spec,
             pf=pf,
@@ -401,7 +401,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         return [state.working]
 
     def _sort_pairs_longest_first(
-        self, ctx: TargetContext, pf: layout.PathFinder
+        self, ctx: TargetContext, pf: PathFinder
     ) -> list[tuple[int, int]]:
         placement = ctx.placement
         arch = ctx.arch_spec
@@ -422,7 +422,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
         state: _GenerateState,
         ctrl: int,
         tgt: int,
-    ) -> tuple[int, layout.LocationAddress, _Path] | None:
+    ) -> tuple[int, LocationAddress, _Path] | None:
         weight = _make_weight_fn(
             state.pf, state.committed_lanes, state.committed_sites, self
         )
@@ -454,7 +454,7 @@ class CongestionAwareTargetGenerator(TargetGeneratorABC):
 # (move_type, zone_id, bus_id, direction) — the scheduler's batching key.
 # Lanes sharing this tuple are physically packable into one AOD shot (see
 # ArchSpec.check_lane_group in python/bloqade/lanes/layout/arch.py).
-_AODSig = tuple[MoveType, int, int, layout.Direction]
+_AODSig = tuple[MoveType, int, int, Direction]
 
 
 def _first_hop_sig(path: _Path | None) -> _AODSig | None:
@@ -494,19 +494,19 @@ class AODClusterTargetGenerator(TargetGeneratorABC):
     signatures produces targets the scheduler can pack more tightly.
     """
 
-    def generate(self, ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+    def generate(self, ctx: TargetContext) -> list[dict[int, LocationAddress]]:
         placement = ctx.placement
         if not ctx.controls:
             return [dict(placement)]
 
-        pf = layout.PathFinder(ctx.arch_spec)
+        pf = PathFinder(ctx.arch_spec)
         pairs = list(zip(ctx.controls, ctx.targets))
 
         # One entry per pair: chosen side (or None = still to be decided),
         # the two partner locations to commit against, and — for pairs
         # still in the greedy pool — their two candidate signatures.
         decisions: list[_PairSide | None] = [None] * len(pairs)
-        partners: list[tuple[layout.LocationAddress, layout.LocationAddress]] = []
+        partners: list[tuple[LocationAddress, LocationAddress]] = []
         pair_sigs: dict[int, tuple[_AODSig, _AODSig]] = {}
         buckets: dict[_AODSig, list[tuple[int, _PairSide]]] = {}
         live_count: dict[_AODSig, int] = {}

@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
@@ -19,8 +20,7 @@ from bloqade.lanes.bytecode._native import (
     WordBus,
     Zone as RustZone,
 )
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.word import Word
+from bloqade.lanes.bytecode.word import Word
 from bloqade.lanes.visualize.arch import ArchVisualizer
 
 # ── Hand-built minimal ArchSpec fixture ──

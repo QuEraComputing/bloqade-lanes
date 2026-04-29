@@ -8,12 +8,12 @@ from bloqade.lanes.arch.gemini.logical.rewrite import (
     RewriteMoves,
 )
 from bloqade.lanes.arch.gemini.logical.stmts import Fill, LogicalInitialize, SiteBusMove
-from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LocationAddress,
     SiteLaneAddress,
 )
+from bloqade.lanes.dialects import move
 
 
 def test_logical_architecture_rewrite_site():

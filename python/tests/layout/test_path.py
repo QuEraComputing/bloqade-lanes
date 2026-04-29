@@ -10,8 +10,8 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
-from bloqade.lanes.layout.path import PathFinder
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 
 
 def _build_pathfinder() -> PathFinder:

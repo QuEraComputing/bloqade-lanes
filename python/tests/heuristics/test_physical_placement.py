@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
@@ -15,8 +15,8 @@ def _make_state() -> ConcreteState:
     return ConcreteState(
         occupied=frozenset(),
         layout=(
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(1, 0),
+            LocationAddress(0, 0),
+            LocationAddress(1, 0),
         ),
         move_count=(0, 0),
     )
@@ -113,10 +113,10 @@ def test_cz_placements_rust_with_blocked_locations():
         arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
     )
     state = ConcreteState(
-        occupied=frozenset({layout.LocationAddress(0, 5)}),
+        occupied=frozenset({LocationAddress(0, 5)}),
         layout=(
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(1, 0),
+            LocationAddress(0, 0),
+            LocationAddress(1, 0),
         ),
         move_count=(0, 0),
     )
@@ -127,7 +127,7 @@ def test_cz_placements_rust_with_blocked_locations():
 def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     """Regression test for #510: _MT_MAP must include MoveType.ZONE (2)."""
     from bloqade.lanes.bytecode import Direction as BytecodeDirection, MoveType
-    from bloqade.lanes.layout.encoding import LaneAddress
+    from bloqade.lanes.bytecode.encoding import LaneAddress
 
     strategy = PhysicalPlacementStrategy(
         arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
@@ -173,8 +173,8 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
     state = ConcreteState(
         occupied=frozenset(),
         layout=(
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(2, 0),
+            LocationAddress(0, 0),
+            LocationAddress(2, 0),
         ),
         move_count=(0, 0),
     )

@@ -6,8 +6,9 @@ from typing import Callable
 
 import rustworkx as nx
 
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
@@ -15,7 +16,6 @@ from bloqade.lanes.layout.encoding import (
     SiteLaneAddress,
     WordLaneAddress,
 )
-from bloqade.lanes.layout.move_metric import MoveMetricCalculator
 
 
 @dataclass(frozen=True)

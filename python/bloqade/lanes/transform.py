@@ -9,8 +9,8 @@ from kirin.dialects import ilist, scf
 from kirin.passes import TypeInfer
 
 from bloqade import qubit, squin
-from bloqade.lanes import layout
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite import move2squin
 from bloqade.lanes.rewrite.move2squin import (
@@ -34,7 +34,7 @@ class MoveToSquinBase(abc.ABC):
     which kernels are passed to the rewrite rules.
     """
 
-    arch_spec: layout.ArchSpec
+    arch_spec: ArchSpec
     aggressive_unroll: bool = field(default=False, kw_only=True)
 
     @abc.abstractmethod

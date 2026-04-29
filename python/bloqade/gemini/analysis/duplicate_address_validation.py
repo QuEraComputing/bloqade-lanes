@@ -24,7 +24,7 @@ from kirin.validation import ValidationPass
 from bloqade.gemini.common import dialect, stmts
 
 if TYPE_CHECKING:
-    from bloqade.lanes.layout.encoding import LocationAddress
+    from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 @dataclass
@@ -54,7 +54,7 @@ class _NewAtDuplicateMethods(interp.MethodTable):
         frame: ForwardFrame[EmptyLattice],
         node: stmts.NewAt,
     ):
-        from bloqade.lanes.layout.encoding import LocationAddress
+        from bloqade.lanes.bytecode.encoding import LocationAddress
 
         z = _interp.expect_const(node.zone_id, int)
         w = _interp.expect_const(node.word_id, int)

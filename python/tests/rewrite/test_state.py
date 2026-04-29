@@ -2,7 +2,7 @@ from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite, types
 from kirin.dialects import cf, func, py
 
-from bloqade.lanes import layout
+from bloqade.lanes.bytecode.encoding import ZoneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite import state
 
@@ -95,14 +95,10 @@ def test_rewrite_load():
         [
             first_load := move.Load(),
             move.Load(),
-            third_state := move.CZ(
-                first_load.result, zone_address=layout.ZoneAddress(0)
-            ),
+            third_state := move.CZ(first_load.result, zone_address=ZoneAddress(0)),
             move.Store(third_state.result),
             move.Store(third_state.result),
-            move.EndMeasure(
-                third_state.result, zone_addresses=(layout.ZoneAddress(0),)
-            ),
+            move.EndMeasure(third_state.result, zone_addresses=(ZoneAddress(0),)),
             move.Load(),
         ]
     )
@@ -112,13 +108,9 @@ def test_rewrite_load():
     expected_block = ir.Block(
         [
             first_load := move.Load(),
-            third_state := move.CZ(
-                first_load.result, zone_address=layout.ZoneAddress(0)
-            ),
+            third_state := move.CZ(first_load.result, zone_address=ZoneAddress(0)),
             move.Store(third_state.result),
-            move.EndMeasure(
-                third_state.result, zone_addresses=(layout.ZoneAddress(0),)
-            ),
+            move.EndMeasure(third_state.result, zone_addresses=(ZoneAddress(0),)),
             move.Load(),
         ]
     )

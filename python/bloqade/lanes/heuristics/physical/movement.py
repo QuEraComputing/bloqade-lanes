@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
@@ -13,8 +12,16 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import EntropyTrace, MoveSolver
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    ZoneAddress,
+)
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
     TargetContext,
@@ -22,12 +29,6 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     TargetGeneratorCallable,
     _coerce_target_generator,
     _validate_candidate,
-)
-from bloqade.lanes.layout import (
-    Direction,
-    LaneAddress,
-    LocationAddress,
-    MoveType,
 )
 
 _STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
@@ -124,7 +125,7 @@ def solve_options_from_traversal(
 class PhysicalPlacementStrategy(PlacementStrategyABC):
     """Physical placement strategy backed by the Rust MoveSolver."""
 
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_arch_spec)
+    arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
     traversal: RustPlacementTraversal = field(default_factory=RustPlacementTraversal)
     target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None
 
@@ -167,7 +168,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
     def validate_initial_layout(
         self,
-        initial_layout: tuple[layout.LocationAddress, ...],
+        initial_layout: tuple[LocationAddress, ...],
     ) -> None:
         _ = initial_layout
 
@@ -334,5 +335,5 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
+            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )

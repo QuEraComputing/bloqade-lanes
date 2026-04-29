@@ -8,8 +8,8 @@ from bloqade import qubit
 from bloqade.gemini.common import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
-from bloqade.lanes.layout.encoding import LocationAddress
 from bloqade.lanes.rewrite.circuit2place import (
     InitializeNewQubits,
     MergePlacementRegions,

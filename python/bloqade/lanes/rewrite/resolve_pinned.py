@@ -4,8 +4,8 @@ from bloqade.analysis import address
 from kirin import ir
 from kirin.rewrite import abc
 
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
-from bloqade.lanes.layout.encoding import LocationAddress
 
 
 @dataclass

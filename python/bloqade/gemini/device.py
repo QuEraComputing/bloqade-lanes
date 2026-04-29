@@ -24,7 +24,7 @@ from bloqade import tsim
 
 if TYPE_CHECKING:
     from bloqade.lanes.analysis import atom
-    from bloqade.lanes.layout.arch import ArchSpec
+    from bloqade.lanes.arch.spec import ArchSpec
     from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 
 RetType = TypeVar("RetType")

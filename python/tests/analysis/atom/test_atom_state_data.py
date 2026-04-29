@@ -1,19 +1,25 @@
 import pytest
 from kirin.interp import InterpreterError
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.atom import atom_state_data
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode.encoding import (
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    WordLaneAddress,
+    ZoneAddress,
+)
 
 
 def test_hash():
     data1 = atom_state_data.AtomStateData.from_fields(
-        locations_to_qubit={layout.LocationAddress(0, 0): 1},
-        qubit_to_locations={1: layout.LocationAddress(0, 0)},
+        locations_to_qubit={LocationAddress(0, 0): 1},
+        qubit_to_locations={1: LocationAddress(0, 0)},
     )
     data2 = atom_state_data.AtomStateData.from_fields(
-        locations_to_qubit={layout.LocationAddress(0, 0): 1},
-        qubit_to_locations={1: layout.LocationAddress(0, 0)},
+        locations_to_qubit={LocationAddress(0, 0): 1},
+        qubit_to_locations={1: LocationAddress(0, 0)},
     )
     assert hash(data1) == hash(data2)
 
@@ -22,17 +28,17 @@ def test_add_atoms():
     atom_state = atom_state_data.AtomStateData()
 
     new_atom_state = atom_state.add_atoms(
-        {0: layout.LocationAddress(0, 0), 1: layout.LocationAddress(1, 0)}
+        {0: LocationAddress(0, 0), 1: LocationAddress(1, 0)}
     )
 
     expected_atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
-            layout.LocationAddress(0, 0): 0,
-            layout.LocationAddress(1, 0): 1,
+            LocationAddress(0, 0): 0,
+            LocationAddress(1, 0): 1,
         },
         qubit_to_locations={
-            0: layout.LocationAddress(0, 0),
-            1: layout.LocationAddress(1, 0),
+            0: LocationAddress(0, 0),
+            1: LocationAddress(1, 0),
         },
     )
 
@@ -42,32 +48,32 @@ def test_add_atoms():
 def test_apply_moves():
     atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
-            layout.LocationAddress(0, 0): 0,
-            layout.LocationAddress(4, 0): 1,
+            LocationAddress(0, 0): 0,
+            LocationAddress(4, 0): 1,
         },
         qubit_to_locations={
-            0: layout.LocationAddress(0, 0),
-            1: layout.LocationAddress(4, 0),
+            0: LocationAddress(0, 0),
+            1: LocationAddress(4, 0),
         },
     )
 
     arch_spec = logical.get_arch_spec()
 
     new_atom_state = atom_state.apply_moves(
-        lanes=(layout.WordLaneAddress(0, 0, 0),), arch_spec=arch_spec
+        lanes=(WordLaneAddress(0, 0, 0),), arch_spec=arch_spec
     )
 
     expected_atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
-            layout.LocationAddress(1, 0): 0,
-            layout.LocationAddress(4, 0): 1,
+            LocationAddress(1, 0): 0,
+            LocationAddress(4, 0): 1,
         },
         qubit_to_locations={
-            0: layout.LocationAddress(1, 0),
-            1: layout.LocationAddress(4, 0),
+            0: LocationAddress(1, 0),
+            1: LocationAddress(4, 0),
         },
         prev_lanes={
-            0: layout.WordLaneAddress(0, 0, 0),
+            0: WordLaneAddress(0, 0, 0),
         },
         move_count={0: 1},
     )
@@ -78,19 +84,19 @@ def test_apply_moves():
 def test_apply_moves_with_collision():
     atom_state = atom_state_data.AtomStateData.from_fields(
         locations_to_qubit={
-            layout.LocationAddress(0, 0): 0,
-            layout.LocationAddress(1, 0): 1,
+            LocationAddress(0, 0): 0,
+            LocationAddress(1, 0): 1,
         },
         qubit_to_locations={
-            0: layout.LocationAddress(0, 0),
-            1: layout.LocationAddress(1, 0),
+            0: LocationAddress(0, 0),
+            1: LocationAddress(1, 0),
         },
     )
 
     arch_spec = logical.get_arch_spec()
 
     new_atom_state = atom_state.apply_moves(
-        lanes=(lane_address := layout.WordLaneAddress(0, 0, 0),),
+        lanes=(lane_address := WordLaneAddress(0, 0, 0),),
         arch_spec=arch_spec,
     )
 
@@ -111,16 +117,16 @@ def test_get_qubit_pairing():
     # Qubit 1 at (w=2,s=0) has no partner at (w=3,s=0) — unpaired.
     atom_state = atom_state_data.AtomStateData.new(
         [
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(2, 0),
-            layout.LocationAddress(1, 0),
+            LocationAddress(0, 0),
+            LocationAddress(2, 0),
+            LocationAddress(1, 0),
         ]
     )
 
     arch_spec = logical.get_arch_spec()
 
     controls, targets, unpaired = atom_state.get_qubit_pairing(
-        zone_address=layout.ZoneAddress(0), arch_spec=arch_spec
+        zone_address=ZoneAddress(0), arch_spec=arch_spec
     )
 
     assert set(controls) == {0}
@@ -135,18 +141,18 @@ def test_get_qubit_pairing_with_pairs():
     # Qubit 4 at (w=4,s=0) — unpaired (no qubit at (w=5,s=0))
     atom_state = atom_state_data.AtomStateData.new(
         [
-            layout.LocationAddress(0, 0),  # qubit 0 — pairs with qubit 1
-            layout.LocationAddress(1, 0),  # qubit 1 — pairs with qubit 0
-            layout.LocationAddress(2, 0),  # qubit 2 — pairs with qubit 3
-            layout.LocationAddress(3, 0),  # qubit 3 — pairs with qubit 2
-            layout.LocationAddress(4, 0),  # qubit 4 — unpaired
+            LocationAddress(0, 0),  # qubit 0 — pairs with qubit 1
+            LocationAddress(1, 0),  # qubit 1 — pairs with qubit 0
+            LocationAddress(2, 0),  # qubit 2 — pairs with qubit 3
+            LocationAddress(3, 0),  # qubit 3 — pairs with qubit 2
+            LocationAddress(4, 0),  # qubit 4 — unpaired
         ]
     )
 
     arch_spec = logical.get_arch_spec()
 
     controls, targets, unpaired = atom_state.get_qubit_pairing(
-        zone_address=layout.ZoneAddress(0), arch_spec=arch_spec
+        zone_address=ZoneAddress(0), arch_spec=arch_spec
     )
 
     assert set(controls) == {0, 2}
@@ -155,40 +161,38 @@ def test_get_qubit_pairing_with_pairs():
 
 
 def test_add_atoms_duplicate_qubit_raises():
-    atom_state = atom_state_data.AtomStateData.new([layout.LocationAddress(0, 0)])
+    atom_state = atom_state_data.AtomStateData.new([LocationAddress(0, 0)])
     with pytest.raises(InterpreterError, match="already exists"):
-        atom_state.add_atoms({0: layout.LocationAddress(1, 0)})
+        atom_state.add_atoms({0: LocationAddress(1, 0)})
 
 
 def test_add_atoms_occupied_location_raises():
-    atom_state = atom_state_data.AtomStateData.new([layout.LocationAddress(0, 0)])
+    atom_state = atom_state_data.AtomStateData.new([LocationAddress(0, 0)])
     with pytest.raises(InterpreterError, match="occupied"):
-        atom_state.add_atoms({1: layout.LocationAddress(0, 0)})
+        atom_state.add_atoms({1: LocationAddress(0, 0)})
 
 
 def test_apply_moves_invalid_lane_returns_none():
-    atom_state = atom_state_data.AtomStateData.new([layout.LocationAddress(0, 0)])
+    atom_state = atom_state_data.AtomStateData.new([LocationAddress(0, 0)])
     arch_spec = logical.get_arch_spec()
 
     # Use a lane with an invalid bus_id
-    invalid_lane = layout.LaneAddress(layout.MoveType.SITE, 0, 0, 99)
+    invalid_lane = LaneAddress(MoveType.SITE, 0, 0, 99)
     result = atom_state.apply_moves(lanes=(invalid_lane,), arch_spec=arch_spec)
     assert result is None
 
 
 def test_get_qubit_pairing_invalid_zone_raises():
-    atom_state = atom_state_data.AtomStateData.new([layout.LocationAddress(0, 0)])
+    atom_state = atom_state_data.AtomStateData.new([LocationAddress(0, 0)])
     arch_spec = logical.get_arch_spec()
 
     with pytest.raises(InterpreterError, match="Invalid zone address"):
-        atom_state.get_qubit_pairing(
-            zone_address=layout.ZoneAddress(99), arch_spec=arch_spec
-        )
+        atom_state.get_qubit_pairing(zone_address=ZoneAddress(99), arch_spec=arch_spec)
 
 
 def test_get_qubit_empty_location():
-    atom_state = atom_state_data.AtomStateData.new([layout.LocationAddress(0, 0)])
-    assert atom_state.get_qubit(layout.LocationAddress(1, 0)) is None
+    atom_state = atom_state_data.AtomStateData.new([LocationAddress(0, 0)])
+    assert atom_state.get_qubit(LocationAddress(1, 0)) is None
 
 
 def test_empty_state():
@@ -202,15 +206,15 @@ def test_empty_state():
 
 def test_properties_return_expected_values():
     atom_state = atom_state_data.AtomStateData.new(
-        [layout.LocationAddress(0, 0), layout.LocationAddress(1, 0)]
+        [LocationAddress(0, 0), LocationAddress(1, 0)]
     )
     assert atom_state.locations_to_qubit == {
-        layout.LocationAddress(0, 0): 0,
-        layout.LocationAddress(1, 0): 1,
+        LocationAddress(0, 0): 0,
+        LocationAddress(1, 0): 1,
     }
     assert atom_state.qubit_to_locations == {
-        0: layout.LocationAddress(0, 0),
-        1: layout.LocationAddress(1, 0),
+        0: LocationAddress(0, 0),
+        1: LocationAddress(1, 0),
     }
     assert atom_state.collision == {}
     assert atom_state.prev_lanes == {}
@@ -225,7 +229,7 @@ def test_equality_with_non_atom_state():
 
 def test_copy():
     atom_state = atom_state_data.AtomStateData.new(
-        [layout.LocationAddress(0, 0), layout.LocationAddress(1, 0)]
+        [LocationAddress(0, 0), LocationAddress(1, 0)]
     )
     copied = atom_state.copy()
     assert atom_state == copied

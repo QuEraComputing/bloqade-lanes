@@ -15,14 +15,14 @@ from bloqade.lanes.bytecode._native import (
     Zone as _RustZone,
     ZoneBus,
 )
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
     MoveType,
     ZoneAddress,
 )
-from bloqade.lanes.layout.word import Word
+from bloqade.lanes.bytecode.word import Word
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

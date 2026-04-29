@@ -12,8 +12,8 @@ from kirin.dialects import func, ssacfg
 
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.layout.analysis import LayoutHeuristicABC
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
-from bloqade.lanes.layout.encoding import LocationAddress
 
 # ---------------------------------------------------------------------------
 # Minimal stub heuristic (never called by these unit tests)

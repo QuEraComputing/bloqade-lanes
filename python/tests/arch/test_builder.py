@@ -3,13 +3,13 @@
 import pytest
 
 from bloqade.lanes.arch.builder import ArchResult, build_arch
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.arch.topology import (
     HypercubeSiteTopology,
     HypercubeWordTopology,
     MatchingTopology,
 )
 from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
-from bloqade.lanes.layout import ArchSpec
 
 
 def _has_site_buses(arch: ArchSpec) -> frozenset[int]:
@@ -324,8 +324,8 @@ class TestBuildArchPerBusWords:
 class TestPathFinderIntegration:
     def test_per_zone_site_bus_scoping(self) -> None:
         """PathFinder graph only connects site bus edges for the bus's words."""
-        from bloqade.lanes.layout.encoding import LocationAddress
-        from bloqade.lanes.layout.path import PathFinder
+        from bloqade.lanes.arch.path import PathFinder
+        from bloqade.lanes.bytecode.encoding import LocationAddress
 
         bp = ArchBlueprint(
             zones={
@@ -351,8 +351,8 @@ class TestPathFinderIntegration:
 
     def test_cross_zone_reachable_via_word_bus(self) -> None:
         """PathFinder can route across zones via inter-zone zone buses."""
-        from bloqade.lanes.layout.encoding import LocationAddress
-        from bloqade.lanes.layout.path import PathFinder
+        from bloqade.lanes.arch.path import PathFinder
+        from bloqade.lanes.bytecode.encoding import LocationAddress
 
         bp = ArchBlueprint(
             zones={

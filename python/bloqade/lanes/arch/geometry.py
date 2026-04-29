@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
-from bloqade.lanes.layout.encoding import Direction, LaneAddress, MoveType
+from bloqade.lanes.bytecode.encoding import Direction, LaneAddress, MoveType
 
 if TYPE_CHECKING:
     from bloqade.geometry.dialects.grid import Grid as GeoGrid

@@ -16,9 +16,9 @@ from kirin.rewrite.abc import RewriteRule
 
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LaneAddress
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 
 

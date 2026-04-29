@@ -7,7 +7,7 @@ from kirin.analysis import Forward
 from kirin.analysis.forward import ForwardFrame
 from typing_extensions import Self
 
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.utils import no_none_elements_tuple
 
 from . import _shot_remapping

@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 
 import kahip
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini.physical import (
     get_physical_layout_arch_spec,
 )
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 def _to_cz_layers(
@@ -26,7 +27,7 @@ def _to_cz_layers(
 
 @dataclass
 class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_layout_arch_spec)
+    arch_spec: ArchSpec = field(default_factory=get_physical_layout_arch_spec)
     max_words: int | None = None
     u_factor: int = 1
     partitioner_seed: int = 0
@@ -166,22 +167,20 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         }
         return {qid: remap[wid] for qid, wid in q_to_word.items()}
 
-    def _sites_center_out(self, word_id: int) -> list[layout.LocationAddress]:
+    def _sites_center_out(self, word_id: int) -> list[LocationAddress]:
         zone_id = self.arch_spec.word_zone_map[word_id]
         n = self.sites_per_partition
-        sites = [
-            layout.LocationAddress(word_id, site_id, zone_id) for site_id in range(n)
-        ]
+        sites = [LocationAddress(word_id, site_id, zone_id) for site_id in range(n)]
         center = (n - 1) / 2.0
         return sorted(
             sites,
             key=lambda addr: (abs(addr.site_id - center), addr.site_id),
         )
 
-    def _sites_bottom_up(self, word_id: int) -> list[layout.LocationAddress]:
+    def _sites_bottom_up(self, word_id: int) -> list[LocationAddress]:
         zone_id = self.arch_spec.word_zone_map[word_id]
         return [
-            layout.LocationAddress(word_id, site_id, zone_id)
+            LocationAddress(word_id, site_id, zone_id)
             for site_id in range(self.sites_per_partition)
         ]
 
@@ -190,8 +189,8 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         members: list[int],
         q_to_node: dict[int, int],
         weighted_edges: dict[tuple[int, int], int],
-        sites: list[layout.LocationAddress],
-    ) -> dict[int, layout.LocationAddress]:
+        sites: list[LocationAddress],
+    ) -> dict[int, LocationAddress]:
         def edge_weight(q0: int, q1: int) -> int:
             u = q_to_node[q0]
             v = q_to_node[q1]
@@ -210,7 +209,7 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         if len(members) == 0:
             return {}
 
-        placed: dict[int, layout.LocationAddress] = {}
+        placed: dict[int, LocationAddress] = {}
         remaining = set(members)
         center_qubit = max(
             sorted(remaining),
@@ -293,15 +292,15 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
 
     def _candidate_slots(
         self, k_words: int, target_sizes: tuple[int, ...]
-    ) -> list[layout.LocationAddress]:
+    ) -> list[LocationAddress]:
         home_words = self.home_word_ids
         word_zone = self.arch_spec.word_zone_map
-        slots: list[layout.LocationAddress] = []
+        slots: list[LocationAddress] = []
         for word_idx in range(k_words):
             word_id = home_words[word_idx]
             zone_id = word_zone[word_id]
             for site_id in range(target_sizes[word_idx]):
-                slots.append(layout.LocationAddress(word_id, site_id, zone_id))
+                slots.append(LocationAddress(word_id, site_id, zone_id))
         return slots
 
     def _global_site_min_cost_assignment(
@@ -309,8 +308,8 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         qubits: tuple[int, ...],
         weighted_edges: dict[tuple[int, int], int],
         q_to_node: dict[int, int],
-        slots: list[layout.LocationAddress],
-    ) -> dict[int, layout.LocationAddress]:
+        slots: list[LocationAddress],
+    ) -> dict[int, LocationAddress]:
         if len(qubits) != len(slots):
             raise RuntimeError("Qubit count and slot count must match for assignment.")
 
@@ -418,8 +417,8 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         self,
         qubits: tuple[int, ...],
         cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
-        pinned: dict[int, layout.LocationAddress] | None = None,
-    ) -> tuple[layout.LocationAddress, ...]:
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
         if pinned is None:
             pinned = {}
         pinned_addresses = set(pinned.values())
@@ -480,8 +479,8 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
-        pinned: dict[int, layout.LocationAddress] | None = None,
-    ) -> tuple[layout.LocationAddress, ...]:
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
         pinned = {} if pinned is None else pinned
         if len(set(pinned.values())) < len(pinned):
             raise ValueError(

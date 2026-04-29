@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import cached_property
 from typing import TYPE_CHECKING, Sequence
 
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LocationAddress,
     SiteLaneAddress,
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from matplotlib.axes import Axes
 
-    from bloqade.lanes.layout.arch import ArchSpec
+    from bloqade.lanes.arch.spec import ArchSpec
 
 
 __all__ = [

@@ -7,10 +7,10 @@ from kirin import ir
 from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice import EmptyLattice
 
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 if TYPE_CHECKING:
-    from bloqade.lanes.layout.arch import ArchSpec
+    from bloqade.lanes.arch.spec import ArchSpec
 
 
 @dataclass
