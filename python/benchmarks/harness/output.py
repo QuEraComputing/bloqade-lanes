@@ -10,6 +10,7 @@ from benchmarks.harness.models import BenchmarkRow
 CSV_COLUMNS: tuple[str, ...] = (
     "case_id",
     "strategy_id",
+    "arch_spec_id",
     "backend",
     "generator_id",
     "success",
@@ -28,7 +29,9 @@ FIDELITY_DECIMALS = 10
 
 def sort_rows(rows: list[BenchmarkRow]) -> list[BenchmarkRow]:
     """Sort rows deterministically for stable diffs."""
-    return sorted(rows, key=lambda row: (row.case_id, row.strategy_id))
+    return sorted(
+        rows, key=lambda row: (row.case_id, row.strategy_id, row.arch_spec_id)
+    )
 
 
 def write_csv(rows: list[BenchmarkRow], output_path: Path) -> None:
@@ -43,6 +46,7 @@ def write_csv(rows: list[BenchmarkRow], output_path: Path) -> None:
                 {
                     "case_id": row.case_id,
                     "strategy_id": row.strategy_id,
+                    "arch_spec_id": row.arch_spec_id,
                     "backend": row.backend,
                     "generator_id": row.generator_id,
                     "success": row.success,

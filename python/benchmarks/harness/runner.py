@@ -104,6 +104,7 @@ class BenchmarkRunner:
                 estimated_fidelity=fidelity,
                 nodes_explored=nodes_explored,
                 max_depth_reached=max_depth_reached,
+                arch_spec_id=job.strategy.arch_spec_id,
                 notes="; ".join([n for n in notes if n]),
             )
         except Exception as exc:  # pragma: no cover - defensive output row
@@ -119,6 +120,7 @@ class BenchmarkRunner:
                 estimated_fidelity=None,
                 nodes_explored=None,
                 max_depth_reached=None,
+                arch_spec_id=job.strategy.arch_spec_id,
                 notes=f"{'; '.join([n for n in notes if n])}; error={exc}".strip("; "),
             )
 
