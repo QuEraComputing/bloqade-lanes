@@ -364,8 +364,14 @@ class InsertFill(RewriteRule):
             return RewriteResult()
 
         first_stmt = node.body.blocks[0].first_stmt
-        if first_stmt is None or isinstance(first_stmt, move.Fill):
+        if first_stmt is None:
             return RewriteResult()
+
+        stmt = first_stmt
+        while stmt is not None and isinstance(stmt, (move.Load, move.Fill, move.Store)):
+            if isinstance(stmt, move.Fill):
+                return RewriteResult()
+            stmt = stmt.next_stmt
 
         location_addresses: list[LocationAddress | None] = []
         for stmt in node.body.walk():
