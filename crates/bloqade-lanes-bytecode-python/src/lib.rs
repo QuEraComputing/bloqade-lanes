@@ -51,6 +51,8 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PySolveResult>()?;
     m.add_class::<search_python::PyEntropyTrace>()?;
     m.add_class::<search_python::PyEntropyTraceStep>()?;
+    m.add_class::<search_python::PyEntropyScorer>()?;
+    m.add_class::<search_python::PyMovesetMetrics>()?;
     m.add_class::<search_python::PyDefaultTargetGenerator>()?;
     m.add_class::<search_python::PyMultiSolveResult>()?;
 
