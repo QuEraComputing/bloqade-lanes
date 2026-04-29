@@ -14,17 +14,15 @@ def test_matrix_expansion_builds_case_strategy_cross_product():
     assert len(jobs) == len(BENCHMARK_CASES) * len(strategies)
 
 
-def test_matrix_expansion_applies_filters():
+def test_matrix_expansion_applies_strategy_filter():
     strategies = default_strategy_configs()
     jobs = expand_benchmark_jobs(
         BENCHMARK_CASES,
         strategies,
-        case_filter={"ghz_4"},
         strategy_filter={"rust_astar"},
     )
-    assert len(jobs) == 1
-    assert jobs[0].case.case_id == "ghz_4"
-    assert jobs[0].strategy.strategy_id == "rust_astar"
+    assert len(jobs) == len(BENCHMARK_CASES)
+    assert all(job.strategy.strategy_id == "rust_astar" for job in jobs)
 
 
 def test_default_strategy_configs_are_importable_and_buildable():
@@ -50,7 +48,7 @@ def test_default_strategy_configs_stamp_builtin_arch_spec_id():
     assert all(s.arch_spec_id == "builtin" for s in strategies)
 
 
-def test_default_strategy_configs_accepts_factory_and_arch_spec_id():
+def test_default_strategy_configs_accepts_arch_spec_pair():
     sentinel = cast(ArchSpec, object())
     factory_calls: list[int] = []
 
@@ -58,9 +56,7 @@ def test_default_strategy_configs_accepts_factory_and_arch_spec_id():
         factory_calls.append(1)
         return sentinel
 
-    strategies = default_strategy_configs(
-        arch_spec_factory=factory, arch_spec_id="custom"
-    )
+    strategies = default_strategy_configs(arch_spec=("custom", factory))
 
     assert strategies
     assert all(s.arch_spec_id == "custom" for s in strategies)
@@ -75,7 +71,7 @@ def test_default_strategy_configs_factory_is_called_per_build():
         calls.append(1)
         return cast(ArchSpec, object())
 
-    strategies = default_strategy_configs(arch_spec_factory=factory, arch_spec_id="x")
+    strategies = default_strategy_configs(arch_spec=("x", factory))
     # One build per strategy → one factory call per strategy.
     for strategy in strategies:
         try:

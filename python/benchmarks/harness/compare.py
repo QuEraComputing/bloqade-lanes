@@ -6,7 +6,7 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-from benchmarks.harness.models import BenchmarkRow
+from benchmarks.harness.models import BUILTIN_ARCH_SPEC_ID, BenchmarkRow
 from benchmarks.harness.output import CSV_COLUMNS
 
 BenchmarkKey = tuple[str, str, str]
@@ -58,8 +58,11 @@ def load_baseline_csv(path: Path) -> list[BenchmarkRow]:
         if fieldnames == CSV_COLUMNS:
             return [_parse_row(row) for row in reader]
         if fieldnames == legacy_columns:
-            # Baselines produced before arch_spec_id existed map to "builtin".
-            return [_parse_row({**row, "arch_spec_id": "builtin"}) for row in reader]
+            # Baselines produced before arch_spec_id existed map to the builtin id.
+            return [
+                _parse_row({**row, "arch_spec_id": BUILTIN_ARCH_SPEC_ID})
+                for row in reader
+            ]
         expected = ", ".join(CSV_COLUMNS)
         actual = ", ".join(reader.fieldnames)
         raise ValueError(

@@ -18,7 +18,7 @@ from benchmarks.harness import (
     render_console_table,
     write_csv,
 )
-from benchmarks.harness.models import BenchmarkJob
+from benchmarks.harness.models import BUILTIN_ARCH_SPEC_ID, BenchmarkJob
 from benchmarks.kernels import select_benchmark_cases
 
 from bloqade.lanes.arch.gemini import physical
@@ -49,8 +49,7 @@ def main() -> int:
         cfg
         for (arch_id, arch) in arch_spec_pairs
         for cfg in default_strategy_configs(
-            arch_spec_factory=(lambda arch=arch: arch),
-            arch_spec_id=arch_id,
+            arch_spec=(arch_id, (lambda arch=arch: arch)),
         )
     )
     jobs = expand_benchmark_jobs(
@@ -167,8 +166,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path(s) to archspec JSON file(s). When omitted, uses the built-in "
-            "physical archspec (id='builtin'). Each file's filename stem is used "
-            "as its id in output rows; stem collisions across paths are an error."
+            f"physical archspec (id='{BUILTIN_ARCH_SPEC_ID}'). Each file's "
+            "filename stem is used as its id in output rows; stem collisions "
+            f"across paths and the reserved id '{BUILTIN_ARCH_SPEC_ID}' are an "
+            "error."
         ),
     )
     return parser
@@ -247,15 +248,28 @@ def _resolve_arch_specs(
 ) -> list[tuple[str, ArchSpec]]:
     """Resolve --arch-spec paths into (id, ArchSpec) pairs.
 
-    Returns a single ("builtin", built-in archspec) pair when paths is None
-    or empty. Each path's identifier is its filename stem. Paths are loaded
-    eagerly; schema errors and stem collisions surface before any benchmark
-    runs.
+    Returns a single (BUILTIN_ARCH_SPEC_ID, built-in archspec) pair when paths
+    is None or empty. Each path's identifier is its filename stem. Paths are
+    loaded eagerly; schema errors, stem collisions, and use of the reserved
+    BUILTIN_ARCH_SPEC_ID stem surface before any benchmark runs.
     """
     if not paths:
-        return [("builtin", physical.get_arch_spec())]
+        return [(BUILTIN_ARCH_SPEC_ID, physical.get_arch_spec())]
 
     stems = [Path(p).stem for p in paths]
+    reserved = sorted(
+        {
+            path
+            for path, stem in zip(paths, stems, strict=True)
+            if stem == BUILTIN_ARCH_SPEC_ID
+        }
+    )
+    if reserved:
+        raise ValueError(
+            f"--arch-spec filename stem '{BUILTIN_ARCH_SPEC_ID}' is reserved "
+            f"for the built-in physical archspec; rename the file: {reserved}"
+        )
+
     counts = Counter(stems)
     duplicates = sorted({stem for stem, n in counts.items() if n > 1})
     if duplicates:

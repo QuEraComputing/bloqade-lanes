@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfig
+from benchmarks.harness.models import (
+    BUILTIN_ARCH_SPEC_ID,
+    BenchmarkCase,
+    BenchmarkJob,
+    StrategyConfig,
+)
 
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.heuristics.physical.placement import (
@@ -15,17 +20,21 @@ from bloqade.lanes.layout.arch import ArchSpec
 
 
 def default_strategy_configs(
-    arch_spec_factory: Callable[[], ArchSpec] | None = None,
-    arch_spec_id: str = "builtin",
+    arch_spec: tuple[str, Callable[[], ArchSpec]] | None = None,
 ) -> tuple[StrategyConfig, ...]:
     """Return the default strategy matrix for V1 benchmarks.
 
-    The factory is invoked once per `StrategyConfig.build_placement_strategy`
-    call, matching the lazy construction semantics of the original built-in
-    archspec. When `arch_spec_factory` is None, defaults to the built-in
-    physical archspec.
+    `arch_spec` couples the id and factory so callers cannot tag rows with one
+    archspec while building from another. When None, defaults to the built-in
+    physical archspec. The factory is invoked once per
+    `StrategyConfig.build_placement_strategy` call, preserving the lazy
+    construction semantics of the original built-in archspec.
     """
-    factory = arch_spec_factory or physical.get_arch_spec
+    if arch_spec is None:
+        arch_spec_id = BUILTIN_ARCH_SPEC_ID
+        factory: Callable[[], ArchSpec] = physical.get_arch_spec
+    else:
+        arch_spec_id, factory = arch_spec
     return (
         StrategyConfig(
             strategy_id="rust_entropy_1",
@@ -139,14 +148,17 @@ def default_strategy_configs(
 def expand_benchmark_jobs(
     cases: tuple[BenchmarkCase, ...],
     strategies: tuple[StrategyConfig, ...],
-    case_filter: set[str] | None = None,
     strategy_filter: set[str] | None = None,
 ) -> list[BenchmarkJob]:
-    """Expand case and strategy registries into executable benchmark jobs."""
+    """Expand case and strategy registries into executable benchmark jobs.
+
+    Cases are taken as-is; the CLI pre-filters them via
+    `select_benchmark_cases`, which also expands size buckets. Strategy
+    filtering happens here because there is no equivalent strategy
+    pre-filter upstream.
+    """
     jobs: list[BenchmarkJob] = []
     for case in cases:
-        if case_filter is not None and case.case_id not in case_filter:
-            continue
         for strategy in strategies:
             if (
                 strategy_filter is not None

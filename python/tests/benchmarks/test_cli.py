@@ -207,7 +207,7 @@ def _mock_cli_run(monkeypatch, rows: list[BenchmarkRow]):
     monkeypatch.setattr(
         cli_module,
         "default_strategy_configs",
-        lambda arch_spec_factory=None, arch_spec_id="builtin": (strategy,),
+        lambda arch_spec=None: (strategy,),
     )
     monkeypatch.setattr(
         cli_module,
@@ -342,7 +342,7 @@ def test_main_logical_mode_skips_large_cases(monkeypatch, capsys, tmp_path: Path
     monkeypatch.setattr(
         cli_module,
         "default_strategy_configs",
-        lambda arch_spec_factory=None, arch_spec_id="builtin": (strategy,),
+        lambda arch_spec=None: (strategy,),
     )
     monkeypatch.setattr(
         cli_module,
@@ -409,6 +409,14 @@ def test_resolve_arch_specs_raises_on_malformed_json(tmp_path):
         _resolve_arch_specs([str(bad)])
 
 
+def test_resolve_arch_specs_raises_on_reserved_builtin_stem(tmp_path):
+    src = Path("examples/arch/full.json").read_text(encoding="utf-8")
+    reserved = tmp_path / "builtin.json"
+    reserved.write_text(src, encoding="utf-8")
+    with pytest.raises(ValueError, match="reserved"):
+        _resolve_arch_specs([str(reserved)])
+
+
 def test_resolve_arch_specs_raises_on_duplicate_stem(tmp_path):
     sub_a = tmp_path / "a"
     sub_b = tmp_path / "b"
@@ -456,7 +464,8 @@ def test_main_arch_spec_expands_matrix_across_archspecs(
     # Rebuild strategies each invocation so arch_spec_id is unique per call.
     captured_strategies: list[tuple[StrategyConfig, ...]] = []
 
-    def fake_default_strategy_configs(arch_spec_factory=None, arch_spec_id="builtin"):
+    def fake_default_strategy_configs(arch_spec=None):
+        arch_spec_id = "builtin" if arch_spec is None else arch_spec[0]
         strategy = StrategyConfig(
             strategy_id="python_bfs",
             backend="python",
@@ -527,7 +536,8 @@ def test_main_arch_spec_expands_matrix_across_archspecs(
 def test_main_without_arch_spec_uses_builtin_id(monkeypatch, tmp_path: Path):
     case = BenchmarkCase(case_id="ghz_4", kernel=cast(ir.Method, object()))
 
-    def fake_default_strategy_configs(arch_spec_factory=None, arch_spec_id="builtin"):
+    def fake_default_strategy_configs(arch_spec=None):
+        arch_spec_id = "builtin" if arch_spec is None else arch_spec[0]
         return (
             StrategyConfig(
                 strategy_id="python_bfs",
