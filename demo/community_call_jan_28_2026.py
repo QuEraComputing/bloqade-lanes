@@ -1,7 +1,7 @@
 # %%
 # %matplotlib inline
 from bloqade.lanes.arch.gemini import logical, physical
-from bloqade.lanes.layout import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
@@ -25,14 +25,14 @@ show_lanes(logical_arch)
 
 # %%
 from bloqade.lanes._prelude import kernel  # noqa F402
-from bloqade.lanes.dialects import move  # noqa F402
-from bloqade.lanes.layout import (  # noqa F402
+from bloqade.lanes.bytecode.encoding import (  # noqa F402
     Direction,
     LocationAddress,
     SiteLaneAddress,
     WordLaneAddress,
     ZoneAddress,
 )
+from bloqade.lanes.dialects import move  # noqa F402
 
 
 @kernel
