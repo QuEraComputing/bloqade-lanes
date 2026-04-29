@@ -709,14 +709,43 @@ pub(crate) fn generate_candidates(
         .collect()
 }
 
-/// Score a moveset: `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
-pub(crate) fn score_moveset(
+/// Detailed per-moveset scoring breakdown returned by [`compute_moveset_metrics`].
+#[derive(Debug, Clone, Default)]
+pub struct MovesetMetrics {
+    pub distance_progress: f64,
+    pub arrived: u32,
+    pub mobility_before: f64,
+    pub mobility_after: f64,
+    /// Qubit ids that ended up strictly closer to their target.
+    pub closer: Vec<u32>,
+    /// Qubit ids that ended up strictly further from their target.
+    pub further: Vec<u32>,
+}
+
+impl MovesetMetrics {
+    pub fn mobility_gain(&self) -> f64 {
+        self.mobility_after - self.mobility_before
+    }
+
+    pub fn score(&self, params: &EntropyParams) -> f64 {
+        params.alpha * self.distance_progress
+            + params.beta * (self.arrived as f64)
+            + params.gamma * self.mobility_gain()
+    }
+}
+
+/// Compute the full metrics breakdown for moving from `old_config` to `new_config`.
+///
+/// Extends [`score_moveset`]'s scalar output with distance/arrival/mobility
+/// components plus the set of qubits that got closer vs further from their
+/// targets, so visualizers and tests can inspect contributions individually.
+pub fn compute_moveset_metrics(
     old_config: &Config,
     new_config: &Config,
     occupied: &HashSet<u64>,
     ctx: &SearchContext,
     params: &EntropyParams,
-) -> f64 {
+) -> MovesetMetrics {
     let targets = ctx.targets;
     let dist_table = ctx.dist_table;
     let blocked = ctx.blocked;
@@ -724,10 +753,7 @@ pub(crate) fn score_moveset(
     let mut new_occupied: HashSet<u64> = new_config.iter().map(|(_, loc)| loc.encode()).collect();
     new_occupied.extend(blocked);
 
-    let mut distance_progress = 0.0_f64;
-    let mut arrived = 0.0_f64;
-    let mut mobility_before = 0.0_f64;
-    let mut mobility_after = 0.0_f64;
+    let mut metrics = MovesetMetrics::default();
 
     for &(qid, target_enc) in targets {
         let Some(old_loc) = old_config.location_of(qid) else {
@@ -762,10 +788,15 @@ pub(crate) fn score_moveset(
                     dist_table,
                 )
             });
-        distance_progress += (d_before - d_after).max(0.0);
+        metrics.distance_progress += (d_before - d_after).max(0.0);
+        if d_after < d_before {
+            metrics.closer.push(qid);
+        } else if d_after > d_before {
+            metrics.further.push(qid);
+        }
 
         if new_loc.encode() == target_enc {
-            arrived += 1.0;
+            metrics.arrived += 1;
         }
 
         // Distance-weighted mobility: closer destinations count more.
@@ -783,7 +814,7 @@ pub(crate) fn score_moveset(
                     blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
                 });
             if d < f64::MAX {
-                mobility_before += 1.0 / (1.0 + d);
+                metrics.mobility_before += 1.0 / (1.0 + d);
             }
         }
         for &lane in index.outgoing_lanes(new_loc) {
@@ -800,14 +831,25 @@ pub(crate) fn score_moveset(
                     blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
                 });
             if d < f64::MAX {
-                mobility_after += 1.0 / (1.0 + d);
+                metrics.mobility_after += 1.0 / (1.0 + d);
             }
         }
     }
 
-    params.alpha * distance_progress
-        + params.beta * arrived
-        + params.gamma * (mobility_after - mobility_before)
+    metrics.closer.sort_unstable();
+    metrics.further.sort_unstable();
+    metrics
+}
+
+/// Score a moveset: `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
+pub(crate) fn score_moveset(
+    old_config: &Config,
+    new_config: &Config,
+    occupied: &HashSet<u64>,
+    ctx: &SearchContext,
+    params: &EntropyParams,
+) -> f64 {
+    compute_moveset_metrics(old_config, new_config, occupied, ctx, params).score(params)
 }
 
 // ── BFS path-finding with occupancy ────────────────────────────────
