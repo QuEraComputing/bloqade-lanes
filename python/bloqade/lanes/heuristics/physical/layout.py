@@ -418,24 +418,81 @@ class PhysicalLayoutHeuristicGraphPartitionCenterOut(LayoutHeuristicABC):
         self,
         qubits: tuple[int, ...],
         cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+        pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
+        if pinned is None:
+            pinned = {}
+        pinned_addresses = set(pinned.values())
+        unpinned_qubits = tuple(q for q in qubits if q not in pinned)
+
         k_words = self._word_count(len(qubits))
-        target_sizes = self._target_block_sizes(len(qubits), k_words)
+        total_capacity = k_words * self.sites_per_partition
+
+        # Compute how many candidate slots remain after reserving pinned addresses.
+        # This check must happen before _target_block_sizes, which raises RuntimeError
+        # when qubit_count exceeds arch capacity; we convert that to a user-facing
+        # ValueError with the "no legal positions remain" message.
+        unpinned_slot_count = max(0, total_capacity - len(pinned_addresses))
+        if len(unpinned_qubits) > unpinned_slot_count:
+            raise ValueError(
+                f"layout heuristic cannot place {len(unpinned_qubits)} un-pinned qubits: "
+                f"arch provides {total_capacity} total sites, "
+                f"{len(pinned_addresses)} are pinned, leaving {unpinned_slot_count} available; "
+                "no legal positions remain"
+            )
+
+        # _target_block_sizes expects qubit_count <= k_words * sites_per_partition.
+        # Use total_capacity as the qubit_count when qubits exceed it (this can
+        # only occur when all overflow qubits are covered by pinned addresses,
+        # since the check above would have raised otherwise).
+        target_qubit_count = min(len(qubits), total_capacity)
+        target_sizes = self._target_block_sizes(target_qubit_count, k_words)
         q_to_node, weighted_edges = self._build_weighted_graph(qubits, cz_layers)
-        slots = self._candidate_slots(k_words, target_sizes)
-        q_to_location = self._global_site_min_cost_assignment(
-            qubits=qubits,
-            weighted_edges=weighted_edges,
-            q_to_node=q_to_node,
-            slots=slots,
-        )
-        return tuple(q_to_location[qid] for qid in qubits)
+        all_slots = self._candidate_slots(k_words, target_sizes)
+
+        unpinned_slots = [s for s in all_slots if s not in pinned_addresses]
+
+        if unpinned_qubits:
+            # Filter weighted_edges to only include edges between unpinned qubits.
+            unpinned_set = set(unpinned_qubits)
+            node_to_q = {node: qid for qid, node in q_to_node.items()}
+            unpinned_edges: dict[tuple[int, int], int] = {
+                (u, v): w
+                for (u, v), w in weighted_edges.items()
+                if node_to_q[u] in unpinned_set and node_to_q[v] in unpinned_set
+            }
+            # Build a q_to_node restricted to unpinned qubits so the assignment
+            # sees a consistent mapping.
+            unpinned_q_to_node = {q: q_to_node[q] for q in unpinned_qubits}
+            q_to_location = self._global_site_min_cost_assignment(
+                qubits=unpinned_qubits,
+                weighted_edges=unpinned_edges,
+                q_to_node=unpinned_q_to_node,
+                slots=unpinned_slots[: len(unpinned_qubits)],
+            )
+        else:
+            q_to_location = {}
+
+        result = q_to_location | pinned
+        return tuple(result[q] for q in qubits)
 
     def compute_layout(
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, layout.LocationAddress] | None = None,
     ) -> tuple[layout.LocationAddress, ...]:
+        pinned = {} if pinned is None else pinned
+        if len(set(pinned.values())) < len(pinned):
+            raise ValueError(
+                "pinned addresses must be unique; two qubit IDs share the same address"
+            )
+        extra_keys = set(pinned) - set(all_qubits)
+        if extra_keys:
+            raise ValueError(
+                f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
+            )
+        self._validate_pinned_in_arch(pinned, self.arch_spec)
         qubits = tuple(sorted(all_qubits))
         cz_layers = _to_cz_layers(stages)
-        return self._compute_layout_from_cz_layers(qubits, cz_layers)
+        return self._compute_layout_from_cz_layers(qubits, cz_layers, pinned)

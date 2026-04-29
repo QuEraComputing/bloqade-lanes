@@ -55,7 +55,10 @@ pipeline-details:
 simulator-device-demo:
     python demo/simulator_device_demo.py
 
-demo: demo-msd demo-pipeline pipeline-details simulator-device-demo
+demo-explicit-allocation:
+    python demo/explicit_allocation.py
+
+demo: demo-msd demo-pipeline pipeline-details simulator-device-demo demo-explicit-allocation
 
 # Install mdBook at the pinned version
 install-mdbook:
