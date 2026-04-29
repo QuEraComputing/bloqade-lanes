@@ -6,6 +6,7 @@ skills
 # for qet code
 demo/msd_utils/qet.py
 demo/qet*.ipynb
+demo/scratch.ipynb
 python/tests/demo/test_qet_utils.py
 
 # misc
