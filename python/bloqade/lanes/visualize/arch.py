@@ -1,4 +1,4 @@
-"""Visualization helpers for :class:`~bloqade.lanes.layout.ArchSpec`.
+"""Visualization helpers for :class:`~bloqade.lanes.arch.spec.ArchSpec`.
 
 These used to live as methods on ``ArchSpec`` itself. They were extracted
 as part of #464 phase 1 so the core ``ArchSpec`` Python wrapper stays

@@ -60,7 +60,7 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
 
         Enumerates site-bus, word-bus, and zone-bus lanes in both forward
         and backward directions. Used by
-        :class:`~bloqade.lanes.layout.MoveMetricCalculator` to compute
+        :class:`~bloqade.lanes.arch.metrics.MoveMetricCalculator` to compute
         max-duration bounds. Prefer ``get_lane_address(src, dst)`` for
         single-pair lookups.
         """

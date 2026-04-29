@@ -4,7 +4,7 @@ This module provides :class:`ArchSpecGeometry`, a helper class for downstream
 consumers who want geometry-level queries (grids, flat site lists, bus
 descriptors) without walking Rust zone objects directly.
 
-The class accepts either a Python :class:`~bloqade.lanes.layout.arch.ArchSpec`
+The class accepts either a Python :class:`~bloqade.lanes.arch.spec.ArchSpec`
 wrapper or a raw Rust ``_RustArchSpec`` object, so it can be used at either
 layer of the stack.
 """
@@ -41,7 +41,7 @@ class ArchSpecGeometry:
     consumers who need geometry-level data without walking Rust zone objects
     directly.
 
-    Accepts either a Python :class:`~bloqade.lanes.layout.arch.ArchSpec` or a
+    Accepts either a Python :class:`~bloqade.lanes.arch.spec.ArchSpec` or a
     raw Rust ``_RustArchSpec`` object, so it can be constructed from either
     layer of the stack.
     """
