@@ -42,6 +42,21 @@ class NativeToPlace:
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
+        if self.arch_spec is not None:
+            from bloqade.gemini.analysis.duplicate_address_validation import (
+                DuplicateAddressValidation,
+            )
+            from bloqade.lanes.validation.address import Validation
+
+            errors: list[ir.ValidationError] = []
+            _, per_stmt_errors = Validation(arch_spec=self.arch_spec).run(out)
+            errors.extend(per_stmt_errors)
+            _, dup_errors = DuplicateAddressValidation().run(out)
+            errors.extend(dup_errors)
+            if errors:
+                message = f"Gemini IR validation failed with {len(errors)} error(s)"
+                raise ValidationErrorGroup(message, errors=errors)
+
         if self.logical_initialize:
             rule = rewrite.Chain(
                 rewrite.Walk(
@@ -58,21 +73,6 @@ class NativeToPlace:
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
-
-        if self.arch_spec is not None:
-            from bloqade.gemini.analysis.duplicate_address_validation import (
-                DuplicateAddressValidation,
-            )
-            from bloqade.lanes.validation.address import Validation
-
-            errors: list[ir.ValidationError] = []
-            _, per_stmt_errors = Validation(arch_spec=self.arch_spec).run(out)
-            errors.extend(per_stmt_errors)
-            _, dup_errors = DuplicateAddressValidation().run(out)
-            errors.extend(dup_errors)
-            if errors:
-                message = f"Gemini IR validation failed with {len(errors)} error(s)"
-                raise ValidationErrorGroup(message, errors=errors)
 
         if self.logical_initialize:
             rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(

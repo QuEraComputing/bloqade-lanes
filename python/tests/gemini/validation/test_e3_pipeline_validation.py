@@ -11,8 +11,13 @@ from kirin.ir.exception import ValidationErrorGroup
 
 import bloqade.gemini as gemini
 from bloqade.gemini.common import new_at
+from bloqade.lanes.compile import compile_to_physical_squin_noise_model
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.heuristics.physical.layout import (
+    PhysicalLayoutHeuristicGraphPartitionCenterOut,
+)
+from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.upstream import squin_to_move
 
 # ---------------------------------------------------------------------------
@@ -95,6 +100,22 @@ def test_pipeline_catches_duplicate_addresses():
     errors = exc_info.value.errors
     assert len(errors) >= 1
     assert any("pinned by two" in str(e) for e in errors)
+
+
+def test_pipeline_physical_noise_u3_kernel_compiles_without_initialize_validation_error():
+    """Physical U3 noise compilation should not expose Initialize to validation."""
+
+    @squin.kernel(typeinfer=True, fold=True)
+    def kernel():
+        q = squin.qalloc(2)
+        squin.u3(1.57079632679, 0.0, 3.14159265359, q[0])
+        squin.cz(q[0], q[1])
+
+    compile_to_physical_squin_noise_model(
+        kernel,
+        layout_heuristic=PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        placement_strategy=PhysicalPlacementStrategy(),
+    )
 
 
 # ---------------------------------------------------------------------------
