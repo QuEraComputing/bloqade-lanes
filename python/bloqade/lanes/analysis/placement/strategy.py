@@ -1,7 +1,8 @@
 import abc
 from dataclasses import dataclass
 
-from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 from .lattice import AtomState, ConcreteState, ExecuteCZ, ExecuteMeasure
 

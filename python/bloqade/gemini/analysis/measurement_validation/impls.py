@@ -5,7 +5,7 @@ from kirin import interp as _interp, ir
 from kirin.analysis import ForwardFrame
 from kirin.dialects import func
 
-import bloqade.gemini as gemini
+from bloqade.gemini.logical.dialects import operations as gemini_operations
 
 from .analysis import _GeminiTerminalMeasurementValidationAnalysis
 
@@ -33,17 +33,15 @@ class __QubitGeminiMeasurementValidation(_interp.MethodTable):
         return (interp.lattice.bottom(),)
 
 
-@gemini.logical.dialects.operations.dialect.register(
-    key="gemini.validate.terminal_measurement"
-)
+@gemini_operations.dialect.register(key="gemini.validate.terminal_measurement")
 class __GeminiLogicalMeasurementValidation(_interp.MethodTable):
 
-    @_interp.impl(gemini.logical.dialects.operations.stmts.TerminalLogicalMeasurement)
+    @_interp.impl(gemini_operations.stmts.TerminalLogicalMeasurement)
     def terminal_measure(
         self,
         interp: _GeminiTerminalMeasurementValidationAnalysis,
         frame: ForwardFrame,
-        stmt: gemini.logical.dialects.operations.stmts.TerminalLogicalMeasurement,
+        stmt: gemini_operations.stmts.TerminalLogicalMeasurement,
     ):
 
         # should only be one terminal measurement EVER

@@ -2,14 +2,14 @@
 
 import pytest
 
-from bloqade.lanes.arch.topology import (
+from bloqade.lanes.arch.build.blueprint import DeviceLayout, ZoneSpec
+from bloqade.lanes.arch.build.topology import (
     AllToAllSiteTopology,
     HypercubeSiteTopology,
     HypercubeWordTopology,
     MatchingTopology,
 )
-from bloqade.lanes.arch.word_factory import WordGrid, create_zone_words
-from bloqade.lanes.arch.zone import DeviceLayout, ZoneSpec
+from bloqade.lanes.arch.build.word_factory import WordGrid, create_zone_words
 
 
 def _make_grid(

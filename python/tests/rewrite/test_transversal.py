@@ -5,13 +5,13 @@ from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
 from kirin.dialects import ilist, py
 
-from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
     SiteLaneAddress,
 )
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import transversal
 
 AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)

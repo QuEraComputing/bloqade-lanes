@@ -5,8 +5,8 @@ from kirin.decl import info, statement
 from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
-from ..layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
 
 dialect = ir.Dialect(name="lanes.move")

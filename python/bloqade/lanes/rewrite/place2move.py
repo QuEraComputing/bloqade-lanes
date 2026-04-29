@@ -2,15 +2,14 @@ from dataclasses import dataclass, field
 from functools import singledispatchmethod
 from typing import Callable
 
-from bloqade.analysis import address
 from kirin import ir
 from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout import LocationAddress
-from bloqade.lanes.layout.encoding import LaneAddress
+from bloqade.lanes.utils import no_none_elements
 
 
 @dataclass
@@ -300,44 +299,43 @@ class RemoveNoOpStaticPlacements(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-@dataclass
 class InsertInitialize(RewriteRule):
-    address_entries: dict[ir.SSAValue, address.Address]
-    initial_layout: tuple[LocationAddress, ...]
+    """Emit move.LogicalInitialize for all NewLogicalQubits in a block,
+    with location_addresses, thetas, phis, lams collected directly from
+    each statement.  Non-NewLogicalQubit statements (e.g. angle constants)
+    are skipped.  The Load/LogicalInitialize/Store triple is inserted before
+    the statement that immediately follows the last NewLogicalQubit.
+
+    Pre-condition: every NewLogicalQubit has a non-None location_address
+    (established by ResolvePinnedAddresses).
+    """
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         stmt = node.first_stmt
         thetas: list[ir.SSAValue] = []
         phis: list[ir.SSAValue] = []
         lams: list[ir.SSAValue] = []
-        location_addresses: list[LocationAddress] = []
+        location_addresses: list[LocationAddress | None] = []
+        insertion_point: ir.Statement | None = None
 
         while stmt is not None:
             if not isinstance(stmt, place.NewLogicalQubit):
                 stmt = stmt.next_stmt
                 continue
-
-            if not isinstance(
-                qubit_addr := self.address_entries.get(stmt.result),
-                address.AddressQubit,
-            ):
-                return RewriteResult()
-
-            if qubit_addr.data >= len(self.initial_layout):
-                return RewriteResult()
-
-            location_addresses.append(self.initial_layout[qubit_addr.data])
+            location_addresses.append(stmt.location_address)
             thetas.append(stmt.theta)
             phis.append(stmt.phi)
             lams.append(stmt.lam)
+            insertion_point = stmt.next_stmt
             stmt = stmt.next_stmt
-            if len(location_addresses) == len(self.initial_layout):
-                break
 
-        if stmt is None:
+        if insertion_point is None or len(location_addresses) == 0:
             return RewriteResult()
 
-        (current_state := move.Load()).insert_before(stmt)
+        if not no_none_elements(location_addresses):
+            return RewriteResult()
+
+        (current_state := move.Load()).insert_before(insertion_point)
         (
             current_state := move.LogicalInitialize(
                 current_state.result,
@@ -346,29 +344,51 @@ class InsertInitialize(RewriteRule):
                 tuple(lams),
                 location_addresses=tuple(location_addresses),
             )
-        ).insert_before(stmt)
-        (move.Store(current_state.result)).insert_before(stmt)
+        ).insert_before(insertion_point)
+        (move.Store(current_state.result)).insert_before(insertion_point)
 
         return RewriteResult(has_done_something=True)
 
 
-@dataclass
 class InsertFill(RewriteRule):
-    initial_layout: tuple[LocationAddress, ...]
+    """Emit move.Fill at function entry, with location_addresses collected
+    from place.NewLogicalQubit.location_address in allocation order.
+
+    Pre-condition: every NewLogicalQubit has a non-None location_address
+    (established by ResolvePinnedAddresses).
+    """
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
         if not isinstance(node, func.Function):
             return RewriteResult()
 
         first_stmt = node.body.blocks[0].first_stmt
+        if first_stmt is None:
+            return RewriteResult()
 
-        if first_stmt is None or isinstance(first_stmt, move.Fill):
+        stmt = first_stmt
+        while stmt is not None and isinstance(stmt, (move.Load, move.Fill, move.Store)):
+            if isinstance(stmt, move.Fill):
+                return RewriteResult()
+            stmt = stmt.next_stmt
+
+        location_addresses: list[LocationAddress | None] = []
+        for stmt in node.body.walk():
+            if not isinstance(stmt, place.NewLogicalQubit):
+                continue
+            location_addresses.append(stmt.location_address)
+
+        if not location_addresses:
+            return RewriteResult()
+
+        if not no_none_elements(location_addresses):
             return RewriteResult()
 
         (current_state := move.Load()).insert_before(first_stmt)
         (
             current_state := move.Fill(
-                current_state.result, location_addresses=self.initial_layout
+                current_state.result,
+                location_addresses=tuple(location_addresses),
             )
         ).insert_before(first_stmt)
         move.Store(current_state.result).insert_before(first_stmt)

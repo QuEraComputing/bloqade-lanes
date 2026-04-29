@@ -5,9 +5,16 @@ from collections import Counter
 
 import pytest
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+)
 from bloqade.lanes.heuristics.physical.target_generator import (
     CongestionAwareTargetGenerator,
     TargetContext,
@@ -18,17 +25,16 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     _sum_base,
     _sum_weighted,
 )
-from bloqade.lanes.layout import Direction, LaneAddress, MoveType, PathFinder
 
 
 @pytest.fixture(scope="module")
-def arch() -> layout.ArchSpec:
+def arch() -> ArchSpec:
     return get_arch_spec()
 
 
 def _pick_cz_pair(
-    arch: layout.ArchSpec,
-) -> tuple[layout.LocationAddress, layout.LocationAddress]:
+    arch: ArchSpec,
+) -> tuple[LocationAddress, LocationAddress]:
     """Return the first CZ-partnered (loc, partner) pair from arch.home_sites."""
     for s in arch.home_sites:
         p = arch.get_cz_partner(s)
@@ -249,8 +255,8 @@ def test_weight_fn_balanced_traffic_still_applies_shared_site(arch):
 
 
 def _ctx(
-    arch: layout.ArchSpec,
-    layout_tup: tuple[layout.LocationAddress, ...],
+    arch: ArchSpec,
+    layout_tup: tuple[LocationAddress, ...],
     controls: tuple[int, ...],
     targets: tuple[int, ...],
 ) -> TargetContext:
@@ -288,9 +294,9 @@ def _find_two_distinct_cost_pairs(arch):
     uncongested path costs. Returns ((short_pair, short_cost),
     (long_pair, long_cost)) or None if arch doesn't support this.
     """
-    pf = layout.PathFinder(arch)
-    candidates: list[tuple[layout.LocationAddress, layout.LocationAddress, float]] = []
-    seen: set[frozenset[layout.LocationAddress]] = set()
+    pf = PathFinder(arch)
+    candidates: list[tuple[LocationAddress, LocationAddress, float]] = []
+    seen: set[frozenset[LocationAddress]] = set()
     for s in arch.home_sites:
         p = arch.get_cz_partner(s)
         if p is None or p == s:
@@ -330,7 +336,7 @@ def test_sort_longest_first_orders_by_descending_uncongested_min_cost(arch):
         targets=(1, 3),
     )
     sorted_pairs = CongestionAwareTargetGenerator()._sort_pairs_longest_first(
-        ctx, layout.PathFinder(arch)
+        ctx, PathFinder(arch)
     )
     assert sorted_pairs[0] == (
         2,
@@ -346,7 +352,7 @@ def _find_blocker_scenario(arch):
     Reason this is non-tautological: we compute both paths with
     `occupied=frozenset()` and compare the location sequences.
     """
-    pf = layout.PathFinder(arch)
+    pf = PathFinder(arch)
     home = list(arch.home_sites)
     for a in home:
         pa = arch.get_cz_partner(a)
@@ -389,7 +395,7 @@ def test_target_direction_chosen_when_target_path_cheaper(arch):
         _sum_weighted,
     )
 
-    pf_check = layout.PathFinder(arch)
+    pf_check = PathFinder(arch)
     working_check = {0: loc_ctrl, 1: loc_tgt, 2: blocker}
     occ_c = frozenset(loc for q, loc in working_check.items() if q != 0)
     occ_t = frozenset(loc for q, loc in working_check.items() if q != 1)

@@ -3,11 +3,14 @@ from typing import Callable, TypeGuard
 
 from bloqade.native.dialects.gate import stmts as gate
 from kirin import ir, types
+from kirin.analysis import const
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
+from bloqade.gemini.common import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
 
@@ -34,23 +37,66 @@ class RewriteInitializeToLogicalInitialize(abc.RewriteRule):
 
 
 class RewriteLogicalInitializeToNewLogical(abc.RewriteRule):
-    """Rewrite qubit references in place.LogicalInitialize statements to place.NewLogicalQubit allocations."""
+    """Rewrite qubit references in place.LogicalInitialize statements to
+    place.NewLogicalQubit allocations.
+
+    Handles both qubit.stmts.New (un-pinned, no location_address) and
+    gemini.operations.NewAt (pinned, with location_address built from
+    constant-folded args).
+    """
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not isinstance(node, place.LogicalInitialize):
             return abc.RewriteResult()
 
-        def is_qubit_new(owner: ir.Statement | ir.Block) -> TypeGuard[qubit.stmts.New]:
-            return isinstance(owner, qubit.stmts.New)
+        def is_alloc(
+            owner: ir.Statement | ir.Block,
+        ) -> TypeGuard[qubit.stmts.New | gemini_common_stmts.NewAt]:
+            return isinstance(owner, (qubit.stmts.New, gemini_common_stmts.NewAt))
 
-        qubit_stmts = tuple(
-            filter(is_qubit_new, (qubit.owner for qubit in node.qubits))
-        )
+        alloc_stmts = tuple(filter(is_alloc, (q.owner for q in node.qubits)))
 
-        for qubit_stmt in qubit_stmts:
-            qubit_stmt.replace_by(place.NewLogicalQubit(node.theta, node.phi, node.lam))
+        any_replaced = False
+        for alloc_stmt in alloc_stmts:
+            if isinstance(alloc_stmt, gemini_common_stmts.NewAt):
+                addr = _resolve_location_from_new_at(alloc_stmt)
+                if addr is None:
+                    continue  # give up on this NewAt; const-prop didn't run / non-constant args
+                replacement = place.NewLogicalQubit(
+                    node.theta, node.phi, node.lam, location_address=addr
+                )
+            else:
+                replacement = place.NewLogicalQubit(node.theta, node.phi, node.lam)
+            alloc_stmt.replace_by(replacement)
+            any_replaced = True
 
-        return abc.RewriteResult(has_done_something=len(qubit_stmts) > 0)
+        return abc.RewriteResult(has_done_something=any_replaced)
+
+
+def _resolve_location_from_new_at(
+    node: gemini_common_stmts.NewAt,
+) -> LocationAddress | None:
+    """Read const-prop hints to build a LocationAddress from a NewAt's args.
+
+    Returns None if any of the three args isn't const-foldable (defensive;
+    Phase E's eager validator should have caught this before the rewrite ran).
+    """
+    z = _get_const_int(node.zone_id)
+    w = _get_const_int(node.word_id)
+    s = _get_const_int(node.site_id)
+    if z is None or w is None or s is None:
+        return None
+    return LocationAddress(word_id=w, site_id=s, zone_id=z)
+
+
+def _get_const_int(value: ir.SSAValue) -> int | None:
+    """Read the const-prop result for an SSA value; None if not constant."""
+    hint = value.hints.get("const")
+    if not isinstance(hint, const.Value):
+        return None
+    if not isinstance(hint.data, int):
+        return None
+    return hint.data
 
 
 class CleanUpLogicalInitialize(abc.RewriteRule):
@@ -69,21 +115,39 @@ class CleanUpLogicalInitialize(abc.RewriteRule):
 
 
 class InitializeNewQubits(abc.RewriteRule):
-    """Rewrite NewLogical qubit allocations to Initialize statements."""
+    """Rewrite bare allocation statements (qubit.stmts.New or
+    gemini.operations.NewAt) to place.NewLogicalQubit with default
+    initialization angles (theta=phi=lam=0).
+    """
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
-        if not isinstance(node, qubit.stmts.New):
-            return abc.RewriteResult()
-
-        (zero := py.Constant(0.0)).insert_before(node)
-        node.replace_by(
-            place.NewLogicalQubit(
-                theta=zero.result,
-                phi=zero.result,
-                lam=zero.result,
+        if isinstance(node, qubit.stmts.New):
+            (zero := py.Constant(0.0)).insert_before(node)
+            node.replace_by(
+                place.NewLogicalQubit(
+                    theta=zero.result,
+                    phi=zero.result,
+                    lam=zero.result,
+                )
             )
-        )
-        return abc.RewriteResult(has_done_something=True)
+            return abc.RewriteResult(has_done_something=True)
+
+        if isinstance(node, gemini_common_stmts.NewAt):
+            addr = _resolve_location_from_new_at(node)
+            if addr is None:
+                return abc.RewriteResult()  # give up; non-constant args
+            (zero := py.Constant(0.0)).insert_before(node)
+            node.replace_by(
+                place.NewLogicalQubit(
+                    theta=zero.result,
+                    phi=zero.result,
+                    lam=zero.result,
+                    location_address=addr,
+                )
+            )
+            return abc.RewriteResult(has_done_something=True)
+
+        return abc.RewriteResult()
 
 
 @dataclass

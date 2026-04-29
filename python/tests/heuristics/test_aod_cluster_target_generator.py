@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini.physical import get_arch_spec
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.target_generator import (
     AODClusterTargetGenerator,
     TargetContext,
@@ -13,13 +15,13 @@ from bloqade.lanes.heuristics.physical.target_generator import (
 
 
 @pytest.fixture(scope="module")
-def arch() -> layout.ArchSpec:
+def arch() -> ArchSpec:
     return get_arch_spec()
 
 
 def _pick_cz_pair(
-    arch: layout.ArchSpec,
-) -> tuple[layout.LocationAddress, layout.LocationAddress]:
+    arch: ArchSpec,
+) -> tuple[LocationAddress, LocationAddress]:
     for s in arch.home_sites:
         p = arch.get_cz_partner(s)
         if p is not None and p != s:
@@ -28,8 +30,8 @@ def _pick_cz_pair(
 
 
 def _ctx(
-    arch: layout.ArchSpec,
-    layout_tup: tuple[layout.LocationAddress, ...],
+    arch: ArchSpec,
+    layout_tup: tuple[LocationAddress, ...],
     controls: tuple[int, ...],
     targets: tuple[int, ...],
 ) -> TargetContext:
@@ -53,7 +55,7 @@ def test_first_hop_sig_none_for_missing_path():
 
 
 def test_first_hop_sig_none_for_empty_path(arch):
-    pf = layout.PathFinder(arch)
+    pf = PathFinder(arch)
     loc, _ = _pick_cz_pair(arch)
     path = pf.find_path(loc, loc)
     assert path is not None
@@ -61,7 +63,7 @@ def test_first_hop_sig_none_for_empty_path(arch):
 
 
 def test_first_hop_sig_returns_tuple(arch):
-    pf = layout.PathFinder(arch)
+    pf = PathFinder(arch)
     src, dst = _pick_cz_pair(arch)
     path = pf.find_path(src, dst)
     assert path is not None and path[0], "fixture: expected non-empty path"
@@ -100,11 +102,8 @@ def test_generate_single_pair_plan_is_cz_partnered(arch):
     """For a single non-partnered pair the generator must still produce a
     plan whose qids form a valid CZ partnership."""
     # Find a blocker-free non-partnered pair by scanning home_sites.
-    pf = layout.PathFinder(arch)
-    chosen: (
-        tuple[layout.LocationAddress, layout.LocationAddress, layout.LocationAddress]
-        | None
-    ) = None
+    pf = PathFinder(arch)
+    chosen: tuple[LocationAddress, LocationAddress, LocationAddress] | None = None
     for a in arch.home_sites:
         pa = arch.get_cz_partner(a)
         if pa is None or pa == a:

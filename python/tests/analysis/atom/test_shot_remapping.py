@@ -9,7 +9,6 @@ emitting structured diagnostics on the soft-fail paths.
 
 import pytest
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.atom import (
     Bottom,
     IListResult,
@@ -20,14 +19,15 @@ from bloqade.lanes.analysis.atom import (
     Value,
 )
 from bloqade.lanes.analysis.atom._shot_remapping import get_shot_remapping
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode import word
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
     Mode as RustMode,
     Zone as RustZone,
 )
-from bloqade.lanes.layout import word
-from bloqade.lanes.layout.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 
 # Small toy architecture: one zone with one word containing four sites
 # at y-positions 0..3. ``yield_zone_locations(ZoneAddress(0))`` will
@@ -53,7 +53,7 @@ _rust_mode = RustMode(
         RustLocAddr(0, 0, 3),
     ],
 )
-_ARCH = layout.ArchSpec.from_components(
+_ARCH = ArchSpec.from_components(
     words=(_word,),
     zones=(_rust_zone,),
     modes=[_rust_mode],

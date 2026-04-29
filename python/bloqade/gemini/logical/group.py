@@ -13,10 +13,14 @@ from kirin.prelude import structural_no_opt
 from kirin.validation import ValidationSuite
 from typing_extensions import Doc
 
+from bloqade.gemini import common as gemini_common
+
 from .dialects import operations
 
 
-@ir.dialect_group(structural_no_opt.union([gate, qubit, operations, annotate]))
+@ir.dialect_group(
+    structural_no_opt.union([gate, qubit, operations, gemini_common, annotate])
+)
 def kernel(self):
     """Compile a function to a Gemini logical kernel."""
     address_analysis = address.AddressAnalysis(dialects=self)
@@ -83,6 +87,9 @@ def kernel(self):
 
         if verify:
             # stop circular import problems
+            from ..analysis.duplicate_address_validation import (
+                DuplicateAddressValidation,
+            )
             from ..analysis.logical_validation import (
                 GeminiLogicalValidation,
             )
@@ -95,6 +102,7 @@ def kernel(self):
                     GeminiLogicalValidation,
                     GeminiTerminalMeasurementValidation,
                     FlatKernelNoCloningValidation,
+                    DuplicateAddressValidation,
                 ]
             )
             validation_result = validator.validate(mt)

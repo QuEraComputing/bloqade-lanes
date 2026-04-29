@@ -13,6 +13,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     PlacementAnalysis,
 )
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")
@@ -41,6 +42,9 @@ class NewLogicalQubit(ir.Statement):
         theta (float): Angle for rotation around the Y axis
         phi (float): angle for rotation around the Z axis
         lam (float): angle for rotation around the Z axis
+        location_address (LocationAddress | None): Pinned physical address; None means
+            the layout heuristic chooses. After ResolvePinnedAddresses runs, this is
+            never None in well-formed IR.
 
     """
 
@@ -48,6 +52,7 @@ class NewLogicalQubit(ir.Statement):
     theta: ir.SSAValue = info.argument(types.Float)
     phi: ir.SSAValue = info.argument(types.Float)
     lam: ir.SSAValue = info.argument(types.Float)
+    location_address: LocationAddress | None = info.attribute(default=None)
     result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
 
@@ -287,6 +292,27 @@ class PlacementMethods(interp.MethodTable):
 
 @dialect.register(key="place.layout")
 class InitialLayoutMethods(interp.MethodTable):
+
+    @interp.impl(NewLogicalQubit)
+    def new_logical_qubit(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: NewLogicalQubit,
+    ):
+        if stmt.location_address is None:
+            return (EmptyLattice.bottom(),)
+        addr_entry = _interp.address_entries.get(stmt.result)
+        if not isinstance(addr_entry, address.AddressQubit):
+            return (EmptyLattice.bottom(),)
+        qubit_id = addr_entry.data
+        pinned_values = _interp.location_addresses.values()
+        if stmt.location_address in pinned_values:
+            raise interp.InterpreterError(
+                f"Duplicate pinned location address: {stmt.location_address}"
+            )
+        _interp.location_addresses[qubit_id] = stmt.location_address
+        return (EmptyLattice.bottom(),)
 
     @interp.impl(CZ)
     def cz(

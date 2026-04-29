@@ -2,14 +2,14 @@
 
 import pytest
 
-from bloqade.lanes.arch.arch_builder import (
+from bloqade.lanes.arch.build.imperative import (
     ArchBuilder,
     ZoneBuilder,
     _SiteGridQuery,
     _validate_aod_rectangle,
 )
 from bloqade.lanes.bytecode._native import Grid
-from bloqade.lanes.layout.encoding import Direction, LaneAddress, MoveType
+from bloqade.lanes.bytecode.encoding import Direction, LaneAddress, MoveType
 
 # Default clearance used by most tests.  The unit-spaced test grids have
 # spacings of 1.0, so 0.25 is comfortably below half-spacing.

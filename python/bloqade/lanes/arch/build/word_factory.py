@@ -14,12 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bloqade.lanes.layout.word import Word
-
-from .zone import DeviceLayout, ZoneSpec
+from bloqade.lanes.bytecode.word import Word
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from .blueprint import DeviceLayout, ZoneSpec
 
 
 @dataclass(frozen=True)

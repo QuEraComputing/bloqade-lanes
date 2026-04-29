@@ -25,9 +25,9 @@ from bloqade.lanes.bytecode._native import (
     Zone as _RustZone,
     ZoneBus as _RustZoneBus,
 )
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import Direction, LaneAddress, MoveType
-from bloqade.lanes.layout.word import Word
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import Direction, LaneAddress, MoveType
+from bloqade.lanes.bytecode.word import Word
 
 if TYPE_CHECKING:
     pass
@@ -63,7 +63,7 @@ def _normalize_index(idx: slice | int | Sequence[int], size: int) -> list[int]:
         return list(range(*idx.indices(size)))
     if isinstance(idx, int):
         return [idx]
-    return list(idx)
+    return sorted(idx)
 
 
 def _validate_aod_rectangle(

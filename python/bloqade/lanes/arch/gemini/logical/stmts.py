@@ -2,8 +2,8 @@ from kirin import decl, ir, types
 from kirin.decl import info
 from kirin.dialects import ilist
 
+from bloqade.lanes.bytecode.encoding import Direction
 from bloqade.lanes.dialects.move import StatefulStatement
-from bloqade.lanes.layout.encoding import Direction
 
 dialect = ir.Dialect("gemini.logical")
 

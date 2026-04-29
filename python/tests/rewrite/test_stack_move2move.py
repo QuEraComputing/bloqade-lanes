@@ -3,12 +3,12 @@ from kirin.dialects import py
 from kirin.rewrite import Walk
 
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.dialects import move, stack_move
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
     LocationAddress as EncodingLocationAddress,
     ZoneAddress as EncodingZoneAddress,
 )
+from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
 
 _ARCH = get_arch_spec()
@@ -202,7 +202,7 @@ def test_global_rz_lowers_with_attribute_lifting():
 
 
 def test_cz_lowers_with_attribute_zone():
-    from bloqade.lanes.layout.encoding import ZoneAddress
+    from bloqade.lanes.bytecode.encoding import ZoneAddress
 
     cz_zone = stack_move.ConstZone(value=ZoneAddress(0))
     cz = stack_move.CZ(zone=cz_zone.result)

@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, TypeVar
 from kirin import ir, types
 from kirin.dialects import func
 
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import stack_move
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 if TYPE_CHECKING:
     from bloqade.lanes.bytecode import Instruction, Program
