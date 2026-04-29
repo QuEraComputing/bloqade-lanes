@@ -1,10 +1,8 @@
-"""TRANSITIONAL SHIM — see ``.superpowers/plans/2026-04-27-archspec-package-merge.md``
-(Stage 4) for the rationale. The original ``bytecode/arch.py`` only held
-two ``Grid`` conversion utilities; the file was renamed to ``grid.py``
-(matching its responsibility) to free the ``arch`` slot for the higher-tier
-arch surface.
+"""Backward-compatible re-exports of ``grid_to_rust`` and ``grid_from_rust``.
 
-Removed in the final cleanup stage.
+The file was renamed from ``bytecode/arch.py`` to ``bytecode/grid.py`` to
+reflect its responsibility and free the ``arch`` name for the higher-level
+architecture surface. The canonical import path is ``bloqade.lanes.bytecode.grid``.
 """
 
 from bloqade.lanes.bytecode.grid import (

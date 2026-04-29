@@ -1,6 +1,6 @@
-"""TRANSITIONAL SHIM for the move to ``bloqade.lanes.arch.build.blueprint``
-(issue #569, stage 8). Removed in the final cleanup stage once all
-in-flight branches have rebased onto the canonical path.
+"""Backward-compatible re-exports of ``build_arch`` and ``ArchResult``.
+
+The canonical import path is ``bloqade.lanes.arch.build.blueprint``.
 """
 
 from bloqade.lanes.arch.build.blueprint import (

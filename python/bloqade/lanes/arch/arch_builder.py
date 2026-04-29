@@ -1,6 +1,6 @@
-"""TRANSITIONAL SHIM for the move to ``bloqade.lanes.arch.build.imperative``
-(issue #569, stage 8). Removed in the final cleanup stage once all
-in-flight branches have rebased onto the canonical path.
+"""Backward-compatible re-exports of ``ZoneBuilder`` and ``ArchBuilder``.
+
+The canonical import path is ``bloqade.lanes.arch.build.imperative``.
 """
 
 from bloqade.lanes.arch.build.imperative import (  # noqa: F401
