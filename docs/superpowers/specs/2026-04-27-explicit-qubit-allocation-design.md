@@ -183,8 +183,8 @@ Both 3.1 and 3.2 run on the gemini IR before any lowering to the place dialect.
 `InsertInitialize` and `InsertFill` (in `python/bloqade/lanes/rewrite/place2move.py`) currently consume the analysis frame. After §2.4 establishes the post-resolve invariant, they read attributes directly.
 
 Note for implementer: for all rewrite rules. If the rewrite can't happen because of whatever reason
-The rewrite rule should simply return with `RewriteResult(has_done_something=False)` intead of throwing
-An exception. For examples look at the existing rewrite rules for how to do this in an idomatic way.
+The rewrite rule should simply return with `RewriteResult(has_done_something=False)` instead of throwing
+An exception. For examples look at the existing rewrite rules for how to do this in an idiomatic way.
 
 ### 4.1 — `InsertInitialize` (revised)
 
