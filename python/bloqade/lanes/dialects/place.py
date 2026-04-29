@@ -13,7 +13,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     PlacementAnalysis,
 )
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")

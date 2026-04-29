@@ -6,8 +6,8 @@ from bloqade.lanes.bytecode import (
     Program,
 )
 from bloqade.lanes.bytecode.decode import load_program
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import stack_move
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 
 def test_empty_program_returns_method_with_empty_body():

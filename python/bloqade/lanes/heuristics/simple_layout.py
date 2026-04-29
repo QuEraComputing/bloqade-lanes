@@ -1,15 +1,16 @@
 from dataclasses import dataclass, field
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini.physical import (
     get_physical_layout_arch_spec,
 )
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 @dataclass
 class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_physical_layout_arch_spec)
+    arch_spec: ArchSpec = field(default_factory=get_physical_layout_arch_spec)
 
     def _validate_single_zone(self) -> None:
         if len(self.arch_spec.zones) != 1:
@@ -31,8 +32,8 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
-        pinned: dict[int, layout.LocationAddress] | None = None,
-    ) -> tuple[layout.LocationAddress, ...]:
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
         _ = stages
         pinned = {} if pinned is None else pinned
         if len(set(pinned.values())) < len(pinned):
@@ -47,12 +48,12 @@ class PhysicalLayoutHeuristicFixed(LayoutHeuristicABC):
         self._validate_pinned_in_arch(pinned, self.arch_spec)
         qubits = tuple(sorted(all_qubits))
 
-        pinned_addresses: set[layout.LocationAddress] = set(pinned.values())
+        pinned_addresses: set[LocationAddress] = set(pinned.values())
 
-        candidates: list[layout.LocationAddress] = []
+        candidates: list[LocationAddress] = []
         for word_id in self.home_word_ids:
             for site_id in range(self.sites_per_home_word):
-                addr = layout.LocationAddress(word_id, site_id)
+                addr = LocationAddress(word_id, site_id)
                 if addr not in pinned_addresses:
                     candidates.append(addr)
 

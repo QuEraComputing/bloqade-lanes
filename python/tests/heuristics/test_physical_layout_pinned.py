@@ -10,10 +10,10 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.layout.encoding import LocationAddress
 
 
 def _make_arch(num_rows: int = 5, sites_per_word: int = 16):

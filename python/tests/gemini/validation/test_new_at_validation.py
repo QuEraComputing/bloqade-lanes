@@ -12,7 +12,7 @@ from bloqade.gemini.analysis.duplicate_address_validation import (
 )
 from bloqade.gemini.common import new_at
 from bloqade.lanes.arch.gemini.physical import get_physical_layout_arch_spec
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.validation.address import Validation
 
 # ---------------------------------------------------------------------------

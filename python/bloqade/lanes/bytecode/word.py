@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import Word as _RustWord
+from bloqade.lanes.bytecode._wrapper import RustWrapper
 
 
 class Word(RustWrapper[_RustWord]):

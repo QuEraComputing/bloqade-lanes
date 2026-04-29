@@ -5,7 +5,6 @@ from dataclasses import dataclass, field, replace
 from functools import cached_property
 from itertools import starmap
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import (
     AtomState,
     ConcreteState,
@@ -18,18 +17,26 @@ from bloqade.lanes.analysis.placement.strategy import (
     assert_single_cz_zone,
 )
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    ZoneAddress,
+)
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
-from bloqade.lanes.layout.path import PathFinder
 
 
 @dataclass(frozen=True)
 class MoveOp:
     """Data class to store a move operation along with its source and destination addresses."""
 
-    arch_spec: layout.ArchSpec
-    src: layout.LocationAddress
-    dst: layout.LocationAddress
+    arch_spec: ArchSpec
+    src: LocationAddress
+    dst: LocationAddress
 
     @cached_property
     def src_position(self) -> tuple[float, float]:
@@ -58,7 +65,7 @@ def check_conflict(m0: MoveOp, m1: MoveOp):
 
 @dataclass
 class LogicalPlacementMethods:
-    arch_spec: layout.ArchSpec
+    arch_spec: ArchSpec
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
     def _get_rust_solver(self) -> MoveSolver:
@@ -79,7 +86,7 @@ class LogicalPlacementMethods:
 
     def validate_initial_layout(
         self,
-        initial_layout: tuple[layout.LocationAddress, ...],
+        initial_layout: tuple[LocationAddress, ...],
     ) -> None:
         for addr in initial_layout:
             if not self.arch_spec.is_home_position(addr):
@@ -142,7 +149,7 @@ class LogicalPlacementMethods:
         state: ConcreteState,
         moves: list[MoveOp],
     ) -> ConcreteState:
-        new_positions: dict[int, layout.LocationAddress] = {}
+        new_positions: dict[int, LocationAddress] = {}
         for move in moves:
             src_qubit = state.get_qubit_id(move.src)
             assert src_qubit is not None, "Source qubit must exist in state"
@@ -169,11 +176,11 @@ class LogicalPlacementMethods:
 
 @dataclass
 class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrategyABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
-    ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
         return compute_move_layers(
             self.arch_spec, state_before, state_after, solver=self._get_rust_solver()
         )
@@ -181,7 +188,7 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 
 @dataclass
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
     H_lookahead: int = 4
     gamma: float = 0.85
     lambda_lookahead: float = 0.5
@@ -190,8 +197,8 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     lane_move_overhead_cost: float = 0.0
     _path_finder: PathFinder = field(init=False, repr=False)
     _best_path_cache: dict[
-        tuple[layout.LocationAddress, layout.LocationAddress],
-        tuple[layout.LaneAddress, ...] | None,
+        tuple[LocationAddress, LocationAddress],
+        tuple[LaneAddress, ...] | None,
     ] = field(default_factory=dict, init=False, repr=False)
     top_bus_signatures: int = 6
     bus_reward_rho: float = 0.7
@@ -200,42 +207,40 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         assert_single_cz_zone(self.arch_spec, type(self).__name__)
         self._path_finder = PathFinder(self.arch_spec)
 
-    def _lane_sig(
-        self, lane: layout.LaneAddress
-    ) -> tuple[layout.MoveType, int, layout.Direction]:
+    def _lane_sig(self, lane: LaneAddress) -> tuple[MoveType, int, Direction]:
         return (lane.move_type, lane.bus_id, lane.direction)
 
     def _sig_sort_key(
-        self, sig: tuple[layout.MoveType, int, layout.Direction]
+        self, sig: tuple[MoveType, int, Direction]
     ) -> tuple[int, int, int]:
         return (int(sig[0]), sig[1], int(sig[2]))
 
     def _path_sigs(
-        self, path: tuple[layout.LaneAddress, ...] | None
-    ) -> frozenset[tuple[layout.MoveType, int, layout.Direction]]:
+        self, path: tuple[LaneAddress, ...] | None
+    ) -> frozenset[tuple[MoveType, int, Direction]]:
         if path is None:
             return frozenset()
         return frozenset(self._lane_sig(lane) for lane in path)
 
     def _path_sig_maxcost(
-        self, path: tuple[layout.LaneAddress, ...] | None
-    ) -> dict[tuple[layout.MoveType, int, layout.Direction], float]:
+        self, path: tuple[LaneAddress, ...] | None
+    ) -> dict[tuple[MoveType, int, Direction], float]:
         if path is None:
             return {}
-        sig_maxcost: dict[tuple[layout.MoveType, int, layout.Direction], float] = {}
+        sig_maxcost: dict[tuple[MoveType, int, Direction], float] = {}
         for lane in path:
             sig = self._lane_sig(lane)
             lane_cost = self._get_lane_cost(lane)
             sig_maxcost[sig] = max(sig_maxcost.get(sig, 0.0), lane_cost)
         return sig_maxcost
 
-    def _home_sites(self) -> set[layout.LocationAddress]:
+    def _home_sites(self) -> set[LocationAddress]:
         return set(self.arch_spec.home_sites)
 
     def _distance_key(
         self,
-        cz_addr: layout.LocationAddress,
-        home_addr: layout.LocationAddress,
+        cz_addr: LocationAddress,
+        home_addr: LocationAddress,
     ) -> tuple[int, int, int, int]:
         # Map CZ position back to its home equivalent
         home_equivalent = self.arch_spec.get_cz_partner(cz_addr)
@@ -252,24 +257,24 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
     def _pair_distance(
         self,
-        addr0: layout.LocationAddress,
-        addr1: layout.LocationAddress,
+        addr0: LocationAddress,
+        addr1: LocationAddress,
     ) -> float:
         # Use shortest-path lane cost as the lookahead proximity metric so both
         # immediate return selection and lookahead terms use the same objective.
         return self._path_cost(self._best_path(addr0, addr1))
 
-    def _get_lane_duration(self, lane: layout.LaneAddress) -> float:
+    def _get_lane_duration(self, lane: LaneAddress) -> float:
         return self._path_finder.metrics.get_lane_duration_us(lane)
 
-    def _get_lane_cost(self, lane: layout.LaneAddress) -> float:
+    def _get_lane_cost(self, lane: LaneAddress) -> float:
         return self._path_finder.metrics.get_lane_duration_cost(lane)
 
     def _best_path(
         self,
-        src: layout.LocationAddress,
-        dst: layout.LocationAddress,
-    ) -> tuple[layout.LaneAddress, ...] | None:
+        src: LocationAddress,
+        dst: LocationAddress,
+    ) -> tuple[LaneAddress, ...] | None:
         if src == dst:
             return ()
         key = (src, dst)
@@ -285,7 +290,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             self._best_path_cache[key] = result[0] if result is not None else None
         return self._best_path_cache[key]
 
-    def _path_cost(self, path: tuple[layout.LaneAddress, ...] | None) -> float:
+    def _path_cost(self, path: tuple[LaneAddress, ...] | None) -> float:
         if path is None:
             return self.large_cost
         return sum(
@@ -294,7 +299,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
     def _nearest_home_layout(
         self, state_before: ConcreteState
-    ) -> tuple[layout.LocationAddress, ...]:
+    ) -> tuple[LocationAddress, ...]:
         home_sites = self._home_sites()
         used_home = {
             addr
@@ -336,7 +341,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
     def _lookahead_penalty(
         self,
-        layout_after_return: tuple[layout.LocationAddress, ...],
+        layout_after_return: tuple[LocationAddress, ...],
         partner_weights: dict[int, dict[int, float]],
     ) -> float:
         penalty = 0.0
@@ -350,7 +355,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         return penalty
 
     def _estimate_layers_time(
-        self, layers: tuple[tuple[layout.LaneAddress, ...], ...]
+        self, layers: tuple[tuple[LaneAddress, ...], ...]
     ) -> float:
         total = 0.0
         for layer in layers:
@@ -362,9 +367,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _assignment_dp(
         self,
         row_edges: list[list[tuple[int, float]]],
-        edge_sigs: dict[
-            tuple[int, int], frozenset[tuple[layout.MoveType, int, layout.Direction]]
-        ],
+        edge_sigs: dict[tuple[int, int], frozenset[tuple[MoveType, int, Direction]]],
         *,
         col_count: int,
     ) -> tuple[float, tuple[int, ...] | None]:
@@ -377,14 +380,14 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             return float("inf"), None
 
         memo: dict[
-            tuple[int, int, tuple[layout.MoveType, int, layout.Direction] | None],
+            tuple[int, int, tuple[MoveType, int, Direction] | None],
             tuple[float, tuple[int, ...] | None],
         ] = {}
 
         def solve(
             row: int,
             used_mask: int,
-            locked_word_sig: tuple[layout.MoveType, int, layout.Direction] | None,
+            locked_word_sig: tuple[MoveType, int, Direction] | None,
         ) -> tuple[float, tuple[int, ...] | None]:
             key = (row, used_mask, locked_word_sig)
             if key in memo:
@@ -429,7 +432,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def _mid_state_for_layout(
         self,
         state_before: ConcreteState,
-        layout_after_return: tuple[layout.LocationAddress, ...],
+        layout_after_return: tuple[LocationAddress, ...],
     ) -> ConcreteState:
         return ConcreteState(
             occupied=state_before.occupied,
@@ -446,10 +449,10 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
     def _word_sig_transition(
         self,
-        locked_word_sig: tuple[layout.MoveType, int, layout.Direction] | None,
-        edge_sigset: frozenset[tuple[layout.MoveType, int, layout.Direction]],
-    ) -> tuple[bool, tuple[layout.MoveType, int, layout.Direction] | None]:
-        word_sigs = tuple(sig for sig in edge_sigset if sig[0] == layout.MoveType.WORD)
+        locked_word_sig: tuple[MoveType, int, Direction] | None,
+        edge_sigset: frozenset[tuple[MoveType, int, Direction]],
+    ) -> tuple[bool, tuple[MoveType, int, Direction] | None]:
+        word_sigs = tuple(sig for sig in edge_sigset if sig[0] == MoveType.WORD)
         if not word_sigs:
             return True, locked_word_sig
         unique_word_sigs = set(word_sigs)
@@ -464,7 +467,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         self,
         state_before: ConcreteState,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
-    ) -> list[tuple[layout.LocationAddress, ...]]:
+    ) -> list[tuple[LocationAddress, ...]]:
         if not lookahead_layers:
             return [self._nearest_home_layout(state_before)]
 
@@ -505,11 +508,11 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         reference_positions = {**home_stayers, **baseline_guess}
 
         edge_costs: dict[tuple[int, int], float] = {}
-        edge_sigs: dict[
-            tuple[int, int], frozenset[tuple[layout.MoveType, int, layout.Direction]]
-        ] = {}
+        edge_sigs: dict[tuple[int, int], frozenset[tuple[MoveType, int, Direction]]] = (
+            {}
+        )
         edge_sig_maxcost: dict[
-            tuple[int, int], dict[tuple[layout.MoveType, int, layout.Direction], float]
+            tuple[int, int], dict[tuple[MoveType, int, Direction], float]
         ] = {}
         candidate_holes_by_returner: dict[int, set[int]] = {}
         for ridx, qid in enumerate(returners):
@@ -538,12 +541,8 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             keep = {hidx for _, hidx in scored[: max(1, self.K_candidates)]}
             candidate_holes_by_returner[ridx] = keep
 
-        sig_coverage: dict[tuple[layout.MoveType, int, layout.Direction], set[int]] = (
-            defaultdict(set)
-        )
-        sig_typical_duration: dict[
-            tuple[layout.MoveType, int, layout.Direction], float
-        ] = {}
+        sig_coverage: dict[tuple[MoveType, int, Direction], set[int]] = defaultdict(set)
+        sig_typical_duration: dict[tuple[MoveType, int, Direction], float] = {}
         for ridx in range(len(returners)):
             for hidx in candidate_holes_by_returner.get(ridx, set()):
                 sigs = edge_sigs.get((ridx, hidx), frozenset())
@@ -560,13 +559,11 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             if duration_values
             else 1.0
         )
-        sig_efficiency: dict[tuple[layout.MoveType, int, layout.Direction], float] = {
+        sig_efficiency: dict[tuple[MoveType, int, Direction], float] = {
             sig: duration_ref / dur for sig, dur in sig_typical_duration.items()
         }
 
-        sig_values: list[
-            tuple[float, tuple[layout.MoveType, int, layout.Direction]]
-        ] = []
+        sig_values: list[tuple[float, tuple[MoveType, int, Direction]]] = []
         for sig, ridx_set in sig_coverage.items():
             value = float(len(ridx_set)) * sig_efficiency.get(sig, 0.0)
             sig_values.append((value, sig))
@@ -616,7 +613,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
                     row_edges[ridx].append((hidx, base_cost - reward))
             maybe_add_assignment(row_edges)
 
-        candidate_layouts: list[tuple[layout.LocationAddress, ...]] = []
+        candidate_layouts: list[tuple[LocationAddress, ...]] = []
         for assignment in sorted(assignments):
             new_layout = list(state_before.layout)
             for ridx, hidx in enumerate(assignment):
@@ -631,13 +628,13 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         self,
         state_before: ConcreteState,
         lookahead_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
-    ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...], float]:
+    ) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...], float]:
         candidate_layouts = self._candidate_layouts(state_before, lookahead_layers)
         best: (
             tuple[
                 float,
                 ConcreteState,
-                tuple[tuple[layout.LaneAddress, ...], ...],
+                tuple[tuple[LaneAddress, ...], ...],
             ]
             | None
         ) = None
@@ -660,7 +657,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
 
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
-    ) -> tuple[tuple[layout.LaneAddress, ...], ...]:
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
         return compute_move_layers(
             self.arch_spec, state_before, state_after, solver=self._get_rust_solver()
         )
@@ -671,7 +668,7 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         controls: tuple[int, ...],
         targets: tuple[int, ...],
         lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
-    ) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
+    ) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...]]:
         _ = controls, targets
         if self.H_lookahead <= 0:
             bounded_lookahead = ()
@@ -731,5 +728,5 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
             occupied=state.occupied,
             layout=state.layout,
             move_count=state.move_count,
-            zone_maps=tuple(layout.ZoneAddress(loc.zone_id) for loc in state.layout),
+            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )

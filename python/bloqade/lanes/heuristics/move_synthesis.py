@@ -4,9 +4,10 @@ Given an architecture spec and two concrete states (before/after layouts),
 computes the sequence of move layers using the Rust MoveSolver.
 """
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.heuristics.physical.movement import (
     RustPlacementTraversal,
     convert_move_layers,
@@ -17,12 +18,12 @@ _DEFAULT_TRAVERSAL = RustPlacementTraversal()
 
 
 def compute_move_layers(
-    arch_spec: layout.ArchSpec,
+    arch_spec: ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
     solver: MoveSolver | None = None,
     traversal: RustPlacementTraversal = _DEFAULT_TRAVERSAL,
-) -> tuple[tuple[layout.LaneAddress, ...], ...]:
+) -> tuple[tuple[LaneAddress, ...], ...]:
     """Compute move layers from state_before to state_after via the Rust MoveSolver.
 
     If ``solver`` is provided, it is reused instead of constructing a fresh
@@ -51,11 +52,11 @@ def compute_move_layers(
 
 
 def move_to_entangle(
-    arch_spec: layout.ArchSpec,
+    arch_spec: ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
     solver: MoveSolver | None = None,
-) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
+) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...]]:
     """Synthesize move layers from current layout to CZ entangling layout."""
     return state_after, compute_move_layers(
         arch_spec, state_before, state_after, solver=solver
@@ -63,11 +64,11 @@ def move_to_entangle(
 
 
 def move_to_left(
-    arch_spec: layout.ArchSpec,
+    arch_spec: ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
     solver: MoveSolver | None = None,
-) -> tuple[ConcreteState, tuple[tuple[layout.LaneAddress, ...], ...]]:
+) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...]]:
     """Synthesize move layers from CZ layout to post-CZ return layout."""
     forward_layers = compute_move_layers(
         arch_spec, state_after, state_before, solver=solver

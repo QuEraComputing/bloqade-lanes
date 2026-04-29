@@ -3,11 +3,11 @@ pinned-address handling in compute_layout."""
 
 import pytest
 
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.logical.layout import (
     LogicalLayoutHeuristic,
     LogicalLayoutHeuristicRecencyWeighted,
 )
-from bloqade.lanes.layout.encoding import LocationAddress
 
 # ---------------------------------------------------------------------------
 # Helpers

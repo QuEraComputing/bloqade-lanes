@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.validation.address import Validation
 
 from .spec import get_arch_spec

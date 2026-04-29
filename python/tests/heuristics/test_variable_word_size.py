@@ -2,7 +2,6 @@
 
 import pytest
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.analysis.placement.lattice import ExecuteCZ
 from bloqade.lanes.arch import (
@@ -13,15 +12,16 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.logical.placement import (
     LogicalPlacementMethods,
     LogicalPlacementStrategyNoHome,
 )
 from bloqade.lanes.heuristics.move_synthesis import compute_move_layers, move_to_left
-from bloqade.lanes.layout.encoding import LocationAddress
 
 
-def _make_arch(word_size_y: int) -> layout.ArchSpec:
+def _make_arch(word_size_y: int) -> ArchSpec:
     bp = ArchBlueprint(
         zones={
             "gate": ZoneSpec(
@@ -64,7 +64,7 @@ def _make_nohome(word_size_y: int) -> LogicalPlacementStrategyNoHome:
 
 
 def assert_valid_cz_placement(
-    arch_spec: layout.ArchSpec,
+    arch_spec: ArchSpec,
     result: ExecuteCZ,
     controls: tuple[int, ...],
     targets: tuple[int, ...],
@@ -82,9 +82,7 @@ def assert_valid_cz_placement(
             assert not arch_spec.check_lane_group([lane]), f"Invalid lane: {lane}"
 
 
-def assert_all_home(
-    arch_spec: layout.ArchSpec, addrs: tuple[LocationAddress, ...]
-) -> None:
+def assert_all_home(arch_spec: ArchSpec, addrs: tuple[LocationAddress, ...]) -> None:
     """Assert all addresses are at home positions."""
     for addr in addrs:
         assert arch_spec.is_home_position(addr), f"{addr} is not a home position"

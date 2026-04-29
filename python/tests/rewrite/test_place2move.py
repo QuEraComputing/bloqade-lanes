@@ -2,21 +2,27 @@ from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite, types
 from kirin.dialects import func, py
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
     ExecuteMeasure,
 )
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode import word
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
     Mode as RustMode,
     Zone as RustZone,
 )
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    LocationAddress,
+    SiteLaneAddress,
+    ZoneAddress,
+)
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout import word
 from bloqade.lanes.rewrite import place2move
 
 _word = word.Word(sites=((0, 0), (0, 1)))
@@ -34,7 +40,7 @@ _rust_mode = RustMode(
     zones=[0],
     bitstring_order=[RustLocAddr(0, 0, 0), RustLocAddr(0, 0, 1)],
 )
-ARCH_SPEC = layout.ArchSpec.from_components(
+ARCH_SPEC = ArchSpec.from_components(
     words=(_word,),
     zones=(_rust_zone,),
     modes=[_rust_mode],
@@ -69,8 +75,8 @@ def test_insert_move():
     )
 
     lane_group = (
-        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(1, 0, 0, layout.Direction.FORWARD),
+        SiteLaneAddress(0, 0, 0, Direction.FORWARD),
+        SiteLaneAddress(1, 0, 0, Direction.FORWARD),
     )
 
     placement_analysis: dict[ir.SSAValue, AtomState] = {
@@ -78,7 +84,7 @@ def test_insert_move():
             frozenset(),
             (),
             (),
-            frozenset([layout.ZoneAddress(0)]),
+            frozenset([ZoneAddress(0)]),
             move_layers=(lane_group,),
         )
     }
@@ -101,12 +107,12 @@ def test_insert_move():
 
 def test_insert_palindrom_moves():
     lane_group = (
-        layout.SiteLaneAddress(0, 0, 0, layout.Direction.FORWARD),
-        layout.SiteLaneAddress(1, 0, 0, layout.Direction.FORWARD),
+        SiteLaneAddress(0, 0, 0, Direction.FORWARD),
+        SiteLaneAddress(1, 0, 0, Direction.FORWARD),
     )
     reverse_moves = (
-        layout.SiteLaneAddress(0, 0, 0, layout.Direction.BACKWARD),
-        layout.SiteLaneAddress(1, 0, 0, layout.Direction.BACKWARD),
+        SiteLaneAddress(0, 0, 0, Direction.BACKWARD),
+        SiteLaneAddress(1, 0, 0, Direction.BACKWARD),
     )
 
     state_before = ir.TestValue()
@@ -192,7 +198,7 @@ def test_insert_cz():
     )
 
     placement_analysis[stmt.results[0]] = ExecuteCZ(
-        frozenset(), (), (), frozenset([layout.ZoneAddress(0)])
+        frozenset(), (), (), frozenset([ZoneAddress(0)])
     )
 
     expected_block = ir.Block(
@@ -201,7 +207,7 @@ def test_insert_cz():
             current_state := move.Load(),
             (
                 current_state := move.CZ(
-                    current_state.result, zone_address=layout.ZoneAddress(0)
+                    current_state.result, zone_address=ZoneAddress(0)
                 )
             ),
             move.Store(current_state.result),
@@ -292,7 +298,7 @@ def test_local_rz():
     )
 
     placement_analysis[stmt.results[0]] = ConcreteState(
-        frozenset([layout.LocationAddress(0, 0)]), (), ()
+        frozenset([LocationAddress(0, 0)]), (), ()
     )
 
     expected_block = ir.Block(
@@ -328,7 +334,7 @@ def test_local_r():
     )
 
     placement_analysis[stmt.results[0]] = ConcreteState(
-        frozenset([layout.LocationAddress(0, 0)]), (), ()
+        frozenset([LocationAddress(0, 0)]), (), ()
     )
 
     expected_block = ir.Block(
@@ -384,11 +390,11 @@ def test_insert_measure():
         ]
     )
     qubit_layout = (
-        layout.LocationAddress(0, 1),
-        layout.LocationAddress(0, 0),
+        LocationAddress(0, 1),
+        LocationAddress(0, 0),
     )
     placement_analysis[stmt.results[0]] = ExecuteMeasure(
-        frozenset(), qubit_layout, (), (layout.ZoneAddress(0), layout.ZoneAddress(1))
+        frozenset(), qubit_layout, (), (ZoneAddress(0), ZoneAddress(1))
     )
 
     expected_block = ir.Block(
@@ -397,17 +403,17 @@ def test_insert_measure():
             current_state := move.Load(),
             future := move.EndMeasure(
                 current_state.result,
-                zone_addresses=(layout.ZoneAddress(0), layout.ZoneAddress(1)),
+                zone_addresses=(ZoneAddress(0), ZoneAddress(1)),
             ),
             zone_result_0 := move.GetFutureResult(
                 future.result,
-                zone_address=layout.ZoneAddress(0),
-                location_address=layout.LocationAddress(0, 1),
+                zone_address=ZoneAddress(0),
+                location_address=LocationAddress(0, 1),
             ),
             zone_result_1 := move.GetFutureResult(
                 future.result,
-                zone_address=layout.ZoneAddress(1),
-                location_address=layout.LocationAddress(0, 0),
+                zone_address=ZoneAddress(1),
+                location_address=LocationAddress(0, 0),
             ),
             place.Yield(state_before, zone_result_0.result, zone_result_1.result),
         ],
@@ -426,7 +432,7 @@ def test_insert_measure():
 
 
 def _make_function_with_qubits(
-    addresses: tuple[layout.LocationAddress, ...],
+    addresses: tuple[LocationAddress, ...],
 ) -> func.Function:
     """Build a minimal func.Function whose body starts with NewLogicalQubit
     statements, each pre-stamped with the given location_address values."""
@@ -450,8 +456,8 @@ def _make_function_with_qubits(
 def test_insert_fill_emits_fill_with_correct_addresses():
     """InsertFill collects location_address from NewLogicalQubit statements
     and emits a move.Fill with those addresses in IR-walk order."""
-    addr0 = layout.LocationAddress(0, 0)
-    addr1 = layout.LocationAddress(0, 1)
+    addr0 = LocationAddress(0, 0)
+    addr1 = LocationAddress(0, 1)
 
     fn = _make_function_with_qubits((addr0, addr1))
     rule = rewrite.Walk(place2move.InsertFill())
@@ -488,7 +494,7 @@ def test_insert_fill_no_qubits_is_noop():
 def test_insert_fill_already_filled_is_noop():
     """InsertFill is a no-op when the function body already begins with
     a move.Fill statement (i.e. the fill was already emitted in a prior pass)."""
-    addr0 = layout.LocationAddress(0, 0)
+    addr0 = LocationAddress(0, 0)
     angle = ir.TestValue()
     nlq = place.NewLogicalQubit(angle, angle, angle)
     nlq.location_address = addr0
@@ -542,8 +548,8 @@ def test_insert_initialize_emits_logical_initialize():
     """InsertInitialize collects location_address, theta, phi, lam from two
     NewLogicalQubit statements and emits move.LogicalInitialize before the
     first non-NewLogicalQubit statement."""
-    addr0 = layout.LocationAddress(0, 0)
-    addr1 = layout.LocationAddress(0, 1)
+    addr0 = LocationAddress(0, 0)
+    addr1 = LocationAddress(0, 1)
     angle = ir.TestValue()
 
     nlq0 = place.NewLogicalQubit(angle, angle, angle)
@@ -591,9 +597,9 @@ def test_insert_initialize_all_nlq_no_terminator_is_noop():
     None after the loop)."""
     angle = ir.TestValue()
     nlq0 = place.NewLogicalQubit(angle, angle, angle)
-    nlq0.location_address = layout.LocationAddress(0, 0)
+    nlq0.location_address = LocationAddress(0, 0)
     nlq1 = place.NewLogicalQubit(angle, angle, angle)
-    nlq1.location_address = layout.LocationAddress(0, 1)
+    nlq1.location_address = LocationAddress(0, 1)
 
     test_block = ir.Block([nlq0, nlq1])
     result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)

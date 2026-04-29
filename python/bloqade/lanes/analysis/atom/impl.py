@@ -3,9 +3,8 @@ from kirin import interp
 from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func, ilist, py
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.atom.atom_state_data import AtomStateData
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 
 from ...dialects import move
 from .analysis import (
@@ -179,7 +178,7 @@ class Move(interp.MethodTable):
         if not isinstance(current_state, AtomState):
             return (MoveExecution.bottom(),)
 
-        results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]] = {}
+        results: dict[ZoneAddress, dict[LocationAddress, int]] = {}
         for zone_address in stmt.zone_addresses:
             result = results.setdefault(zone_address, {})
             for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):
@@ -226,7 +225,7 @@ class Move(interp.MethodTable):
         # Build the MeasurementFuture by mirroring end_measure_impl: for
         # each zone, walk every location in the zone, and record any qubit
         # currently at that location.
-        results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]] = {}
+        results: dict[ZoneAddress, dict[LocationAddress, int]] = {}
         for zone_address in zone_addresses:
             result = results.setdefault(zone_address, {})
             for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):

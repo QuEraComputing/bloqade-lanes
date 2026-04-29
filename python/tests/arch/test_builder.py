@@ -2,14 +2,19 @@
 
 import pytest
 
-from bloqade.lanes.arch.builder import ArchResult, build_arch
-from bloqade.lanes.arch.topology import (
+from bloqade.lanes.arch.build.blueprint import (
+    ArchBlueprint,
+    ArchResult,
+    DeviceLayout,
+    ZoneSpec,
+    build_arch,
+)
+from bloqade.lanes.arch.build.topology import (
     HypercubeSiteTopology,
     HypercubeWordTopology,
     MatchingTopology,
 )
-from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
-from bloqade.lanes.layout import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 
 
 def _has_site_buses(arch: ArchSpec) -> frozenset[int]:
@@ -245,7 +250,7 @@ class TestBuildArchValidation:
 class TestBuildArchPerBusWords:
     def test_mixed_site_topologies(self) -> None:
         """Two zones with different site topologies get separate buses."""
-        from bloqade.lanes.arch.topology import AllToAllSiteTopology
+        from bloqade.lanes.arch.build.topology import AllToAllSiteTopology
 
         bp = ArchBlueprint(
             zones={
@@ -324,8 +329,8 @@ class TestBuildArchPerBusWords:
 class TestPathFinderIntegration:
     def test_per_zone_site_bus_scoping(self) -> None:
         """PathFinder graph only connects site bus edges for the bus's words."""
-        from bloqade.lanes.layout.encoding import LocationAddress
-        from bloqade.lanes.layout.path import PathFinder
+        from bloqade.lanes.arch.path import PathFinder
+        from bloqade.lanes.bytecode.encoding import LocationAddress
 
         bp = ArchBlueprint(
             zones={
@@ -351,8 +356,8 @@ class TestPathFinderIntegration:
 
     def test_cross_zone_reachable_via_word_bus(self) -> None:
         """PathFinder can route across zones via inter-zone zone buses."""
-        from bloqade.lanes.layout.encoding import LocationAddress
-        from bloqade.lanes.layout.path import PathFinder
+        from bloqade.lanes.arch.path import PathFinder
+        from bloqade.lanes.bytecode.encoding import LocationAddress
 
         bp = ArchBlueprint(
             zones={

@@ -7,9 +7,9 @@ from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
 
 @dataclass

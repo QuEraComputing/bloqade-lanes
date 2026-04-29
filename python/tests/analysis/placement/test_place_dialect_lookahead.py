@@ -10,8 +10,9 @@ from bloqade.lanes.analysis.placement import (
     PlacementStrategyABC,
 )
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
-from bloqade.lanes.layout import ArchSpec, LocationAddress
 
 
 @dataclass
