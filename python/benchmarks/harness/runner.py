@@ -21,30 +21,12 @@ from bloqade.lanes.heuristics.physical.layout import (
 )
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
-    PlacementTraversalABC,
     RustPlacementTraversal,
 )
 from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.transform import MoveToSquinLogical
 from bloqade.lanes.upstream import squin_to_move
-
-
-@dataclass
-class SearchStatsCollector(PlacementTraversalABC):
-    """Wrap traversal to collect search result metadata."""
-
-    inner: PlacementTraversalABC
-    nodes_expanded_total: int = 0
-    max_depth_reached: int = 0
-    runs: int = 0
-
-    def path_to_target_config(self, *, tree, target):
-        result = self.inner.path_to_target_config(tree=tree, target=target)
-        self.nodes_expanded_total += result.nodes_expanded
-        self.max_depth_reached = max(self.max_depth_reached, result.max_depth_reached)
-        self.runs += 1
-        return result
 
 
 @dataclass(frozen=True)
@@ -144,14 +126,7 @@ class BenchmarkRunner:
 
     def _compile(self, job: BenchmarkJob) -> _RunArtifacts:
         placement_strategy = self._build_placement_strategy(job)
-        stats_collector: SearchStatsCollector | None = None
         layout_heuristic = self._build_layout_heuristic(job)
-
-        if isinstance(placement_strategy, PhysicalPlacementStrategy):
-            traversal = placement_strategy.traversal
-            if isinstance(traversal, PlacementTraversalABC):
-                stats_collector = SearchStatsCollector(inner=traversal)
-                placement_strategy.traversal = stats_collector
 
         move_mt = squin_to_move(
             job.case.kernel,
@@ -162,16 +137,7 @@ class BenchmarkRunner:
         )
         _assert_move_lowering_complete(move_mt)
 
-        if stats_collector is not None:
-            return _RunArtifacts(
-                move_mt=move_mt,
-                nodes_explored=stats_collector.nodes_expanded_total,
-                max_depth_reached=stats_collector.max_depth_reached,
-            )
-
-        notes = ""
         nodes: int | None = None
-        depth: int | None = None
         if isinstance(placement_strategy, PhysicalPlacementStrategy) and isinstance(
             placement_strategy.traversal, RustPlacementTraversal
         ):
@@ -179,8 +145,7 @@ class BenchmarkRunner:
         return _RunArtifacts(
             move_mt=move_mt,
             nodes_explored=nodes,
-            max_depth_reached=depth,
-            notes=notes,
+            max_depth_reached=None,
         )
 
     def _estimate_fidelity(self, job: BenchmarkJob) -> float | None:

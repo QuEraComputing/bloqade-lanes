@@ -16,6 +16,7 @@ from scipy.interpolate import interp1d
 from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
 from bloqade.lanes.dialects import move
 from bloqade.lanes.layout import ArchSpec
+from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
 class QuEraColorCode(str, Enum):
@@ -338,6 +339,10 @@ class StateArtist:
     y_min: float
     y_max: float
 
+    @cached_property
+    def _visualizer(self) -> ArchVisualizer:
+        return ArchVisualizer(self.arch_spec)
+
     def _get_aod_paths(self, speed, move_execution: AtomState):
         waypoints: list[tuple[set[float], set[float]]] = []
         path_len = None
@@ -537,12 +542,12 @@ class StateArtist:
         self._show_local(stmt, color=self.plot_params.local_rz_color)
 
     def _show_global(self, stmt: move.GlobalR | move.GlobalRz, color: str):
-        x_min, x_max = self.arch_spec.x_bounds
+        x_min, x_max = self._visualizer.x_bounds
         x_width = x_max - x_min
         x_min -= 0.5 * x_width
         x_max += 0.5 * x_width
 
-        y_min, y_max = self.arch_spec.y_bounds
+        y_min, y_max = self._visualizer.y_bounds
         y_width = y_max - y_min
         y_min -= 0.5 * y_width
         y_max += 0.5 * y_width
@@ -578,7 +583,7 @@ class StateArtist:
                 y_min = min(y_min, pos[1])
                 y_max = max(y_max, pos[1])
 
-        x_min, x_max = self.arch_spec.x_bounds
+        x_min, x_max = self._visualizer.x_bounds
         y_width = y_max - y_min
         y_min -= 0.1 * y_width
         y_max += 0.1 * y_width
@@ -592,7 +597,7 @@ class StateArtist:
         )
 
     def show_slm(self, stmt: ir.Statement, atom_marker: str):
-        self.arch_spec.plot(
+        self._visualizer.plot(
             self.ax,
             show_words=range(len(self.arch_spec.words)),
             **self.plot_params.slm_plot_args,
@@ -602,7 +607,7 @@ class StateArtist:
 def get_state_artist(
     arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"
 ) -> StateArtist:
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
+    x_min, x_max, y_min, y_max = ArchVisualizer(arch_spec).path_bounds()
     x_width = x_max - x_min
     y_width = y_max - y_min
 
