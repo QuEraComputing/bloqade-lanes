@@ -1,6 +1,6 @@
 from bloqade.test_utils import assert_nodes
-from kirin import ir, rewrite
-from kirin.dialects import py
+from kirin import ir, rewrite, types
+from kirin.dialects import func, py
 
 from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement.lattice import (
@@ -418,3 +418,199 @@ def test_insert_measure():
     expected_block.print()
 
     assert_nodes(test_block, expected_block)
+
+
+# ---------------------------------------------------------------------------
+# InsertFill tests
+# ---------------------------------------------------------------------------
+
+
+def _make_function_with_qubits(
+    addresses: tuple[layout.LocationAddress, ...],
+) -> func.Function:
+    """Build a minimal func.Function whose body starts with NewLogicalQubit
+    statements, each pre-stamped with the given location_address values."""
+    angle = ir.TestValue()
+    stmts: list[ir.Statement] = []
+    for addr in addresses:
+        nlq = place.NewLogicalQubit(angle, angle, angle)
+        nlq.location_address = addr
+        stmts.append(nlq)
+
+    block = ir.Block(stmts)
+    region = ir.Region(block)
+    return func.Function(
+        sym_name="test_fn",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+
+
+def test_insert_fill_emits_fill_with_correct_addresses():
+    """InsertFill collects location_address from NewLogicalQubit statements
+    and emits a move.Fill with those addresses in IR-walk order."""
+    addr0 = layout.LocationAddress(0, 0)
+    addr1 = layout.LocationAddress(0, 1)
+
+    fn = _make_function_with_qubits((addr0, addr1))
+    rule = rewrite.Walk(place2move.InsertFill())
+    result = rule.rewrite(fn)
+
+    assert result.has_done_something
+
+    first_stmt = fn.body.blocks[0].first_stmt
+    assert isinstance(first_stmt, move.Load)
+
+    fill_stmt = first_stmt.next_stmt
+    assert isinstance(fill_stmt, move.Fill)
+    assert fill_stmt.location_addresses == (addr0, addr1)
+
+    store_stmt = fill_stmt.next_stmt
+    assert isinstance(store_stmt, move.Store)
+
+
+def test_insert_fill_no_qubits_is_noop():
+    """InsertFill is a no-op when the function body has no NewLogicalQubit
+    statements (i.e. no location_addresses to collect)."""
+    block = ir.Block([])
+    region = ir.Region(block)
+    fn = func.Function(
+        sym_name="empty_fn",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+    result = rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    assert not result.has_done_something
+
+
+def test_insert_fill_already_filled_is_noop():
+    """InsertFill is a no-op when the function body already begins with
+    a move.Fill statement (i.e. the fill was already emitted in a prior pass)."""
+    addr0 = layout.LocationAddress(0, 0)
+    angle = ir.TestValue()
+    nlq = place.NewLogicalQubit(angle, angle, angle)
+    nlq.location_address = addr0
+
+    # Construct the block so move.Fill is genuinely the first statement,
+    # which is the condition InsertFill checks to detect an already-filled func.
+    load_outer = move.Load()
+    fill = move.Fill(load_outer.result, location_addresses=(addr0,))
+    store_outer = move.Store(fill.result)
+
+    block = ir.Block([fill, store_outer, nlq])
+    region = ir.Region(block)
+    fn = func.Function(
+        sym_name="already_filled",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+    result = rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    assert not result.has_done_something
+
+
+def test_insert_fill_none_location_address_is_noop():
+    """InsertFill gives up (returns no-op RewriteResult) when any NewLogicalQubit
+    has location_address=None — indicating the post-ResolvePinnedAddresses
+    invariant has not been met."""
+    angle = ir.TestValue()
+    nlq = place.NewLogicalQubit(angle, angle, angle)
+    # deliberately leave location_address=None (the default)
+
+    block = ir.Block([nlq])
+    region = ir.Region(block)
+    fn = func.Function(
+        sym_name="unresolved_fn",
+        signature=func.Signature((), types.NoneType),
+        slots=(),
+        body=region,
+    )
+    result = rewrite.Walk(place2move.InsertFill()).rewrite(fn)
+    assert not result.has_done_something
+    # No move.Fill should have been inserted
+    assert not any(isinstance(s, move.Fill) for s in block.walk())
+
+
+# ---------------------------------------------------------------------------
+# InsertInitialize tests
+# ---------------------------------------------------------------------------
+
+
+def test_insert_initialize_emits_logical_initialize():
+    """InsertInitialize collects location_address, theta, phi, lam from two
+    NewLogicalQubit statements and emits move.LogicalInitialize before the
+    first non-NewLogicalQubit statement."""
+    addr0 = layout.LocationAddress(0, 0)
+    addr1 = layout.LocationAddress(0, 1)
+    angle = ir.TestValue()
+
+    nlq0 = place.NewLogicalQubit(angle, angle, angle)
+    nlq0.location_address = addr0
+    nlq1 = place.NewLogicalQubit(angle, angle, angle)
+    nlq1.location_address = addr1
+    terminator = py.Constant(42)
+
+    test_block = ir.Block([nlq0, nlq1, terminator])
+    rule = rewrite.Walk(place2move.InsertInitialize())
+    result = rule.rewrite(test_block)
+
+    assert result.has_done_something
+
+    # The block should now have: NLQ0, NLQ1, Load, LogicalInitialize, Store, Constant
+    stmt = test_block.first_stmt
+    assert isinstance(stmt, place.NewLogicalQubit)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, place.NewLogicalQubit)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, move.Load)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, move.LogicalInitialize)
+    assert stmt.location_addresses == (addr0, addr1)
+    assert stmt.thetas == (angle, angle)
+    assert stmt.phis == (angle, angle)
+    assert stmt.lams == (angle, angle)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, move.Store)
+    stmt = stmt.next_stmt
+    assert isinstance(stmt, py.Constant)
+
+
+def test_insert_initialize_empty_block_is_noop():
+    """InsertInitialize is a no-op when the block's first statement is not a
+    NewLogicalQubit (len(location_addresses) == 0 after the loop)."""
+    test_block = ir.Block([py.Constant(99)])
+    result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    assert not result.has_done_something
+
+
+def test_insert_initialize_all_nlq_no_terminator_is_noop():
+    """InsertInitialize is a no-op when the block contains only NewLogicalQubit
+    statements with no following non-NewLogicalQubit insertion point (stmt is
+    None after the loop)."""
+    angle = ir.TestValue()
+    nlq0 = place.NewLogicalQubit(angle, angle, angle)
+    nlq0.location_address = layout.LocationAddress(0, 0)
+    nlq1 = place.NewLogicalQubit(angle, angle, angle)
+    nlq1.location_address = layout.LocationAddress(0, 1)
+
+    test_block = ir.Block([nlq0, nlq1])
+    result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    assert not result.has_done_something
+
+
+def test_insert_initialize_none_location_address_is_noop():
+    """InsertInitialize gives up (returns no-op RewriteResult) when any
+    NewLogicalQubit has location_address=None — indicating the post-
+    ResolvePinnedAddresses invariant has not been met."""
+    angle = ir.TestValue()
+    nlq = place.NewLogicalQubit(angle, angle, angle)
+    # deliberately leave location_address=None (the default)
+    terminator = py.Constant(0)
+
+    test_block = ir.Block([nlq, terminator])
+    result = rewrite.Walk(place2move.InsertInitialize()).rewrite(test_block)
+    assert not result.has_done_something
+    # No move.LogicalInitialize should have been inserted
+    assert not any(isinstance(s, move.LogicalInitialize) for s in test_block.walk())
