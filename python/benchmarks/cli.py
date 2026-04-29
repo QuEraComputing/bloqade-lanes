@@ -21,9 +21,9 @@ from benchmarks.harness import (
 from benchmarks.harness.models import BUILTIN_ARCH_SPEC_ID, BenchmarkJob
 from benchmarks.kernels import select_benchmark_cases
 
+from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
-from bloqade.lanes.layout.arch import ArchSpec
 
 MAX_LOGICAL_QUBITS = 10
 

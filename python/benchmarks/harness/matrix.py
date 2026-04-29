@@ -11,12 +11,12 @@ from benchmarks.harness.models import (
     StrategyConfig,
 )
 
+from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
-from bloqade.lanes.layout.arch import ArchSpec
 
 
 def default_strategy_configs(

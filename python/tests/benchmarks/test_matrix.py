@@ -5,7 +5,7 @@ from benchmarks.harness.models import StrategyConfig
 from benchmarks.kernels import BENCHMARK_CASES
 
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.arch import ArchSpec
 
 
 def test_matrix_expansion_builds_case_strategy_cross_product():
