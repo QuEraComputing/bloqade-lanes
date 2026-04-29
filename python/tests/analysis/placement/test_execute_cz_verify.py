@@ -113,9 +113,16 @@ def test_verify_no_czs():
 
 def test_verify_custom_large_arch():
     """Verify works with multiword ArchSpec using the builder."""
-    from bloqade.lanes.arch.builder import build_arch
-    from bloqade.lanes.arch.topology import HypercubeSiteTopology, HypercubeWordTopology
-    from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+    from bloqade.lanes.arch.build.blueprint import (
+        ArchBlueprint,
+        DeviceLayout,
+        ZoneSpec,
+        build_arch,
+    )
+    from bloqade.lanes.arch.build.topology import (
+        HypercubeSiteTopology,
+        HypercubeWordTopology,
+    )
 
     bp = ArchBlueprint(
         zones={

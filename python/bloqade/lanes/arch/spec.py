@@ -4,7 +4,6 @@ from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Sequence
 
-from bloqade.lanes._wrapper import RustWrapper
 from bloqade.lanes.bytecode._native import (
     ArchSpec as _RustArchSpec,
     LaneAddress as _RustLaneAddress,
@@ -15,6 +14,7 @@ from bloqade.lanes.bytecode._native import (
     Zone as _RustZone,
     ZoneBus,
 )
+from bloqade.lanes.bytecode._wrapper import RustWrapper
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,

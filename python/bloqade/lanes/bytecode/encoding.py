@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bloqade.lanes._wrapper import KirinRustWrapper
 from bloqade.lanes.bytecode._native import (
     Direction as Direction,
     LaneAddress as _RustLaneAddress,
@@ -10,6 +9,7 @@ from bloqade.lanes.bytecode._native import (
     MoveType as MoveType,
     ZoneAddress as _RustZoneAddress,
 )
+from bloqade.lanes.bytecode._wrapper import KirinRustWrapper
 
 if TYPE_CHECKING:
     from typing_extensions import Self

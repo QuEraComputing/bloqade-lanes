@@ -2,7 +2,7 @@
 
 import pytest
 
-from bloqade.lanes.arch.arch_builder import (
+from bloqade.lanes.arch.build.imperative import (
     ArchBuilder,
     ZoneBuilder,
     _SiteGridQuery,

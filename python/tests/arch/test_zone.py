@@ -2,7 +2,7 @@
 
 import pytest
 
-from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+from bloqade.lanes.arch.build.blueprint import ArchBlueprint, DeviceLayout, ZoneSpec
 
 
 class TestZoneSpec:

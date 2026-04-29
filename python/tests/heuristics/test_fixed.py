@@ -408,9 +408,16 @@ def test_nohome_best_path_none_returns_large_cost(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize("sites_per_word", [2, 4])
 def test_initial_layout_variable_sites_per_word(sites_per_word):
-    from bloqade.lanes.arch.builder import build_arch
-    from bloqade.lanes.arch.topology import HypercubeSiteTopology, HypercubeWordTopology
-    from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+    from bloqade.lanes.arch.build.blueprint import (
+        ArchBlueprint,
+        DeviceLayout,
+        ZoneSpec,
+        build_arch,
+    )
+    from bloqade.lanes.arch.build.topology import (
+        HypercubeSiteTopology,
+        HypercubeWordTopology,
+    )
 
     bp = ArchBlueprint(
         zones={

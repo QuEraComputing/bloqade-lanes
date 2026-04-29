@@ -204,7 +204,7 @@ def test_find_path_respects_per_bus_word_scoping():
         },
         layout=DeviceLayout(sites_per_word=4),
     )
-    from bloqade.lanes.arch.topology import MatchingTopology
+    from bloqade.lanes.arch.build.topology import MatchingTopology
 
     result = build_arch(bp, connections={("a", "b"): MatchingTopology()})
     arch = result.arch

@@ -2,14 +2,19 @@
 
 import pytest
 
-from bloqade.lanes.arch.builder import ArchResult, build_arch
-from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.arch.topology import (
+from bloqade.lanes.arch.build.blueprint import (
+    ArchBlueprint,
+    ArchResult,
+    DeviceLayout,
+    ZoneSpec,
+    build_arch,
+)
+from bloqade.lanes.arch.build.topology import (
     HypercubeSiteTopology,
     HypercubeWordTopology,
     MatchingTopology,
 )
-from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
+from bloqade.lanes.arch.spec import ArchSpec
 
 
 def _has_site_buses(arch: ArchSpec) -> frozenset[int]:
@@ -245,7 +250,7 @@ class TestBuildArchValidation:
 class TestBuildArchPerBusWords:
     def test_mixed_site_topologies(self) -> None:
         """Two zones with different site topologies get separate buses."""
-        from bloqade.lanes.arch.topology import AllToAllSiteTopology
+        from bloqade.lanes.arch.build.topology import AllToAllSiteTopology
 
         bp = ArchBlueprint(
             zones={
