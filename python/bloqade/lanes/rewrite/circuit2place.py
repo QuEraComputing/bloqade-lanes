@@ -359,7 +359,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, (place.NewLogicalQubit, place.NewPinnedQubit))
+            isinstance(node, place.NewPinnedQubit)
             and (parent_block := node.parent_block) is not None
             and (first_stmt := parent_block.first_stmt) is not None
             and node is not first_stmt
@@ -372,7 +372,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
         def loop_cond(stmt: ir.Statement | None) -> TypeGuard[ir.Statement]:
             return (
                 stmt is not None
-                and not isinstance(stmt, (place.NewLogicalQubit, place.NewPinnedQubit))
+                and not isinstance(stmt, place.NewPinnedQubit)
                 and set(stmt.results).isdisjoint(node.args)
             )
 

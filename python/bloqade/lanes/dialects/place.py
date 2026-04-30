@@ -35,8 +35,25 @@ class LogicalInitialize(ir.Statement):
 
 
 @statement(dialect=dialect)
-class NewLogicalQubit(ir.Statement):
-    """Allocate new logical qubits with initial state u3(theta, phi, lam)|0>.
+class NewPinnedQubit(ir.Statement):
+    """Allocate a physical qubit at an optional pinned location.
+
+    No initialization angles — physical qubits have a location but no associated
+    initialization sequence.  location_address=None means the layout heuristic will
+    assign a site; after ResolvePinnedAddresses runs this is never None in well-formed IR.
+    """
+
+    traits = frozenset()
+    location_address: LocationAddress | None = info.attribute(default=None)
+    result: ir.ResultValue = info.result(bloqade_types.QubitType)
+
+
+@statement(dialect=dialect)
+class NewLogicalQubit(NewPinnedQubit):
+    """Allocate a logical qubit with initial state u3(theta, phi, lam)|0>.
+
+    Extends NewPinnedQubit with initialization angles.  location_address and result
+    are inherited from NewPinnedQubit.
 
     Args:
         theta (float): Angle for rotation around the Y axis
@@ -48,27 +65,9 @@ class NewLogicalQubit(ir.Statement):
 
     """
 
-    traits = frozenset()
     theta: ir.SSAValue = info.argument(types.Float)
     phi: ir.SSAValue = info.argument(types.Float)
     lam: ir.SSAValue = info.argument(types.Float)
-    location_address: LocationAddress | None = info.attribute(default=None)
-    result: ir.ResultValue = info.result(bloqade_types.QubitType)
-
-
-@statement(dialect=dialect)
-class NewPinnedQubit(ir.Statement):
-    """Allocate a physical qubit at an optional pinned location.
-
-    Unlike NewLogicalQubit there are no initialization angles — physical qubits
-    have a location but no associated initialization sequence.  location_address=None
-    means the layout heuristic will assign a site; after ResolvePinnedAddresses runs
-    this is never None in well-formed IR.
-    """
-
-    traits = frozenset()
-    location_address: LocationAddress | None = info.attribute(default=None)
-    result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
 
 @statement(init=False)
@@ -309,28 +308,8 @@ class PlacementMethods(interp.MethodTable):
 class InitialLayoutMethods(interp.MethodTable):
 
     @interp.impl(NewLogicalQubit)
-    def new_logical_qubit(
-        self,
-        _interp: LayoutAnalysis,
-        frame: ForwardFrame[EmptyLattice],
-        stmt: NewLogicalQubit,
-    ):
-        if stmt.location_address is None:
-            return (EmptyLattice.bottom(),)
-        addr_entry = _interp.address_entries.get(stmt.result)
-        if not isinstance(addr_entry, address.AddressQubit):
-            return (EmptyLattice.bottom(),)
-        qubit_id = addr_entry.data
-        pinned_values = _interp.location_addresses.values()
-        if stmt.location_address in pinned_values:
-            raise interp.InterpreterError(
-                f"Duplicate pinned location address: {stmt.location_address}"
-            )
-        _interp.location_addresses[qubit_id] = stmt.location_address
-        return (EmptyLattice.bottom(),)
-
     @interp.impl(NewPinnedQubit)
-    def new_pinned_qubit_layout(
+    def new_qubit_layout(
         self,
         _interp: LayoutAnalysis,
         frame: ForwardFrame[EmptyLattice],
@@ -389,18 +368,8 @@ class InitialLayoutMethods(interp.MethodTable):
 class QubitAddressAnalysis(interp.MethodTable):
 
     @interp.impl(NewLogicalQubit)
-    def new_logical_qubit(
-        self,
-        _interp: address.AddressAnalysis,
-        frame: ForwardFrame[address.Address],
-        stmt: NewLogicalQubit,
-    ):
-        addr = address.AddressQubit(_interp.next_address)
-        _interp.next_address += 1
-        return (addr,)
-
     @interp.impl(NewPinnedQubit)
-    def new_pinned_qubit(
+    def new_qubit_address(
         self,
         _interp: address.AddressAnalysis,
         frame: ForwardFrame[address.Address],

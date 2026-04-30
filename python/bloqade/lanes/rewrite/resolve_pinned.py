@@ -27,7 +27,7 @@ class ResolvePinnedAddresses(abc.RewriteRule):
     initial_layout: tuple[LocationAddress, ...]
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
-        if not isinstance(node, (place.NewLogicalQubit, place.NewPinnedQubit)):
+        if not isinstance(node, place.NewPinnedQubit):
             return abc.RewriteResult()
         if node.location_address is not None:
             return abc.RewriteResult()
