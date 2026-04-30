@@ -138,6 +138,20 @@ PAPER_SCALE_CONFIG = {
 PAPER_SCALE_CONFIG["mld_train_shots"] = 10_000_000
 PAPER_SCALE_CONFIG["eval_shots"] = 1_000_000
 CONFIG = PAPER_SCALE_CONFIG.copy()
+SIM_TYPE = "tsim"
+if SIM_TYPE not in {"tsim", "clifft"}:
+    raise ValueError(
+        f"SIM_TYPE is {SIM_TYPE}; currently, the only supported simulator "
+        "backends are 'tsim' and 'clifft'."
+    )
+
+_ORIGINAL_RUN_TASK = globals().get("_ORIGINAL_RUN_TASK", run_task)
+
+
+def run_task(*args, **kwargs):
+    kwargs.setdefault("sim_type", SIM_TYPE)
+    return _ORIGINAL_RUN_TASK(*args, **kwargs)
+
 
 PLOT_CONFIG = {
     "min_accepted_fraction": 0.02,
@@ -279,6 +293,7 @@ def injected_baseline_raw(task_map, posterior_samples: int):
         target_bloch=FIDELITY_TARGET_BLOCH,
         raw=True,
         basis_labels=BASIS_LABELS,
+        sim_type=SIM_TYPE,
     )
 
 
@@ -631,6 +646,7 @@ injected_summary_corrected = injected_baseline(
     training_task_map=injected_decoder_tasks,
     basis_labels=BASIS_LABELS,
     uncertainty_backend=CONFIG["uncertainty_backend"],
+    sim_type=SIM_TYPE,
 )
 injected_summary_raw = injected_baseline_raw(
     injected_tasks, CONFIG["posterior_samples"]

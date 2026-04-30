@@ -187,12 +187,14 @@ def train_mld_decoder_pair_from_task(
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     chunk_size: int | None = 1_000_000,
     with_noise: bool = True,
+    sim_type: str = "tsim",
 ) -> tuple[Any, Any]:
     chunk_iter = iter_task_datasets(
         task,
         shots,
         with_noise=with_noise,
         chunk_size=chunk_size,
+        sim_type=sim_type,
     )
 
     try:
@@ -481,6 +483,7 @@ def estimate_mld_ancilla_scores_from_tasks(
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     chunk_size: int | None = 1_000_000,
     with_noise: bool = True,
+    sim_type: str = "tsim",
 ) -> np.ndarray:
     targets = resolve_valid_factory_targets(
         factory_target=factory_target,
@@ -509,6 +512,7 @@ def estimate_mld_ancilla_scores_from_tasks(
             shots,
             with_noise=with_noise,
             chunk_size=chunk_size,
+            sim_type=sim_type,
         ):
             anc_det, _ = split_factory_bits(
                 dataset.detectors,
@@ -1259,10 +1263,16 @@ def injected_baseline(
     training_task_map: Mapping[str, Any] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     uncertainty_backend: str = "wilson",
+    sim_type: str = "tsim",
 ) -> dict[str, Any]:
     corrected = {}
     for basis in basis_labels:
-        evaluation_dataset = run_task(task_map[basis], eval_shots, with_noise=True)
+        evaluation_dataset = run_task(
+            task_map[basis],
+            eval_shots,
+            with_noise=True,
+            sim_type=sim_type,
+        )
         if raw:
             corrected[basis] = evaluation_dataset.observables[:, 0].astype(np.uint8)
             continue
@@ -1270,7 +1280,10 @@ def injected_baseline(
         training_dataset = evaluation_dataset
         if training_task_map is not None:
             training_dataset = run_task(
-                training_task_map[basis], eval_shots, with_noise=True
+                training_task_map[basis],
+                eval_shots,
+                with_noise=True,
+                sim_type=sim_type,
             )
 
         decoder = table_decoder_cls.from_det_obs_shots(

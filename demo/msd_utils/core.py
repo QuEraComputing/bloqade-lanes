@@ -26,6 +26,29 @@ class BasisDataset:
     observables: np.ndarray
 
 
+def _run_simulator_task(
+    task: Any,
+    shots: int,
+    *,
+    with_noise: bool,
+    run_detectors: bool,
+    sim_type: str,
+) -> Any:
+    if isinstance(task, DemoTask):
+        return task.run(
+            shots,
+            with_noise=with_noise,
+            run_detectors=run_detectors,
+            sim_type=sim_type,
+        )
+    if sim_type != "tsim":
+        raise ValueError(
+            f"sim_type is {sim_type}; currently, the only supported simulator "
+            "backends are 'tsim' and 'clifft'"
+        )
+    return task.run(shots, with_noise=with_noise, run_detectors=run_detectors)
+
+
 def bits_to_key(bits: np.ndarray | Sequence[bool] | Sequence[int]) -> str:
     return "".join("1" if int(x) else "0" for x in bits)
 
@@ -222,9 +245,16 @@ def sample_task_raw(
     *,
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
+    sim_type: str = "tsim",
 ) -> BasisDataset:
     if chunk_size is None or shots <= chunk_size:
-        result = task.run(shots, with_noise=with_noise, run_detectors=True)
+        result = _run_simulator_task(
+            task,
+            shots,
+            with_noise=with_noise,
+            run_detectors=True,
+            sim_type=sim_type,
+        )
         return BasisDataset(
             detectors=np.asarray(result.detectors, dtype=np.uint8),
             observables=np.asarray(result.observables, dtype=np.uint8),
@@ -235,7 +265,13 @@ def sample_task_raw(
     remaining = shots
     while remaining > 0:
         batch = min(chunk_size, remaining)
-        result = task.run(batch, with_noise=with_noise, run_detectors=True)
+        result = _run_simulator_task(
+            task,
+            batch,
+            with_noise=with_noise,
+            run_detectors=True,
+            sim_type=sim_type,
+        )
         det_chunks.append(np.asarray(result.detectors, dtype=np.uint8))
         obs_chunks.append(np.asarray(result.observables, dtype=np.uint8))
         remaining -= batch
@@ -246,11 +282,22 @@ def sample_task_raw(
     )
 
 
-def compute_observable_reference(task: DemoTask, *, shots: int = 64) -> np.ndarray:
+def compute_observable_reference(
+    task: DemoTask,
+    *,
+    shots: int = 64,
+    sim_type: str = "tsim",
+) -> np.ndarray:
     if task.observable_reference is not None:
         return np.asarray(task.observable_reference, dtype=np.uint8)
 
-    reference_result = task.run(shots, with_noise=False, run_detectors=True)
+    reference_result = _run_simulator_task(
+        task,
+        shots,
+        with_noise=False,
+        run_detectors=True,
+        sim_type=sim_type,
+    )
     reference_obs = np.asarray(reference_result.observables, dtype=np.uint8)
     unique_rows = np.unique(reference_obs, axis=0)
     if len(unique_rows) != 1:
@@ -271,12 +318,17 @@ def rebase_dataset_observables(
     )
 
 
-def normalize_observable_frame(task: Any, dataset: BasisDataset) -> BasisDataset:
+def normalize_observable_frame(
+    task: Any,
+    dataset: BasisDataset,
+    *,
+    sim_type: str = "tsim",
+) -> BasisDataset:
     if not isinstance(task, DemoTask):
         return dataset
     if task.observable_frame != ObservableFrame.NOISELESS_REFERENCE_FLIPS:
         return dataset
-    reference = compute_observable_reference(task)
+    reference = compute_observable_reference(task, sim_type=sim_type)
     return rebase_dataset_observables(dataset, reference)
 
 
@@ -286,6 +338,7 @@ def iter_task_datasets(
     *,
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
+    sim_type: str = "tsim",
 ):
     remaining = int(shots)
     if remaining < 0:
@@ -298,12 +351,18 @@ def iter_task_datasets(
 
     while remaining > 0:
         batch = min(int(chunk_size), remaining)
-        result = task.run(batch, with_noise=with_noise, run_detectors=True)
+        result = _run_simulator_task(
+            task,
+            batch,
+            with_noise=with_noise,
+            run_detectors=True,
+            sim_type=sim_type,
+        )
         dataset = BasisDataset(
             detectors=np.asarray(result.detectors, dtype=np.uint8),
             observables=np.asarray(result.observables, dtype=np.uint8),
         )
-        yield normalize_observable_frame(task, dataset)
+        yield normalize_observable_frame(task, dataset, sim_type=sim_type)
         remaining -= batch
 
 
@@ -313,6 +372,7 @@ def run_task(
     *,
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
+    sim_type: str = "tsim",
 ) -> BasisDataset:
     return normalize_observable_frame(
         task,
@@ -321,7 +381,9 @@ def run_task(
             shots,
             with_noise=with_noise,
             chunk_size=chunk_size,
+            sim_type=sim_type,
         ),
+        sim_type=sim_type,
     )
 
 

@@ -118,6 +118,49 @@ def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
     assert len(np.unique(np.asarray(result.detectors, dtype=np.uint8), axis=0)) == 1
 
 
+def test_demo_task_clifft_backend_matches_result_shapes():
+    pytest.importorskip("clifft")
+
+    sim = GeminiLogicalSimulator()
+    noisy_initializer = make_noisy_steane7_initializer(sim)
+    m2dets, m2obs = build_measurement_maps(5)
+    decoder = build_decoder_kernel_bundle(
+        0.1,
+        0.2,
+        0.3,
+        special_kernel_strategy="prefix_prepare",
+    )
+    demo_task = build_task(
+        sim,
+        decoder.special["X"],
+        m2dets=m2dets,
+        m2obs=m2obs,
+        noisy_initializer=noisy_initializer,
+        append_measurements=False,
+    )
+
+    detector_result = demo_task.run(
+        4,
+        with_noise=False,
+        run_detectors=True,
+        sim_type="clifft",
+        seed=123,
+    )
+    assert np.asarray(detector_result.detectors, dtype=np.uint8).shape == (4, 15)
+    assert np.asarray(detector_result.observables, dtype=np.uint8).shape == (4, 5)
+
+    measurement_result = demo_task.run(
+        4,
+        with_noise=False,
+        run_detectors=False,
+        sim_type="clifft",
+        seed=123,
+    )
+    assert np.asarray(measurement_result.measurements, dtype=np.uint8).shape == (4, 35)
+    assert np.asarray(measurement_result.detectors, dtype=np.uint8).shape == (4, 15)
+    assert np.asarray(measurement_result.observables, dtype=np.uint8).shape == (4, 5)
+
+
 def test_decoder_kernel_bundle_accepts_variadic_primitive_builder():
     captured: list[tuple[float, ...]] = []
 
