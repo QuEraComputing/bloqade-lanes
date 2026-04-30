@@ -19,7 +19,9 @@ from .dialects import operations
 
 
 @ir.dialect_group(
-    structural_no_opt.union([gate, qubit, operations, gemini_common, annotate])
+    structural_no_opt.union(
+        [gate, qubit, operations, annotate, gemini_common.dialects.qubit]
+    )
 )
 def kernel(self):
     """Compile a function to a Gemini logical kernel."""
@@ -87,13 +89,13 @@ def kernel(self):
 
         if verify:
             # stop circular import problems
-            from ..analysis.duplicate_address_validation import (
+            from ..common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
-            from ..analysis.logical_validation import (
+            from .validation.clifford.analysis import (
                 GeminiLogicalValidation,
             )
-            from ..analysis.measurement_validation import (
+            from .validation.measurement.analysis import (
                 GeminiTerminalMeasurementValidation,
             )
 

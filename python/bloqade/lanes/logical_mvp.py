@@ -11,12 +11,12 @@ from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
-from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
-from bloqade.gemini.analysis.measurement_validation import (
-    GeminiTerminalMeasurementValidation,
-)
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
+)
+from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
+from bloqade.gemini.logical.validation.measurement.analysis import (
+    GeminiTerminalMeasurementValidation,
 )
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom
