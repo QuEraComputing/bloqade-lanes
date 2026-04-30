@@ -329,6 +329,57 @@ class RewritePlaceOperations(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+class RewritePhysicalMeasure(abc.RewriteRule):
+    """Lower qubit.stmts.Measure to place.StaticPlacement(EndMeasure).
+
+    For the physical pipeline.  After AggressiveUnroll, qalloc produces:
+      ilist.New([q0, q1])   — the register
+    and measure receives:
+      ilist.New([reg])      — outer wrapper with one IList[Qubit, N] element
+
+    We unwrap one level of nesting to collect individual Qubit SSA values.
+    """
+
+    def _collect_inputs(self, node: qubit.stmts.Measure) -> list[ir.SSAValue] | None:
+        owner = node.qubits.owner
+        if not isinstance(owner, ilist.New):
+            return None
+        inputs: list[ir.SSAValue] = []
+        for val in owner.values:
+            inner = val.owner
+            if isinstance(inner, ilist.New):
+                inputs.extend(inner.values)
+            else:
+                inputs.append(val)
+        return inputs or None
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, qubit.stmts.Measure):
+            return abc.RewriteResult()
+
+        inputs = self._collect_inputs(node)
+        if inputs is None:
+            return abc.RewriteResult()
+
+        body = ir.Region(block := ir.Block())
+        entry_state = block.args.append_from(StateType, name="entry_state")
+        gate_stmt = place.EndMeasure(entry_state, qubits=tuple(range(len(inputs))))
+        block.stmts.append(gate_stmt)
+        block.stmts.append(place.Yield(gate_stmt.state_after, *gate_stmt.results[1:]))
+
+        static_placement = place.StaticPlacement(qubits=tuple(inputs), body=body)
+        static_placement.insert_before(node)
+
+        # Assemble the flat IList[MeasurementResult, N] that replaces Measure.result.
+        meas_results = list(static_placement.results[1:])
+        result_list = ilist.New(tuple(meas_results))
+        result_list.insert_before(node)
+        node.result.replace_by(result_list.result)
+        node.delete()
+
+        return abc.RewriteResult(has_done_something=True)
+
+
 class HoistConstants(abc.RewriteRule):
     """This rewrite rule hoists all constant values to the top of the kernel."""
 

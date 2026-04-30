@@ -1,10 +1,14 @@
 """Tests for the physical pipeline and NewPinnedQubit."""
 
+import bloqade.squin as squin
 from kirin import ir, rewrite
+from kirin.dialects import ilist
+from kirin.ir.exception import ValidationErrorGroup
 
 from bloqade import qubit
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import move, place
+from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewriteQubitsToPinnedQubits
 
 
@@ -32,3 +36,45 @@ def test_rewrite_new_to_pinned():
     pinned = [s for s in block.stmts if isinstance(s, place.NewPinnedQubit)]
     assert len(pinned) == 1
     assert pinned[0].location_address is None
+
+
+def test_physical_pipeline_smoke():
+    """Single-qubit kernel with terminal measure compiles end-to-end."""
+
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(1)
+        squin.qubit.measure(ilist.IList([reg[0]]))  # type: ignore[arg-type]
+
+    out = PhysicalPipeline().emit(kernel)
+    assert out is not None
+    fills = [s for s in out.callable_region.walk() if isinstance(s, move.Fill)]
+    assert len(fills) == 1
+
+
+def test_physical_pipeline_no_new_pinned_remaining():
+    """After compilation, no place.NewPinnedQubit statements remain."""
+
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(2)
+        squin.qubit.measure(ilist.IList([reg[0], reg[1]]))  # type: ignore[arg-type]
+
+    out = PhysicalPipeline().emit(kernel)
+    pinned_stmts = [
+        s for s in out.callable_region.walk() if isinstance(s, place.NewPinnedQubit)
+    ]
+    assert pinned_stmts == []
+
+
+def test_physical_pipeline_missing_measure_raises():
+    """Kernel with no terminal measure raises at validation."""
+
+    @squin.kernel
+    def kernel():
+        _reg = squin.qalloc(1)  # noqa: F841
+
+    import pytest
+
+    with pytest.raises(ValidationErrorGroup):
+        PhysicalPipeline().emit(kernel, no_raise=False)
