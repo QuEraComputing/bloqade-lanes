@@ -83,8 +83,9 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
                 out.code
             )
-            rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
             rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
 
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
