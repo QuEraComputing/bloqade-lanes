@@ -1156,6 +1156,7 @@ class MoveSolver:
         blocked: list[LocationAddress],
         max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
     ) -> SolveResult:
         """Solve a loose-goal entangling placement + routing problem.
 
@@ -1169,6 +1170,9 @@ class MoveSolver:
             blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
             options: Search-tuning parameters. Defaults to SolveOptions().
+            future_cz_layers: Optional list of future CZ pair layers for
+                lookahead-aware Hungarian assignment. Each layer is a list
+                of (qubit_a, qubit_b) tuples.
 
         Returns:
             SolveResult with the discovered entangling placement.

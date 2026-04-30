@@ -122,12 +122,23 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         # Blocked locations: occupied by atoms not in this circuit.
         blocked = [loc._inner for loc in state.occupied]
 
+        # Extract future CZ layers for lookahead-aware assignment.
+        # lookahead_cz_layers[0] is the current layer (skip it),
+        # lookahead_cz_layers[1:] are future layers.
+        future = None
+        if len(lookahead_cz_layers) > 1:
+            future = [
+                list(zip(ctrls, tgts))
+                for ctrls, tgts in lookahead_cz_layers[1:]
+            ]
+
         result = solver.solve_entangling(
             initial,
             cz_pairs,
             blocked,
             max_expansions=self.max_expansions,
             options=options,
+            future_cz_layers=future,
         )
 
         if result.status != "solved":

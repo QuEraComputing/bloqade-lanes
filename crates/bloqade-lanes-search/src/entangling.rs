@@ -244,6 +244,8 @@ pub fn greedy_assign_pairs(
     arch: &ArchSpec,
     dist_table: &DistanceTable,
     seed: u64,
+    transition_targets: Option<&HashMap<u32, u64>>,
+    transition_weight: f64,
 ) -> Vec<(u32, u64)> {
     if cz_pairs.is_empty() {
         return Vec::new();
@@ -304,12 +306,34 @@ pub fn greedy_assign_pairs(
             // Orientation 1: qa→loc_a, qb→loc_b
             let d_a1 = dist_table.distance(loc_a_enc, slot.loc_a).unwrap_or(BIG);
             let d_b1 = dist_table.distance(loc_b_enc, slot.loc_b).unwrap_or(BIG);
-            let cost1 = d_a1.saturating_add(d_b1);
+            let mut cost1 = d_a1.saturating_add(d_b1);
 
             // Orientation 2: qa→loc_b, qb→loc_a
             let d_a2 = dist_table.distance(loc_a_enc, slot.loc_b).unwrap_or(BIG);
             let d_b2 = dist_table.distance(loc_b_enc, slot.loc_a).unwrap_or(BIG);
-            let cost2 = d_a2.saturating_add(d_b2);
+            let mut cost2 = d_a2.saturating_add(d_b2);
+
+            // Add transition cost to next layer's assigned positions.
+            if let Some(targets) = transition_targets {
+                // Orientation 1: qa ends at slot.loc_a, qb ends at slot.loc_b
+                if let Some(&next_a) = targets.get(&qa) {
+                    let dt = dist_table.distance(slot.loc_a, next_a).unwrap_or(BIG);
+                    cost1 = cost1.saturating_add((dt as f64 * transition_weight) as u32);
+                }
+                if let Some(&next_b) = targets.get(&qb) {
+                    let dt = dist_table.distance(slot.loc_b, next_b).unwrap_or(BIG);
+                    cost1 = cost1.saturating_add((dt as f64 * transition_weight) as u32);
+                }
+                // Orientation 2: qa ends at slot.loc_b, qb ends at slot.loc_a
+                if let Some(&next_a) = targets.get(&qa) {
+                    let dt = dist_table.distance(slot.loc_b, next_a).unwrap_or(BIG);
+                    cost2 = cost2.saturating_add((dt as f64 * transition_weight) as u32);
+                }
+                if let Some(&next_b) = targets.get(&qb) {
+                    let dt = dist_table.distance(slot.loc_a, next_b).unwrap_or(BIG);
+                    cost2 = cost2.saturating_add((dt as f64 * transition_weight) as u32);
+                }
+            }
 
             let idx = i * n_slots + j;
             if cost1 <= cost2 {
@@ -360,6 +384,89 @@ pub fn greedy_assign_pairs(
     }
 
     result
+}
+
+/// Two-pass lookahead Hungarian assignment with variable depth.
+///
+/// Forward pass: compute preliminary assignments for the current and each
+/// future layer using forward cost only, simulating positions from each
+/// layer's output to the next.
+///
+/// Backward pass: refine each layer's assignment using the next layer's
+/// assigned positions as transition targets (weighted by `beta`).
+///
+/// Returns the refined assignment for the current layer (`cz_pairs`).
+pub fn lookahead_assign_pairs(
+    cz_pairs: &[(u32, u32)],
+    config: &Config,
+    arch: &ArchSpec,
+    dist_table: &DistanceTable,
+    seed: u64,
+    future_layers: &[Vec<(u32, u32)>],
+    beta: f64,
+) -> Vec<(u32, u64)> {
+    if future_layers.is_empty() || beta == 0.0 {
+        return greedy_assign_pairs(cz_pairs, config, arch, dist_table, seed, None, 0.0);
+    }
+
+    // Collect all layers: current + future.
+    let depth = 1 + future_layers.len();
+    let all_layers: Vec<&[(u32, u32)]> = std::iter::once(cz_pairs)
+        .chain(future_layers.iter().map(|v| v.as_slice()))
+        .collect();
+
+    // Forward pass: preliminary assignments.
+    let mut forward_assignments: Vec<Vec<(u32, u64)>> = Vec::with_capacity(depth);
+    let mut sim_config = config.clone();
+
+    for layer_pairs in &all_layers {
+        let assign =
+            greedy_assign_pairs(layer_pairs, &sim_config, arch, dist_table, seed, None, 0.0);
+        // Build simulated config: move assigned qubits to their targets.
+        let moves: Vec<(u32, LocationAddr)> = assign
+            .iter()
+            .map(|&(qid, enc)| (qid, LocationAddr::decode(enc)))
+            .collect();
+        sim_config = sim_config.with_moves(&moves);
+        forward_assignments.push(assign);
+    }
+
+    // Backward pass: refine with transition targets from the next layer.
+    // Start from the second-to-last layer and work backward.
+    for i in (0..depth - 1).rev() {
+        // Build transition targets: qubit → assigned position in layer i+1.
+        let next_assign = &forward_assignments[i + 1];
+        let targets: HashMap<u32, u64> = next_assign.iter().copied().collect();
+
+        // Determine the config for this layer.
+        // Layer 0 uses the original config. Layers 1+ use simulated configs
+        // rebuilt from the (already refined) previous layer.
+        let layer_config = if i == 0 {
+            config.clone()
+        } else {
+            let mut cfg = config.clone();
+            for j in 0..i {
+                let moves: Vec<(u32, LocationAddr)> = forward_assignments[j]
+                    .iter()
+                    .map(|&(qid, enc)| (qid, LocationAddr::decode(enc)))
+                    .collect();
+                cfg = cfg.with_moves(&moves);
+            }
+            cfg
+        };
+
+        forward_assignments[i] = greedy_assign_pairs(
+            all_layers[i],
+            &layer_config,
+            arch,
+            dist_table,
+            seed,
+            Some(&targets),
+            beta,
+        );
+    }
+
+    forward_assignments.into_iter().next().unwrap_or_default()
 }
 
 /// Solve the rectangular min-cost assignment problem (n_rows ≤ n_cols).
@@ -706,7 +813,7 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
-        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0);
+        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
 
         // Should assign both qubits.
         assert_eq!(targets.len(), 2);
@@ -725,7 +832,7 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
-        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0);
+        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
 
         let t0 = targets.iter().find(|&&(q, _)| q == 0).unwrap().1;
         let t1 = targets.iter().find(|&&(q, _)| q == 1).unwrap().1;
@@ -751,7 +858,7 @@ mod tests {
         ])
         .unwrap();
         let cz_pairs = [(0u32, 1u32), (2u32, 3u32)];
-        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0);
+        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
 
         // All 4 qubit targets should be at distinct locations.
         let locs_used: HashSet<u64> = targets.iter().map(|&(_, l)| l).collect();
@@ -775,9 +882,9 @@ mod tests {
         .unwrap();
         let cz_pairs = [(0u32, 1u32), (2u32, 3u32)];
 
-        let t0 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0);
-        let t1 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 42);
-        let t2 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 123);
+        let t0 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
+        let t1 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 42, None, 0.0);
+        let t2 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 123, None, 0.0);
 
         // At least one seed should produce a different assignment.
         // (Not guaranteed, but very likely with different seeds.)

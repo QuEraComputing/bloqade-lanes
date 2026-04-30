@@ -665,6 +665,7 @@ impl MoveSolver {
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
         opts: &SolveOptions,
+        future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
         use crate::goals::EntanglingConstraintGoal;
         use crate::heuristic::PairDistanceHeuristic;
@@ -684,7 +685,20 @@ impl MoveSolver {
 
         let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
 
-        let greedy_targets = entangling::greedy_assign_pairs(cz_pairs, &root, arch, &dist_table, 0);
+        // Use lookahead assignment if future layers are available.
+        let greedy_targets = if !future_cz_layers.is_empty() {
+            entangling::lookahead_assign_pairs(
+                cz_pairs,
+                &root,
+                arch,
+                &dist_table,
+                0,
+                future_cz_layers,
+                0.2,
+            )
+        } else {
+            entangling::greedy_assign_pairs(cz_pairs, &root, arch, &dist_table, 0, None, 0.0)
+        };
 
         let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
         let ctx = SearchContext {
@@ -1315,6 +1329,7 @@ mod tests {
                 std::iter::empty(),
                 Some(5000),
                 &default_opts(),
+                &[],
             )
             .unwrap();
 
@@ -1342,6 +1357,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &default_opts(),
+                &[],
             )
             .unwrap();
 
@@ -1365,6 +1381,7 @@ mod tests {
                 std::iter::empty(),
                 Some(10000),
                 &default_opts(),
+                &[],
             )
             .unwrap();
 
@@ -1394,6 +1411,7 @@ mod tests {
                 std::iter::empty(),
                 Some(5000),
                 &default_opts(),
+                &[],
             )
             .unwrap();
 
@@ -1416,6 +1434,7 @@ mod tests {
                     w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                &[],
             )
             .unwrap();
 
@@ -1436,6 +1455,7 @@ mod tests {
                     w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                &[],
             )
             .unwrap();
 
@@ -1458,6 +1478,7 @@ mod tests {
                     w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                &[],
             )
             .unwrap();
 

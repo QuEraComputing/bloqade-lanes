@@ -89,6 +89,8 @@ impl LooseTargetGenerator {
             &self.arch,
             &self.dist_table,
             self.seed,
+            None,
+            0.0,
         );
         let new_cost = entangling::assignment_cost(config, &new_targets, &self.dist_table);
         if new_cost < self.cached_cost.get() {
@@ -115,6 +117,8 @@ impl MoveGenerator for LooseTargetGenerator {
                 &self.arch,
                 &self.dist_table,
                 self.seed,
+                None,
+                0.0,
             );
             let cost = entangling::assignment_cost(config, &targets, &self.dist_table);
             self.cached_cost.set(cost);

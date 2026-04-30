@@ -600,7 +600,8 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with the discovered entangling placement.
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None))]
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, future_cz_layers=None))]
+    #[allow(clippy::too_many_arguments)]
     fn solve_entangling(
         &self,
         py: Python<'_>,
@@ -609,11 +610,13 @@ impl PyMoveSolver {
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
     ) -> PyResult<PySolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let future = future_cz_layers.unwrap_or_default();
 
         let result = py
             .allow_threads(|| {
@@ -623,6 +626,7 @@ impl PyMoveSolver {
                     blocked_locs,
                     max_expansions,
                     &opts,
+                    &future,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;

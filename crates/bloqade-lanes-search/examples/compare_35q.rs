@@ -267,6 +267,7 @@ fn main() {
                         std::iter::empty(),
                         max_exp,
                         &loose_opts,
+                        &[],
                     )
                     .unwrap();
 

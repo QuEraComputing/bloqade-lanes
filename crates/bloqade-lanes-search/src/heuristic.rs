@@ -695,8 +695,15 @@ mod tests {
 
         // Solve with A* to get actual cost.
         let goal = EntanglingConstraintGoal::new(&cz_pairs, eset);
-        let target_encoded =
-            crate::entangling::greedy_assign_pairs(&cz_pairs, &config, arch, &dist_table, 0);
+        let target_encoded = crate::entangling::greedy_assign_pairs(
+            &cz_pairs,
+            &config,
+            arch,
+            &dist_table,
+            0,
+            None,
+            0.0,
+        );
         let blocked = HashSet::new();
         let ctx = SearchContext {
             index: &index,
