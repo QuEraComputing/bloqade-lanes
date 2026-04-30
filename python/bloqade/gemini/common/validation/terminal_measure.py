@@ -1,10 +1,17 @@
-"""Pre-compilation validation for physical circuits (post-unroll).
+"""Terminal-measurement validation for physical Gemini programs (post-unroll).
 
-Checks that the unrolled squin kernel has exactly one qubit.stmts.Measure statement
-and that it consumes every qubit allocated in the circuit.
+``PhysicalTerminalMeasurementValidation`` checks that the unrolled squin kernel
+has exactly one ``qubit.stmts.Measure`` statement and that it consumes every
+qubit allocated in the circuit.
 
-Run this after SquinToNative + AggressiveUnroll so that qubit.stmts.New and
-qubit.stmts.Measure are present as direct IR statements rather than Invokes.
+Run this after ``SquinToNative`` + ``AggressiveUnroll`` so that
+``qubit.stmts.New`` and ``qubit.stmts.Measure`` are present as direct IR
+statements rather than Invokes.
+
+The ``_PhysicalTerminalMeasurementAnalysis`` Forward pass accumulates a
+``measure_count`` on the interpreter; the per-statement impl is registered in
+``bloqade.gemini.common.impl.terminal_measure`` under the key
+``"gemini.validate.physical.terminal_measure"``.
 """
 
 from __future__ import annotations
@@ -12,10 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import bloqade.qubit as qubit_dialect
 from bloqade.analysis import address
 from bloqade.analysis.address.lattice import AddressQubit, AddressReg, PartialIList
 from kirin import ir
+from kirin.analysis import Forward, ForwardFrame
+from kirin.lattice import EmptyLattice
 from kirin.validation import ValidationPass
 
 
@@ -34,16 +42,31 @@ def _collect_qubit_ids(addr: address.Address) -> set[int]:
 
 
 @dataclass
+class _PhysicalTerminalMeasurementAnalysis(Forward[EmptyLattice]):
+    """Forward dataflow pass that validates the physical terminal measurement.
+
+    ``measure_count`` accumulates across the walk via the impl registered in
+    ``bloqade.gemini.common.impl.terminal_measure``.
+    """
+
+    keys = ("gemini.validate.physical.terminal_measure",)
+    lattice = EmptyLattice
+
+    address_frame: ForwardFrame
+    total_qubits: int
+    measure_count: int = field(init=False, default=0)
+
+    def eval_fallback(self, frame: ForwardFrame, node: ir.Statement):
+        return tuple(self.lattice.bottom() for _ in node.results)
+
+    def method_self(self, method: ir.Method) -> EmptyLattice:
+        return self.lattice.bottom()
+
+
+@dataclass
 class PhysicalTerminalMeasurementValidation(ValidationPass):
-    """Validate that a physical circuit has exactly one terminal measure
-    covering all allocated qubits.
-
-    Pre-condition: IR has been through SquinToNative + AggressiveUnroll so that
-    qubit.stmts.New and qubit.stmts.Measure are direct IR statements.
-
-    Checks:
-    1. Exactly one qubit.stmts.Measure statement exists.
-    2. Its qubits argument covers all qubits allocated in the circuit.
+    """Validate that a physical (post-unroll) circuit contains exactly one
+    ``qubit.stmts.Measure`` consuming all allocated qubits.
     """
 
     analysis_cache: dict = field(default_factory=dict)
@@ -58,23 +81,22 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
         self.analysis_cache.update(cache)
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
-        measure_stmts = [
-            s
-            for s in method.callable_region.walk()
-            if isinstance(s, qubit_dialect.stmts.Measure)
-        ]
-
         addr_analysis = address.AddressAnalysis(dialects=method.dialects)
-        frame, _ = addr_analysis.run(method)
+        address_frame, _ = addr_analysis.run(method)
         total_qubits = addr_analysis.qubit_count
 
-        errors: list[ir.ValidationError] = []
+        analysis = _PhysicalTerminalMeasurementAnalysis(
+            method.dialects,
+            address_frame=address_frame,
+            total_qubits=total_qubits,
+        )
+        frame, _ = analysis.run(method)
 
-        # Anchor method-level errors to the return statement.
-        return_stmt = method.callable_region.blocks[0].last_stmt
-        assert return_stmt is not None
+        errors = list(analysis.get_validation_errors())
 
-        if len(measure_stmts) == 0:
+        if analysis.measure_count == 0:
+            return_stmt = method.callable_region.blocks[0].last_stmt
+            assert return_stmt is not None
             errors.append(
                 ir.ValidationError(
                     return_stmt,
@@ -82,28 +104,5 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
                     "consuming all allocated qubits; none found.",
                 )
             )
-            return None, errors
 
-        if len(measure_stmts) > 1:
-            for extra in measure_stmts[1:]:
-                errors.append(
-                    ir.ValidationError(
-                        extra,
-                        "Multiple qubit.stmts.Measure statements found; only one "
-                        "terminal measure is allowed in a physical circuit.",
-                    )
-                )
-
-        measure = measure_stmts[0]
-        measured_ids = _collect_qubit_ids(frame.get(measure.qubits))
-        expected_ids = set(range(total_qubits))
-        if measured_ids != expected_ids:
-            errors.append(
-                ir.ValidationError(
-                    measure,
-                    f"Terminal measure covers {len(measured_ids)} qubit(s) but "
-                    f"{total_qubits} were allocated; all qubits must be measured.",
-                )
-            )
-
-        return None, errors
+        return frame, errors
