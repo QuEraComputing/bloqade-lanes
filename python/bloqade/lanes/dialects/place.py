@@ -56,6 +56,21 @@ class NewLogicalQubit(ir.Statement):
     result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
 
+@statement(dialect=dialect)
+class NewPinnedQubit(ir.Statement):
+    """Allocate a physical qubit at an optional pinned location.
+
+    Unlike NewLogicalQubit there are no initialization angles — physical qubits
+    have a location but no associated initialization sequence.  location_address=None
+    means the layout heuristic will assign a site; after ResolvePinnedAddresses runs
+    this is never None in well-formed IR.
+    """
+
+    traits = frozenset()
+    location_address: LocationAddress | None = info.attribute(default=None)
+    result: ir.ResultValue = info.result(bloqade_types.QubitType)
+
+
 @statement(init=False)
 class QuantumStmt(ir.Statement):
     """This is a base class for all low level statements."""
@@ -314,6 +329,27 @@ class InitialLayoutMethods(interp.MethodTable):
         _interp.location_addresses[qubit_id] = stmt.location_address
         return (EmptyLattice.bottom(),)
 
+    @interp.impl(NewPinnedQubit)
+    def new_pinned_qubit_layout(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: NewPinnedQubit,
+    ):
+        if stmt.location_address is None:
+            return (EmptyLattice.bottom(),)
+        addr_entry = _interp.address_entries.get(stmt.result)
+        if not isinstance(addr_entry, address.AddressQubit):
+            return (EmptyLattice.bottom(),)
+        qubit_id = addr_entry.data
+        pinned_values = _interp.location_addresses.values()
+        if stmt.location_address in pinned_values:
+            raise interp.InterpreterError(
+                f"Duplicate pinned location address: {stmt.location_address}"
+            )
+        _interp.location_addresses[qubit_id] = stmt.location_address
+        return (EmptyLattice.bottom(),)
+
     @interp.impl(CZ)
     def cz(
         self,
@@ -358,6 +394,17 @@ class QubitAddressAnalysis(interp.MethodTable):
         _interp: address.AddressAnalysis,
         frame: ForwardFrame[address.Address],
         stmt: NewLogicalQubit,
+    ):
+        addr = address.AddressQubit(_interp.next_address)
+        _interp.next_address += 1
+        return (addr,)
+
+    @interp.impl(NewPinnedQubit)
+    def new_pinned_qubit(
+        self,
+        _interp: address.AddressAnalysis,
+        frame: ForwardFrame[address.Address],
+        stmt: NewPinnedQubit,
     ):
         addr = address.AddressQubit(_interp.next_address)
         _interp.next_address += 1
