@@ -16,6 +16,7 @@ class LogicalKernelSpec:
     # TODO: these "special" fields should ONLY be added for "special" kernels. To be honest, not sure if they should be added at all.
     special_prepare_kernel: Any | None = None
     special_tsim_circuit_strategy: str | None = None
+    # TODO: for observable_frame, we need to NOT have this auto-correction
     observable_frame: ObservableFrame = ObservableFrame.RAW
 
 
