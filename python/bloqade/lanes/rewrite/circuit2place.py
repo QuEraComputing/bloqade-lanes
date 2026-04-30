@@ -378,7 +378,7 @@ class RewritePhysicalMeasure(abc.RewriteRule):
         static_placement.insert_before(node)
 
         # Assemble the flat IList[MeasurementResult, N] that replaces Measure.result.
-        meas_results = list(static_placement.results[1:])
+        meas_results = list(static_placement.results)
         result_list = ilist.New(tuple(meas_results))
         result_list.insert_before(node)
         node.result.replace_by(result_list.result)
