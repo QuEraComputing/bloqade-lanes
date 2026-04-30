@@ -4,9 +4,10 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping
 
-from kirin.dialects import func, ilist
+from kirin import rewrite
+from kirin.dialects import ilist
 
-from bloqade import qubit, squin
+from bloqade import qubit, squin, tsim
 from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.device import GeminiLogicalSimulatorTask
 from bloqade.gemini.logical.stdlib import default_post_processing
@@ -97,25 +98,6 @@ def _build_inverse_prepare_kernel_from_cirq(
     )
 
 
-def _count_initializer_invokes(
-    method: Any,
-    *,
-    initializer_name: str,
-) -> int:
-    block = method.code.body.blocks[0]
-    count = 0
-    for stmt in block.stmts:
-        if not isinstance(stmt, func.Invoke):
-            continue
-        callee = getattr(stmt, "callee", None)
-        callee_name = (
-            getattr(callee, "sym_name", None) or getattr(callee, "name", None) or ""
-        )
-        if initializer_name in str(callee_name):
-            count += 1
-    return count
-
-
 def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) -> None:
     try:
         setattr(task, attr, value)
@@ -161,59 +143,23 @@ def _override_task_tsim_circuit(
     _set_task_override(task, "tsim_circuit", circuit)
 
 
-def _prepend_prepare_kernel_to_initializer_inputs(
-    compiled_kernel: Any,
+def _build_prepare_prefix_tsim_circuit(
     prepare_kernel: Any,
     *,
-    initializer_name: str,
+    num_physical_qubits: int,
 ):
-    mt = compiled_kernel.similar()
-    block = mt.code.body.blocks[0]
-    stmts = list(block.stmts)
+    from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 
-    qubit_new_stmts = [
-        stmt for stmt in stmts if "qubit.new" in stmt.name or stmt.name == "new"
-    ]
-    if len(qubit_new_stmts) < 35:
-        raise RuntimeError(
-            f"Expected at least 35 qubit allocations, got {len(qubit_new_stmts)}"
-        )
+    @squin.kernel
+    def prepare_prefix():
+        q = squin.qalloc(num_physical_qubits)
+        inputs = ilist.IList([q[6], q[13], q[20], q[27], q[34]])
+        prepare_kernel(inputs)
+        return
 
-    init_invokes = []
-    for stmt in stmts:
-        if not isinstance(stmt, func.Invoke):
-            continue
-        callee = getattr(stmt, "callee", None)
-        callee_name = (
-            getattr(callee, "sym_name", None) or getattr(callee, "name", None) or ""
-        )
-        if initializer_name in str(callee_name):
-            init_invokes.append(stmt)
-
-    if len(init_invokes) != 5:
-        raise RuntimeError(f"Expected 5 initializer invokes, got {len(init_invokes)}")
-
-    anchor = init_invokes[0]
-    # The Steane initializer uses the last physical qubit in each 7-qubit block
-    # as the seeded input qubit.
-    input_reg = ilist.New(tuple(stmt.result for stmt in qubit_new_stmts[6:35:7]))
-    input_reg.insert_before(anchor)
-    func.Invoke((input_reg.result,), callee=prepare_kernel).insert_before(anchor)
-
-    return mt
-
-
-def _apply_special_state_prefix(
-    compiled_kernel: Any,
-    *,
-    prepare_kernel: Any,
-    initializer_name: str,
-) -> Any:
-    return _prepend_prepare_kernel_to_initializer_inputs(
-        compiled_kernel,
-        prepare_kernel,
-        initializer_name=initializer_name,
-    )
+    prefix_kernel = prepare_prefix.similar()
+    rewrite.Walk(RemoveReturn()).rewrite(prefix_kernel.code)
+    return tsim.Circuit(prefix_kernel)
 
 
 def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSpec:
@@ -714,8 +660,6 @@ def build_task(
     physical_hypercube_dims: int = 4,
     transversal_rewrite: bool = True,
 ) -> DemoTask:
-    from bloqade.lanes.arch.gemini.logical import steane7_initialize
-
     spec = _ensure_kernel_spec(kernel_spec)
     logical_kernel = spec.kernel.similar()
     if append_measurements:
@@ -778,23 +722,11 @@ def build_task(
                 f"{getattr(spec.kernel, 'sym_name', 'special')}_prepare_inverse"
             ),
         )
-        initializer_kernel = noisy_initializer or steane7_initialize
-        initializer_name = (
-            getattr(initializer_kernel, "sym_name", None)
-            or getattr(initializer_kernel, "name", None)
-            or initializer_kernel.__name__
+        prefix_circuit = _build_prepare_prefix_tsim_circuit(
+            special_prepare_kernel,
+            num_physical_qubits=7 * int(special_circuit_num_qubits),
         )
-
-        compiled_kernel = getattr(task, "physical_squin_kernel")
-        _set_task_override(
-            task,
-            "physical_squin_kernel",
-            _apply_special_state_prefix(
-                compiled_kernel,
-                prepare_kernel=special_prepare_kernel,
-                initializer_name=str(initializer_name),
-            ),
-        )
+        _override_task_tsim_circuit(task, prefix_circuit + task.tsim_circuit)
     elif spec.special_tsim_circuit_strategy == "compiled_inverse_prefix":
         _override_task_tsim_circuit(task, _build_compiled_inverse_prefix_circuit(task))
     elif spec.special_tsim_circuit_strategy is not None:

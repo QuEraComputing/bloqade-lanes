@@ -8,13 +8,17 @@ import numpy as np
 import pytest
 
 from bloqade import squin
+from bloqade.lanes import GeminiLogicalSimulator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_utils.circuits import (
     DecoderPrimitiveSet,
     build_decoder_kernel_bundle,
+    build_measurement_maps,
     build_naive_kernel_bundle,
+    build_task,
+    make_noisy_steane7_initializer,
 )
 from demo.msd_utils.common import SyndromeLayout
 from demo.msd_utils.core import (
@@ -85,6 +89,33 @@ def test_kernel_builders_return_expected_basis_maps():
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert set(decoder.injected) == {"X", "Y", "Z"}
+
+
+def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
+    sim = GeminiLogicalSimulator()
+    noisy_initializer = make_noisy_steane7_initializer(sim)
+    m2dets, m2obs = build_measurement_maps(5)
+    decoder = build_decoder_kernel_bundle(
+        0.1,
+        0.2,
+        0.3,
+        special_kernel_strategy="prefix_prepare",
+    )
+
+    demo_task = build_task(
+        sim,
+        decoder.special["X"],
+        m2dets=m2dets,
+        m2obs=m2obs,
+        noisy_initializer=noisy_initializer,
+        append_measurements=False,
+    )
+
+    assert "prepare_inverse" not in str(demo_task.task.physical_squin_kernel)
+
+    result = demo_task.task.run(16, with_noise=False, run_detectors=True)
+    assert len(np.unique(np.asarray(result.observables, dtype=np.uint8), axis=0)) == 1
+    assert len(np.unique(np.asarray(result.detectors, dtype=np.uint8), axis=0)) == 1
 
 
 def test_decoder_kernel_bundle_accepts_variadic_primitive_builder():
