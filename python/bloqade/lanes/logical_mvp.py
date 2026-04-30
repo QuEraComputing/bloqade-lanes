@@ -26,12 +26,12 @@ from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.pipeline import LogicalPipeline
 from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquinLogical
-from bloqade.lanes.upstream import squin_to_move
 
 __all__ = [
     "run_squin_kernel_validation",
@@ -122,14 +122,11 @@ def compile_squin_to_move(
     if layout_heuristic is None:
         layout_heuristic = logical_layout.LogicalLayoutHeuristic()
 
-    mt = squin_to_move(
-        mt,
+    mt = LogicalPipeline(
         layout_heuristic=layout_heuristic,
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_return_moves=insert_return_moves,
-        no_raise=no_raise,
-        logical_initialize=True,
-    )
+    ).emit(mt, no_raise=no_raise)
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
 
