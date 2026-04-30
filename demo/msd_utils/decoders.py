@@ -846,15 +846,10 @@ def _build_generic_threshold_tables(
         )
         unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
 
-        full_decode_cache = _build_full_decode_cache(
-            decoder_map[basis],
-            unique_groups[:, 2],
-            syndrome_length=dataset.detectors.shape[1],
-        )
-
         score_to_counts: defaultdict[float, np.ndarray] = defaultdict(
             lambda: np.zeros(2, dtype=np.int64)
         )
+        accepted_groups: list[tuple[float, int, int, int]] = []
         for row, count in zip(unique_groups, group_counts, strict=True):
             packed_a_det = int(row[0])
             packed_a_obs = int(row[1])
@@ -868,9 +863,23 @@ def _build_generic_threshold_tables(
             if corrected_anc_packed not in packed_targets:
                 continue
 
+            accepted_groups.append((float(score), packed_det, output_bit, int(count)))
+
+        accepted_full_dets = np.fromiter(
+            (packed_det for _score, packed_det, _output_bit, _count in accepted_groups),
+            dtype=np.uint64,
+            count=len(accepted_groups),
+        )
+        full_decode_cache = _build_full_decode_cache(
+            decoder_map[basis],
+            accepted_full_dets,
+            syndrome_length=dataset.detectors.shape[1],
+        )
+
+        for score, packed_det, output_bit, count in accepted_groups:
             corrected_output_bit = output_bit ^ full_decode_cache[packed_det]
-            score_to_counts[float(score)][corrected_output_bit] += int(count)
-            global_score_weights[float(score)] += int(count)
+            score_to_counts[score][corrected_output_bit] += count
+            global_score_weights[score] += count
 
         per_basis_tables[basis] = _score_count_dict_to_arrays(score_to_counts)
 
