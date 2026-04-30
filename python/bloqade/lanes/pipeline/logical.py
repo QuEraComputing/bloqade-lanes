@@ -16,6 +16,7 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 from bloqade.lanes.analysis import layout, placement
+from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
@@ -35,7 +36,7 @@ class _LogicalNativeToPlace(_NativeToPlaceBase):
             ]
         )
         result = validator.validate(mt)
-        if not result.is_valid:
+        if not result.is_valid and not no_raise:
             result.raise_if_invalid()
 
         rule = rewrite.Chain(
@@ -74,7 +75,7 @@ class LogicalPipeline:
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = field(
         default=_default_merge_heuristic
     )
-    arch_spec: ArchSpec | None = None
+    arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = _LogicalNativeToPlace(

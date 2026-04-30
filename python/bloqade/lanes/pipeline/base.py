@@ -56,11 +56,12 @@ class _NativeToPlaceBase:
       rewrites.
 
     The ``arch_spec`` field controls whether post-unroll address and duplicate
-    validation runs (the ``if self.arch_spec is not None`` block).
-    ``PhysicalPipeline`` always supplies an ``arch_spec`` (defaults to
-    ``get_physical_arch_spec()``), so this validation is unconditional for the
-    physical pipeline.  ``LogicalPipeline`` defaults ``arch_spec=None``, so the
-    block is skipped unless the caller passes an explicit spec.
+    validation runs (the ``if self.arch_spec is not None`` block).  Both
+    ``PhysicalPipeline`` and ``LogicalPipeline`` always supply an
+    ``arch_spec`` (defaulting to their respective Gemini arch specs), so this
+    validation is unconditional for both pipelines.  Set ``arch_spec=None``
+    only when constructing a ``_NativeToPlaceBase`` subclass directly and
+    you explicitly want to skip address validation.
     """
 
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = field(

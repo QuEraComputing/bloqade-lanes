@@ -51,3 +51,17 @@ def test_logical_pipeline_no_return_moves():
 
     out = LogicalPipeline(insert_return_moves=False).emit(kernel)
     assert out is not None
+
+
+def test_logical_pipeline_no_raise_suppresses_validation():
+    """no_raise=True does not raise even when pre-native validation fails."""
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def invalid_kernel():
+        reg = squin.qalloc(2)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        # missing terminal_measure — violates GeminiTerminalMeasurementValidation
+
+    out = LogicalPipeline().emit(invalid_kernel, no_raise=True)
+    assert out is not None

@@ -69,16 +69,8 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
     ``qubit.stmts.Measure`` consuming all allocated qubits.
     """
 
-    analysis_cache: dict = field(default_factory=dict)
-
     def name(self) -> str:
         return "Physical Terminal Measurement Validation"
-
-    def get_required_analyses(self) -> list[type]:
-        return []
-
-    def set_analysis_cache(self, cache: dict[type, Any]) -> None:
-        self.analysis_cache.update(cache)
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
         addr_analysis = address.AddressAnalysis(dialects=method.dialects)
