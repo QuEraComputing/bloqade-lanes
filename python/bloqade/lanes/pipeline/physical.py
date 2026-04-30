@@ -56,11 +56,14 @@ class PhysicalPipeline:
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
-            self.layout_heuristic
-            or PhysicalLayoutHeuristicGraphPartitionCenterOut(arch_spec=self.arch_spec)
+            PhysicalLayoutHeuristicGraphPartitionCenterOut(arch_spec=self.arch_spec)
+            if self.layout_heuristic is None
+            else self.layout_heuristic
         )
-        strategy = self.placement_strategy or PhysicalPlacementStrategy(
-            arch_spec=self.arch_spec
+        strategy = (
+            PhysicalPlacementStrategy(arch_spec=self.arch_spec)
+            if self.placement_strategy is None
+            else self.placement_strategy
         )
 
         out = _PhysicalNativeToPlace(
