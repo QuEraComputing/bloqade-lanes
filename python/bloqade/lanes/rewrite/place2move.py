@@ -374,7 +374,7 @@ class InsertFill(RewriteRule):
 
         location_addresses: list[LocationAddress | None] = []
         for stmt in node.body.walk():
-            if not isinstance(stmt, place.NewLogicalQubit):
+            if not isinstance(stmt, (place.NewLogicalQubit, place.NewPinnedQubit)):
                 continue
             location_addresses.append(stmt.location_address)
 
@@ -397,7 +397,10 @@ class InsertFill(RewriteRule):
 
 class DeleteQubitNew(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult:
-        if not (isinstance(node, place.NewLogicalQubit) and len(node.result.uses) == 0):
+        if not (
+            isinstance(node, (place.NewLogicalQubit, place.NewPinnedQubit))
+            and len(node.result.uses) == 0
+        ):
             return RewriteResult()
 
         node.delete()
