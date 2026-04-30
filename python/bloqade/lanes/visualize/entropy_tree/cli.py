@@ -47,7 +47,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument("--layer-index", type=int, default=0)
-    p.add_argument("--max-expansions", type=int, default=1000)
+    p.add_argument(
+        "--max-expansions",
+        type=int,
+        default=1000,
+        help="Maximum node expansions before stopping the trace. Use -1 for no limit.",
+    )
     p.add_argument("--max-goal-candidates", type=int, default=None)
     p.add_argument("--export-animation", type=Path, default=None)
     p.add_argument("--export-fps", type=float, default=1.5)

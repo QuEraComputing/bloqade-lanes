@@ -12,6 +12,7 @@ from bloqade.lanes.bytecode._native import (
     LocationAddress as NativeLocationAddress,
 )
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
+from bloqade.lanes.visualize.arch import ArchVisualizer
 from bloqade.lanes.visualize.entropy_tree.state import NodeState, TreeFrameState
 
 _DEPTH_Y_STEP = 0.34
@@ -77,6 +78,10 @@ def _configuration_to_native(
     return {qid: loc._inner for qid, loc in config.items()}
 
 
+def _path_bounds(arch_spec) -> tuple[float, float, float, float]:  # type: ignore[no-untyped-def]
+    return ArchVisualizer(arch_spec).path_bounds()
+
+
 def _stable_focus_bounds(
     *,
     arch_spec,  # type: ignore[no-untyped-def]
@@ -84,7 +89,7 @@ def _stable_focus_bounds(
     target,  # type: ignore[no-untyped-def]
 ) -> tuple[float, float, float, float]:
     """Compute a fixed viewport for candidate hardware snapshots."""
-    arch_x_min, arch_x_max, arch_y_min, arch_y_max = arch_spec.path_bounds()
+    arch_x_min, arch_x_max, arch_y_min, arch_y_max = _path_bounds(arch_spec)
     arch_x_width = arch_x_max - arch_x_min
     arch_y_width = arch_y_max - arch_y_min
     full_bounds = (
@@ -167,27 +172,28 @@ def _layout(nodes: dict[int, NodeState]) -> dict[int, tuple[float, float]]:
     leaf_step = 1.0
     root_gap = 2.0
 
-    def assign_subtree_x(node_id: int) -> float:
+    def assign_subtree_x_iterative(node_id: int) -> None:
         nonlocal next_leaf_x
-        child_ids = [cid for cid in children.get(node_id, []) if cid in nodes]
-        if not child_ids:
-            x = next_leaf_x
-            x_raw[node_id] = x
-            next_leaf_x += leaf_step
-            return x
+        stack = [(node_id, False)]
+        while stack:
+            current_id, visited = stack.pop()
+            child_ids = [cid for cid in children.get(current_id, []) if cid in nodes]
+            if visited:
+                if not child_ids:
+                    x_raw[current_id] = next_leaf_x
+                    next_leaf_x += leaf_step
+                    continue
+                x_raw[current_id] = 0.5 * (x_raw[child_ids[0]] + x_raw[child_ids[-1]])
+                continue
 
-        first_x = assign_subtree_x(child_ids[0])
-        last_x = first_x
-        for child_id in child_ids[1:]:
-            last_x = assign_subtree_x(child_id)
-        x = 0.5 * (first_x + last_x)
-        x_raw[node_id] = x
-        return x
+            stack.append((current_id, True))
+            for child_id in reversed(child_ids):
+                stack.append((child_id, False))
 
     for idx, root_id in enumerate(roots):
         if idx > 0:
             next_leaf_x += root_gap
-        assign_subtree_x(root_id)
+        assign_subtree_x_iterative(root_id)
 
     positions: dict[int, tuple[float, float]] = {}
     for node_id, node in nodes.items():
@@ -249,17 +255,17 @@ def draw_tree_frame(ax, frame: TreeFrameState) -> None:  # type: ignore[no-untyp
     if min_gap is not None:
         # Shrink nodes as density increases, but never below readable minimum.
         allowed_w = 0.90 * min_gap
-        if allowed_w >= node_w:
-            node_w = node_w
-        elif allowed_w >= _NODE_W_MIN:
-            node_w = allowed_w
-        else:
-            node_w = _NODE_W_MIN
-            # Once width hits floor, reduce edge thickness gradually.
-            pressure = min(1.0, max(0.0, (_NODE_W_MIN - allowed_w) / _NODE_W_MIN))
-            edge_width_scale = max(
-                _EDGE_WIDTH_MIN_SCALE, 1.0 - (1.0 - _EDGE_WIDTH_MIN_SCALE) * pressure
-            )
+        if allowed_w < node_w:
+            if allowed_w >= _NODE_W_MIN:
+                node_w = allowed_w
+            else:
+                node_w = _NODE_W_MIN
+                # Once width hits floor, reduce edge thickness gradually.
+                pressure = min(1.0, max(0.0, (_NODE_W_MIN - allowed_w) / _NODE_W_MIN))
+                edge_width_scale = max(
+                    _EDGE_WIDTH_MIN_SCALE,
+                    1.0 - (1.0 - _EDGE_WIDTH_MIN_SCALE) * pressure,
+                )
 
     for edge in frame.edges:
         if edge.parent_id not in positions or edge.child_id not in positions:
@@ -331,7 +337,7 @@ def draw_tree_frame(ax, frame: TreeFrameState) -> None:  # type: ignore[no-untyp
 def _draw_architecture_background(ax, arch_spec) -> None:  # type: ignore[no-untyped-def]
     """Plot the architecture's site lattice as the hardware panel background."""
     word_ids = list(range(len(arch_spec.words)))
-    arch_spec.plot(
+    ArchVisualizer(arch_spec).plot(
         ax=ax,
         show_words=word_ids,
         facecolors="none",
@@ -437,9 +443,10 @@ def _draw_moveset_path(  # type: ignore[no-untyped-def]
     positions: list[tuple[float, float]] = []
     if not moveset:
         return positions
+    occupied_locs = set(source_config.values())
     for lane in moveset:
         src, _dst = arch_spec.get_endpoints(lane)
-        if src in source_config.values():
+        if src in occupied_locs:
             path = arch_spec.get_path(lane)
             if len(path) < 2:
                 continue
@@ -481,7 +488,7 @@ def _apply_view_bounds(  # type: ignore[no-untyped-def]
         ax.set_xlim(x_min - 0.12 * x_width, x_max + 0.12 * x_width)
         ax.set_ylim(y_min - 0.22 * y_width, y_max + 0.22 * y_width)
     else:
-        x_min, x_max, y_min, y_max = arch_spec.path_bounds()
+        x_min, x_max, y_min, y_max = _path_bounds(arch_spec)
         x_width = x_max - x_min
         y_width = y_max - y_min
         ax.set_xlim(x_min - 0.06 * x_width, x_max + 0.06 * x_width)
@@ -491,7 +498,6 @@ def _apply_view_bounds(  # type: ignore[no-untyped-def]
 def _draw_hardware_snapshot(
     ax,  # type: ignore[no-untyped-def]
     *,
-    frame: TreeFrameState,
     arch_spec,  # type: ignore[no-untyped-def]
     target,  # type: ignore[no-untyped-def]
     configuration,  # type: ignore[no-untyped-def]
@@ -505,7 +511,6 @@ def _draw_hardware_snapshot(
     fixed_bounds: tuple[float, float, float, float] | None = None,
 ) -> None:
     """Compose a hardware-state snapshot: arch + blockers + qubits + moveset."""
-    _ = frame  # retained for API compatibility with older callers
     ax.clear()
     _draw_architecture_background(ax, arch_spec)
 
@@ -684,7 +689,6 @@ def draw_focus_panel(
     )
     _draw_hardware_snapshot(
         current_inset,
-        frame=frame,
         arch_spec=arch_spec,
         target=target,
         configuration=frame.hardware_configuration,
@@ -823,7 +827,6 @@ def draw_focus_panel(
             )
             _draw_hardware_snapshot(
                 inset,
-                frame=frame,
                 arch_spec=arch_spec,
                 target=target,
                 configuration=node.configuration,
@@ -992,130 +995,3 @@ def draw_metadata_panel(
                     family="monospace",
                     zorder=4,
                 )
-
-
-def draw_hardware_panel(
-    ax,  # type: ignore[no-untyped-def]
-    frame: TreeFrameState,
-    arch_spec,  # type: ignore[no-untyped-def]
-    target,  # type: ignore[no-untyped-def]
-    show_qubit_ids: bool = True,
-) -> None:
-    """Render hardware-level candidate move context for the active frame."""
-    ax.clear()
-    _draw_architecture_background(ax, arch_spec)
-
-    root_node = next(
-        (node for node in frame.nodes.values() if node.parent_id is None), None
-    )
-    root_configuration = (
-        root_node.configuration
-        if root_node is not None
-        else frame.hardware_configuration
-    )
-    moving_qids = {
-        qid
-        for qid, root_loc in root_configuration.items()
-        if target.get(qid) is not None and target[qid] != root_loc
-    }
-
-    _draw_qubits(
-        ax,
-        arch_spec,
-        frame.hardware_configuration,
-        moving_qids=moving_qids,
-        target=target,
-        qid_label_map=None,
-        show_qubit_ids=show_qubit_ids,
-    )
-
-    move_source_config = (
-        frame.hardware_move_source_configuration
-        if frame.hardware_move_source_configuration is not None
-        else frame.hardware_parent_configuration
-    )
-    if move_source_config is None:
-        move_source_config = frame.hardware_configuration
-    if frame.hardware_moveset:
-        for lane in frame.hardware_moveset:
-            src, _dst = arch_spec.get_endpoints(lane)
-            if src in move_source_config.values():
-                path = arch_spec.get_path(lane)
-                if len(path) < 2:
-                    continue
-                dx, dy = path[-1]
-                ax.scatter(dx, dy, c="#6437FF", s=120, zorder=8, alpha=0.3)
-                x_vals = [x for x, _ in path]
-                y_vals = [y for _, y in path]
-                ax.plot(x_vals, y_vals, color="#C2477F", linewidth=2, zorder=9)
-                ax.annotate(
-                    "",
-                    xy=path[-1],
-                    xytext=path[-2],
-                    arrowprops=dict(arrowstyle="->", color="#C2477F", lw=2),
-                    zorder=10,
-                )
-
-    ax.set_title("Hardware Layout")
-    buffer_ids = frame.best_buffer_node_display_ids
-    if buffer_ids:
-        box_w = 0.060
-        box_h = 0.080
-        gap = 0.010
-        start_x = 0.02
-        y = 1.03
-        total_w = len(buffer_ids) * box_w + max(0, len(buffer_ids) - 1) * gap
-        outer_pad = 0.012
-        outer_rect = Rectangle(
-            (start_x - outer_pad, y - outer_pad),
-            total_w + 2 * outer_pad,
-            box_h + 2 * outer_pad,
-            transform=ax.transAxes,
-            facecolor="#E3F2FD",
-            edgecolor="#1E88E5",
-            linewidth=1.8,
-            clip_on=False,
-            zorder=19,
-        )
-        ax.add_patch(outer_rect)
-        ax.text(
-            start_x,
-            y + box_h + 0.01,
-            "Best candidate buffer",
-            transform=ax.transAxes,
-            ha="left",
-            va="bottom",
-            fontsize=9,
-        )
-        for i, display_id in enumerate(buffer_ids):
-            x = start_x + i * (box_w + gap)
-            rect = Rectangle(
-                (x, y),
-                box_w,
-                box_h,
-                transform=ax.transAxes,
-                facecolor="#FFFFFF",
-                edgecolor="#111111",
-                linewidth=1.2,
-                clip_on=False,
-                zorder=20,
-            )
-            ax.add_patch(rect)
-            if display_id is not None:
-                ax.text(
-                    x + box_w / 2.0,
-                    y + box_h / 2.0,
-                    str(display_id),
-                    transform=ax.transAxes,
-                    ha="center",
-                    va="center",
-                    fontsize=9,
-                    family="monospace",
-                    zorder=21,
-                )
-    ax.set_aspect("equal")
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
-    x_width = x_max - x_min
-    y_width = y_max - y_min
-    ax.set_xlim(x_min - 0.1 * x_width, x_max + 0.1 * x_width)
-    ax.set_ylim(y_min - 0.1 * y_width, y_max + 0.1 * y_width)

@@ -21,7 +21,7 @@ def candidate_color(generation: int, index: int) -> str:
     hue = (generation * generation_shift + index * golden_ratio_conj) % 1.0
     sat_cycle = (0.72, 0.82, 0.68, 0.88)
     val_cycle = (0.90, 0.82, 0.95, 0.86)
-    saturation = sat_cycle[(index // 1) % len(sat_cycle)]
+    saturation = sat_cycle[index % len(sat_cycle)]
     value = val_cycle[(index // len(sat_cycle)) % len(val_cycle)]
     r, g, b = colorsys.hsv_to_rgb(hue, saturation, value)
     return f"#{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
