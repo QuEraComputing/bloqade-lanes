@@ -254,12 +254,20 @@ def main():
                     max_pairs=args.max_pairs,
                     merge_heuristic=strat_config.get("merge_heuristic"),
                 )
+                failed = result["n_move_layers"] == 0 and args.depth > 0
                 results.append(result)
-                print(
-                    f"{seed:>4} {result['n_qubits']:>6} {result['n_cz_pairs']:>8} "
-                    f"{result['n_move_layers']:>6} {result['n_total_lanes']:>6} "
-                    f"{result['time_ms']:>10.1f}"
-                )
+                if failed:
+                    print(
+                        f"{seed:>4} {result['n_qubits']:>6} {result['n_cz_pairs']:>8} "
+                        f"{'FAIL':>6} {'':>6} "
+                        f"{result['time_ms']:>10.1f}"
+                    )
+                else:
+                    print(
+                        f"{seed:>4} {result['n_qubits']:>6} {result['n_cz_pairs']:>8} "
+                        f"{result['n_move_layers']:>6} {result['n_total_lanes']:>6} "
+                        f"{result['time_ms']:>10.1f}"
+                    )
             except Exception as e:
                 print(f"{seed:>4} {args.n_qubits:>6}   ERROR: {e}")
                 import traceback
@@ -269,30 +277,45 @@ def main():
         all_strategy_results[strat_name] = results
 
         if results:
-            avg_moves = sum(r["n_move_layers"] for r in results) / len(results)
-            avg_lanes = sum(r["n_total_lanes"] for r in results) / len(results)
-            avg_time = sum(r["time_ms"] for r in results) / len(results)
-            print(
-                f"\nAvg: {avg_moves:.1f} move layers, "
-                f"{avg_lanes:.1f} lanes, {avg_time:.1f} ms"
-            )
+            solved = [r for r in results if r["n_move_layers"] > 0 or args.depth == 0]
+            n_fail = len(results) - len(solved)
+            if solved:
+                avg_moves = sum(r["n_move_layers"] for r in solved) / len(solved)
+                avg_lanes = sum(r["n_total_lanes"] for r in solved) / len(solved)
+                avg_time = sum(r["time_ms"] for r in results) / len(results)
+                fail_str = f" ({n_fail} failed)" if n_fail else ""
+                print(
+                    f"\nAvg: {avg_moves:.1f} move layers, "
+                    f"{avg_lanes:.1f} lanes, {avg_time:.1f} ms"
+                    f" [{len(solved)}/{len(results)} solved{fail_str}]"
+                )
+            else:
+                print(f"\nAll {len(results)} seeds failed.")
 
         print()
 
     # Summary comparison.
-    print("=" * 60)
+    print("=" * 70)
     print("Summary:")
-    print(f"{'Strategy':<25} {'Avg Moves':>10} {'Avg Lanes':>10} {'Avg Time':>10}")
-    print("─" * 60)
+    print(
+        f"{'Strategy':<25} {'Avg Moves':>10} {'Avg Lanes':>10} {'Avg Time':>10} {'Solved':>8}"
+    )
+    print("─" * 70)
     for strat_name, results in all_strategy_results.items():
         if not results:
-            print(f"{strat_name:<25} {'N/A':>10} {'N/A':>10} {'N/A':>10}")
+            print(f"{strat_name:<25} {'N/A':>10} {'N/A':>10} {'N/A':>10} {'N/A':>8}")
             continue
-        avg_moves = sum(r["n_move_layers"] for r in results) / len(results)
-        avg_lanes = sum(r["n_total_lanes"] for r in results) / len(results)
+        solved = [r for r in results if r["n_move_layers"] > 0 or args.depth == 0]
+        if solved:
+            avg_moves = sum(r["n_move_layers"] for r in solved) / len(solved)
+            avg_lanes = sum(r["n_total_lanes"] for r in solved) / len(solved)
+        else:
+            avg_moves = avg_lanes = 0.0
         avg_time = sum(r["time_ms"] for r in results) / len(results)
+        solved_str = f"{len(solved)}/{len(results)}"
         print(
-            f"{strat_name:<25} {avg_moves:>10.1f} {avg_lanes:>10.1f} {avg_time:>8.0f} ms"
+            f"{strat_name:<25} {avg_moves:>10.1f} {avg_lanes:>10.1f}"
+            f" {avg_time:>8.0f} ms {solved_str:>8}"
         )
 
     # Visualize best run from each strategy.
