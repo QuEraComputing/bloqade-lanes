@@ -87,6 +87,7 @@ def _adaptive_bloch_ball_grid(
         for n_i, k_i in zip(n, k, strict=True)
     ]
 
+    # TODO: should max_grid_points be hardcoded here?
     max_grid_points = 1_500_000
     total_points = len(subsets[0]) * len(subsets[1]) * len(subsets[2])
     if total_points > max_grid_points:
