@@ -16,12 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from kirin import interp, ir
+from kirin import ir
 from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
-
-from bloqade.gemini.common import dialect, stmts
 
 if TYPE_CHECKING:
     from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -29,10 +27,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class _DuplicateAddressValidationAnalysis(Forward[EmptyLattice]):
-    keys = ("gemini.new_at.duplicates",)
+    keys = ("gemini.common.qubit.duplicates",)
     lattice = EmptyLattice
 
-    seen: dict["LocationAddress", stmts.NewAt] = field(init=False, default_factory=dict)
+    seen: dict["LocationAddress", ir.Statement] = field(
+        init=False, default_factory=dict
+    )
 
     def initialize(self):
         self.seen.clear()
@@ -45,37 +45,6 @@ class _DuplicateAddressValidationAnalysis(Forward[EmptyLattice]):
         return tuple(self.lattice.bottom() for _ in node.results)
 
 
-@dialect.register(key="gemini.new_at.duplicates")
-class _NewAtDuplicateMethods(interp.MethodTable):
-    @interp.impl(stmts.NewAt)
-    def check_duplicate(
-        self,
-        _interp: _DuplicateAddressValidationAnalysis,
-        frame: ForwardFrame[EmptyLattice],
-        node: stmts.NewAt,
-    ):
-        from bloqade.lanes.bytecode.encoding import LocationAddress
-
-        z = _interp.expect_const(node.zone_id, int)
-        w = _interp.expect_const(node.word_id, int)
-        s = _interp.expect_const(node.site_id, int)
-
-        addr = LocationAddress(word_id=w, site_id=s, zone_id=z)
-        if addr in _interp.seen:
-            _interp.add_validation_error(
-                node,
-                ir.ValidationError(
-                    node,
-                    f"address (zone={z}, word={w}, site={s}) is pinned by two "
-                    f"operations.new_at calls",
-                ),
-            )
-        else:
-            _interp.seen[addr] = node
-
-        return (EmptyLattice.bottom(),)
-
-
 @dataclass
 class DuplicateAddressValidation(ValidationPass):
     """Report any pair of ``gemini.common.NewAt`` statements that pin the
@@ -83,7 +52,7 @@ class DuplicateAddressValidation(ValidationPass):
     """
 
     def name(self) -> str:
-        return "gemini.new_at.duplicates"
+        return "gemini.common.qubit.duplicates"
 
     def run(self, method: ir.Method) -> tuple[Any, list[ir.ValidationError]]:
         analysis = _DuplicateAddressValidationAnalysis(method.dialects)

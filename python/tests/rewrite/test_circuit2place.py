@@ -5,7 +5,7 @@ from kirin.analysis import const
 from kirin.dialects import ilist, py
 
 from bloqade import qubit
-from bloqade.gemini.common import stmts as gemini_common_stmts
+from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.bytecode.encoding import LocationAddress

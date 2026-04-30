@@ -13,7 +13,7 @@ from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
 
 import bloqade.gemini as gemini
-from bloqade.gemini.common import new_at
+from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic

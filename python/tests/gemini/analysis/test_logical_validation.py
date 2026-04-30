@@ -7,11 +7,11 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.analysis.logical_validation.analysis import (
+from bloqade.gemini.logical.validation.clifford.analysis import (
     GeminiLogicalValidation,
     _GeminiLogicalValidationAnalysis,
 )
-from bloqade.gemini.analysis.measurement_validation.analysis import (
+from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 
