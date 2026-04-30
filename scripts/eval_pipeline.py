@@ -206,7 +206,19 @@ def main():
     )
 
     strategies = {
-        "Baseline (Rust IDS r=20)": {
+        "1 Baseline": {
+            "strategy": PhysicalPlacementStrategy(
+                arch_spec=arch_spec,
+                traversal=RustPlacementTraversal(
+                    strategy="ids",
+                    max_expansions=args.max_expansions,
+                    restarts=20,
+                    lookahead=False,
+                ),
+            ),
+            "insert_return_moves": True,
+        },
+        "2 Baseline+LA": {
             "strategy": PhysicalPlacementStrategy(
                 arch_spec=arch_spec,
                 traversal=RustPlacementTraversal(
@@ -218,7 +230,19 @@ def main():
             ),
             "insert_return_moves": True,
         },
-        "Loose-Goal (IDS r=20)": {
+        "3 Loose fixed": {
+            "strategy": LooseGoalPlacementStrategy(
+                arch_spec=arch_spec,
+                strategy="ids",
+                max_expansions=args.max_expansions,
+                restarts=20,
+                dynamic_targets=False,
+                lookahead=False,
+            ),
+            "insert_return_moves": False,
+            "merge_heuristic": always_merge_heuristic,
+        },
+        "4 Loose dynamic": {
             "strategy": LooseGoalPlacementStrategy(
                 arch_spec=arch_spec,
                 strategy="ids",
@@ -226,6 +250,32 @@ def main():
                 restarts=20,
                 dynamic_targets=True,
                 recompute_interval=0,
+                lookahead=False,
+            ),
+            "insert_return_moves": False,
+            "merge_heuristic": always_merge_heuristic,
+        },
+        "5 Loose fixed+LA": {
+            "strategy": LooseGoalPlacementStrategy(
+                arch_spec=arch_spec,
+                strategy="ids",
+                max_expansions=args.max_expansions,
+                restarts=20,
+                dynamic_targets=False,
+                lookahead=True,
+            ),
+            "insert_return_moves": False,
+            "merge_heuristic": always_merge_heuristic,
+        },
+        "6 Loose full LA": {
+            "strategy": LooseGoalPlacementStrategy(
+                arch_spec=arch_spec,
+                strategy="ids",
+                max_expansions=args.max_expansions,
+                restarts=20,
+                dynamic_targets=True,
+                recompute_interval=0,
+                lookahead=True,
             ),
             "insert_return_moves": False,
             "merge_heuristic": always_merge_heuristic,
