@@ -340,10 +340,14 @@ class RewritePhysicalMeasure(abc.RewriteRule):
     We unwrap one level of nesting to collect individual Qubit SSA values.
     """
 
-    def _collect_inputs(self, node: qubit.stmts.Measure) -> list[ir.SSAValue] | None:
+    def _collect_inputs(self, node: qubit.stmts.Measure) -> list[ir.SSAValue]:
         owner = node.qubits.owner
         if not isinstance(owner, ilist.New):
-            return None
+            raise ValueError(
+                f"RewritePhysicalMeasure: expected qubits owner to be ilist.New, "
+                f"got {type(owner).__name__}. Ensure AggressiveUnroll ran before "
+                f"this rewrite pass."
+            )
         inputs: list[ir.SSAValue] = []
         for val in owner.values:
             inner = val.owner
@@ -351,15 +355,18 @@ class RewritePhysicalMeasure(abc.RewriteRule):
                 inputs.extend(inner.values)
             else:
                 inputs.append(val)
-        return inputs or None
+        if not inputs:
+            raise ValueError(
+                f"RewritePhysicalMeasure: collected no qubit inputs from {node}; "
+                f"the qubits list appears to be empty."
+            )
+        return inputs
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not isinstance(node, qubit.stmts.Measure):
             return abc.RewriteResult()
 
         inputs = self._collect_inputs(node)
-        if inputs is None:
-            return abc.RewriteResult()
 
         body = ir.Region(block := ir.Block())
         entry_state = block.args.append_from(StateType, name="entry_state")
@@ -410,7 +417,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, place.NewPinnedQubit)
+            isinstance(node, place._NewQubitBase)
             and (parent_block := node.parent_block) is not None
             and (first_stmt := parent_block.first_stmt) is not None
             and node is not first_stmt
@@ -423,7 +430,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
         def loop_cond(stmt: ir.Statement | None) -> TypeGuard[ir.Statement]:
             return (
                 stmt is not None
-                and not isinstance(stmt, place.NewPinnedQubit)
+                and not isinstance(stmt, place._NewQubitBase)
                 and set(stmt.results).isdisjoint(node.args)
             )
 

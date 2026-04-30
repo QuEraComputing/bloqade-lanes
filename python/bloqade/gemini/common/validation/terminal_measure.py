@@ -38,7 +38,7 @@ def _collect_qubit_ids(addr: address.Address) -> set[int]:
         for elem in addr.data:
             result |= _collect_qubit_ids(elem)
         return result
-    return set()
+    raise TypeError(f"Unhandled Address type: {type(addr)}")
 
 
 @dataclass
@@ -96,7 +96,11 @@ class PhysicalTerminalMeasurementValidation(ValidationPass):
 
         if analysis.measure_count == 0:
             return_stmt = method.callable_region.blocks[0].last_stmt
-            assert return_stmt is not None
+            if return_stmt is None:
+                raise RuntimeError(
+                    "PhysicalTerminalMeasurementValidation: method has no statements; "
+                    "cannot attach missing-measure error."
+                )
             errors.append(
                 ir.ValidationError(
                     return_stmt,

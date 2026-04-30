@@ -78,3 +78,50 @@ def test_physical_pipeline_missing_measure_raises():
 
     with pytest.raises(ValidationErrorGroup):
         PhysicalPipeline().emit(kernel, no_raise=False)
+
+
+def test_physical_pipeline_no_raise_succeeds_without_terminal_measure():
+    """With no_raise=True, PhysicalPipeline.emit must not raise even when there
+    is no terminal measurement (validation errors are suppressed in lenient mode)."""
+
+    @squin.kernel
+    def kernel():
+        squin.qalloc(1)  # no measurement
+
+    # Should not raise in lenient mode.
+    result = PhysicalPipeline().emit(kernel, no_raise=True)
+    assert result is not None
+
+
+def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
+    """When layout_heuristic and placement_strategy are None, PhysicalPipeline
+    resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut and
+    PhysicalPlacementStrategy before passing them to the place→move stage."""
+    from bloqade.lanes.heuristics.physical.layout import (
+        PhysicalLayoutHeuristicGraphPartitionCenterOut,
+    )
+    from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+    from bloqade.lanes.pipeline.base import _PlaceToMove
+
+    captured: dict = {}
+    _orig_emit = _PlaceToMove.emit
+
+    def spy_emit(self_inner, mt, no_raise=True):
+        captured["layout_heuristic_type"] = type(self_inner.layout_heuristic)
+        captured["placement_strategy_type"] = type(self_inner.placement_strategy)
+        return _orig_emit(self_inner, mt, no_raise=no_raise)
+
+    monkeypatch.setattr(_PlaceToMove, "emit", spy_emit)
+
+    @squin.kernel
+    def kernel():
+        reg = squin.qalloc(1)
+        squin.qubit.measure(ilist.IList([reg[0]]))  # type: ignore[arg-type]
+
+    PhysicalPipeline().emit(kernel)
+
+    assert (
+        captured["layout_heuristic_type"]
+        is PhysicalLayoutHeuristicGraphPartitionCenterOut
+    )
+    assert captured["placement_strategy_type"] is PhysicalPlacementStrategy

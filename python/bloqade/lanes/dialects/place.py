@@ -34,13 +34,15 @@ class LogicalInitialize(ir.Statement):
     qubits: tuple[ir.SSAValue, ...] = info.argument(bloqade_types.QubitType)
 
 
-@statement(dialect=dialect)
-class NewPinnedQubit(ir.Statement):
-    """Allocate a physical qubit at an optional pinned location.
+@statement(init=False)
+class _NewQubitBase(ir.Statement):
+    """Shared abstract base for qubit-allocation statements.
 
-    No initialization angles — physical qubits have a location but no associated
-    initialization sequence.  location_address=None means the layout heuristic will
-    assign a site; after ResolvePinnedAddresses runs this is never None in well-formed IR.
+    Holds the two fields common to both ``NewPinnedQubit`` (physical) and
+    ``NewLogicalQubit`` (logical) so that isinstance guards throughout the
+    codebase can match "any qubit allocation" without one type being a subtype
+    of the other.  Neither class should be used where only one flavour is
+    intended; use the concrete subclass directly in those cases.
     """
 
     traits = frozenset()
@@ -49,11 +51,20 @@ class NewPinnedQubit(ir.Statement):
 
 
 @statement(dialect=dialect)
-class NewLogicalQubit(NewPinnedQubit):
+class NewPinnedQubit(_NewQubitBase):
+    """Allocate a physical qubit at an optional pinned location.
+
+    No initialization angles — physical qubits have a location but no associated
+    initialization sequence.  location_address=None means the layout heuristic will
+    assign a site; after ResolvePinnedAddresses runs this is never None in well-formed IR.
+    """
+
+
+@statement(dialect=dialect)
+class NewLogicalQubit(_NewQubitBase):
     """Allocate a logical qubit with initial state u3(theta, phi, lam)|0>.
 
-    Extends NewPinnedQubit with initialization angles.  location_address and result
-    are inherited from NewPinnedQubit.
+    location_address and result are inherited from _NewQubitBase.
 
     Args:
         theta (float): Angle for rotation around the Y axis
@@ -313,7 +324,7 @@ class InitialLayoutMethods(interp.MethodTable):
         self,
         _interp: LayoutAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        stmt: NewPinnedQubit,
+        stmt: _NewQubitBase,
     ):
         if stmt.location_address is None:
             return (EmptyLattice.bottom(),)
@@ -373,7 +384,7 @@ class QubitAddressAnalysis(interp.MethodTable):
         self,
         _interp: address.AddressAnalysis,
         frame: ForwardFrame[address.Address],
-        stmt: NewPinnedQubit,
+        stmt: _NewQubitBase,
     ):
         addr = address.AddressQubit(_interp.next_address)
         _interp.next_address += 1

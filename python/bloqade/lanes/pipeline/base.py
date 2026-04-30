@@ -54,6 +54,13 @@ class _NativeToPlaceBase:
       Physical subclass runs ``RewriteQubitsToPinnedQubits`` +
       ``RewritePhysicalMeasure``; logical subclass runs the four initialize
       rewrites.
+
+    The ``arch_spec`` field controls whether post-unroll address and duplicate
+    validation runs (the ``if self.arch_spec is not None`` block).
+    ``PhysicalPipeline`` always supplies an ``arch_spec`` (defaults to
+    ``get_physical_arch_spec()``), so this validation is unconditional for the
+    physical pipeline.  ``LogicalPipeline`` defaults ``arch_spec=None``, so the
+    block is skipped unless the caller passes an explicit spec.
     """
 
     merge_heuristic: Callable[[ir.Region, ir.Region], bool] = field(
@@ -64,7 +71,7 @@ class _NativeToPlaceBase:
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         return out
 
-    def _post_unroll_validation(self, out: Method) -> None:
+    def _post_unroll_validation(self, out: Method, no_raise: bool) -> None:
         pass
 
     def _lower_qubits(self, out: Method) -> None:
@@ -76,7 +83,7 @@ class _NativeToPlaceBase:
 
         out = SquinToNative().emit(out, no_raise=no_raise)
         AggressiveUnroll(out.dialects, no_raise=no_raise).fixpoint(out)
-        self._post_unroll_validation(out)
+        self._post_unroll_validation(out, no_raise)
 
         rewrite.Walk(scf2cf.ScfToCfRule()).rewrite(out.code)
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
@@ -221,7 +228,8 @@ class _PlaceToMove:
         ).rewrite(out.code)
 
         passes.TypeInfer(out.dialects)(out)
-        out.verify()
-        out.verify_type()
+        if not no_raise:
+            out.verify()
+            out.verify_type()
 
         return out
