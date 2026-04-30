@@ -10,7 +10,7 @@ from kirin.dialects import ilist
 
 from bloqade import squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.gemini.common import new_at
+from bloqade.gemini.common.dialects.qubit import new_at
 from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
