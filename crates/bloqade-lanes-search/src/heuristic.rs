@@ -25,6 +25,8 @@ use crate::lane_index::LaneIndex;
 pub struct DistanceTable {
     /// encoded_target → { encoded_location → min hops to target }
     distance_to: HashMap<u64, HashMap<u64, u32>>,
+    /// Flattened (from, to) → distance for faster single-probe lookup.
+    flat_distance: HashMap<(u64, u64), u32>,
     /// Optional time-weighted distances: encoded_target → { encoded_location → min time (µs) }
     time_distance_to: Option<HashMap<u64, HashMap<u64, f64>>>,
     /// Fastest lane duration across all lanes (for normalization).
@@ -78,8 +80,17 @@ impl DistanceTable {
             distance_to.insert(target_enc, dist);
         }
 
+        // Build flattened index for single-probe lookups.
+        let mut flat_distance = HashMap::with_capacity(distance_to.values().map(|m| m.len()).sum());
+        for (&target, sources) in &distance_to {
+            for (&source, &dist) in sources {
+                flat_distance.insert((source, target), dist);
+            }
+        }
+
         Self {
             distance_to,
+            flat_distance,
             time_distance_to: None,
             fastest_lane_us: None,
         }
@@ -151,9 +162,8 @@ impl DistanceTable {
     ///
     /// Returns `None` if the target is unknown or the source is unreachable.
     pub fn distance(&self, from_encoded: u64, to_target_encoded: u64) -> Option<u32> {
-        self.distance_to
-            .get(&to_target_encoded)?
-            .get(&from_encoded)
+        self.flat_distance
+            .get(&(from_encoded, to_target_encoded))
             .copied()
     }
 
