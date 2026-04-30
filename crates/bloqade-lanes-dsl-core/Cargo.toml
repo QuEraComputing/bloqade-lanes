@@ -1,20 +1,18 @@
 [package]
-name = "bloqade-lanes-search"
+name = "bloqade-lanes-dsl-core"
 version.workspace = true
 edition = "2024"
 
 [lib]
-name = "bloqade_lanes_search"
+name = "bloqade_lanes_dsl_core"
 
 [dependencies]
 bloqade-lanes-bytecode-core = { path = "../bloqade-lanes-bytecode-core" }
-bloqade-lanes-dsl-core = { path = "../bloqade-lanes-dsl-core" }
-rand = { version = "0.9", features = ["small_rng"] }
-rayon = "1"
+starlark = "0.13"
+allocative = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-allocative = "0.3"
-starlark = "0.13"
+thiserror = "1"
 
 [dev-dependencies]
 tempfile = "3"

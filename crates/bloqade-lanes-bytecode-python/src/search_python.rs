@@ -6,6 +6,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
@@ -165,6 +166,11 @@ impl PyDeadlockPolicy {
 ///
 /// Contains the sequence of move steps, the final qubit configuration,
 /// and search statistics.
+///
+/// When produced by the Move Policy DSL path (`policy_path` kwarg on
+/// `MoveSolver.solve`), the `policy_file`, `policy_params`, and
+/// `policy_status` fields are populated; for the strategy-based path
+/// they are all `None`.
 #[pyclass(
     name = "SolveResult",
     frozen,
@@ -172,11 +178,21 @@ impl PyDeadlockPolicy {
 )]
 pub struct PySolveResult {
     inner: SolveResult,
+    /// Echo of the `.star` policy path — populated only on the DSL path.
+    pub policy_file: Option<String>,
+    /// JSON-encoded echo of `policy_params` — populated only on the DSL path.
+    pub policy_params: Option<String>,
+    /// String representation of `PolicyStatus` — populated only on the DSL path.
+    pub policy_status: Option<String>,
 }
 
 #[pymethods]
 impl PySolveResult {
     /// Status of the solve: "solved", "unsolvable", or "budget_exceeded".
+    ///
+    /// For results produced via the `policy_path` kwarg, this still reflects
+    /// the underlying `SolveResult` status. Use `policy_status` to inspect
+    /// the DSL-level terminal state.
     #[getter]
     fn status(&self) -> &'static str {
         match self.inner.status {
@@ -184,6 +200,27 @@ impl PySolveResult {
             SolveStatus::Unsolvable => "unsolvable",
             SolveStatus::BudgetExceeded => "budget_exceeded",
         }
+    }
+
+    /// Echo of the `.star` policy file path, or `None` if not a DSL solve.
+    #[getter]
+    fn policy_file(&self) -> Option<&str> {
+        self.policy_file.as_deref()
+    }
+
+    /// JSON-encoded echo of `policy_params` dict, or `None` if not a DSL solve.
+    /// Use `json.loads(result.policy_params)` to recover the dict.
+    #[getter]
+    fn policy_params(&self) -> Option<&str> {
+        self.policy_params.as_deref()
+    }
+
+    /// String representation of the DSL terminal status (e.g. `"solved"`,
+    /// `"unsolvable"`, `"budget_exhausted"`, `"timeout"`, etc.), or `None`
+    /// if not a DSL solve.
+    #[getter]
+    fn policy_status(&self) -> Option<&str> {
+        self.policy_status.as_deref()
     }
 
     /// Move layers: list of move steps, each a list of lane address tuples.
@@ -267,6 +304,91 @@ impl PySolveResult {
             self.inner.nodes_expanded,
             self.inner.deadlocks,
         )
+    }
+}
+
+impl PySolveResult {
+    /// Build a `PySolveResult` from a `PolicyResult` returned by the DSL kernel.
+    ///
+    /// The inner `SolveResult` is synthesised from the policy result's
+    /// `move_layers` and `goal_config`. The strategy-specific fields
+    /// (`cost`, `deadlocks`, `entropy_trace`) are zeroed/empty since the
+    /// DSL kernel does not track them.
+    pub fn from_policy(p: bloqade_lanes_search::move_policy_dsl::PolicyResult) -> Self {
+        use bloqade_lanes_search::move_policy_dsl::PolicyStatus;
+
+        let policy_status_str = match &p.status {
+            PolicyStatus::Solved => "solved".to_string(),
+            PolicyStatus::Unsolvable => "unsolvable".to_string(),
+            PolicyStatus::BudgetExhausted => "budget_exhausted".to_string(),
+            PolicyStatus::Timeout => "timeout".to_string(),
+            PolicyStatus::Fallback(m) => format!("fallback: {m}"),
+            PolicyStatus::SyntaxError(m) => format!("syntax_error: {m}"),
+            PolicyStatus::RuntimeError(m) => format!("runtime_error: {m}"),
+            PolicyStatus::SchemaError(f) => format!("schema_error: {f}"),
+            PolicyStatus::BadPolicy(m) => format!("bad_policy: {m}"),
+            PolicyStatus::StarlarkBudget => "starlark_budget".to_string(),
+            PolicyStatus::StarlarkOOM => "starlark_oom".to_string(),
+        };
+
+        let inner_status = match p.status {
+            PolicyStatus::Solved => SolveStatus::Solved,
+            PolicyStatus::Unsolvable => SolveStatus::Unsolvable,
+            _ => SolveStatus::BudgetExceeded,
+        };
+
+        let inner = SolveResult {
+            status: inner_status,
+            move_layers: p.move_layers,
+            goal_config: p.goal_config,
+            nodes_expanded: p.nodes_expanded,
+            cost: 0.0,
+            deadlocks: 0,
+            entropy_trace: None,
+        };
+
+        Self {
+            inner,
+            policy_file: Some(p.policy_file),
+            policy_params: Some(serde_json::to_string(&p.policy_params).unwrap_or_default()),
+            policy_status: Some(policy_status_str),
+        }
+    }
+}
+
+// ── JSON helpers for policy_params conversion ──
+
+fn pydict_to_json(d: &Bound<'_, PyDict>) -> PyResult<serde_json::Value> {
+    let mut obj = serde_json::Map::new();
+    for (k, v) in d.iter() {
+        let key: String = k.extract()?;
+        let val = pyany_to_json(&v)?;
+        obj.insert(key, val);
+    }
+    Ok(serde_json::Value::Object(obj))
+}
+
+fn pyany_to_json(v: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    if v.is_none() {
+        Ok(serde_json::Value::Null)
+    } else if let Ok(b) = v.extract::<bool>() {
+        Ok(serde_json::Value::Bool(b))
+    } else if let Ok(i) = v.extract::<i64>() {
+        Ok(serde_json::Value::Number(serde_json::Number::from(i)))
+    } else if let Ok(f) = v.extract::<f64>() {
+        Ok(serde_json::json!(f))
+    } else if let Ok(s) = v.extract::<String>() {
+        Ok(serde_json::Value::String(s))
+    } else if let Ok(list) = v.downcast::<PyList>() {
+        let items: PyResult<Vec<_>> = list.iter().map(|x| pyany_to_json(&x)).collect();
+        Ok(serde_json::Value::Array(items?))
+    } else if let Ok(dict) = v.downcast::<PyDict>() {
+        pydict_to_json(dict)
+    } else {
+        Err(PyValueError::new_err(format!(
+            "policy_params: unsupported value type {}",
+            v.get_type().name()?
+        )))
     }
 }
 
@@ -434,6 +556,9 @@ impl PyEntropyTraceStep {
 #[pyclass(name = "MoveSolver", frozen, module = "bloqade.lanes.bytecode._native")]
 pub struct PyMoveSolver {
     inner: MoveSolver,
+    /// Stored arch spec JSON, used to build a fresh `LaneIndex` for the
+    /// Move Policy DSL path (which needs an `Arc<LaneIndex>`).
+    arch_spec_json: String,
 }
 
 #[pymethods]
@@ -443,7 +568,10 @@ impl PyMoveSolver {
     fn new(arch_spec_json: &str) -> PyResult<Self> {
         let inner = MoveSolver::from_json(arch_spec_json)
             .map_err(|e| PyValueError::new_err(format!("invalid arch spec JSON: {e}")))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            arch_spec_json: arch_spec_json.to_owned(),
+        })
     }
 
     /// Create a solver from a native ArchSpec object.
@@ -453,7 +581,10 @@ impl PyMoveSolver {
             .map_err(|e| PyValueError::new_err(format!("failed to serialize arch spec: {e}")))?;
         let inner = MoveSolver::from_json(&json)
             .map_err(|e| PyValueError::new_err(format!("invalid arch spec: {e}")))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            arch_spec_json: json,
+        })
     }
 
     /// Solve a move synthesis problem.
@@ -464,25 +595,74 @@ impl PyMoveSolver {
     ///     blocked: List of LocationAddress for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
     ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
+    ///     policy_path: Path to a `.star` Move Policy DSL file. When supplied,
+    ///         routes through `solve_with_policy` instead of the strategy-based
+    ///         search path. The `options` kwarg is ignored on this path.
+    ///     policy_params: Free-form dict of parameters echoed into the result's
+    ///         `policy_params` field (JSON-encoded string). Only used when
+    ///         `policy_path` is supplied.
+    ///     timeout_s: Wall-clock time limit (seconds) for the DSL kernel. Only
+    ///         used when `policy_path` is supplied.
     ///
     /// Returns:
-    ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None))]
+    ///     SolveResult with status indicating success/failure. When
+    ///     `policy_path` is used, also check `policy_status`, `policy_file`,
+    ///     and `policy_params` on the returned object.
+    #[pyo3(signature = (initial, target, blocked, *, max_expansions=None, options=None, policy_path=None, policy_params=None, timeout_s=None))]
+    #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
         py: Python<'_>,
         initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         target: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
+        max_expansions: Option<u64>,
         options: Option<&PySolveOptions>,
+        policy_path: Option<&str>,
+        policy_params: Option<&Bound<'_, PyDict>>,
+        timeout_s: Option<f64>,
     ) -> PyResult<PySolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let target_pairs: Vec<(u32, LocationAddr)> =
             target.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        // ── Move Policy DSL path ──────────────────────────────────────────
+        if let Some(path) = policy_path {
+            let params_json: serde_json::Value = match policy_params {
+                Some(d) => pydict_to_json(d)?,
+                None => serde_json::Value::Object(Default::default()),
+            };
+            let policy_opts = bloqade_lanes_search::move_policy_dsl::PolicyOptions {
+                policy_path: path.to_string(),
+                policy_params: params_json,
+                max_expansions: max_expansions.unwrap_or(100_000),
+                timeout_s,
+                sandbox: bloqade_lanes_dsl_core::sandbox::SandboxConfig::default(),
+            };
+            let arch_spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
+                serde_json::from_str(&self.arch_spec_json).map_err(|e| {
+                    PyValueError::new_err(format!("failed to re-parse arch spec: {e}"))
+                })?;
+            let index = std::sync::Arc::new(bloqade_lanes_search::LaneIndex::new(arch_spec));
+            let result = py
+                .allow_threads(|| {
+                    bloqade_lanes_search::move_policy_dsl::solve_with_policy(
+                        initial_pairs,
+                        target_pairs,
+                        blocked_locs,
+                        index,
+                        policy_opts,
+                    )
+                })
+                .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+            return Ok(PySolveResult::from_policy(result));
+        }
+
+        // ── Strategy-based path (existing) ───────────────────────────────
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let max_exp_u32 = max_expansions.map(|n| n as u32);
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -491,13 +671,18 @@ impl PyMoveSolver {
                     initial_pairs,
                     target_pairs,
                     blocked_locs,
-                    max_expansions,
+                    max_exp_u32,
                     &opts,
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        Ok(PySolveResult { inner: result })
+        Ok(PySolveResult {
+            inner: result,
+            policy_file: None,
+            policy_params: None,
+            policy_status: None,
+        })
     }
 
     /// Solve using a target generator: generates candidates, validates each,

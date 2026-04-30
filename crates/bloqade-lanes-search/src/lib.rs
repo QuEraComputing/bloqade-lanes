@@ -18,6 +18,7 @@ pub mod heuristic;
 pub mod heuristics;
 
 pub mod lane_index;
+pub mod move_policy_dsl;
 pub mod observer;
 pub(crate) mod ordering;
 pub mod scorers;
@@ -36,6 +37,7 @@ pub use goals::{AllAtTarget, PartialPlacementGoal};
 pub use graph::{MoveSet, NodeId, SearchGraph};
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
+pub use move_policy_dsl::{PolicyOptions, PolicyResult, PolicyStatus};
 pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
 pub use scorers::{DistanceScorer, EntropyScorer};
 pub use solve::{CandidateAttempt, InnerStrategy, MultiSolveResult, SolveOptions, Strategy};
