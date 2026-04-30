@@ -4,19 +4,17 @@ from kirin.analysis.typeinfer import TypeInference
 from kirin.dialects import ilist
 from kirin.interp import Frame, MethodTable, impl
 
-from ._dialect import dialect
-from .stmts import TerminalLogicalMeasurement
+from ..dialects import operations
 
 
-@dialect.register(key="typeinfer")
+@operations.dialect.register(key="typeinfer")
 class TypeInfer(MethodTable):
-
-    @impl(TerminalLogicalMeasurement)
+    @impl(operations.stmts.TerminalLogicalMeasurement)
     def terminal_logical_measurement(
         self,
         interp_: TypeInference,
         frame: Frame[types.TypeAttribute],
-        stmt: TerminalLogicalMeasurement,
+        stmt: operations.stmts.TerminalLogicalMeasurement,
     ):
         qubits_type = frame.get(stmt.qubits)
         if qubits_type.is_structurally_equal(

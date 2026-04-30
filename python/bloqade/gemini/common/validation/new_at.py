@@ -14,20 +14,20 @@ from kirin import interp, ir
 from kirin.analysis.forward import ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 
-from bloqade.gemini.common import dialect, stmts
+from bloqade.gemini.common.dialects import qubit
 
 if TYPE_CHECKING:
     from bloqade.lanes.validation.address import _ValidationAnalysis
 
 
-@dialect.register(key="move.address.validation")
+@qubit.dialect.register(key="move.address.validation")
 class _NewAtValidation(interp.MethodTable):
-    @interp.impl(stmts.NewAt)
+    @interp.impl(qubit.stmts.NewAt)
     def check_new_at(
         self,
         _interp: _ValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        node: stmts.NewAt,
+        node: qubit.stmts.NewAt,
     ):
         # Lazy import to avoid circular initialisation:
         # any bloqade.lanes.* import triggers bloqade.lanes.__init__, which

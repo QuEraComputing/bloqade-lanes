@@ -14,6 +14,7 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 
+from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
@@ -60,7 +61,7 @@ class NativeToPlace:
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         if self.arch_spec is not None:
-            from bloqade.gemini.analysis.duplicate_address_validation import (
+            from bloqade.gemini.common.validation.duplicate_address import (
                 DuplicateAddressValidation,
             )
             from bloqade.lanes.validation.address import Validation
@@ -82,8 +83,12 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
                 out.code
             )
-            rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
             rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+
+        # Must run unconditionally: NewAt statements can appear in physical
+        # circuits (not just logical ones gated on arch_spec). A follow-up PR
+        # will separate the logical and physical compilation pipelines properly.
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
 
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
@@ -107,7 +112,7 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
         ).rewrite(out.code)
 
-        out = out.similar(out.dialects.discard(native_gate))
+        out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
 
         if not no_raise:
