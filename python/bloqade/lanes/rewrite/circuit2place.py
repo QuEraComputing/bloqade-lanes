@@ -150,6 +150,31 @@ class InitializeNewQubits(abc.RewriteRule):
         return abc.RewriteResult()
 
 
+class RewriteQubitsToPinnedQubits(abc.RewriteRule):
+    """Lower all bare qubit allocations to place.NewPinnedQubit.
+
+    - qubit.stmts.New       → NewPinnedQubit(location_address=None)
+    - gemini.common.NewAt   → NewPinnedQubit(location_address=<const>)
+
+    Used exclusively by the physical pipeline; the logical pipeline uses
+    InitializeNewQubits instead.
+    """
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if isinstance(node, qubit.stmts.New):
+            node.replace_by(place.NewPinnedQubit())
+            return abc.RewriteResult(has_done_something=True)
+
+        if isinstance(node, gemini_common_stmts.NewAt):
+            addr = _resolve_location_from_new_at(node)
+            if addr is None:
+                return abc.RewriteResult()
+            node.replace_by(place.NewPinnedQubit(location_address=addr))
+            return abc.RewriteResult(has_done_something=True)
+
+        return abc.RewriteResult()
+
+
 @dataclass
 class RewritePlaceOperations(abc.RewriteRule):
     """
