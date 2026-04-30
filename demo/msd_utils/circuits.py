@@ -62,29 +62,6 @@ def build_measurement_maps(num_logical_qubits: int) -> tuple[Any, Any]:
     return steane7_m2dets(num_logical_qubits), steane7_m2obs(num_logical_qubits)
 
 
-def _build_special_prefix_kernel(
-    prepare_kernel: Any,
-    initializer_kernel: Any,
-):
-    @squin.kernel
-    def prefix(q):
-        q0 = q[0:7]
-        q1 = q[7:14]
-        q2 = q[14:21]
-        q3 = q[21:28]
-        q4 = q[28:35]
-        inputs = [q0[6], q1[6], q2[6], q3[6], q4[6]]
-
-        prepare_kernel(inputs)
-        initializer_kernel(0.0, 0.0, 0.0, q0)
-        initializer_kernel(0.0, 0.0, 0.0, q1)
-        initializer_kernel(0.0, 0.0, 0.0, q2)
-        initializer_kernel(0.0, 0.0, 0.0, q3)
-        initializer_kernel(0.0, 0.0, 0.0, q4)
-
-    return prefix
-
-
 def _attach_special_circuit_kernel(
     kernel: Any,
     special_circuit_kernel: Any,
@@ -184,9 +161,9 @@ def _override_task_tsim_circuit(
     _set_task_override(task, "tsim_circuit", circuit)
 
 
-def _splice_noiseless_prefix_into_compiled_kernel(
+def _prepend_prepare_kernel_to_initializer_inputs(
     compiled_kernel: Any,
-    prefix_kernel: Any,
+    prepare_kernel: Any,
     *,
     initializer_name: str,
 ):
@@ -217,12 +194,11 @@ def _splice_noiseless_prefix_into_compiled_kernel(
         raise RuntimeError(f"Expected 5 initializer invokes, got {len(init_invokes)}")
 
     anchor = init_invokes[0]
-    full_reg = ilist.New(tuple(stmt.result for stmt in qubit_new_stmts[:35]))
-    full_reg.insert_before(anchor)
-    func.Invoke((full_reg.result,), callee=prefix_kernel).insert_before(anchor)
-
-    for stmt in reversed(init_invokes):
-        stmt.delete(safe=False)
+    # The Steane initializer uses the last physical qubit in each 7-qubit block
+    # as the seeded input qubit.
+    input_reg = ilist.New(tuple(stmt.result for stmt in qubit_new_stmts[6:35:7]))
+    input_reg.insert_before(anchor)
+    func.Invoke((input_reg.result,), callee=prepare_kernel).insert_before(anchor)
 
     return mt
 
@@ -231,13 +207,11 @@ def _apply_special_state_prefix(
     compiled_kernel: Any,
     *,
     prepare_kernel: Any,
-    initializer_kernel: Any,
     initializer_name: str,
 ) -> Any:
-    prefix_kernel = _build_special_prefix_kernel(prepare_kernel, initializer_kernel)
-    return _splice_noiseless_prefix_into_compiled_kernel(
+    return _prepend_prepare_kernel_to_initializer_inputs(
         compiled_kernel,
-        prefix_kernel,
+        prepare_kernel,
         initializer_name=initializer_name,
     )
 
@@ -818,7 +792,6 @@ def build_task(
             _apply_special_state_prefix(
                 compiled_kernel,
                 prepare_kernel=special_prepare_kernel,
-                initializer_kernel=initializer_kernel,
                 initializer_name=str(initializer_name),
             ),
         )
