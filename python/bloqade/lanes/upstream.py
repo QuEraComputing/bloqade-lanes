@@ -85,6 +85,9 @@ class NativeToPlace:
             )
             rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
 
+        # Must run unconditionally: NewAt statements can appear in physical
+        # circuits (not just logical ones gated on arch_spec). A follow-up PR
+        # will separate the logical and physical compilation pipelines properly.
         rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
 
         rewrite.Walk(

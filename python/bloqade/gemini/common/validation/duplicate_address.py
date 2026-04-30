@@ -22,6 +22,7 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
 if TYPE_CHECKING:
+    from bloqade.gemini.common.dialects.qubit.stmts import NewAt
     from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
@@ -30,9 +31,7 @@ class _DuplicateAddressValidationAnalysis(Forward[EmptyLattice]):
     keys = ("gemini.common.qubit.duplicates",)
     lattice = EmptyLattice
 
-    seen: dict["LocationAddress", ir.Statement] = field(
-        init=False, default_factory=dict
-    )
+    seen: dict["LocationAddress", "NewAt"] = field(init=False, default_factory=dict)
 
     def initialize(self):
         self.seen.clear()
