@@ -85,6 +85,41 @@ def _build_special_prefix_kernel(
     return prefix
 
 
+def _attach_special_circuit_kernel(
+    kernel: Any,
+    special_circuit_kernel: Any,
+    *,
+    num_qubits: int,
+) -> Any:
+    setattr(kernel, "_msd_special_circuit_kernel", special_circuit_kernel)
+    setattr(kernel, "_msd_special_circuit_num_qubits", int(num_qubits))
+    return kernel
+
+
+def _build_inverse_prepare_kernel_from_cirq(
+    special_circuit_kernel: Any,
+    *,
+    num_qubits: int,
+    kernel_name: str,
+) -> Any:
+    import cirq
+    from bloqade.cirq_utils import emit_circuit, load_circuit
+
+    @squin.kernel
+    def special_circuit_wrapper():
+        reg = squin.qalloc(num_qubits)
+        special_circuit_kernel(reg)
+
+    circuit = emit_circuit(special_circuit_wrapper, ignore_returns=True)
+    inverse_circuit = cirq.inverse(circuit)
+    return load_circuit(
+        inverse_circuit,
+        kernel_name=kernel_name,
+        register_as_argument=True,
+        register_argument_name="inputs",
+    )
+
+
 def _count_initializer_invokes(
     method: Any,
     *,
@@ -426,28 +461,24 @@ def build_decoder_kernel_bundle(
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
     state_injection_circuit = primitive_set.state_injection_circuit
     logical_circuit = primitive_set.logical_circuit
-    logical_circuit_inverse = primitive_set.logical_circuit_inverse
     tomography_x = tomography_primitives["tomography_x"]
     tomography_y = tomography_primitives["tomography_y"]
     tomography_z = tomography_primitives["tomography_z"]
-    tomography_x_inv = tomography_primitives["tomography_x_inv"]
-    tomography_y_inv = tomography_primitives["tomography_y_inv"]
-    tomography_z_inv = tomography_primitives["tomography_z_inv"]
 
     @squin.kernel
-    def prepare_special_x(inputs):
-        tomography_x_inv(inputs)
-        logical_circuit_inverse(inputs)
+    def special_circuit_x(reg):
+        logical_circuit(reg)
+        tomography_x(reg)
 
     @squin.kernel
-    def prepare_special_y(inputs):
-        tomography_y_inv(inputs)
-        logical_circuit_inverse(inputs)
+    def special_circuit_y(reg):
+        logical_circuit(reg)
+        tomography_y(reg)
 
     @squin.kernel
-    def prepare_special_z(inputs):
-        tomography_z_inv(inputs)
-        logical_circuit_inverse(inputs)
+    def special_circuit_z(reg):
+        logical_circuit(reg)
+        tomography_z(reg)
 
     @gemini_logical.kernel(aggressive_unroll=True)
     def msd_actual_x():
@@ -502,18 +533,30 @@ def build_decoder_kernel_bundle(
     if special_kernel_strategy == "prefix_prepare":
         special = {
             "X": LogicalKernelSpec(
-                kernel=msd_special_x,
-                special_prepare_kernel=prepare_special_x,
+                kernel=_attach_special_circuit_kernel(
+                    msd_special_x,
+                    special_circuit_x,
+                    num_qubits=num_logical_qubits,
+                ),
+                special_tsim_circuit_strategy="prefix_prepare",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
             "Y": LogicalKernelSpec(
-                kernel=msd_special_y,
-                special_prepare_kernel=prepare_special_y,
+                kernel=_attach_special_circuit_kernel(
+                    msd_special_y,
+                    special_circuit_y,
+                    num_qubits=num_logical_qubits,
+                ),
+                special_tsim_circuit_strategy="prefix_prepare",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
             "Z": LogicalKernelSpec(
-                kernel=msd_special_z,
-                special_prepare_kernel=prepare_special_z,
+                kernel=_attach_special_circuit_kernel(
+                    msd_special_z,
+                    special_circuit_z,
+                    num_qubits=num_logical_qubits,
+                ),
+                special_tsim_circuit_strategy="prefix_prepare",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
         }
@@ -733,12 +776,34 @@ def build_task(
             ).emit(physical_move_kernel),
         )
 
-    if spec.special_prepare_kernel is not None:
-        if spec.special_tsim_circuit_strategy is not None:
+    if spec.special_tsim_circuit_strategy == "prefix_prepare":
+        special_circuit_kernel = getattr(
+            spec.kernel,
+            "_msd_special_circuit_kernel",
+            None,
+        )
+        if special_circuit_kernel is None:
             raise ValueError(
-                "LogicalKernelSpec cannot set both special_prepare_kernel and "
-                "special_tsim_circuit_strategy."
+                "prefix_prepare special kernels must provide an "
+                "_msd_special_circuit_kernel source."
             )
+        special_circuit_num_qubits = getattr(
+            spec.kernel,
+            "_msd_special_circuit_num_qubits",
+            None,
+        )
+        if special_circuit_num_qubits is None:
+            raise ValueError(
+                "prefix_prepare special kernels must provide an "
+                "_msd_special_circuit_num_qubits value."
+            )
+        special_prepare_kernel = _build_inverse_prepare_kernel_from_cirq(
+            special_circuit_kernel,
+            num_qubits=int(special_circuit_num_qubits),
+            kernel_name=(
+                f"{getattr(spec.kernel, 'sym_name', 'special')}_prepare_inverse"
+            ),
+        )
         initializer_kernel = noisy_initializer or steane7_initialize
         initializer_name = (
             getattr(initializer_kernel, "sym_name", None)
@@ -752,19 +817,18 @@ def build_task(
             "physical_squin_kernel",
             _apply_special_state_prefix(
                 compiled_kernel,
-                prepare_kernel=spec.special_prepare_kernel,
+                prepare_kernel=special_prepare_kernel,
                 initializer_kernel=initializer_kernel,
                 initializer_name=str(initializer_name),
             ),
         )
-
-    if spec.special_tsim_circuit_strategy is not None:
-        if spec.special_tsim_circuit_strategy != "compiled_inverse_prefix":
-            raise ValueError(
-                "Unknown special_tsim_circuit_strategy: "
-                f"{spec.special_tsim_circuit_strategy}"
-            )
+    elif spec.special_tsim_circuit_strategy == "compiled_inverse_prefix":
         _override_task_tsim_circuit(task, _build_compiled_inverse_prefix_circuit(task))
+    elif spec.special_tsim_circuit_strategy is not None:
+        raise ValueError(
+            "Unknown special_tsim_circuit_strategy: "
+            f"{spec.special_tsim_circuit_strategy}"
+        )
 
     return DemoTask(
         task=task,
