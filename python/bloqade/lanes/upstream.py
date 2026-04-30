@@ -14,7 +14,6 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 
-from bloqade.gemini import common
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
@@ -108,7 +107,7 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
         ).rewrite(out.code)
 
-        out = out.similar(out.dialects.discard(native_gate).discard(common))
+        out = out.similar(out.dialects.discard(native_gate))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
 
         if not no_raise:
