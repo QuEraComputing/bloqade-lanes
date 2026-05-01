@@ -1,8 +1,8 @@
 """Evaluation script: compare baseline vs loose-goal placement on random CZ circuits.
 
 Uses the Gemini physical architecture (20 words, 8 sites/word).
-Compares PhysicalPlacementStrategy (Python entropy traversal) against
-LooseGoalPlacementStrategy (Rust IDS with multi-restart).
+Compares PhysicalPlacementStrategy (baseline and baseline+lookahead) against
+LooseGoalPlacementStrategy (full lookahead with dynamic targets).
 
 Usage:
     python scripts/eval_pipeline.py [--n-qubits 4] [--depth 3] [--seeds 3]
@@ -188,6 +188,12 @@ def main():
         help="Max simultaneous CZ pairs per layer (default: unlimited)",
     )
     parser.add_argument(
+        "--loose-strategy",
+        choices=["ids", "entropy", "cascade-ids"],
+        default="ids",
+        help="Search strategy for loose-goal placement (default: ids)",
+    )
+    parser.add_argument(
         "--visualize",
         action="store_true",
         help="Visualize the first seed's result (loose-goal)",
@@ -230,47 +236,10 @@ def main():
             ),
             "insert_return_moves": True,
         },
-        "3 Loose fixed": {
+        f"3 Loose full LA ({args.loose_strategy})": {
             "strategy": LooseGoalPlacementStrategy(
                 arch_spec=arch_spec,
-                strategy="ids",
-                max_expansions=args.max_expansions,
-                restarts=20,
-                dynamic_targets=False,
-                lookahead=False,
-            ),
-            "insert_return_moves": False,
-            "merge_heuristic": always_merge_heuristic,
-        },
-        "4 Loose dynamic": {
-            "strategy": LooseGoalPlacementStrategy(
-                arch_spec=arch_spec,
-                strategy="ids",
-                max_expansions=args.max_expansions,
-                restarts=20,
-                dynamic_targets=True,
-                recompute_interval=0,
-                lookahead=False,
-            ),
-            "insert_return_moves": False,
-            "merge_heuristic": always_merge_heuristic,
-        },
-        "5 Loose fixed+LA": {
-            "strategy": LooseGoalPlacementStrategy(
-                arch_spec=arch_spec,
-                strategy="ids",
-                max_expansions=args.max_expansions,
-                restarts=20,
-                dynamic_targets=False,
-                lookahead=True,
-            ),
-            "insert_return_moves": False,
-            "merge_heuristic": always_merge_heuristic,
-        },
-        "6 Loose full LA": {
-            "strategy": LooseGoalPlacementStrategy(
-                arch_spec=arch_spec,
-                strategy="ids",
+                strategy=args.loose_strategy,
                 max_expansions=args.max_expansions,
                 restarts=20,
                 dynamic_targets=True,
