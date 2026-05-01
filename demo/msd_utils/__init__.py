@@ -12,6 +12,7 @@ from .circuits import (
     build_task,
     build_task_map,
     make_noisy_steane7_initializer,
+    produce_tomography_kernels,
 )
 from .common import (
     DEFAULT_SYNDROME_LAYOUT,
@@ -167,6 +168,7 @@ __all__ = [
     "plot_msd_fig3b",
     "print_experiment_diagnostics",
     "print_msd_fig3b_summary",
+    "produce_tomography_kernels",
     "QET_VALID_POSTSELECTION_PATTERNS",
     "rebase_dataset_observables",
     "resolve_valid_factory_targets",

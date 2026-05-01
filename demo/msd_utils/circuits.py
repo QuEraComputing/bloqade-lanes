@@ -12,12 +12,6 @@ from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.device import GeminiLogicalSimulatorTask
 from bloqade.gemini.logical.stdlib import default_post_processing
 from bloqade.lanes import GeminiLogicalSimulator
-from bloqade.lanes.analysis import atom
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
-from bloqade.lanes.logical_mvp import (
-    append_measurements_and_annotations,
-    compile_squin_to_move,
-)
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquin
 
@@ -199,6 +193,53 @@ def _build_tomography_primitives(*, output_qubit: int):
     }
 
 
+@gemini_logical.kernel(aggressive_unroll=True, verify=False)
+def _return_none(reg):
+    return
+
+
+def produce_tomography_kernels(
+    num_qubits: int,
+    logical_kernel: Any,
+    tomography_kernels: Mapping[str, Any],
+    return_val_fn: Any,
+    kernel_name: str,
+) -> Mapping[str, Any]:
+    def make_kernel(tomog_kernel: Any, generated_name: str):
+        def logical_tomography_kernel():
+            reg = qubit.qalloc(num_qubits)
+            logical_kernel(reg)
+            tomog_kernel(reg)
+            return return_val_fn(reg)
+
+        logical_tomography_kernel.__name__ = generated_name
+        logical_tomography_kernel.__qualname__ = generated_name
+        return gemini_logical.kernel(aggressive_unroll=True)(logical_tomography_kernel)
+
+    return {
+        f"{kernel_name}_{tomog_kernel_key.split('_')[-1]}": make_kernel(
+            tomog_kernel,
+            f"{kernel_name}_{tomog_kernel_key.split('_')[-1]}",
+        )
+        for tomog_kernel_key, tomog_kernel in tomography_kernels.items()
+    }
+
+
+def _kernel_specs_by_tomography_basis(
+    kernels: Mapping[str, Any],
+    *,
+    observable_frame: ObservableFrame = ObservableFrame.RAW,
+) -> dict[str, LogicalKernelSpec]:
+    return {
+        kernel_name.split("_")[-1].upper(): LogicalKernelSpec(
+            kernel=kernel,
+            observable_frame=observable_frame,
+        )
+        for kernel_name, kernel in kernels.items()
+    }
+
+
+# NOTE: this is to basically enforce typing at runtime for Python.. in part because we don't have compile-time checks
 def _require_primitive_keys(
     primitives: Mapping[str, Any],
     *,
@@ -212,6 +253,7 @@ def _require_primitive_keys(
         )
 
 
+# NOTE: this is to basically enforce typing at runtime for Python.. in part because we don't have compile-time checks
 def _coerce_decoder_primitive_set(
     primitive_set: DecoderPrimitiveSet | Mapping[str, Any],
     *,
@@ -249,66 +291,34 @@ def build_naive_kernel_bundle(
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
     state_injection_circuit = msd_primitives["state_injection_circuit"]
     logical_circuit = msd_primitives["logical_circuit"]
-    tomography_x = tomography_primitives["tomography_x"]
-    tomography_y = tomography_primitives["tomography_y"]
-    tomography_z = tomography_primitives["tomography_z"]
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def distilled_x():
-        reg = qubit.qalloc(5)
+    @squin.kernel
+    def distilled_logical_kernel(reg):
         state_injection_circuit(reg)
         logical_circuit(reg)
-        tomography_x(reg)
-        return
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def distilled_y():
-        reg = qubit.qalloc(5)
-        state_injection_circuit(reg)
-        logical_circuit(reg)
-        tomography_y(reg)
-        return
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def distilled_z():
-        reg = qubit.qalloc(5)
-        state_injection_circuit(reg)
-        logical_circuit(reg)
-        tomography_z(reg)
-        return
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_x():
-        reg = qubit.qalloc(1)
+    @squin.kernel
+    def injected_logical_kernel(reg):
         squin.u3(theta, phi, lam, reg[0])
-        tomography_x(reg)
-        return
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_y():
-        reg = qubit.qalloc(1)
-        squin.u3(theta, phi, lam, reg[0])
-        tomography_y(reg)
-        return
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_z():
-        reg = qubit.qalloc(1)
-        squin.u3(theta, phi, lam, reg[0])
-        tomography_z(reg)
-        return
+    distilled_kernels = produce_tomography_kernels(
+        5,
+        distilled_logical_kernel,
+        tomography_primitives,
+        _return_none,
+        "distilled",
+    )
+    injected_kernels = produce_tomography_kernels(
+        1,
+        injected_logical_kernel,
+        tomography_primitives,
+        _return_none,
+        "injected",
+    )
 
     return NaiveKernelBundle(
-        distilled={
-            "X": LogicalKernelSpec(kernel=distilled_x),
-            "Y": LogicalKernelSpec(kernel=distilled_y),
-            "Z": LogicalKernelSpec(kernel=distilled_z),
-        },
-        injected={
-            "X": LogicalKernelSpec(kernel=injected_x),
-            "Y": LogicalKernelSpec(kernel=injected_y),
-            "Z": LogicalKernelSpec(kernel=injected_z),
-        },
+        distilled=_kernel_specs_by_tomography_basis(distilled_kernels),
+        injected=_kernel_specs_by_tomography_basis(injected_kernels),
     )
 
 
@@ -342,6 +352,15 @@ def build_decoder_kernel_bundle(
     tomography_z = tomography_primitives["tomography_z"]
 
     @squin.kernel
+    def actual_logical_kernel(reg):
+        state_injection_circuit(reg)
+        logical_circuit(reg)
+
+    @squin.kernel
+    def special_logical_kernel(reg):
+        logical_circuit(reg)
+
+    @squin.kernel
     def special_circuit_x(reg):
         logical_circuit(reg)
         tomography_x(reg)
@@ -356,99 +375,47 @@ def build_decoder_kernel_bundle(
         logical_circuit(reg)
         tomography_z(reg)
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def msd_actual_x():
-        reg = qubit.qalloc(num_logical_qubits)
-        state_injection_circuit(reg)
-        logical_circuit(reg)
-        tomography_x(reg)
-        return default_post_processing(reg)
+    actual_kernels = produce_tomography_kernels(
+        num_logical_qubits,
+        actual_logical_kernel,
+        tomography_primitives,
+        default_post_processing,
+        "msd_actual",
+    )
+    special_task_kernels = produce_tomography_kernels(
+        num_logical_qubits,
+        special_logical_kernel,
+        tomography_primitives,
+        default_post_processing,
+        "msd_special",
+    )
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def msd_actual_y():
-        reg = qubit.qalloc(num_logical_qubits)
-        state_injection_circuit(reg)
-        logical_circuit(reg)
-        tomography_y(reg)
-        return default_post_processing(reg)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def msd_actual_z():
-        reg = qubit.qalloc(num_logical_qubits)
-        state_injection_circuit(reg)
-        logical_circuit(reg)
-        tomography_z(reg)
-        return default_post_processing(reg)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def msd_special_x():
-        reg = qubit.qalloc(num_logical_qubits)
-        logical_circuit(reg)
-        tomography_x(reg)
-        return default_post_processing(reg)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def msd_special_y():
-        reg = qubit.qalloc(num_logical_qubits)
-        logical_circuit(reg)
-        tomography_y(reg)
-        return default_post_processing(reg)
-
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def msd_special_z():
-        reg = qubit.qalloc(num_logical_qubits)
-        logical_circuit(reg)
-        tomography_z(reg)
-        return default_post_processing(reg)
-
-    actual = {
-        "X": LogicalKernelSpec(kernel=msd_actual_x),
-        "Y": LogicalKernelSpec(kernel=msd_actual_y),
-        "Z": LogicalKernelSpec(kernel=msd_actual_z),
-    }
+    actual = _kernel_specs_by_tomography_basis(actual_kernels)
     if special_kernel_strategy == "prefix_prepare":
         # TODO: think about a cleaner way to pass down this information? Do I have to pass down this "special_kernel_{x, y, z}"?
+        special_circuit_sources = {
+            "X": special_circuit_x,
+            "Y": special_circuit_y,
+            "Z": special_circuit_z,
+        }
         special = {
-            "X": LogicalKernelSpec(
+            basis: LogicalKernelSpec(
                 kernel=_attach_special_circuit_kernel(
-                    msd_special_x,
-                    special_circuit_x,
+                    spec.kernel,
+                    special_circuit_sources[basis],
                     num_qubits=num_logical_qubits,
                 ),
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-            ),
-            "Y": LogicalKernelSpec(
-                kernel=_attach_special_circuit_kernel(
-                    msd_special_y,
-                    special_circuit_y,
-                    num_qubits=num_logical_qubits,
-                ),
-                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-            ),
-            "Z": LogicalKernelSpec(
-                kernel=_attach_special_circuit_kernel(
-                    msd_special_z,
-                    special_circuit_z,
-                    num_qubits=num_logical_qubits,
-                ),
-                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-            ),
+            )
+            for basis, spec in _kernel_specs_by_tomography_basis(
+                special_task_kernels
+            ).items()
         }
     else:
-        special = {
-            "X": LogicalKernelSpec(
-                kernel=msd_actual_x,
-                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-            ),
-            "Y": LogicalKernelSpec(
-                kernel=msd_actual_y,
-                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-            ),
-            "Z": LogicalKernelSpec(
-                kernel=msd_actual_z,
-                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-            ),
-        }
+        special = _kernel_specs_by_tomography_basis(
+            actual_kernels,
+            observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+        )
 
     resolved_injected_prep_args = injected_prep_args
     if resolved_injected_prep_args is None and len(primitive_args) == 3:
@@ -462,32 +429,19 @@ def build_decoder_kernel_bundle(
     if resolved_injected_prep_args is not None:
         theta, phi, lam = resolved_injected_prep_args
 
-        @gemini_logical.kernel(aggressive_unroll=True)
-        def injected_x():
-            reg = qubit.qalloc(1)
+        @squin.kernel
+        def injected_logical_kernel(reg):
             squin.u3(theta, phi, lam, reg[0])
-            tomography_x(reg)
-            return default_post_processing(reg)
 
-        @gemini_logical.kernel(aggressive_unroll=True)
-        def injected_y():
-            reg = qubit.qalloc(1)
-            squin.u3(theta, phi, lam, reg[0])
-            tomography_y(reg)
-            return default_post_processing(reg)
+        injected_kernels = produce_tomography_kernels(
+            1,
+            injected_logical_kernel,
+            tomography_primitives,
+            default_post_processing,
+            "injected",
+        )
 
-        @gemini_logical.kernel(aggressive_unroll=True)
-        def injected_z():
-            reg = qubit.qalloc(1)
-            squin.u3(theta, phi, lam, reg[0])
-            tomography_z(reg)
-            return default_post_processing(reg)
-
-        injected = {
-            "X": LogicalKernelSpec(kernel=injected_x),
-            "Y": LogicalKernelSpec(kernel=injected_y),
-            "Z": LogicalKernelSpec(kernel=injected_z),
-        }
+        injected = _kernel_specs_by_tomography_basis(injected_kernels)
 
     return DecoderKernelBundle(
         actual=actual,
@@ -506,38 +460,52 @@ def build_injected_decoder_kernel_map(
     hs_phi = -0.5 * math.pi
     lam = 0.0
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
-    tomography_x = tomography_primitives["tomography_x"]
-    tomography_y = tomography_primitives["tomography_y"]
-    tomography_z = tomography_primitives["tomography_z"]
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_decoder_x():
-        reg = qubit.qalloc(1)
+    @squin.kernel
+    def injected_decoder_x_logical_kernel(reg):
         squin.u3(h_theta, h_phi, lam, reg[0])
-        tomography_x(reg)
-        return default_post_processing(reg)
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_decoder_y():
-        reg = qubit.qalloc(1)
+    @squin.kernel
+    def injected_decoder_y_logical_kernel(reg):
         squin.u3(hs_theta, hs_phi, lam, reg[0])
-        tomography_y(reg)
-        return default_post_processing(reg)
 
-    @gemini_logical.kernel(aggressive_unroll=True)
-    def injected_decoder_z():
-        reg = qubit.qalloc(1)
+    @squin.kernel
+    def injected_decoder_z_logical_kernel(reg):
         squin.u3(0.0, 0.0, 0.0, reg[0])
-        tomography_z(reg)
-        return default_post_processing(reg)
 
     return {
-        "X": LogicalKernelSpec(kernel=injected_decoder_x),
-        "Y": LogicalKernelSpec(kernel=injected_decoder_y),
-        "Z": LogicalKernelSpec(kernel=injected_decoder_z),
+        **_kernel_specs_by_tomography_basis(
+            produce_tomography_kernels(
+                1,
+                injected_decoder_x_logical_kernel,
+                {"tomography_x": tomography_primitives["tomography_x"]},
+                default_post_processing,
+                "injected_decoder",
+            )
+        ),
+        **_kernel_specs_by_tomography_basis(
+            produce_tomography_kernels(
+                1,
+                injected_decoder_y_logical_kernel,
+                {"tomography_y": tomography_primitives["tomography_y"]},
+                default_post_processing,
+                "injected_decoder",
+            )
+        ),
+        **_kernel_specs_by_tomography_basis(
+            produce_tomography_kernels(
+                1,
+                injected_decoder_z_logical_kernel,
+                {"tomography_z": tomography_primitives["tomography_z"]},
+                default_post_processing,
+                "injected_decoder",
+            )
+        ),
     }
 
 
+# TODO: this noisy initializer should already be implemented in the latest version of bloqade-lanes;
+# adapt to their interface for how to specify noise in the state prep kernel.
 def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
     local_r_noise = simulator.noise_model.local_r_noise
     local_rz_noise = simulator.noise_model.local_rz_noise
@@ -599,7 +567,6 @@ def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
     return noisy_steane7_initialize
 
 
-# TODO, 4/17 10:30 AM: continue reading from here to think about how to integrate Jing's code.
 def build_task(
     simulator: GeminiLogicalSimulator,
     kernel_spec: LogicalKernelSpec | Any,
@@ -608,30 +575,14 @@ def build_task(
     m2obs: Any,
     noisy_initializer: Any | None = None,
     append_measurements: bool = True,
-    physical_hypercube_dims: int = 4,
-    transversal_rewrite: bool = True,
 ) -> DemoTask:
     spec = _ensure_kernel_spec(kernel_spec)
     logical_kernel = spec.kernel.similar()
-    if append_measurements:
-        append_measurements_and_annotations(logical_kernel, m2dets, m2obs)
 
-    physical_arch_spec = generate_arch_hypercube(physical_hypercube_dims)
-    physical_move_kernel = compile_squin_to_move(
+    task = simulator.task(
         logical_kernel,
-        transversal_rewrite=transversal_rewrite,
-    )
-    post_processing = atom.AtomInterpreter(
-        physical_move_kernel.dialects,
-        arch_spec=physical_arch_spec,
-    ).get_post_processing(physical_move_kernel)
-
-    task = GeminiLogicalSimulatorTask(
-        logical_kernel,
-        simulator.noise_model,
-        physical_arch_spec,
-        physical_move_kernel,
-        post_processing,
+        m2dets if append_measurements else None,
+        m2obs if append_measurements else None,
     )
 
     if noisy_initializer is not None:
@@ -639,10 +590,10 @@ def build_task(
             task,
             "physical_squin_kernel",
             MoveToSquin(
-                physical_arch_spec,
+                task.physical_arch_spec,
                 logical_initialization=noisy_initializer,
                 noise_model=simulator.noise_model,
-            ).emit(physical_move_kernel),
+            ).emit(task.physical_move_kernel),
         )
 
     return DemoTask(
@@ -722,8 +673,6 @@ def build_task_map(
     m2obs: Any,
     noisy_initializer: Any | None = None,
     append_measurements: bool = True,
-    physical_hypercube_dims: int = 4,
-    transversal_rewrite: bool = True,
 ) -> dict[str, DemoTask]:
     return {
         basis: build_task(
@@ -733,8 +682,6 @@ def build_task_map(
             m2obs=m2obs,
             noisy_initializer=noisy_initializer,
             append_measurements=append_measurements,
-            physical_hypercube_dims=physical_hypercube_dims,
-            transversal_rewrite=transversal_rewrite,
         )
         for basis, kernel in kernel_map.items()
     }
