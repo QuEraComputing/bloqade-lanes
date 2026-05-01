@@ -7,7 +7,7 @@ from kirin.rewrite import abc
 from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
 
-_GateStmt = place.R | place.Rz | place.CZ | place.Initialize | place.EndMeasure
+_GateStmt = place.R | place.Rz | place.CZ
 
 
 def cz_layer_split_policy(body_block: ir.Block) -> list[ir.Block]:
@@ -23,11 +23,7 @@ def cz_layer_split_policy(body_block: ir.Block) -> list[ir.Block]:
     classical_results = tuple(old_yield.classical_results)
 
     stmts: list[_GateStmt] = [
-        s
-        for s in body_block.stmts
-        if isinstance(
-            s, (place.R, place.Rz, place.CZ, place.Initialize, place.EndMeasure)
-        )
+        s for s in body_block.stmts if isinstance(s, (place.R, place.Rz, place.CZ))
     ]
 
     if not any(isinstance(s, place.CZ) for s in stmts):
@@ -92,9 +88,37 @@ class SplitStaticPlacement(abc.RewriteRule):
         if len(new_blocks) <= 1:
             return abc.RewriteResult()
 
-        new_sps = [
-            place.StaticPlacement(node.qubits, ir.Region(block)) for block in new_blocks
-        ]
+        new_sps: list[place.StaticPlacement] = []
+        for block in new_blocks:
+            # 1. Scan which local qubit indices this block's statements reference.
+            used: set[int] = set()
+            for stmt in block.stmts:
+                if isinstance(stmt, (place.R, place.Rz, place.CZ)):
+                    used.update(stmt.qubits)
+            qubit_indices = sorted(used)
+            remap = {orig: new for new, orig in enumerate(qubit_indices)}
+
+            # 2. Remap qubit indices in-place: replace each gate statement with a
+            #    clone that has updated qubit attributes, propagating the result SSA
+            #    values so the state chain and Yield remain valid.
+            gate_stmts = [
+                s for s in block.stmts if isinstance(s, (place.R, place.Rz, place.CZ))
+            ]
+            for stmt in gate_stmts:
+                new_stmt = stmt.from_stmt(
+                    stmt,
+                    attributes={
+                        "qubits": ir.PyAttr(tuple(remap[q] for q in stmt.qubits))
+                    },
+                )
+                new_stmt.insert_before(stmt)
+                for old_r, new_r in zip(stmt.results, new_stmt.results, strict=True):
+                    old_r.replace_by(new_r)
+                stmt.delete()
+
+            # 3. Build the narrowed qubit tuple and wrap in a new StaticPlacement.
+            new_qubits = tuple(node.qubits[i] for i in qubit_indices)
+            new_sps.append(place.StaticPlacement(new_qubits, ir.Region(block)))
 
         for sp in new_sps:
             sp.insert_before(node)

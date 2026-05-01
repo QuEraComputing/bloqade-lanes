@@ -125,11 +125,11 @@ def test_two_cz_layers_produce_two_groups():
     assert isinstance(s1[0], place.R) and s1[0].qubits == (0,)  # type: ignore[union-attr]
     assert isinstance(s1[1], place.CZ) and s1[1].qubits == (0, 1)  # type: ignore[union-attr]
 
-    # SP2: R(q2), CZ(q2,q3)
+    # SP2: R(q2), CZ(q2,q3) — remapped: used={2,3}, remap={2:0,3:1}
     s2 = _body_stmts(sps[1])
     assert len(s2) == 2
-    assert isinstance(s2[0], place.R) and s2[0].qubits == (2,)  # type: ignore[union-attr]
-    assert isinstance(s2[1], place.CZ) and s2[1].qubits == (2, 3)  # type: ignore[union-attr]
+    assert isinstance(s2[0], place.R) and s2[0].qubits == (0,)  # type: ignore[union-attr]
+    assert isinstance(s2[1], place.CZ) and s2[1].qubits == (0, 1)  # type: ignore[union-attr]
 
 
 def test_trailing_sq_after_last_cz_forms_own_group():
@@ -156,9 +156,10 @@ def test_trailing_sq_after_last_cz_forms_own_group():
     assert isinstance(s1[0], place.R) and s1[0].qubits == (0,)  # type: ignore[union-attr]
     assert isinstance(s1[1], place.CZ)
 
+    # SP2: R(q2) — remapped: used={2}, remap={2:0}
     s2 = _body_stmts(sps[1])
     assert len(s2) == 1
-    assert isinstance(s2[0], place.R) and s2[0].qubits == (2,)  # type: ignore[union-attr]
+    assert isinstance(s2[0], place.R) and s2[0].qubits == (0,)  # type: ignore[union-attr]
 
 
 def test_policy_a_full_example():
@@ -223,14 +224,14 @@ def test_policy_a_full_example():
     assert isinstance(s1[2], place.R) and s1[2].qubits == (1,)  # type: ignore[union-attr]
     assert isinstance(s1[3], place.CZ) and s1[3].qubits == (0, 1)  # type: ignore[union-attr]
 
-    # SP2: R(0), R(3), CZ(2,3)
+    # SP2: R(0), R(3), CZ(2,3) — remapped: used={0,2,3}, remap={0:0,2:1,3:2}
     s2 = _body_stmts(sps[1])
     assert len(s2) == 3
     assert isinstance(s2[0], place.R) and s2[0].qubits == (0,)  # type: ignore[union-attr]
-    assert isinstance(s2[1], place.R) and s2[1].qubits == (3,)  # type: ignore[union-attr]
-    assert isinstance(s2[2], place.CZ) and s2[2].qubits == (2, 3)  # type: ignore[union-attr]
+    assert isinstance(s2[1], place.R) and s2[1].qubits == (2,)  # type: ignore[union-attr]
+    assert isinstance(s2[2], place.CZ) and s2[2].qubits == (1, 2)  # type: ignore[union-attr]
 
-    # SP3: R(1)
+    # SP3: R(1) — remapped: used={1}, remap={1:0}
     s3 = _body_stmts(sps[2])
     assert len(s3) == 1
-    assert isinstance(s3[0], place.R) and s3[0].qubits == (1,)  # type: ignore[union-attr]
+    assert isinstance(s3[0], place.R) and s3[0].qubits == (0,)  # type: ignore[union-attr]
