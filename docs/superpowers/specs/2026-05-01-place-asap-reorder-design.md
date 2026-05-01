@@ -12,7 +12,7 @@ Three composable rewrite passes for the `place`-dialect compilation stage, each 
 3. **`SplitStaticPlacement(split_policy)`** — splits a single `StaticPlacement` body into multiple `StaticPlacement` nodes using a caller-supplied partitioning function.
 
 Concrete policies supplied for this feature:
-- `always_merge` — merge predicate that always returns `True` (existing default behaviour).
+- `gate_only_merge` — merge predicate that only merges placements containing exclusively gate statements (`R`, `Rz`, `CZ`); `Initialize` and `EndMeasure` placements are never merged.
 - `asap_reorder_policy` — reorder policy implementing ASAP (As Soon As Possible) scheduling via a `rustworkx.PyDAG` dependency graph.
 - `cz_layer_split_policy` — split policy that groups all single-qubit layers preceding each CZ layer together with that CZ layer into one `StaticPlacement`, following the CZ-anchored grouping rule (policy A).
 
@@ -25,7 +25,7 @@ After `RewritePlaceOperations` each gate occupies its own `StaticPlacement`. Nai
 ```
 RewritePlaceOperations
        ↓
-MergeStaticPlacement(always_merge)           (collapse all into one body)
+MergeStaticPlacement(gate_only_merge)        (collapse gate-only layers; Initialize/EndMeasure isolated)
        ↓
 ReorderStaticPlacement(asap_reorder_policy)  (ASAP schedule within the body)
        ↓
@@ -62,14 +62,24 @@ Callable[[place.StaticPlacement, place.StaticPlacement], bool]
 
 This is necessary because `place.CZ.qubits` holds **local integer indices** into the outer `StaticPlacement.qubits` tuple; resolving those indices to identify physical qubits requires access to the placement, not just its body region.
 
-### `always_merge` policy
+### `gate_only_merge` policy (new default)
 
 ```python
-def always_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
-    return True
+def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    return _is_gate_only(sp1) and _is_gate_only(sp2)
+
+def _is_gate_only(sp: place.StaticPlacement) -> bool:
+    return not any(
+        isinstance(stmt, (place.Initialize, place.EndMeasure))
+        for stmt in sp.body.blocks[0].stmts
+    )
 ```
 
-Preserves the existing default behaviour.
+Only merges placements whose bodies contain exclusively gate statements (`R`, `Rz`, `CZ`) and a trailing `place.Yield`. `Initialize` and `EndMeasure` placements are never merged and pass through the pipeline unchanged.
+
+This guarantee is load-bearing for `SplitStaticPlacement`: because every merged body is a pure gate block terminating in a plain `place.Yield`, the split policy can safely reuse that `Yield` in the last output block without any special-casing for non-gate terminators.
+
+The previous `always_merge` behaviour (merge unconditionally) is still available as an explicit policy for callers that need it.
 
 ## Component 2: `ReorderStaticPlacement`
 
