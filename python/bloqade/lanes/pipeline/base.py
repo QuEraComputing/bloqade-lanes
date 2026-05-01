@@ -66,6 +66,7 @@ class _NativeToPlaceBase:
     """
 
     arch_spec: ArchSpec | None = field(default=None)
+    fuse_gates: bool = True
 
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         return out
@@ -121,7 +122,8 @@ class _NativeToPlaceBase:
             )
         ).rewrite(out.code)
         rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(out.code)
-        rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
+        if self.fuse_gates:
+            rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
         rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
 
         out = out.similar(

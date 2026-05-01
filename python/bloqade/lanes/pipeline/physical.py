@@ -49,6 +49,7 @@ class PhysicalPipeline:
     layout_heuristic: layout.LayoutHeuristicABC | None = None
     placement_strategy: placement.PlacementStrategyABC | None = None
     insert_return_moves: bool = True
+    fuse_gates: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
@@ -64,6 +65,7 @@ class PhysicalPipeline:
 
         out = _PhysicalNativeToPlace(
             arch_spec=self.arch_spec,
+            fuse_gates=self.fuse_gates,
         ).emit(mt, no_raise=no_raise)
 
         out = _PlaceToMove(

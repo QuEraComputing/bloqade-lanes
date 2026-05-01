@@ -35,6 +35,7 @@ from bloqade.lanes.rewrite.split_static_placement import (
 class NativeToPlace:
     logical_initialize: bool = True
     arch_spec: ArchSpec | None = field(default=None)
+    fuse_gates: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -111,7 +112,8 @@ class NativeToPlace:
             ),
         ).rewrite(out.code)
         rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(out.code)
-        rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
+        if self.fuse_gates:
+            rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
         rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
 
         out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
@@ -243,6 +245,7 @@ def squin_to_move(
     ] = place2move.palindrome_move_layers,
     no_raise: bool = True,
     logical_initialize: bool = True,
+    fuse_gates: bool = True,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
@@ -257,6 +260,7 @@ def squin_to_move(
             Defaults to palindrome_move_layers.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
+        fuse_gates (bool, optional): Whether to fuse adjacent compatible gates before splitting into CZ-anchored layers. Defaults to True.
 
     Returns:
         ir.Method: The compiled move dialect method.
@@ -266,6 +270,7 @@ def squin_to_move(
     out = NativeToPlace(
         logical_initialize=logical_initialize,
         arch_spec=arch_spec,
+        fuse_gates=fuse_gates,
     ).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
