@@ -182,7 +182,6 @@ def test_decoder_kernel_bundle_accepts_variadic_primitive_builder():
         return DecoderPrimitiveSet(
             state_injection_circuit=sentinel,
             logical_circuit=sentinel,
-            logical_circuit_inverse=sentinel,
         )
 
     decoder = build_decoder_kernel_bundle(

@@ -18,6 +18,8 @@ class ObservableFrame(str, Enum):
 class LogicalKernelSpec:
     kernel: Any
     # TODO: for observable_frame, we need to NOT have this auto-correction
+    # ^ hmm... on second thought, it might be fine; it is pretty generic I think, and potentially useful when you don't know/care about
+    # the 'ideal' observable, so long as it's deterministic
     observable_frame: ObservableFrame = ObservableFrame.RAW
 
 

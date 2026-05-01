@@ -53,7 +53,6 @@ class DecoderKernelBundle:
 class DecoderPrimitiveSet:
     state_injection_circuit: Any
     logical_circuit: Any
-    logical_circuit_inverse: Any
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
@@ -187,20 +186,9 @@ def _build_msd_primitives(
         squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
         squin.broadcast.sqrt_x_adj(reg)
 
-    @squin.kernel
-    def msd_inverse(reg):
-        squin.broadcast.sqrt_x(reg)
-        squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
-        squin.sqrt_x(reg[0])
-        squin.broadcast.cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[2], reg[4]]))
-        squin.broadcast.sqrt_y_adj(ilist.IList([reg[0], reg[3]]))
-        squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
-        squin.broadcast.sqrt_x_adj(ilist.IList([reg[0], reg[1], reg[4]]))
-
     return DecoderPrimitiveSet(
         state_injection_circuit=msd_magic_prep,
         logical_circuit=msd_forward,
-        logical_circuit_inverse=msd_inverse,
     )
 
 
@@ -267,14 +255,12 @@ def _coerce_decoder_primitive_set(
             keys=(
                 "state_injection_circuit",
                 "logical_circuit",
-                "logical_circuit_inverse",
             ),
             builder_name=builder_name,
         )
         return DecoderPrimitiveSet(
             state_injection_circuit=primitive_set["state_injection_circuit"],
             logical_circuit=primitive_set["logical_circuit"],
-            logical_circuit_inverse=primitive_set["logical_circuit_inverse"],
         )
     raise TypeError(
         f"{builder_name} must return a DecoderPrimitiveSet or mapping, got "
@@ -451,6 +437,7 @@ def build_decoder_kernel_bundle(
         "Z": LogicalKernelSpec(kernel=msd_actual_z),
     }
     if special_kernel_strategy == "prefix_prepare":
+        # TODO: think about a cleaner way to pass down this information? Do I have to pass down this "special_kernel_{x, y, z}"?
         special = {
             "X": LogicalKernelSpec(
                 kernel=_attach_special_circuit_kernel(
@@ -723,6 +710,8 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
             "_msd_special_circuit_num_qubits value."
         )
 
+    # TODO: instead of using Cirq here and then converting to squin and then to tsim, maybe
+    # we can use tsim only?
     special_prepare_kernel = _build_inverse_prepare_kernel_from_cirq(
         special_circuit_kernel,
         num_qubits=int(special_circuit_num_qubits),

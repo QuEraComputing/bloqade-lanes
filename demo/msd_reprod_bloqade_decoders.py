@@ -101,7 +101,7 @@ from demo.msd_utils.decoders import (  # noqa: E402
     train_mld_decoder_pair,
 )
 
-from bloqade import qubit, squin  # noqa: E402
+from bloqade import qubit  # noqa: E402
 from bloqade.gemini import logical as gemini_logical  # noqa: E402
 from bloqade.gemini.logical.stdlib import default_post_processing  # noqa: E402
 from bloqade.lanes import GeminiLogicalSimulator  # noqa: E402
@@ -194,7 +194,6 @@ SPECIAL_KERNEL_STRATEGY = "compiled_inverse_prefix"
 
 _MSD_PRIMITIVES = _build_msd_primitives(THETA, PHI, LAM)
 msd_forward = _MSD_PRIMITIVES["logical_circuit"]
-msd_inverse = _MSD_PRIMITIVES["logical_circuit_inverse"]
 
 _TOMOGRAPHY_PRIMITIVES = _build_tomography_primitives(output_qubit=OUTPUT_QUBIT)
 tomography_x = _TOMOGRAPHY_PRIMITIVES["tomography_x"]
@@ -874,19 +873,6 @@ summarize_noiseless(dbg_identity_task, label="identity_5")
 
 # %%
 @gemini_logical.kernel(aggressive_unroll=True)
-def dbg_cancel():
-    reg = qubit.qalloc(5)
-    msd_inverse(reg)
-    msd_forward(reg)
-    return default_post_processing(reg)
-
-
-dbg_cancel_task = build_task(sim, dbg_cancel, m2dets=None, m2obs=None)
-summarize_noiseless(dbg_cancel_task, label="inverse_then_forward")
-
-
-# %%
-@gemini_logical.kernel(aggressive_unroll=True)
 def dbg_tomo_x():
     reg = qubit.qalloc(5)
     tomography_x(reg)
@@ -924,80 +910,6 @@ for name, kernel in [
 ]:
     task = build_task(sim, kernel, m2dets=None, m2obs=None)
     summarize_noiseless(task, label=name)
-
-
-# %%
-@squin.kernel
-def tomography_x_inv(reg):
-    squin.h(reg[OUTPUT_QUBIT])
-
-
-@squin.kernel
-def tomography_y_inv(reg):
-    squin.h(reg[OUTPUT_QUBIT])
-    squin.sqrt_z(reg[OUTPUT_QUBIT])
-
-
-@squin.kernel
-def tomography_z_inv(reg):
-    return
-
-
-# %%
-@squin.kernel
-def prepare_special_x_v2(reg):
-    tomography_x_inv(reg)
-    msd_inverse(reg)
-
-
-@squin.kernel
-def prepare_special_y_v2(reg):
-    tomography_y_inv(reg)
-    msd_inverse(reg)
-
-
-@squin.kernel
-def prepare_special_z_v2(reg):
-    tomography_z_inv(reg)
-    msd_inverse(reg)
-
-
-# %%
-@gemini_logical.kernel(aggressive_unroll=True)
-def msd_special_x_v2():
-    reg = qubit.qalloc(5)
-    prepare_special_x_v2(reg)
-    msd_forward(reg)
-    tomography_x(reg)
-    return default_post_processing(reg)
-
-
-@gemini_logical.kernel(aggressive_unroll=True)
-def msd_special_y_v2():
-    reg = qubit.qalloc(5)
-    prepare_special_y_v2(reg)
-    msd_forward(reg)
-    tomography_y(reg)
-    return default_post_processing(reg)
-
-
-@gemini_logical.kernel(aggressive_unroll=True)
-def msd_special_z_v2():
-    reg = qubit.qalloc(5)
-    prepare_special_z_v2(reg)
-    msd_forward(reg)
-    tomography_z(reg)
-    return default_post_processing(reg)
-
-
-special_v2_tasks = {
-    "X": build_task(sim, msd_special_x_v2, m2dets=None, m2obs=None),
-    "Y": build_task(sim, msd_special_y_v2, m2dets=None, m2obs=None),
-    "Z": build_task(sim, msd_special_z_v2, m2dets=None, m2obs=None),
-}
-
-for basis, task in special_v2_tasks.items():
-    summarize_noiseless(task, label=f"special_v2_{basis}")
 
 
 # %% [markdown]
