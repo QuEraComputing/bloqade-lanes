@@ -19,10 +19,7 @@ from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.passes import (
-    PlaceOptimizationPass,
-    SequentialPlacePass,
-)
+from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 
 
@@ -30,9 +27,7 @@ from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, sta
 class NativeToPlace:
     logical_initialize: bool = True
     arch_spec: ArchSpec | None = field(default=None)
-    place_optimization: PlaceOptimizationPass = field(
-        default_factory=SequentialPlacePass
-    )
+    place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -94,7 +89,7 @@ class NativeToPlace:
         ).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
-        self.place_optimization(out)
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
@@ -225,7 +220,7 @@ def squin_to_move(
     ] = place2move.palindrome_move_layers,
     no_raise: bool = True,
     logical_initialize: bool = True,
-    place_optimization: PlaceOptimizationPass | None = None,
+    place_opt_type: type[passes.Pass] = SequentialPlacePass,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
@@ -240,7 +235,7 @@ def squin_to_move(
             Defaults to palindrome_move_layers.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
-        place_optimization (PlaceOptimizationPass, optional): Place-dialect optimization pass. Defaults to SequentialPlacePass.
+        place_opt_type (type[passes.Pass], optional): Place-dialect optimization pass class. Defaults to SequentialPlacePass.
 
     Returns:
         ir.Method: The compiled move dialect method.
@@ -250,7 +245,7 @@ def squin_to_move(
     out = NativeToPlace(
         logical_initialize=logical_initialize,
         arch_spec=arch_spec,
-        place_optimization=place_optimization or SequentialPlacePass(),
+        place_opt_type=place_opt_type,
     ).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,

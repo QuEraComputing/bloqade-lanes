@@ -1,9 +1,12 @@
-from abc import ABC, abstractmethod
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import ClassVar
 
-from kirin import rewrite
-from kirin.ir.method import Method
+from kirin import ir, passes, rewrite
+from kirin.rewrite.abc import RewriteResult
 
+from bloqade.lanes.rewrite import circuit2place
 from bloqade.lanes.rewrite.circuit2place import (
     HoistNewQubitsUp,
     MergeStaticPlacement,
@@ -11,6 +14,7 @@ from bloqade.lanes.rewrite.circuit2place import (
     sq_only_merge,
 )
 from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
+from bloqade.lanes.rewrite.remove_debug import RemoveDebugStatements
 from bloqade.lanes.rewrite.reorder_static_placement import (
     ReorderStaticPlacement,
     asap_reorder_policy,
@@ -22,37 +26,36 @@ from bloqade.lanes.rewrite.split_static_placement import (
 
 
 @dataclass
-class PlaceOptimizationPass(ABC):
-    """Base class for place-dialect optimization passes.
-
-    Called once from the compilation pipeline without a fixpoint wrapper.
-    Any internal fixpoint logic must be self-contained in the implementation.
-    """
-
-    @abstractmethod
-    def __call__(self, mt: Method) -> None: ...
-
-
-@dataclass
-class SequentialPlacePass(PlaceOptimizationPass):
+class SequentialPlacePass(passes.Pass):
     """Preserve gate order; merge only adjacent single-qubit-gate placements (R, Rz).
 
     CZ placements remain isolated, preserving the original program order.
     This is the default behavior.
     """
 
-    def __call__(self, mt: Method) -> None:
-        rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
-            mt.code
+    name: ClassVar[str] = "sequential_place"
+
+    def unsafe_run(self, mt: ir.Method) -> RewriteResult:
+        result = RewriteResult()
+        result = result.join(
+            rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
-        rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code)
-        rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
-            mt.code
+        result = result.join(
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
+                mt.code
+            )
         )
+        result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
+        result = result.join(
+            rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(sq_only_merge))).rewrite(
+                mt.code
+            )
+        )
+        return result
 
 
 @dataclass
-class ASAPPlacePass(PlaceOptimizationPass):
+class ASAPPlacePass(passes.Pass):
     """ASAP scheduling optimization for the place dialect.
 
     Merges all pure-gate placements (R, Rz, CZ), reorders gates by ASAP
@@ -60,14 +63,32 @@ class ASAPPlacePass(PlaceOptimizationPass):
     on CZ-anchored boundaries.
     """
 
-    def __call__(self, mt: Method) -> None:
-        rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(gate_only_merge))).rewrite(
-            mt.code
+    name: ClassVar[str] = "asap_place"
+
+    def unsafe_run(self, mt: ir.Method) -> RewriteResult:
+        result = RewriteResult()
+        result = result.join(rewrite.Walk(RemoveDebugStatements()).rewrite(mt.code))
+        result = result.join(
+            rewrite.Walk(circuit2place.HoistConstants()).rewrite(mt.code)
         )
-        rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code)
-        rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(gate_only_merge))).rewrite(
-            mt.code
+        result = result.join(
+            rewrite.Fixpoint(
+                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
+            ).rewrite(mt.code)
         )
-        rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(mt.code)
-        rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(mt.code)
-        rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(mt.code)
+        result = result.join(rewrite.Walk(HoistNewQubitsUp()).rewrite(mt.code))
+        result = result.join(
+            rewrite.Fixpoint(
+                rewrite.Walk(MergeStaticPlacement(gate_only_merge))
+            ).rewrite(mt.code)
+        )
+        result = result.join(
+            rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(mt.code)
+        )
+        result = result.join(
+            rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(mt.code)
+        )
+        result = result.join(
+            rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(mt.code)
+        )
+        return result
