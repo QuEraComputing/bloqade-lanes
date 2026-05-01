@@ -111,8 +111,8 @@ class NativeToPlace:
             ),
         ).rewrite(out.code)
         rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(out.code)
-        rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
         rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
+        rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
 
         out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
