@@ -8,7 +8,7 @@ from bloqade.analysis.measure_id.lattice import (
 from kirin import interp, types as kirin_types
 from kirin.dialects import ilist
 
-from bloqade.gemini.logical.dialects import operations
+from ..dialects import operations
 
 
 @operations.dialect.register(key="measure_id")

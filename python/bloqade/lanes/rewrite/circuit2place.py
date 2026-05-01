@@ -8,7 +8,7 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
-from bloqade.gemini.common import stmts as gemini_common_stmts
+from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
@@ -145,6 +145,31 @@ class InitializeNewQubits(abc.RewriteRule):
                     location_address=addr,
                 )
             )
+            return abc.RewriteResult(has_done_something=True)
+
+        return abc.RewriteResult()
+
+
+class RewriteQubitsToPinnedQubits(abc.RewriteRule):
+    """Lower all bare qubit allocations to place.NewPinnedQubit.
+
+    - qubit.stmts.New       → NewPinnedQubit(location_address=None)
+    - gemini.common.NewAt   → NewPinnedQubit(location_address=<const>)
+
+    Used exclusively by the physical pipeline; the logical pipeline uses
+    InitializeNewQubits instead.
+    """
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if isinstance(node, qubit.stmts.New):
+            node.replace_by(place.NewPinnedQubit())
+            return abc.RewriteResult(has_done_something=True)
+
+        if isinstance(node, gemini_common_stmts.NewAt):
+            addr = _resolve_location_from_new_at(node)
+            if addr is None:
+                return abc.RewriteResult()
+            node.replace_by(place.NewPinnedQubit(location_address=addr))
             return abc.RewriteResult(has_done_something=True)
 
         return abc.RewriteResult()
@@ -304,6 +329,64 @@ class RewritePlaceOperations(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+class RewritePhysicalMeasure(abc.RewriteRule):
+    """Lower qubit.stmts.Measure to place.StaticPlacement(EndMeasure).
+
+    For the physical pipeline.  After AggressiveUnroll, qalloc produces:
+      ilist.New([q0, q1])   — the register
+    and measure receives:
+      ilist.New([reg])      — outer wrapper with one IList[Qubit, N] element
+
+    We unwrap one level of nesting to collect individual Qubit SSA values.
+    """
+
+    def _collect_inputs(self, node: qubit.stmts.Measure) -> list[ir.SSAValue]:
+        owner = node.qubits.owner
+        if not isinstance(owner, ilist.New):
+            raise ValueError(
+                f"RewritePhysicalMeasure: expected qubits owner to be ilist.New, "
+                f"got {type(owner).__name__}. Ensure AggressiveUnroll ran before "
+                f"this rewrite pass."
+            )
+        inputs: list[ir.SSAValue] = []
+        for val in owner.values:
+            inner = val.owner
+            if isinstance(inner, ilist.New):
+                inputs.extend(inner.values)
+            else:
+                inputs.append(val)
+        if not inputs:
+            raise ValueError(
+                f"RewritePhysicalMeasure: collected no qubit inputs from {node}; "
+                f"the qubits list appears to be empty."
+            )
+        return inputs
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, qubit.stmts.Measure):
+            return abc.RewriteResult()
+
+        inputs = self._collect_inputs(node)
+
+        body = ir.Region(block := ir.Block())
+        entry_state = block.args.append_from(StateType, name="entry_state")
+        gate_stmt = place.EndMeasure(entry_state, qubits=tuple(range(len(inputs))))
+        block.stmts.append(gate_stmt)
+        block.stmts.append(place.Yield(gate_stmt.state_after, *gate_stmt.results[1:]))
+
+        static_placement = place.StaticPlacement(qubits=tuple(inputs), body=body)
+        static_placement.insert_before(node)
+
+        # Assemble the flat IList[MeasurementResult, N] that replaces Measure.result.
+        meas_results = list(static_placement.results)
+        result_list = ilist.New(tuple(meas_results))
+        result_list.insert_before(node)
+        node.result.replace_by(result_list.result)
+        node.delete()
+
+        return abc.RewriteResult(has_done_something=True)
+
+
 class HoistConstants(abc.RewriteRule):
     """This rewrite rule hoists all constant values to the top of the kernel."""
 
@@ -334,7 +417,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, place.NewLogicalQubit)
+            isinstance(node, place._NewQubitBase)
             and (parent_block := node.parent_block) is not None
             and (first_stmt := parent_block.first_stmt) is not None
             and node is not first_stmt
@@ -347,7 +430,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
         def loop_cond(stmt: ir.Statement | None) -> TypeGuard[ir.Statement]:
             return (
                 stmt is not None
-                and not isinstance(stmt, place.NewLogicalQubit)
+                and not isinstance(stmt, place._NewQubitBase)
                 and set(stmt.results).isdisjoint(node.args)
             )
 
