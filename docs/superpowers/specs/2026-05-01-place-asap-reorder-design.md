@@ -39,27 +39,57 @@ Nothing downstream of `FuseAdjacentGates` changes.
 ### Helper
 
 ```python
-def _cz_qubits(region: ir.Region) -> set[int]:
-    """Return all qubit indices touched by CZ statements in the region's first block."""
-    result: set[int] = set()
-    for stmt in region.blocks[0].stmts:
+def _cz_qubits(sp: place.StaticPlacement) -> set[ir.SSAValue]:
+    """Return the SSA qubit values touched by any CZ in this placement.
+
+    place.CZ.qubits holds local integer indices into sp.qubits; resolving
+    through sp.qubits gives SSA values that are comparable across placements.
+    """
+    result: set[ir.SSAValue] = set()
+    for stmt in sp.body.blocks[0].stmts:
         if isinstance(stmt, place.CZ):
-            result.update(stmt.qubits)  # qubits = controls first, then targets
+            result.update(sp.qubits[i] for i in stmt.qubits)
     return result
 ```
 
 ### Heuristic logic
 
 ```
-is_cz_layer(r) = _cz_qubits(r) is non-empty
+is_cz_layer(sp) = _cz_qubits(sp) is non-empty
 
 Rules (evaluated in order):
-1. is_cz_layer(r1) != is_cz_layer(r2)  →  False   (never mix CZ and non-CZ layers)
-2. not is_cz_layer(r1)                  →  True    (both non-CZ: merge freely)
-3. both CZ layers                       →  _cz_qubits(r1).isdisjoint(_cz_qubits(r2))
+1. is_cz_layer(sp1) != is_cz_layer(sp2)  →  False   (never mix CZ and non-CZ layers)
+2. not is_cz_layer(sp1)                   →  True    (both non-CZ: merge freely)
+3. both CZ layers                         →  _cz_qubits(sp1).isdisjoint(_cz_qubits(sp2))
 ```
 
-The heuristic is passed to `MergePlacementRegions(merge_heuristic=cz_disjoint_heuristic)`. No changes to `MergePlacementRegions` itself.
+The heuristic is passed to `MergePlacementRegions(merge_heuristic=cz_disjoint_heuristic)`.
+
+### Required change to `MergePlacementRegions`
+
+The current `merge_heuristic` signature is `Callable[[ir.Region, ir.Region], bool]`, passing only the body regions. Within a `StaticPlacement` body, `place.CZ.qubits` contains **local integer indices** into the outer `StaticPlacement.qubits` tuple — not SSA qubit values. Comparing qubit sets across two placements requires resolving those indices through each placement's `qubits` tuple.
+
+Change the signature to pass the full placement statements:
+
+```python
+# Before
+merge_heuristic: Callable[[ir.Region, ir.Region], bool]
+
+# After
+merge_heuristic: Callable[[place.StaticPlacement, place.StaticPlacement], bool]
+```
+
+Update `_default_merge_heuristic` and the two call sites inside `rewrite_Statement` accordingly. The `_cz_qubits` helper takes a `place.StaticPlacement` and resolves local indices:
+
+```python
+def _cz_qubits(sp: place.StaticPlacement) -> set[ir.SSAValue]:
+    """Return the set of SSA qubit values touched by any CZ in this placement."""
+    result: set[ir.SSAValue] = set()
+    for stmt in sp.body.blocks[0].stmts:
+        if isinstance(stmt, place.CZ):
+            result.update(sp.qubits[i] for i in stmt.qubits)
+    return result
+```
 
 ## Component 2: `ASAPReorder`
 
