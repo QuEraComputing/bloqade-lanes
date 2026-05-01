@@ -26,6 +26,7 @@ from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 
 MAX_LOGICAL_QUBITS = 10
+LOGICAL_UNSUPPORTED_NON_CLIFFORD_CASE_IDS = frozenset({"adder_4", "qpe_9"})
 
 
 def main() -> int:
@@ -59,6 +60,7 @@ def main() -> int:
     )
     jobs = _apply_architecture_mode(jobs, architecture_mode=args.architecture)
     if args.architecture == "logical":
+        jobs = _filter_jobs_for_logical_compatibility(jobs)
         jobs = _filter_jobs_for_logical_capacity(
             jobs, max_logical_qubits=MAX_LOGICAL_QUBITS
         )
@@ -232,6 +234,26 @@ def _filter_jobs_for_logical_capacity(
         print(
             "[warn] logical mode skipped cases exceeding logical qubit capacity "
             f"({max_logical_qubits}): {skipped}"
+        )
+    return filtered_jobs
+
+
+def _filter_jobs_for_logical_compatibility(
+    jobs: list[BenchmarkJob],
+) -> list[BenchmarkJob]:
+    filtered_jobs: list[BenchmarkJob] = []
+    skipped_case_ids: set[str] = set()
+    for job in jobs:
+        if job.case.case_id in LOGICAL_UNSUPPORTED_NON_CLIFFORD_CASE_IDS:
+            skipped_case_ids.add(job.case.case_id)
+            continue
+        filtered_jobs.append(job)
+
+    if skipped_case_ids:
+        skipped = ", ".join(sorted(skipped_case_ids))
+        print(
+            "[warn] logical mode skipped cases with unsupported non-Clifford "
+            f"rotations: {skipped}"
         )
     return filtered_jobs
 
