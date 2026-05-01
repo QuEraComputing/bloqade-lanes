@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from itertools import chain
 from typing import Callable
 
 from bloqade.analysis import address
@@ -21,23 +20,19 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
-
-
-def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
-    return all(
-        isinstance(stmt, (place.R, place.Rz, place.Yield))
-        for stmt in chain(region_a.walk(), region_b.walk())
-    )
-
-
-def always_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
-    """Always allow merging; all CZs end up in one region in the Place IR."""
-    return True
+from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
+from bloqade.lanes.rewrite.reorder_static_placement import (
+    ReorderStaticPlacement,
+    asap_reorder_policy,
+)
+from bloqade.lanes.rewrite.split_static_placement import (
+    SplitStaticPlacement,
+    cz_layer_split_policy,
+)
 
 
 @dataclass
 class NativeToPlace:
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
     logical_initialize: bool = True
     arch_spec: ArchSpec | None = field(default=None)
 
@@ -103,14 +98,21 @@ class NativeToPlace:
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
         rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
+            rewrite.Walk(
+                circuit2place.MergeStaticPlacement(circuit2place.gate_only_merge)
+            ),
         ).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
 
         rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
+            rewrite.Walk(
+                circuit2place.MergeStaticPlacement(circuit2place.gate_only_merge)
+            ),
         ).rewrite(out.code)
+        rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(out.code)
+        rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
+        rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
 
         out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
@@ -239,7 +241,6 @@ def squin_to_move(
         [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
         tuple[tuple[LaneAddress, ...], ...] | None,
     ] = place2move.palindrome_move_layers,
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
     no_raise: bool = True,
     logical_initialize: bool = True,
 ) -> ir.Method:
@@ -254,7 +255,6 @@ def squin_to_move(
         revert_initial_position (Callable, optional): Callback returning move
             layers to insert near the end of each static placement region.
             Defaults to palindrome_move_layers.
-        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
 
@@ -264,7 +264,6 @@ def squin_to_move(
 
     arch_spec: ArchSpec | None = getattr(layout_heuristic, "arch_spec", None)
     out = NativeToPlace(
-        merge_heuristic=merge_heuristic,
         logical_initialize=logical_initialize,
         arch_spec=arch_spec,
     ).emit(mt, no_raise=no_raise)
