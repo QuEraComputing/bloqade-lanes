@@ -12,7 +12,7 @@ Three composable rewrite passes for the `place`-dialect compilation stage, each 
 3. **`SplitStaticPlacement(split_policy)`** — splits a single `StaticPlacement` body into multiple `StaticPlacement` nodes using a caller-supplied partitioning function.
 
 Concrete policies supplied for this feature:
-- `gate_only_merge` — merge predicate that only merges placements with empty `results` (no classical outputs); placements whose `Yield` carries measurement results are never merged.
+- `gate_only_merge` — merge predicate that only merges placements whose bodies contain exclusively `R`, `Rz`, `CZ`, and `Yield`; `Initialize` and `EndMeasure` placements are never merged.
 - `asap_reorder_policy` — reorder policy implementing ASAP (As Soon As Possible) scheduling via a `rustworkx.PyDAG` dependency graph.
 - `cz_layer_split_policy` — split policy that groups all single-qubit layers preceding each CZ layer together with that CZ layer into one `StaticPlacement`, following the CZ-anchored grouping rule (policy A).
 
@@ -65,13 +65,21 @@ This is necessary because `place.CZ.qubits` holds **local integer indices** into
 ### `gate_only_merge` policy (new default)
 
 ```python
+_GATE_STMT_TYPES = (place.R, place.Rz, place.CZ, place.Yield)
+
+def _is_pure_gate_block(sp: place.StaticPlacement) -> bool:
+    return all(isinstance(stmt, _GATE_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
+
 def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
-    return len(sp1.results) == 0 and len(sp2.results) == 0
+    return _is_pure_gate_block(sp1) and _is_pure_gate_block(sp2)
 ```
 
-`place.Yield` is the body terminator. When a body contains an `EndMeasure`, that statement's measurement results are threaded into the `Yield` as `classical_results`, which causes the `StaticPlacement` to expose non-empty `results`. Merging such a placement into a larger block would require propagating those classical outputs incorrectly.
+Only merges placements whose bodies contain exclusively `R`, `Rz`, `CZ`, and a trailing `place.Yield` with no classical results. Two important non-gate statement types are excluded:
 
-`gate_only_merge` avoids scanning the body for specific statement types: it checks `results` directly. A `StaticPlacement` with empty `results` has a body terminating in a plain `place.Yield(state_after)` — a pure gate block. Placements with non-empty `results` (i.e. those carrying measurement outputs) are never merged and pass through the pipeline unchanged.
+- **`EndMeasure`** — a `QuantumStmt` whose measurement results are threaded into the `Yield` as `classical_results`, giving the `StaticPlacement` non-empty results. Merging would require propagating those classical outputs incorrectly.
+- **`place.Initialize`** — a `QuantumStmt` (with `theta`, `phi`, `lam`) that has no extra result types, so its `StaticPlacement` has empty `results`. A results-only check would incorrectly allow merging it with gate blocks. `Initialize` must remain isolated because `place2move` lowering treats it as a distinct hardware operation (lowered to `move.Fill` + `LogicalInitialize`) and expects it in its own `StaticPlacement`.
+
+Checking body statement types directly (rather than `len(sp.results)`) handles both cases correctly.
 
 This guarantee is load-bearing for `SplitStaticPlacement`: every body entering the split pass terminates in a plain `place.Yield` with no classical results, so the split policy can safely reuse that `Yield` in the last output block without special-casing.
 
