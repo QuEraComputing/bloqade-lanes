@@ -31,6 +31,10 @@ use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr,
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+#[cfg(test)]
+static COMPUTE_MOVESET_METRICS_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// Trace payload for entropy visualization/replay.
 #[derive(Debug, Clone, Default)]
 pub struct EntropyTrace {
@@ -709,6 +713,141 @@ pub(crate) fn generate_candidates(
         .collect()
 }
 
+/// Detailed per-moveset scoring breakdown returned by [`compute_moveset_metrics`].
+#[derive(Debug, Clone, Default)]
+pub struct MovesetMetrics {
+    pub distance_progress: f64,
+    pub arrived: u32,
+    pub mobility_before: f64,
+    pub mobility_after: f64,
+    /// Qubit ids that ended up strictly closer to their target.
+    pub closer: Vec<u32>,
+    /// Qubit ids that ended up strictly further from their target.
+    pub further: Vec<u32>,
+}
+
+impl MovesetMetrics {
+    pub fn mobility_gain(&self) -> f64 {
+        self.mobility_after - self.mobility_before
+    }
+
+    pub fn score(&self, params: &EntropyParams) -> f64 {
+        params.alpha * self.distance_progress
+            + params.beta * (self.arrived as f64)
+            + params.gamma * self.mobility_gain()
+    }
+}
+
+/// Compute the full metrics breakdown for moving from `old_config` to `new_config`.
+///
+/// Extends [`score_moveset`]'s scalar output with distance/arrival/mobility
+/// components plus the set of qubits that got closer vs further from their
+/// targets, so visualizers and tests can inspect contributions individually.
+pub fn compute_moveset_metrics(
+    old_config: &Config,
+    new_config: &Config,
+    occupied: &HashSet<u64>,
+    ctx: &SearchContext,
+    params: &EntropyParams,
+) -> MovesetMetrics {
+    #[cfg(test)]
+    COMPUTE_MOVESET_METRICS_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let targets = ctx.targets;
+    let dist_table = ctx.dist_table;
+    let blocked = ctx.blocked;
+    let index = ctx.index;
+    let mut new_occupied: HashSet<u64> = new_config.iter().map(|(_, loc)| loc.encode()).collect();
+    new_occupied.extend(blocked);
+
+    let mut metrics = MovesetMetrics::default();
+
+    for &(qid, target_enc) in targets {
+        let Some(old_loc) = old_config.location_of(qid) else {
+            continue;
+        };
+        let Some(new_loc) = new_config.location_of(qid) else {
+            continue;
+        };
+        if old_loc == new_loc {
+            continue; // didn't move
+        }
+
+        let d_before = dist_table
+            .distance(old_loc.encode(), target_enc)
+            .map_or(0.0, |d| {
+                blended_distance(
+                    d as f64,
+                    old_loc.encode(),
+                    target_enc,
+                    params.w_t,
+                    dist_table,
+                )
+            });
+        let d_after = dist_table
+            .distance(new_loc.encode(), target_enc)
+            .map_or(0.0, |d| {
+                blended_distance(
+                    d as f64,
+                    new_loc.encode(),
+                    target_enc,
+                    params.w_t,
+                    dist_table,
+                )
+            });
+        metrics.distance_progress += (d_before - d_after).max(0.0);
+        if d_after < d_before {
+            metrics.closer.push(qid);
+        } else if d_after > d_before {
+            metrics.further.push(qid);
+        }
+
+        if new_loc.encode() == target_enc {
+            metrics.arrived += 1;
+        }
+
+        // Distance-weighted mobility: closer destinations count more.
+        for &lane in index.outgoing_lanes(old_loc) {
+            let Some((_, dst)) = index.endpoints(&lane) else {
+                continue;
+            };
+            let dst_enc = dst.encode();
+            if occupied.contains(&dst_enc) {
+                continue;
+            }
+            let d = dist_table
+                .distance(dst_enc, target_enc)
+                .map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
+                });
+            if d < f64::MAX {
+                metrics.mobility_before += 1.0 / (1.0 + d);
+            }
+        }
+        for &lane in index.outgoing_lanes(new_loc) {
+            let Some((_, dst)) = index.endpoints(&lane) else {
+                continue;
+            };
+            let dst_enc = dst.encode();
+            if new_occupied.contains(&dst_enc) {
+                continue;
+            }
+            let d = dist_table
+                .distance(dst_enc, target_enc)
+                .map_or(f64::MAX, |d| {
+                    blended_distance(d as f64, dst_enc, target_enc, params.w_t, dist_table)
+                });
+            if d < f64::MAX {
+                metrics.mobility_after += 1.0 / (1.0 + d);
+            }
+        }
+    }
+
+    metrics.closer.sort_unstable();
+    metrics.further.sort_unstable();
+    metrics
+}
+
 /// Score a moveset: `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
 pub(crate) fn score_moveset(
     old_config: &Config,
@@ -724,10 +863,10 @@ pub(crate) fn score_moveset(
     let mut new_occupied: HashSet<u64> = new_config.iter().map(|(_, loc)| loc.encode()).collect();
     new_occupied.extend(blocked);
 
-    let mut distance_progress = 0.0_f64;
-    let mut arrived = 0.0_f64;
-    let mut mobility_before = 0.0_f64;
-    let mut mobility_after = 0.0_f64;
+    let mut distance_progress = 0.0;
+    let mut arrived = 0_u32;
+    let mut mobility_before = 0.0;
+    let mut mobility_after = 0.0;
 
     for &(qid, target_enc) in targets {
         let Some(old_loc) = old_config.location_of(qid) else {
@@ -765,7 +904,7 @@ pub(crate) fn score_moveset(
         distance_progress += (d_before - d_after).max(0.0);
 
         if new_loc.encode() == target_enc {
-            arrived += 1.0;
+            arrived += 1;
         }
 
         // Distance-weighted mobility: closer destinations count more.
@@ -806,7 +945,7 @@ pub(crate) fn score_moveset(
     }
 
     params.alpha * distance_progress
-        + params.beta * arrived
+        + params.beta * (arrived as f64)
         + params.gamma * (mobility_after - mobility_before)
 }
 
@@ -1800,6 +1939,38 @@ mod tests {
         // Node id is de-duplicated and priority is refreshed.
         assert_eq!(buffer.iter().filter(|e| e.node_id == parent).count(), 1);
         assert_eq!(resume_buffer_pop_best(&mut buffer, None), Some(parent));
+    }
+
+    #[test]
+    fn score_moveset_uses_scalar_path_without_detailed_metrics() {
+        let index = make_index();
+        let old_config = Config::new([(0, loc(0, 0))]).unwrap();
+        let new_config = Config::new([(0, loc(0, 1))]).unwrap();
+        let target_encoded = vec![(0u32, loc(0, 5).encode())];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let occupied: HashSet<u64> = old_config.iter().map(|(_, loc)| loc.encode()).collect();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+        };
+        let params = EntropyParams::default();
+
+        COMPUTE_MOVESET_METRICS_CALLS.store(0, std::sync::atomic::Ordering::Relaxed);
+        let score = score_moveset(&old_config, &new_config, &occupied, &ctx, &params);
+
+        assert_eq!(
+            COMPUTE_MOVESET_METRICS_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+
+        let detailed_score =
+            compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &params)
+                .score(&params);
+        assert_eq!(score, detailed_score);
     }
 
     #[test]

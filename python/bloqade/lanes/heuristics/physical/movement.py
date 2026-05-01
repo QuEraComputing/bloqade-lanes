@@ -126,7 +126,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     """Physical placement strategy backed by the Rust MoveSolver."""
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
-    traversal: RustPlacementTraversal = field(default_factory=RustPlacementTraversal)
+    traversal: RustPlacementTraversal = field(
+        default_factory=lambda: RustPlacementTraversal(strategy="entropy")
+    )
     target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None
 
     _cz_counter: int = field(default=0, init=False, repr=False)
@@ -228,6 +230,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
     @property
     def traced_target(self) -> dict[int, LocationAddress]:
+        """First candidate target for the traced CZ layer (used by visualizers)."""
         return dict(self._traced_target)
 
     def _cz_placements_rust(
@@ -250,8 +253,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             self._trace_cz_index is None or self._cz_counter == self._trace_cz_index
         )
         if should_trace:
-            self._traced_target = dict(candidates[0])
             self._traced_rust_entropy_trace = None
+            self._traced_target = dict(candidates[0])
 
         solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}

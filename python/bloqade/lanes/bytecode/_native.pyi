@@ -1081,6 +1081,80 @@ class EntropyTraceStep:
     def __repr__(self) -> str: ...
 
 @final
+class MovesetMetrics:
+    """Per-moveset scoring breakdown returned by ``EntropyScorer.metrics``."""
+
+    @property
+    def distance_progress(self) -> float: ...
+    @property
+    def arrived(self) -> int: ...
+    @property
+    def mobility_before(self) -> float: ...
+    @property
+    def mobility_after(self) -> float: ...
+    @property
+    def mobility_gain(self) -> float: ...
+    @property
+    def closer(self) -> list[int]:
+        """Qubit ids whose blended distance to target strictly improved."""
+        ...
+
+    @property
+    def further(self) -> list[int]:
+        """Qubit ids whose blended distance to target strictly degraded."""
+        ...
+
+    @property
+    def score(self) -> float:
+        """``alpha * distance_progress + beta * arrived + gamma * mobility_gain``."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class EntropyScorer:
+    """Rust-backed moveset scorer for the entropy-guided search formula."""
+
+    def __init__(
+        self,
+        arch_spec: ArchSpec,
+        target: dict[int, LocationAddress],
+        blocked: Optional[list[LocationAddress]] = None,
+        alpha: float = 80.0,
+        beta: float = 3.0,
+        gamma: float = 3.1,
+        w_t: float = 0.05,
+    ) -> None: ...
+    def metrics(
+        self,
+        current_config: dict[int, LocationAddress],
+        moveset: list[tuple[int, int, int, int, int, int]],
+    ) -> MovesetMetrics:
+        """Compute the metrics breakdown after applying ``moveset`` to ``current_config``.
+
+        ``moveset`` entries are ``(direction, move_type, zone_id, word_id, site_id, bus_id)``
+        tuples matching the format returned by ``SolveResult.move_layers``.
+        """
+        ...
+
+    def score_moveset(
+        self,
+        current_config: dict[int, LocationAddress],
+        moveset: list[tuple[int, int, int, int, int, int]],
+    ) -> float:
+        """Shorthand for ``scorer.metrics(current, moveset).score``."""
+        ...
+
+    @property
+    def alpha(self) -> float: ...
+    @property
+    def beta(self) -> float: ...
+    @property
+    def gamma(self) -> float: ...
+    @property
+    def w_t(self) -> float: ...
+
+@final
 class MoveSolver:
     """Reusable move synthesis solver.
 
