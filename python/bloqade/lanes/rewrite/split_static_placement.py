@@ -111,10 +111,7 @@ class SplitStaticPlacement(abc.RewriteRule):
                         "qubits": ir.PyAttr(tuple(remap[q] for q in stmt.qubits))
                     },
                 )
-                new_stmt.insert_before(stmt)
-                for old_r, new_r in zip(stmt.results, new_stmt.results, strict=True):
-                    old_r.replace_by(new_r)
-                stmt.delete()
+                stmt.replace_by(new_stmt)
 
             # 3. Build the narrowed qubit tuple and wrap in a new StaticPlacement.
             new_qubits = tuple(node.qubits[i] for i in qubit_indices)
