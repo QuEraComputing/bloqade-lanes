@@ -13,6 +13,7 @@ pub(crate) mod errors;
 mod instruction_python;
 mod program_python;
 mod search_python;
+mod target_generator_dsl_python;
 pub(crate) mod validation;
 
 #[pymodule]
@@ -53,6 +54,9 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyEntropyTraceStep>()?;
     m.add_class::<search_python::PyDefaultTargetGenerator>()?;
     m.add_class::<search_python::PyMultiSolveResult>()?;
+
+    // Target Generator DSL (Plan B of #597)
+    m.add_class::<target_generator_dsl_python::PyTargetPolicyRunner>()?;
 
     Ok(())
 }

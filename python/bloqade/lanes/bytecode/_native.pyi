@@ -1263,6 +1263,60 @@ class MultiSolveResult:
 
     def __repr__(self) -> str: ...
 
+# ── Target Generator DSL ──
+
+@final
+class TargetPolicyRunner:
+    """Reusable runner that wraps a parsed `.star` target-generator policy.
+
+    Constructed once per (policy file, ArchSpec) pair. Each ``generate(...)``
+    call invokes the policy's ``generate(ctx, lib)`` function, validates each
+    candidate against architecture invariants (qubit coverage, location
+    validity, CZ-blockade pair invariant), and returns the validated
+    candidates as a list of qubit-id → location dicts.
+
+    Args:
+        policy_path: Path to a ``.star`` Target Generator DSL file.
+        arch_spec: Native ``ArchSpec`` (e.g. from ``Python ArchSpec._inner``).
+            The runner builds an internal ``LaneIndex`` from it.
+
+    Raises:
+        ValueError: If the policy file is missing or fails to parse.
+    """
+
+    def __init__(self, policy_path: str, arch_spec: ArchSpec) -> None: ...
+    def generate(
+        self,
+        placement: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        lookahead_cz_layers: list[tuple[list[int], list[int]]],
+        cz_stage_index: int,
+        policy_params: dict[str, object] | None = None,
+    ) -> list[dict[int, LocationAddress]]:
+        """Run the policy's ``generate(ctx, lib)`` and validate each candidate.
+
+        Args:
+            placement: Current qubit positions (qid → LocationAddress).
+            controls: Control qubit IDs for this CZ stage.
+            targets: Target qubit IDs for this CZ stage.
+            lookahead_cz_layers: Future CZ layers as ``(controls, targets)``
+                pairs. Empty list if no lookahead is wired.
+            cz_stage_index: 0-based index of the current CZ stage (for tracing).
+            policy_params: Optional free-form params dict made available to
+                the policy. Echoed only; the kernel does not interpret it.
+
+        Returns:
+            List of candidate target placements in policy-defined order. Each
+            candidate is a dict mapping every qid in ``placement`` to its
+            target location. An empty list signals "defer to fallback".
+
+        Raises:
+            ValueError: If the policy returns a malformed shape, references an
+                unknown CZ partner, or any candidate fails validation.
+        """
+        ...
+
 # ── AtomStateData ──
 
 @final

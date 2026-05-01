@@ -358,7 +358,7 @@ impl PySolveResult {
 
 // ── JSON helpers for policy_params conversion ──
 
-fn pydict_to_json(d: &Bound<'_, PyDict>) -> PyResult<serde_json::Value> {
+pub(crate) fn pydict_to_json(d: &Bound<'_, PyDict>) -> PyResult<serde_json::Value> {
     let mut obj = serde_json::Map::new();
     for (k, v) in d.iter() {
         let key: String = k.extract()?;

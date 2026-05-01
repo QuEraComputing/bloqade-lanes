@@ -10,9 +10,9 @@
 
 **Spec:** Move Policy DSL / Target Generator DSL design (Notion, 2026-04-29 transcription). Sections referenced as `§N`.
 
-**Follow-up plans (out of scope here):**
-- **Plan B — Target Generator DSL.** Python adapter `target_generator_dsl.py` implementing `TargetGeneratorABC` by loading a `.star` file via `dsl-core` (exposed through PyO3). Reuses the validation logic in `_validate_candidate`. Unblocked once Plan A's `dsl-core` crate is on `main`.
-- **Plan C — Reference policies + CLI harness + primer.** Adds `dfs.star`, `bfs.star`, `ids.star`; CLI subcommands `eval-policy` and `trace-policy` in `bloqade-lanes-bytecode-cli`; auto-generated `policies/primer.md` from Rust type definitions; snapshot fixtures across multiple problem sizes. Unblocked once Plan A's Move Policy DSL is on `main`.
+**Follow-up plans:**
+- **Plan B — Target Generator DSL (delivered 2026-05-01).** Stacked on this branch; details in [Plan B — Target Generator DSL (delivered)](#plan-b--target-generator-dsl-delivered) below. Adds `StarlarkPlacement` to `dsl-core`, a new `target_generator_dsl/` module under `bloqade-lanes-search`, a PyO3 `TargetPolicyRunner` class, the Python adapter `TargetGeneratorDSL(TargetGeneratorABC)`, and a reference `policies/reference/default_target.star`. Reuses the existing Rust `validate_candidate` for safety enforcement.
+- **Plan C — Reference policies + CLI harness + primer (out of scope here).** Adds `dfs.star`, `bfs.star`, `ids.star`; CLI subcommands `eval-policy` and `trace-policy` in `bloqade-lanes-bytecode-cli`; auto-generated `policies/primer.md` from Rust type definitions; snapshot fixtures across multiple problem sizes. Unblocked once Plan A's Move Policy DSL is on `main`.
 
 ---
 
@@ -2936,6 +2936,101 @@ git commit -am "chore: format + clippy after DSL implementation"
   - Any acid-test tolerances (path-length ±N) that the user should sanity-check before merging.
 
 - [ ] **Step 2: Stop here.** PR creation, merging, and follow-up Plans B/C are user-driven.
+
+---
+
+## Plan B — Target Generator DSL (delivered)
+
+**Delivered:** 2026-05-01, stacked on top of Plan A on the same branch (`jason/move-policy-dsl`). Issue #597 Plan B checkbox is satisfied.
+
+**Goal recap.** Mirror the Move Policy DSL on the *Place* side: a Starlark-hosted adapter that implements `TargetGeneratorABC` so agents can author CZ-stage target generators in `.star` files and inject them at `PhysicalPlacementStrategy(target_generator=...)`. Target generation is a single pure function call per CZ stage (no search graph, no step loop, no transposition table), so the implementation is significantly thinner than Plan A's kernel.
+
+**Architecture decisions.**
+- **Kernel location:** new module `crates/bloqade-lanes-search/src/target_generator_dsl/` (sibling to `move_policy_dsl/`). Lives in `bloqade-lanes-search` so it can reuse the existing Rust `validate_candidate` in `crates/bloqade-lanes-search/src/target_generator.rs:130-185` without crossing crate boundaries.
+- **Lib surface — minimal v1.** No bespoke pipeline primitives. Policies have `stable_sort` / `argmax` / `normalize` from `dsl-core` globals, plus a thin `lib.cz_partner(loc)` shortcut. Richer `lib_target.*` helpers are deferred until a real policy demands them.
+- **PyO3 surface — native ArchSpec.** `TargetPolicyRunner.__init__(policy_path, arch_spec)` takes the native `ArchSpec` (matching `MoveSolver.from_arch_spec`'s style) rather than re-parsing JSON per call. Avoids round-trips while still keeping the runner stateless beyond its parsed-and-frozen `LoadedPolicy`.
+- **Runner caching.** The Python adapter caches the underlying `TargetPolicyRunner` keyed by the `arch_spec` instance, so a single `.star` file is parsed once and reused across every CZ stage of a placement run.
+- **Validation: Rust-side, single source of truth.** Each candidate returned by the policy is validated by `target_generator::validate_candidate` before crossing back into Python. The Python `_validate_candidate` in `target_generator.py` continues to run as defense-in-depth on the strategy's `_build_candidates` path; both check the same invariants.
+
+### Policy author surface (`.star` contract)
+
+```python
+def generate(ctx, lib):
+    # ctx.arch_spec           — ArchSpec wrapper (read-only)
+    # ctx.placement           — Placement: dict-like, .qubits()/.get(qid)/.items()/.len
+    # ctx.controls            — list[int]
+    # ctx.targets             — list[int]
+    # ctx.lookahead_cz_layers — list[(list[int], list[int])]
+    # ctx.cz_stage_index      — int
+    # lib.arch_spec           — alias of ctx.arch_spec
+    # lib.cz_partner(loc)     — Location | None
+    target = {}
+    for q in ctx.placement.qubits():
+        target[q] = ctx.placement.get(q)
+    for i in range(len(ctx.controls)):
+        c = ctx.controls[i]
+        t = ctx.targets[i]
+        target[c] = lib.cz_partner(target[t])
+    return [target]   # list[dict[int, Location]]
+```
+
+Empty `[]` defers to the strategy's `DefaultTargetGenerator` fallback.
+
+The starlark-0.13 late-binding caveat from `entropy.star` still applies: pass `ctx` and `lib` as function parameters; do not capture them as free variables in nested helpers.
+
+### File structure (delivered)
+
+**New Rust files:**
+| File | Purpose |
+|---|---|
+| `crates/bloqade-lanes-dsl-core/src/primitives/placement.rs` | `StarlarkPlacement` shared primitive (BTreeMap-backed dict-like view; `.get`, `.qubits`, `.items`, `.len`). |
+| `crates/bloqade-lanes-search/src/target_generator_dsl/mod.rs` | Module index. |
+| `crates/bloqade-lanes-search/src/target_generator_dsl/ctx_handle.rs` | `StarlarkTargetContext` exposing the six `ctx.*` fields to policies. |
+| `crates/bloqade-lanes-search/src/target_generator_dsl/lib_target.rs` | `StarlarkLibTarget` with `cz_partner(loc)` and the `arch_spec` alias attribute. |
+| `crates/bloqade-lanes-search/src/target_generator_dsl/kernel.rs` | `TargetPolicyRunner` + `run_target_policy(...)` + `TargetPolicyError`. Loads `.star`, invokes `generate(ctx, lib)`, marshals the returned `list[dict[int, Location]]`, runs `validate_candidate`. |
+| `crates/bloqade-lanes-bytecode-python/src/target_generator_dsl_python.rs` | PyO3 `TargetPolicyRunner` class — `__init__(policy_path, arch_spec)` + `generate(...)`. |
+
+**Modified Rust files:**
+| File | Change |
+|---|---|
+| `crates/bloqade-lanes-dsl-core/src/primitives/mod.rs` | `pub mod placement;` + re-export `StarlarkPlacement`. |
+| `crates/bloqade-lanes-search/src/lib.rs` | `pub mod target_generator_dsl;`. |
+| `crates/bloqade-lanes-search/Cargo.toml` | Added `thiserror = "1"` to deps. |
+| `crates/bloqade-lanes-bytecode-python/src/lib.rs` | Register `PyTargetPolicyRunner` in the `_native` pymodule. |
+| `crates/bloqade-lanes-bytecode-python/src/search_python.rs` | `pydict_to_json` promoted to `pub(crate)` for reuse. |
+
+**New Python files:**
+| File | Purpose |
+|---|---|
+| `python/bloqade/lanes/heuristics/physical/target_generator_dsl.py` | `TargetGeneratorDSL(TargetGeneratorABC)` adapter — caches one `TargetPolicyRunner` per `arch_spec`, marshals `TargetContext` to/from native types per call. |
+| `policies/reference/default_target.star` | Reference policy mirroring `DefaultTargetGenerator` (acid-test against the existing in-tree default). |
+| `python/tests/heuristics/test_target_generator_dsl.py` | 8 tests: subclass check, default-policy parity, wrapper round-trip, empty-list fallback semantics, validator rejection, runner caching, reference-policy parity, end-to-end through `PhysicalPlacementStrategy._build_candidates`. |
+
+**Modified Python files:**
+| File | Change |
+|---|---|
+| `python/bloqade/lanes/bytecode/_native.pyi` | Added `TargetPolicyRunner` stub class. |
+| `python/bloqade/lanes/bytecode/__init__.py` | Re-export `TargetPolicyRunner` from `_native`. |
+
+### Determinism guarantees (Plan B specific)
+
+- `StarlarkPlacement` is backed by a `BTreeMap`, so `ctx.placement.qubits()` and `ctx.placement.items()` iterate in sorted qubit-id order on every call.
+- The kernel iterates the returned candidates in policy-defined order; validation never reorders, only accepts/rejects.
+- No new RNG, time, or IO surface is exposed — `lib.cz_partner` is a pure arch lookup, and the rest of the determinism story is inherited from `dsl-core::sandbox`.
+
+### Verification (results from delivery)
+
+- **Rust unit tests** (`cargo test -p bloqade-lanes-dsl-core -p bloqade-lanes-search --lib`): 193 pass — including 3 `StarlarkPlacement`, 2 `StarlarkTargetContext`, 1 `StarlarkLibTarget`, and 4 `TargetPolicyRunner` tests added by Plan B.
+- **Python tests** (`uv run pytest python/tests`): 1075 passed, 9 skipped, 0 failed. The 8 new `test_target_generator_dsl.py` tests cover ABC subclassing, parity with `DefaultTargetGenerator`, wrapper round-trip, fallback semantics, validator rejection, runner caching, reference-policy parity, and end-to-end integration with `PhysicalPlacementStrategy`.
+- **Lint:** `cargo clippy -p bloqade-lanes-dsl-core` clean; `pyright`, `black`, `isort`, `ruff` clean on every Plan B Python file. (Pre-existing clippy issues in `bloqade-lanes-search/src/{entropy,generators,ordering}.rs` predate Plan B and are outside CI's lint scope, which only covers the bytecode-core / bytecode-cli crates.)
+
+### Out of scope for Plan B (deferred to Plan C or later)
+
+- CLI harness for target-generator policies (`lanes eval-policy --target ...`).
+- Auto-generated `policies/primer.md` covering the Place DSL surface.
+- Snapshot tests against fixture corpora.
+- Richer `lib_target.*` primitives (Dijkstra-style cost estimation, AOD-cluster signature grouping). Will be added when a policy author needs them.
+- A `from_arch_spec_json` constructor on `TargetPolicyRunner`. The native-`ArchSpec` constructor covers every in-tree call site; expose JSON only if a downstream caller actually wants it.
 
 ---
 

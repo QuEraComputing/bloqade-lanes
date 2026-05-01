@@ -24,6 +24,7 @@ pub(crate) mod ordering;
 pub mod scorers;
 pub mod solve;
 pub mod target_generator;
+pub mod target_generator_dsl;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod traits;
