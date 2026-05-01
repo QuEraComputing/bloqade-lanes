@@ -117,12 +117,14 @@ New file: `python/bloqade/lanes/rewrite/split_static_placement.py`
 ```python
 @dataclass
 class SplitStaticPlacement(RewriteRule):
-    split_policy: Callable[[list[place.QuantumStmt]], list[list[place.QuantumStmt]]]
+    split_policy: Callable[[ir.Block], list[ir.Block]]
 
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult: ...
 ```
 
-The policy receives the ordered body statements (excluding `place.Yield`) and returns a partition: a list of groups, each of which becomes one `StaticPlacement`. The rewriter constructs the new placements, threads their state chains, and replaces the original node.
+The policy receives the body block (with its fully-threaded state chain) and returns a list of new blocks, each of which becomes one `StaticPlacement`. State threading is the policy's responsibility: because the number of statements changes across the output blocks, the policy must construct each output block with a correctly threaded state chain. The rewriter wraps each returned block in a new `StaticPlacement` and replaces the original node.
+
+The `reorder_policy` does not have this constraint — it is a pure permutation of statements with no change in count, so the rewriter can re-thread the state chain itself after reordering.
 
 ### `cz_layer_split_policy` (policy A)
 
