@@ -11,7 +11,6 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin, types
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes import compile
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
@@ -19,6 +18,10 @@ from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.heuristics.logical.placement import (
     LogicalPlacementStrategyNoHome,
 )
+from bloqade.lanes.heuristics.physical.layout import (
+    PhysicalLayoutHeuristicGraphPartitionCenterOut,
+)
+from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.logical_mvp import (
     compile_squin_to_move,
     transversal_rewrites,
@@ -162,7 +165,15 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
         for i in range(1, len(reg)):
             squin.cx(reg[0], reg[i])
 
-    physical_move = compile.compile_squin_to_move(ghz, no_raise=False)
+    # GHZ is a state-prep circuit with no terminal measurement; use the
+    # lower-level squin_to_move API which does not enforce that requirement.
+    physical_move = squin_to_move(
+        ghz,
+        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        PhysicalPlacementStrategy(),
+        logical_initialize=False,
+        no_raise=False,
+    )
     roundtrip_squin = MoveToSquinPhysical(get_physical_arch_spec()).emit(
         physical_move, no_raise=False
     )
