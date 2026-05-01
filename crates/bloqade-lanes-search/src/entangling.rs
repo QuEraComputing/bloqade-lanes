@@ -238,6 +238,7 @@ struct PositionSlot {
 ///
 /// Returns `(qubit_id, encoded_target_location)` entries suitable for
 /// [`SearchContext::targets`](crate::context::SearchContext).
+#[allow(clippy::too_many_arguments)]
 pub fn greedy_assign_pairs(
     cz_pairs: &[(u32, u32)],
     config: &Config,
@@ -246,6 +247,7 @@ pub fn greedy_assign_pairs(
     seed: u64,
     transition_targets: Option<&HashMap<u32, u64>>,
     transition_weight: f64,
+    congestion_weight: f64,
 ) -> Vec<(u32, u64)> {
     if cz_pairs.is_empty() {
         return Vec::new();
@@ -288,7 +290,7 @@ pub fn greedy_assign_pairs(
     // of d(qa, target_a) + d(qb, target_b).
     // We also store which orientation was chosen per cell.
     const BIG: u32 = u32::MAX / 4;
-    let mut costs = vec![BIG; n_pairs * n_slots];
+    let mut base_costs = vec![BIG; n_pairs * n_slots];
     // swapped[i * n_slots + j] = true means qa→loc_b, qb→loc_a is cheaper.
     let mut swapped = vec![false; n_pairs * n_slots];
 
@@ -337,10 +339,10 @@ pub fn greedy_assign_pairs(
 
             let idx = i * n_slots + j;
             if cost1 <= cost2 {
-                costs[idx] = cost1;
+                base_costs[idx] = cost1;
                 swapped[idx] = false;
             } else {
-                costs[idx] = cost2;
+                base_costs[idx] = cost2;
                 swapped[idx] = true;
             }
         }
@@ -351,7 +353,7 @@ pub fn greedy_assign_pairs(
         use rand::rngs::SmallRng;
         use rand::{Rng, SeedableRng};
         let mut rng = SmallRng::seed_from_u64(seed);
-        for c in costs.iter_mut() {
+        for c in base_costs.iter_mut() {
             if *c < BIG {
                 let perturbation: i32 = rng.random_range(-1..=1);
                 *c = (*c as i32).saturating_add(perturbation).max(0) as u32;
@@ -359,8 +361,20 @@ pub fn greedy_assign_pairs(
         }
     }
 
-    // Solve the rectangular assignment problem.
-    let assignment = hungarian(&costs, n_pairs, n_slots);
+    // Run Hungarian, possibly iterating with congestion penalty.
+    let assignment = if congestion_weight > 0.0 && word_pairs.len() > 1 {
+        congestion_aware_hungarian(
+            &base_costs,
+            n_pairs,
+            n_slots,
+            sites_per_word as usize,
+            word_pairs.len(),
+            congestion_weight,
+            BIG,
+        )
+    } else {
+        hungarian(&base_costs, n_pairs, n_slots)
+    };
 
     // Extract result.
     let mut result: Vec<(u32, u64)> = Vec::with_capacity(n_pairs * 2);
@@ -369,7 +383,7 @@ pub fn greedy_assign_pairs(
             continue; // unassigned (shouldn't happen if slots >= pairs)
         }
         let idx = i * n_slots + col;
-        if costs[idx] >= BIG {
+        if base_costs[idx] >= BIG {
             continue; // unreachable position
         }
         let (qa, qb) = cz_pairs[i];
@@ -386,6 +400,134 @@ pub fn greedy_assign_pairs(
     result
 }
 
+/// Congestion-aware assignment: vanilla Hungarian followed by greedy
+/// rebalancing that re-routes pairs from over-loaded entangling word pairs
+/// to under-loaded ones, picking the lowest-cost-loss reassignment first.
+///
+/// `slots` are laid out as `[wp_0_site_0, ..., wp_0_site_{S-1}, wp_1_site_0, ...]`,
+/// so `slot_j / sites_per_word == word_pair_idx`.
+///
+/// `congestion_weight` is the maximum cost increase (in distance hops) the
+/// rebalance accepts to move one pair off an over-loaded word pair.
+///   - `0.0`: rebalance disabled.
+///   - `1.0`: only accept "free" or cheaper moves (≤ +1 hop).
+///   - `5.0`: accept moves that lengthen the routing by up to 5 hops.
+fn congestion_aware_hungarian(
+    base_costs: &[u32],
+    n_pairs: usize,
+    n_slots: usize,
+    sites_per_word: usize,
+    n_word_pairs: usize,
+    congestion_weight: f64,
+    big: u32,
+) -> Vec<usize> {
+    let mut assignment = hungarian(base_costs, n_pairs, n_slots);
+    if congestion_weight <= 0.0 {
+        return assignment;
+    }
+
+    let ideal_load = n_pairs.div_ceil(n_word_pairs);
+    let mut load = load_per_wp(&assignment, sites_per_word, n_word_pairs);
+    if *load.iter().max().unwrap_or(&0) <= ideal_load {
+        return assignment;
+    }
+
+    let max_acceptable_loss = congestion_weight;
+
+    // Track which slots are taken.
+    let mut slot_used: Vec<bool> = vec![false; n_slots];
+    for &col in &assignment {
+        if col < n_slots {
+            slot_used[col] = true;
+        }
+    }
+
+    // Repeatedly re-route the cheapest excess pair until quota satisfied
+    // or no improving move within budget remains. O(n_pairs² × n_slots)
+    // worst case.
+    let max_iter = n_pairs;
+    for _ in 0..max_iter {
+        let max_wp = load
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, &c)| c)
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+        if load[max_wp] <= ideal_load {
+            break;
+        }
+
+        // For each pair currently assigned to `max_wp`, find the cheapest
+        // re-routing to an under-loaded wp within the cost-loss budget.
+        let mut best_pair: Option<usize> = None;
+        let mut best_target: Option<usize> = None;
+        let mut best_loss: f64 = f64::INFINITY;
+
+        for (i, &col) in assignment.iter().enumerate() {
+            if col >= n_slots {
+                continue;
+            }
+            if col / sites_per_word != max_wp {
+                continue;
+            }
+            let cur_cost = base_costs[i * n_slots + col];
+            if cur_cost >= big {
+                continue;
+            }
+            for j in 0..n_slots {
+                let wp = j / sites_per_word;
+                if wp == max_wp || load[wp] >= ideal_load || slot_used[j] {
+                    continue;
+                }
+                let new_cost = base_costs[i * n_slots + j];
+                if new_cost >= big {
+                    continue;
+                }
+                let cost_loss = new_cost as f64 - cur_cost as f64;
+                if cost_loss > max_acceptable_loss {
+                    continue;
+                }
+                if cost_loss < best_loss {
+                    best_loss = cost_loss;
+                    best_pair = Some(i);
+                    best_target = Some(j);
+                }
+            }
+        }
+
+        let (Some(i), Some(j)) = (best_pair, best_target) else {
+            break;
+        };
+        let old_col = assignment[i];
+        slot_used[old_col] = false;
+        slot_used[j] = true;
+        load[old_col / sites_per_word] -= 1;
+        load[j / sites_per_word] += 1;
+        assignment[i] = j;
+    }
+
+    assignment
+}
+
+fn load_per_wp(assignment: &[usize], sites_per_word: usize, n_word_pairs: usize) -> Vec<usize> {
+    let mut load = vec![0usize; n_word_pairs];
+    for &col in assignment {
+        let wp = col / sites_per_word;
+        if wp < n_word_pairs {
+            load[wp] += 1;
+        }
+    }
+    load
+}
+
+#[cfg(test)]
+fn max_load_per_wp(assignment: &[usize], sites_per_word: usize, n_word_pairs: usize) -> usize {
+    load_per_wp(assignment, sites_per_word, n_word_pairs)
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+}
+
 /// Two-pass lookahead Hungarian assignment with variable depth.
 ///
 /// Forward pass: compute preliminary assignments for the current and each
@@ -396,6 +538,7 @@ pub fn greedy_assign_pairs(
 /// assigned positions as transition targets (weighted by `beta`).
 ///
 /// Returns the refined assignment for the current layer (`cz_pairs`).
+#[allow(clippy::too_many_arguments)]
 pub fn lookahead_assign_pairs(
     cz_pairs: &[(u32, u32)],
     config: &Config,
@@ -404,9 +547,19 @@ pub fn lookahead_assign_pairs(
     seed: u64,
     future_layers: &[Vec<(u32, u32)>],
     beta: f64,
+    congestion_weight: f64,
 ) -> Vec<(u32, u64)> {
     if future_layers.is_empty() || beta == 0.0 {
-        return greedy_assign_pairs(cz_pairs, config, arch, dist_table, seed, None, 0.0);
+        return greedy_assign_pairs(
+            cz_pairs,
+            config,
+            arch,
+            dist_table,
+            seed,
+            None,
+            0.0,
+            congestion_weight,
+        );
     }
 
     // Collect all layers: current + future.
@@ -420,8 +573,16 @@ pub fn lookahead_assign_pairs(
     let mut sim_config = config.clone();
 
     for layer_pairs in &all_layers {
-        let assign =
-            greedy_assign_pairs(layer_pairs, &sim_config, arch, dist_table, seed, None, 0.0);
+        let assign = greedy_assign_pairs(
+            layer_pairs,
+            &sim_config,
+            arch,
+            dist_table,
+            seed,
+            None,
+            0.0,
+            congestion_weight,
+        );
         // Build simulated config: move assigned qubits to their targets.
         let moves: Vec<(u32, LocationAddr)> = assign
             .iter()
@@ -463,6 +624,7 @@ pub fn lookahead_assign_pairs(
             seed,
             Some(&targets),
             beta,
+            congestion_weight,
         );
     }
 
@@ -813,7 +975,8 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
-        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
+        let targets =
+            greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0, 0.0);
 
         // Should assign both qubits.
         assert_eq!(targets.len(), 2);
@@ -832,7 +995,8 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
-        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
+        let targets =
+            greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0, 0.0);
 
         let t0 = targets.iter().find(|&&(q, _)| q == 0).unwrap().1;
         let t1 = targets.iter().find(|&&(q, _)| q == 1).unwrap().1;
@@ -858,7 +1022,8 @@ mod tests {
         ])
         .unwrap();
         let cz_pairs = [(0u32, 1u32), (2u32, 3u32)];
-        let targets = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
+        let targets =
+            greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0, 0.0);
 
         // All 4 qubit targets should be at distinct locations.
         let locs_used: HashSet<u64> = targets.iter().map(|&(_, l)| l).collect();
@@ -882,9 +1047,9 @@ mod tests {
         .unwrap();
         let cz_pairs = [(0u32, 1u32), (2u32, 3u32)];
 
-        let t0 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0);
-        let t1 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 42, None, 0.0);
-        let t2 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 123, None, 0.0);
+        let t0 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0, 0.0);
+        let t1 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 42, None, 0.0, 0.0);
+        let t2 = greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 123, None, 0.0, 0.0);
 
         // At least one seed should produce a different assignment.
         // (Not guaranteed, but very likely with different seeds.)
@@ -895,6 +1060,90 @@ mod tests {
         assert_eq!(t1.len(), 4);
         assert_eq!(t2.len(), 4);
         let _ = all_same; // suppress unused warning
+    }
+
+    // ── congestion-aware assignment ──
+
+    #[test]
+    fn congestion_aware_does_not_break_uncongested_case() {
+        // With only one CZ pair and the example arch (1 word pair, 10 sites),
+        // congestion can't bind. Result must match the standard assignment.
+        let arch = make_arch();
+        let index = make_index();
+        let locs = all_entangling_locations(&arch);
+        let dist_table = DistanceTable::new(&locs, &index);
+
+        let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
+        let cz_pairs = [(0u32, 1u32)];
+
+        let baseline =
+            greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0, 0.0);
+        let with_cw =
+            greedy_assign_pairs(&cz_pairs, &config, &arch, &dist_table, 0, None, 0.0, 5.0);
+
+        assert_eq!(
+            baseline, with_cw,
+            "single pair: congestion penalty must not change the result"
+        );
+    }
+
+    #[test]
+    fn congestion_aware_hungarian_spreads_load() {
+        // 4 pairs × 8 slots (2 word_pairs × 4 sites_per_word). ideal_load = 2.
+        // Costs are nearly tied between word pairs (gap = 1) so Hungarian
+        // will pick whichever side has the small bias, but a modest penalty
+        // can shift assignments without flipping wholesale.
+        const BIG: u32 = u32::MAX / 4;
+        let n_pairs = 4;
+        let sites_per_word = 4;
+        let n_word_pairs = 2;
+        let n_slots = sites_per_word * n_word_pairs;
+        let mut costs = vec![0u32; n_pairs * n_slots];
+        for i in 0..n_pairs {
+            for j in 0..n_slots {
+                let wp = j / sites_per_word;
+                // wp 0 base 5, wp 1 base 6 — small gap to keep mixing feasible.
+                let base = if wp == 0 { 5 } else { 6 };
+                // Prefer matching slot to differentiate within wp.
+                let bonus = if (j % sites_per_word) == i { 0 } else { 2 };
+                costs[i * n_slots + j] = base + bonus;
+            }
+        }
+
+        let no_penalty = hungarian(&costs, n_pairs, n_slots);
+        let max_load_no = max_load_per_wp(&no_penalty, sites_per_word, n_word_pairs);
+        assert_eq!(
+            max_load_no, n_pairs,
+            "without penalty, all pairs concentrate on the cheapest wp"
+        );
+
+        let with_penalty = congestion_aware_hungarian(
+            &costs,
+            n_pairs,
+            n_slots,
+            sites_per_word,
+            n_word_pairs,
+            1.0,
+            BIG,
+        );
+        let max_load_w = max_load_per_wp(&with_penalty, sites_per_word, n_word_pairs);
+        // Greedy rebalance forces a strict reduction in max_load when an
+        // under-loaded wp has reachable slots.
+        assert_eq!(with_penalty.len(), n_pairs, "all pairs must be assigned");
+        let mut used = std::collections::HashSet::new();
+        for &col in &with_penalty {
+            assert!(col < n_slots, "all pairs must be assigned to a slot");
+            assert!(used.insert(col), "no double-booking of slots");
+        }
+        assert!(
+            max_load_w < max_load_no,
+            "congestion_weight should reduce max load, got {max_load_w} (was {max_load_no})"
+        );
+        let ideal = n_pairs.div_ceil(n_word_pairs);
+        assert!(
+            max_load_w <= ideal,
+            "rebalance should reach ideal load when feasible: {max_load_w} > {ideal}"
+        );
     }
 
     // ── build_partner_map ──

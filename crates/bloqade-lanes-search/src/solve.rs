@@ -136,6 +136,15 @@ pub struct SolveOptions {
     /// `10-50` = periodic recomputation (good balance).
     /// Only used by [`MoveSolver::solve_entangling`]; ignored by [`MoveSolver::solve`].
     pub recompute_interval: u32,
+    /// Congestion penalty weight for the entangling Hungarian assignment.
+    ///
+    /// `0.0` (default): standard min-sum-distance assignment.
+    /// `> 0.0`: iteratively re-runs Hungarian, adding a penalty
+    /// `congestion_weight × (load - ideal_load)` to slots on overloaded
+    /// entangling word pairs. Spreads CZ pairs across word pairs to reduce
+    /// routing serialization at high occupancy.
+    /// Only used by [`MoveSolver::solve_entangling`]; ignored by [`MoveSolver::solve`].
+    pub congestion_weight: f64,
 }
 
 impl Default for SolveOptions {
@@ -152,6 +161,7 @@ impl Default for SolveOptions {
             collect_entropy_trace: false,
             dynamic_targets: false,
             recompute_interval: 1,
+            congestion_weight: 0.0,
         }
     }
 }
@@ -695,9 +705,19 @@ impl MoveSolver {
                 0,
                 future_cz_layers,
                 0.2,
+                opts.congestion_weight,
             )
         } else {
-            entangling::greedy_assign_pairs(cz_pairs, &root, arch, &dist_table, 0, None, 0.0)
+            entangling::greedy_assign_pairs(
+                cz_pairs,
+                &root,
+                arch,
+                &dist_table,
+                0,
+                None,
+                0.0,
+                opts.congestion_weight,
+            )
         };
 
         let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
@@ -728,6 +748,7 @@ impl MoveSolver {
             let arch_arc = Arc::new(arch.clone());
             let dt_arc = dist_table.clone(); // Arc clone (cheap)
             let recompute_interval = opts.recompute_interval;
+            let congestion_weight = opts.congestion_weight;
 
             let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
             let make_generator = move |seed: u64, policy: DeadlockPolicy| {
@@ -742,6 +763,7 @@ impl MoveSolver {
                     dt_arc.clone(),
                     seed,
                     recompute_interval,
+                    congestion_weight,
                 )
             };
 

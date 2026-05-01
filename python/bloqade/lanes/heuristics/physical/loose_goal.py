@@ -52,6 +52,11 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
     recompute_interval:
         How often to recompute targets when ``dynamic_targets`` is true.
         0 = deadlock-triggered only.
+    congestion_weight:
+        Penalty weight for the entangling Hungarian assignment to spread
+        CZ pairs across word pairs. ``0.0`` (default) uses standard
+        min-sum assignment; positive values reduce routing serialization
+        at high occupancy at some cost in total atom moves.
     """
 
     strategy: str = "ids"
@@ -60,6 +65,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
     dynamic_targets: bool = True
     recompute_interval: int = 0
     lookahead: bool = True
+    congestion_weight: float = 0.0
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
@@ -90,6 +96,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
             dynamic_targets=self.dynamic_targets,
             recompute_interval=self.recompute_interval,
             lookahead=self.lookahead,
+            congestion_weight=self.congestion_weight,
         )
 
     def validate_initial_layout(
@@ -127,10 +134,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         # lookahead_cz_layers[1:] are future layers.
         future = None
         if len(lookahead_cz_layers) > 1:
-            future = [
-                list(zip(ctrls, tgts))
-                for ctrls, tgts in lookahead_cz_layers[1:]
-            ]
+            future = [list(zip(ctrls, tgts)) for ctrls, tgts in lookahead_cz_layers[1:]]
 
         result = solver.solve_entangling(
             initial,

@@ -42,6 +42,8 @@ pub struct LooseTargetGenerator {
     seed: u64,
     /// 0 = deadlock-only, N > 0 = also recompute every N expansions.
     recompute_interval: u32,
+    /// Forwarded to greedy_assign_pairs; 0.0 = standard min-sum assignment.
+    congestion_weight: f64,
     cached_targets: RefCell<Vec<(u32, u64)>>,
     cached_cost: Cell<u32>,
     cache_initialized: Cell<bool>,
@@ -59,6 +61,9 @@ impl LooseTargetGenerator {
     /// * `dist_table` — Distance table targeting entangling locations (shared).
     /// * `seed` — Seed for greedy assignment perturbation (0 = no perturbation).
     /// * `recompute_interval` — 0 = deadlock-only, N > 0 = also every N expansions.
+    /// * `congestion_weight` — Forwarded to greedy assignment for spreading targets
+    ///   across word pairs; 0.0 = standard min-sum.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         inner: HeuristicGenerator,
         cz_pairs: Vec<(u32, u32)>,
@@ -66,6 +71,7 @@ impl LooseTargetGenerator {
         dist_table: Arc<DistanceTable>,
         seed: u64,
         recompute_interval: u32,
+        congestion_weight: f64,
     ) -> Self {
         Self {
             inner,
@@ -74,6 +80,7 @@ impl LooseTargetGenerator {
             dist_table,
             seed,
             recompute_interval,
+            congestion_weight,
             cached_targets: RefCell::new(Vec::new()),
             cached_cost: Cell::new(u32::MAX),
             cache_initialized: Cell::new(false),
@@ -91,6 +98,7 @@ impl LooseTargetGenerator {
             self.seed,
             None,
             0.0,
+            self.congestion_weight,
         );
         let new_cost = entangling::assignment_cost(config, &new_targets, &self.dist_table);
         if new_cost < self.cached_cost.get() {
@@ -119,6 +127,7 @@ impl MoveGenerator for LooseTargetGenerator {
                 self.seed,
                 None,
                 0.0,
+                self.congestion_weight,
             );
             let cost = entangling::assignment_cost(config, &targets, &self.dist_table);
             self.cached_cost.set(cost);
@@ -197,6 +206,7 @@ mod tests {
             dist_table.clone(),
             0,
             1,
+            0.0,
         );
 
         // q0 at word 0 site 0, q1 at word 0 site 5 — same column,
@@ -236,6 +246,7 @@ mod tests {
             dist_table.clone(),
             0,
             1,
+            0.0,
         );
         let inner2 = HeuristicGenerator::new();
         let generator2 = LooseTargetGenerator::new(
@@ -245,6 +256,7 @@ mod tests {
             dist_table.clone(),
             0,
             1,
+            0.0,
         );
 
         let dummy_targets: Vec<(u32, u64)> = vec![];
