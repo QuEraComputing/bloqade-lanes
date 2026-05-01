@@ -7,7 +7,7 @@
 
 Two coordinated additions to the `place`-dialect compilation stage:
 
-1. **`cz_disjoint_heuristic`** — a new `merge_heuristic` for `MergePlacementRegions` that prevents mixing CZ and non-CZ layers and only merges CZ layers whose qubit sets are disjoint.
+1. **`make_cz_disjoint_heuristic`** — a factory that returns a `merge_heuristic` for `MergePlacementRegions` that prevents mixing CZ and non-CZ layers and only merges CZ layers whose global qubit address sets are disjoint.
 2. **`ASAPReorder`** — a new rewrite rule that reorders statements within a `StaticPlacement` body block using ASAP (As Soon As Possible) scheduling, creating adjacency that `FuseAdjacentGates` can then exploit.
 
 ## Motivation
@@ -19,55 +19,26 @@ ASAP reordering moves each gate to the earliest position its qubit dependencies 
 ## Pass Ordering
 
 ```
-RewritePlaceOperations                              (one StaticPlacement per gate)
+RewritePlaceOperations                                    (one StaticPlacement per gate)
        ↓
-MergePlacementRegions(cz_disjoint_heuristic)        (new heuristic — CZ-aware)
+MergePlacementRegions(make_cz_disjoint_heuristic(...))    (new heuristic — CZ-aware)
        ↓
-ASAPReorder                                         (new — reorders within body)
+ASAPReorder                                               (new — reorders within body)
        ↓
-FuseAdjacentGates                                   (unchanged)
+FuseAdjacentGates                                         (unchanged)
 ```
 
 Nothing downstream of `FuseAdjacentGates` changes.
 
-## Component 1: `cz_disjoint_heuristic`
+## Component 1: CZ-disjoint merge heuristic
 
 ### Location
 
 `python/bloqade/lanes/rewrite/circuit2place.py`, alongside `_default_merge_heuristic`.
 
-### Helper
-
-```python
-def _cz_qubits(sp: place.StaticPlacement) -> set[ir.SSAValue]:
-    """Return the SSA qubit values touched by any CZ in this placement.
-
-    place.CZ.qubits holds local integer indices into sp.qubits; resolving
-    through sp.qubits gives SSA values that are comparable across placements.
-    """
-    result: set[ir.SSAValue] = set()
-    for stmt in sp.body.blocks[0].stmts:
-        if isinstance(stmt, place.CZ):
-            result.update(sp.qubits[i] for i in stmt.qubits)
-    return result
-```
-
-### Heuristic logic
-
-```
-is_cz_layer(sp) = _cz_qubits(sp) is non-empty
-
-Rules (evaluated in order):
-1. is_cz_layer(sp1) != is_cz_layer(sp2)  →  False   (never mix CZ and non-CZ layers)
-2. not is_cz_layer(sp1)                   →  True    (both non-CZ: merge freely)
-3. both CZ layers                         →  _cz_qubits(sp1).isdisjoint(_cz_qubits(sp2))
-```
-
-The heuristic is passed to `MergePlacementRegions(merge_heuristic=cz_disjoint_heuristic)`.
-
 ### Required change to `MergePlacementRegions`
 
-The current `merge_heuristic` signature is `Callable[[ir.Region, ir.Region], bool]`, passing only the body regions. Within a `StaticPlacement` body, `place.CZ.qubits` contains **local integer indices** into the outer `StaticPlacement.qubits` tuple — not SSA qubit values. Comparing qubit sets across two placements requires resolving those indices through each placement's `qubits` tuple.
+The current `merge_heuristic` signature is `Callable[[ir.Region, ir.Region], bool]`, passing only the body regions. Within a `StaticPlacement` body, `place.CZ.qubits` contains **local integer indices** into the outer `StaticPlacement.qubits` tuple. Comparing qubit identity across two placements requires access to those outer tuples, which the body region alone does not provide.
 
 Change the signature to pass the full placement statements:
 
@@ -79,17 +50,59 @@ merge_heuristic: Callable[[ir.Region, ir.Region], bool]
 merge_heuristic: Callable[[place.StaticPlacement, place.StaticPlacement], bool]
 ```
 
-Update `_default_merge_heuristic` and the two call sites inside `rewrite_Statement` accordingly. The `_cz_qubits` helper takes a `place.StaticPlacement` and resolves local indices:
+Update `_default_merge_heuristic` and the call site inside `rewrite_Statement` accordingly.
+
+### Qubit identity via `AddressAnalysis`
+
+Comparing `ir.SSAValue` objects directly is unsafe: two different SSA values may refer to the same underlying qubit (e.g., through aliasing). Instead, resolve each qubit through the results of `AddressAnalysis`, which assigns a unique integer (`AddressQubit.data`) to each distinct qubit allocation. Two SSA values that alias the same qubit will produce the same `AddressQubit.data`.
+
+### Helper
 
 ```python
-def _cz_qubits(sp: place.StaticPlacement) -> set[ir.SSAValue]:
-    """Return the set of SSA qubit values touched by any CZ in this placement."""
-    result: set[ir.SSAValue] = set()
+from bloqade.analysis.address.lattice import Address, AddressQubit
+
+def _cz_qubits(
+    sp: place.StaticPlacement,
+    address_entries: dict[ir.SSAValue, Address],
+) -> set[int]:
+    """Return the global qubit addresses touched by any CZ in this placement.
+
+    place.CZ.qubits holds local integer indices into sp.qubits. Each index
+    is resolved to an outer SSA value, then looked up in address_entries to
+    obtain an AddressQubit whose .data is the canonical global qubit ID.
+    Qubits missing from address_entries (analysis did not reach them) are
+    skipped; the caller should treat missing entries conservatively.
+    """
+    result: set[int] = set()
     for stmt in sp.body.blocks[0].stmts:
         if isinstance(stmt, place.CZ):
-            result.update(sp.qubits[i] for i in stmt.qubits)
+            for local_idx in stmt.qubits:
+                addr = address_entries.get(sp.qubits[local_idx])
+                if isinstance(addr, AddressQubit):
+                    result.add(addr.data)
     return result
 ```
+
+### Heuristic factory
+
+The heuristic closes over a pre-computed `address_entries` dict (from `AddressAnalysis` run on the method before this pass):
+
+```python
+def make_cz_disjoint_heuristic(
+    address_entries: dict[ir.SSAValue, Address],
+) -> Callable[[place.StaticPlacement, place.StaticPlacement], bool]:
+    def heuristic(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+        q1 = _cz_qubits(sp1, address_entries)
+        q2 = _cz_qubits(sp2, address_entries)
+        if bool(q1) != bool(q2):   # one CZ layer, one not → never merge
+            return False
+        if not q1:                  # both non-CZ → merge freely
+            return True
+        return q1.isdisjoint(q2)   # both CZ → merge only if address sets disjoint
+    return heuristic
+```
+
+Usage: `MergePlacementRegions(merge_heuristic=make_cz_disjoint_heuristic(address_frame.entries))`.
 
 ## Component 2: `ASAPReorder`
 
@@ -155,16 +168,16 @@ Return `RewriteResult(has_done_something=True)` if any statement changed positio
 ### `test_circuit2place.py` additions
 
 - `test_cz_disjoint_heuristic_rejects_cz_plus_noncz` — one CZ layer + one R layer → False
-- `test_cz_disjoint_heuristic_rejects_overlapping_cz_layers` — two CZ layers sharing a qubit → False
-- `test_cz_disjoint_heuristic_accepts_disjoint_cz_layers` — two CZ layers with disjoint qubits → True
+- `test_cz_disjoint_heuristic_rejects_overlapping_cz_layers` — two CZ layers sharing an address → False
+- `test_cz_disjoint_heuristic_accepts_disjoint_cz_layers` — two CZ layers with disjoint addresses → True
 - `test_cz_disjoint_heuristic_accepts_noncz_layers` — two R-only layers → True
 
 ### `test_asap_reorder.py` (new file, hand-built IR, style of `test_fuse_gates.py`)
 
 - `test_single_stmt_unchanged` — one statement, no reorder
-- `test_two_independent_gates_same_type_reordered` — R(q0) then R(q1): already optimal, verify idempotence
+- `test_two_independent_gates_already_optimal` — R(q0) then R(q1): already layer 0, verify idempotence
 - `test_dependent_gate_not_moved_before_predecessor` — R(q0), CZ(q0,q1), R(q1): CZ cannot move before R(q0)
-- `test_independent_gate_moves_earlier` — R(q0), R(q1), CZ(q0,q1), R(q2): R(q2) is qubit-independent of everything before it; ASAP assigns it layer 0 alongside R(q0)/R(q1), moving it before CZ(q0,q1) which is layer 1
+- `test_independent_gate_moves_earlier` — R(q0), R(q1), CZ(q0,q1), R(q2): R(q2) touches only q2 so ASAP assigns it layer 0 alongside R(q0)/R(q1), moving it before CZ(q0,q1) which is layer 1
 - `test_barrier_prevents_reorder_across` — R(q0), Initialize(q1), R(q0): second R stays after Initialize
 - `test_multiple_layers_correct_ordering` — three gates spanning two layers, verify layer grouping
 - `test_idempotence` — second application is a no-op
