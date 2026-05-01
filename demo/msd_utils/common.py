@@ -14,6 +14,8 @@ class ObservableFrame(str, Enum):
     NOISELESS_REFERENCE_FLIPS = "noiseless_reference_flips"
 
 
+# TODO: I wonder if it's possible to remove "observable_frame", because we should just need the kernel itself. Also, it appears
+# that "observable_frame" is only used by "special_tasks" anyways.
 @dataclass(frozen=True)
 class LogicalKernelSpec:
     kernel: Any

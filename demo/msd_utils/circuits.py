@@ -92,6 +92,8 @@ def _build_physical_prefix_source_tsim_circuit(
     return tsim.Circuit(prefix_kernel)
 
 
+# TODO: this is for the use case of overriding an existing tsim circuit, and overriding the GeminiLogicalSimulatorTask
+# cached attributes. Ideally, we'd add this functionality in GeminiLogicalSimulatorTask.
 def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) -> None:
     try:
         setattr(task, attr, value)
@@ -99,6 +101,7 @@ def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) 
         task.__dict__[attr] = value
 
 
+# TODO: see above.
 def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
     for attr in (
         "tsim_circuit",
@@ -112,6 +115,7 @@ def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
         task.__dict__.pop(attr, None)
 
 
+# TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
 def _first_nonunitary_instruction_index(circuit: Any) -> int:
     for idx in range(len(circuit)):
         if str(circuit[idx]).startswith(NONUNITARY_PREFIXES):
@@ -127,11 +131,13 @@ def _prepend_inverse_tsim_circuit(
     _override_task_tsim_circuit(task, inverse_prefix + task.tsim_circuit)
 
 
+# TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
 def _build_compiled_unitary_prefix_circuit(task: GeminiLogicalSimulatorTask):
     compiled_circuit = task.tsim_circuit
     return compiled_circuit[: _first_nonunitary_instruction_index(compiled_circuit)]
 
 
+# TODO: ideally, overriding the tsim circuit could be done in the GeminiLogicalSimulatorTask. See above
 def _override_task_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
     circuit: Any,
@@ -186,26 +192,10 @@ def _build_tomography_primitives(*, output_qubit: int):
     def tomography_z(reg):
         return
 
-    @squin.kernel
-    def tomography_x_inv(reg):
-        squin.h(reg[output_qubit])
-
-    @squin.kernel
-    def tomography_y_inv(reg):
-        squin.h(reg[output_qubit])
-        squin.sqrt_z(reg[output_qubit])
-
-    @squin.kernel
-    def tomography_z_inv(reg):
-        return
-
     return {
         "tomography_x": tomography_x,
         "tomography_y": tomography_y,
         "tomography_z": tomography_z,
-        "tomography_x_inv": tomography_x_inv,
-        "tomography_y_inv": tomography_y_inv,
-        "tomography_z_inv": tomography_z_inv,
     }
 
 
