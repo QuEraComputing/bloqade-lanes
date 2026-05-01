@@ -38,7 +38,7 @@ def _collect_qubit_ids(addr: address.Address) -> set[int]:
         for elem in addr.data:
             result |= _collect_qubit_ids(elem)
         return result
-    raise TypeError(f"Unhandled Address type: {type(addr)}")
+    raise ValueError(f"Unhandled Address type: {type(addr)}")
 
 
 @dataclass
