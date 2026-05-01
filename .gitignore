@@ -25,6 +25,10 @@ __pycache__/
 **/mutants.out*/
 Cargo.lock
 
+# Agents
+.agents
+AGENTS.md
+
 # Distribution / packaging
 .Python
 build/
