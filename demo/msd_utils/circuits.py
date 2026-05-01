@@ -73,28 +73,23 @@ def _attach_special_circuit_kernel(
     return kernel
 
 
-def _build_inverse_prepare_kernel_from_cirq(
+def _build_physical_prefix_source_tsim_circuit(
     special_circuit_kernel: Any,
     *,
-    num_qubits: int,
-    kernel_name: str,
-) -> Any:
-    import cirq
-    from bloqade.cirq_utils import emit_circuit, load_circuit
+    num_logical_qubits: int,
+):
+    from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 
     @squin.kernel
-    def special_circuit_wrapper():
-        reg = squin.qalloc(num_qubits)
-        special_circuit_kernel(reg)
+    def physical_prefix_source():
+        q = squin.qalloc(7 * num_logical_qubits)
+        inputs = q[6::7]
+        special_circuit_kernel(inputs)
+        return
 
-    circuit = emit_circuit(special_circuit_wrapper, ignore_returns=True)
-    inverse_circuit = cirq.inverse(circuit)
-    return load_circuit(
-        inverse_circuit,
-        kernel_name=kernel_name,
-        register_as_argument=True,
-        register_argument_name="inputs",
-    )
+    prefix_kernel = physical_prefix_source.similar()
+    rewrite.Walk(RemoveReturn()).rewrite(prefix_kernel.code)
+    return tsim.Circuit(prefix_kernel)
 
 
 def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) -> None:
@@ -124,13 +119,17 @@ def _first_nonunitary_instruction_index(circuit: Any) -> int:
     return len(circuit)
 
 
-def _build_compiled_inverse_prefix_circuit(task: GeminiLogicalSimulatorTask):
+def _prepend_inverse_tsim_circuit(
+    task: GeminiLogicalSimulatorTask,
+    circuit_to_invert: Any,
+) -> None:
+    inverse_prefix = circuit_to_invert.without_noise().inverse()
+    _override_task_tsim_circuit(task, inverse_prefix + task.tsim_circuit)
+
+
+def _build_compiled_unitary_prefix_circuit(task: GeminiLogicalSimulatorTask):
     compiled_circuit = task.tsim_circuit
-    unitary_prefix = compiled_circuit[
-        : _first_nonunitary_instruction_index(compiled_circuit)
-    ]
-    inverse_prefix = unitary_prefix.without_noise().inverse()
-    return inverse_prefix + compiled_circuit
+    return compiled_circuit[: _first_nonunitary_instruction_index(compiled_circuit)]
 
 
 def _override_task_tsim_circuit(
@@ -140,25 +139,6 @@ def _override_task_tsim_circuit(
     _set_task_override(task, "tsim_circuit", circuit)
     _clear_task_tsim_artifacts(task)
     _set_task_override(task, "tsim_circuit", circuit)
-
-
-def _build_prepare_prefix_tsim_circuit(
-    prepare_kernel: Any,
-    *,
-    num_physical_qubits: int,
-):
-    from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-
-    @squin.kernel
-    def prepare_prefix():
-        q = squin.qalloc(num_physical_qubits)
-        inputs = ilist.IList([q[6], q[13], q[20], q[27], q[34]])
-        prepare_kernel(inputs)
-        return
-
-    prefix_kernel = prepare_prefix.similar()
-    rewrite.Walk(RemoveReturn()).rewrite(prefix_kernel.code)
-    return tsim.Circuit(prefix_kernel)
 
 
 def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSpec:
@@ -710,20 +690,13 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
             "_msd_special_circuit_num_qubits value."
         )
 
-    # TODO: instead of using Cirq here and then converting to squin and then to tsim, maybe
-    # we can use tsim only?
-    special_prepare_kernel = _build_inverse_prepare_kernel_from_cirq(
+    prefix_source_circuit = _build_physical_prefix_source_tsim_circuit(
         special_circuit_kernel,
-        num_qubits=int(special_circuit_num_qubits),
-        kernel_name=(f"{getattr(spec.kernel, 'sym_name', 'special')}_prepare_inverse"),
+        num_logical_qubits=int(special_circuit_num_qubits),
     )
-    prefix_circuit = _build_prepare_prefix_tsim_circuit(
-        special_prepare_kernel,
-        num_physical_qubits=7 * int(special_circuit_num_qubits),
-    )
-    _override_task_tsim_circuit(
+    _prepend_inverse_tsim_circuit(
         demo_task.task,
-        prefix_circuit + demo_task.task.tsim_circuit,
+        prefix_source_circuit,
     )
 
 
@@ -744,9 +717,9 @@ def apply_special_tsim_circuit_strategy(
         if strategy == "prefix_prepare":
             _apply_prefix_prepare_to_task(demo_task)
         else:
-            _override_task_tsim_circuit(
+            _prepend_inverse_tsim_circuit(
                 demo_task.task,
-                _build_compiled_inverse_prefix_circuit(demo_task.task),
+                _build_compiled_unitary_prefix_circuit(demo_task.task),
             )
     return transformed
 
