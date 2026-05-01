@@ -61,7 +61,7 @@ Comparing `ir.SSAValue` objects directly is unsafe: two different SSA values may
 ```python
 from bloqade.analysis.address.lattice import Address, AddressQubit
 
-def _cz_qubits(
+def _cz_qubit_addresses(
     sp: place.StaticPlacement,
     address_entries: dict[ir.SSAValue, Address],
 ) -> set[int]:
@@ -92,8 +92,8 @@ def make_cz_disjoint_heuristic(
     address_entries: dict[ir.SSAValue, Address],
 ) -> Callable[[place.StaticPlacement, place.StaticPlacement], bool]:
     def heuristic(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
-        q1 = _cz_qubits(sp1, address_entries)
-        q2 = _cz_qubits(sp2, address_entries)
+        q1 = _cz_qubit_addresses(sp1, address_entries)
+        q2 = _cz_qubit_addresses(sp2, address_entries)
         if bool(q1) != bool(q2):   # one CZ layer, one not → never merge
             return False
         if not q1:                  # both non-CZ → merge freely
