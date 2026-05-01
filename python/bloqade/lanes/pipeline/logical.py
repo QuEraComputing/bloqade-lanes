@@ -72,7 +72,7 @@ class LogicalPipeline:
     )
     insert_return_moves: bool = True
     arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
-    fuse_gates: bool = True
+    fuse_gates: bool = False
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = _LogicalNativeToPlace(

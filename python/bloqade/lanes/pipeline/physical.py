@@ -49,7 +49,7 @@ class PhysicalPipeline:
     layout_heuristic: layout.LayoutHeuristicABC | None = None
     placement_strategy: placement.PlacementStrategyABC | None = None
     insert_return_moves: bool = True
-    fuse_gates: bool = True
+    fuse_gates: bool = False
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (

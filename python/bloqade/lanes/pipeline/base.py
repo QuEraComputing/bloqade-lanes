@@ -66,7 +66,7 @@ class _NativeToPlaceBase:
     """
 
     arch_spec: ArchSpec | None = field(default=None)
-    fuse_gates: bool = True
+    fuse_gates: bool = False
 
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         return out

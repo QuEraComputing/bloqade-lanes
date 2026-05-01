@@ -35,7 +35,7 @@ from bloqade.lanes.rewrite.split_static_placement import (
 class NativeToPlace:
     logical_initialize: bool = True
     arch_spec: ArchSpec | None = field(default=None)
-    fuse_gates: bool = True
+    fuse_gates: bool = False
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -245,7 +245,7 @@ def squin_to_move(
     ] = place2move.palindrome_move_layers,
     no_raise: bool = True,
     logical_initialize: bool = True,
-    fuse_gates: bool = True,
+    fuse_gates: bool = False,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
