@@ -194,3 +194,34 @@ def test_idempotence():
 
     assert _run(outer)  # first pass reorders
     assert not _run(outer)  # second pass is no-op
+
+
+def test_same_type_gates_cluster_within_layer():
+    """R(q0,a,b), Rz(q1,c), R(q2,a,b) all at layer 0: the two R gates cluster together.
+
+    Both R gates share the same axis_angle and rotation_angle SSA values.
+    _group_within_layer opens the (R, id(a), id(b)) group on the first R,
+    then Rz opens a new group, then the second R lands in the first group.
+    Result: R(q0), R(q2), Rz(q1).
+    """
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle_r = ir.TestValue(type=kirin_types.Float)
+    angle_rz = ir.TestValue(type=kirin_types.Float)
+
+    r0 = place.R(entry_state, axis_angle=axis, rotation_angle=angle_r, qubits=(0,))
+    body_block.stmts.append(r0)
+    rz1 = place.Rz(r0.state_after, rotation_angle=angle_rz, qubits=(1,))
+    body_block.stmts.append(rz1)
+    r2 = place.R(rz1.state_after, axis_angle=axis, rotation_angle=angle_r, qubits=(2,))
+    body_block.stmts.append(r2)
+
+    _, outer = _wrap_in_static_placement(body_block, num_qubits=3)
+    assert _run(outer)  # order changes: R(q2) moves before Rz(q1)
+
+    sp = _get_sp(outer)
+    stmts = _body_stmts(sp)
+    assert len(stmts) == 3
+    assert isinstance(stmts[0], place.R) and stmts[0].qubits == (0,)  # type: ignore[union-attr]
+    assert isinstance(stmts[1], place.R) and stmts[1].qubits == (2,)  # type: ignore[union-attr]
+    assert isinstance(stmts[2], place.Rz) and stmts[2].qubits == (1,)  # type: ignore[union-attr]

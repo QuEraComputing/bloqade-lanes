@@ -14,8 +14,30 @@ _BARRIERS: tuple[type, ...] = (place.Initialize, place.EndMeasure)
 _GateStmt = place.R | place.Rz | place.CZ | place.Initialize | place.EndMeasure
 
 
+def _group_key(stmt: _GateStmt) -> tuple:
+    """Hashable key identifying gates that FuseAdjacentGates can fuse together."""
+    if isinstance(stmt, place.R):
+        return (type(stmt), id(stmt.axis_angle), id(stmt.rotation_angle))
+    if isinstance(stmt, place.Rz):
+        return (type(stmt), id(stmt.rotation_angle))
+    return (type(stmt),)  # CZ has no non-qubit params
+
+
+def _group_within_layer(layer_stmts: list[_GateStmt]) -> list[_GateStmt]:
+    """Re-order layer_stmts so fusable-equivalent gates are adjacent.
+
+    Uses Python dict insertion-order: the first time a (type, params) key is
+    seen a new group is opened; subsequent matches append to that group.
+    Iterating over groups in insertion order preserves first-seen ordering.
+    """
+    groups: dict[tuple, list[_GateStmt]] = {}
+    for stmt in layer_stmts:
+        groups.setdefault(_group_key(stmt), []).append(stmt)
+    return [stmt for group in groups.values() for stmt in group]
+
+
 def _asap_schedule(stmts: list[_GateStmt]) -> list[_GateStmt]:
-    """Return stmts sorted into ASAP layers. Stable within each layer."""
+    """Return stmts in ASAP layer order with fusable-equivalent gates adjacent within each layer."""
     if len(stmts) <= 1:
         return list(stmts)
 
@@ -34,8 +56,16 @@ def _asap_schedule(stmts: list[_GateStmt]) -> list[_GateStmt]:
         preds = dag.predecessor_indices(node_idx)
         layer[node_idx] = 0 if not preds else max(layer[p] for p in preds) + 1
 
-    sorted_indices = sorted(range(len(stmts)), key=lambda i: layer[node_for[i]])
-    return [stmts[i] for i in sorted_indices]
+    # Bucket statements per layer in original order, then group within each layer
+    # so fusable-equivalent gates (same type + params) are adjacent.
+    layer_buckets: dict[int, list[_GateStmt]] = {}
+    for i, stmt in enumerate(stmts):
+        layer_buckets.setdefault(layer[node_for[i]], []).append(stmt)
+
+    result: list[_GateStmt] = []
+    for lyr in sorted(layer_buckets):
+        result.extend(_group_within_layer(layer_buckets[lyr]))
+    return result
 
 
 def asap_reorder_policy(
