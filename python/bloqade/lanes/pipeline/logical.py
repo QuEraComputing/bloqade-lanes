@@ -19,6 +19,10 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.passes import (
+    PlaceOptimizationPass,
+    SequentialPlacePass,
+)
 from bloqade.lanes.rewrite import circuit2place
 
 from .base import _NativeToPlaceBase, _PlaceToMove
@@ -72,12 +76,14 @@ class LogicalPipeline:
     )
     insert_return_moves: bool = True
     arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
-    fuse_gates: bool = False
+    place_optimization: PlaceOptimizationPass = field(
+        default_factory=SequentialPlacePass
+    )
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = _LogicalNativeToPlace(
             arch_spec=self.arch_spec,
-            fuse_gates=self.fuse_gates,
+            place_optimization=self.place_optimization,
         ).emit(mt, no_raise=no_raise)
 
         out = _PlaceToMove(

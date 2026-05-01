@@ -19,23 +19,20 @@ from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.passes import (
+    PlaceOptimizationPass,
+    SequentialPlacePass,
+)
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
-from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
-from bloqade.lanes.rewrite.reorder_static_placement import (
-    ReorderStaticPlacement,
-    asap_reorder_policy,
-)
-from bloqade.lanes.rewrite.split_static_placement import (
-    SplitStaticPlacement,
-    cz_layer_split_policy,
-)
 
 
 @dataclass
 class NativeToPlace:
     logical_initialize: bool = True
     arch_spec: ArchSpec | None = field(default=None)
-    fuse_gates: bool = False
+    place_optimization: PlaceOptimizationPass = field(
+        default_factory=SequentialPlacePass
+    )
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -97,24 +94,7 @@ class NativeToPlace:
         ).rewrite(out.code)
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
-
-        rewrite.Fixpoint(
-            rewrite.Walk(
-                circuit2place.MergeStaticPlacement(circuit2place.gate_only_merge)
-            ),
-        ).rewrite(out.code)
-
-        rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
-
-        rewrite.Fixpoint(
-            rewrite.Walk(
-                circuit2place.MergeStaticPlacement(circuit2place.gate_only_merge)
-            ),
-        ).rewrite(out.code)
-        rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(out.code)
-        if self.fuse_gates:
-            rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
-        rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
+        self.place_optimization(out)
 
         out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
@@ -245,7 +225,7 @@ def squin_to_move(
     ] = place2move.palindrome_move_layers,
     no_raise: bool = True,
     logical_initialize: bool = True,
-    fuse_gates: bool = False,
+    place_optimization: PlaceOptimizationPass | None = None,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
@@ -260,7 +240,7 @@ def squin_to_move(
             Defaults to palindrome_move_layers.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
-        fuse_gates (bool, optional): Whether to fuse adjacent compatible gates before splitting into CZ-anchored layers. Defaults to True.
+        place_optimization (PlaceOptimizationPass, optional): Place-dialect optimization pass. Defaults to SequentialPlacePass.
 
     Returns:
         ir.Method: The compiled move dialect method.
@@ -270,7 +250,7 @@ def squin_to_move(
     out = NativeToPlace(
         logical_initialize=logical_initialize,
         arch_spec=arch_spec,
-        fuse_gates=fuse_gates,
+        place_optimization=place_optimization or SequentialPlacePass(),
     ).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,

@@ -538,14 +538,25 @@ class MergePlacementRegions(abc.RewriteRule):
 
 
 _GATE_STMT_TYPES = (place.R, place.Rz, place.CZ, place.Yield)
+_SQ_STMT_TYPES = (place.R, place.Rz, place.Yield)
 
 
 def _is_pure_gate_block(sp: place.StaticPlacement) -> bool:
     return all(isinstance(stmt, _GATE_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
 
 
+def _is_sq_only_block(sp: place.StaticPlacement) -> bool:
+    return all(isinstance(stmt, _SQ_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
+
+
 def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge placements whose bodies contain only R, Rz, CZ, and Yield."""
     return _is_pure_gate_block(sp1) and _is_pure_gate_block(sp2)
+
+
+def sq_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge placements whose bodies contain only R and Rz (no CZ)."""
+    return _is_sq_only_block(sp1) and _is_sq_only_block(sp2)
 
 
 def always_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:

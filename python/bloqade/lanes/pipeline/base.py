@@ -22,16 +22,11 @@ from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.passes import (
+    PlaceOptimizationPass,
+    SequentialPlacePass,
+)
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
-from bloqade.lanes.rewrite.fuse_gates import FuseAdjacentGates
-from bloqade.lanes.rewrite.reorder_static_placement import (
-    ReorderStaticPlacement,
-    asap_reorder_policy,
-)
-from bloqade.lanes.rewrite.split_static_placement import (
-    SplitStaticPlacement,
-    cz_layer_split_policy,
-)
 from bloqade.lanes.validation.address import Validation as AddressValidation
 
 
@@ -66,7 +61,9 @@ class _NativeToPlaceBase:
     """
 
     arch_spec: ArchSpec | None = field(default=None)
-    fuse_gates: bool = False
+    place_optimization: PlaceOptimizationPass = field(
+        default_factory=SequentialPlacePass
+    )
 
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         return out
@@ -110,21 +107,7 @@ class _NativeToPlaceBase:
             )
         ).rewrite(out.code)
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
-        rewrite.Fixpoint(
-            rewrite.Walk(
-                circuit2place.MergeStaticPlacement(circuit2place.gate_only_merge)
-            )
-        ).rewrite(out.code)
-        rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
-        rewrite.Fixpoint(
-            rewrite.Walk(
-                circuit2place.MergeStaticPlacement(circuit2place.gate_only_merge)
-            )
-        ).rewrite(out.code)
-        rewrite.Walk(ReorderStaticPlacement(asap_reorder_policy)).rewrite(out.code)
-        if self.fuse_gates:
-            rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(out.code)
-        rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(out.code)
+        self.place_optimization(out)
 
         out = out.similar(
             out.dialects.discard(native_gate).discard(gemini_qubit).discard(squin_qubit)

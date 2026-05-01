@@ -16,6 +16,10 @@ from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+from bloqade.lanes.passes import (
+    PlaceOptimizationPass,
+    SequentialPlacePass,
+)
 from bloqade.lanes.rewrite import circuit2place
 
 from .base import _NativeToPlaceBase, _PlaceToMove
@@ -49,7 +53,9 @@ class PhysicalPipeline:
     layout_heuristic: layout.LayoutHeuristicABC | None = None
     placement_strategy: placement.PlacementStrategyABC | None = None
     insert_return_moves: bool = True
-    fuse_gates: bool = False
+    place_optimization: PlaceOptimizationPass = field(
+        default_factory=SequentialPlacePass
+    )
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
@@ -65,7 +71,7 @@ class PhysicalPipeline:
 
         out = _PhysicalNativeToPlace(
             arch_spec=self.arch_spec,
-            fuse_gates=self.fuse_gates,
+            place_optimization=self.place_optimization,
         ).emit(mt, no_raise=no_raise)
 
         out = _PlaceToMove(
