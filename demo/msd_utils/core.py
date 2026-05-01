@@ -247,6 +247,32 @@ def sample_task_raw(
     chunk_size: int | None = 1_000_000,
     sim_type: str = "tsim",
 ) -> BasisDataset:
+    if isinstance(task, DemoTask) and sim_type == "clifft":
+        if chunk_size is None or shots <= chunk_size:
+            detectors, observables = task.sample_clifft_det_obs(
+                shots,
+                with_noise=with_noise,
+            )
+            return BasisDataset(detectors=detectors, observables=observables)
+
+        det_chunks = []
+        obs_chunks = []
+        remaining = shots
+        while remaining > 0:
+            batch = min(chunk_size, remaining)
+            detectors, observables = task.sample_clifft_det_obs(
+                batch,
+                with_noise=with_noise,
+            )
+            det_chunks.append(detectors)
+            obs_chunks.append(observables)
+            remaining -= batch
+
+        return BasisDataset(
+            detectors=np.concatenate(det_chunks, axis=0),
+            observables=np.concatenate(obs_chunks, axis=0),
+        )
+
     if chunk_size is None or shots <= chunk_size:
         result = _run_simulator_task(
             task,

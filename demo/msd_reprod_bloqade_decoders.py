@@ -73,6 +73,7 @@ from bloqade.decoders import GurobiDecoder, TableDecoder  # noqa: E402
 from demo.msd_utils.circuits import (  # noqa: E402
     _build_msd_primitives,
     _build_tomography_primitives,
+    apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
     build_measurement_maps,
@@ -316,6 +317,10 @@ special_tasks = build_task_map(
     m2obs=MSD_MEASUREMENT_MAPS[1],
     noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
+)
+special_tasks = apply_special_tsim_circuit_strategy(
+    special_tasks,
+    SPECIAL_KERNEL_STRATEGY,
 )
 injected_tasks = build_task_map(
     sim,

@@ -14,10 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_utils.circuits import (
     DecoderPrimitiveSet,
+    apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_measurement_maps,
     build_naive_kernel_bundle,
-    build_task,
+    build_task_map,
     make_noisy_steane7_initializer,
 )
 from demo.msd_utils.common import SyndromeLayout
@@ -102,14 +103,18 @@ def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
         special_kernel_strategy="prefix_prepare",
     )
 
-    demo_task = build_task(
+    special_tasks = build_task_map(
         sim,
-        decoder.special["X"],
+        {"X": decoder.special["X"]},
         m2dets=m2dets,
         m2obs=m2obs,
         noisy_initializer=noisy_initializer,
         append_measurements=False,
     )
+    demo_task = apply_special_tsim_circuit_strategy(
+        special_tasks,
+        "prefix_prepare",
+    )["X"]
 
     assert "prepare_inverse" not in str(demo_task.task.physical_squin_kernel)
 
@@ -130,14 +135,18 @@ def test_demo_task_clifft_backend_matches_result_shapes():
         0.3,
         special_kernel_strategy="prefix_prepare",
     )
-    demo_task = build_task(
+    special_tasks = build_task_map(
         sim,
-        decoder.special["X"],
+        {"X": decoder.special["X"]},
         m2dets=m2dets,
         m2obs=m2obs,
         noisy_initializer=noisy_initializer,
         append_measurements=False,
     )
+    demo_task = apply_special_tsim_circuit_strategy(
+        special_tasks,
+        "prefix_prepare",
+    )["X"]
 
     detector_result = demo_task.run(
         4,

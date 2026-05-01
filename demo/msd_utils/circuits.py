@@ -458,7 +458,6 @@ def build_decoder_kernel_bundle(
                     special_circuit_x,
                     num_qubits=num_logical_qubits,
                 ),
-                special_tsim_circuit_strategy="prefix_prepare",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
             "Y": LogicalKernelSpec(
@@ -467,7 +466,6 @@ def build_decoder_kernel_bundle(
                     special_circuit_y,
                     num_qubits=num_logical_qubits,
                 ),
-                special_tsim_circuit_strategy="prefix_prepare",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
             "Z": LogicalKernelSpec(
@@ -476,7 +474,6 @@ def build_decoder_kernel_bundle(
                     special_circuit_z,
                     num_qubits=num_logical_qubits,
                 ),
-                special_tsim_circuit_strategy="prefix_prepare",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
         }
@@ -484,17 +481,14 @@ def build_decoder_kernel_bundle(
         special = {
             "X": LogicalKernelSpec(
                 kernel=msd_actual_x,
-                special_tsim_circuit_strategy="compiled_inverse_prefix",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
             "Y": LogicalKernelSpec(
                 kernel=msd_actual_y,
-                special_tsim_circuit_strategy="compiled_inverse_prefix",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
             "Z": LogicalKernelSpec(
                 kernel=msd_actual_z,
-                special_tsim_circuit_strategy="compiled_inverse_prefix",
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
             ),
         }
@@ -694,52 +688,78 @@ def build_task(
             ).emit(physical_move_kernel),
         )
 
-    if spec.special_tsim_circuit_strategy == "prefix_prepare":
-        special_circuit_kernel = getattr(
-            spec.kernel,
-            "_msd_special_circuit_kernel",
-            None,
-        )
-        if special_circuit_kernel is None:
-            raise ValueError(
-                "prefix_prepare special kernels must provide an "
-                "_msd_special_circuit_kernel source."
-            )
-        special_circuit_num_qubits = getattr(
-            spec.kernel,
-            "_msd_special_circuit_num_qubits",
-            None,
-        )
-        if special_circuit_num_qubits is None:
-            raise ValueError(
-                "prefix_prepare special kernels must provide an "
-                "_msd_special_circuit_num_qubits value."
-            )
-        special_prepare_kernel = _build_inverse_prepare_kernel_from_cirq(
-            special_circuit_kernel,
-            num_qubits=int(special_circuit_num_qubits),
-            kernel_name=(
-                f"{getattr(spec.kernel, 'sym_name', 'special')}_prepare_inverse"
-            ),
-        )
-        prefix_circuit = _build_prepare_prefix_tsim_circuit(
-            special_prepare_kernel,
-            num_physical_qubits=7 * int(special_circuit_num_qubits),
-        )
-        _override_task_tsim_circuit(task, prefix_circuit + task.tsim_circuit)
-    elif spec.special_tsim_circuit_strategy == "compiled_inverse_prefix":
-        _override_task_tsim_circuit(task, _build_compiled_inverse_prefix_circuit(task))
-    elif spec.special_tsim_circuit_strategy is not None:
-        raise ValueError(
-            "Unknown special_tsim_circuit_strategy: "
-            f"{spec.special_tsim_circuit_strategy}"
-        )
-
     return DemoTask(
         task=task,
         observable_frame=spec.observable_frame,
         metadata={"logical_kernel_spec": spec},
     )
+
+
+def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
+    spec = demo_task.metadata.get("logical_kernel_spec")
+    if not isinstance(spec, LogicalKernelSpec):
+        raise ValueError(
+            "prefix_prepare special tasks must preserve " "LogicalKernelSpec metadata."
+        )
+
+    special_circuit_kernel = getattr(
+        spec.kernel,
+        "_msd_special_circuit_kernel",
+        None,
+    )
+    if special_circuit_kernel is None:
+        raise ValueError(
+            "prefix_prepare special kernels must provide an "
+            "_msd_special_circuit_kernel source."
+        )
+    special_circuit_num_qubits = getattr(
+        spec.kernel,
+        "_msd_special_circuit_num_qubits",
+        None,
+    )
+    if special_circuit_num_qubits is None:
+        raise ValueError(
+            "prefix_prepare special kernels must provide an "
+            "_msd_special_circuit_num_qubits value."
+        )
+
+    special_prepare_kernel = _build_inverse_prepare_kernel_from_cirq(
+        special_circuit_kernel,
+        num_qubits=int(special_circuit_num_qubits),
+        kernel_name=(f"{getattr(spec.kernel, 'sym_name', 'special')}_prepare_inverse"),
+    )
+    prefix_circuit = _build_prepare_prefix_tsim_circuit(
+        special_prepare_kernel,
+        num_physical_qubits=7 * int(special_circuit_num_qubits),
+    )
+    _override_task_tsim_circuit(
+        demo_task.task,
+        prefix_circuit + demo_task.task.tsim_circuit,
+    )
+
+
+def apply_special_tsim_circuit_strategy(
+    task_map: Mapping[str, DemoTask],
+    strategy: Literal["prefix_prepare", "compiled_inverse_prefix"] | None,
+) -> dict[str, DemoTask]:
+    if strategy is None:
+        return dict(task_map)
+    if strategy not in {"prefix_prepare", "compiled_inverse_prefix"}:
+        raise ValueError(
+            "special_tsim_circuit_strategy must be 'prefix_prepare', "
+            "'compiled_inverse_prefix', or None."
+        )
+
+    transformed = dict(task_map)
+    for demo_task in transformed.values():
+        if strategy == "prefix_prepare":
+            _apply_prefix_prepare_to_task(demo_task)
+        else:
+            _override_task_tsim_circuit(
+                demo_task.task,
+                _build_compiled_inverse_prefix_circuit(demo_task.task),
+            )
+    return transformed
 
 
 def build_task_map(

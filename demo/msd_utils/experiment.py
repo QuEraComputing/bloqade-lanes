@@ -9,6 +9,7 @@ import numpy as np
 from bloqade.lanes import GeminiLogicalSimulator
 
 from .circuits import (
+    apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
     build_measurement_maps,
@@ -205,6 +206,7 @@ def build_experiment_task_maps(
     injected_measurement_maps: tuple[Any, Any],
     simulator: GeminiLogicalSimulator | None = None,
     append_measurements: bool = False,
+    special_tsim_circuit_strategy: str | None = "prefix_prepare",
 ) -> ExperimentTaskMaps:
     sim = simulator if simulator is not None else GeminiLogicalSimulator()
     noisy_initializer = make_noisy_steane7_initializer(sim)
@@ -216,13 +218,16 @@ def build_experiment_task_maps(
         noisy_initializer=noisy_initializer,
         append_measurements=append_measurements,
     )
-    special_tasks = build_task_map(
-        sim,
-        special_kernels,
-        m2dets=msd_measurement_maps[0],
-        m2obs=msd_measurement_maps[1],
-        noisy_initializer=noisy_initializer,
-        append_measurements=append_measurements,
+    special_tasks = apply_special_tsim_circuit_strategy(
+        build_task_map(
+            sim,
+            special_kernels,
+            m2dets=msd_measurement_maps[0],
+            m2obs=msd_measurement_maps[1],
+            noisy_initializer=noisy_initializer,
+            append_measurements=append_measurements,
+        ),
+        special_tsim_circuit_strategy,
     )
     injected_tasks = build_task_map(
         sim,

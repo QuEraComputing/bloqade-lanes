@@ -17,7 +17,6 @@ class ObservableFrame(str, Enum):
 @dataclass(frozen=True)
 class LogicalKernelSpec:
     kernel: Any
-    special_tsim_circuit_strategy: str | None = None
     # TODO: for observable_frame, we need to NOT have this auto-correction
     observable_frame: ObservableFrame = ObservableFrame.RAW
 
@@ -72,19 +71,9 @@ class DemoTask:
         run_detectors: bool = False,
         seed: int | None = None,
     ) -> Any:
-        import clifft
-
         from bloqade.gemini.device import DetectorResult, Result
 
-        program = (
-            self.clifft_tsim_program
-            if with_noise
-            else self.clifft_noiseless_tsim_program
-        )
-        sample_kwargs: dict[str, Any] = {"shots": int(shots)}
-        if seed is not None:
-            sample_kwargs["seed"] = int(seed)
-        sample_result = clifft.sample(program, **sample_kwargs)
+        sample_result = self._sample_clifft(shots, with_noise=with_noise, seed=seed)
 
         fidelity_min, fidelity_max = self.task.fidelity_bounds()
         if run_detectors:
@@ -132,4 +121,36 @@ class DemoTask:
             with_noise,
             run_detectors=run_detectors,
             seed=seed,
+        )
+
+    def _sample_clifft(
+        self,
+        shots: int,
+        *,
+        with_noise: bool = True,
+        seed: int | None = None,
+    ) -> Any:
+        import clifft
+
+        program = (
+            self.clifft_tsim_program
+            if with_noise
+            else self.clifft_noiseless_tsim_program
+        )
+        sample_kwargs: dict[str, Any] = {"shots": int(shots)}
+        if seed is not None:
+            sample_kwargs["seed"] = int(seed)
+        return clifft.sample(program, **sample_kwargs)
+
+    def sample_clifft_det_obs(
+        self,
+        shots: int,
+        *,
+        with_noise: bool = True,
+        seed: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        sample_result = self._sample_clifft(shots, with_noise=with_noise, seed=seed)
+        return (
+            np.asarray(sample_result.detectors, dtype=np.uint8),
+            np.asarray(sample_result.observables, dtype=np.uint8),
         )
