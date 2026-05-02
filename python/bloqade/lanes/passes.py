@@ -61,6 +61,11 @@ class ASAPPlacePass(passes.Pass):
     Merges all pure-gate placements (R, Rz, CZ), reorders gates by ASAP
     dependency scheduling, fuses adjacent compatible gates, then re-splits
     on CZ-anchored boundaries.
+
+    ``debug.Info`` statements are stripped at the start of this pass.
+    ASAP scheduling cannot reorder across opaque debug nodes, so they must
+    be removed before the merge/reorder/fuse/split sequence.  Use
+    ``SequentialPlacePass`` if debug statements must be preserved.
     """
 
     name: ClassVar[str] = "asap_place"

@@ -12,6 +12,7 @@ from bloqade.lanes.heuristics.physical.layout import (
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.logical_mvp import compile_squin_to_move
+from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.transform import MoveToSquinPhysical
 from bloqade.lanes.upstream import squin_to_move
 from bloqade.lanes.utils import check_circuit
@@ -65,3 +66,30 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     )
 
     assert check_circuit(ghz, roundtrip_squin)
+
+
+@pytest.mark.slow
+def test_asap_place_pass_roundtrip_state_vector():
+    """ASAPPlacePass produces a physically equivalent circuit to SequentialPlacePass."""
+
+    @squin.kernel(typeinfer=True, fold=True)
+    def circuit():
+        reg = squin.qalloc(4)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        squin.cx(reg[0], reg[2])
+        squin.cx(reg[0], reg[3])
+
+    physical_move = squin_to_move(
+        circuit,
+        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        PhysicalPlacementStrategy(),
+        logical_initialize=False,
+        place_opt_type=ASAPPlacePass,
+        no_raise=False,
+    )
+    roundtrip_squin = MoveToSquinPhysical(get_physical_arch_spec()).emit(
+        physical_move, no_raise=False
+    )
+
+    assert check_circuit(circuit, roundtrip_squin)

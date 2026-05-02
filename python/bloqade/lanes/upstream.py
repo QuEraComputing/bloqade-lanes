@@ -88,7 +88,6 @@ class NativeToPlace:
             )
         ).rewrite(out.code)
 
-        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
         self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))

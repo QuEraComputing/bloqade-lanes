@@ -11,10 +11,10 @@ from bloqade.lanes.types import StateType
 _BARRIERS: tuple[type, ...] = (place.Initialize, place.EndMeasure)
 
 # Union of all concrete QuantumStmt subclasses that carry a .qubits attribute.
-_GateStmt = place.R | place.Rz | place.CZ | place.Initialize | place.EndMeasure
+_SchedulableStmt = place.R | place.Rz | place.CZ | place.Initialize | place.EndMeasure
 
 
-def _group_key(stmt: _GateStmt) -> tuple:
+def _group_key(stmt: _SchedulableStmt) -> tuple:
     """Hashable key identifying gates that FuseAdjacentGates can fuse together."""
     if isinstance(stmt, place.R):
         return (type(stmt), id(stmt.axis_angle), id(stmt.rotation_angle))
@@ -23,20 +23,20 @@ def _group_key(stmt: _GateStmt) -> tuple:
     return (type(stmt),)  # CZ has no non-qubit params
 
 
-def _group_within_layer(layer_stmts: list[_GateStmt]) -> list[_GateStmt]:
+def _group_within_layer(layer_stmts: list[_SchedulableStmt]) -> list[_SchedulableStmt]:
     """Re-order layer_stmts so fusable-equivalent gates are adjacent.
 
     Uses Python dict insertion-order: the first time a (type, params) key is
     seen a new group is opened; subsequent matches append to that group.
     Iterating over groups in insertion order preserves first-seen ordering.
     """
-    groups: dict[tuple, list[_GateStmt]] = {}
+    groups: dict[tuple, list[_SchedulableStmt]] = {}
     for stmt in layer_stmts:
         groups.setdefault(_group_key(stmt), []).append(stmt)
     return [stmt for group in groups.values() for stmt in group]
 
 
-def _asap_schedule(stmts: list[_GateStmt]) -> list[_GateStmt]:
+def _asap_schedule(stmts: list[_SchedulableStmt]) -> list[_SchedulableStmt]:
     """Return stmts in ASAP layer order with fusable-equivalent gates adjacent within each layer."""
     if len(stmts) <= 1:
         return list(stmts)
@@ -58,23 +58,23 @@ def _asap_schedule(stmts: list[_GateStmt]) -> list[_GateStmt]:
 
     # Bucket statements per layer in original order, then group within each layer
     # so fusable-equivalent gates (same type + params) are adjacent.
-    layer_buckets: dict[int, list[_GateStmt]] = {}
+    layer_buckets: dict[int, list[_SchedulableStmt]] = {}
     for i, stmt in enumerate(stmts):
         layer_buckets.setdefault(layer[node_for[i]], []).append(stmt)
 
-    result: list[_GateStmt] = []
+    result: list[_SchedulableStmt] = []
     for lyr in sorted(layer_buckets):
         result.extend(_group_within_layer(layer_buckets[lyr]))
     return result
 
 
 def asap_reorder_policy(
-    stmts: list[_GateStmt],
-) -> list[_GateStmt]:
+    stmts: list[_SchedulableStmt],
+) -> list[_SchedulableStmt]:
     """ASAP scheduling policy. Hard barriers (Initialize, EndMeasure) divide
     the body into independent segments; each segment is scheduled separately."""
-    result: list[_GateStmt] = []
-    segment: list[_GateStmt] = []
+    result: list[_SchedulableStmt] = []
+    segment: list[_SchedulableStmt] = []
 
     for stmt in stmts:
         if isinstance(stmt, _BARRIERS):
@@ -97,7 +97,7 @@ class ReorderStaticPlacement(abc.RewriteRule):
     the gate statements within each segment between barriers.
     """
 
-    reorder_policy: Callable[[list[_GateStmt]], list[_GateStmt]]
+    reorder_policy: Callable[[list[_SchedulableStmt]], list[_SchedulableStmt]]
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not isinstance(node, place.StaticPlacement):
@@ -107,7 +107,7 @@ class ReorderStaticPlacement(abc.RewriteRule):
         old_yield = body_block.last_stmt
         assert isinstance(old_yield, place.Yield)
 
-        stmts: list[_GateStmt] = [
+        stmts: list[_SchedulableStmt] = [
             s
             for s in body_block.stmts
             if isinstance(
