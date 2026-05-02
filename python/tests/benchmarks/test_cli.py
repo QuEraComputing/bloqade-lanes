@@ -11,6 +11,7 @@ from benchmarks.cli import (
     _apply_architecture_mode,
     _build_parser,
     _filter_jobs_for_logical_capacity,
+    _filter_jobs_for_logical_compatibility,
     _infer_case_qubit_count,
     _print_debug_job_start,
     _resolve_arch_specs,
@@ -155,6 +156,25 @@ def test_filter_jobs_for_logical_capacity_skips_large_cases(capsys):
         in captured.out
     )
     assert "adder_64" in captured.out
+
+
+def test_filter_jobs_for_logical_compatibility_skips_non_clifford_cases(capsys):
+    jobs = [
+        _build_job("adder_4", "python_entropy"),
+        _build_job("ghz_4", "python_entropy"),
+        _build_job("qpe_9", "python_entropy"),
+    ]
+
+    filtered_jobs = _filter_jobs_for_logical_compatibility(jobs)
+
+    assert [job.case.case_id for job in filtered_jobs] == ["ghz_4"]
+    captured = capsys.readouterr()
+    assert (
+        "logical mode skipped cases with unsupported non-Clifford rotations"
+        in captured.out
+    )
+    assert "adder_4" in captured.out
+    assert "qpe_9" in captured.out
 
 
 def test_resolve_output_path_uses_architecture_specific_defaults():
