@@ -22,9 +22,12 @@ def cz_layer_split_policy(body_block: ir.Block) -> list[ir.Block]:
     assert isinstance(old_yield, place.Yield)
     classical_results = tuple(old_yield.classical_results)
 
-    stmts: list[_GateStmt] = [
-        s for s in body_block.stmts if isinstance(s, (place.R, place.Rz, place.CZ))
-    ]
+    _supported = (place.R, place.Rz, place.CZ)
+    for stmt in body_block.stmts:
+        if not isinstance(stmt, (*_supported, place.Yield)):
+            return [body_block]
+
+    stmts: list[_GateStmt] = [s for s in body_block.stmts if isinstance(s, _supported)]
 
     if not any(isinstance(s, place.CZ) for s in stmts):
         return [body_block]

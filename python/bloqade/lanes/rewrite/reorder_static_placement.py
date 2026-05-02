@@ -91,10 +91,14 @@ def asap_reorder_policy(
 class ReorderStaticPlacement(abc.RewriteRule):
     """Reorder quantum statements within a StaticPlacement using a pluggable policy.
 
-    The policy receives the gate statements of the body (excluding the trailing
-    Yield and any hard barriers) and returns them in the desired order. Hard
-    barriers are preserved in their original positions; the policy only reorders
-    the gate statements within each segment between barriers.
+    The policy receives all schedulable statements from the body (R, Rz, CZ,
+    Initialize, EndMeasure — everything except the trailing Yield) and returns
+    them in the desired order.  Barrier handling (Initialize, EndMeasure) is the
+    policy's responsibility; ``asap_reorder_policy`` segments on barriers and
+    schedules each segment independently.
+
+    If the body contains any statement type outside that supported set the
+    rewriter skips the node rather than silently dropping unknown statements.
     """
 
     reorder_policy: Callable[[list[_SchedulableStmt]], list[_SchedulableStmt]]
@@ -107,13 +111,15 @@ class ReorderStaticPlacement(abc.RewriteRule):
         old_yield = body_block.last_stmt
         assert isinstance(old_yield, place.Yield)
 
-        stmts: list[_SchedulableStmt] = [
-            s
-            for s in body_block.stmts
-            if isinstance(
-                s, (place.R, place.Rz, place.CZ, place.Initialize, place.EndMeasure)
-            )
-        ]
+        _supported = (place.R, place.Rz, place.CZ, place.Initialize, place.EndMeasure)
+        stmts: list[_SchedulableStmt] = []
+        for s in body_block.stmts:
+            if isinstance(s, place.Yield):
+                continue
+            if not isinstance(s, _supported):
+                return abc.RewriteResult()
+            stmts.append(s)
+
         if not stmts:
             return abc.RewriteResult()
 

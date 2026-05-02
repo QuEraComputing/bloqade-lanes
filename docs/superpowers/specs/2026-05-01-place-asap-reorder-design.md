@@ -81,7 +81,7 @@ Only merges placements whose bodies contain exclusively `R`, `Rz`, `CZ`, and a t
 
 Checking body statement types directly (rather than `len(sp.results)`) handles both cases correctly.
 
-This guarantee is load-bearing for `SplitStaticPlacement`: every body entering the split pass terminates in a plain `place.Yield` with no classical results, so the split policy can safely reuse that `Yield` in the last output block without special-casing.
+This guarantee is load-bearing for `SplitStaticPlacement`: every body entering the split pass terminates in a plain `place.Yield` with no classical results, so the split policy can construct a new `place.Yield` for every output block (including the last) without needing to propagate classical results from the original terminator.
 
 ## Component 2: `ReorderStaticPlacement`
 
@@ -99,7 +99,7 @@ class ReorderStaticPlacement(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult: ...
 ```
 
-The policy receives the gate statements of the body (excluding the trailing `place.Yield` and any hard barriers) and returns them in a new order. Hard barriers (`place.Initialize`, `place.EndMeasure`) divide the body into independent segments; the rewriter applies the policy to each segment separately and re-threads the state chain after reordering.
+The policy receives all schedulable statements from the body (R, Rz, CZ, Initialize, EndMeasure — everything except the trailing `place.Yield`) and returns them in the desired order. Barrier handling is the policy's responsibility: `asap_reorder_policy` segments on `Initialize`/`EndMeasure` barriers and schedules each segment independently. If the body contains any statement type outside the supported set the rewriter skips the node.
 
 ### `asap_reorder_policy`
 
@@ -134,7 +134,7 @@ class SplitStaticPlacement(RewriteRule):
     def rewrite_Statement(self, node: ir.Statement) -> RewriteResult: ...
 ```
 
-The policy receives the body block (with its fully-threaded state chain) and returns a list of new blocks, each of which becomes one `StaticPlacement`. State threading is the policy's responsibility: because the number of statements changes across the output blocks, the policy must construct each output block with a correctly threaded state chain. Each output block must also terminate with a `place.Yield` carrying the block's final `state_after` value — this is required for the block to be a valid `StaticPlacement` body. Intermediate blocks must append a freshly constructed `place.Yield`; the **last block must reuse the original terminator** from the input block (not construct a new one), since that terminator may carry classical results or other outputs that downstream statements depend on. The rewriter wraps each returned block in a new `StaticPlacement` and replaces the original node.
+The policy receives the body block (with its fully-threaded state chain) and returns a list of new blocks, each of which becomes one `StaticPlacement`. State threading is the policy's responsibility: because the number of statements changes across the output blocks, the policy must construct each output block with a correctly threaded state chain. Each output block must also terminate with a freshly constructed `place.Yield` carrying the block's final `state_after` value — this is required for the block to be a valid `StaticPlacement` body. The last block's `Yield` must carry the classical results from the original terminator (extracted before block construction). The rewriter wraps each returned block in a new `StaticPlacement` and replaces the original node.
 
 The `reorder_policy` does not have this constraint — it is a pure permutation of statements with no change in count, so the rewriter can re-thread the state chain itself after reordering.
 
