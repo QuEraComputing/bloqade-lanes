@@ -22,7 +22,6 @@ from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 from bloqade.lanes.validation.address import Validation as AddressValidation
 
@@ -58,7 +57,6 @@ class _NativeToPlaceBase:
     """
 
     arch_spec: ArchSpec | None = field(default=None)
-    place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
         return out
@@ -101,7 +99,6 @@ class _NativeToPlaceBase:
                 rewrite.CommonSubexpressionElimination(),
             )
         ).rewrite(out.code)
-        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
         out = out.similar(
             out.dialects.discard(native_gate).discard(gemini_qubit).discard(squin_qubit)
         )

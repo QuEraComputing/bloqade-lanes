@@ -64,10 +64,10 @@ class PhysicalPipeline:
             else self.placement_strategy
         )
 
-        out = _PhysicalNativeToPlace(
-            arch_spec=self.arch_spec,
-            place_opt_type=self.place_opt_type,
-        ).emit(mt, no_raise=no_raise)
+        out = _PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
+            mt, no_raise=no_raise
+        )
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = _PlaceToMove(
             layout_heuristic=heuristic,

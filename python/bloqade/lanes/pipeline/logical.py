@@ -76,10 +76,10 @@ class LogicalPipeline:
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        out = _LogicalNativeToPlace(
-            arch_spec=self.arch_spec,
-            place_opt_type=self.place_opt_type,
-        ).emit(mt, no_raise=no_raise)
+        out = _LogicalNativeToPlace(arch_spec=self.arch_spec).emit(
+            mt, no_raise=no_raise
+        )
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = _PlaceToMove(
             layout_heuristic=self.layout_heuristic,
