@@ -129,7 +129,8 @@ pub struct SolveOptions {
     /// `congestion_weight × (load - ideal_load)` to slots on overloaded
     /// entangling word pairs. Spreads CZ pairs across word pairs to reduce
     /// routing serialization at high occupancy.
-    /// Only used by [`MoveSolver::solve_entangling`]; ignored by [`MoveSolver::solve`].
+    /// Only used by [`MoveSolver::solve_entangling`]; ignored by
+    /// [`MoveSolver::solve`] and [`MoveSolver::solve_nohome`].
     pub congestion_weight: f64,
 }
 
@@ -855,13 +856,15 @@ impl MoveSolver {
 
     /// Two-phase no-home placement: return assignment + entangling routing.
     ///
-    /// Phase 1: Assigns displaced qubits to optimal home sites using the
-    /// Hungarian algorithm, considering future CZ layer proximity.
+    /// Phase 1 generates up to `1 + nohome_opts.top_bus_signatures` candidate
+    /// home layouts (Hungarian with lane-signature reward variants), routes
+    /// each via [`solve`](MoveSolver::solve), and keeps the candidate whose
+    /// return-routing produces the fewest move layers (the hop-count
+    /// substitute for routing time).
     ///
-    /// Phase 2: Pre-computes CZ-staging targets via the entangling Hungarian
-    /// assignment (with lookahead when `future_cz_layers` is non-empty) and
-    /// routes from the home layout to those fixed targets via
-    /// [`solve`](MoveSolver::solve).
+    /// Phase 2 picks one CZ-staging target per pair via a deterministic
+    /// per-pair rule (cross-word pairs prefer moving the qubit at home;
+    /// same-word pairs default to moving the control), then routes once.
     ///
     /// # Arguments
     ///
@@ -871,9 +874,9 @@ impl MoveSolver {
     /// * `max_expansions` — Budget for node expansions (shared across phases).
     /// * `opts` — Search-tuning parameters for the routing phases.
     /// * `nohome_opts` — Tuning parameters for the return assignment.
-    /// * `future_cz_layers` — Future CZ layers; when non-empty, Phase 2 uses
-    ///   `lookahead_assign_pairs` instead of `greedy_assign_pairs` to bias
-    ///   the CZ-staging assignment toward future-friendly slots.
+    /// * `future_cz_layers` — Future CZ layers; gamma-decayed partner
+    ///   distances bias the Phase-1 home assignment toward future-friendly
+    ///   layouts via `nohome_opts.lambda_lookahead`.
     ///
     /// # Errors
     ///
@@ -905,7 +908,6 @@ impl MoveSolver {
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
         let nh_cache = self.nohome_cache();
-        let ent_cache = self.entangling_cache();
         let arch = self.index.arch_spec();
 
         let has_returners = root
@@ -913,15 +915,17 @@ impl MoveSolver {
             .any(|(_, loc)| !nh_cache.home_set.contains(&loc.encode()));
 
         let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
-        let _ = ent_cache; // not used in the simple Phase-2 picker
 
         // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
-        // Mirrors Python LogicalPlacementMethods._pick_move (without the
+        // Mirrors Python LogicalPlacementMethods._pick_move (minus the
         // move_count comparison, which isn't tracked at the solver level):
         // for each CZ pair, pick which qubit moves to the CZ partner of the
         // *other* qubit's position. Cross-word pairs prefer moving the home
-        // qubit; same-word pairs break ties by minimising same-destination
-        // conflicts among already-chosen moves.
+        // qubit; same-word pairs default to moving the control. (The
+        // Python's `_pick_move_by_conflict` tiebreak collapses to a no-op
+        // for same-word pairs because both candidate destinations land in
+        // the same partner word — porting it would need real lane-conflict
+        // analysis, which is out of scope here.)
         let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
             let mut chosen: Vec<(u32, LocationAddr)> = Vec::with_capacity(cz_pairs.len());
             for &(c, t) in cz_pairs {
@@ -942,26 +946,13 @@ impl MoveSolver {
                 let move_t = (t, t_dst);
 
                 let pick = if c_addr.word_id == t_addr.word_id {
-                    // Same word — break ties by minimising shared-destination
-                    // conflicts with already-chosen moves.
-                    let conflicts = |mv: &(u32, LocationAddr)| -> usize {
-                        chosen
-                            .iter()
-                            .filter(|m| m.1.word_id == mv.1.word_id)
-                            .count()
-                    };
-                    if conflicts(&move_c) <= conflicts(&move_t) {
-                        move_c
-                    } else {
-                        move_t
-                    }
-                } else {
+                    // Same word — pick the control deterministically.
+                    move_c
+                } else if arch.is_home_position(&t_addr) {
                     // Cross-word — prefer moving the qubit currently at home.
-                    if arch.is_home_position(&t_addr) {
-                        move_t
-                    } else {
-                        move_c
-                    }
+                    move_t
+                } else {
+                    move_c
                 };
                 chosen.push(pick);
             }
@@ -1008,6 +999,7 @@ impl MoveSolver {
         // hop-count substitute for Python's _estimate_layers_time).
         let mut total_expanded: u32 = 0;
         let mut best_p1: Option<SolveResult> = None;
+        let mut p1_saw_budget_exceeded = false;
         for candidate in &candidates {
             let return_target: Vec<(u32, LocationAddr)> = candidate.clone();
             let return_result = self.solve(
@@ -1020,21 +1012,29 @@ impl MoveSolver {
 
             total_expanded += return_result.nodes_expanded;
 
-            if return_result.status != SolveStatus::Solved {
-                continue;
-            }
-            if best_p1
-                .as_ref()
-                .is_none_or(|b| return_result.move_layers.len() < b.move_layers.len())
-            {
-                best_p1 = Some(return_result);
+            match return_result.status {
+                SolveStatus::Solved => {
+                    if best_p1
+                        .as_ref()
+                        .is_none_or(|b| return_result.move_layers.len() < b.move_layers.len())
+                    {
+                        best_p1 = Some(return_result);
+                    }
+                }
+                SolveStatus::BudgetExceeded => p1_saw_budget_exceeded = true,
+                SolveStatus::Unsolvable => {}
             }
         }
 
         let Some(return_result) = best_p1 else {
             // No candidate routed successfully.
+            let status = if p1_saw_budget_exceeded {
+                SolveStatus::BudgetExceeded
+            } else {
+                SolveStatus::Unsolvable
+            };
             return Ok(SolveResult {
-                status: SolveStatus::BudgetExceeded,
+                status,
                 move_layers: Vec::new(),
                 goal_config: root,
                 nodes_expanded: total_expanded,
@@ -1056,11 +1056,11 @@ impl MoveSolver {
 
         total_expanded += entangling_result.nodes_expanded;
 
-        let best = if entangling_result.status == SolveStatus::Solved {
+        if entangling_result.status == SolveStatus::Solved {
             let total_cost = return_result.cost + entangling_result.cost;
             let mut combined_layers = return_result.move_layers;
             combined_layers.extend(entangling_result.move_layers);
-            Some(SolveResult {
+            return Ok(SolveResult {
                 status: SolveStatus::Solved,
                 move_layers: combined_layers,
                 goal_config: entangling_result.goal_config,
@@ -1068,20 +1068,18 @@ impl MoveSolver {
                 cost: total_cost,
                 deadlocks: return_result.deadlocks + entangling_result.deadlocks,
                 entropy_trace: None,
-            })
-        } else {
-            None
-        };
+            });
+        }
 
-        Ok(best.unwrap_or(SolveResult {
-            status: SolveStatus::BudgetExceeded,
+        Ok(SolveResult {
+            status: entangling_result.status,
             move_layers: Vec::new(),
             goal_config: root,
             nodes_expanded: total_expanded,
             cost: 0.0,
-            deadlocks: 0,
+            deadlocks: return_result.deadlocks + entangling_result.deadlocks,
             entropy_trace: None,
-        }))
+        })
     }
 }
 

@@ -215,13 +215,16 @@ pub fn candidate_return_layouts(
             };
             let hop_cost = path.len() as u32;
 
-            // Lookahead penalty against reference partners.
+            // Lookahead penalty against reference partners. Skip pairs the
+            // dist_table can't reach — `u32::MAX as f64` would saturate the
+            // score and dominate the cost matrix, masking the real ranking.
             let mut future_delta = 0.0;
             if let Some(partners) = pw.get(&qid) {
                 for (&pid, &weight) in partners {
-                    if let Some(&ref_pos) = reference.get(&pid) {
-                        let d = dist_table.distance(hole, ref_pos).unwrap_or(u32::MAX) as f64;
-                        future_delta += weight * d;
+                    if let Some(&ref_pos) = reference.get(&pid)
+                        && let Some(d) = dist_table.distance(hole, ref_pos)
+                    {
+                        future_delta += weight * d as f64;
                     }
                 }
             }
