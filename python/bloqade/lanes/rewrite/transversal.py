@@ -1,13 +1,17 @@
+import math
 from dataclasses import dataclass
 from itertools import chain
+from typing import Any, cast
 
 from kirin import ir, types
-from kirin.dialects import ilist
+from kirin.analysis import const
+from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.star import steane_star_theta
 from bloqade.lanes.utils import no_none_elements
 
 
@@ -79,6 +83,80 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
         node.replace_by(move.Move(node.current_state, lanes=physical_lanes))
 
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+@dataclass
+class RewriteStarRz(rewrite_abc.RewriteRule):
+    """Lower logical STAR rotations to physical local Rz rotations.
+
+    v1 supports only literal target logical angles and the k=3 Steane STAR
+    protocol.
+    """
+
+    def _literal_angle(self, node: move.StarRz) -> float:
+        hint = node.rotation_angle.hints.get("const")
+        if isinstance(hint, const.Value) and isinstance(hint.data, (int, float)):
+            theta = float(hint.data)
+            if not math.isfinite(theta):
+                raise ValueError("star_rz theta must be finite")
+            return theta
+
+        owner = node.rotation_angle.owner
+        if not isinstance(owner, py.Constant):
+            raise ValueError(
+                "star_rz only supports literal/compile-time theta values in v1; "
+                "runtime kernel-argument theta is not supported"
+            )
+        value = cast(Any, owner.value).data
+        if not isinstance(value, (int, float)):
+            raise ValueError(
+                "star_rz only supports literal/compile-time theta values in v1; "
+                "runtime kernel-argument theta is not supported"
+            )
+        theta = float(value)
+        if not math.isfinite(theta):
+            raise ValueError("star_rz theta must be finite")
+        return theta
+
+    def _physical_support(
+        self,
+        logical_address: LocationAddress,
+        support: tuple[int, int, int],
+    ) -> tuple[LocationAddress, ...]:
+        if logical_address.site_id >= 2:
+            raise ValueError(
+                f"star_rz expected a logical site id 0 or 1, got "
+                f"{logical_address.site_id}"
+            )
+        base = logical_address.site_id * 7
+        return tuple(
+            logical_address.replace(site_id=base + physical_index)
+            for physical_index in support
+        )
+
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, move.StarRz):
+            return rewrite_abc.RewriteResult()
+
+        theta_star = steane_star_theta(self._literal_angle(node))
+        angle_stmt = py.Constant(theta_star)
+        angle_stmt.insert_before(node)
+
+        physical_addresses = tuple(
+            chain.from_iterable(
+                self._physical_support(address, node.qubit_indices)
+                for address in node.location_addresses
+            )
+        )
+
+        node.replace_by(
+            move.LocalRz(
+                node.current_state,
+                angle_stmt.result,
+                location_addresses=physical_addresses,
+            )
+        )
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 

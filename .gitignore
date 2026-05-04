@@ -2,6 +2,10 @@
 .agents
 AGENTS.md
 
+# demo
+demo/star_demo.ipynb
+demo/test_demo_logarch.ipynb
+
 # misc
 .DS_Store
 .tmp*

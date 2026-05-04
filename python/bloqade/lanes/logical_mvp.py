@@ -85,6 +85,7 @@ def transversal_rewrites(mt: ir.Method):
 
     rewrite.Walk(
         rewrite.Chain(
+            transversal.RewriteStarRz(),
             transversal.RewriteLocations(logical.steane7_transversal_map),
             transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
             transversal.RewriteMoves(logical.steane7_transversal_map),

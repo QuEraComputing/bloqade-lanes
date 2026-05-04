@@ -13,6 +13,7 @@ from bloqade.lanes.bytecode.encoding import (
 )
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import transversal
+from bloqade.lanes.star import steane_star_theta
 
 AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
 
@@ -101,5 +102,38 @@ def test_rewrite_conversion():
     result = rewrite.Walk(transversal.RewriteLogicalToPhysicalConversion()).rewrite(
         test_block
     )
+    assert result.has_done_something
+    assert_nodes(test_block, expected_block)
+
+
+def test_rewrite_star_rz_to_physical_local_rz():
+    test_block = ir.Block()
+    test_block.stmts.append(rotation_angle := py.Constant(0.5))
+    test_block.stmts.append(
+        move.StarRz(
+            current_state := ir.TestValue(),
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 0),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    expected_block = ir.Block()
+    expected_block.stmts.append(rotation_angle := py.Constant(0.5))
+    expected_block.stmts.append(theta_star := py.Constant(steane_star_theta(0.5)))
+    expected_block.stmts.append(
+        move.LocalRz(
+            current_state,
+            theta_star.result,
+            location_addresses=(
+                LocationAddress(0, 4),
+                LocationAddress(0, 5),
+                LocationAddress(0, 6),
+            ),
+        )
+    )
+
+    result = rewrite.Walk(transversal.RewriteStarRz()).rewrite(test_block)
+
     assert result.has_done_something
     assert_nodes(test_block, expected_block)

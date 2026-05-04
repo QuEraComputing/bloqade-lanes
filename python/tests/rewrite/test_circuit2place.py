@@ -123,6 +123,40 @@ def test_rz():
     assert_nodes(test_block, expected_block)
 
 
+def test_star_rz():
+    rotation_angle = ir.TestValue()
+    test_block = ir.Block(
+        [
+            qubits := ilist.New(values=(q0 := ir.TestValue(), q1 := ir.TestValue())),
+            gemini_stmts.StarRz(rotation_angle, qubits.result, qubit_indices=(0, 2, 4)),
+        ],
+    )
+
+    expected_block = ir.Block(
+        [
+            qubits := ilist.New(values=(q0, q1)),
+            place.StaticPlacement(qubits=(q0, q1), body=ir.Region(block := ir.Block())),
+        ]
+    )
+
+    entry_state = block.args.append_from(types.StateType, name="entry_state")
+    block.stmts.append(
+        gate_stmt := place.StarRz(
+            entry_state,
+            rotation_angle,
+            qubits=(0, 1),
+            qubit_indices=(0, 2, 4),
+        )
+    )
+    block.stmts.append(place.Yield(gate_stmt.state_after))
+
+    rule = rewrite.Walk(RewritePlaceOperations())
+
+    rule.rewrite(test_block)
+
+    assert_nodes(test_block, expected_block)
+
+
 def test_measurement():
     test_block = ir.Block(
         [

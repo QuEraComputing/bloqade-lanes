@@ -6,6 +6,7 @@ from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.star import validate_steane_star_support
 
 from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
 
@@ -124,6 +125,30 @@ class LocalRz(StatefulStatement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
+@statement(dialect=dialect, init=False)
+class StarRz(StatefulStatement):
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def __init__(
+        self,
+        current_state: ir.SSAValue,
+        rotation_angle: ir.SSAValue,
+        *,
+        location_addresses: tuple[LocationAddress, ...],
+        qubit_indices: tuple[int, int, int] | tuple[int, ...] | None = None,
+    ):
+        ir.Statement.__init__(
+            self,
+            args=(current_state, rotation_angle),
+            args_slice={"current_state": 0, "rotation_angle": 1},
+            result_types=(StateType,),
+        )
+        self.location_addresses = location_addresses
+        self.qubit_indices = validate_steane_star_support(qubit_indices)
+
+
 @statement(dialect=dialect)
 class GlobalRz(StatefulStatement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
@@ -235,6 +260,16 @@ def local_rz(
     rotation_angle: float,
     *,
     location_addresses: tuple[LocationAddress, ...],
+) -> State: ...
+
+
+@wraps(StarRz)
+def star_rz(
+    current_state: State,
+    rotation_angle: float,
+    *,
+    location_addresses: tuple[LocationAddress, ...],
+    qubit_indices: tuple[int, int, int],
 ) -> State: ...
 
 

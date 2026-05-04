@@ -14,6 +14,7 @@ from bloqade.lanes.analysis.placement import (
     PlacementAnalysis,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.star import validate_steane_star_support
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")
@@ -134,6 +135,30 @@ class Rz(QuantumStmt):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
+@statement(dialect=dialect, init=False)
+class StarRz(QuantumStmt):
+    qubits: tuple[int, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def __init__(
+        self,
+        state_before: ir.SSAValue,
+        rotation_angle: ir.SSAValue,
+        *,
+        qubits: tuple[int, ...],
+        qubit_indices: tuple[int, int, int] | tuple[int, ...] | None = None,
+    ):
+        ir.Statement.__init__(
+            self,
+            args=(state_before, rotation_angle),
+            args_slice={"state_before": 0, "rotation_angle": 1},
+            result_types=(StateType,),
+        )
+        self.qubits = qubits
+        self.qubit_indices = validate_steane_star_support(qubit_indices)
+
+
 @statement(dialect=dialect)
 class EndMeasure(QuantumStmt):
     state_before: ir.SSAValue = info.argument(StateType)
@@ -252,8 +277,12 @@ class PlacementMethods(interp.MethodTable):
 
     @interp.impl(R)
     @interp.impl(Rz)
+    @interp.impl(StarRz)
     def impl_single_qubit_gate(
-        self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: R | Rz
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: R | Rz | StarRz,
     ):
         return (
             _interp.placement_strategy.sq_placements(
