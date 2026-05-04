@@ -59,3 +59,25 @@ class RewriteMoveToStackMove(RewriteRule):
     @_rewrite.register(move.Store)
     def _(self, stmt: move.Store, to_delete: list[ir.Statement]) -> None:
         to_delete.append(stmt)
+
+    @_rewrite.register(move.Fill)
+    def _(self, stmt: move.Fill, to_delete: list[ir.Statement]) -> None:
+        loc_consts = tuple(
+            stack_move.ConstLoc(value=addr) for addr in stmt.location_addresses
+        )
+        for lc in loc_consts:
+            lc.insert_before(stmt)
+        cls = stack_move.Fill if self._first_fill_emitted else stack_move.InitialFill
+        new = cls(locations=tuple(lc.result for lc in loc_consts))
+        new.insert_before(stmt)
+        self._first_fill_emitted = True
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.Move)
+    def _(self, stmt: move.Move, to_delete: list[ir.Statement]) -> None:
+        lane_consts = tuple(stack_move.ConstLane(value=addr) for addr in stmt.lanes)
+        for lc in lane_consts:
+            lc.insert_before(stmt)
+        new = stack_move.Move(lanes=tuple(lc.result for lc in lane_consts))
+        new.insert_before(stmt)
+        to_delete.append(stmt)
