@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import singledispatchmethod
 
+from bloqade.decoders.dialects import annotate as _annotate
 from kirin import ir
 from kirin.dialects import ilist as kirin_ilist, py as kirin_py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
@@ -190,4 +191,22 @@ class RewriteMoveToStackMove(RewriteRule):
         aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
         aw.insert_before(stmt)
         stmt.result.replace_by(aw.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(_annotate.stmts.SetDetector)
+    def _(
+        self, stmt: _annotate.stmts.SetDetector, to_delete: list[ir.Statement]
+    ) -> None:
+        new = stack_move.SetDetector(array=stmt.measurements)
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(_annotate.stmts.SetObservable)
+    def _(
+        self, stmt: _annotate.stmts.SetObservable, to_delete: list[ir.Statement]
+    ) -> None:
+        new = stack_move.SetObservable(array=stmt.measurements)
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
         to_delete.append(stmt)

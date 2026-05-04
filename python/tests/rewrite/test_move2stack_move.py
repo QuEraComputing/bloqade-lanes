@@ -1,3 +1,4 @@
+from bloqade.decoders.dialects import annotate
 from kirin import ir
 from kirin.dialects import func, ilist, py as kirin_py
 from kirin.rewrite import Walk
@@ -280,3 +281,35 @@ def test_getfutureresult_chain_lowers_to_await_measure():
     sm_m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
     aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
     assert aw.future is sm_m.results[0]
+
+
+# ---- annotation tests ----
+
+
+def test_set_detector_lowers_to_stack_move_set_detector():
+    na = ilist.New(values=())
+    coords = ilist.New(values=())
+    sd = annotate.stmts.SetDetector(measurements=na.result, coordinates=coords.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [na, coords, sd, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, annotate.stmts.SetDetector) for s in block.stmts)
+    assert any(isinstance(s, stack_move.SetDetector) for s in block.stmts)
+
+
+def test_set_observable_lowers_to_stack_move_set_observable():
+    na = ilist.New(values=())
+    so = annotate.stmts.SetObservable(measurements=na.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [na, so, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, annotate.stmts.SetObservable) for s in block.stmts)
+    assert any(isinstance(s, stack_move.SetObservable) for s in block.stmts)
