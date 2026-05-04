@@ -22,7 +22,12 @@ kernel.run_pass = squin.kernel.run_pass
 LogicalQubit = ilist.IList[Qubit, Literal[7]]
 
 
-def slot_allocator():
+def steane_slot_allocator():
+    """Generates a qubit allocator for logical qubits.
+    Tries to allocate logical qubits into the architecture in an efficient way to
+    make parallelism in the logical gagdets as easily as possible in the move compiler.
+
+    """
     # canonical slot order
     slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10, 14, 20])
 
@@ -64,7 +69,7 @@ def slot_allocator():
     return qalloc, qalloc_slot
 
 
-qalloc, qalloc_slot = slot_allocator()
+qalloc, qalloc_slot = steane_slot_allocator()
 
 N = TypeVar("N")
 
@@ -73,6 +78,8 @@ N = TypeVar("N")
 def flat(
     reg: ilist.IList[LogicalQubit, Any],
 ) -> ilist.IList[Qubit, Any]:
+    """Flatten a logical register into a single list of physical qubits"""
+
     def _inner(cumulant, ele):
         return cumulant + ele
 
@@ -81,11 +88,17 @@ def flat(
 
 @kernel
 def cx(controls: ilist.IList[LogicalQubit, N], targets: ilist.IList[LogicalQubit, N]):
+    """Efficient broadcasted cx gate over steane logical qubits"""
     squin.broadcast.cx(flat(controls), flat(targets))
 
 
 @kernel
 def measure_logical_reg(logical_reg: ilist.IList[LogicalQubit, Any]):
+    """Helper function to get around single measurement restriction of kernel.
+    first flatten the logical register into physical qubits, then reconstruct
+    the groups of physical measurements into groups related to logical qubits.
+
+    """
     # measurements must be flattened, only one measurement is allowed!
     measurements = squin.broadcast.measure(flat(logical_reg))
     logical_groups = []
