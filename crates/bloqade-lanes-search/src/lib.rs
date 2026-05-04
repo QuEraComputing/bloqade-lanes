@@ -19,6 +19,7 @@ pub mod heuristic;
 pub mod heuristics;
 
 pub mod lane_index;
+pub mod nohome;
 pub mod observer;
 pub(crate) mod ordering;
 pub mod scorers;

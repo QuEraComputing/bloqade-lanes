@@ -12,6 +12,7 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use crate::arch_python::PyLaneAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::entropy::{EntropyTrace, EntropyTraceStep};
+use bloqade_lanes_search::nohome::NoHomeOptions;
 use bloqade_lanes_search::solve::{
     InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
 };
@@ -634,8 +635,127 @@ impl PyMoveSolver {
         Ok(PySolveResult { inner: result })
     }
 
+    /// Two-phase no-home placement: return assignment + entangling routing.
+    ///
+    /// Phase 1 assigns displaced qubits to optimal home sites.
+    /// Phase 2 routes from home to CZ-staging using solve_entangling.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to current location.
+    ///     cz_pairs: List of (control, target) qubit pairs for the CZ layer.
+    ///     blocked: List of immovable obstacle locations.
+    ///     max_expansions: Optional node expansion budget.
+    ///     options: Search-tuning parameters for routing phases.
+    ///     nohome_options: Tuning parameters for the return assignment.
+    ///     future_cz_layers: Future CZ layers for lookahead.
+    ///
+    /// Returns:
+    ///     SolveResult with the combined return + entangling placement.
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, nohome_options=None, future_cz_layers=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn solve_nohome(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        options: Option<&PySolveOptions>,
+        nohome_options: Option<&PyNoHomeOptions>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let nh_opts = nohome_options.map(|o| o.inner.clone()).unwrap_or_default();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_nohome(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &opts,
+                    &nh_opts,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
     fn __repr__(&self) -> String {
         "MoveSolver(...)".to_string()
+    }
+}
+
+// ── No-home options ──
+
+/// Tuning parameters for the no-home return assignment.
+///
+/// Controls how displaced qubits are assigned to available home sites
+/// between CZ layers.
+#[pyclass(
+    name = "NoHomeOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyNoHomeOptions {
+    inner: NoHomeOptions,
+}
+
+#[pymethods]
+impl PyNoHomeOptions {
+    #[new]
+    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8))]
+    fn new(gamma: f64, lambda_lookahead: f64, k_candidates: usize) -> PyResult<Self> {
+        if !gamma.is_finite() || !(0.0..=1.0).contains(&gamma) {
+            return Err(PyValueError::new_err(
+                "gamma must be a finite float in [0.0, 1.0]",
+            ));
+        }
+        if !lambda_lookahead.is_finite() || lambda_lookahead < 0.0 {
+            return Err(PyValueError::new_err(
+                "lambda_lookahead must be a non-negative finite float",
+            ));
+        }
+        if k_candidates == 0 {
+            return Err(PyValueError::new_err("k_candidates must be >= 1"));
+        }
+        Ok(Self {
+            inner: NoHomeOptions {
+                gamma,
+                lambda_lookahead,
+                k_candidates,
+            },
+        })
+    }
+
+    #[getter]
+    fn gamma(&self) -> f64 {
+        self.inner.gamma
+    }
+
+    #[getter]
+    fn lambda_lookahead(&self) -> f64 {
+        self.inner.lambda_lookahead
+    }
+
+    #[getter]
+    fn k_candidates(&self) -> usize {
+        self.inner.k_candidates
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={})",
+            self.inner.gamma, self.inner.lambda_lookahead, self.inner.k_candidates,
+        )
     }
 }
 
@@ -658,7 +778,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false, dynamic_targets=false, recompute_interval=1, congestion_weight=0.0))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false, congestion_weight=0.0))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
@@ -670,8 +790,6 @@ impl PySolveOptions {
         deadlock_policy: PyDeadlockPolicy,
         w_t: f64,
         collect_entropy_trace: bool,
-        dynamic_targets: bool,
-        recompute_interval: u32,
         congestion_weight: f64,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
@@ -710,21 +828,9 @@ impl PySolveOptions {
                 deadlock_policy: deadlock_policy.to_rs(),
                 w_t,
                 collect_entropy_trace,
-                dynamic_targets,
-                recompute_interval,
                 congestion_weight,
             },
         })
-    }
-
-    #[getter]
-    fn dynamic_targets(&self) -> bool {
-        self.inner.dynamic_targets
-    }
-
-    #[getter]
-    fn recompute_interval(&self) -> u32 {
-        self.inner.recompute_interval
     }
 
     #[getter]

@@ -953,8 +953,6 @@ class SolveOptions:
         deadlock_policy: DeadlockPolicy = DeadlockPolicy.SKIP,
         w_t: float = 0.05,
         collect_entropy_trace: bool = False,
-        dynamic_targets: bool = False,
-        recompute_interval: int = 1,
         congestion_weight: float = 0.0,
     ) -> None: ...
     @property
@@ -976,11 +974,25 @@ class SolveOptions:
     @property
     def collect_entropy_trace(self) -> bool: ...
     @property
-    def dynamic_targets(self) -> bool: ...
-    @property
-    def recompute_interval(self) -> int: ...
-    @property
     def congestion_weight(self) -> float: ...
+    def __repr__(self) -> str: ...
+
+@final
+class NoHomeOptions:
+    """Tuning parameters for the no-home return assignment."""
+
+    def __init__(
+        self,
+        gamma: float = 0.85,
+        lambda_lookahead: float = 0.5,
+        k_candidates: int = 8,
+    ) -> None: ...
+    @property
+    def gamma(self) -> float: ...
+    @property
+    def lambda_lookahead(self) -> float: ...
+    @property
+    def k_candidates(self) -> int: ...
     def __repr__(self) -> str: ...
 
 @final
@@ -1179,6 +1191,37 @@ class MoveSolver:
 
         Returns:
             SolveResult with the discovered entangling placement.
+        """
+        ...
+
+    def solve_nohome(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: Optional[int] = None,
+        options: SolveOptions | None = None,
+        nohome_options: NoHomeOptions | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Two-phase no-home placement: return assignment + entangling routing.
+
+        Phase 1 assigns displaced qubits to optimal home sites using the
+        Hungarian algorithm with gamma-decayed future CZ partner proximity.
+        Phase 2 routes from the chosen home layout to CZ-staging positions
+        using ``solve_entangling``.
+
+        Args:
+            initial: Mapping of qubit_id to current location.
+            cz_pairs: List of (control, target) qubit pairs for the CZ layer.
+            blocked: List of immovable obstacle locations.
+            max_expansions: Optional node expansion budget.
+            options: Search-tuning parameters for routing phases.
+            nohome_options: Tuning parameters for the return assignment.
+            future_cz_layers: Future CZ layers for lookahead.
+
+        Returns:
+            SolveResult with the combined return + entangling placement.
         """
         ...
 

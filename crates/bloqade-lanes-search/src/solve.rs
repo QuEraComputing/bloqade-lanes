@@ -23,6 +23,7 @@ use crate::goals::AllAtTarget;
 use crate::graph::MoveSet;
 use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
 use crate::lane_index::LaneIndex;
+use crate::nohome::{self, NoHomeOptions};
 use crate::observer::NoOpObserver;
 use crate::scorers::DistanceScorer;
 use crate::target_generator::{TargetContext, TargetGenerator, validate_candidate};
@@ -121,21 +122,6 @@ pub struct SolveOptions {
     pub w_t: f64,
     /// Collect entropy-step trace payload when using entropy strategy.
     pub collect_entropy_trace: bool,
-    /// Whether to recompute per-qubit targets dynamically on every node
-    /// expansion in [`MoveSolver::solve_entangling`].
-    ///
-    /// `false` (default): use a static greedy pre-assignment computed once.
-    /// `true`: recompute targets per expansion, avoiding premature qubit
-    /// "sleep" at the cost of O(pairs × word_pairs) extra per node.
-    ///
-    /// Ignored by [`MoveSolver::solve`] (always uses fixed targets).
-    pub dynamic_targets: bool,
-    /// How often to recompute targets when `dynamic_targets` is true.
-    ///
-    /// `1` = every expansion (most fresh, most expensive).
-    /// `10-50` = periodic recomputation (good balance).
-    /// Only used by [`MoveSolver::solve_entangling`]; ignored by [`MoveSolver::solve`].
-    pub recompute_interval: u32,
     /// Congestion penalty weight for the entangling Hungarian assignment.
     ///
     /// `0.0` (default): standard min-sum-distance assignment.
@@ -159,8 +145,6 @@ impl Default for SolveOptions {
             deadlock_policy: DeadlockPolicy::Skip,
             w_t: 0.05,
             collect_entropy_trace: false,
-            dynamic_targets: false,
-            recompute_interval: 1,
             congestion_weight: 0.0,
         }
     }
@@ -491,6 +475,16 @@ pub(crate) struct EntanglingCache {
     pub wpd: WordPairDistances,
 }
 
+/// Cached architecture-dependent data for [`MoveSolver::solve_nohome`].
+///
+/// All fields depend only on the architecture (lane index). Built once on
+/// first `solve_nohome` call and reused for all subsequent calls.
+pub(crate) struct NoHomeCache {
+    pub home_locs: Vec<u64>,
+    pub home_set: HashSet<u64>,
+    pub dist_table: Arc<DistanceTable>,
+}
+
 /// Reusable move synthesis solver.
 ///
 /// Constructed once per architecture — parses the arch spec JSON and builds
@@ -502,6 +496,7 @@ pub(crate) struct EntanglingCache {
 pub struct MoveSolver {
     index: LaneIndex,
     entangling_cache: OnceLock<EntanglingCache>,
+    nohome_cache: OnceLock<NoHomeCache>,
 }
 
 impl std::fmt::Debug for MoveSolver {
@@ -522,6 +517,7 @@ impl MoveSolver {
         Ok(Self {
             index: LaneIndex::new(arch_spec),
             entangling_cache: OnceLock::new(),
+            nohome_cache: OnceLock::new(),
         })
     }
 
@@ -530,6 +526,7 @@ impl MoveSolver {
         Self {
             index,
             entangling_cache: OnceLock::new(),
+            nohome_cache: OnceLock::new(),
         }
     }
 
@@ -730,24 +727,25 @@ impl MoveSolver {
         };
 
         let lookahead = opts.lookahead;
-        // Loose-goal search needs at least MoveBlockers to handle blocking
-        // between qubits competing for entangling positions. Upgrade Skip
-        // to MoveBlockers; preserve AllMoves if explicitly requested.
-        let deadlock_policy = match opts.deadlock_policy {
-            DeadlockPolicy::Skip => DeadlockPolicy::MoveBlockers,
-            other => other,
-        };
-        let opts = &SolveOptions {
-            deadlock_policy,
-            ..opts.clone()
+        // Loose-goal entangling search needs at least MoveBlockers to handle
+        // qubits competing for entangling positions; preserve AllMoves if
+        // explicitly requested.
+        let upgraded_opts;
+        let opts = if matches!(opts.deadlock_policy, DeadlockPolicy::Skip) {
+            upgraded_opts = SolveOptions {
+                deadlock_policy: DeadlockPolicy::MoveBlockers,
+                ..opts.clone()
+            };
+            &upgraded_opts
+        } else {
+            opts
         };
 
-        let mut result = if opts.dynamic_targets {
+        let mut result = {
             use crate::generators::LooseTargetGenerator;
 
             let arch_arc = Arc::new(arch.clone());
             let dt_arc = dist_table.clone(); // Arc clone (cheap)
-            let recompute_interval = opts.recompute_interval;
             let congestion_weight = opts.congestion_weight;
 
             let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
@@ -762,27 +760,8 @@ impl MoveSolver {
                     arch_arc.clone(),
                     dt_arc.clone(),
                     seed,
-                    recompute_interval,
                     congestion_weight,
                 )
-            };
-
-            run_with_components(
-                root,
-                &goal,
-                make_generator,
-                h_max,
-                h_sum,
-                &ctx,
-                max_expansions,
-                opts,
-            )
-        } else {
-            let make_generator = |seed: u64, policy: DeadlockPolicy| {
-                HeuristicGenerator::new()
-                    .with_deadlock_policy(policy)
-                    .with_lookahead(lookahead)
-                    .with_seed(seed)
             };
 
             run_with_components(
@@ -854,6 +833,226 @@ impl MoveSolver {
         }
 
         Ok(result)
+    }
+
+    /// Get or build the cached no-home precomputation.
+    fn nohome_cache(&self) -> &NoHomeCache {
+        self.nohome_cache.get_or_init(|| {
+            let arch = self.index.arch_spec();
+            let home_locs = nohome::home_sites(arch);
+            let home_set: HashSet<u64> = home_locs.iter().copied().collect();
+            let dist_table = Arc::new(
+                DistanceTable::new(&home_locs, &self.index).with_time_distances(&self.index),
+            );
+            NoHomeCache {
+                home_locs,
+                home_set,
+                dist_table,
+            }
+        })
+    }
+
+    /// Two-phase no-home placement: return assignment + entangling routing.
+    ///
+    /// Phase 1: Assigns displaced qubits to optimal home sites using the
+    /// Hungarian algorithm, considering future CZ layer proximity.
+    ///
+    /// Phase 2: Pre-computes CZ-staging targets via the entangling Hungarian
+    /// assignment (with lookahead when `future_cz_layers` is non-empty) and
+    /// routes from the home layout to those fixed targets via
+    /// [`solve`](MoveSolver::solve).
+    ///
+    /// # Arguments
+    ///
+    /// * `initial` — Starting qubit positions (typically post-CZ).
+    /// * `cz_pairs` — Required CZ pairs for the next layer.
+    /// * `blocked` — Immovable obstacle locations.
+    /// * `max_expansions` — Budget for node expansions (shared across phases).
+    /// * `opts` — Search-tuning parameters for the routing phases.
+    /// * `nohome_opts` — Tuning parameters for the return assignment.
+    /// * `future_cz_layers` — Future CZ layers; when non-empty, Phase 2 uses
+    ///   `lookahead_assign_pairs` instead of `greedy_assign_pairs` to bias
+    ///   the CZ-staging assignment toward future-friendly slots.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if `initial` contains duplicate qubit IDs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn solve_nohome(
+        &self,
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        cz_pairs: &[(u32, u32)],
+        blocked: impl IntoIterator<Item = LocationAddr>,
+        max_expansions: Option<u32>,
+        opts: &SolveOptions,
+        nohome_opts: &NoHomeOptions,
+        future_cz_layers: &[Vec<(u32, u32)>],
+    ) -> Result<SolveResult, ConfigError> {
+        // Both phases route under entangling-style contention; upgrade Skip
+        // to MoveBlockers (preserve AllMoves if explicitly requested).
+        let upgraded_opts;
+        let opts = if matches!(opts.deadlock_policy, DeadlockPolicy::Skip) {
+            upgraded_opts = SolveOptions {
+                deadlock_policy: DeadlockPolicy::MoveBlockers,
+                ..opts.clone()
+            };
+            &upgraded_opts
+        } else {
+            opts
+        };
+
+        let root = Config::new(initial)?;
+        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+        let nh_cache = self.nohome_cache();
+        let ent_cache = self.entangling_cache();
+        let arch = self.index.arch_spec();
+
+        let has_returners = root
+            .iter()
+            .any(|(_, loc)| !nh_cache.home_set.contains(&loc.encode()));
+
+        let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+
+        // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
+        // Spectator qubits keep their current location.
+        let cz_qubits: HashSet<u32> = cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+        let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
+            let assigned = if !future_cz_layers.is_empty() {
+                entangling::lookahead_assign_pairs(
+                    cz_pairs,
+                    from,
+                    arch,
+                    &ent_cache.dist_table,
+                    0,
+                    future_cz_layers,
+                    0.2,
+                    opts.congestion_weight,
+                )
+            } else {
+                entangling::greedy_assign_pairs(
+                    cz_pairs,
+                    from,
+                    arch,
+                    &ent_cache.dist_table,
+                    0,
+                    None,
+                    0.0,
+                    opts.congestion_weight,
+                )
+            };
+            let assigned_map: HashMap<u32, u64> = assigned.into_iter().collect();
+            from.iter()
+                .map(|(qid, loc)| {
+                    let target = if cz_qubits.contains(&qid) {
+                        assigned_map
+                            .get(&qid)
+                            .copied()
+                            .map(LocationAddr::decode)
+                            .unwrap_or(loc)
+                    } else {
+                        loc
+                    };
+                    (qid, target)
+                })
+                .collect()
+        };
+
+        if !has_returners {
+            // Skip the return phase — go directly to fixed-target entangling.
+            let cz_targets = resolve_cz_targets(&root);
+            return self.solve(
+                root.iter(),
+                cz_targets,
+                blocked_locs.iter().copied(),
+                max_expansions,
+                opts,
+            );
+        }
+
+        let occupied_set: HashSet<u64> = root.iter().map(|(_, loc)| loc.encode()).collect();
+        let holes: Vec<u64> = nh_cache
+            .home_locs
+            .iter()
+            .filter(|l| !occupied_set.contains(l) && !blocked_set.contains(l))
+            .copied()
+            .collect();
+
+        let pw = nohome::partner_weights(future_cz_layers, nohome_opts.gamma);
+
+        let candidates = nohome::candidate_return_layouts(
+            &root,
+            &nh_cache.home_set,
+            &holes,
+            &nh_cache.dist_table,
+            &pw,
+            nohome_opts,
+        );
+
+        let mut best: Option<SolveResult> = None;
+        let mut total_expanded: u32 = 0;
+
+        for candidate in &candidates {
+            // Phase 1: route current → home layout (fixed-target).
+            let return_target: Vec<(u32, LocationAddr)> = candidate.clone();
+            let return_result = self.solve(
+                root.iter(),
+                return_target,
+                blocked_locs.iter().copied(),
+                max_expansions,
+                opts,
+            )?;
+
+            total_expanded += return_result.nodes_expanded;
+
+            if return_result.status != SolveStatus::Solved {
+                continue;
+            }
+
+            // Phase 2: pre-assign CZ-staging targets, then route home → staging
+            // via the regular fixed-target solve.
+            let cz_targets = resolve_cz_targets(&return_result.goal_config);
+            let entangling_result = self.solve(
+                return_result.goal_config.iter(),
+                cz_targets,
+                blocked_locs.iter().copied(),
+                max_expansions,
+                opts,
+            )?;
+
+            total_expanded += entangling_result.nodes_expanded;
+
+            if entangling_result.status != SolveStatus::Solved {
+                continue;
+            }
+
+            let total_cost = return_result.cost + entangling_result.cost;
+            let mut combined_layers = return_result.move_layers;
+            combined_layers.extend(entangling_result.move_layers);
+
+            let combined = SolveResult {
+                status: SolveStatus::Solved,
+                move_layers: combined_layers,
+                goal_config: entangling_result.goal_config,
+                nodes_expanded: total_expanded,
+                cost: total_cost,
+                deadlocks: return_result.deadlocks + entangling_result.deadlocks,
+                entropy_trace: None,
+            };
+
+            if best.as_ref().is_none_or(|b| total_cost < b.cost) {
+                best = Some(combined);
+            }
+        }
+
+        Ok(best.unwrap_or(SolveResult {
+            status: SolveStatus::BudgetExceeded,
+            move_layers: Vec::new(),
+            goal_config: root,
+            nodes_expanded: total_expanded,
+            cost: 0.0,
+            deadlocks: 0,
+            entropy_trace: None,
+        }))
     }
 }
 
@@ -1453,27 +1652,6 @@ mod tests {
                 Some(5000),
                 &SolveOptions {
                     strategy: Strategy::Ids,
-                    w_t: 0.0,
-                    ..SolveOptions::default()
-                },
-                &[],
-            )
-            .unwrap();
-
-        assert_eq!(result.status, SolveStatus::Solved);
-    }
-
-    #[test]
-    fn solve_entangling_dynamic_targets() {
-        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
-        let result = solver
-            .solve_entangling(
-                [(0, loc(0, 0)), (1, loc(1, 0))],
-                &[(0, 1)],
-                std::iter::empty(),
-                Some(5000),
-                &SolveOptions {
-                    dynamic_targets: true,
                     w_t: 0.0,
                     ..SolveOptions::default()
                 },

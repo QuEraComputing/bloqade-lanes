@@ -18,6 +18,7 @@ import random
 import sys
 import tempfile
 import time
+from typing import Literal
 
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.compile import squin_to_move
@@ -30,6 +31,7 @@ from bloqade.lanes.heuristics.physical.movement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
 from bloqade.lanes.upstream import always_merge_heuristic
 
 # ── Random circuit generation ──────────────────────────────────────
@@ -188,10 +190,18 @@ def main():
         help="Max simultaneous CZ pairs per layer (default: unlimited)",
     )
     parser.add_argument(
-        "--loose-strategy",
-        choices=["ids", "entropy", "cascade-ids"],
-        default="ids",
-        help="Search strategy for loose-goal placement (default: ids)",
+        "--congestion-weight",
+        type=float,
+        default=1.0,
+        help="Congestion-aware Hungarian weight for loose-goal (0.0 = off, 1.0 = default)",
+    )
+    parser.add_argument(
+        "--deadlock-policy",
+        choices=["skip", "move_blockers", "all_moves"],
+        default="move_blockers",
+        help="Deadlock policy in loose-goal: 'skip' = pure IDS jump-back, "
+        "'move_blockers' (default) = single-atom blocker escapes, "
+        "'all_moves' = exhaustive single-atom escapes.",
     )
     parser.add_argument(
         "--visualize",
@@ -211,45 +221,62 @@ def main():
         arch_spec=arch_spec
     )
 
-    strategies = {
-        "1 Baseline": {
+    loose_suffix = f"cw={args.congestion_weight}, dl={args.deadlock_policy}"
+
+    strategies: dict[str, dict] = {}
+    inners: tuple[Literal["ids", "entropy"], ...] = ("ids", "entropy")
+    for idx, inner in enumerate(inners):
+        offset = idx * 4
+        strategies[f"{offset + 1} Baseline ({inner})"] = {
             "strategy": PhysicalPlacementStrategy(
                 arch_spec=arch_spec,
                 traversal=RustPlacementTraversal(
-                    strategy="ids",
+                    strategy=inner,
                     max_expansions=args.max_expansions,
                     restarts=20,
                     lookahead=False,
                 ),
             ),
             "insert_return_moves": True,
-        },
-        "2 Baseline+LA": {
+        }
+        strategies[f"{offset + 2} Baseline+LA ({inner})"] = {
             "strategy": PhysicalPlacementStrategy(
                 arch_spec=arch_spec,
                 traversal=RustPlacementTraversal(
-                    strategy="ids",
+                    strategy=inner,
                     max_expansions=args.max_expansions,
                     restarts=20,
                     lookahead=True,
                 ),
             ),
             "insert_return_moves": True,
-        },
-        f"3 Loose full LA ({args.loose_strategy})": {
+        }
+        strategies[f"{offset + 3} Loose ({inner}, {loose_suffix})"] = {
             "strategy": LooseGoalPlacementStrategy(
                 arch_spec=arch_spec,
-                strategy=args.loose_strategy,
+                strategy=inner,
                 max_expansions=args.max_expansions,
                 restarts=20,
-                dynamic_targets=True,
-                recompute_interval=0,
                 lookahead=True,
+                congestion_weight=args.congestion_weight,
+                deadlock_policy=args.deadlock_policy,
             ),
             "insert_return_moves": False,
             "merge_heuristic": always_merge_heuristic,
-        },
-    }
+        }
+        strategies[f"{offset + 4} NoHome ({inner}, {loose_suffix})"] = {
+            "strategy": NoHomePlacementStrategy(
+                arch_spec=arch_spec,
+                strategy=inner,
+                max_expansions=args.max_expansions,
+                restarts=20,
+                lookahead=True,
+                congestion_weight=args.congestion_weight,
+                deadlock_policy=args.deadlock_policy,
+            ),
+            "insert_return_moves": False,
+            "merge_heuristic": always_merge_heuristic,
+        }
 
     all_strategy_results: dict[str, list[dict]] = {}
 
@@ -314,15 +341,20 @@ def main():
         print()
 
     # Summary comparison.
-    print("=" * 70)
+    name_w = max(len(k) for k in all_strategy_results) if all_strategy_results else 25
+    name_w = max(name_w, len("Strategy"))
+    total_w = name_w + 45
+    print("=" * total_w)
     print("Summary:")
     print(
-        f"{'Strategy':<25} {'Avg Moves':>10} {'Avg Lanes':>10} {'Avg Time':>10} {'Solved':>8}"
+        f"{'Strategy':<{name_w}} {'Avg Moves':>10} {'Avg Lanes':>10} {'Avg Time':>10} {'Solved':>8}"
     )
-    print("─" * 70)
+    print("─" * total_w)
     for strat_name, results in all_strategy_results.items():
         if not results:
-            print(f"{strat_name:<25} {'N/A':>10} {'N/A':>10} {'N/A':>10} {'N/A':>8}")
+            print(
+                f"{strat_name:<{name_w}} {'N/A':>10} {'N/A':>10} {'N/A':>10} {'N/A':>8}"
+            )
             continue
         solved = [r for r in results if r["n_move_layers"] > 0 or args.depth == 0]
         if solved:
@@ -333,18 +365,22 @@ def main():
         avg_time = sum(r["time_ms"] for r in results) / len(results)
         solved_str = f"{len(solved)}/{len(results)}"
         print(
-            f"{strat_name:<25} {avg_moves:>10.1f} {avg_lanes:>10.1f}"
+            f"{strat_name:<{name_w}} {avg_moves:>10.1f} {avg_lanes:>10.1f}"
             f" {avg_time:>8.0f} ms {solved_str:>8}"
         )
 
-    # Visualize best run from each strategy.
+    # Visualize best run from each strategy. Skip seeds that failed
+    # (n_move_layers == 0 with non-trivial depth) since their move_ir is
+    # incomplete; skip the whole strategy if every seed failed.
     if args.visualize:
         from bloqade.lanes import visualize
 
         for strat_name, results in all_strategy_results.items():
-            if not results:
+            solved = [r for r in results if r["n_move_layers"] > 0 or args.depth == 0]
+            if not solved:
+                print(f"\nSkipping {strat_name} — no successful seeds to visualize.")
                 continue
-            best = min(results, key=lambda r: r["n_move_layers"])
+            best = min(solved, key=lambda r: r["n_move_layers"])
             print(
                 f"\nVisualizing best {strat_name} "
                 f"(seed {best['seed']}, {best['n_move_layers']} moves)..."

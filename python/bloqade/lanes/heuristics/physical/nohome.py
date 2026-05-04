@@ -1,10 +1,18 @@
-"""Loose-goal placement strategy using entangling constraint search.
+"""No-home placement strategy: two-phase return assignment + entangling routing.
 
-Instead of fixed target positions, this strategy passes CZ pair constraints
-to the Rust ``solve_entangling`` solver which simultaneously discovers both
-the entangling placement and the routing.  Layers are chained: the output
-configuration of one CZ layer becomes the input for the next, avoiding the
-cost of returning to home positions between layers.
+Instead of returning atoms to their original home positions after each CZ
+layer, this strategy assigns displaced qubits to *optimal* home sites that
+minimise future movement.  The assignment uses the Hungarian algorithm with
+gamma-decayed future CZ partner proximity as a lookahead signal.
+
+Phase 1 (return): Hungarian-pick a home layout, then route current → home
+via fixed-target ``solve``.
+Phase 2 (entangling): Hungarian-pick CZ-staging targets (with optional
+lookahead-aware blend), then route home → staging via fixed-target ``solve``.
+This mirrors how :class:`PhysicalPlacementStrategy` routes to pre-computed
+CZ targets.
+
+Both phases run in Rust via ``MoveSolver.solve_nohome``.
 """
 
 from __future__ import annotations
@@ -29,32 +37,36 @@ from bloqade.lanes.layout import (
 
 
 @dataclass
-class LooseGoalPlacementStrategy(PlacementStrategyABC):
-    """Placement strategy using loose-goal entangling constraint search.
-
-    Uses :pymethod:`MoveSolver.solve_entangling` to find both the entangling
-    placement and routing simultaneously.  Each CZ layer's output layout is
-    passed as input to the next layer (chaining), saving the cost of
-    palindrome return moves.
+class NoHomePlacementStrategy(PlacementStrategyABC):
+    """Two-phase placement: return assignment + entangling routing.
 
     Parameters
     ----------
     arch_spec:
         Architecture specification.
     strategy:
-        Search strategy name (``"ids"``, ``"cascade"``, ``"entropy"``, etc.).
+        Search strategy name for the routing phases.
     max_expansions:
-        Maximum node expansions per solve call.
+        Maximum node expansions per solve call (shared across phases).
     restarts:
         Number of parallel restarts with perturbed scoring.  Each restart
-        gets a different seed for the greedy CZ-pair-to-slot assignment,
-        producing diverse target layouts; ``pick_best`` keeps the lowest-
-        cost result.
+        gets a different seed for the entangling-phase target assignment.
+    lookahead:
+        Enable 2-step lookahead scoring in the routing search.
     congestion_weight:
         Penalty weight for the entangling Hungarian assignment to spread
-        CZ pairs across word pairs. ``0.0`` (default) uses standard
-        min-sum assignment; positive values reduce routing serialization
-        at high occupancy at some cost in total atom moves.
+        CZ pairs across word pairs.
+    deadlock_policy:
+        How the heuristic generator handles deadlocks during routing.
+    gamma:
+        Discount factor for future CZ layer weights in the return
+        assignment (default 0.85).
+    lambda_lookahead:
+        Blend weight for future proximity penalty in the return
+        assignment (default 0.5).
+    k_candidates:
+        Maximum candidate holes per returner for cost-matrix pruning
+        (default 8).
     """
 
     strategy: str = "ids"
@@ -63,6 +75,9 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
     lookahead: bool = True
     congestion_weight: float = 0.0
     deadlock_policy: str = "move_blockers"  # "skip" | "move_blockers" | "all_moves"
+    gamma: float = 0.85
+    lambda_lookahead: float = 0.5
+    k_candidates: int = 8
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
@@ -78,14 +93,6 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         repr=False,
     )
 
-    def __post_init__(self) -> None:
-        assert_single_cz_zone(self.arch_spec, type(self).__name__)
-
-    def _get_solver(self) -> MoveSolver:
-        if self._solver is None:
-            self._solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
-        return self._solver
-
     _DEADLOCK_MAP: dict[str, _native.DeadlockPolicy] = field(
         default_factory=lambda: {
             "skip": _native.DeadlockPolicy.SKIP,
@@ -96,6 +103,14 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         repr=False,
     )
 
+    def __post_init__(self) -> None:
+        assert_single_cz_zone(self.arch_spec, type(self).__name__)
+
+    def _get_solver(self) -> MoveSolver:
+        if self._solver is None:
+            self._solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
+        return self._solver
+
     def _make_options(self) -> _native.SolveOptions:
         return _native.SolveOptions(
             strategy=self._STRATEGY_MAP[self.strategy],
@@ -103,6 +118,13 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
             lookahead=self.lookahead,
             congestion_weight=self.congestion_weight,
             deadlock_policy=self._DEADLOCK_MAP[self.deadlock_policy],
+        )
+
+    def _make_nohome_options(self) -> _native.NoHomeOptions:
+        return _native.NoHomeOptions(
+            gamma=self.gamma,
+            lambda_lookahead=self.lambda_lookahead,
+            k_candidates=self.k_candidates,
         )
 
     def validate_initial_layout(
@@ -125,8 +147,9 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
 
         solver = self._get_solver()
         options = self._make_options()
+        nohome_options = self._make_nohome_options()
 
-        # Build initial placement: qubit_id → native location.
+        # Build initial placement: qubit_id -> native location.
         initial = {qid: state.layout[qid]._inner for qid in range(len(state.layout))}
 
         # Build CZ pairs from controls/targets.
@@ -142,12 +165,13 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         if len(lookahead_cz_layers) > 1:
             future = [list(zip(ctrls, tgts)) for ctrls, tgts in lookahead_cz_layers[1:]]
 
-        result = solver.solve_entangling(
+        result = solver.solve_nohome(
             initial,
             cz_pairs,
             blocked,
             max_expansions=self.max_expansions,
             options=options,
+            nohome_options=nohome_options,
             future_cz_layers=future,
         )
 

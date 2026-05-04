@@ -12,6 +12,9 @@ from bloqade.lanes.heuristics.physical.movement import (
     PlacementTraversalABC,
     RustPlacementTraversal,
 )
+from bloqade.lanes.heuristics.physical.nohome import (
+    NoHomePlacementStrategy,
+)
 from bloqade.lanes.heuristics.physical.target_generator import (
     AODClusterTargetGenerator,
     CongestionAwareTargetGenerator,
@@ -28,6 +31,7 @@ __all__ = [
     "EntropyPlacementTraversal",
     "GreedyPlacementTraversal",
     "LooseGoalPlacementStrategy",
+    "NoHomePlacementStrategy",
     "PhysicalLayoutHeuristicGraphPartitionCenterOut",
     "PhysicalPlacementStrategy",
     "PlacementTraversalABC",

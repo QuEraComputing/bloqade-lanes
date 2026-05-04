@@ -165,7 +165,9 @@ impl HeuristicGenerator {
         score_step1 + best_step2
     }
 
-    /// Generate escape moves only for qubits that block an unresolved target.
+    /// Generate single-atom escape moves only for qubits that block an
+    /// unresolved target. Each blocker × outgoing-lane becomes one
+    /// 1-lane MoveCandidate.
     fn generate_blocker_escape(
         &self,
         config: &Config,
@@ -174,13 +176,9 @@ impl HeuristicGenerator {
         index: &LaneIndex,
         out: &mut Vec<MoveCandidate>,
     ) {
-        // Find which locations are blocked targets.
         let target_locs: HashSet<u64> = unresolved.iter().map(|&(_, _, t)| t).collect();
-
         for (qid, loc) in config.iter() {
-            let loc_enc = loc.encode();
-            // Only move qubits sitting on someone else's target.
-            if !target_locs.contains(&loc_enc) {
+            if !target_locs.contains(&loc.encode()) {
                 continue;
             }
             for &lane in index.outgoing_lanes(loc) {
@@ -602,7 +600,6 @@ impl MoveGenerator for HeuristicGenerator {
         // Step 7: deadlock escape.
         if !has_positive {
             self.deadlock_count.set(self.deadlock_count.get() + 1);
-
             match self.deadlock_policy {
                 DeadlockPolicy::Skip => {}
                 DeadlockPolicy::MoveBlockers => {
