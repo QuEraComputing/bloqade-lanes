@@ -815,7 +815,7 @@ pub(crate) fn score_moveset(
 // ── BFS path-finding with occupancy ────────────────────────────────
 
 /// Find shortest lane path from `from` to `to`, avoiding `occupied` locations.
-pub(crate) fn find_path_occupied(
+pub fn find_path_occupied(
     from: LocationAddr,
     to: LocationAddr,
     occupied: &HashSet<u64>,

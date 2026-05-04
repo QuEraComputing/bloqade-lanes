@@ -10,12 +10,21 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::config::Config;
 use crate::entangling;
+use crate::entropy::find_path_occupied;
 use crate::heuristic::DistanceTable;
+use crate::lane_index::LaneIndex;
+
+/// Lane-signature triple: identifies a parallelisable bus group.
+type LaneSig = (MoveType, u32, Direction);
+
+/// Per-edge scoring entry in `candidate_return_layouts`:
+/// `(score, hole_index, hop_cost, sig_set)`.
+type EdgeScore = (f64, usize, u32, HashSet<LaneSig>);
 
 // ── Options ───────────────────────────────────────────────────────
 
@@ -30,6 +39,13 @@ pub struct NoHomeOptions {
     /// Maximum candidate holes per returner for cost-matrix pruning
     /// (default 8).
     pub k_candidates: usize,
+    /// Number of bus-reward variant assignments to generate (default 6).
+    /// Each variant rewards edges sharing a high-coverage lane signature,
+    /// biasing the assignment toward layouts with parallel routing.
+    pub top_bus_signatures: usize,
+    /// Per-edge hop-count discount applied to edges using a top signature
+    /// when building bus-reward variant cost matrices (default 1).
+    pub bus_reward_rho: u32,
 }
 
 impl Default for NoHomeOptions {
@@ -38,6 +54,8 @@ impl Default for NoHomeOptions {
             gamma: 0.85,
             lambda_lookahead: 0.5,
             k_candidates: 8,
+            top_bus_signatures: 6,
+            bus_reward_rho: 1,
         }
     }
 }
@@ -123,16 +141,27 @@ pub fn nearest_home_layout(
 
 /// Compute optimal return-layout candidates using the Hungarian algorithm.
 ///
-/// Returns a list of candidate layouts. Each layout is a full qubit→location
-/// mapping (all qubits, not just returners) as `(qubit_id, LocationAddr)`.
+/// Returns up to `1 + opts.top_bus_signatures` distinct candidate layouts.
+/// Each layout is a full qubit→location mapping (all qubits, not just
+/// returners) as `(qubit_id, LocationAddr)`.
 ///
-/// Currently returns a single candidate (the Hungarian optimum). Can be
-/// extended with bus-reward variants in the future.
+/// Algorithm:
+/// 1. For each (returner, hole) edge: BFS-shortest-path, hop-cost, lane
+///    signatures used by the path, lookahead-blended score.
+/// 2. Top-K hole pruning per returner.
+/// 3. Run plain Hungarian on the baseline cost matrix → 1 candidate.
+/// 4. For each top-`top_bus_signatures` lane signature ranked by coverage
+///    (number of returners whose pruned edges include it), build a cost
+///    matrix where edges using that signature get a `bus_reward_rho` hop
+///    discount; run Hungarian → up to N more candidates.
+/// 5. Deduplicate and return.
+#[allow(clippy::too_many_arguments)]
 pub fn candidate_return_layouts(
     config: &Config,
     home_set: &HashSet<u64>,
     holes: &[u64],
     dist_table: &DistanceTable,
+    index: &LaneIndex,
     pw: &HashMap<u32, HashMap<u32, f64>>,
     opts: &NoHomeOptions,
 ) -> Vec<Vec<(u32, LocationAddr)>> {
@@ -156,30 +185,37 @@ pub fn candidate_return_layouts(
     // Build reference positions from greedy baseline (for lookahead cost).
     let greedy_assignments = nearest_home_layout(config, home_set, holes, dist_table);
     let mut reference: HashMap<u32, u64> = HashMap::new();
-    // Qubits already at home keep their position.
     for (qid, loc) in config.iter() {
         let enc = loc.encode();
         if home_set.contains(&enc) {
             reference.insert(qid, enc);
         }
     }
-    // Greedy assignments for returners.
     for &(qid, loc) in &greedy_assignments {
         reference.insert(qid, loc);
     }
 
-    // Score each (returner, hole) edge.
+    // ── Score each (returner, hole) edge: hop-cost, lookahead, sigs ──
+    // For each returner, collect its scored edges. Each entry is
+    // (score, hidx, hop_cost, sig_set). Paths come from BFS so the hop
+    // count = path.len() = `dist_table.distance` for the same arch (both
+    // are unweighted shortest paths).
+    let empty_blocked: HashSet<u64> = HashSet::new();
     let n_returners = returners.len();
-    let mut scored_per_returner: Vec<Vec<(f64, usize)>> = Vec::with_capacity(n_returners);
+    let mut scored_per_returner: Vec<Vec<EdgeScore>> = Vec::with_capacity(n_returners);
 
     for &(qid, src_enc) in &returners {
-        let mut scored: Vec<(f64, usize)> = Vec::with_capacity(holes.len());
+        let src_loc = LocationAddr::decode(src_enc);
+        let mut scored: Vec<EdgeScore> = Vec::with_capacity(holes.len());
         for (hidx, &hole) in holes.iter().enumerate() {
-            let path_cost = dist_table.distance(src_enc, hole).unwrap_or(u32::MAX) as f64;
-            if path_cost >= 1e8 {
-                continue; // unreachable
-            }
-            // Future proximity penalty.
+            let dst_loc = LocationAddr::decode(hole);
+            let path = match find_path_occupied(src_loc, dst_loc, &empty_blocked, index) {
+                Some(p) => p,
+                None => continue, // unreachable
+            };
+            let hop_cost = path.len() as u32;
+
+            // Lookahead penalty against reference partners.
             let mut future_delta = 0.0;
             if let Some(partners) = pw.get(&qid) {
                 for (&pid, &weight) in partners {
@@ -189,61 +225,120 @@ pub fn candidate_return_layouts(
                     }
                 }
             }
-            let score = path_cost + opts.lambda_lookahead * future_delta;
-            scored.push((score, hidx));
+            let score = hop_cost as f64 + opts.lambda_lookahead * future_delta;
+
+            // Lane-signature set for this path.
+            let sigs: HashSet<LaneSig> = path
+                .iter()
+                .map(|lane| (lane.move_type, lane.bus_id, lane.direction))
+                .collect();
+
+            scored.push((score, hidx, hop_cost, sigs));
         }
         scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(opts.k_candidates);
         scored_per_returner.push(scored);
     }
 
-    // Build the pruned hole universe (union of top-K per returner).
+    // ── Pruned hole universe ──
     let mut active_holes: Vec<usize> = scored_per_returner
         .iter()
-        .flat_map(|s| s.iter().map(|&(_, hidx)| hidx))
+        .flat_map(|s| s.iter().map(|&(_, hidx, _, _)| hidx))
         .collect();
     active_holes.sort_unstable();
     active_holes.dedup();
 
     let n_active = active_holes.len();
     if n_active == 0 || n_active < n_returners {
-        // Degenerate — fall back to greedy.
         return vec![build_full_layout(config, home_set, &greedy_assignments)];
     }
 
-    // Map original hole indices to compact indices for the cost matrix.
     let hole_to_compact: HashMap<usize, usize> = active_holes
         .iter()
         .enumerate()
         .map(|(ci, &hi)| (hi, ci))
         .collect();
 
-    // Build cost matrix for Hungarian (u32, row-major: returners x active_holes).
-    // Scale float costs to u32 with 1000x precision.
+    // ── Build baseline cost matrix (scaled u32) ──
     const SCALE: f64 = 1000.0;
     let large_cost: u32 = 1_000_000_000;
-    let mut cost_matrix = vec![large_cost; n_returners * n_active];
+    let mut base_cost = vec![large_cost; n_returners * n_active];
 
     for (ridx, scored) in scored_per_returner.iter().enumerate() {
-        for &(score, hidx) in scored {
+        for &(score, hidx, _, _) in scored {
             if let Some(&cidx) = hole_to_compact.get(&hidx) {
-                cost_matrix[ridx * n_active + cidx] = (score * SCALE) as u32;
+                base_cost[ridx * n_active + cidx] = (score * SCALE) as u32;
             }
         }
     }
 
-    // Run Hungarian.
-    let assignment = entangling::hungarian(&cost_matrix, n_returners, n_active);
+    // ── Run baseline Hungarian — first candidate ──
+    let mut all_assignments: Vec<Vec<usize>> = Vec::new();
+    let baseline_assign = entangling::hungarian(&base_cost, n_returners, n_active);
+    all_assignments.push(baseline_assign);
 
-    // Build the full layout from the assignment.
-    let mut returner_assignments: Vec<(u32, u64)> = Vec::with_capacity(n_returners);
-    for (ridx, &compact_col) in assignment.iter().enumerate() {
-        let original_hidx = active_holes[compact_col];
-        let (qid, _) = returners[ridx];
-        returner_assignments.push((qid, holes[original_hidx]));
+    // ── Rank lane signatures by coverage across pruned edges ──
+    if opts.top_bus_signatures > 0 {
+        // sig_coverage[sig] = set of returner indices whose pruned edges include sig.
+        let mut sig_coverage: HashMap<LaneSig, HashSet<usize>> = HashMap::new();
+        for (ridx, scored) in scored_per_returner.iter().enumerate() {
+            for (_, _, _, sigs) in scored {
+                for &sig in sigs {
+                    sig_coverage.entry(sig).or_default().insert(ridx);
+                }
+            }
+        }
+
+        // Rank signatures by coverage (ties broken deterministically by sig itself).
+        let mut ranked: Vec<(LaneSig, usize)> = sig_coverage
+            .into_iter()
+            .map(|(sig, set)| (sig, set.len()))
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| (a.0.0 as u8).cmp(&(b.0.0 as u8)))
+                .then_with(|| a.0.1.cmp(&b.0.1))
+                .then_with(|| (a.0.2 as u8).cmp(&(b.0.2 as u8)))
+        });
+        ranked.truncate(opts.top_bus_signatures);
+
+        // ── Build a reward-modified cost matrix per top signature ──
+        let reward_scaled = (opts.bus_reward_rho as f64 * SCALE) as u32;
+        for (sig, _) in &ranked {
+            if reward_scaled == 0 {
+                break;
+            }
+            let mut cost = base_cost.clone();
+            for (ridx, scored) in scored_per_returner.iter().enumerate() {
+                for (_, hidx, _, sigs) in scored {
+                    if sigs.contains(sig)
+                        && let Some(&cidx) = hole_to_compact.get(hidx)
+                    {
+                        let idx = ridx * n_active + cidx;
+                        cost[idx] = cost[idx].saturating_sub(reward_scaled);
+                    }
+                }
+            }
+            let assign = entangling::hungarian(&cost, n_returners, n_active);
+            // Dedup: skip if identical to any previously-collected assignment.
+            if !all_assignments.iter().any(|a| a == &assign) {
+                all_assignments.push(assign);
+            }
+        }
     }
 
-    vec![build_full_layout(config, home_set, &returner_assignments)]
+    // ── Materialise candidate layouts ──
+    let mut candidates: Vec<Vec<(u32, LocationAddr)>> = Vec::with_capacity(all_assignments.len());
+    for assignment in &all_assignments {
+        let mut returner_assigns: Vec<(u32, u64)> = Vec::with_capacity(n_returners);
+        for (ridx, &compact_col) in assignment.iter().enumerate() {
+            let original_hidx = active_holes[compact_col];
+            let (qid, _) = returners[ridx];
+            returner_assigns.push((qid, holes[original_hidx]));
+        }
+        candidates.push(build_full_layout(config, home_set, &returner_assigns));
+    }
+    candidates
 }
 
 /// Build a full `(qubit_id, LocationAddr)` layout from a config plus
@@ -375,6 +470,7 @@ mod tests {
             &home_set,
             &holes,
             &dist,
+            &index,
             &pw,
             &NoHomeOptions::default(),
         );

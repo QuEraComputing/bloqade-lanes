@@ -483,6 +483,14 @@ impl ArchSpec {
         }
     }
 
+    /// Whether a location sits in a "home" word — i.e. its `word_id` is in
+    /// [`Self::left_cz_word_ids`]. Used by the no-home placement strategy
+    /// to identify atoms still at their original home positions vs.
+    /// returners that need re-assigning.
+    pub fn is_home_position(&self, loc: &LocationAddr) -> bool {
+        self.left_cz_word_ids().contains(&loc.word_id)
+    }
+
     /// Get the CZ partner for a given location.
     ///
     /// Searches `zones[loc.zone_id].entangling_pairs` for a pair containing
