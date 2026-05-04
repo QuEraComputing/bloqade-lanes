@@ -280,9 +280,20 @@ pub fn greedy_assign_pairs(
         }
     }
 
-    let n_pairs = cz_pairs.len();
+    // Filter to pairs whose qubits are both present in the config. Leaving
+    // missing-qubit rows in the matrix as all-BIG would force Hungarian to
+    // assign them a column anyway, depriving valid pairs of preferred slots.
+    let valid_pairs: Vec<((u32, u32), u64, u64)> = cz_pairs
+        .iter()
+        .filter_map(|&(qa, qb)| {
+            let loc_a_enc = config.location_of(qa)?.encode();
+            let loc_b_enc = config.location_of(qb)?.encode();
+            Some(((qa, qb), loc_a_enc, loc_b_enc))
+        })
+        .collect();
+    let n_pairs = valid_pairs.len();
     let n_slots = slots.len();
-    if n_slots == 0 {
+    if n_pairs == 0 || n_slots == 0 {
         return Vec::new();
     }
 
@@ -294,16 +305,7 @@ pub fn greedy_assign_pairs(
     // swapped[i * n_slots + j] = true means qa→loc_b, qb→loc_a is cheaper.
     let mut swapped = vec![false; n_pairs * n_slots];
 
-    for (i, &(qa, qb)) in cz_pairs.iter().enumerate() {
-        let loc_a_enc = match config.location_of(qa) {
-            Some(l) => l.encode(),
-            None => continue,
-        };
-        let loc_b_enc = match config.location_of(qb) {
-            Some(l) => l.encode(),
-            None => continue,
-        };
-
+    for (i, &((qa, qb), loc_a_enc, loc_b_enc)) in valid_pairs.iter().enumerate() {
         for (j, slot) in slots.iter().enumerate() {
             // Orientation 1: qa→loc_a, qb→loc_b
             let d_a1 = dist_table.distance(loc_a_enc, slot.loc_a).unwrap_or(BIG);
@@ -386,7 +388,7 @@ pub fn greedy_assign_pairs(
         if base_costs[idx] >= BIG {
             continue; // unreachable position
         }
-        let (qa, qb) = cz_pairs[i];
+        let (qa, qb) = valid_pairs[i].0;
         let slot = &slots[col];
         if swapped[idx] {
             result.push((qa, slot.loc_b));
@@ -599,15 +601,17 @@ pub fn lookahead_assign_pairs(
         let next_assign = &forward_assignments[i + 1];
         let targets: HashMap<u32, u64> = next_assign.iter().copied().collect();
 
-        // Determine the config for this layer.
-        // Layer 0 uses the original config. Layers 1+ use simulated configs
-        // rebuilt from the (already refined) previous layer.
+        // Cascade replays preliminary forward-pass assignments for
+        // layers 0..i (the backward sweep visits them after i, so they
+        // are not yet refined). Transition `targets` above use the
+        // refined layer i+1. Mismatch is intentional: the refinement
+        // pass exists to inject the lookahead signal via targets.
         let layer_config = if i == 0 {
             config.clone()
         } else {
             let mut cfg = config.clone();
-            for j in 0..i {
-                let moves: Vec<(u32, LocationAddr)> = forward_assignments[j]
+            for assignment in forward_assignments.iter().take(i) {
+                let moves: Vec<(u32, LocationAddr)> = assignment
                     .iter()
                     .map(|&(qid, enc)| (qid, LocationAddr::decode(enc)))
                     .collect();
@@ -639,7 +643,7 @@ pub fn lookahead_assign_pairs(
 ///
 /// Uses the shortest-augmenting-path variant of the Hungarian algorithm,
 /// O(n_rows² × n_cols).
-fn hungarian(costs: &[u32], n_rows: usize, n_cols: usize) -> Vec<usize> {
+pub(crate) fn hungarian(costs: &[u32], n_rows: usize, n_cols: usize) -> Vec<usize> {
     assert!(n_rows <= n_cols);
     assert_eq!(costs.len(), n_rows * n_cols);
 
