@@ -49,8 +49,10 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
     max_expansions:
         Maximum node expansions per solve call (shared across phases).
     restarts:
-        Number of parallel restarts with perturbed scoring.  Each restart
-        gets a different seed for the entangling-phase target assignment.
+        Number of parallel restarts with perturbed scoring inside each
+        routing solve (return phase + entangling phase). The two-phase
+        Hungarian assignments themselves are deterministic; diversity
+        comes from the candidate-home-layout fan-out.
     lookahead:
         Enable 2-step lookahead scoring in the routing search.
     deadlock_policy:

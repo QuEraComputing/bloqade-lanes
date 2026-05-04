@@ -199,14 +199,15 @@ def main():
         "--deadlock-policy",
         choices=["skip", "move_blockers", "all_moves"],
         default="move_blockers",
-        help="Deadlock policy in loose-goal: 'skip' = pure IDS jump-back, "
+        help="Deadlock policy for loose-goal and no-home routing: "
+        "'skip' = pure IDS jump-back, "
         "'move_blockers' (default) = single-atom blocker escapes, "
         "'all_moves' = exhaustive single-atom escapes.",
     )
     parser.add_argument(
         "--visualize",
         action="store_true",
-        help="Visualize the first seed's result (loose-goal)",
+        help="Open the visualizer on the best seed of each strategy",
     )
     args = parser.parse_args()
 

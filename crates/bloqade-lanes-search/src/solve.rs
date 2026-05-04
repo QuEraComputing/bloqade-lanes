@@ -915,7 +915,10 @@ impl MoveSolver {
         let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
         // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
-        // Spectator qubits keep their current location.
+        // Spectator qubits keep their current location. Phase 2 always uses
+        // vanilla min-sum Hungarian (congestion_weight=0); congestion-aware
+        // rebalance is a loose-goal-only knob and is intentionally not
+        // threaded into the no-home pipeline.
         let cz_qubits: HashSet<u32> = cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
         let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
             let assigned = if !future_cz_layers.is_empty() {
@@ -927,7 +930,7 @@ impl MoveSolver {
                     0,
                     future_cz_layers,
                     0.2,
-                    opts.congestion_weight,
+                    0.0,
                 )
             } else {
                 entangling::greedy_assign_pairs(
@@ -938,7 +941,7 @@ impl MoveSolver {
                     0,
                     None,
                     0.0,
-                    opts.congestion_weight,
+                    0.0,
                 )
             };
             let assigned_map: HashMap<u32, u64> = assigned.into_iter().collect();
