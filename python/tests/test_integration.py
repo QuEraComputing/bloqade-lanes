@@ -1,134 +1,21 @@
-import io
 import math
-from collections import Counter
-from typing import Any
 
 import pytest
-from bloqade.decoders.dialects import annotate
-from bloqade.stim.emit.stim_str import EmitStimMain
-from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin.dialects import ilist
 
-from bloqade import qubit, squin, types
+from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
-from bloqade.lanes.heuristics.logical import layout as logical_layout
-from bloqade.lanes.heuristics.logical.placement import (
-    LogicalPlacementStrategyNoHome,
-)
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
-from bloqade.lanes.logical_mvp import (
-    compile_squin_to_move,
-    transversal_rewrites,
-)
-from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.transform import MoveToSquinLogical, MoveToSquinPhysical
-from bloqade.lanes.upstream import (
-    always_merge_heuristic,
-    default_merge_heuristic,
-    squin_to_move,
-)
+from bloqade.lanes.logical_mvp import compile_squin_to_move
+from bloqade.lanes.passes import ASAPPlacePass
+from bloqade.lanes.transform import MoveToSquinPhysical
+from bloqade.lanes.upstream import squin_to_move
 from bloqade.lanes.utils import check_circuit
-
-
-@gemini_logical.kernel(verify=False)
-def set_detector(meas: ilist.IList[types.MeasurementResult, Any]):
-    annotate.set_detector([meas[0], meas[1], meas[2], meas[3]], coordinates=[0, 0])
-    annotate.set_detector([meas[1], meas[2], meas[4], meas[5]], coordinates=[0, 1])
-    annotate.set_detector([meas[2], meas[3], meas[4], meas[6]], coordinates=[0, 2])
-
-
-@gemini_logical.kernel(verify=False)
-def set_observable(meas: ilist.IList[types.MeasurementResult, Any]):
-    annotate.set_observable([meas[0], meas[1], meas[5]])
-
-
-@gemini_logical.kernel(aggressive_unroll=True)
-def main():
-    # see arXiv: 2412.15165v1, Figure 3a
-    reg = qubit.qalloc(5)
-    squin.broadcast.u3(0.3041 * math.pi, 0.25 * math.pi, 0.0, reg)
-
-    squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
-    squin.broadcast.cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
-    squin.broadcast.sqrt_y(ilist.IList([reg[0], reg[3]]))
-    squin.broadcast.cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[2], reg[4]]))
-    squin.sqrt_x_adj(reg[0])
-    squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[4], reg[3]]))
-    squin.broadcast.sqrt_y_adj(reg)
-
-    measurements = gemini_logical.terminal_measure(reg)
-
-    for i in range(len(reg)):
-        set_detector(measurements[i])
-        set_observable(measurements[i])
-
-
-def _compile_to_stim_with_merge_heuristic(mt, merge_heuristic):
-
-    logical_noise = generate_logical_noise_model()
-    move_mt = squin_to_move(
-        mt,
-        layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
-        placement_strategy=LogicalPlacementStrategyNoHome(),
-        insert_return_moves=True,
-        merge_heuristic=merge_heuristic,
-    )
-    move_mt = transversal_rewrites(move_mt)
-    # debugger(move_mt, physical.get_arch_spec())
-    transformer = MoveToSquinLogical(
-        arch_spec=physical.get_arch_spec(),
-        noise_model=logical_noise,
-        add_noise=True,
-        aggressive_unroll=False,
-    )
-    physical_squin = transformer.emit(move_mt)
-    stim_kernel = squin_to_stim(physical_squin)
-    buf = io.StringIO()
-    emit = EmitStimMain(dialects=stim_kernel.dialects, io=buf)
-    emit.initialize()
-    emit.run(node=stim_kernel)
-    return buf.getvalue().strip()
-
-
-def _normalized_gate_ops(stim_program: str) -> Counter[str]:
-    """Remove all comments and noise operations (PAULI_CHANNEL_* and I_ERROR[...]) from the stim program."""
-    ops: list[str] = []
-    for raw_line in stim_program.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if " #" in line:
-            line = line.split(" #", 1)[0].rstrip()
-        normalized = " ".join(line.split())
-        if normalized:
-            if normalized.startswith("PAULI_CHANNEL_") or normalized.startswith(
-                "I_ERROR["
-            ):
-                continue
-            ops.append(normalized)
-    return Counter(ops)
-
-
-@pytest.mark.slow
-def test_default_and_always_merge_have_same_operations():
-    default_program = _compile_to_stim_with_merge_heuristic(
-        main, default_merge_heuristic
-    )
-    always_program = _compile_to_stim_with_merge_heuristic(main, always_merge_heuristic)
-
-    default_ops = _normalized_gate_ops(default_program)
-    always_ops = _normalized_gate_ops(always_program)
-    print(default_program)
-    print("--------------------------------")
-    print(always_program)
-
-    assert default_ops == always_ops
 
 
 @pytest.mark.slow
@@ -179,3 +66,30 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     )
 
     assert check_circuit(ghz, roundtrip_squin)
+
+
+@pytest.mark.slow
+def test_asap_place_pass_roundtrip_state_vector():
+    """ASAPPlacePass produces a physically equivalent circuit to SequentialPlacePass."""
+
+    @squin.kernel(typeinfer=True, fold=True)
+    def circuit():
+        reg = squin.qalloc(4)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        squin.cx(reg[0], reg[2])
+        squin.cx(reg[0], reg[3])
+
+    physical_move = squin_to_move(
+        circuit,
+        PhysicalLayoutHeuristicGraphPartitionCenterOut(),
+        PhysicalPlacementStrategy(),
+        logical_initialize=False,
+        place_opt_type=ASAPPlacePass,
+        no_raise=False,
+    )
+    roundtrip_squin = MoveToSquinPhysical(get_physical_arch_spec()).emit(
+        physical_move, no_raise=False
+    )
+
+    assert check_circuit(circuit, roundtrip_squin)

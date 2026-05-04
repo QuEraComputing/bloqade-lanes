@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import chain
 from typing import Callable
 
 import bloqade.qubit as squin_qubit
@@ -25,13 +24,6 @@ from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 from bloqade.lanes.validation.address import Validation as AddressValidation
-
-
-def _default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
-    return all(
-        isinstance(stmt, (place.R, place.Rz, place.Yield))
-        for stmt in chain(region_a.walk(), region_b.walk())
-    )
 
 
 @dataclass
@@ -64,9 +56,6 @@ class _NativeToPlaceBase:
     you explicitly want to skip address validation.
     """
 
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = field(
-        default=_default_merge_heuristic
-    )
     arch_spec: ArchSpec | None = field(default=None)
 
     def _pre_native_rewrites(self, mt: Method, out: Method, no_raise: bool) -> Method:
@@ -110,15 +99,6 @@ class _NativeToPlaceBase:
                 rewrite.CommonSubexpressionElimination(),
             )
         ).rewrite(out.code)
-        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
-        rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
-        ).rewrite(out.code)
-        rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
-        rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic))
-        ).rewrite(out.code)
-
         out = out.similar(
             out.dialects.discard(native_gate).discard(gemini_qubit).discard(squin_qubit)
         )
