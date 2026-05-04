@@ -42,28 +42,38 @@ class RewriteMoveToStackMove(RewriteRule):
     )
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
+        self._first_fill_emitted = False
+        self._gfr_results = set()
+        self._future_to_sm_measure = {}
         to_delete: list[ir.Statement] = []
+        result = RewriteResult()
         for stmt in list(node.stmts):
-            self._rewrite(stmt, to_delete)
+            result = result.join(self._rewrite(stmt, to_delete))
         for stmt in reversed(to_delete):
             stmt.delete()
-        return RewriteResult(has_done_something=True)
+        if to_delete:
+            result = result.join(RewriteResult(has_done_something=True))
+        return result
 
     @singledispatchmethod
-    def _rewrite(self, stmt: ir.Statement, to_delete: list[ir.Statement]) -> None:
+    def _rewrite(
+        self, stmt: ir.Statement, to_delete: list[ir.Statement]
+    ) -> RewriteResult:
         """Default: unknown statements pass through unchanged."""
-        pass
+        return RewriteResult()
 
     @_rewrite.register(move.Load)
-    def _(self, stmt: move.Load, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.Load, to_delete: list[ir.Statement]) -> RewriteResult:
         to_delete.append(stmt)
+        return RewriteResult()
 
     @_rewrite.register(move.Store)
-    def _(self, stmt: move.Store, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.Store, to_delete: list[ir.Statement]) -> RewriteResult:
         to_delete.append(stmt)
+        return RewriteResult()
 
     @_rewrite.register(move.Fill)
-    def _(self, stmt: move.Fill, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.Fill, to_delete: list[ir.Statement]) -> RewriteResult:
         loc_consts = tuple(
             stack_move.ConstLoc(value=addr) for addr in stmt.location_addresses
         )
@@ -74,33 +84,38 @@ class RewriteMoveToStackMove(RewriteRule):
         new.insert_before(stmt)
         self._first_fill_emitted = True
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.Move)
-    def _(self, stmt: move.Move, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.Move, to_delete: list[ir.Statement]) -> RewriteResult:
         lane_consts = tuple(stack_move.ConstLane(value=addr) for addr in stmt.lanes)
         for lc in lane_consts:
             lc.insert_before(stmt)
         new = stack_move.Move(lanes=tuple(lc.result for lc in lane_consts))
         new.insert_before(stmt)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(kirin_py.Constant)
-    def _(self, stmt: kirin_py.Constant, to_delete: list[ir.Statement]) -> None:
+    def _(
+        self, stmt: kirin_py.Constant, to_delete: list[ir.Statement]
+    ) -> RewriteResult:
         val = stmt.value.unwrap()
         if isinstance(val, bool):
-            return  # bool subclasses int — pass through unchanged
+            return RewriteResult()  # bool subclasses int — pass through unchanged
         if isinstance(val, float):
             new: ir.Statement = stack_move.ConstFloat(value=val)
         elif isinstance(val, int):
             new = stack_move.ConstInt(value=val)
         else:
-            return  # non-numeric py.Constant passes through unchanged
+            return RewriteResult()  # non-numeric py.Constant passes through unchanged
         new.insert_before(stmt)
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.LocalR)
-    def _(self, stmt: move.LocalR, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.LocalR, to_delete: list[ir.Statement]) -> RewriteResult:
         loc_consts = tuple(
             stack_move.ConstLoc(value=addr) for addr in stmt.location_addresses
         )
@@ -113,9 +128,10 @@ class RewriteMoveToStackMove(RewriteRule):
         )
         new.insert_before(stmt)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.LocalRz)
-    def _(self, stmt: move.LocalRz, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.LocalRz, to_delete: list[ir.Statement]) -> RewriteResult:
         loc_consts = tuple(
             stack_move.ConstLoc(value=addr) for addr in stmt.location_addresses
         )
@@ -127,32 +143,36 @@ class RewriteMoveToStackMove(RewriteRule):
         )
         new.insert_before(stmt)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.GlobalR)
-    def _(self, stmt: move.GlobalR, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.GlobalR, to_delete: list[ir.Statement]) -> RewriteResult:
         new = stack_move.GlobalR(
             axis_angle=stmt.axis_angle,
             rotation_angle=stmt.rotation_angle,
         )
         new.insert_before(stmt)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.GlobalRz)
-    def _(self, stmt: move.GlobalRz, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.GlobalRz, to_delete: list[ir.Statement]) -> RewriteResult:
         new = stack_move.GlobalRz(rotation_angle=stmt.rotation_angle)
         new.insert_before(stmt)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.CZ)
-    def _(self, stmt: move.CZ, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.CZ, to_delete: list[ir.Statement]) -> RewriteResult:
         zone_const = stack_move.ConstZone(value=stmt.zone_address)
         zone_const.insert_before(stmt)
         new = stack_move.CZ(zone=zone_const.result)
         new.insert_before(stmt)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.Measure)
-    def _(self, stmt: move.Measure, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: move.Measure, to_delete: list[ir.Statement]) -> RewriteResult:
         zone_consts = tuple(
             stack_move.ConstZone(value=addr) for addr in stmt.zone_addresses
         )
@@ -162,19 +182,25 @@ class RewriteMoveToStackMove(RewriteRule):
         new.insert_before(stmt)
         self._future_to_sm_measure[stmt.future] = new
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(move.GetFutureResult)
-    def _(self, stmt: move.GetFutureResult, to_delete: list[ir.Statement]) -> None:
+    def _(
+        self, stmt: move.GetFutureResult, to_delete: list[ir.Statement]
+    ) -> RewriteResult:
         self._gfr_results.add(stmt.result)
         to_delete.append(stmt)
+        return RewriteResult()
 
     @_rewrite.register(kirin_ilist.New)
-    def _(self, stmt: kirin_ilist.New, to_delete: list[ir.Statement]) -> None:
+    def _(self, stmt: kirin_ilist.New, to_delete: list[ir.Statement]) -> RewriteResult:
         values = tuple(stmt.values)
         if not values:
-            return  # empty ilist (e.g. coordinates placeholder) — pass through
+            return (
+                RewriteResult()
+            )  # empty ilist (e.g. coordinates placeholder) — pass through
         if not all(v in self._gfr_results for v in values):
-            return  # non-measurement ilist — pass through
+            return RewriteResult()  # non-measurement ilist — pass through
         # All values are GetFutureResult outputs: this is the measurement bundle.
         futures: set[ir.SSAValue] = set()
         for v in values:
@@ -183,30 +209,33 @@ class RewriteMoveToStackMove(RewriteRule):
                 if isinstance(owner, move.GetFutureResult):
                     futures.add(owner.measurement_future)
         if len(futures) != 1:
-            return
+            return RewriteResult()
         (move_future,) = futures
         sm_measure = self._future_to_sm_measure.get(move_future)
         if sm_measure is None:
-            return
+            return RewriteResult()
         aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
         aw.insert_before(stmt)
         stmt.result.replace_by(aw.result)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(_annotate.stmts.SetDetector)
     def _(
         self, stmt: _annotate.stmts.SetDetector, to_delete: list[ir.Statement]
-    ) -> None:
+    ) -> RewriteResult:
         new = stack_move.SetDetector(array=stmt.measurements)
         new.insert_before(stmt)
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(_annotate.stmts.SetObservable)
     def _(
         self, stmt: _annotate.stmts.SetObservable, to_delete: list[ir.Statement]
-    ) -> None:
+    ) -> RewriteResult:
         new = stack_move.SetObservable(array=stmt.measurements)
         new.insert_before(stmt)
         stmt.result.replace_by(new.result)
         to_delete.append(stmt)
+        return RewriteResult(has_done_something=True)
