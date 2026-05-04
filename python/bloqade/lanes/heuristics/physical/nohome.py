@@ -53,9 +53,6 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
         gets a different seed for the entangling-phase target assignment.
     lookahead:
         Enable 2-step lookahead scoring in the routing search.
-    congestion_weight:
-        Penalty weight for the entangling Hungarian assignment to spread
-        CZ pairs across word pairs.
     deadlock_policy:
         How the heuristic generator handles deadlocks during routing.
     gamma:
@@ -73,7 +70,6 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
     max_expansions: int | None = 100
     restarts: int = 20
     lookahead: bool = True
-    congestion_weight: float = 0.0
     deadlock_policy: str = "move_blockers"  # "skip" | "move_blockers" | "all_moves"
     gamma: float = 0.85
     lambda_lookahead: float = 0.5
@@ -116,7 +112,6 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
             strategy=self._STRATEGY_MAP[self.strategy],
             restarts=self.restarts,
             lookahead=self.lookahead,
-            congestion_weight=self.congestion_weight,
             deadlock_policy=self._DEADLOCK_MAP[self.deadlock_policy],
         )
 

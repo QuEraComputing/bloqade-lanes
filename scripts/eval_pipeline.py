@@ -222,6 +222,7 @@ def main():
     )
 
     loose_suffix = f"cw={args.congestion_weight}, dl={args.deadlock_policy}"
+    nohome_suffix = f"dl={args.deadlock_policy}"
 
     strategies: dict[str, dict] = {}
     inners: tuple[Literal["ids", "entropy"], ...] = ("ids", "entropy")
@@ -264,14 +265,13 @@ def main():
             "insert_return_moves": False,
             "merge_heuristic": always_merge_heuristic,
         }
-        strategies[f"{offset + 4} NoHome ({inner}, {loose_suffix})"] = {
+        strategies[f"{offset + 4} NoHome ({inner}, {nohome_suffix})"] = {
             "strategy": NoHomePlacementStrategy(
                 arch_spec=arch_spec,
                 strategy=inner,
                 max_expansions=args.max_expansions,
                 restarts=20,
                 lookahead=True,
-                congestion_weight=args.congestion_weight,
                 deadlock_policy=args.deadlock_policy,
             ),
             "insert_return_moves": False,
