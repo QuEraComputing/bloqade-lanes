@@ -129,6 +129,8 @@ noise_model = MoveToSquinPhysical(
 
 fid = FidelityAnalysis(noise_model.dialects)
 fid.run(noise_model)
-# note min/max is only used when there is control flow
-print("Log Fidelity max: ", -sum(np.log(frange.max) for frange in fid.gate_fidelities))
-print("Log Fidelity min: ", -sum(np.log(frange.min) for frange in fid.gate_fidelities))
+# note frange.min/max is only used when there is control flow
+print(
+    "Fidelity max: ",
+    np.exp(sum(np.log(frange.max) for frange in fid.gate_fidelities)),
+)
