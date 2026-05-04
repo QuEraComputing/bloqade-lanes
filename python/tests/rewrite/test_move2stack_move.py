@@ -1,5 +1,5 @@
 from kirin import ir
-from kirin.dialects import func
+from kirin.dialects import func, py as kirin_py
 from kirin.rewrite import Walk
 
 from bloqade.lanes.bytecode.encoding import (
@@ -7,6 +7,7 @@ from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
     MoveType,
+    ZoneAddress,
 )
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.move2stack_move import RewriteMoveToStackMove
@@ -90,3 +91,139 @@ def test_move_lowers_to_stack_move_move():
     assert len(lane_consts) == 2
     assert {lc.value for lc in lane_consts} == {lane0, lane1}
     assert len(sm_mv.lanes) == 2
+
+
+def test_py_constant_float_converts_to_const_float():
+    pc = kirin_py.Constant(value=ir.PyAttr(1.5))
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [pc, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, kirin_py.Constant) for s in block.stmts)
+    cf = next(s for s in block.stmts if isinstance(s, stack_move.ConstFloat))
+    assert cf.value == 1.5
+
+
+def test_py_constant_int_converts_to_const_int():
+    pc = kirin_py.Constant(value=ir.PyAttr(7))
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [pc, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, kirin_py.Constant) for s in block.stmts)
+    ci = next(s for s in block.stmts if isinstance(s, stack_move.ConstInt))
+    assert ci.value == 7
+
+
+def test_local_r_lowers_with_const_loc_and_angles():
+    axis_c = kirin_py.Constant(value=ir.PyAttr(0.1))
+    rot_c = kirin_py.Constant(value=ir.PyAttr(0.2))
+    addr = LocationAddress(0, 0, 0)
+    load = move.Load()
+    lr = move.LocalR(
+        current_state=load.result,
+        axis_angle=axis_c.result,
+        rotation_angle=rot_c.result,
+        location_addresses=(addr,),
+    )
+    store = move.Store(current_state=lr.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [axis_c, rot_c, load, lr, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, move.LocalR) for s in block.stmts)
+    sm_lr = next(s for s in block.stmts if isinstance(s, stack_move.LocalR))
+    locs = [s for s in block.stmts if isinstance(s, stack_move.ConstLoc)]
+    assert len(locs) == 1
+    assert locs[0].value == addr
+    assert isinstance(sm_lr.axis_angle.owner, stack_move.ConstFloat)
+    assert isinstance(sm_lr.rotation_angle.owner, stack_move.ConstFloat)
+
+
+def test_local_rz_lowers():
+    rot_c = kirin_py.Constant(value=ir.PyAttr(0.5))
+    addr = LocationAddress(0, 1, 0)
+    load = move.Load()
+    lrz = move.LocalRz(
+        current_state=load.result,
+        rotation_angle=rot_c.result,
+        location_addresses=(addr,),
+    )
+    store = move.Store(current_state=lrz.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [rot_c, load, lrz, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    sm_lrz = next(s for s in block.stmts if isinstance(s, stack_move.LocalRz))
+    assert isinstance(sm_lrz.rotation_angle.owner, stack_move.ConstFloat)
+    locs = [s for s in block.stmts if isinstance(s, stack_move.ConstLoc)]
+    assert locs[0].value == addr
+
+
+def test_global_r_lowers():
+    axis_c = kirin_py.Constant(value=ir.PyAttr(0.3))
+    rot_c = kirin_py.Constant(value=ir.PyAttr(0.4))
+    load = move.Load()
+    gr = move.GlobalR(
+        current_state=load.result,
+        axis_angle=axis_c.result,
+        rotation_angle=rot_c.result,
+    )
+    store = move.Store(current_state=gr.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [axis_c, rot_c, load, gr, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    sm_gr = next(s for s in block.stmts if isinstance(s, stack_move.GlobalR))
+    assert isinstance(sm_gr.axis_angle.owner, stack_move.ConstFloat)
+    assert isinstance(sm_gr.rotation_angle.owner, stack_move.ConstFloat)
+
+
+def test_global_rz_lowers():
+    rot_c = kirin_py.Constant(value=ir.PyAttr(0.6))
+    load = move.Load()
+    grz = move.GlobalRz(current_state=load.result, rotation_angle=rot_c.result)
+    store = move.Store(current_state=grz.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [rot_c, load, grz, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    sm_grz = next(s for s in block.stmts if isinstance(s, stack_move.GlobalRz))
+    assert isinstance(sm_grz.rotation_angle.owner, stack_move.ConstFloat)
+
+
+def test_cz_lowers_with_const_zone():
+    load = move.Load()
+    cz = move.CZ(current_state=load.result, zone_address=ZoneAddress(0))
+    store = move.Store(current_state=cz.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [load, cz, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, move.CZ) for s in block.stmts)
+    sm_cz = next(s for s in block.stmts if isinstance(s, stack_move.CZ))
+    zone_consts = [s for s in block.stmts if isinstance(s, stack_move.ConstZone)]
+    assert len(zone_consts) == 1
+    assert zone_consts[0].value == ZoneAddress(0)
+    assert sm_cz.zone.owner is zone_consts[0]

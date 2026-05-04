@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from functools import singledispatchmethod
 
 from kirin import ir
+from kirin.dialects import py as kirin_py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
@@ -79,5 +80,72 @@ class RewriteMoveToStackMove(RewriteRule):
         for lc in lane_consts:
             lc.insert_before(stmt)
         new = stack_move.Move(lanes=tuple(lc.result for lc in lane_consts))
+        new.insert_before(stmt)
+        to_delete.append(stmt)
+
+    @_rewrite.register(kirin_py.Constant)
+    def _(self, stmt: kirin_py.Constant, to_delete: list[ir.Statement]) -> None:
+        val = stmt.value.unwrap()
+        if isinstance(val, bool):
+            return  # bool subclasses int — pass through unchanged
+        if isinstance(val, float):
+            new: ir.Statement = stack_move.ConstFloat(value=val)
+        elif isinstance(val, int):
+            new = stack_move.ConstInt(value=val)
+        else:
+            return  # non-numeric py.Constant passes through unchanged
+        new.insert_before(stmt)
+        stmt.result.replace_by(new.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.LocalR)
+    def _(self, stmt: move.LocalR, to_delete: list[ir.Statement]) -> None:
+        loc_consts = tuple(
+            stack_move.ConstLoc(value=addr) for addr in stmt.location_addresses
+        )
+        for lc in loc_consts:
+            lc.insert_before(stmt)
+        new = stack_move.LocalR(
+            axis_angle=stmt.axis_angle,
+            rotation_angle=stmt.rotation_angle,
+            locations=tuple(lc.result for lc in loc_consts),
+        )
+        new.insert_before(stmt)
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.LocalRz)
+    def _(self, stmt: move.LocalRz, to_delete: list[ir.Statement]) -> None:
+        loc_consts = tuple(
+            stack_move.ConstLoc(value=addr) for addr in stmt.location_addresses
+        )
+        for lc in loc_consts:
+            lc.insert_before(stmt)
+        new = stack_move.LocalRz(
+            rotation_angle=stmt.rotation_angle,
+            locations=tuple(lc.result for lc in loc_consts),
+        )
+        new.insert_before(stmt)
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.GlobalR)
+    def _(self, stmt: move.GlobalR, to_delete: list[ir.Statement]) -> None:
+        new = stack_move.GlobalR(
+            axis_angle=stmt.axis_angle,
+            rotation_angle=stmt.rotation_angle,
+        )
+        new.insert_before(stmt)
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.GlobalRz)
+    def _(self, stmt: move.GlobalRz, to_delete: list[ir.Statement]) -> None:
+        new = stack_move.GlobalRz(rotation_angle=stmt.rotation_angle)
+        new.insert_before(stmt)
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.CZ)
+    def _(self, stmt: move.CZ, to_delete: list[ir.Statement]) -> None:
+        zone_const = stack_move.ConstZone(value=stmt.zone_address)
+        zone_const.insert_before(stmt)
+        new = stack_move.CZ(zone=zone_const.result)
         new.insert_before(stmt)
         to_delete.append(stmt)
