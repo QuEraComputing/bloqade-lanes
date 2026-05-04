@@ -712,8 +712,14 @@ pub struct PyNoHomeOptions {
 #[pymethods]
 impl PyNoHomeOptions {
     #[new]
-    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8))]
-    fn new(gamma: f64, lambda_lookahead: f64, k_candidates: usize) -> PyResult<Self> {
+    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8, top_bus_signatures=6, bus_reward_rho=1))]
+    fn new(
+        gamma: f64,
+        lambda_lookahead: f64,
+        k_candidates: usize,
+        top_bus_signatures: usize,
+        bus_reward_rho: u32,
+    ) -> PyResult<Self> {
         if !gamma.is_finite() || !(0.0..=1.0).contains(&gamma) {
             return Err(PyValueError::new_err(
                 "gamma must be a finite float in [0.0, 1.0]",
@@ -732,6 +738,8 @@ impl PyNoHomeOptions {
                 gamma,
                 lambda_lookahead,
                 k_candidates,
+                top_bus_signatures,
+                bus_reward_rho,
             },
         })
     }
@@ -751,10 +759,24 @@ impl PyNoHomeOptions {
         self.inner.k_candidates
     }
 
+    #[getter]
+    fn top_bus_signatures(&self) -> usize {
+        self.inner.top_bus_signatures
+    }
+
+    #[getter]
+    fn bus_reward_rho(&self) -> u32 {
+        self.inner.bus_reward_rho
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={})",
-            self.inner.gamma, self.inner.lambda_lookahead, self.inner.k_candidates,
+            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={}, top_bus_signatures={}, bus_reward_rho={})",
+            self.inner.gamma,
+            self.inner.lambda_lookahead,
+            self.inner.k_candidates,
+            self.inner.top_bus_signatures,
+            self.inner.bus_reward_rho,
         )
     }
 }

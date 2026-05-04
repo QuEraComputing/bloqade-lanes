@@ -66,6 +66,14 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
     k_candidates:
         Maximum candidate holes per returner for cost-matrix pruning
         (default 8).
+    top_bus_signatures:
+        Number of bus-reward variant assignments to generate (default 6).
+        Each variant rewards edges sharing a high-coverage lane signature,
+        biasing the assignment toward layouts with parallel routing.
+    bus_reward_rho:
+        Per-edge hop-count discount applied to edges using a top
+        signature when building bus-reward variant cost matrices
+        (default 1).
     """
 
     strategy: str = "ids"
@@ -76,6 +84,8 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
     gamma: float = 0.85
     lambda_lookahead: float = 0.5
     k_candidates: int = 8
+    top_bus_signatures: int = 6
+    bus_reward_rho: int = 1
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
@@ -122,6 +132,8 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
             gamma=self.gamma,
             lambda_lookahead=self.lambda_lookahead,
             k_candidates=self.k_candidates,
+            top_bus_signatures=self.top_bus_signatures,
+            bus_reward_rho=self.bus_reward_rho,
         )
 
     def validate_initial_layout(
