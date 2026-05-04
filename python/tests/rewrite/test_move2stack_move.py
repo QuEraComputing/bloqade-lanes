@@ -1,7 +1,8 @@
 from kirin import ir
-from kirin.dialects import func, py as kirin_py
+from kirin.dialects import func, ilist, py as kirin_py
 from kirin.rewrite import Walk
 
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
@@ -11,6 +12,8 @@ from bloqade.lanes.bytecode.encoding import (
 )
 from bloqade.lanes.dialects import move, stack_move
 from bloqade.lanes.rewrite.move2stack_move import RewriteMoveToStackMove
+
+_ARCH = get_arch_spec()
 
 
 def test_load_and_store_are_removed():
@@ -227,3 +230,53 @@ def test_cz_lowers_with_const_zone():
     assert len(zone_consts) == 1
     assert zone_consts[0].value == ZoneAddress(0)
     assert sm_cz.zone.owner is zone_consts[0]
+
+
+# ---- measurement tests ----
+
+
+def test_measure_lowers_to_stack_move_measure():
+    load = move.Load()
+    m = move.Measure(current_state=load.result, zone_addresses=(ZoneAddress(0),))
+    store = move.Store(current_state=m.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [load, m, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, move.Measure) for s in block.stmts)
+    sm_m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
+    zone_consts = [s for s in block.stmts if isinstance(s, stack_move.ConstZone)]
+    assert len(zone_consts) == 1
+    assert zone_consts[0].value == ZoneAddress(0)
+    assert len(sm_m.zones) == 1
+
+
+def test_getfutureresult_chain_lowers_to_await_measure():
+    locs = list(_ARCH.yield_zone_locations(ZoneAddress(0)))
+    load = move.Load()
+    m = move.Measure(current_state=load.result, zone_addresses=(ZoneAddress(0),))
+    gfrs = [
+        move.GetFutureResult(
+            measurement_future=m.future,
+            zone_address=ZoneAddress(0),
+            location_address=loc,
+        )
+        for loc in locs
+    ]
+    bundle = ilist.New(values=tuple(g.result for g in gfrs))
+    store = move.Store(current_state=m.result)
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [load, m, *gfrs, bundle, store, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+
+    assert not any(isinstance(s, move.GetFutureResult) for s in block.stmts)
+    assert not any(isinstance(s, ilist.New) for s in block.stmts)
+    sm_m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
+    aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
+    assert aw.future is sm_m.results[0]

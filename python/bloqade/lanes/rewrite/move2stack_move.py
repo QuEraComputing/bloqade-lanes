@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from functools import singledispatchmethod
 
 from kirin import ir
-from kirin.dialects import py as kirin_py
+from kirin.dialects import ilist as kirin_ilist, py as kirin_py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.dialects import move, stack_move
@@ -148,4 +148,46 @@ class RewriteMoveToStackMove(RewriteRule):
         zone_const.insert_before(stmt)
         new = stack_move.CZ(zone=zone_const.result)
         new.insert_before(stmt)
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.Measure)
+    def _(self, stmt: move.Measure, to_delete: list[ir.Statement]) -> None:
+        zone_consts = tuple(
+            stack_move.ConstZone(value=addr) for addr in stmt.zone_addresses
+        )
+        for zc in zone_consts:
+            zc.insert_before(stmt)
+        new = stack_move.Measure(zones=tuple(zc.result for zc in zone_consts))
+        new.insert_before(stmt)
+        self._future_to_sm_measure[stmt.future] = new
+        to_delete.append(stmt)
+
+    @_rewrite.register(move.GetFutureResult)
+    def _(self, stmt: move.GetFutureResult, to_delete: list[ir.Statement]) -> None:
+        self._gfr_results.add(stmt.result)
+        to_delete.append(stmt)
+
+    @_rewrite.register(kirin_ilist.New)
+    def _(self, stmt: kirin_ilist.New, to_delete: list[ir.Statement]) -> None:
+        values = tuple(stmt.values)
+        if not values:
+            return  # empty ilist (e.g. coordinates placeholder) — pass through
+        if not all(v in self._gfr_results for v in values):
+            return  # non-measurement ilist — pass through
+        # All values are GetFutureResult outputs: this is the measurement bundle.
+        futures: set[ir.SSAValue] = set()
+        for v in values:
+            if isinstance(v, ir.ResultValue):
+                owner = v.owner
+                if isinstance(owner, move.GetFutureResult):
+                    futures.add(owner.measurement_future)
+        if len(futures) != 1:
+            return
+        (move_future,) = futures
+        sm_measure = self._future_to_sm_measure.get(move_future)
+        if sm_measure is None:
+            return
+        aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
+        aw.insert_before(stmt)
+        stmt.result.replace_by(aw.result)
         to_delete.append(stmt)
