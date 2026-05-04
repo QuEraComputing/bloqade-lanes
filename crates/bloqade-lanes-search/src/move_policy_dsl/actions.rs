@@ -17,7 +17,7 @@ use crate::graph::{MoveSet, NodeId};
 
 /// One verb the policy issues per `step()`. The kernel applies these
 /// in returned order, atomically per tick.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum MoveAction {
     InsertChild { parent: NodeId, move_set: MoveSet },
     UpdateNodeState { node: NodeId, patch: PatchValue },
@@ -31,7 +31,7 @@ pub enum MoveAction {
 /// the schema check (§5.10 row "update_node_state with a field not in
 /// schema") is performed in the kernel against the declared NodeState
 /// schema, not here.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PatchValue(pub serde_json::Value);
 
 impl MoveAction {
@@ -141,7 +141,7 @@ impl MoveAction {
 /// `register_X(GlobalsBuilder)` macro signature doesn't provide.
 #[starlark_module]
 pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
-    /// Emit an `insert_child` action.
+    /// Emit an `insert_child` action — create a child of `parent` with the given encoded lanes.
     fn insert_child<'v>(
         parent: i32,
         move_set_encoded: &'v ListRef<'v>,
@@ -163,7 +163,7 @@ pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(heap.alloc(dict))
     }
 
-    /// Emit an `update_node_state` action. `patch` is a dict.
+    /// Emit an `update_node_state` action, merging `patch` dict into per-node DSL state for `node`.
     fn update_node_state<'v>(
         node: i32,
         patch: Value<'v>,
@@ -178,7 +178,7 @@ pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(heap.alloc(dict))
     }
 
-    /// Emit an `update_global_state` action. `patch` is a dict.
+    /// Emit an `update_global_state` action, merging `patch` into the solver-wide global state.
     fn update_global_state<'v>(
         patch: Value<'v>,
         eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
@@ -191,7 +191,7 @@ pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(heap.alloc(dict))
     }
 
-    /// Emit an `emit_solution` action.
+    /// Emit an `emit_solution` action, recording `node` as a solved output.
     fn emit_solution<'v>(
         node: i32,
         eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
@@ -204,7 +204,7 @@ pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(heap.alloc(dict))
     }
 
-    /// Emit a `halt` action.
+    /// Halt the search with `status` ∈ {"solved","unsolvable","fallback","error"}.
     fn halt<'v>(
         status: &str,
         #[starlark(default = "")] message: &str,
@@ -219,7 +219,7 @@ pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
         Ok(heap.alloc(dict))
     }
 
-    /// Emit an `invoke_builtin` action. `args` is a dict.
+    /// Invoke built-in `name` with `args` dict; result readable via `graph.last_builtin_result()`.
     fn invoke_builtin<'v>(
         name: &str,
         args: Value<'v>,

@@ -91,6 +91,7 @@ def step(graph, gs, ctx, lib):
         std::iter::empty(),
         index,
         opts,
+        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve");
 

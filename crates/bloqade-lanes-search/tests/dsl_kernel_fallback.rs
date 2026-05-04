@@ -76,6 +76,7 @@ def step(graph, gs, ctx, lib):
         std::iter::empty::<bloqade_lanes_bytecode_core::arch::addr::LocationAddr>(),
         index,
         opts,
+        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve");
 

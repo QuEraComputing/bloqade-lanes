@@ -87,6 +87,7 @@ fn run_entropy_star(
         blocked.iter().copied(),
         index,
         opts,
+        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve_with_policy error")
 }
@@ -132,17 +133,19 @@ impl From<PolicyResult> for CanonicalResult {
 
 // ── Fixture builders (copied from dsl_entropy_acid.rs) ───────────────────────
 
+type Fixture = (
+    &'static str,
+    Vec<(u32, LocationAddr)>,
+    Vec<(u32, LocationAddr)>,
+    Vec<LocationAddr>,
+);
+
 /// Fixture 1: tiny — 1 qubit, 1 site-bus hop.
 ///
 /// Qubit 0 starts at word 0, site 0 (source row).
 /// Target: word 0, site 5 (destination row).
 /// One site-bus move is required.
-fn build_tiny_fixture() -> (
-    &'static str,
-    Vec<(u32, LocationAddr)>,
-    Vec<(u32, LocationAddr)>,
-    Vec<LocationAddr>,
-) {
+fn build_tiny_fixture() -> Fixture {
     (
         example_arch_json(),
         vec![(0u32, loc(0, 0))],
@@ -157,12 +160,7 @@ fn build_tiny_fixture() -> (
 /// Target: word 1, site 5.
 /// Path: site-bus (site 0 → site 5 in word 0), then word-bus (word 0 → word 1).
 /// Two bus hops are required.
-fn build_small_fixture() -> (
-    &'static str,
-    Vec<(u32, LocationAddr)>,
-    Vec<(u32, LocationAddr)>,
-    Vec<LocationAddr>,
-) {
+fn build_small_fixture() -> Fixture {
     (
         example_arch_json(),
         vec![(0u32, loc(0, 0))],
@@ -175,12 +173,7 @@ fn build_small_fixture() -> (
 ///
 /// Qubit 0 at word 0, site 0.  Target: word 0, site 5.
 /// Qubit 1 at word 0, site 1.  Target: word 0, site 6.
-fn build_medium_fixture() -> (
-    &'static str,
-    Vec<(u32, LocationAddr)>,
-    Vec<(u32, LocationAddr)>,
-    Vec<LocationAddr>,
-) {
+fn build_medium_fixture() -> Fixture {
     (
         example_arch_json(),
         vec![(0u32, loc(0, 0)), (1u32, loc(0, 1))],

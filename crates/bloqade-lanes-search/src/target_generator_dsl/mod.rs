@@ -7,7 +7,12 @@
 pub mod ctx_handle;
 pub mod kernel;
 pub mod lib_target;
+pub mod observer;
 
 pub use ctx_handle::StarlarkTargetContext;
 pub use kernel::{TargetPolicyError, TargetPolicyRunner, run_target_policy};
 pub use lib_target::StarlarkLibTarget;
+pub use observer::{
+    CandidateSummary, JsonTargetTraceObserver, NoOpTargetObserver, TargetContextSnapshot,
+    TargetKernelObserver,
+};

@@ -516,7 +516,7 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(this.dist_table.fastest_lane_us().unwrap_or(0.0))
     }
 
-    /// Mobility = Σ 1 / (1 + hop_distance(next_dst, target)) over outgoing lanes.
+    /// Return the mobility score of `loc`: Σ 1/(1+hop_distance) over outgoing lanes × targets.
     ///
     /// `targets` is a list of `(qid, target_loc)` 2-tuples (e.g., `ctx.targets`).
     /// Lanes that reach unreachable targets (no path) contribute nothing.
@@ -569,7 +569,9 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
     // pipeline. The pure-Rust core for stages 2–4 lives in
     // [`crate::generators::pipeline`].
 
-    /// Stage 1. For each unresolved qubit and each outgoing lane (skipping
+    /// Stage 1. Score every (qubit, lane) pair via `score_fn`; return a list of `ScoredLane`.
+    ///
+    /// For each unresolved qubit and each outgoing lane (skipping
     /// lanes whose destination is occupied/blocked), call
     /// `score_fn(qubit, lane, ns, ctx)` and collect a [`ScoredLane`] per
     /// successful evaluation.
@@ -644,7 +646,9 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(eval.heap().alloc(AllocList(out_values.into_iter())))
     }
 
-    /// Stage 2. Group `scored` by qid, retain the top-`c` entries per qid
+    /// Stage 2. Retain the top-`c` lanes per qubit from `scored`, sorted by score descending.
+    ///
+    /// Groups `scored` by qid, retains the top-`c` entries per qid
     /// sorted by `(score desc, lane.encoded asc)`. Falls back to the
     /// single best entry across all qubits when no entry has positive
     /// score (matches `HeuristicGenerator::generate`'s fallback).
@@ -664,8 +668,9 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(heap.alloc(AllocList(items.into_iter())))
     }
 
-    /// Stage 3. Group `scored` by `(move_type, bus_id, direction)` and
-    /// return groups sorted ascending by triplet key.
+    /// Stage 3. Group `scored` lanes by `(move_type, bus_id, direction)` triplet.
+    ///
+    /// Returns groups sorted ascending by triplet key.
     fn group_by_triplet<'v>(
         this: &LibMove,
         scored: &'v ListRef<'v>,
@@ -681,8 +686,10 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(heap.alloc(AllocList(items.into_iter())))
     }
 
-    /// Stage 4. For each triplet group, build AOD-compatible rectangles
-    /// via [`crate::aod_grid::BusGridContext`] and lift to
+    /// Stage 4. Pack triplet groups into AOD-compatible `PackedCandidate` rectangles.
+    ///
+    /// For each triplet group, builds AOD-compatible rectangles
+    /// via [`crate::aod_grid::BusGridContext`] and lifts to
     /// [`pipeline::PackedCandidate`]s. Returned candidates are sorted by
     /// `score_sum desc` with deterministic tie-breakers.
     ///

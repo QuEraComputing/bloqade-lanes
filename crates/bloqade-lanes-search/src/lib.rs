@@ -8,6 +8,7 @@ pub mod astar;
 pub mod config;
 pub mod context;
 pub mod cost;
+pub mod fixture;
 
 pub mod entropy;
 pub mod frontier;
@@ -33,6 +34,7 @@ pub use astar::SearchResult;
 pub use config::{Config, ConfigError};
 pub use context::{MoveCandidate, SearchContext, SearchState};
 pub use cost::UniformCost;
+pub use fixture::{Budget, FixtureError, MoveProblem, Problem, TargetProblem};
 pub use generators::{DeadlockPolicy, ExhaustiveGenerator, GreedyGenerator, HeuristicGenerator};
 pub use goals::{AllAtTarget, PartialPlacementGoal};
 pub use graph::{MoveSet, NodeId, SearchGraph};

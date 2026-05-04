@@ -56,6 +56,7 @@ impl PyTargetPolicyRunner {
 
         let result = py
             .allow_threads(|| {
+                let mut observer = bloqade_lanes_search::target_generator_dsl::NoOpTargetObserver;
                 self.inner.generate(
                     self.index.clone(),
                     placement_pairs,
@@ -64,6 +65,7 @@ impl PyTargetPolicyRunner {
                     lookahead_cz_layers,
                     cz_stage_index,
                     params_json,
+                    &mut observer,
                 )
             })
             .map_err(map_err)?;

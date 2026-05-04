@@ -15,7 +15,7 @@ use crate::config::Config;
 /// Opaque handle to a node in the search graph.
 ///
 /// Internally an index into the node arena.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct NodeId(pub(crate) u32);
 
 /// A set of lanes applied simultaneously in one move step.
@@ -23,7 +23,7 @@ pub struct NodeId(pub(crate) u32);
 /// Stored as a sorted, deduplicated `Vec<u64>` of
 /// [`LaneAddr::encode_u64()`] values, making it order-independent
 /// (analogous to Python's `frozenset[LaneAddress]`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct MoveSet {
     lanes: Vec<u64>,
 }

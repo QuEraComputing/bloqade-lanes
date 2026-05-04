@@ -1,0 +1,6 @@
+{
+  "status": "Fallback",
+  "halt_reason": "policy-requested",
+  "expansions": 0,
+  "max_depth": 12
+}

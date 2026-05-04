@@ -91,6 +91,12 @@ pub struct HeuristicGenerator {
     deadlock_count: Cell<u32>,
 }
 
+impl Default for HeuristicGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeuristicGenerator {
     /// Create a new heuristic generator.
     pub fn new() -> Self {
@@ -972,7 +978,7 @@ mod tests {
 
     #[test]
     fn scored_triple_tie_break_is_deterministic() {
-        let mut entries = vec![
+        let mut entries = [
             (
                 (1, 2, 3),
                 ScoredTriple {
@@ -1015,7 +1021,7 @@ mod tests {
     fn candidate_tie_break_uses_moveset_then_config() {
         let cfg_a = Config::new([(0, loc(0, 1))]).unwrap();
         let cfg_b = Config::new([(0, loc(0, 2))]).unwrap();
-        let mut candidates = vec![
+        let mut candidates = [
             (5, MoveSet::from_encoded(vec![9]), cfg_b),
             (5, MoveSet::from_encoded(vec![3]), cfg_a),
         ];

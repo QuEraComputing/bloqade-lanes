@@ -92,6 +92,7 @@ fn run_with_params(
         std::iter::empty::<LocationAddr>(),
         index,
         opts,
+        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve_with_policy")
 }

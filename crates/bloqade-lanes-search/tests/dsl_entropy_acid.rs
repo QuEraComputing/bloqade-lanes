@@ -156,6 +156,7 @@ fn run_entropy_star(
         blocked.iter().copied(),
         index,
         opts,
+        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve_with_policy error")
 }
@@ -241,7 +242,7 @@ fn assert_acid(
     // Only check when both paths produce non-empty move layers (i.e., when the
     // problem actually requires moves, and entropy.star produced a path via
     // sequential_fallback).
-    if strategy_result.move_layers.len() > 0 && policy_result.move_layers.len() > 0 {
+    if !strategy_result.move_layers.is_empty() && !policy_result.move_layers.is_empty() {
         let diff = (strategy_result.move_layers.len() as i64
             - policy_result.move_layers.len() as i64)
             .abs();
@@ -346,8 +347,8 @@ fn entropy_star_matches_strategy_entropy_small() {
 /// Strategy::Entropy can move them in parallel (1 layer).
 /// entropy.star now reaches Solved (graph.config + is_goal wired up):
 ///   - Finds a packed move that moves both qubits simultaneously → 2 layers.
-/// Strategy::Entropy finds the 1-parallel-layer optimum; entropy.star finds
-/// 2 layers (sequential pack due to scoring).  Observed diff = 1.
+///     Strategy::Entropy finds the 1-parallel-layer optimum; entropy.star finds
+///     2 layers (sequential pack due to scoring).  Observed diff = 1.
 ///
 /// n_layers tolerance tightened to ±3.
 #[test]

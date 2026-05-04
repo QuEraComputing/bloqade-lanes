@@ -176,8 +176,10 @@ fn register_graph_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(heap.alloc(AllocList(kids.into_iter())))
     }
 
-    /// Path from root to `node` as a list of `move_set_encoded` lane
-    /// arrays. (We expose the encoded lane vec rather than a typed
+    /// Return the path from root to `node` as a list of encoded-lane arrays.
+    ///
+    /// Each element is a list of encoded lane integers representing one
+    /// `move_set_encoded` step. (We expose the encoded lane vec rather than a typed
     /// `MoveSet` value to keep the wrapper type-set small for v1; the
     /// reference policies and acid test consume the encoded form.)
     fn path_from_root<'v>(
@@ -208,7 +210,9 @@ fn register_graph_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(json_to_starlark(state, heap))
     }
 
-    /// Configuration of `node`. Returns a real [`StarlarkConfig`] so that
+    /// Return the qubit configuration at `node` as a `Config` value.
+    ///
+    /// Returns a real [`StarlarkConfig`] so that
     /// policy code can call `lib.score_lanes(graph.config(node), ...)` and
     /// related pipeline methods.
     fn config<'v>(this: &PolicyGraph, node: i32, heap: &'v Heap) -> starlark::Result<Value<'v>> {
@@ -217,7 +221,9 @@ fn register_graph_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(heap.alloc(StarlarkConfig(cfg)))
     }
 
-    /// Goal predicate: returns `true` when the node's config equals the
+    /// Return `true` if `node`'s config matches the solve-start target config.
+    ///
+    /// Returns `true` when the node's config equals the
     /// target config that was set at solve start.
     fn is_goal(this: &PolicyGraph, node: i32) -> starlark::Result<bool> {
         let inner = this.lock();

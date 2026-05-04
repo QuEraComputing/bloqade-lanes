@@ -111,7 +111,8 @@ pub struct PolicyResult {
 /// Terminal status enum for [`PolicyResult::status`].
 ///
 /// Mirrors the spec §5.10 status codes plus a few internal flavors.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "type", content = "detail")]
 pub enum PolicyStatus {
     /// Policy halted with `actions.halt("solved", ...)`.
     Solved,
@@ -154,6 +155,7 @@ pub fn solve_with_policy(
     blocked: impl IntoIterator<Item = LocationAddr>,
     index: Arc<LaneIndex>,
     opts: PolicyOptions,
+    observer: &mut dyn crate::move_policy_dsl::observer::MoveKernelObserver,
 ) -> Result<PolicyResult, DslError> {
     // 1. Build initial / target / blocked sets.
     let initial_cfg =
@@ -191,6 +193,17 @@ pub fn solve_with_policy(
         target: target_cfg.clone(),
     };
     let policy_graph = PolicyGraph::new(inner);
+
+    // Notify the observer that we're starting a new solve.
+    {
+        use crate::move_policy_dsl::observer::PolicyGraphSnapshot;
+        let snap = PolicyGraphSnapshot {
+            root_qubits: initial_cfg.iter().map(|(q, _)| q).collect(),
+            target_qubits: target_cfg.iter().map(|(q, _)| q).collect(),
+            blocked_count: blocked_set.len(),
+        };
+        observer.on_init(&snap);
+    }
 
     // 5. Build LibMove + Ctx.
     let arch_spec_arc = Arc::new(index.arch_spec().clone());
@@ -238,14 +251,17 @@ pub fn solve_with_policy(
     let mut node_state_schema: Option<HashSet<String>> = None;
     let mut global_state_schema: Option<HashSet<String>> =
         gs.as_object().map(|m| m.keys().cloned().collect());
+    let mut step_idx: u64 = 0;
 
     loop {
         // Budget checks.
         if let Some(t) = opts.timeout_s
             && start.elapsed().as_secs_f64() > t
         {
+            let status = PolicyStatus::Timeout;
+            observer.on_halt(&status);
             return Ok(make_terminal_result(
-                PolicyStatus::Timeout,
+                status,
                 &opts,
                 &solutions,
                 &inner_arc_for_kernel,
@@ -256,8 +272,10 @@ pub fn solve_with_policy(
             ));
         }
         if (nodes_expanded as u64) >= opts.max_expansions {
+            let status = PolicyStatus::BudgetExhausted;
+            observer.on_halt(&status);
             return Ok(make_terminal_result(
-                PolicyStatus::BudgetExhausted,
+                status,
                 &opts,
                 &solutions,
                 &inner_arc_for_kernel,
@@ -284,11 +302,42 @@ pub fn solve_with_policy(
             &mut node_state_schema,
             &mut global_state_schema,
         )?;
+
+        // Notify the observer for each action applied this tick.
+        {
+            use crate::move_policy_dsl::observer::GraphDelta;
+            let inner = inner_arc_for_kernel
+                .lock()
+                .expect("PolicyGraphInner mutex poisoned");
+            let delta = GraphDelta {
+                last_insert: inner
+                    .last_insert
+                    .as_ref()
+                    .and_then(|o| o.child_id.map(|id| id.0 as u64)),
+                last_builtin: inner.last_builtin.as_ref().map(|o| o.status.clone()),
+            };
+            for action in &actions {
+                // Notify on_builtin for InvokeBuiltin actions.
+                if let MoveAction::InvokeBuiltin { name, .. } = action {
+                    let ok = delta
+                        .last_builtin
+                        .as_deref()
+                        .map(|s| !s.starts_with("unknown builtin"))
+                        .unwrap_or(false);
+                    observer.on_builtin(step_idx, name, ok);
+                }
+                let depth = action_depth(&inner.graph, action, delta.last_insert);
+                observer.on_step(step_idx, depth, action, &delta);
+            }
+        }
+        step_idx += 1;
+
         gs = new_gs;
         if committed_new_child {
             nodes_expanded += 1;
         }
         if let Some(status) = halt {
+            observer.on_halt(&status);
             return Ok(make_terminal_result(
                 status,
                 &opts,
@@ -300,6 +349,26 @@ pub fn solve_with_policy(
                 nodes_expanded,
             ));
         }
+    }
+}
+
+// ── action_depth ─────────────────────────────────────────────────────────
+
+/// Return the search-tree depth associated with the just-applied `action`.
+///
+/// - `InsertChild`: the new child's depth (looked up from `last_insert`).
+/// - `UpdateNodeState` / `EmitSolution`: the depth of the named node.
+/// - `Halt`, `UpdateGlobalState`, `InvokeBuiltin`: no associated node; `0`.
+fn action_depth(graph: &SearchGraph, action: &MoveAction, last_insert: Option<u64>) -> u32 {
+    match action {
+        MoveAction::InsertChild { .. } => last_insert
+            .map(|id| graph.depth(NodeId(id as u32)))
+            .unwrap_or(0),
+        MoveAction::UpdateNodeState { node, .. } => graph.depth(*node),
+        MoveAction::EmitSolution { node } => graph.depth(*node),
+        MoveAction::Halt { .. }
+        | MoveAction::UpdateGlobalState { .. }
+        | MoveAction::InvokeBuiltin { .. } => 0,
     }
 }
 
@@ -891,6 +960,7 @@ def step(graph, gs, ctx, lib):
             std::iter::empty::<LocationAddr>(),
             index,
             opts,
+            &mut crate::move_policy_dsl::observer::NoOpMoveObserver,
         )
         .expect("solve");
 

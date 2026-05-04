@@ -938,6 +938,7 @@ impl PyMoveSolver {
                         blocked_locs,
                         index,
                         policy_opts,
+                        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
                     )
                 })
                 .map_err(|e| PyValueError::new_err(format!("{e}")))?;

@@ -92,7 +92,19 @@ impl TargetPolicyRunner {
         lookahead_cz_layers: Vec<(Vec<u32>, Vec<u32>)>,
         cz_stage_index: u32,
         _policy_params: serde_json::Value,
+        observer: &mut dyn crate::target_generator_dsl::observer::TargetKernelObserver,
     ) -> Result<Vec<Vec<(u32, LocationAddr)>>, TargetPolicyError> {
+        use crate::target_generator_dsl::observer::{CandidateSummary, TargetContextSnapshot};
+
+        let snap = TargetContextSnapshot {
+            current_qubit_count: placement.len(),
+            controls_len: controls.len(),
+            targets_len: targets.len(),
+            lookahead_layers: lookahead_cz_layers.len(),
+            cz_stage_index,
+        };
+        observer.on_invoke(cz_stage_index as u64, &snap);
+
         let generate_fn =
             self.loaded
                 .get("generate")
@@ -166,12 +178,28 @@ impl TargetPolicyRunner {
         }
 
         // Validate each candidate against architecture-level invariants.
-        for cand in &candidates {
-            validate_candidate(cand, &controls, &targets, &index)
-                .map_err(|error| TargetPolicyError::InvalidCandidate { error })?;
-        }
+        let result: Result<Vec<Vec<(u32, LocationAddr)>>, TargetPolicyError> = {
+            let mut validated = Vec::with_capacity(candidates.len());
+            for cand in candidates {
+                validate_candidate(&cand, &controls, &targets, &index)
+                    .map_err(|error| TargetPolicyError::InvalidCandidate { error })?;
+                validated.push(cand);
+            }
+            Ok(validated)
+        };
 
-        Ok(candidates)
+        let summary = match &result {
+            Ok(cands) => CandidateSummary {
+                num_candidates: cands.len(),
+                first_candidate_size: cands.first().map_or(0, |c| c.len()),
+            },
+            Err(_) => CandidateSummary {
+                num_candidates: 0,
+                first_candidate_size: 0,
+            },
+        };
+        observer.on_result(cz_stage_index as u64, &summary, result.is_ok());
+        result
     }
 }
 
@@ -187,6 +215,7 @@ pub fn run_target_policy(
     cz_stage_index: u32,
     policy_params: serde_json::Value,
     cfg: &SandboxConfig,
+    observer: &mut dyn crate::target_generator_dsl::observer::TargetKernelObserver,
 ) -> Result<Vec<Vec<(u32, LocationAddr)>>, TargetPolicyError> {
     let runner = TargetPolicyRunner::from_path(policy_path, cfg)?;
     runner.generate(
@@ -197,6 +226,7 @@ pub fn run_target_policy(
         lookahead_cz_layers,
         cz_stage_index,
         policy_params,
+        observer,
     )
 }
 
@@ -252,6 +282,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
+                &mut crate::target_generator_dsl::NoOpTargetObserver,
             )
             .expect("generate");
         assert_eq!(candidates.len(), 1);
@@ -283,6 +314,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
+                &mut crate::target_generator_dsl::NoOpTargetObserver,
             )
             .expect_err("must reject");
         assert!(
@@ -306,6 +338,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
+                &mut crate::target_generator_dsl::NoOpTargetObserver,
             )
             .expect_err("must reject");
         assert!(
@@ -334,6 +367,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
+                &mut crate::target_generator_dsl::NoOpTargetObserver,
             )
             .expect("generate");
         assert!(
