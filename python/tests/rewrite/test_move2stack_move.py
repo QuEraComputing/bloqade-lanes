@@ -313,3 +313,40 @@ def test_set_observable_lowers_to_stack_move_set_observable():
 
     assert not any(isinstance(s, annotate.stmts.SetObservable) for s in block.stmts)
     assert any(isinstance(s, stack_move.SetObservable) for s in block.stmts)
+
+
+# ---- round-trip test ----
+
+
+def test_round_trip_fill_move_gate():
+    """stack_move → move → stack_move preserves Fill and LocalRz semantics."""
+    from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
+
+    arch = get_arch_spec()
+    a0 = LocationAddress(0, 0, 0)
+
+    # Build a minimal stack_move block: ConstFloat + ConstLoc + InitialFill + LocalRz
+    cf = stack_move.ConstFloat(value=0.5)
+    cl_loc = stack_move.ConstLoc(value=a0)
+    initial_fill = stack_move.InitialFill(locations=(cl_loc.result,))
+    lrz = stack_move.LocalRz(rotation_angle=cf.result, locations=(cl_loc.result,))
+    none_stmt = func.ConstantNone()
+    ret = func.Return(none_stmt.result)
+
+    block = ir.Block()
+    for s in [cf, cl_loc, initial_fill, lrz, none_stmt, ret]:
+        block.stmts.append(s)
+
+    # Forward: stack_move → move
+    Walk(RewriteStackMoveToMove(arch_spec=arch)).rewrite(block)
+    assert any(isinstance(s, move.Fill) for s in block.stmts)
+    assert not any(isinstance(s, stack_move.InitialFill) for s in block.stmts)
+    assert any(isinstance(s, move.LocalRz) for s in block.stmts)
+    assert not any(isinstance(s, stack_move.LocalRz) for s in block.stmts)
+
+    # Inverse: move → stack_move
+    Walk(RewriteMoveToStackMove()).rewrite(block)
+    assert not any(isinstance(s, move.Fill) for s in block.stmts)
+    assert not any(isinstance(s, move.LocalRz) for s in block.stmts)
+    assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)
+    assert any(isinstance(s, stack_move.LocalRz) for s in block.stmts)
