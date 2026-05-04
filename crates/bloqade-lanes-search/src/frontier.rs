@@ -355,10 +355,22 @@ impl<H: crate::traits::Heuristic> Frontier for DfsFrontier<H> {
 
 // ── IdsFrontier (Iterative Diving Search) ───────────────────────────
 
-/// Priority entry for IDS: depth-first with heuristic jump-back.
+/// Priority entry for IDS: best-first dive (paper-style "Iterative Diving
+/// Search").
 ///
-/// Ordering (max-heap): higher depth first, then lower insertion order
-/// (preserves expander ranking), then lower h (best heuristic on jump-back).
+/// Ordering (max-heap): lower `h_score` first, then deeper (dive when scores
+/// tie), then earlier insertion (preserves expander ranking).
+///
+/// This matches the algorithm in arxiv:2512.13790 — the heuristic drives the
+/// pop order, with depth as a tiebreaker so the search prefers diving into
+/// the cheapest path while still backing up to a shallower node when the
+/// shallower path looks better.
+///
+/// Note: `insertion_order` is unique across all entries (one increment per
+/// `receive_children` call), so it always breaks ties decisively. This
+/// means earlier orderings where `insertion_order` came before `h_score`
+/// effectively never consulted the heuristic — the change to put
+/// `h_score` first activates a previously-dormant signal.
 struct IdsEntry {
     depth: u32,
     insertion_order: u64,
@@ -378,13 +390,15 @@ impl PartialEq for IdsEntry {
 
 impl Ord for IdsEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Max-heap: higher depth = higher priority (depth-first dive).
-        self.depth
-            .cmp(&other.depth)
-            // Tie-break: lower insertion_order = higher priority (expander's ranking).
+        // Primary: lower h_score = higher priority (best-first).
+        other
+            .h_score
+            .total_cmp(&self.h_score)
+            // Secondary: deeper = higher priority (dive within score tier).
+            .then(self.depth.cmp(&other.depth))
+            // Tertiary: earlier insertion = higher priority (preserves
+            // expander ranking among same-depth same-score entries).
             .then(other.insertion_order.cmp(&self.insertion_order))
-            // Tie-break: lower h = higher priority (best heuristic on jump-back).
-            .then(other.h_score.total_cmp(&self.h_score))
     }
 }
 
