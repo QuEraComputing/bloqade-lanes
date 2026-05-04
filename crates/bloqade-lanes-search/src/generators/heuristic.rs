@@ -87,6 +87,10 @@ pub struct HeuristicGenerator {
     lookahead: bool,
     /// Seed for score perturbation RNG (restart diversity).
     seed: u64,
+    /// Optional per-qubit move-candidate pruning (the "c" in `top_c` =
+    /// number of candidates kept). `None` = keep all scored triples.
+    /// `Some(n)` = keep at most n bus options per qubit by score.
+    top_c: Option<usize>,
     /// Counter for deadlock occurrences (single-threaded; each restart gets its own generator).
     deadlock_count: Cell<u32>,
 }
@@ -104,6 +108,7 @@ impl HeuristicGenerator {
             deadlock_policy: DeadlockPolicy::AllMoves,
             lookahead: false,
             seed: 0,
+            top_c: None,
             deadlock_count: Cell::new(0),
         }
     }
@@ -123,6 +128,13 @@ impl HeuristicGenerator {
     /// Set the seed for score perturbation.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
+        self
+    }
+
+    /// Limit per-qubit bus options to the top `n` by score.
+    /// Default is `None` (keep all).
+    pub fn with_top_c(mut self, n: usize) -> Self {
+        self.top_c = Some(n);
         self
     }
 
@@ -401,6 +413,9 @@ impl MoveGenerator for HeuristicGenerator {
 
         for entries in per_qubit.values_mut() {
             entries.sort_by(cmp_scored_triples);
+            if let Some(c) = self.top_c {
+                entries.truncate(c);
+            }
             for e in entries.iter() {
                 if e.1.score > 0 {
                     has_positive = true;

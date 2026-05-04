@@ -753,6 +753,7 @@ impl MoveSolver {
                 let inner = HeuristicGenerator::new()
                     .with_deadlock_policy(policy)
                     .with_lookahead(lookahead)
+                    .with_top_c(3)
                     .with_seed(seed);
                 LooseTargetGenerator::new(
                     inner,
