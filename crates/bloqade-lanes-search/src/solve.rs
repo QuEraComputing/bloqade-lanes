@@ -913,51 +913,61 @@ impl MoveSolver {
             .any(|(_, loc)| !nh_cache.home_set.contains(&loc.encode()));
 
         let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+        let _ = ent_cache; // not used in the simple Phase-2 picker
 
         // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
-        // Spectator qubits keep their current location. Phase 2 always uses
-        // vanilla min-sum Hungarian (congestion_weight=0); congestion-aware
-        // rebalance is a loose-goal-only knob and is intentionally not
-        // threaded into the no-home pipeline.
-        let cz_qubits: HashSet<u32> = cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+        // Mirrors Python LogicalPlacementMethods._pick_move (without the
+        // move_count comparison, which isn't tracked at the solver level):
+        // for each CZ pair, pick which qubit moves to the CZ partner of the
+        // *other* qubit's position. Cross-word pairs prefer moving the home
+        // qubit; same-word pairs break ties by minimising same-destination
+        // conflicts among already-chosen moves.
         let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
-            let assigned = if !future_cz_layers.is_empty() {
-                entangling::lookahead_assign_pairs(
-                    cz_pairs,
-                    from,
-                    arch,
-                    &ent_cache.dist_table,
-                    0,
-                    future_cz_layers,
-                    0.2,
-                    0.0,
-                )
-            } else {
-                entangling::greedy_assign_pairs(
-                    cz_pairs,
-                    from,
-                    arch,
-                    &ent_cache.dist_table,
-                    0,
-                    None,
-                    0.0,
-                    0.0,
-                )
-            };
-            let assigned_map: HashMap<u32, u64> = assigned.into_iter().collect();
-            from.iter()
-                .map(|(qid, loc)| {
-                    let target = if cz_qubits.contains(&qid) {
-                        assigned_map
-                            .get(&qid)
-                            .copied()
-                            .map(LocationAddr::decode)
-                            .unwrap_or(loc)
-                    } else {
-                        loc
+            let mut chosen: Vec<(u32, LocationAddr)> = Vec::with_capacity(cz_pairs.len());
+            for &(c, t) in cz_pairs {
+                let Some(c_addr) = from.location_of(c) else {
+                    continue;
+                };
+                let Some(t_addr) = from.location_of(t) else {
+                    continue;
+                };
+                let Some(c_dst) = arch.get_cz_partner(&t_addr) else {
+                    continue;
+                };
+                let Some(t_dst) = arch.get_cz_partner(&c_addr) else {
+                    continue;
+                };
+
+                let move_c = (c, c_dst);
+                let move_t = (t, t_dst);
+
+                let pick = if c_addr.word_id == t_addr.word_id {
+                    // Same word — break ties by minimising shared-destination
+                    // conflicts with already-chosen moves.
+                    let conflicts = |mv: &(u32, LocationAddr)| -> usize {
+                        chosen
+                            .iter()
+                            .filter(|m| m.1.word_id == mv.1.word_id)
+                            .count()
                     };
-                    (qid, target)
-                })
+                    if conflicts(&move_c) <= conflicts(&move_t) {
+                        move_c
+                    } else {
+                        move_t
+                    }
+                } else {
+                    // Cross-word — prefer moving the qubit currently at home.
+                    if arch.is_home_position(&t_addr) {
+                        move_t
+                    } else {
+                        move_c
+                    }
+                };
+                chosen.push(pick);
+            }
+            let chosen_map: HashMap<u32, LocationAddr> = chosen.iter().copied().collect();
+            from.iter()
+                .map(|(qid, loc)| (qid, chosen_map.get(&qid).copied().unwrap_or(loc)))
                 .collect()
         };
 
@@ -988,15 +998,17 @@ impl MoveSolver {
             &nh_cache.home_set,
             &holes,
             &nh_cache.dist_table,
+            &self.index,
             &pw,
             nohome_opts,
         );
 
-        let mut best: Option<SolveResult> = None;
+        // Phase 1: route every candidate's return layout, pick the candidate
+        // whose Phase-1 routing produces the fewest move layers (the
+        // hop-count substitute for Python's _estimate_layers_time).
         let mut total_expanded: u32 = 0;
-
+        let mut best_p1: Option<SolveResult> = None;
         for candidate in &candidates {
-            // Phase 1: route current → home layout (fixed-target).
             let return_target: Vec<(u32, LocationAddr)> = candidate.clone();
             let return_result = self.solve(
                 root.iter(),
@@ -1011,29 +1023,44 @@ impl MoveSolver {
             if return_result.status != SolveStatus::Solved {
                 continue;
             }
-
-            // Phase 2: pre-assign CZ-staging targets, then route home → staging
-            // via the regular fixed-target solve.
-            let cz_targets = resolve_cz_targets(&return_result.goal_config);
-            let entangling_result = self.solve(
-                return_result.goal_config.iter(),
-                cz_targets,
-                blocked_locs.iter().copied(),
-                max_expansions,
-                opts,
-            )?;
-
-            total_expanded += entangling_result.nodes_expanded;
-
-            if entangling_result.status != SolveStatus::Solved {
-                continue;
+            if best_p1
+                .as_ref()
+                .is_none_or(|b| return_result.move_layers.len() < b.move_layers.len())
+            {
+                best_p1 = Some(return_result);
             }
+        }
 
+        let Some(return_result) = best_p1 else {
+            // No candidate routed successfully.
+            return Ok(SolveResult {
+                status: SolveStatus::BudgetExceeded,
+                move_layers: Vec::new(),
+                goal_config: root,
+                nodes_expanded: total_expanded,
+                cost: 0.0,
+                deadlocks: 0,
+                entropy_trace: None,
+            });
+        };
+
+        // Phase 2: simple per-pair target picker, then route once.
+        let cz_targets = resolve_cz_targets(&return_result.goal_config);
+        let entangling_result = self.solve(
+            return_result.goal_config.iter(),
+            cz_targets,
+            blocked_locs.iter().copied(),
+            max_expansions,
+            opts,
+        )?;
+
+        total_expanded += entangling_result.nodes_expanded;
+
+        let best = if entangling_result.status == SolveStatus::Solved {
             let total_cost = return_result.cost + entangling_result.cost;
             let mut combined_layers = return_result.move_layers;
             combined_layers.extend(entangling_result.move_layers);
-
-            let combined = SolveResult {
+            Some(SolveResult {
                 status: SolveStatus::Solved,
                 move_layers: combined_layers,
                 goal_config: entangling_result.goal_config,
@@ -1041,12 +1068,10 @@ impl MoveSolver {
                 cost: total_cost,
                 deadlocks: return_result.deadlocks + entangling_result.deadlocks,
                 entropy_trace: None,
-            };
-
-            if best.as_ref().is_none_or(|b| total_cost < b.cost) {
-                best = Some(combined);
-            }
-        }
+            })
+        } else {
+            None
+        };
 
         Ok(best.unwrap_or(SolveResult {
             status: SolveStatus::BudgetExceeded,
