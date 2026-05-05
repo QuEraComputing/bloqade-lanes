@@ -535,3 +535,109 @@ class MergePlacementRegions(abc.RewriteRule):
         next_node.delete()  # this will be skipped if it is the next item in the Walk worklist
 
         return abc.RewriteResult(has_done_something=True)
+
+
+_GATE_STMT_TYPES = (place.R, place.Rz, place.CZ, place.Yield)
+_SQ_STMT_TYPES = (place.R, place.Rz, place.Yield)
+
+
+def _is_pure_gate_block(sp: place.StaticPlacement) -> bool:
+    return all(isinstance(stmt, _GATE_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
+
+
+def _is_sq_only_block(sp: place.StaticPlacement) -> bool:
+    return all(isinstance(stmt, _SQ_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
+
+
+def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge placements whose bodies contain only R, Rz, CZ, and Yield."""
+    return _is_pure_gate_block(sp1) and _is_pure_gate_block(sp2)
+
+
+def sq_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge placements whose bodies contain only R and Rz (no CZ)."""
+    return _is_sq_only_block(sp1) and _is_sq_only_block(sp2)
+
+
+def always_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    return True
+
+
+@dataclass
+class MergeStaticPlacement(abc.RewriteRule):
+    """Merge adjacent StaticPlacement statements using a caller-supplied policy.
+
+    Replaces MergePlacementRegions. Policy receives full StaticPlacement
+    statements (not just body regions) so CZ qubit indices can be resolved.
+    """
+
+    merge_policy: Callable[[place.StaticPlacement, place.StaticPlacement], bool] = (
+        always_merge
+    )
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not (
+            isinstance(node, place.StaticPlacement)
+            and isinstance(next_node := node.next_stmt, place.StaticPlacement)
+        ):
+            return abc.RewriteResult()
+
+        if not self.merge_policy(node, next_node):
+            return abc.RewriteResult()
+
+        new_qubits = node.qubits
+        new_input_map: dict[int, int] = {}
+        for old_qid, qbit in enumerate(next_node.qubits):
+            if qbit not in new_qubits:
+                new_input_map[old_qid] = len(new_qubits)
+                new_qubits = new_qubits + (qbit,)
+            else:
+                new_input_map[old_qid] = new_qubits.index(qbit)
+
+        new_body = node.body.clone()
+        new_block = new_body.blocks[0]
+
+        curr_yield = new_block.last_stmt
+        assert isinstance(curr_yield, place.Yield)
+
+        curr_state = curr_yield.final_state
+        current_yields = list(curr_yield.classical_results)
+        curr_yield.delete()
+
+        for stmt in next_node.body.blocks[0].stmts:
+            if isinstance(
+                stmt,
+                (place.R, place.Rz, place.CZ, place.EndMeasure, place.Initialize),
+            ):
+                remapped_stmt = stmt.from_stmt(
+                    stmt,
+                    args=(curr_state, *stmt.args[1:]),
+                    attributes={
+                        "qubits": ir.PyAttr(
+                            tuple(new_input_map[i] for i in stmt.qubits)
+                        )
+                    },
+                )
+                curr_state = remapped_stmt.results[0]
+                new_block.stmts.append(remapped_stmt)
+                for old_result, new_result in zip(
+                    stmt.results[1:], remapped_stmt.results[1:]
+                ):
+                    old_result.replace_by(new_result)
+                    current_yields.append(new_result)
+
+        new_block.stmts.append(place.Yield(curr_state, *current_yields))
+
+        new_static_circuit = place.StaticPlacement(new_qubits, new_body)
+        new_static_circuit.insert_before(node)
+
+        old_results = list(node.results) + list(next_node.results)
+        for old_result, new_result in zip(
+            old_results, new_static_circuit.results, strict=True
+        ):
+            old_result.replace_by(new_result)
+
+        node.delete()
+        next_node.delete()
+
+        return abc.RewriteResult(has_done_something=True)

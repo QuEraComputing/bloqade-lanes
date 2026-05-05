@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
 
-from kirin import ir, rewrite
+from kirin import passes, rewrite
 from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 
@@ -17,9 +16,10 @@ from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
 from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place
 
-from .base import _default_merge_heuristic, _NativeToPlaceBase, _PlaceToMove
+from .base import _NativeToPlaceBase, _PlaceToMove
 
 
 @dataclass
@@ -50,9 +50,7 @@ class PhysicalPipeline:
     layout_heuristic: layout.LayoutHeuristicABC | None = None
     placement_strategy: placement.PlacementStrategyABC | None = None
     insert_return_moves: bool = True
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = field(
-        default=_default_merge_heuristic
-    )
+    place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
@@ -66,10 +64,10 @@ class PhysicalPipeline:
             else self.placement_strategy
         )
 
-        out = _PhysicalNativeToPlace(
-            merge_heuristic=self.merge_heuristic,
-            arch_spec=self.arch_spec,
-        ).emit(mt, no_raise=no_raise)
+        out = _PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
+            mt, no_raise=no_raise
+        )
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = _PlaceToMove(
             layout_heuristic=heuristic,
