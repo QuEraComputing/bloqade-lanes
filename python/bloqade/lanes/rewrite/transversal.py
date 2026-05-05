@@ -128,12 +128,9 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
         self,
         logical_address: LocationAddress,
         support: tuple[int, int, int],
-    ) -> tuple[LocationAddress, ...]:
+    ) -> tuple[LocationAddress, ...] | None:
         if logical_address.site_id >= 2:
-            raise ValueError(
-                f"star_rz expected a logical site id 0 or 1, got "
-                f"{logical_address.site_id}"
-            )
+            return None
         base = logical_address.site_id * 7
         return tuple(
             logical_address.replace(site_id=base + physical_index)
@@ -144,15 +141,16 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
         if not isinstance(node, move.StarRz):
             return rewrite_abc.RewriteResult()
 
+        iterators = [
+            self._physical_support(address, node.qubit_indices)
+            for address in node.location_addresses
+        ]
+
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
         theta_star = self._theta_star_ir(node)
-
-        physical_addresses = tuple(
-            chain.from_iterable(
-                self._physical_support(address, node.qubit_indices)
-                for address in node.location_addresses
-            )
-        )
-
+        physical_addresses = tuple(chain.from_iterable(iterators))
         node.replace_by(
             move.LocalRz(
                 node.current_state,

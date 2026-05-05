@@ -159,3 +159,32 @@ def test_rewrite_star_rz_to_physical_local_rz():
 
     assert result.has_done_something
     assert_nodes(test_block, expected_block)
+
+
+def test_rewrite_star_rz_noop_for_already_physical_location():
+    test_block = ir.Block()
+    test_block.stmts.append(rotation_angle := py.Constant(0.5))
+    test_block.stmts.append(
+        move.StarRz(
+            current_state := ir.TestValue(),
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 4),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    expected_block = ir.Block()
+    expected_block.stmts.append(rotation_angle := py.Constant(0.5))
+    expected_block.stmts.append(
+        move.StarRz(
+            current_state,
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 4),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    result = rewrite.Walk(transversal.RewriteStarRz()).rewrite(test_block)
+
+    assert not result.has_done_something
+    assert_nodes(test_block, expected_block)
