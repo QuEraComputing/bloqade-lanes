@@ -47,30 +47,15 @@ class FromPythonStarRzCall(lowering.FromPythonCall["StarRz"]):
     def lower(
         self, stmt: type["StarRz"], state: State[ast.AST], node: ast.Call
     ) -> Result:
-        if not 2 <= len(node.args) <= 3:
-            raise lowering.BuildError("star_rz expects theta and qubits")
-
-        if len(node.args) == 3:
-            qubit_indices = state.get_global(node.args[2]).expect(tuple)
-        else:
-            qubit_indices = DEFAULT_STEANE_STAR_SUPPORT
-
-        for kw in node.keywords:
-            if kw.arg == "qubit_indices":
-                qubit_indices = state.get_global(kw.value).expect(tuple)
-            else:
-                raise lowering.BuildError(f"Unexpected keyword argument {kw.arg}")
-
-        theta = state.lower(node.args[0]).expect_one()
-        qubits = state.lower(node.args[1]).expect_one()
+        args, kwargs = self.lower_Call_inputs(stmt, state, node)
+        rotation_angle = cast(ir.SSAValue, args["rotation_angle"])
+        qubits = cast(ir.SSAValue, args["qubits"])
         if not qubits.type.is_subseteq(ilist.IListType[QubitType, types.Any]):
             qubits = state.current_frame.push(
                 ilist.New([qubits], elem_type=QubitType)
             ).result
 
-        return state.current_frame.push(
-            stmt(theta, qubits, qubit_indices=qubit_indices)
-        )
+        return state.current_frame.push(stmt(rotation_angle, qubits, **kwargs))
 
 
 @statement(dialect=dialect)
