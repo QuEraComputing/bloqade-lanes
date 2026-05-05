@@ -17,6 +17,10 @@ from bloqade.lanes.rewrite.move2stack_move import RewriteMoveToStackMove
 _ARCH = get_arch_spec()
 
 
+def _rule() -> RewriteMoveToStackMove:
+    return RewriteMoveToStackMove(arch_spec=_ARCH)
+
+
 def test_load_and_store_are_removed():
     load = move.Load()
     store = move.Store(current_state=load.result)
@@ -26,7 +30,7 @@ def test_load_and_store_are_removed():
     for s in [load, store, none_stmt, ret]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.Load) for s in block.stmts)
     assert not any(isinstance(s, move.Store) for s in block.stmts)
@@ -42,7 +46,7 @@ def test_first_fill_lowers_to_initial_fill():
     for s in [load, fill, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.Fill) for s in block.stmts)
     assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)
@@ -64,7 +68,7 @@ def test_second_fill_lowers_to_fill_not_initial_fill():
     for s in [load, fill1, fill2, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     fills = [
         s
@@ -87,7 +91,7 @@ def test_move_lowers_to_stack_move_move():
     for s in [load, mv, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.Move) for s in block.stmts)
     sm_mv = next(s for s in block.stmts if isinstance(s, stack_move.Move))
@@ -104,7 +108,7 @@ def test_py_constant_float_converts_to_const_float():
     for s in [pc, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, kirin_py.Constant) for s in block.stmts)
     cf = next(s for s in block.stmts if isinstance(s, stack_move.ConstFloat))
@@ -118,7 +122,7 @@ def test_py_constant_int_converts_to_const_int():
     for s in [pc, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, kirin_py.Constant) for s in block.stmts)
     ci = next(s for s in block.stmts if isinstance(s, stack_move.ConstInt))
@@ -142,7 +146,7 @@ def test_local_r_lowers_with_const_loc_and_angles():
     for s in [axis_c, rot_c, load, lr, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.LocalR) for s in block.stmts)
     sm_lr = next(s for s in block.stmts if isinstance(s, stack_move.LocalR))
@@ -168,7 +172,7 @@ def test_local_rz_lowers():
     for s in [rot_c, load, lrz, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     sm_lrz = next(s for s in block.stmts if isinstance(s, stack_move.LocalRz))
     assert isinstance(sm_lrz.rotation_angle.owner, stack_move.ConstFloat)
@@ -191,7 +195,7 @@ def test_global_r_lowers():
     for s in [axis_c, rot_c, load, gr, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     sm_gr = next(s for s in block.stmts if isinstance(s, stack_move.GlobalR))
     assert isinstance(sm_gr.axis_angle.owner, stack_move.ConstFloat)
@@ -208,7 +212,7 @@ def test_global_rz_lowers():
     for s in [rot_c, load, grz, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     sm_grz = next(s for s in block.stmts if isinstance(s, stack_move.GlobalRz))
     assert isinstance(sm_grz.rotation_angle.owner, stack_move.ConstFloat)
@@ -223,7 +227,7 @@ def test_cz_lowers_with_const_zone():
     for s in [load, cz, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.CZ) for s in block.stmts)
     sm_cz = next(s for s in block.stmts if isinstance(s, stack_move.CZ))
@@ -236,7 +240,7 @@ def test_cz_lowers_with_const_zone():
 # ---- measurement tests ----
 
 
-def test_measure_lowers_to_stack_move_measure():
+def test_measure_lowers_to_stack_move_measure_and_await():
     load = move.Load()
     m = move.Measure(current_state=load.result, zone_addresses=(ZoneAddress(0),))
     store = move.Store(current_state=m.result)
@@ -245,17 +249,20 @@ def test_measure_lowers_to_stack_move_measure():
     for s in [load, m, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
     sm_m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
+    aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
     zone_consts = [s for s in block.stmts if isinstance(s, stack_move.ConstZone)]
     assert len(zone_consts) == 1
     assert zone_consts[0].value == ZoneAddress(0)
     assert len(sm_m.zones) == 1
+    assert aw.future is sm_m.results[0]
 
 
-def test_getfutureresult_chain_lowers_to_await_measure():
+def test_getfutureresult_lowers_to_getitem_on_await():
+    """Each GetFutureResult becomes a GetItem indexed into the AwaitMeasure array."""
     locs = list(_ARCH.yield_zone_locations(ZoneAddress(0)))
     load = move.Load()
     m = move.Measure(current_state=load.result, zone_addresses=(ZoneAddress(0),))
@@ -267,20 +274,45 @@ def test_getfutureresult_chain_lowers_to_await_measure():
         )
         for loc in locs
     ]
-    bundle = ilist.New(values=tuple(g.result for g in gfrs))
     store = move.Store(current_state=m.result)
     none_stmt = func.ConstantNone()
     block = ir.Block()
-    for s in [load, m, *gfrs, bundle, store, none_stmt, func.Return(none_stmt.result)]:
+    for s in [load, m, *gfrs, store, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, move.GetFutureResult) for s in block.stmts)
-    assert not any(isinstance(s, ilist.New) for s in block.stmts)
-    sm_m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
     aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
-    assert aw.future is sm_m.results[0]
+    get_items = [s for s in block.stmts if isinstance(s, stack_move.GetItem)]
+    assert len(get_items) == len(locs)
+    # Every GetItem indexes into the AwaitMeasure result.
+    assert all(gi.array is aw.result for gi in get_items)
+    # Indices are distinct consecutive integers covering [0, len(locs)).
+    indices = {
+        gi.indices[0].owner.value  # type: ignore[union-attr]
+        for gi in get_items
+        if isinstance(gi.indices[0].owner, stack_move.ConstInt)
+    }
+    assert indices == set(range(len(locs)))
+
+
+def test_ilist_new_lowers_to_new_array_1d():
+    """ilist.New with homogeneous int elements becomes a 1-D stack_move.NewArray."""
+    ci0 = stack_move.ConstInt(value=0)
+    ci1 = stack_move.ConstInt(value=1)
+    arr = ilist.New(values=(ci0.result, ci1.result))
+    none_stmt = func.ConstantNone()
+    block = ir.Block()
+    for s in [ci0, ci1, arr, none_stmt, func.Return(none_stmt.result)]:
+        block.stmts.append(s)
+
+    Walk(_rule()).rewrite(block)
+
+    assert not any(isinstance(s, ilist.New) for s in block.stmts)
+    na = next(s for s in block.stmts if isinstance(s, stack_move.NewArray))
+    assert na.dim0 == 2
+    assert na.dim1 == 0
 
 
 # ---- annotation tests ----
@@ -295,7 +327,7 @@ def test_set_detector_lowers_to_stack_move_set_detector():
     for s in [na, coords, sd, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, annotate.stmts.SetDetector) for s in block.stmts)
     assert any(isinstance(s, stack_move.SetDetector) for s in block.stmts)
@@ -309,7 +341,7 @@ def test_set_observable_lowers_to_stack_move_set_observable():
     for s in [na, so, none_stmt, func.Return(none_stmt.result)]:
         block.stmts.append(s)
 
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(_rule()).rewrite(block)
 
     assert not any(isinstance(s, annotate.stmts.SetObservable) for s in block.stmts)
     assert any(isinstance(s, stack_move.SetObservable) for s in block.stmts)
@@ -345,7 +377,7 @@ def test_round_trip_fill_move_gate():
     assert not any(isinstance(s, stack_move.LocalRz) for s in block.stmts)
 
     # Inverse: move → stack_move
-    Walk(RewriteMoveToStackMove()).rewrite(block)
+    Walk(RewriteMoveToStackMove(arch_spec=arch)).rewrite(block)
     assert not any(isinstance(s, move.Fill) for s in block.stmts)
     assert not any(isinstance(s, move.LocalRz) for s in block.stmts)
     assert any(isinstance(s, stack_move.InitialFill) for s in block.stmts)

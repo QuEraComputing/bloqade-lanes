@@ -5,8 +5,8 @@ Inverse of RewriteStackMoveToMove in stack_move2move.py.
 Strips move.Load / move.Store state threading, materialises address
 attributes as stack_move.Const* SSA values, converts py.Constant
 float/int values to stack_move.ConstFloat/Int, and reconstructs
-stack_move.Measure + stack_move.AwaitMeasure from the
-move.Measure + move.GetFutureResult chain + ilist.New pattern.
+stack_move.Measure + stack_move.AwaitMeasure + stack_move.GetItem from
+the move.Measure + move.GetFutureResult pattern.
 """
 
 from __future__ import annotations
@@ -15,36 +15,56 @@ from dataclasses import dataclass, field
 from functools import singledispatchmethod
 
 from bloqade.decoders.dialects import annotate as _annotate
+from bloqade.decoders.dialects.annotate.types import MeasurementResultType
 from kirin import ir
 from kirin.dialects import ilist as kirin_ilist, py as kirin_py
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move, stack_move
+
+# Reverse of stack_move.TYPE_TAG: Kirin TypeAttribute → bytecode type_tag int.
+# MeasurementResultType has no dedicated tag yet; use Int (1) as a placeholder.
+_TYPE_TO_TAG: dict[object, int] = {v: k for k, v in stack_move.TYPE_TAG.items()}
+_TYPE_TO_TAG[MeasurementResultType] = 1
+
+
+def _elem_type_tag(value: ir.SSAValue) -> int:
+    """Return the bytecode type_tag for the element type of *value*."""
+    tag = _TYPE_TO_TAG.get(value.type)
+    if tag is not None:
+        return tag
+    # Fallback for unrecognised types (e.g. future MeasurementResultType tag).
+    return 1
 
 
 @dataclass
 class RewriteMoveToStackMove(RewriteRule):
     """Rewrite a move-dialect block into stack_move dialect in place.
 
+    Constructor args:
+    - arch_spec: required. GetFutureResult lowering uses
+      ``arch_spec.yield_zone_locations`` and ``arch_spec.get_zone_index``
+      to resolve the flat index of a (zone, location) pair into the
+      AwaitMeasure result array.
+
     Mutable state carried across the block walk:
     - _first_fill_emitted: True after the first move.Fill is processed,
       so subsequent fills lower to stack_move.Fill instead of InitialFill.
-    - _gfr_results: set of SSA results produced by move.GetFutureResult
-      statements, used to detect the measurement-bundle ilist.New.
-    - _future_to_sm_measure: maps move.Measure.future SSA → the emitted
-      stack_move.Measure statement, for AwaitMeasure reconstruction.
+    - _future_to_await: maps move.Measure.future SSA → (AwaitMeasure result
+      SSA, zone_addresses tuple), for GetFutureResult index resolution.
     """
 
+    arch_spec: ArchSpec
     _first_fill_emitted: bool = field(default=False, init=False)
-    _gfr_results: set[ir.SSAValue] = field(default_factory=set, init=False)
-    _future_to_sm_measure: dict[ir.SSAValue, stack_move.Measure] = field(
-        default_factory=dict, init=False
+    _future_to_await: dict[ir.SSAValue, tuple[ir.SSAValue, tuple[ZoneAddress, ...]]] = (
+        field(default_factory=dict, init=False)
     )
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         self._first_fill_emitted = False
-        self._gfr_results = set()
-        self._future_to_sm_measure = {}
+        self._future_to_await = {}
         to_delete: list[ir.Statement] = []
         result = RewriteResult()
         for stmt in list(node.stmts):
@@ -54,6 +74,27 @@ class RewriteMoveToStackMove(RewriteRule):
         if to_delete:
             result = result.join(RewriteResult(has_done_something=True))
         return result
+
+    def _measure_flat_index(
+        self,
+        zone_addresses: tuple[ZoneAddress, ...],
+        target_zone: ZoneAddress,
+        target_loc: LocationAddress,
+    ) -> int:
+        """Flat index of (target_zone, target_loc) in the measurement array."""
+        offset = 0
+        for zone in zone_addresses:
+            if zone == target_zone:
+                within = self.arch_spec.get_zone_index(target_loc, zone)
+                if within is None:
+                    raise ValueError(
+                        f"location {target_loc!r} not found in zone {zone!r}"
+                    )
+                return offset + within
+            offset += sum(1 for _ in self.arch_spec.yield_zone_locations(zone))
+        raise ValueError(
+            f"zone {target_zone!r} not found in measurement zone_addresses"
+        )
 
     @singledispatchmethod
     def _rewrite(
@@ -178,9 +219,11 @@ class RewriteMoveToStackMove(RewriteRule):
         )
         for zc in zone_consts:
             zc.insert_before(stmt)
-        new = stack_move.Measure(zones=tuple(zc.result for zc in zone_consts))
-        new.insert_before(stmt)
-        self._future_to_sm_measure[stmt.future] = new
+        sm_measure = stack_move.Measure(zones=tuple(zc.result for zc in zone_consts))
+        sm_measure.insert_before(stmt)
+        aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
+        aw.insert_before(stmt)
+        self._future_to_await[stmt.future] = (aw.result, stmt.zone_addresses)
         to_delete.append(stmt)
         return RewriteResult(has_done_something=True)
 
@@ -188,35 +231,54 @@ class RewriteMoveToStackMove(RewriteRule):
     def _(
         self, stmt: move.GetFutureResult, to_delete: list[ir.Statement]
     ) -> RewriteResult:
-        self._gfr_results.add(stmt.result)
+        await_result, zone_addresses = self._future_to_await[stmt.measurement_future]
+        idx = self._measure_flat_index(
+            zone_addresses, stmt.zone_address, stmt.location_address
+        )
+        idx_const = stack_move.ConstInt(value=idx)
+        idx_const.insert_before(stmt)
+        gi = stack_move.GetItem(array=await_result, indices=(idx_const.result,))
+        gi.insert_before(stmt)
+        stmt.result.replace_by(gi.result)
         to_delete.append(stmt)
-        return RewriteResult()
+        return RewriteResult(has_done_something=True)
 
     @_rewrite.register(kirin_ilist.New)
     def _(self, stmt: kirin_ilist.New, to_delete: list[ir.Statement]) -> RewriteResult:
         values = tuple(stmt.values)
         if not values:
-            return (
-                RewriteResult()
-            )  # empty ilist (e.g. coordinates placeholder) — pass through
-        if not all(v in self._gfr_results for v in values):
-            return RewriteResult()  # non-measurement ilist — pass through
-        # All values are GetFutureResult outputs: this is the measurement bundle.
-        futures: set[ir.SSAValue] = set()
-        for v in values:
-            if isinstance(v, ir.ResultValue):
-                owner = v.owner
-                if isinstance(owner, move.GetFutureResult):
-                    futures.add(owner.measurement_future)
-        if len(futures) != 1:
-            return RewriteResult()
-        (move_future,) = futures
-        sm_measure = self._future_to_sm_measure.get(move_future)
-        if sm_measure is None:
-            return RewriteResult()
-        aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
-        aw.insert_before(stmt)
-        stmt.result.replace_by(aw.result)
+            return RewriteResult()  # empty ilist placeholder — pass through
+
+        # 2-D: all values come from inner stack_move.NewArray rows emitted
+        # earlier in this same block walk (inner ilist.New → NewArray with
+        # replace_by already applied, so stmt.values now point at NewArray
+        # results).
+        if all(
+            isinstance(v, ir.ResultValue) and isinstance(v.owner, stack_move.NewArray)
+            for v in values
+        ):
+            inner_stmts: list[stack_move.NewArray] = [v.owner for v in values]  # type: ignore[union-attr]
+            dim0 = len(inner_stmts)
+            dim1 = inner_stmts[0].dim0
+            type_tag = inner_stmts[0].type_tag
+            flat_values = tuple(v for row in inner_stmts for v in row.values)
+            new_2d = stack_move.NewArray(
+                values=flat_values, type_tag=type_tag, dim0=dim0, dim1=dim1
+            )
+            new_2d.insert_before(stmt)
+            for inner in inner_stmts:
+                inner.delete()
+            stmt.result.replace_by(new_2d.result)
+            to_delete.append(stmt)
+            return RewriteResult(has_done_something=True)
+
+        # 1-D: infer type_tag from the first element.
+        type_tag = _elem_type_tag(values[0])
+        new_1d = stack_move.NewArray(
+            values=values, type_tag=type_tag, dim0=len(values), dim1=0
+        )
+        new_1d.insert_before(stmt)
+        stmt.result.replace_by(new_1d.result)
         to_delete.append(stmt)
         return RewriteResult(has_done_something=True)
 
