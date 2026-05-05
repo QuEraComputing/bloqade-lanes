@@ -150,6 +150,31 @@ class InitializeNewQubits(abc.RewriteRule):
         return abc.RewriteResult()
 
 
+class RewriteQubitsToPinnedQubits(abc.RewriteRule):
+    """Lower all bare qubit allocations to place.NewPinnedQubit.
+
+    - qubit.stmts.New       → NewPinnedQubit(location_address=None)
+    - gemini.common.NewAt   → NewPinnedQubit(location_address=<const>)
+
+    Used exclusively by the physical pipeline; the logical pipeline uses
+    InitializeNewQubits instead.
+    """
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if isinstance(node, qubit.stmts.New):
+            node.replace_by(place.NewPinnedQubit())
+            return abc.RewriteResult(has_done_something=True)
+
+        if isinstance(node, gemini_common_stmts.NewAt):
+            addr = _resolve_location_from_new_at(node)
+            if addr is None:
+                return abc.RewriteResult()
+            node.replace_by(place.NewPinnedQubit(location_address=addr))
+            return abc.RewriteResult(has_done_something=True)
+
+        return abc.RewriteResult()
+
+
 @dataclass
 class RewritePlaceOperations(abc.RewriteRule):
     """
@@ -304,6 +329,64 @@ class RewritePlaceOperations(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
+class RewritePhysicalMeasure(abc.RewriteRule):
+    """Lower qubit.stmts.Measure to place.StaticPlacement(EndMeasure).
+
+    For the physical pipeline.  After AggressiveUnroll, qalloc produces:
+      ilist.New([q0, q1])   — the register
+    and measure receives:
+      ilist.New([reg])      — outer wrapper with one IList[Qubit, N] element
+
+    We unwrap one level of nesting to collect individual Qubit SSA values.
+    """
+
+    def _collect_inputs(self, node: qubit.stmts.Measure) -> list[ir.SSAValue]:
+        owner = node.qubits.owner
+        if not isinstance(owner, ilist.New):
+            raise ValueError(
+                f"RewritePhysicalMeasure: expected qubits owner to be ilist.New, "
+                f"got {type(owner).__name__}. Ensure AggressiveUnroll ran before "
+                f"this rewrite pass."
+            )
+        inputs: list[ir.SSAValue] = []
+        for val in owner.values:
+            inner = val.owner
+            if isinstance(inner, ilist.New):
+                inputs.extend(inner.values)
+            else:
+                inputs.append(val)
+        if not inputs:
+            raise ValueError(
+                f"RewritePhysicalMeasure: collected no qubit inputs from {node}; "
+                f"the qubits list appears to be empty."
+            )
+        return inputs
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not isinstance(node, qubit.stmts.Measure):
+            return abc.RewriteResult()
+
+        inputs = self._collect_inputs(node)
+
+        body = ir.Region(block := ir.Block())
+        entry_state = block.args.append_from(StateType, name="entry_state")
+        gate_stmt = place.EndMeasure(entry_state, qubits=tuple(range(len(inputs))))
+        block.stmts.append(gate_stmt)
+        block.stmts.append(place.Yield(gate_stmt.state_after, *gate_stmt.results[1:]))
+
+        static_placement = place.StaticPlacement(qubits=tuple(inputs), body=body)
+        static_placement.insert_before(node)
+
+        # Assemble the flat IList[MeasurementResult, N] that replaces Measure.result.
+        meas_results = list(static_placement.results)
+        result_list = ilist.New(tuple(meas_results))
+        result_list.insert_before(node)
+        node.result.replace_by(result_list.result)
+        node.delete()
+
+        return abc.RewriteResult(has_done_something=True)
+
+
 class HoistConstants(abc.RewriteRule):
     """This rewrite rule hoists all constant values to the top of the kernel."""
 
@@ -334,7 +417,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
 
     def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
         if not (
-            isinstance(node, place.NewLogicalQubit)
+            isinstance(node, place._NewQubitBase)
             and (parent_block := node.parent_block) is not None
             and (first_stmt := parent_block.first_stmt) is not None
             and node is not first_stmt
@@ -347,7 +430,7 @@ class HoistNewQubitsUp(abc.RewriteRule):
         def loop_cond(stmt: ir.Statement | None) -> TypeGuard[ir.Statement]:
             return (
                 stmt is not None
-                and not isinstance(stmt, place.NewLogicalQubit)
+                and not isinstance(stmt, place._NewQubitBase)
                 and set(stmt.results).isdisjoint(node.args)
             )
 
@@ -450,5 +533,111 @@ class MergePlacementRegions(abc.RewriteRule):
         # delete the old nodes
         node.delete()
         next_node.delete()  # this will be skipped if it is the next item in the Walk worklist
+
+        return abc.RewriteResult(has_done_something=True)
+
+
+_GATE_STMT_TYPES = (place.R, place.Rz, place.CZ, place.Yield)
+_SQ_STMT_TYPES = (place.R, place.Rz, place.Yield)
+
+
+def _is_pure_gate_block(sp: place.StaticPlacement) -> bool:
+    return all(isinstance(stmt, _GATE_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
+
+
+def _is_sq_only_block(sp: place.StaticPlacement) -> bool:
+    return all(isinstance(stmt, _SQ_STMT_TYPES) for stmt in sp.body.blocks[0].stmts)
+
+
+def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge placements whose bodies contain only R, Rz, CZ, and Yield."""
+    return _is_pure_gate_block(sp1) and _is_pure_gate_block(sp2)
+
+
+def sq_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge placements whose bodies contain only R and Rz (no CZ)."""
+    return _is_sq_only_block(sp1) and _is_sq_only_block(sp2)
+
+
+def always_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    return True
+
+
+@dataclass
+class MergeStaticPlacement(abc.RewriteRule):
+    """Merge adjacent StaticPlacement statements using a caller-supplied policy.
+
+    Replaces MergePlacementRegions. Policy receives full StaticPlacement
+    statements (not just body regions) so CZ qubit indices can be resolved.
+    """
+
+    merge_policy: Callable[[place.StaticPlacement, place.StaticPlacement], bool] = (
+        always_merge
+    )
+
+    def rewrite_Statement(self, node: ir.Statement) -> abc.RewriteResult:
+        if not (
+            isinstance(node, place.StaticPlacement)
+            and isinstance(next_node := node.next_stmt, place.StaticPlacement)
+        ):
+            return abc.RewriteResult()
+
+        if not self.merge_policy(node, next_node):
+            return abc.RewriteResult()
+
+        new_qubits = node.qubits
+        new_input_map: dict[int, int] = {}
+        for old_qid, qbit in enumerate(next_node.qubits):
+            if qbit not in new_qubits:
+                new_input_map[old_qid] = len(new_qubits)
+                new_qubits = new_qubits + (qbit,)
+            else:
+                new_input_map[old_qid] = new_qubits.index(qbit)
+
+        new_body = node.body.clone()
+        new_block = new_body.blocks[0]
+
+        curr_yield = new_block.last_stmt
+        assert isinstance(curr_yield, place.Yield)
+
+        curr_state = curr_yield.final_state
+        current_yields = list(curr_yield.classical_results)
+        curr_yield.delete()
+
+        for stmt in next_node.body.blocks[0].stmts:
+            if isinstance(
+                stmt,
+                (place.R, place.Rz, place.CZ, place.EndMeasure, place.Initialize),
+            ):
+                remapped_stmt = stmt.from_stmt(
+                    stmt,
+                    args=(curr_state, *stmt.args[1:]),
+                    attributes={
+                        "qubits": ir.PyAttr(
+                            tuple(new_input_map[i] for i in stmt.qubits)
+                        )
+                    },
+                )
+                curr_state = remapped_stmt.results[0]
+                new_block.stmts.append(remapped_stmt)
+                for old_result, new_result in zip(
+                    stmt.results[1:], remapped_stmt.results[1:]
+                ):
+                    old_result.replace_by(new_result)
+                    current_yields.append(new_result)
+
+        new_block.stmts.append(place.Yield(curr_state, *current_yields))
+
+        new_static_circuit = place.StaticPlacement(new_qubits, new_body)
+        new_static_circuit.insert_before(node)
+
+        old_results = list(node.results) + list(next_node.results)
+        for old_result, new_result in zip(
+            old_results, new_static_circuit.results, strict=True
+        ):
+            old_result.replace_by(new_result)
+
+        node.delete()
+        next_node.delete()
 
         return abc.RewriteResult(has_done_something=True)

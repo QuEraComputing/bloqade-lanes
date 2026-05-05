@@ -1,31 +1,28 @@
-case_id,strategy_id,backend,generator_id,success,wall_time_ms,move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,max_depth_reached,notes
-adder_4,rust_astar,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-adder_4,rust_bfs,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-adder_4,rust_dfs,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-adder_4,rust_entropy,rust,rust_solver,True,99.892500,36,44,0.7563320614,41,,
-adder_4,rust_greedy,rust,rust_solver,True,98.983166,38,48,0.7563320614,33,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-adder_4,rust_ids,rust,rust_solver,False,,,,,,,error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-ghz_4,rust_astar,rust,rust_solver,True,128.711875,6,8,0.7306791625,3,,
-ghz_4,rust_bfs,rust,rust_solver,True,126.519709,6,8,0.7306791625,3,,
-ghz_4,rust_dfs,rust,rust_solver,True,127.059750,6,8,0.7306791625,3,,
-ghz_4,rust_entropy,rust,rust_solver,True,127.053959,6,8,0.7306791625,8,,
-ghz_4,rust_greedy,rust,rust_solver,True,126.682708,6,8,0.7306791625,3,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-ghz_4,rust_ids,rust,rust_solver,True,125.323958,6,8,0.7306791625,3,,
-ghz_6,rust_astar,rust,rust_solver,True,193.782417,8,12,0.6354523319,4,,
-ghz_6,rust_bfs,rust,rust_solver,True,197.273875,8,12,0.6354523319,4,,
-ghz_6,rust_dfs,rust,rust_solver,True,195.330417,8,12,0.6354523319,4,,
-ghz_6,rust_entropy,rust,rust_solver,True,196.151792,8,12,0.6354523319,12,,
-ghz_6,rust_greedy,rust,rust_solver,True,193.731334,8,12,0.6354523319,4,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-ghz_6,rust_ids,rust,rust_solver,True,195.991417,8,12,0.6354523319,4,,
-qpe_9,rust_astar,rust,rust_solver,True,327.940583,136,140,0.5334615830,68,,
-qpe_9,rust_bfs,rust,rust_solver,True,330.812000,136,140,0.5334615830,68,,
-qpe_9,rust_dfs,rust,rust_solver,True,326.582209,136,140,0.5334615830,68,,
-qpe_9,rust_entropy,rust,rust_solver,True,335.032250,136,140,0.5334615830,142,,
-qpe_9,rust_greedy,rust,rust_solver,True,328.449000,136,140,0.5334615830,68,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-qpe_9,rust_ids,rust,rust_solver,True,466.420250,136,140,0.5334615830,68,,
-steane_logical_5,rust_astar,rust,rust_solver,True,29.123166,10,18,0.7053272104,5,,
-steane_logical_5,rust_bfs,rust,rust_solver,True,29.531125,10,18,0.7053272104,5,,
-steane_logical_5,rust_dfs,rust,rust_solver,True,29.508125,10,18,0.7053272104,5,,
-steane_logical_5,rust_entropy,rust,rust_solver,True,30.511958,10,18,0.7053272104,14,,
-steane_logical_5,rust_greedy,rust,rust_solver,True,29.572958,10,18,0.7053272104,5,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
-steane_logical_5,rust_ids,rust,rust_solver,True,29.421416,10,18,0.7053272104,5,,
+case_id,strategy_id,arch_spec_id,backend,generator_id,success,wall_time_ms,move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,max_depth_reached,notes
+ghz_4,rust_astar,builtin,rust,rust_solver,True,126.286333,6,8,0.7306791625,3,,
+ghz_4,rust_bfs,builtin,rust,rust_solver,True,121.778666,6,8,0.7306791625,3,,
+ghz_4,rust_dfs,builtin,rust,rust_solver,True,123.610250,6,8,0.7306791625,3,,
+ghz_4,rust_entropy_1,builtin,rust,rust_solver,True,122.127416,6,8,0.7306791625,3,,
+ghz_4,rust_entropy_10,builtin,rust,rust_solver,True,121.494834,6,8,0.7306791625,8,,
+ghz_4,rust_entropy_20,builtin,rust,rust_solver,True,123.120709,6,8,0.7306791625,8,,
+ghz_4,rust_entropy_5,builtin,rust,rust_solver,True,124.610417,6,8,0.7306791625,8,,
+ghz_4,rust_greedy,builtin,rust,rust_solver,True,134.130584,6,8,0.7306791625,3,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+ghz_4,rust_ids,builtin,rust,rust_solver,True,124.239042,6,8,0.7306791625,3,,
+ghz_6,rust_astar,builtin,rust,rust_solver,True,188.135667,8,12,0.6354523319,4,,
+ghz_6,rust_bfs,builtin,rust,rust_solver,True,188.964500,8,12,0.6354523319,4,,
+ghz_6,rust_dfs,builtin,rust,rust_solver,True,189.017958,8,12,0.6354523319,4,,
+ghz_6,rust_entropy_1,builtin,rust,rust_solver,True,189.811625,8,12,0.6354523319,4,,
+ghz_6,rust_entropy_10,builtin,rust,rust_solver,True,191.480959,8,12,0.6354523319,12,,
+ghz_6,rust_entropy_20,builtin,rust,rust_solver,True,192.085959,8,12,0.6354523319,12,,
+ghz_6,rust_entropy_5,builtin,rust,rust_solver,True,196.927334,8,12,0.6354523319,12,,
+ghz_6,rust_greedy,builtin,rust,rust_solver,True,187.077334,8,12,0.6354523319,4,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+ghz_6,rust_ids,builtin,rust,rust_solver,True,188.381667,8,12,0.6354523319,4,,
+steane_logical_5,rust_astar,builtin,rust,rust_solver,True,27.799167,10,18,0.7053272104,5,,
+steane_logical_5,rust_bfs,builtin,rust,rust_solver,True,28.005291,10,18,0.7053272104,5,,
+steane_logical_5,rust_dfs,builtin,rust,rust_solver,True,28.190041,10,18,0.7053272104,5,,
+steane_logical_5,rust_entropy_1,builtin,rust,rust_solver,True,28.615125,10,18,0.7053272104,5,,
+steane_logical_5,rust_entropy_10,builtin,rust,rust_solver,True,29.277916,10,18,0.7053272104,14,,
+steane_logical_5,rust_entropy_20,builtin,rust,rust_solver,True,29.150000,10,18,0.7053272104,14,,
+steane_logical_5,rust_entropy_5,builtin,rust,rust_solver,True,29.352209,10,18,0.7053272104,14,,
+steane_logical_5,rust_greedy,builtin,rust,rust_solver,True,28.494584,10,18,0.7053272104,5,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output
+steane_logical_5,rust_ids,builtin,rust,rust_solver,True,29.256375,10,18,0.7053272104,5,,

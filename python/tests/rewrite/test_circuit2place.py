@@ -10,6 +10,9 @@ from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes import types
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
+from bloqade.lanes.rewrite.circuit2place import MergeStaticPlacement  # new
+from bloqade.lanes.rewrite.circuit2place import always_merge  # new
+from bloqade.lanes.rewrite.circuit2place import gate_only_merge  # new
 from bloqade.lanes.rewrite.circuit2place import (
     InitializeNewQubits,
     MergePlacementRegions,
@@ -514,3 +517,155 @@ def test_initialize_new_qubits_bare_new_at_non_const_is_noop():
     new_logical_qubits = [s for s in stmts if isinstance(s, place.NewLogicalQubit)]
     assert len(new_ats) == 1, "NewAt should remain when const-prop hint is missing"
     assert len(new_logical_qubits) == 0, "No NewLogicalQubit should be emitted"
+
+
+def test_merge_static_placement_always_merge():
+    """MergeStaticPlacement(always_merge) merges two EndMeasure blocks (same as MergePlacementRegions)."""
+    # Re-implementation of test_merge_regions using the new class.
+    qubits = tuple(ir.TestValue() for _ in range(4))
+
+    test_block = ir.Block([rotation_angle := py.Constant(0.5)])
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, name="entry_state")
+    body_block.stmts.append(
+        gate_stmt := place.Rz(
+            entry_state, qubits=(0,), rotation_angle=rotation_angle.result
+        )
+    )
+    body_block.stmts.append(place.Yield(gate_stmt.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[0],), body=ir.Region(body_block))
+    )
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, name="entry_state")
+    body_block.stmts.append(
+        gate_stmt := place.Rz(
+            entry_state, qubits=(0,), rotation_angle=rotation_angle.result
+        )
+    )
+    body_block.stmts.append(place.Yield(gate_stmt.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[1],), body=ir.Region(body_block))
+    )
+
+    rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(always_merge))).rewrite(
+        test_block
+    )
+
+    merged_stmts = [s for s in test_block.stmts if isinstance(s, place.StaticPlacement)]
+    assert len(merged_stmts) == 1
+    body_stmts = list(merged_stmts[0].body.blocks[0].stmts)
+    # two Rz + one Yield
+    assert len(body_stmts) == 3
+    assert isinstance(body_stmts[0], place.Rz)
+    assert isinstance(body_stmts[1], place.Rz)
+    assert isinstance(body_stmts[2], place.Yield)
+
+
+def test_gate_only_merge_allows_pure_gate_blocks():
+    """gate_only_merge merges two placements that contain only R/Rz/CZ/Yield."""
+    qubits = tuple(ir.TestValue() for _ in range(2))
+    test_block = ir.Block([angle := py.Constant(0.5)])
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, "entry_state")
+    body_block.stmts.append(
+        g := place.Rz(entry_state, qubits=(0,), rotation_angle=angle.result)
+    )
+    body_block.stmts.append(place.Yield(g.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[0],), body=ir.Region(body_block))
+    )
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, "entry_state")
+    body_block.stmts.append(
+        g := place.Rz(entry_state, qubits=(0,), rotation_angle=angle.result)
+    )
+    body_block.stmts.append(place.Yield(g.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[1],), body=ir.Region(body_block))
+    )
+
+    rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(gate_only_merge))).rewrite(
+        test_block
+    )
+
+    merged_stmts = [s for s in test_block.stmts if isinstance(s, place.StaticPlacement)]
+    assert len(merged_stmts) == 1
+
+
+def test_gate_only_merge_rejects_initialize_block():
+    """gate_only_merge does NOT merge a placement containing place.Initialize."""
+    qubits = tuple(ir.TestValue() for _ in range(2))
+    test_block = ir.Block(
+        [
+            theta := py.Constant(0.0),
+            phi := py.Constant(0.0),
+            lam := py.Constant(0.0),
+            angle := py.Constant(0.5),
+        ]
+    )
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, "entry_state")
+    body_block.stmts.append(
+        init := place.Initialize(
+            entry_state, theta=theta.result, phi=phi.result, lam=lam.result, qubits=(0,)
+        )
+    )
+    body_block.stmts.append(place.Yield(init.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[0],), body=ir.Region(body_block))
+    )
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, "entry_state")
+    body_block.stmts.append(
+        g := place.Rz(entry_state, qubits=(0,), rotation_angle=angle.result)
+    )
+    body_block.stmts.append(place.Yield(g.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[1],), body=ir.Region(body_block))
+    )
+
+    rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(gate_only_merge))).rewrite(
+        test_block
+    )
+
+    # Must NOT be merged
+    remaining = [s for s in test_block.stmts if isinstance(s, place.StaticPlacement)]
+    assert len(remaining) == 2
+
+
+def test_gate_only_merge_rejects_end_measure_block():
+    """gate_only_merge does NOT merge a placement containing place.EndMeasure."""
+    qubits = tuple(ir.TestValue() for _ in range(2))
+    test_block = ir.Block([angle := py.Constant(0.5)])
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, "entry_state")
+    body_block.stmts.append(em := place.EndMeasure(entry_state, qubits=(0,)))
+    body_block.stmts.append(place.Yield(*em.results))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[0],), body=ir.Region(body_block))
+    )
+
+    body_block = ir.Block()
+    entry_state = body_block.args.append_from(types.StateType, "entry_state")
+    body_block.stmts.append(
+        g := place.Rz(entry_state, qubits=(0,), rotation_angle=angle.result)
+    )
+    body_block.stmts.append(place.Yield(g.state_after))
+    test_block.stmts.append(
+        place.StaticPlacement(qubits=(qubits[1],), body=ir.Region(body_block))
+    )
+
+    rewrite.Fixpoint(rewrite.Walk(MergeStaticPlacement(gate_only_merge))).rewrite(
+        test_block
+    )
+
+    remaining = [s for s in test_block.stmts if isinstance(s, place.StaticPlacement)]
+    assert len(remaining) == 2

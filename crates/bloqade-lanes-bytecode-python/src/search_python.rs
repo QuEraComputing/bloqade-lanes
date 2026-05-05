@@ -4,12 +4,20 @@
 //! bridge for `ArchSpec` — the solver is fully decoupled from the bytecode
 //! Python bindings.
 
+use std::collections::HashSet;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use bloqade_lanes_search::DeadlockPolicy;
-use bloqade_lanes_search::entropy::{EntropyTrace, EntropyTraceStep};
+use bloqade_lanes_search::config::Config;
+use bloqade_lanes_search::context::SearchContext;
+use bloqade_lanes_search::entropy::{
+    EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
+};
+use bloqade_lanes_search::heuristic::DistanceTable;
+use bloqade_lanes_search::lane_index::LaneIndex;
 use bloqade_lanes_search::solve::{
     InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
 };
@@ -421,6 +429,282 @@ impl PyEntropyTraceStep {
             "EntropyTraceStep(event='{}', node_id={}, depth={}, entropy={})",
             self.inner.event, self.inner.node_id, self.inner.depth, self.inner.entropy,
         )
+    }
+}
+
+// ── Entropy scorer (metrics + score for a single moveset) ──
+
+/// Per-moveset scoring breakdown returned by [`PyEntropyScorer::metrics`].
+///
+/// Exposes `alpha * distance_progress + beta * arrived + gamma * mobility_gain`
+/// and the per-component contributions, plus the qubit ids whose distance to
+/// target strictly improved / degraded.
+#[pyclass(
+    name = "MovesetMetrics",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyMovesetMetrics {
+    inner: MovesetMetrics,
+    alpha: f64,
+    beta: f64,
+    gamma: f64,
+}
+
+#[pymethods]
+impl PyMovesetMetrics {
+    #[getter]
+    fn distance_progress(&self) -> f64 {
+        self.inner.distance_progress
+    }
+
+    #[getter]
+    fn arrived(&self) -> u32 {
+        self.inner.arrived
+    }
+
+    #[getter]
+    fn mobility_before(&self) -> f64 {
+        self.inner.mobility_before
+    }
+
+    #[getter]
+    fn mobility_after(&self) -> f64 {
+        self.inner.mobility_after
+    }
+
+    #[getter]
+    fn mobility_gain(&self) -> f64 {
+        self.inner.mobility_gain()
+    }
+
+    #[getter]
+    fn closer(&self) -> Vec<u32> {
+        self.inner.closer.clone()
+    }
+
+    #[getter]
+    fn further(&self) -> Vec<u32> {
+        self.inner.further.clone()
+    }
+
+    /// `alpha * distance_progress + beta * arrived + gamma * mobility_gain`.
+    #[getter]
+    fn score(&self) -> f64 {
+        self.alpha * self.inner.distance_progress
+            + self.beta * (self.inner.arrived as f64)
+            + self.gamma * self.inner.mobility_gain()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MovesetMetrics(score={:.4}, distance_progress={:.3}, arrived={}, mobility_gain={:.3})",
+            self.score(),
+            self.inner.distance_progress,
+            self.inner.arrived,
+            self.inner.mobility_gain(),
+        )
+    }
+}
+
+/// Scorer that evaluates candidate movesets for entropy-guided search.
+///
+/// Build one per (architecture, target, blocked) context to amortize the
+/// distance-table precomputation; then call `metrics(current_config, moveset)`
+/// or `score_moveset(current_config, moveset)` per candidate.
+///
+/// This is the Rust-native replacement for the deleted Python
+/// `bloqade.lanes.search.scoring.CandidateScorer.score_moveset()` — same
+/// `alpha * D + beta * A + gamma * M` formula, same `w_t` blended distance.
+#[pyclass(
+    name = "EntropyScorer",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyEntropyScorer {
+    index: LaneIndex,
+    dist_table: DistanceTable,
+    blocked: HashSet<u64>,
+    targets: Vec<(u32, u64)>,
+    params: EntropyParams,
+}
+
+impl PyEntropyScorer {
+    fn apply_moveset(
+        &self,
+        config: &Config,
+        moveset: &[(u8, u8, u32, u32, u32, u32)],
+    ) -> PyResult<Config> {
+        let mut moves: Vec<(u32, LocationAddr)> = Vec::with_capacity(moveset.len());
+        for &(dir, mt, zone, word, site, bus) in moveset {
+            let direction = match dir {
+                0 => Direction::Forward,
+                1 => Direction::Backward,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "invalid direction {other} (must be 0 or 1)"
+                    )));
+                }
+            };
+            let move_type = match mt {
+                0 => MoveType::SiteBus,
+                1 => MoveType::WordBus,
+                2 => MoveType::ZoneBus,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "invalid move_type {other} (must be 0, 1, or 2)"
+                    )));
+                }
+            };
+            let lane = LaneAddr {
+                direction,
+                move_type,
+                zone_id: zone,
+                word_id: word,
+                site_id: site,
+                bus_id: bus,
+            };
+            let Some((src, dst)) = self.index.endpoints(&lane) else {
+                return Err(PyValueError::new_err(
+                    "lane endpoints missing from arch index",
+                ));
+            };
+            let Some(qid) = config.qubit_at(src) else {
+                continue;
+            };
+            moves.push((qid, dst));
+        }
+        Ok(config.with_moves(&moves))
+    }
+}
+
+#[pymethods]
+impl PyEntropyScorer {
+    /// Build a scorer bound to an architecture, target mapping, and params.
+    ///
+    /// ``alpha``, ``beta``, ``gamma`` weight the distance / arrival / mobility
+    /// terms; ``w_t`` blends hop-count (0.0) with move-time distance (1.0).
+    #[new]
+    #[pyo3(signature = (
+        arch_spec,
+        target,
+        blocked = None,
+        alpha = 80.0,
+        beta = 3.0,
+        gamma = 3.1,
+        w_t = 0.05,
+    ))]
+    fn new(
+        arch_spec: &PyArchSpec,
+        target: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        blocked: Option<Vec<PyRef<'_, PyLocationAddr>>>,
+        alpha: f64,
+        beta: f64,
+        gamma: f64,
+        w_t: f64,
+    ) -> PyResult<Self> {
+        let json = serde_json::to_string(&arch_spec.inner)
+            .map_err(|e| PyValueError::new_err(format!("failed to serialize arch spec: {e}")))?;
+        let parsed = serde_json::from_str(&json)
+            .map_err(|e| PyValueError::new_err(format!("invalid arch spec: {e}")))?;
+        let index = LaneIndex::new(parsed);
+
+        let targets: Vec<(u32, u64)> = target
+            .iter()
+            .map(|(q, loc)| (*q, loc.inner.encode()))
+            .collect();
+        let target_locs: Vec<u64> = targets.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index).with_time_distances(&index);
+
+        let blocked_set: HashSet<u64> = blocked
+            .unwrap_or_default()
+            .iter()
+            .map(|p| p.inner.encode())
+            .collect();
+
+        let params = EntropyParams {
+            alpha,
+            beta,
+            gamma,
+            w_t,
+            ..EntropyParams::default()
+        };
+
+        Ok(Self {
+            index,
+            dist_table,
+            blocked: blocked_set,
+            targets,
+            params,
+        })
+    }
+
+    /// Compute the full metrics breakdown after applying ``moveset``.
+    #[allow(clippy::type_complexity)]
+    fn metrics(
+        &self,
+        current_config: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        moveset: Vec<(u8, u8, u32, u32, u32, u32)>,
+    ) -> PyResult<PyMovesetMetrics> {
+        let pairs: Vec<(u32, LocationAddr)> = current_config
+            .iter()
+            .map(|(q, loc)| (*q, loc.inner))
+            .collect();
+        let old_config = Config::new(pairs)
+            .map_err(|e| PyValueError::new_err(format!("invalid current_config: {e}")))?;
+        let new_config = self.apply_moveset(&old_config, &moveset)?;
+
+        let mut occupied: HashSet<u64> =
+            HashSet::with_capacity(self.blocked.len() + old_config.len());
+        occupied.extend(&self.blocked);
+        for (_, loc) in old_config.iter() {
+            occupied.insert(loc.encode());
+        }
+
+        let ctx = SearchContext {
+            index: &self.index,
+            dist_table: &self.dist_table,
+            blocked: &self.blocked,
+            targets: &self.targets,
+        };
+        let inner =
+            compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &self.params);
+        Ok(PyMovesetMetrics {
+            inner,
+            alpha: self.params.alpha,
+            beta: self.params.beta,
+            gamma: self.params.gamma,
+        })
+    }
+
+    /// Shorthand for `scorer.metrics(current, moveset).score`.
+    #[allow(clippy::type_complexity)]
+    fn score_moveset(
+        &self,
+        current_config: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        moveset: Vec<(u8, u8, u32, u32, u32, u32)>,
+    ) -> PyResult<f64> {
+        Ok(self.metrics(current_config, moveset)?.score())
+    }
+
+    #[getter]
+    fn alpha(&self) -> f64 {
+        self.params.alpha
+    }
+
+    #[getter]
+    fn beta(&self) -> f64 {
+        self.params.beta
+    }
+
+    #[getter]
+    fn gamma(&self) -> f64 {
+        self.params.gamma
+    }
+
+    #[getter]
+    fn w_t(&self) -> f64 {
+        self.params.w_t
     }
 }
 
