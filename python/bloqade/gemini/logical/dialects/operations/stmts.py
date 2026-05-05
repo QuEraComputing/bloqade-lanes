@@ -1,9 +1,12 @@
+import ast
+from dataclasses import dataclass
 from typing import cast
 
 from bloqade.types import MeasurementResultType, QubitType
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
 from kirin.dialects import ilist
+from kirin.lowering import Result, State
 
 from ._dialect import dialect
 
@@ -37,6 +40,37 @@ def validate_steane_star_support(
             f"got {out}. Valid Steane supports are: {valid}"
         )
     return cast(tuple[int, int, int], out)
+
+
+@dataclass(frozen=True)
+class FromPythonStarRzCall(lowering.FromPythonCall["StarRz"]):
+    def lower(
+        self, stmt: type["StarRz"], state: State[ast.AST], node: ast.Call
+    ) -> Result:
+        if not 2 <= len(node.args) <= 3:
+            raise lowering.BuildError("star_rz expects theta and qubits")
+
+        if len(node.args) == 3:
+            qubit_indices = state.get_global(node.args[2]).expect(tuple)
+        else:
+            qubit_indices = DEFAULT_STEANE_STAR_SUPPORT
+
+        for kw in node.keywords:
+            if kw.arg == "qubit_indices":
+                qubit_indices = state.get_global(kw.value).expect(tuple)
+            else:
+                raise lowering.BuildError(f"Unexpected keyword argument {kw.arg}")
+
+        theta = state.lower(node.args[0]).expect_one()
+        qubits = state.lower(node.args[1]).expect_one()
+        if not qubits.type.is_subseteq(ilist.IListType[QubitType, types.Any]):
+            qubits = state.current_frame.push(
+                ilist.New([qubits], elem_type=QubitType)
+            ).result
+
+        return state.current_frame.push(
+            stmt(theta, qubits, qubit_indices=qubit_indices)
+        )
 
 
 @statement(dialect=dialect)
@@ -97,7 +131,7 @@ class StarRz(ir.Statement):
     k=3 and emits physical Rz rotations on ``qubit_indices``.
     """
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({FromPythonStarRzCall()})
     rotation_angle: ir.SSAValue = info.argument(types.Float)
     qubits: ir.SSAValue = info.argument(ilist.IListType[QubitType, types.Any])
     qubit_indices: tuple[int, int, int] = info.attribute(

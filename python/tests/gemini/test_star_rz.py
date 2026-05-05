@@ -6,7 +6,6 @@ import pytest
 from kirin.dialects import py
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.dialects import operations
 from bloqade.gemini.logical.dialects.operations.stmts import (
     StarRz,
     validate_steane_star_support,
@@ -64,7 +63,7 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        operations.star_rz(math.pi / 16, reg, qubit_indices=support)
+        gemini.logical.broadcast.star_rz(math.pi / 16, reg, qubit_indices=support)
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -129,7 +128,7 @@ def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
     def kernel():
         reg = squin.qalloc(1)
         squin.h(reg[0])
-        operations.star_rz(theta, reg, qubit_indices=(0, 2, 4))
+        gemini.logical.star_rz(theta, reg[0], qubit_indices=(0, 2, 4))
         gemini.logical.terminal_measure(reg)
 
     physical_move = compile_squin_to_move(

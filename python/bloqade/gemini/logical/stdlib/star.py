@@ -1,14 +1,13 @@
-from kirin.dialects import ilist
+from kirin import lowering
 
 from bloqade import types
 
-from ..group import kernel
-from . import broadcast
+from ..dialects.operations.stmts import DEFAULT_STEANE_STAR_SUPPORT, StarRz
 
 
-@kernel(aggressive_unroll=True, verify=False)
+@lowering.wraps(StarRz)
 def star_rz(
     theta: float,
     qubit: types.Qubit,
-):
-    broadcast.star_rz(theta, ilist.IList([qubit]))
+    qubit_indices: tuple[int, int, int] = DEFAULT_STEANE_STAR_SUPPORT,
+) -> None: ...
