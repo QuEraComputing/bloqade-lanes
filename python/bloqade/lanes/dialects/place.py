@@ -135,28 +135,17 @@ class Rz(QuantumStmt):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
-@statement(dialect=dialect, init=False)
+@statement(dialect=dialect)
 class StarRz(QuantumStmt):
     qubits: tuple[int, ...] = info.attribute()
     qubit_indices: tuple[int, int, int] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
-    def __init__(
-        self,
-        state_before: ir.SSAValue,
-        rotation_angle: ir.SSAValue,
-        *,
-        qubits: tuple[int, ...],
-        qubit_indices: tuple[int, int, int] | tuple[int, ...] | None = None,
-    ):
-        ir.Statement.__init__(
-            self,
-            args=(state_before, rotation_angle),
-            args_slice={"state_before": 0, "rotation_angle": 1},
-            result_types=(StateType,),
-        )
-        self.qubits = qubits
-        self.qubit_indices = validate_steane_star_support(qubit_indices)
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
 
 
 @statement(dialect=dialect)
