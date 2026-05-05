@@ -1,17 +1,13 @@
-import math
 from dataclasses import dataclass
 from itertools import chain
-from typing import Any, cast
 
 from kirin import ir, types
-from kirin.analysis import const
-from kirin.dialects import ilist, py
+from kirin.dialects import ilist, math as kmath, py
 from kirin.rewrite import abc as rewrite_abc
 from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.star import steane_star_theta
 from bloqade.lanes.utils import no_none_elements
 
 
@@ -90,34 +86,43 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 class RewriteStarRz(rewrite_abc.RewriteRule):
     """Lower logical STAR rotations to physical local Rz rotations.
 
-    v1 supports only literal target logical angles and the k=3 Steane STAR
-    protocol.
+    v1 supports the k=3 Steane STAR protocol. The logical target angle is
+    converted to the physical STAR angle with Kirin math IR, so the angle may
+    be either a literal or an SSA value.
     """
 
-    def _literal_angle(self, node: move.StarRz) -> float:
-        hint = node.rotation_angle.hints.get("const")
-        if isinstance(hint, const.Value) and isinstance(hint.data, (int, float)):
-            theta = float(hint.data)
-            if not math.isfinite(theta):
-                raise ValueError("star_rz theta must be finite")
-            return theta
+    def _theta_star_ir(self, node: move.StarRz) -> ir.SSAValue:
+        # theta_star = -copysign(2 * atan(abs(tan(theta / 2)) ** (1 / 3)), theta)
+        half = py.Constant(2.0)
+        exponent = py.Constant(1.0 / 3.0)
+        two = py.Constant(2.0)
+        neg_one = py.Constant(-1.0)
+        theta_over_two = py.Div(node.rotation_angle, half.result)
+        tan_half_theta = kmath.stmts.tan(theta_over_two.result)
+        abs_tan = kmath.stmts.fabs(tan_half_theta.result)
+        root = kmath.stmts.pow(abs_tan.result, exponent.result)
+        atan_root = kmath.stmts.atan(root.result)
+        magnitude = py.Mult(two.result, atan_root.result)
+        signed_magnitude = kmath.stmts.copysign(magnitude.result, node.rotation_angle)
+        theta_star = py.Mult(neg_one.result, signed_magnitude.result)
 
-        owner = node.rotation_angle.owner
-        if not isinstance(owner, py.Constant):
-            raise ValueError(
-                "star_rz only supports literal/compile-time theta values in v1; "
-                "runtime kernel-argument theta is not supported"
-            )
-        value = cast(Any, owner.value).data
-        if not isinstance(value, (int, float)):
-            raise ValueError(
-                "star_rz only supports literal/compile-time theta values in v1; "
-                "runtime kernel-argument theta is not supported"
-            )
-        theta = float(value)
-        if not math.isfinite(theta):
-            raise ValueError("star_rz theta must be finite")
-        return theta
+        for stmt in (
+            half,
+            exponent,
+            two,
+            neg_one,
+            theta_over_two,
+            tan_half_theta,
+            abs_tan,
+            root,
+            atan_root,
+            magnitude,
+            signed_magnitude,
+            theta_star,
+        ):
+            stmt.insert_before(node)
+
+        return theta_star.result
 
     def _physical_support(
         self,
@@ -139,9 +144,7 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
         if not isinstance(node, move.StarRz):
             return rewrite_abc.RewriteResult()
 
-        theta_star = steane_star_theta(self._literal_angle(node))
-        angle_stmt = py.Constant(theta_star)
-        angle_stmt.insert_before(node)
+        theta_star = self._theta_star_ir(node)
 
         physical_addresses = tuple(
             chain.from_iterable(
@@ -153,7 +156,7 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
         node.replace_by(
             move.LocalRz(
                 node.current_state,
-                angle_stmt.result,
+                theta_star,
                 location_addresses=physical_addresses,
             )
         )

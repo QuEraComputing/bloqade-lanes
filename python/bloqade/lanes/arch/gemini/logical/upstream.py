@@ -1,7 +1,7 @@
 from typing import Iterator, Literal, TypeVar
 
 from kirin import ir, rewrite
-from kirin.dialects import debug, ilist
+from kirin.dialects import debug, ilist, math as kmath
 
 from bloqade import qubit, squin
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
@@ -217,7 +217,7 @@ class SpecializeGemini:
         self.sites_per_word = sites_per_word
 
     def emit(self, mt: ir.Method, no_raise=True) -> ir.Method:
-        out = mt.similar(dialects=mt.dialects.add(dialect))
+        out = mt.similar(dialects=mt.dialects.add(dialect).add(kmath.dialect))
 
         rewrite.Walk(
             rewrite.Chain(

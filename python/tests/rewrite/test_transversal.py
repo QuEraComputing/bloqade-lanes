@@ -3,7 +3,7 @@ from typing import TypeVar
 import pytest
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
-from kirin.dialects import ilist, py
+from kirin.dialects import ilist, math as kmath, py
 
 from bloqade.lanes.bytecode.encoding import (
     Direction,
@@ -13,7 +13,6 @@ from bloqade.lanes.bytecode.encoding import (
 )
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import transversal
-from bloqade.lanes.star import steane_star_theta
 
 AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
 
@@ -120,7 +119,30 @@ def test_rewrite_star_rz_to_physical_local_rz():
 
     expected_block = ir.Block()
     expected_block.stmts.append(rotation_angle := py.Constant(0.5))
-    expected_block.stmts.append(theta_star := py.Constant(steane_star_theta(0.5)))
+    expected_block.stmts.append(half := py.Constant(2.0))
+    expected_block.stmts.append(exponent := py.Constant(1.0 / 3.0))
+    expected_block.stmts.append(two := py.Constant(2.0))
+    expected_block.stmts.append(neg_one := py.Constant(-1.0))
+    expected_block.stmts.append(
+        theta_over_two := py.Div(rotation_angle.result, half.result)
+    )
+    expected_block.stmts.append(
+        tan_half_theta := kmath.stmts.tan(theta_over_two.result)
+    )
+    expected_block.stmts.append(abs_tan := kmath.stmts.fabs(tan_half_theta.result))
+    expected_block.stmts.append(
+        root := kmath.stmts.pow(abs_tan.result, exponent.result)
+    )
+    expected_block.stmts.append(atan_root := kmath.stmts.atan(root.result))
+    expected_block.stmts.append(magnitude := py.Mult(two.result, atan_root.result))
+    expected_block.stmts.append(
+        signed_magnitude := kmath.stmts.copysign(
+            magnitude.result, rotation_angle.result
+        )
+    )
+    expected_block.stmts.append(
+        theta_star := py.Mult(neg_one.result, signed_magnitude.result)
+    )
     expected_block.stmts.append(
         move.LocalRz(
             current_state,

@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import bloqade.squin as squin
 import pytest
-from kirin.dialects import py
+from kirin.dialects import math as kmath, py
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
@@ -24,11 +24,6 @@ VALID_STEANE_STAR_SUPPORTS = {
     (2, 3, 5),
     (4, 5, 6),
 }
-
-
-def _star_theta(theta: float) -> float:
-    magnitude = 2 * math.atan(abs(math.tan(theta / 2)) ** (1 / 3))
-    return -math.copysign(magnitude, theta)
 
 
 def test_star_rz_public_api_single_qubit_lowers_to_statement():
@@ -145,8 +140,35 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
     ]
     assert len(star_rz_nodes) == 1
     angle_owner = star_rz_nodes[0].rotation_angle.owner
-    assert isinstance(angle_owner, py.Constant)
-    assert cast(Any, angle_owner.value).data == pytest.approx(_star_theta(theta))
+    assert isinstance(angle_owner, py.Mult)
+    neg_one = angle_owner.lhs.owner
+    assert isinstance(neg_one, py.Constant)
+    assert cast(Any, neg_one.value).data == -1.0
+    assert isinstance(angle_owner.rhs.owner, kmath.stmts.copysign)
+
+
+def test_star_rz_pipeline_accepts_parameterized_theta():
+    @gemini.logical.kernel(aggressive_unroll=True, verify=False)
+    def kernel(theta: float):
+        reg = squin.qalloc(1)
+        gemini.logical.star_rz(theta, reg[0])
+        gemini.logical.terminal_measure(reg)
+
+    physical_move = compile_squin_to_move(
+        kernel,
+        transversal_rewrite=True,
+        no_raise=False,
+        insert_return_moves=False,
+    )
+
+    assert not any(
+        isinstance(stmt, move.StarRz) for stmt in physical_move.callable_region.walk()
+    )
+    assert any(
+        isinstance(stmt, move.LocalRz)
+        and isinstance(stmt.rotation_angle.owner, py.Mult)
+        for stmt in physical_move.callable_region.walk()
+    )
 
 
 def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():

@@ -7,7 +7,7 @@ from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
 from kirin import ir, rewrite
-from kirin.dialects import func, ilist, py
+from kirin.dialects import func, ilist, math as kmath, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
@@ -129,6 +129,7 @@ def compile_squin_to_move(
         insert_return_moves=insert_return_moves,
     ).emit(mt, no_raise=no_raise)
     if transversal_rewrite:
+        mt = mt.similar(mt.dialects.add(kmath.dialect))
         mt = transversal_rewrites(mt)
 
     return mt
