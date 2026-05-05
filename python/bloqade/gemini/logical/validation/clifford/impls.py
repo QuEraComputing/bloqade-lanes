@@ -133,20 +133,7 @@ class __OperationsGeminiLogicalValidation(_interp.MethodTable):
         frame: ForwardFrame,
         stmt: operations.stmts.StarRz,
     ):
-        address_value = interp.addr_frame.get(stmt.qubits)
-        if isinstance(address_value, address.AddressReg):
-            for addr_int in address_value.data:
-                interp.first_gates[addr_int] = False
-        elif isinstance(address_value, address.AddressQubit):
-            interp.first_gates[address_value.data] = False
-        else:
-            interp.add_validation_error(
-                stmt,
-                ir.ValidationError(
-                    stmt,
-                    "Cannot determine qubit address location for star_rz.",
-                ),
-            )
+        interp.check_first_gate(stmt.qubits)
         return ()
 
 
