@@ -169,12 +169,11 @@ def test_pre_gate_deferred_from_layer_0_to_later():
 
 
 def test_alap_places_cz_layer0_sink_gates_last():
-    """Three-gate chain: R(q0), CZ(q0,q1), R(q1).  Independent R(q2).
+    """Sink gate placed early (ASAP-style) gets deferred to max_layer by ALAP.
 
-    ALAP layers: R(q0)=0, CZ=1, R(q1)=2, R(q2)=2 (max_layer=2, no successor).
-    Input order: R(q0), CZ(q0,q1), R(q2)[independent, placed early by mistake], R(q1).
-    Expected output: R(q0), CZ, R(q1), R(q2)  (both R at layer 2, but R(q1)
-    preserves original relative order with R(q2) since they're at the same ALAP layer).
+    Input order (ASAP-style): R(q0), R(q2)[independent, ASAP=0], CZ(q0,q1), R(q1).
+    ALAP layers: R(q0)=0, CZ=1, R(q1)=2, R(q2)=2 (no successor → ALAP=max_layer=2).
+    Expected: ALAP moves R(q2) past CZ so both layer-2 gates follow it.
     """
     body_block, entry_state = _new_body_block()
     axis = ir.TestValue(type=kirin_types.Float)
@@ -182,25 +181,23 @@ def test_alap_places_cz_layer0_sink_gates_last():
 
     r0 = place.R(entry_state, axis_angle=axis, rotation_angle=angle, qubits=(0,))
     body_block.stmts.append(r0)
-    cz = place.CZ(r0.state_after, qubits=(0, 1))
-    body_block.stmts.append(cz)
-    r2 = place.R(cz.state_after, axis_angle=axis, rotation_angle=angle, qubits=(2,))
+    # R(q2) placed before CZ as ASAP would — this is what ALAP should fix.
+    r2 = place.R(r0.state_after, axis_angle=axis, rotation_angle=angle, qubits=(2,))
     body_block.stmts.append(r2)
-    r1 = place.R(r2.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
+    cz = place.CZ(r2.state_after, qubits=(0, 1))
+    body_block.stmts.append(cz)
+    r1 = place.R(cz.state_after, axis_angle=axis, rotation_angle=angle, qubits=(1,))
     body_block.stmts.append(r1)
 
     _, outer = _wrap_in_static_placement(body_block, num_qubits=3)
-    # R(q1) has ALAP=2 (must follow CZ). R(q2) also has ALAP=2 (no successor).
-    # Both land at layer 2 — relative order among them follows original order.
-    # Original order already matches ALAP if r2 and r1 are both at layer 2.
-    # The pass may or may not reorder (depends on whether R(q2) stays at same slot).
+    assert _run(outer)  # ALAP defers R(q2) from layer 0 to layer 2
+
     sp = _get_sp(outer)
     stmts = _body_stmts(sp)
     assert len(stmts) == 4
-    # R(q0) must be first, CZ must be second
+    # R(q0) first (ALAP=0), CZ second (ALAP=1), then R(q1) and R(q2) both at ALAP=2
     assert isinstance(stmts[0], place.R) and stmts[0].qubits == (0,)
     assert isinstance(stmts[1], place.CZ)
-    # Both R(q1) and R(q2) come after CZ
     after_cz = {s.qubits for s in stmts[2:] if isinstance(s, place.R)}  # type: ignore[union-attr]
     assert (1,) in after_cz
     assert (2,) in after_cz
@@ -311,3 +308,34 @@ def test_alap_defers_independent_pre_gates():
     # ALAP layer is >= CZ1's layer. They should appear after CZ1 in linear order.
     assert r14_pos > cz1_pos, "R(q14) pre-gate should be deferred past CZ(q0,q7)"
     assert r21_pos > cz1_pos, "R(q21) pre-gate should be deferred past CZ(q0,q7)"
+
+
+def test_same_type_gates_cluster_within_alap_layer():
+    """Same-parameter R gates at the same ALAP layer cluster together for FuseAdjacentGates.
+
+    Circuit (input order): R(q0,a,b), Rz(q1,c), R(q2,a,b) — all at ALAP layer 0
+    (no CZ, max_layer = 0, independent).  _group_within_layer should cluster the
+    two R(a,b) gates together, interleaving past the Rz.
+    Expected output: R(q0,a,b), R(q2,a,b), Rz(q1,c).
+    """
+    body_block, entry_state = _new_body_block()
+    axis = ir.TestValue(type=kirin_types.Float)
+    angle_r = ir.TestValue(type=kirin_types.Float)
+    angle_rz = ir.TestValue(type=kirin_types.Float)
+
+    r0 = place.R(entry_state, axis_angle=axis, rotation_angle=angle_r, qubits=(0,))
+    body_block.stmts.append(r0)
+    rz1 = place.Rz(r0.state_after, rotation_angle=angle_rz, qubits=(1,))
+    body_block.stmts.append(rz1)
+    r2 = place.R(rz1.state_after, axis_angle=axis, rotation_angle=angle_r, qubits=(2,))
+    body_block.stmts.append(r2)
+
+    _, outer = _wrap_in_static_placement(body_block, num_qubits=3)
+    assert _run(outer)  # R(q2) clusters with R(q0), moving before Rz(q1)
+
+    sp = _get_sp(outer)
+    stmts = _body_stmts(sp)
+    assert len(stmts) == 3
+    assert isinstance(stmts[0], place.R) and stmts[0].qubits == (0,)  # type: ignore[union-attr]
+    assert isinstance(stmts[1], place.R) and stmts[1].qubits == (2,)  # type: ignore[union-attr]
+    assert isinstance(stmts[2], place.Rz) and stmts[2].qubits == (1,)  # type: ignore[union-attr]

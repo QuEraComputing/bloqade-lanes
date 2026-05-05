@@ -4,6 +4,7 @@ import rustworkx
 
 from bloqade.lanes.rewrite.reorder_static_placement.types import (
     _BARRIERS,
+    _build_dependency_dag,
     _group_within_layer,
     _SchedulableStmt,
 )
@@ -20,16 +21,7 @@ def _alap_schedule(stmts: list[_SchedulableStmt]) -> list[_SchedulableStmt]:
     if len(stmts) <= 1:
         return list(stmts)
 
-    dag = rustworkx.PyDAG()
-    node_for: list[int] = [dag.add_node(i) for i in range(len(stmts))]
-    last_touch: dict[int, int] = {}
-
-    for i, stmt in enumerate(stmts):
-        for q in stmt.qubits:
-            if q in last_touch:
-                dag.add_edge(last_touch[q], node_for[i], None)
-            last_touch[q] = node_for[i]
-
+    dag, node_for = _build_dependency_dag(stmts)
     topo_order = list(rustworkx.topological_sort(dag))
 
     # Forward pass to find max ASAP depth (= ALAP horizon for sink nodes).
