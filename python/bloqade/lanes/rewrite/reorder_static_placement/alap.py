@@ -2,7 +2,7 @@
 
 import rustworkx
 
-from bloqade.lanes.rewrite.reorder_static_placement.types import (
+from bloqade.lanes.rewrite.reorder_static_placement.common import (
     _BARRIERS,
     _build_dependency_dag,
     _group_within_layer,

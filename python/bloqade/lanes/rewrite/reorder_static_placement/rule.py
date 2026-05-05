@@ -7,7 +7,7 @@ from kirin import ir
 from kirin.rewrite import abc
 
 from bloqade.lanes.dialects import place
-from bloqade.lanes.rewrite.reorder_static_placement.types import _SchedulableStmt
+from bloqade.lanes.rewrite.reorder_static_placement.common import _SchedulableStmt
 from bloqade.lanes.types import StateType
 
 
