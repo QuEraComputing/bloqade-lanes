@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from kirin import ir, lowering, types
+from kirin import exception, ir, lowering, types
 from kirin.decl import info, statement
 from kirin.lowering.python.binding import wraps
 
@@ -125,28 +125,17 @@ class LocalRz(StatefulStatement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
 
-@statement(dialect=dialect, init=False)
+@statement(dialect=dialect)
 class StarRz(StatefulStatement):
     location_addresses: tuple[LocationAddress, ...] = info.attribute()
     qubit_indices: tuple[int, int, int] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
-    def __init__(
-        self,
-        current_state: ir.SSAValue,
-        rotation_angle: ir.SSAValue,
-        *,
-        location_addresses: tuple[LocationAddress, ...],
-        qubit_indices: tuple[int, int, int] | tuple[int, ...] | None = None,
-    ):
-        ir.Statement.__init__(
-            self,
-            args=(current_state, rotation_angle),
-            args_slice={"current_state": 0, "rotation_angle": 1},
-            result_types=(StateType,),
-        )
-        self.location_addresses = location_addresses
-        self.qubit_indices = validate_steane_star_support(qubit_indices)
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
 
 
 @statement(dialect=dialect)
