@@ -1,12 +1,13 @@
 import ast
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 from bloqade.types import MeasurementResultType, QubitType
-from kirin import ir, lowering, types
+from kirin import exception, ir, lowering, types
 from kirin.decl import info, statement
 from kirin.dialects import ilist
 from kirin.lowering import Result, State
+from kirin.lowering.exception import BuildError
 
 from bloqade.gemini.star import (
     DEFAULT_STEANE_STAR_SUPPORT,
@@ -16,11 +17,24 @@ from bloqade.gemini.star import (
 from ._dialect import dialect
 
 
+class _StarRzConstructor(Protocol):
+    def __call__(
+        self,
+        rotation_angle: ir.SSAValue,
+        qubits: ir.SSAValue,
+        *,
+        qubit_indices: tuple[int, ...] = DEFAULT_STEANE_STAR_SUPPORT,
+    ) -> "StarRz": ...
+
+
 @dataclass(frozen=True)
 class FromPythonStarRzCall(lowering.FromPythonCall["StarRz"]):
     def lower(
         self, stmt: type["StarRz"], state: State[ast.AST], node: ast.Call
     ) -> Result:
+        if len(node.args) > 3:
+            raise BuildError("star_rz expects at most 3 positional arguments")
+
         args, kwargs = self.lower_Call_inputs(stmt, state, node)
         rotation_angle = cast(ir.SSAValue, args["rotation_angle"])
         qubits = cast(ir.SSAValue, args["qubits"])
@@ -29,7 +43,22 @@ class FromPythonStarRzCall(lowering.FromPythonCall["StarRz"]):
                 ilist.New([qubits], elem_type=QubitType)
             ).result
 
-        return state.current_frame.push(stmt(rotation_angle, qubits, **kwargs))
+        if len(node.args) == 3:
+            if "qubit_indices" in kwargs:
+                raise BuildError(
+                    "qubit_indices was provided as both a positional and keyword argument"
+                )
+            kwargs["qubit_indices"] = tuple(
+                state.get_global(node.args[2]).expect(tuple)
+            )
+
+        return state.current_frame.push(
+            cast(_StarRzConstructor, stmt)(
+                rotation_angle,
+                qubits,
+                **kwargs,
+            )
+        )
 
 
 @statement(dialect=dialect)
@@ -97,16 +126,8 @@ class StarRz(ir.Statement):
         default=DEFAULT_STEANE_STAR_SUPPORT
     )
 
-    def __init__(
-        self,
-        rotation_angle: ir.SSAValue,
-        qubits: ir.SSAValue,
-        *,
-        qubit_indices: tuple[int, int, int] | tuple[int, ...] | None = None,
-    ):
-        super().__init__(
-            args=(rotation_angle, qubits),
-            args_slice={"rotation_angle": 0, "qubits": 1},
-            result_types=(),
-        )
-        self.qubit_indices = validate_steane_star_support(qubit_indices)
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc

@@ -4,6 +4,7 @@ from typing import Any, cast
 import bloqade.squin as squin
 import pytest
 from kirin.dialects import py
+from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
 from bloqade.gemini.logical.dialects.operations.stmts import (
@@ -72,6 +73,19 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
     assert star_node.qubit_indices == support
 
 
+def test_star_rz_accepts_positional_support():
+    @gemini.logical.kernel(aggressive_unroll=True, verify=False)
+    def kernel():
+        reg = squin.qalloc(1)
+        gemini.logical.broadcast.star_rz(math.pi / 16, reg, (1, 2, 6))
+        gemini.logical.terminal_measure(reg)
+
+    star_node = next(
+        stmt for stmt in kernel.callable_region.walk() if isinstance(stmt, StarRz)
+    )
+    assert star_node.qubit_indices == (1, 2, 6)
+
+
 @pytest.mark.parametrize(
     "support",
     [(0, 1, 2), (4, 4, 6), (-1, 5, 6), (4, 5, 7), (4.0, 5, 6)],
@@ -79,6 +93,20 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
 def test_star_rz_rejects_invalid_steane_supports(support):
     with pytest.raises(ValueError, match="qubit_indices"):
         validate_steane_star_support(support)
+
+
+def test_star_rz_statement_check_rejects_invalid_support():
+    with pytest.raises(ValidationError, match="qubit_indices"):
+
+        @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
+        def kernel():
+            reg = squin.qalloc(1)
+            gemini.logical.star_rz(
+                math.pi / 16,
+                reg[0],
+                qubit_indices=(0, 1, 2),
+            )
+            gemini.logical.terminal_measure(reg)
 
 
 def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite():

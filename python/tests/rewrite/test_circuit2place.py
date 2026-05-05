@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from bloqade.native.dialects.gate import stmts as gates
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
@@ -128,7 +130,12 @@ def test_star_rz():
     test_block = ir.Block(
         [
             qubits := ilist.New(values=(q0 := ir.TestValue(), q1 := ir.TestValue())),
-            gemini_stmts.StarRz(rotation_angle, qubits.result, qubit_indices=(0, 2, 4)),
+            # TODO: why is this cast as Any? is there a better way to get around this pyright check failure?
+            cast(Any, gemini_stmts.StarRz)(
+                rotation_angle=rotation_angle,
+                qubits=qubits.result,
+                qubit_indices=(0, 2, 4),
+            ),
         ],
     )
 
