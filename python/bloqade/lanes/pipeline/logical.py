@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
 from bloqade.rewrite.passes.callgraph import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
-from kirin import ir, rewrite
+from kirin import passes, rewrite
 from kirin.ir.method import Method
 from kirin.validation import ValidationSuite
 
@@ -20,9 +19,10 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place
 
-from .base import _default_merge_heuristic, _NativeToPlaceBase, _PlaceToMove
+from .base import _NativeToPlaceBase, _PlaceToMove
 
 
 @dataclass
@@ -72,16 +72,14 @@ class LogicalPipeline:
         default_factory=LogicalPlacementStrategyNoHome
     )
     insert_return_moves: bool = True
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = field(
-        default=_default_merge_heuristic
-    )
     arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
+    place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        out = _LogicalNativeToPlace(
-            merge_heuristic=self.merge_heuristic,
-            arch_spec=self.arch_spec,
-        ).emit(mt, no_raise=no_raise)
+        out = _LogicalNativeToPlace(arch_spec=self.arch_spec).emit(
+            mt, no_raise=no_raise
+        )
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = _PlaceToMove(
             layout_heuristic=self.layout_heuristic,
