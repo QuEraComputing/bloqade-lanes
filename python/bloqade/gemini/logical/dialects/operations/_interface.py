@@ -4,7 +4,7 @@ from bloqade.types import MeasurementResult, Qubit
 from kirin import lowering
 from kirin.dialects import ilist
 
-from .stmts import StarRz, TerminalLogicalMeasurement
+from .stmts import DEFAULT_STEANE_STAR_SUPPORT, StarRz, TerminalLogicalMeasurement
 
 Len = TypeVar("Len")
 
@@ -31,15 +31,14 @@ def terminal_measure(
 @lowering.wraps(StarRz)
 def star_rz(
     theta: float,
-    qubits: Qubit | ilist.IList[Qubit, Len],
-    qubit_indices: tuple[int, int, int] | tuple[int, ...] | None = None,
+    qubits: ilist.IList[Qubit, Any],
+    qubit_indices: tuple[int, int, int] = DEFAULT_STEANE_STAR_SUPPORT,
 ) -> None:
     """Apply a STAR/TMR logical-Z rotation injection primitive.
 
     Args:
         theta: Target logical rotation angle.
-        qubits: One logical qubit or a list of logical qubits.
-        qubit_indices: Optional Steane weight-3 logical-Z support. Defaults to
-            ``(4, 5, 6)``.
+        qubits: List of logical qubits.
+        qubit_indices: Steane weight-3 logical-Z support. Defaults to ``(4, 5, 6)``.
     """
     ...

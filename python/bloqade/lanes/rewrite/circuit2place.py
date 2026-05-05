@@ -330,21 +330,21 @@ class RewritePlaceOperations(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
     def rewrite_StarRz(self, node: gemini_stmts.StarRz) -> abc.RewriteResult:
-        if isinstance(args_list := node.qubits.owner, ilist.New):
-            inputs = args_list.values
-        else:
-            inputs = (node.qubits,)
+        if not isinstance(args_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
 
         body, block, entry_state = self.prep_region()
         gate_stmt = place.StarRz(
             entry_state,
             node.rotation_angle,
-            qubits=tuple(range(len(inputs))),
+            qubits=tuple(range(len(args_list.values))),
             qubit_indices=node.qubit_indices,
         )
 
         node.replace_by(
-            self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
+            self.construct_execute(
+                gate_stmt, qubits=args_list.values, body=body, block=block
+            )
         )
 
         return abc.RewriteResult(has_done_something=True)

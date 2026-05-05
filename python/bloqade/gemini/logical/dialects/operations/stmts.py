@@ -90,15 +90,16 @@ class TerminalLogicalMeasurement(ir.Statement):
 class StarRz(ir.Statement):
     """STAR/TMR logical-Z rotation injection primitive.
 
-    ``rotation_angle`` is the target logical angle. ``qubits`` may be either one
-    logical qubit SSA value or an ``IList`` of logical qubits. The final
-    logical-to-physical lowering computes the physical STAR angle for k=3 and
-    emits physical Rz rotations on ``qubit_indices``.
+    ``rotation_angle`` is the target logical angle. ``qubits`` is an ``IList``
+    of logical qubits, matching the raw Squin single-qubit gate statements.
+    The public stdlib API provides a one-qubit helper plus a broadcast helper.
+    The final logical-to-physical lowering computes the physical STAR angle for
+    k=3 and emits physical Rz rotations on ``qubit_indices``.
     """
 
     traits = frozenset({lowering.FromPythonCall()})
     rotation_angle: ir.SSAValue = info.argument(types.Float)
-    qubits: ir.SSAValue = info.argument(types.Any)
+    qubits: ir.SSAValue = info.argument(ilist.IListType[QubitType, types.Any])
     qubit_indices: tuple[int, int, int] = info.attribute(
         default=DEFAULT_STEANE_STAR_SUPPORT
     )

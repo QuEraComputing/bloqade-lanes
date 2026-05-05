@@ -6,7 +6,11 @@ import pytest
 from kirin.dialects import py
 
 import bloqade.gemini as gemini
-from bloqade.gemini.logical.dialects.operations.stmts import StarRz
+from bloqade.gemini.logical.dialects import operations
+from bloqade.gemini.logical.dialects.operations.stmts import (
+    StarRz,
+    validate_steane_star_support,
+)
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.logical_mvp import compile_squin_to_move
@@ -41,12 +45,26 @@ def test_star_rz_public_api_single_qubit_lowers_to_statement():
     assert star_nodes[0].qubit_indices == (4, 5, 6)
 
 
+def test_star_rz_broadcast_lowers_to_statement():
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(1)
+        gemini.logical.broadcast.star_rz(math.pi / 16, reg)
+        gemini.logical.terminal_measure(reg)
+
+    star_nodes = [
+        stmt for stmt in kernel.callable_region.walk() if isinstance(stmt, StarRz)
+    ]
+    assert len(star_nodes) == 1
+    assert star_nodes[0].qubit_indices == (4, 5, 6)
+
+
 @pytest.mark.parametrize("support", sorted(VALID_STEANE_STAR_SUPPORTS))
 def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(math.pi / 16, reg[0], qubit_indices=support)
+        operations.star_rz(math.pi / 16, reg, qubit_indices=support)
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -61,12 +79,7 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
 )
 def test_star_rz_rejects_invalid_steane_supports(support):
     with pytest.raises(ValueError, match="qubit_indices"):
-
-        @gemini.logical.kernel(aggressive_unroll=True, verify=False)
-        def kernel():
-            reg = squin.qalloc(1)
-            gemini.logical.star_rz(math.pi / 16, reg[0], qubit_indices=support)
-            gemini.logical.terminal_measure(reg)
+        validate_steane_star_support(support)
 
 
 def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite():
@@ -116,7 +129,7 @@ def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
     def kernel():
         reg = squin.qalloc(1)
         squin.h(reg[0])
-        gemini.logical.star_rz(theta, reg[0], qubit_indices=(0, 2, 4))
+        operations.star_rz(theta, reg, qubit_indices=(0, 2, 4))
         gemini.logical.terminal_measure(reg)
 
     physical_move = compile_squin_to_move(
