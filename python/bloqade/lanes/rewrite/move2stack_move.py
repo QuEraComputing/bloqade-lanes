@@ -52,18 +52,26 @@ class RewriteMoveToStackMove(RewriteRule):
     Mutable state carried across the block walk:
     - _first_fill_emitted: True after the first move.Fill is processed,
       so subsequent fills lower to stack_move.Fill instead of InitialFill.
-    - _future_to_await: maps move.Measure.future SSA → (AwaitMeasure result
-      SSA, zone_addresses tuple), for GetFutureResult index resolution.
+    - _future_to_sm_measure: maps move.Measure.future SSA → (stack_move.Measure
+      stmt, zone_addresses tuple). Populated by move.Measure; used by
+      GetFutureResult to emit AwaitMeasure lazily on first access.
+    - _future_to_await: maps move.Measure.future SSA → AwaitMeasure result SSA.
+      Populated on the first GetFutureResult for each future so that the
+      AwaitMeasure is inserted at the right program point.
     """
 
     arch_spec: ArchSpec
     _first_fill_emitted: bool = field(default=False, init=False)
-    _future_to_await: dict[ir.SSAValue, tuple[ir.SSAValue, tuple[ZoneAddress, ...]]] = (
-        field(default_factory=dict, init=False)
+    _future_to_sm_measure: dict[
+        ir.SSAValue, tuple[stack_move.Measure, tuple[ZoneAddress, ...]]
+    ] = field(default_factory=dict, init=False)
+    _future_to_await: dict[ir.SSAValue, ir.SSAValue] = field(
+        default_factory=dict, init=False
     )
 
     def rewrite_Block(self, node: ir.Block) -> RewriteResult:
         self._first_fill_emitted = False
+        self._future_to_sm_measure = {}
         self._future_to_await = {}
         to_delete: list[ir.Statement] = []
         result = RewriteResult()
@@ -221,9 +229,7 @@ class RewriteMoveToStackMove(RewriteRule):
             zc.insert_before(stmt)
         sm_measure = stack_move.Measure(zones=tuple(zc.result for zc in zone_consts))
         sm_measure.insert_before(stmt)
-        aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
-        aw.insert_before(stmt)
-        self._future_to_await[stmt.future] = (aw.result, stmt.zone_addresses)
+        self._future_to_sm_measure[stmt.future] = (sm_measure, stmt.zone_addresses)
         to_delete.append(stmt)
         return RewriteResult(has_done_something=True)
 
@@ -231,7 +237,13 @@ class RewriteMoveToStackMove(RewriteRule):
     def _(
         self, stmt: move.GetFutureResult, to_delete: list[ir.Statement]
     ) -> RewriteResult:
-        await_result, zone_addresses = self._future_to_await[stmt.measurement_future]
+        sm_measure, zone_addresses = self._future_to_sm_measure[stmt.measurement_future]
+        # Emit AwaitMeasure lazily before the first GetFutureResult for this future.
+        if stmt.measurement_future not in self._future_to_await:
+            aw = stack_move.AwaitMeasure(future=sm_measure.results[0])
+            aw.insert_before(stmt)
+            self._future_to_await[stmt.measurement_future] = aw.result
+        await_result = self._future_to_await[stmt.measurement_future]
         idx = self._measure_flat_index(
             zone_addresses, stmt.zone_address, stmt.location_address
         )

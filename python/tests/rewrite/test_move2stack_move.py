@@ -240,7 +240,9 @@ def test_cz_lowers_with_const_zone():
 # ---- measurement tests ----
 
 
-def test_measure_lowers_to_stack_move_measure_and_await():
+def test_measure_lowers_to_stack_move_measure():
+    # AwaitMeasure is deferred until the first GetFutureResult; a bare Measure
+    # with no consumers produces only stack_move.Measure.
     load = move.Load()
     m = move.Measure(current_state=load.result, zone_addresses=(ZoneAddress(0),))
     store = move.Store(current_state=m.result)
@@ -253,12 +255,11 @@ def test_measure_lowers_to_stack_move_measure_and_await():
 
     assert not any(isinstance(s, move.Measure) for s in block.stmts)
     sm_m = next(s for s in block.stmts if isinstance(s, stack_move.Measure))
-    aw = next(s for s in block.stmts if isinstance(s, stack_move.AwaitMeasure))
     zone_consts = [s for s in block.stmts if isinstance(s, stack_move.ConstZone)]
     assert len(zone_consts) == 1
     assert zone_consts[0].value == ZoneAddress(0)
     assert len(sm_m.zones) == 1
-    assert aw.future is sm_m.results[0]
+    assert not any(isinstance(s, stack_move.AwaitMeasure) for s in block.stmts)
 
 
 def test_getfutureresult_lowers_to_getitem_on_await():
