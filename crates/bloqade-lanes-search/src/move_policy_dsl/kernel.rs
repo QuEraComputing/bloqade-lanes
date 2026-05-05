@@ -81,7 +81,7 @@ impl Default for PolicyOptions {
         Self {
             policy_path: String::new(),
             policy_params: serde_json::Value::Object(Default::default()),
-            max_expansions: 100_000,
+            max_expansions: 10_000,
             timeout_s: None,
             sandbox: SandboxConfig::default(),
         }
