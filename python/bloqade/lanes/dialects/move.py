@@ -5,8 +5,8 @@ from kirin.decl import info, statement
 from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
+from bloqade.gemini.star import validate_steane_star_support
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
-from bloqade.lanes.star import validate_steane_star_support
 
 from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
 
