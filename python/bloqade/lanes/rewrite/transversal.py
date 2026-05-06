@@ -115,8 +115,6 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
             return None
 
         physical_addresses = tuple(iterator)
-        if any(index >= len(physical_addresses) for index in support):
-            return None
 
         return tuple(physical_addresses[index] for index in support)
 
