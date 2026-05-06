@@ -7,24 +7,15 @@ from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
 from bloqade.gemini.logical.dialects import operations
-from bloqade.gemini.logical.dialects.operations.stmts import (
-    StarRz,
+from bloqade.gemini.logical.dialects.operations.stmts import StarRz
+from bloqade.gemini.star import (
+    VALID_STEANE_STAR_SUPPORTS,
     validate_steane_star_support,
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.logical_mvp import compile_squin_to_move
 from bloqade.lanes.rewrite.transversal import steane_star_theta
-
-VALID_STEANE_STAR_SUPPORTS = {
-    (0, 1, 5),
-    (0, 2, 4),
-    (0, 3, 6),
-    (1, 2, 6),
-    (1, 3, 4),
-    (2, 3, 5),
-    (4, 5, 6),
-}
 
 
 def test_star_rz_public_api_single_qubit_lowers_to_statement():
