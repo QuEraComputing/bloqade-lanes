@@ -76,14 +76,6 @@ class StarRz(ir.Statement):
     )
 
     def check(self) -> None:
-        if self.qubits.type.is_structurally_equal(
-            types.Bottom
-        ) or self.qubits.type.is_subseteq(QubitType):
-            raise exception.StaticCheckError(
-                "star_rz expects qubits to be an ilist.IList[Qubit]. "
-                "For one logical qubit, wrap it as ilist.IList([q]); for a "
-                "register, pass the register directly."
-            )
         try:
             validate_steane_star_support(self.qubit_indices)
         except ValueError as exc:

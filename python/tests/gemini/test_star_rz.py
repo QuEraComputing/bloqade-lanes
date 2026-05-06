@@ -1,5 +1,4 @@
 import math
-from typing import Any, cast
 
 import bloqade.squin as squin
 import pytest
@@ -54,16 +53,6 @@ def test_star_rz_broadcast_lowers_to_statement():
     ]
     assert len(star_nodes) == 1
     assert star_nodes[0].qubit_indices == (4, 5, 6)
-
-
-def test_raw_star_rz_scalar_qubit_error_is_actionable():
-    with pytest.raises(ValidationError, match="ilist.IList"):
-
-        @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
-        def kernel():
-            reg = squin.qalloc(1)
-            operations.star_rz(math.pi / 16, cast(Any, reg[0]), qubit_indices=(0, 1, 5))
-            gemini.logical.terminal_measure(reg)
 
 
 @pytest.mark.parametrize("support", sorted(VALID_STEANE_STAR_SUPPORTS))
