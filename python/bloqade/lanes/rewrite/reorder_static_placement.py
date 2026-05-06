@@ -143,14 +143,7 @@ class ReorderStaticPlacement(abc.RewriteRule):
         curr_state = new_block.args.append_from(StateType, "entry_state")
 
         for stmt in new_stmts:
-            attributes: dict[str, ir.Attribute] = {}
-            if isinstance(stmt, place.StarRz):
-                attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
-            remapped = stmt.from_stmt(
-                stmt,
-                args=(curr_state, *stmt.args[1:]),
-                attributes=attributes,
-            )
+            remapped = stmt.from_stmt(stmt, args=(curr_state, *stmt.args[1:]))
             new_block.stmts.append(remapped)
             curr_state = remapped.state_after
             for old_r, new_r in zip(stmt.results[1:], remapped.results[1:]):
