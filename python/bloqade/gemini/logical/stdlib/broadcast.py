@@ -1,16 +1,17 @@
 from typing import Any
 
-from kirin import lowering
 from kirin.dialects import ilist
 
 from bloqade import types
 
-from ..dialects.operations.stmts import DEFAULT_STEANE_STAR_SUPPORT, StarRz
+from ..dialects import operations
+from ..dialects.operations.stmts import DEFAULT_STEANE_STAR_SUPPORT
+from ..group import kernel
 
 
-@lowering.wraps(StarRz)
+@kernel(aggressive_unroll=True, verify=False)
 def star_rz(
     theta: float,
     qubits: ilist.IList[types.Qubit, Any],
-    qubit_indices: tuple[int, int, int] = DEFAULT_STEANE_STAR_SUPPORT,
-) -> None: ...
+) -> None:
+    operations.star_rz(theta, qubits, DEFAULT_STEANE_STAR_SUPPORT)

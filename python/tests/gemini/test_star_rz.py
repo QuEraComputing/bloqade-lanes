@@ -7,6 +7,7 @@ from kirin.dialects import func, ilist
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
+from bloqade.gemini.logical.dialects import operations
 from bloqade.gemini.logical.dialects.operations.stmts import (
     StarRz,
     validate_steane_star_support,
@@ -27,11 +28,11 @@ VALID_STEANE_STAR_SUPPORTS = {
 }
 
 
-def test_star_rz_public_api_list_lowers_to_statement():
+def test_star_rz_public_api_single_qubit_lowers_to_statement():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(math.pi / 16, ilist.IList([reg[0]]))
+        gemini.logical.star_rz(math.pi / 16, reg[0])
         gemini.logical.terminal_measure(reg)
 
     star_nodes = [
@@ -55,15 +56,13 @@ def test_star_rz_broadcast_lowers_to_statement():
     assert star_nodes[0].qubit_indices == (4, 5, 6)
 
 
-def test_star_rz_scalar_qubit_error_is_actionable():
+def test_raw_star_rz_scalar_qubit_error_is_actionable():
     with pytest.raises(ValidationError, match="ilist.IList"):
 
         @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
         def kernel():
             reg = squin.qalloc(1)
-            gemini.logical.star_rz(
-                math.pi / 16, cast(Any, reg[0]), qubit_indices=(0, 1, 5)
-            )
+            operations.star_rz(math.pi / 16, cast(Any, reg[0]), qubit_indices=(0, 1, 5))
             gemini.logical.terminal_measure(reg)
 
 
@@ -72,7 +71,7 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.broadcast.star_rz(math.pi / 16, reg, qubit_indices=support)
+        operations.star_rz(math.pi / 16, reg, qubit_indices=support)
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -85,7 +84,7 @@ def test_star_rz_accepts_keyword_support():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.broadcast.star_rz(math.pi / 16, reg, qubit_indices=(1, 2, 6))
+        operations.star_rz(math.pi / 16, reg, qubit_indices=(1, 2, 6))
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -109,7 +108,7 @@ def test_star_rz_statement_check_rejects_invalid_support():
         @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
         def kernel():
             reg = squin.qalloc(1)
-            gemini.logical.star_rz(
+            operations.star_rz(
                 math.pi / 16,
                 ilist.IList([reg[0]]),
                 qubit_indices=(0, 1, 2),
@@ -123,7 +122,7 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(theta, ilist.IList([reg[0]]))
+        gemini.logical.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
     physical_move = compile_squin_to_move(
@@ -162,7 +161,7 @@ def test_star_rz_pipeline_accepts_parameterized_theta():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel(theta: float):
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(theta, ilist.IList([reg[0]]))
+        gemini.logical.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
     physical_move = compile_squin_to_move(
@@ -190,7 +189,7 @@ def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
     def kernel():
         reg = squin.qalloc(1)
         squin.h(reg[0])
-        gemini.logical.star_rz(theta, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
+        operations.star_rz(theta, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
         gemini.logical.terminal_measure(reg)
 
     physical_move = compile_squin_to_move(
@@ -218,7 +217,7 @@ def test_star_rz_without_transversal_rewrite_remains_logical_move_statement():
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(math.pi / 16, ilist.IList([reg[0]]))
+        gemini.logical.star_rz(math.pi / 16, reg[0])
         gemini.logical.terminal_measure(reg)
 
     logical_move = compile_squin_to_move(
