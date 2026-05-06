@@ -1,13 +1,7 @@
-import ast
-from dataclasses import dataclass
-from typing import Protocol, cast
-
 from bloqade.types import MeasurementResultType, QubitType
 from kirin import exception, ir, lowering, types
 from kirin.decl import info, statement
 from kirin.dialects import ilist
-from kirin.lowering import Result, State
-from kirin.lowering.exception import BuildError
 
 from bloqade.gemini.star import (
     DEFAULT_STEANE_STAR_SUPPORT,
@@ -15,50 +9,6 @@ from bloqade.gemini.star import (
 )
 
 from ._dialect import dialect
-
-
-class _StarRzConstructor(Protocol):
-    def __call__(
-        self,
-        rotation_angle: ir.SSAValue,
-        qubits: ir.SSAValue,
-        *,
-        qubit_indices: tuple[int, ...] = DEFAULT_STEANE_STAR_SUPPORT,
-    ) -> "StarRz": ...
-
-
-@dataclass(frozen=True)
-class FromPythonStarRzCall(lowering.FromPythonCall["StarRz"]):
-    def lower(
-        self, stmt: type["StarRz"], state: State[ast.AST], node: ast.Call
-    ) -> Result:
-        if len(node.args) > 3:
-            raise BuildError("star_rz expects at most 3 positional arguments")
-
-        args, kwargs = self.lower_Call_inputs(stmt, state, node)
-        rotation_angle = cast(ir.SSAValue, args["rotation_angle"])
-        qubits = cast(ir.SSAValue, args["qubits"])
-        if not qubits.type.is_subseteq(ilist.IListType[QubitType, types.Any]):
-            qubits = state.current_frame.push(
-                ilist.New([qubits], elem_type=QubitType)
-            ).result
-
-        if len(node.args) == 3:
-            if "qubit_indices" in kwargs:
-                raise BuildError(
-                    "qubit_indices was provided as both a positional and keyword argument"
-                )
-            kwargs["qubit_indices"] = tuple(
-                state.get_global(node.args[2]).expect(tuple)
-            )
-
-        return state.current_frame.push(
-            cast(_StarRzConstructor, stmt)(
-                rotation_angle,
-                qubits,
-                **kwargs,
-            )
-        )
 
 
 @statement(dialect=dialect)
@@ -108,18 +58,17 @@ class TerminalLogicalMeasurement(ir.Statement):
     )
 
 
-@statement(dialect=dialect, init=False)
+@statement(dialect=dialect)
 class StarRz(ir.Statement):
     """STAR/TMR logical-Z rotation injection primitive.
 
     ``rotation_angle`` is the target logical angle. ``qubits`` is an ``IList``
-    of logical qubits, matching the raw Squin single-qubit gate statements.
-    The public stdlib API provides a one-qubit helper plus a broadcast helper.
+    of logical qubits.
     The final logical-to-physical lowering computes the physical STAR angle for
     k=3 and emits physical Rz rotations on ``qubit_indices``.
     """
 
-    traits = frozenset({FromPythonStarRzCall()})
+    traits = frozenset({lowering.FromPythonCall()})
     rotation_angle: ir.SSAValue = info.argument(types.Float)
     qubits: ir.SSAValue = info.argument(ilist.IListType[QubitType, types.Any])
     qubit_indices: tuple[int, int, int] = info.attribute(
