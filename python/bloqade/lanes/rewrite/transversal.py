@@ -2,13 +2,22 @@ from dataclasses import dataclass
 from itertools import chain
 
 from kirin import ir, types
-from kirin.dialects import ilist, math as kmath, py
+from kirin.dialects import func, ilist, math as kmath
 from kirin.rewrite import abc as rewrite_abc
 from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.prelude import kernel
 from bloqade.lanes.utils import no_none_elements
+
+
+@kernel(verify=False)
+def steane_star_theta(theta: float) -> float:
+    return -kmath.copysign(
+        2 * kmath.atan(kmath.fabs(kmath.tan(theta / 2)) ** (1 / 3)),
+        theta,
+    )
 
 
 @dataclass
@@ -91,51 +100,25 @@ class RewriteStarRz(rewrite_abc.RewriteRule):
     be either a literal or an SSA value.
     """
 
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
+
     def _theta_star_ir(self, node: move.StarRz) -> ir.SSAValue:
-        # theta_star = -copysign(2 * atan(abs(tan(theta / 2)) ** (1 / 3)), theta)
-        half = py.Constant(2.0)
-        exponent = py.Constant(1.0 / 3.0)
-        two = py.Constant(2.0)
-        neg_one = py.Constant(-1.0)
-        theta_over_two = py.Div(node.rotation_angle, half.result)
-        tan_half_theta = kmath.stmts.tan(theta_over_two.result)
-        abs_tan = kmath.stmts.fabs(tan_half_theta.result)
-        root = kmath.stmts.pow(abs_tan.result, exponent.result)
-        atan_root = kmath.stmts.atan(root.result)
-        magnitude = py.Mult(two.result, atan_root.result)
-        signed_magnitude = kmath.stmts.copysign(magnitude.result, node.rotation_angle)
-        theta_star = py.Mult(neg_one.result, signed_magnitude.result)
-
-        for stmt in (
-            half,
-            exponent,
-            two,
-            neg_one,
-            theta_over_two,
-            tan_half_theta,
-            abs_tan,
-            root,
-            atan_root,
-            magnitude,
-            signed_magnitude,
-            theta_star,
-        ):
-            stmt.insert_before(node)
-
+        theta_star = func.Invoke((node.rotation_angle,), callee=steane_star_theta)
+        theta_star.insert_before(node)
         return theta_star.result
 
     def _physical_support(
-        self,
-        logical_address: LocationAddress,
-        support: tuple[int, int, int],
+        self, logical_address: LocationAddress, support: tuple[int, int, int]
     ) -> tuple[LocationAddress, ...] | None:
-        if logical_address.site_id >= 2:
+        iterator = self.transform_location(logical_address)
+        if iterator is None:
             return None
-        base = logical_address.site_id * 7
-        return tuple(
-            logical_address.replace(site_id=base + physical_index)
-            for physical_index in support
-        )
+
+        physical_addresses = tuple(iterator)
+        if any(index >= len(physical_addresses) for index in support):
+            return None
+
+        return tuple(physical_addresses[index] for index in support)
 
     def rewrite_Statement(self, node: ir.Statement):
         if not isinstance(node, move.StarRz):

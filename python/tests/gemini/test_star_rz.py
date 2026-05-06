@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import bloqade.squin as squin
 import pytest
-from kirin.dialects import ilist, math as kmath, py
+from kirin.dialects import func, ilist
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
@@ -14,6 +14,7 @@ from bloqade.gemini.logical.dialects.operations.stmts import (
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.logical_mvp import compile_squin_to_move
+from bloqade.lanes.rewrite.transversal import steane_star_theta
 
 VALID_STEANE_STAR_SUPPORTS = {
     (0, 1, 5),
@@ -152,11 +153,9 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
     ]
     assert len(star_rz_nodes) == 1
     angle_owner = star_rz_nodes[0].rotation_angle.owner
-    assert isinstance(angle_owner, py.Mult)
-    neg_one = angle_owner.lhs.owner
-    assert isinstance(neg_one, py.Constant)
-    assert cast(Any, neg_one.value).data == -1.0
-    assert isinstance(angle_owner.rhs.owner, kmath.stmts.copysign)
+    assert isinstance(angle_owner, func.Invoke)
+    assert angle_owner.callee is steane_star_theta
+    assert len(angle_owner.inputs) == 1
 
 
 def test_star_rz_pipeline_accepts_parameterized_theta():
@@ -178,7 +177,8 @@ def test_star_rz_pipeline_accepts_parameterized_theta():
     )
     assert any(
         isinstance(stmt, move.LocalRz)
-        and isinstance(stmt.rotation_angle.owner, py.Mult)
+        and isinstance(stmt.rotation_angle.owner, func.Invoke)
+        and stmt.rotation_angle.owner.callee is steane_star_theta
         for stmt in physical_move.callable_region.walk()
     )
 

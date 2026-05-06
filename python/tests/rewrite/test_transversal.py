@@ -3,7 +3,7 @@ from typing import TypeVar
 import pytest
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
-from kirin.dialects import ilist, math as kmath, py
+from kirin.dialects import func, ilist, py
 
 from bloqade.lanes.bytecode.encoding import (
     Direction,
@@ -20,6 +20,12 @@ AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
 def trivial_map(address: AddressType) -> tuple[AddressType, ...] | None:
     if address.word_id < 1:
         return (address,)
+    return None
+
+
+def star_map(address: LocationAddress) -> tuple[LocationAddress, ...] | None:
+    if address.word_id < 1 and address.site_id < 2:
+        return tuple(address.replace(site_id=10 + i) for i in range(7))
     return None
 
 
@@ -119,43 +125,24 @@ def test_rewrite_star_rz_to_physical_local_rz():
 
     expected_block = ir.Block()
     expected_block.stmts.append(rotation_angle := py.Constant(0.5))
-    expected_block.stmts.append(half := py.Constant(2.0))
-    expected_block.stmts.append(exponent := py.Constant(1.0 / 3.0))
-    expected_block.stmts.append(two := py.Constant(2.0))
-    expected_block.stmts.append(neg_one := py.Constant(-1.0))
     expected_block.stmts.append(
-        theta_over_two := py.Div(rotation_angle.result, half.result)
-    )
-    expected_block.stmts.append(
-        tan_half_theta := kmath.stmts.tan(theta_over_two.result)
-    )
-    expected_block.stmts.append(abs_tan := kmath.stmts.fabs(tan_half_theta.result))
-    expected_block.stmts.append(
-        root := kmath.stmts.pow(abs_tan.result, exponent.result)
-    )
-    expected_block.stmts.append(atan_root := kmath.stmts.atan(root.result))
-    expected_block.stmts.append(magnitude := py.Mult(two.result, atan_root.result))
-    expected_block.stmts.append(
-        signed_magnitude := kmath.stmts.copysign(
-            magnitude.result, rotation_angle.result
+        theta_star := func.Invoke(
+            (rotation_angle.result,), callee=transversal.steane_star_theta
         )
-    )
-    expected_block.stmts.append(
-        theta_star := py.Mult(neg_one.result, signed_magnitude.result)
     )
     expected_block.stmts.append(
         move.LocalRz(
             current_state,
             theta_star.result,
             location_addresses=(
-                LocationAddress(0, 4),
-                LocationAddress(0, 5),
-                LocationAddress(0, 6),
+                LocationAddress(0, 14),
+                LocationAddress(0, 15),
+                LocationAddress(0, 16),
             ),
         )
     )
 
-    result = rewrite.Walk(transversal.RewriteStarRz()).rewrite(test_block)
+    result = rewrite.Walk(transversal.RewriteStarRz(star_map)).rewrite(test_block)
 
     assert result.has_done_something
     assert_nodes(test_block, expected_block)
@@ -184,7 +171,7 @@ def test_rewrite_star_rz_noop_for_already_physical_location():
         )
     )
 
-    result = rewrite.Walk(transversal.RewriteStarRz()).rewrite(test_block)
+    result = rewrite.Walk(transversal.RewriteStarRz(star_map)).rewrite(test_block)
 
     assert not result.has_done_something
     assert_nodes(test_block, expected_block)

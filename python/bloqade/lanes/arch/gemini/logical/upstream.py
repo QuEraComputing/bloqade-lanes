@@ -221,7 +221,7 @@ class SpecializeGemini:
 
         rewrite.Walk(
             rewrite.Chain(
-                RewriteStarRz(),
+                RewriteStarRz(steane7_transversal_map),
                 RewriteMoves(sites_per_word=self.sites_per_word),
                 RewriteFill(),
                 RewriteInitialize(),
