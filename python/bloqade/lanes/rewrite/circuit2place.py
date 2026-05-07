@@ -188,6 +188,7 @@ class RewritePlaceOperations(abc.RewriteRule):
             (
                 gemini_stmts.TerminalLogicalMeasurement,
                 gemini_stmts.Initialize,
+                gemini_stmts.StarRz,
                 gate.CZ,
                 gate.R,
                 gate.Rz,
@@ -324,6 +325,26 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         node.replace_by(
             self.construct_execute(gate_stmt, qubits=inputs, body=body, block=block)
+        )
+
+        return abc.RewriteResult(has_done_something=True)
+
+    def rewrite_StarRz(self, node: gemini_stmts.StarRz) -> abc.RewriteResult:
+        if not isinstance(args_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        body, block, entry_state = self.prep_region()
+        gate_stmt = place.StarRz(
+            entry_state,
+            node.rotation_angle,
+            qubits=tuple(range(len(args_list.values))),
+            qubit_indices=node.qubit_indices,
+        )
+
+        node.replace_by(
+            self.construct_execute(
+                gate_stmt, qubits=args_list.values, body=body, block=block
+            )
         )
 
         return abc.RewriteResult(has_done_something=True)
@@ -491,16 +512,25 @@ class MergePlacementRegions(abc.RewriteRule):
 
         for stmt in next_node.body.blocks[0].stmts:
             if isinstance(
-                stmt, (place.R, place.Rz, place.CZ, place.EndMeasure, place.Initialize)
+                stmt,
+                (
+                    place.R,
+                    place.Rz,
+                    place.StarRz,
+                    place.CZ,
+                    place.EndMeasure,
+                    place.Initialize,
+                ),
             ):
+                attributes: dict[str, ir.Attribute] = {
+                    "qubits": ir.PyAttr(tuple(new_input_map[i] for i in stmt.qubits))
+                }
+                if isinstance(stmt, place.StarRz):
+                    attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
-                    attributes={
-                        "qubits": ir.PyAttr(
-                            tuple(new_input_map[i] for i in stmt.qubits)
-                        )
-                    },
+                    attributes=attributes,
                 )
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)
@@ -537,8 +567,8 @@ class MergePlacementRegions(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
-_GATE_STMT_TYPES = (place.R, place.Rz, place.CZ, place.Yield)
-_SQ_STMT_TYPES = (place.R, place.Rz, place.Yield)
+_GATE_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.CZ, place.Yield)
+_SQ_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.Yield)
 
 
 def _is_pure_gate_block(sp: place.StaticPlacement) -> bool:
@@ -607,16 +637,24 @@ class MergeStaticPlacement(abc.RewriteRule):
         for stmt in next_node.body.blocks[0].stmts:
             if isinstance(
                 stmt,
-                (place.R, place.Rz, place.CZ, place.EndMeasure, place.Initialize),
+                (
+                    place.R,
+                    place.Rz,
+                    place.StarRz,
+                    place.CZ,
+                    place.EndMeasure,
+                    place.Initialize,
+                ),
             ):
+                attributes: dict[str, ir.Attribute] = {
+                    "qubits": ir.PyAttr(tuple(new_input_map[i] for i in stmt.qubits))
+                }
+                if isinstance(stmt, place.StarRz):
+                    attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
-                    attributes={
-                        "qubits": ir.PyAttr(
-                            tuple(new_input_map[i] for i in stmt.qubits)
-                        )
-                    },
+                    attributes=attributes,
                 )
                 curr_state = remapped_stmt.results[0]
                 new_block.stmts.append(remapped_stmt)

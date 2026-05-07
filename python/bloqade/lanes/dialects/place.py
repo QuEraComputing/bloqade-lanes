@@ -6,6 +6,7 @@ from kirin.dialects import ilist
 from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
+from bloqade.gemini.star import validate_steane_star_support
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -135,6 +136,19 @@ class Rz(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class StarRz(QuantumStmt):
+    qubits: tuple[int, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
+
+
+@statement(dialect=dialect)
 class EndMeasure(QuantumStmt):
     state_before: ir.SSAValue = info.argument(StateType)
 
@@ -252,8 +266,12 @@ class PlacementMethods(interp.MethodTable):
 
     @interp.impl(R)
     @interp.impl(Rz)
+    @interp.impl(StarRz)
     def impl_single_qubit_gate(
-        self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: R | Rz
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: R | Rz | StarRz,
     ):
         return (
             _interp.placement_strategy.sq_placements(
