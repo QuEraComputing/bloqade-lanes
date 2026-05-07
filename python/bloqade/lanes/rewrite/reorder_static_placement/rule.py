@@ -15,11 +15,11 @@ from bloqade.lanes.types import StateType
 class ReorderStaticPlacement(abc.RewriteRule):
     """Reorder quantum statements within a StaticPlacement using a pluggable policy.
 
-    The policy receives all schedulable statements from the body (R, Rz, CZ,
-    Initialize, EndMeasure — everything except the trailing Yield) and returns
-    them in the desired order.  Barrier handling (Initialize, EndMeasure) is the
-    policy's responsibility; ``asap_reorder_policy`` segments on barriers and
-    schedules each segment independently.
+    The policy receives all schedulable statements from the body (R, Rz,
+    StarRz, CZ, Initialize, EndMeasure — everything except the trailing Yield)
+    and returns them in the desired order.  Barrier handling (Initialize,
+    EndMeasure) is the policy's responsibility; ``asap_reorder_policy`` segments
+    on barriers and schedules each segment independently.
 
     If the body contains any statement type outside that supported set the
     rewriter skips the node rather than silently dropping unknown statements.
@@ -35,7 +35,14 @@ class ReorderStaticPlacement(abc.RewriteRule):
         old_yield = body_block.last_stmt
         assert isinstance(old_yield, place.Yield)
 
-        _supported = (place.R, place.Rz, place.CZ, place.Initialize, place.EndMeasure)
+        _supported = (
+            place.R,
+            place.Rz,
+            place.StarRz,
+            place.CZ,
+            place.Initialize,
+            place.EndMeasure,
+        )
         stmts: list[_SchedulableStmt] = []
         for s in body_block.stmts:
             if isinstance(s, place.Yield):
