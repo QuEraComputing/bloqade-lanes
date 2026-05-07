@@ -726,6 +726,10 @@ impl MoveSolver {
 
         let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
 
+        // Build the blocked set up-front so the Hungarian and the search
+        // share the same view of immobile atoms.
+        let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+
         // Use lookahead assignment if future layers are available.
         // Both branches go through `assign_pairs_with_blockers` (directly
         // or via `lookahead_assign_pairs`), so the produced target list
@@ -738,6 +742,7 @@ impl MoveSolver {
                 arch,
                 &self.index,
                 &dist_table,
+                &blocked_encoded,
                 0,
                 future_cz_layers,
                 0.2,
@@ -752,6 +757,7 @@ impl MoveSolver {
                 arch,
                 &self.index,
                 &dist_table,
+                &blocked_encoded,
                 0,
                 None,
                 0.0,
@@ -762,7 +768,6 @@ impl MoveSolver {
             )
         };
 
-        let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
         let ctx = SearchContext {
             index: &self.index,
             dist_table: &dist_table,

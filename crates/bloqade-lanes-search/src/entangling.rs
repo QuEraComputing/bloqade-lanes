@@ -497,6 +497,7 @@ pub fn assign_pairs_with_blockers(
     arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
+    blocked: &HashSet<u64>,
     seed: u64,
     transition_targets: Option<&HashMap<u32, u64>>,
     transition_weight: f64,
@@ -618,6 +619,7 @@ pub fn assign_pairs_with_blockers(
             config,
             dist_table,
             &row_qubits,
+            blocked,
             transition_targets,
             transition_weight,
             congestion_weight,
@@ -688,6 +690,7 @@ fn mixed_row_hungarian(
     config: &Config,
     dist_table: &DistanceTable,
     row_qubits: &HashSet<u32>,
+    blocked: &HashSet<u64>,
     transition_targets: Option<&HashMap<u32, u64>>,
     transition_weight: f64,
     congestion_weight: f64,
@@ -737,6 +740,16 @@ fn mixed_row_hungarian(
     let move_active = move_penalty > 0.0;
     let move_pen_u32 = move_penalty.round().max(0.0) as u32;
 
+    // Slot-half blockedness: a half held by a `blocked` atom (an atom
+    // not part of this strategy's layout) is unmovable, so no row may
+    // land there. Pair rows occupy both halves and must skip slots
+    // where either half is blocked. Spectator rows can still pick the
+    // non-blocked half of a partly-blocked slot.
+    let pair_slot_blocked: Vec<bool> = slots
+        .iter()
+        .map(|s| blocked.contains(&s.loc_a) || blocked.contains(&s.loc_b))
+        .collect();
+
     for (i, row) in rows.iter().enumerate() {
         for (j, slot) in slots.iter().enumerate() {
             let idx = i * n_slots + j;
@@ -747,6 +760,12 @@ fn mixed_row_hungarian(
                     loc_a_enc,
                     loc_b_enc,
                 } => {
+                    // Pair must take both halves of this slot — skip if
+                    // either is blocked.
+                    if pair_slot_blocked[j] {
+                        // Leave base_costs[idx] = BIG (init value).
+                        continue;
+                    }
                     // Orientation 1: qa→loc_a, qb→loc_b.
                     let d_a1 = dist_table.distance(loc_a_enc, slot.loc_a).unwrap_or(BIG);
                     let d_b1 = dist_table.distance(loc_b_enc, slot.loc_b).unwrap_or(BIG);
@@ -849,6 +868,15 @@ fn mixed_row_hungarian(
                         if loc_enc != slot.loc_b {
                             half_b_total = half_b_total.saturating_add(move_pen_u32);
                         }
+                    }
+
+                    // Blocked-half guard: a spectator can only land on a
+                    // half not currently held by an immobile atom.
+                    if blocked.contains(&slot.loc_a) {
+                        half_a_total = BIG;
+                    }
+                    if blocked.contains(&slot.loc_b) {
+                        half_b_total = BIG;
                     }
 
                     if half_a_total <= half_b_total {
@@ -1266,6 +1294,7 @@ pub fn lookahead_assign_pairs(
     arch: &ArchSpec,
     index: &LaneIndex,
     dist_table: &DistanceTable,
+    blocked: &HashSet<u64>,
     seed: u64,
     future_layers: &[Vec<(u32, u32)>],
     beta: f64,
@@ -1280,6 +1309,7 @@ pub fn lookahead_assign_pairs(
             arch,
             index,
             dist_table,
+            blocked,
             seed,
             None,
             0.0,
@@ -1313,6 +1343,7 @@ pub fn lookahead_assign_pairs(
             arch,
             index,
             dist_table,
+            blocked,
             seed,
             None,
             0.0,
@@ -1367,6 +1398,7 @@ pub fn lookahead_assign_pairs(
             arch,
             index,
             dist_table,
+            blocked,
             seed,
             Some(&targets),
             beta,
@@ -2042,12 +2074,14 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
 
+        let blocked = HashSet::new();
         let iter_targets = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
             &arch,
             &index,
             &dist_table,
+            &blocked,
             0,
             None,
             0.0,
@@ -2152,12 +2186,14 @@ mod tests {
         let config = Config::new([(0, loc(0, 0)), (1, loc(1, 0))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
 
+        let blocked = HashSet::new();
         let pen0 = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
             &arch,
             &index,
             &dist_table,
+            &blocked,
             0,
             None,
             0.0,
@@ -2172,6 +2208,7 @@ mod tests {
             &arch,
             &index,
             &dist_table,
+            &blocked,
             0,
             None,
             0.0,
@@ -2309,12 +2346,14 @@ mod tests {
         let config = Config::new([(0, loc(0, 5)), (1, loc(1, 5))]).unwrap();
         let cz_pairs = [(0u32, 1u32)];
 
+        let blocked = HashSet::new();
         let with_bias = assign_pairs_with_blockers(
             &cz_pairs,
             &config,
             &arch,
             &index,
             &dist_table,
+            &blocked,
             0,
             None,
             0.0,
