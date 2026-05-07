@@ -5,6 +5,7 @@ from kirin.analysis import ForwardFrame, const
 from kirin.dialects import func, scf
 
 from bloqade import qubit
+from bloqade.gemini.logical.dialects import operations
 
 from .analysis import _GeminiLogicalValidationAnalysis
 
@@ -120,6 +121,19 @@ class __GateGeminiLogicalValidation(_interp.MethodTable):
     ):
         interp.check_first_gate(stmt.controls)
         interp.check_first_gate(stmt.targets)
+        return ()
+
+
+@operations.dialect.register(key="gemini.validate.logical")
+class __OperationsGeminiLogicalValidation(_interp.MethodTable):
+    @_interp.impl(operations.stmts.StarRz)
+    def star_rz(
+        self,
+        interp: _GeminiLogicalValidationAnalysis,
+        frame: ForwardFrame,
+        stmt: operations.stmts.StarRz,
+    ):
+        interp.check_first_gate(stmt.qubits)
         return ()
 
 

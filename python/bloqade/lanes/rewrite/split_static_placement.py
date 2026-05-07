@@ -7,13 +7,13 @@ from kirin.rewrite import abc
 from bloqade.lanes.dialects import place
 from bloqade.lanes.types import StateType
 
-_GateStmt = place.R | place.Rz | place.CZ
+_GateStmt = place.R | place.Rz | place.StarRz | place.CZ
 
 
 def cz_layer_split_policy(body_block: ir.Block) -> list[ir.Block]:
     """Split a StaticPlacement body into CZ-anchored groups (policy A).
 
-    Accumulates SQ gates (R, Rz); when a CZ is encountered, flushes
+    Accumulates SQ gates (R, Rz, StarRz); when a CZ is encountered, flushes
     [accumulated SQ + CZ] as one group. Remaining SQ after the last CZ
     forms the final group. Returns the original block unchanged if there
     is at most one CZ (no split needed).
@@ -22,7 +22,7 @@ def cz_layer_split_policy(body_block: ir.Block) -> list[ir.Block]:
     assert isinstance(old_yield, place.Yield)
     classical_results = tuple(old_yield.classical_results)
 
-    _supported = (place.R, place.Rz, place.CZ)
+    _supported = (place.R, place.Rz, place.StarRz, place.CZ)
     for stmt in body_block.stmts:
         if not isinstance(stmt, (*_supported, place.Yield)):
             return [body_block]
@@ -96,7 +96,7 @@ class SplitStaticPlacement(abc.RewriteRule):
             # 1. Scan which local qubit indices this block's statements reference.
             used: set[int] = set()
             for stmt in block.stmts:
-                if isinstance(stmt, (place.R, place.Rz, place.CZ)):
+                if isinstance(stmt, (place.R, place.Rz, place.StarRz, place.CZ)):
                     used.update(stmt.qubits)
             qubit_indices = sorted(used)
             remap = {orig: new for new, orig in enumerate(qubit_indices)}
@@ -105,14 +105,19 @@ class SplitStaticPlacement(abc.RewriteRule):
             #    clone that has updated qubit attributes, propagating the result SSA
             #    values so the state chain and Yield remain valid.
             gate_stmts = [
-                s for s in block.stmts if isinstance(s, (place.R, place.Rz, place.CZ))
+                s
+                for s in block.stmts
+                if isinstance(s, (place.R, place.Rz, place.StarRz, place.CZ))
             ]
             for stmt in gate_stmts:
+                attributes: dict[str, ir.Attribute] = {
+                    "qubits": ir.PyAttr(tuple(remap[q] for q in stmt.qubits))
+                }
+                if isinstance(stmt, place.StarRz):
+                    attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
                 new_stmt = stmt.from_stmt(
                     stmt,
-                    attributes={
-                        "qubits": ir.PyAttr(tuple(remap[q] for q in stmt.qubits))
-                    },
+                    attributes=attributes,
                 )
                 stmt.replace_by(new_stmt)
 
