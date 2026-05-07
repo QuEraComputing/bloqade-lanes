@@ -147,6 +147,7 @@ def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSp
     return LogicalKernelSpec(kernel=kernel_like)
 
 
+# NOTE: this is basically what the user would "instantiate" for this specific MSD experiment
 def _build_msd_primitives(
     theta: float,
     phi: float,
@@ -198,23 +199,40 @@ def _return_none(reg):
     return
 
 
+@squin.kernel
+def _squin_return_none(reg):
+    return
+
+
 def produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: Any,
     tomography_kernels: Mapping[str, Any],
     return_val_fn: Any,
     kernel_name: str,
+    *,
+    supply_reg: bool = True,
 ) -> Mapping[str, Any]:
     def make_kernel(tomog_kernel: Any, generated_name: str):
-        def logical_tomography_kernel():
-            reg = qubit.qalloc(num_qubits)
+        def inner_tomog_kernel(reg):
             logical_kernel(reg)
             tomog_kernel(reg)
+
+        inner_tomog_kernel.__name__ = generated_name
+        inner_tomog_kernel.__qualname__ = generated_name
+        inner_kernel = squin.kernel(inner_tomog_kernel)
+
+        if not supply_reg:
+            return inner_kernel
+
+        def alloc_kernel():
+            reg = qubit.qalloc(num_qubits)
+            inner_kernel(reg)
             return return_val_fn(reg)
 
-        logical_tomography_kernel.__name__ = generated_name
-        logical_tomography_kernel.__qualname__ = generated_name
-        return gemini_logical.kernel(aggressive_unroll=True)(logical_tomography_kernel)
+        alloc_kernel.__name__ = generated_name
+        alloc_kernel.__qualname__ = generated_name
+        return gemini_logical.kernel(aggressive_unroll=True)(alloc_kernel)
 
     return {
         f"{kernel_name}_{tomog_kernel_key.split('_')[-1]}": make_kernel(
@@ -225,6 +243,7 @@ def produce_tomography_kernels(
     }
 
 
+# This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for downstream consumption
 def _kernel_specs_by_tomography_basis(
     kernels: Mapping[str, Any],
     *,
@@ -347,9 +366,6 @@ def build_decoder_kernel_bundle(
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
     state_injection_circuit = primitive_set.state_injection_circuit
     logical_circuit = primitive_set.logical_circuit
-    tomography_x = tomography_primitives["tomography_x"]
-    tomography_y = tomography_primitives["tomography_y"]
-    tomography_z = tomography_primitives["tomography_z"]
 
     @squin.kernel
     def actual_logical_kernel(reg):
@@ -359,21 +375,6 @@ def build_decoder_kernel_bundle(
     @squin.kernel
     def special_logical_kernel(reg):
         logical_circuit(reg)
-
-    @squin.kernel
-    def special_circuit_x(reg):
-        logical_circuit(reg)
-        tomography_x(reg)
-
-    @squin.kernel
-    def special_circuit_y(reg):
-        logical_circuit(reg)
-        tomography_y(reg)
-
-    @squin.kernel
-    def special_circuit_z(reg):
-        logical_circuit(reg)
-        tomography_z(reg)
 
     actual_kernels = produce_tomography_kernels(
         num_logical_qubits,
@@ -389,20 +390,25 @@ def build_decoder_kernel_bundle(
         default_post_processing,
         "msd_special",
     )
+    special_circuit_sources = _kernel_specs_by_tomography_basis(
+        produce_tomography_kernels(
+            num_logical_qubits,
+            special_logical_kernel,
+            tomography_primitives,
+            _squin_return_none,
+            "msd_special_circuit",
+            supply_reg=False,
+        )
+    )
 
     actual = _kernel_specs_by_tomography_basis(actual_kernels)
     if special_kernel_strategy == "prefix_prepare":
         # TODO: think about a cleaner way to pass down this information? Do I have to pass down this "special_kernel_{x, y, z}"?
-        special_circuit_sources = {
-            "X": special_circuit_x,
-            "Y": special_circuit_y,
-            "Z": special_circuit_z,
-        }
         special = {
             basis: LogicalKernelSpec(
                 kernel=_attach_special_circuit_kernel(
                     spec.kernel,
-                    special_circuit_sources[basis],
+                    special_circuit_sources[basis].kernel,
                     num_qubits=num_logical_qubits,
                 ),
                 observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,

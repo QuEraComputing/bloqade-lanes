@@ -7,6 +7,8 @@ import numpy as np
 from scipy.special import logsumexp
 
 
+# NOTE: this "bayesian_bloch_ball" I might not look at; because we probably aren't going to use 'bayesian_bloch_ball' in the final code
+# (we are probably going to focus more on the 'wilson' path)
 def weighted_quantile(
     values: np.ndarray,
     quantiles: Sequence[float],
