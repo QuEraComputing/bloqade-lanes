@@ -72,6 +72,13 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
     lookahead: bool = True
     congestion_weight: float = 0.0
     occupancy_penalty: float = 1.0
+    H_lookahead: int = 4
+    """Number of future CZ layers to feed the Hungarian's
+    forward/backward sweep. ``0`` disables lookahead entirely; ``None``
+    is unbounded (all future layers). Each extra layer costs an extra
+    Hungarian forward + backward pass per restart, so depth grows
+    linearly in solve time. Default ``4`` matches the logical-placement
+    strategy."""
     deadlock_policy: str = "move_blockers"  # "skip" | "move_blockers" | "all_moves"
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
@@ -149,9 +156,16 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         # Extract future CZ layers for lookahead-aware assignment.
         # lookahead_cz_layers[0] is the current layer (skip it),
         # lookahead_cz_layers[1:] are future layers.
+        # ``H_lookahead`` caps the horizon so solve time stays bounded
+        # regardless of circuit depth: ``0`` disables, ``None`` is
+        # unbounded.
         future = None
-        if len(lookahead_cz_layers) > 1:
-            future = [list(zip(ctrls, tgts)) for ctrls, tgts in lookahead_cz_layers[1:]]
+        if self.H_lookahead != 0 and len(lookahead_cz_layers) > 1:
+            tail = lookahead_cz_layers[1:]
+            if self.H_lookahead is not None:
+                tail = tail[: self.H_lookahead]
+            if tail:
+                future = [list(zip(ctrls, tgts)) for ctrls, tgts in tail]
 
         result = solver.solve_entangling(
             initial,
