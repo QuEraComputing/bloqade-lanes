@@ -55,6 +55,15 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         CZ pairs across word pairs. ``0.0`` (default) uses standard
         min-sum assignment; positive values reduce routing serialization
         at high occupancy at some cost in total atom moves.
+    occupancy_penalty:
+        Per-slot-half penalty (in lane-hop units) added to the Hungarian
+        cost for slots currently held by spectator atoms (atoms not in
+        any CZ pair of the current layer). Steers the assignment away
+        from slots that would force the search to evict a
+        non-participating atom. ``0.0`` recovers the legacy
+        occupancy-blind behaviour. Default ``1.0`` was tuned on the 80q
+        / depth 3 / max_pairs 10 regime; deeper sparse-pair circuits
+        prefer larger values (~2–3). Fractional values are supported.
     """
 
     strategy: str = "ids"
@@ -62,6 +71,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
     restarts: int = 20
     lookahead: bool = True
     congestion_weight: float = 0.0
+    occupancy_penalty: float = 1.0
     deadlock_policy: str = "move_blockers"  # "skip" | "move_blockers" | "all_moves"
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
@@ -102,6 +112,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
             restarts=self.restarts,
             lookahead=self.lookahead,
             congestion_weight=self.congestion_weight,
+            occupancy_penalty=self.occupancy_penalty,
             deadlock_policy=self._DEADLOCK_MAP[self.deadlock_policy],
         )
 

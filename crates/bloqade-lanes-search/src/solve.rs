@@ -29,6 +29,16 @@ use crate::scorers::DistanceScorer;
 use crate::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::traits::{Goal, Heuristic, MoveGenerator};
 
+/// Default spectator-occupancy penalty (in lane-hop units). See
+/// [`SolveOptions::occupancy_penalty`] for full semantics.
+const OCCUPANCY_PENALTY_DEFAULT: f64 = 1.0;
+
+/// Per-atom-moved penalty (in lane-hop units) applied by the iterative
+/// Hungarian wrapper. Slightly biases the assignment toward leaving
+/// atoms where they are when the cost is otherwise close, which keeps
+/// shuttling simpler in subsequent search. Default `1.0` ≈ one hop.
+const MOVE_PENALTY: f64 = 1.0;
+
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InnerStrategy {
@@ -132,6 +142,28 @@ pub struct SolveOptions {
     /// Only used by [`MoveSolver::solve_entangling`]; ignored by
     /// [`MoveSolver::solve`] and [`MoveSolver::solve_nohome`].
     pub congestion_weight: f64,
+    /// Spectator-occupancy penalty (in lane-hop units) added to each
+    /// entangling Hungarian cost cell *per spectator-occupied slot half*.
+    /// A spectator is an atom that is *not* in any CZ pair of the current
+    /// layer.
+    ///
+    /// `0.0`: occupancy-blind (legacy behaviour). `> 0.0`: bias the
+    /// assignment away from slots that would force the search to evict a
+    /// non-participating atom. Default `1.0` was selected by sweep on
+    /// the 80q / depth 3 / max_pairs 10 regime; deeper sparse-pair
+    /// circuits prefer larger values (~2–3), full-layer circuits are
+    /// unaffected since they have no spectators. Atoms that are
+    /// themselves part of another CZ pair this layer are *not* penalised
+    /// — they will be reassigned by the Hungarian and move out of the
+    /// way naturally.
+    ///
+    /// Internally the per-cell contribution is
+    /// `(spectator_half_count * occupancy_penalty).round() as u32`, so
+    /// fractional values (e.g. `0.5`, `1.5`) provide meaningful sub-hop
+    /// granularity for sweeps. Must be finite and non-negative.
+    /// Only used by [`MoveSolver::solve_entangling`]; ignored by
+    /// [`MoveSolver::solve`] and [`MoveSolver::solve_nohome`].
+    pub occupancy_penalty: f64,
 }
 
 impl Default for SolveOptions {
@@ -147,6 +179,7 @@ impl Default for SolveOptions {
             w_t: 0.05,
             collect_entropy_trace: false,
             congestion_weight: 0.0,
+            occupancy_penalty: OCCUPANCY_PENALTY_DEFAULT,
         }
     }
 }
@@ -694,27 +727,38 @@ impl MoveSolver {
         let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
 
         // Use lookahead assignment if future layers are available.
+        // Both branches go through `assign_pairs_with_blockers` (directly
+        // or via `lookahead_assign_pairs`), so the produced target list
+        // includes any spectator displacements needed to break Case-A,
+        // Case-B, or accidental-CZ deadlocks.
         let greedy_targets = if !future_cz_layers.is_empty() {
             entangling::lookahead_assign_pairs(
                 cz_pairs,
                 &root,
                 arch,
+                &self.index,
                 &dist_table,
                 0,
                 future_cz_layers,
                 0.2,
                 opts.congestion_weight,
+                opts.occupancy_penalty,
+                MOVE_PENALTY,
             )
         } else {
-            entangling::greedy_assign_pairs(
+            entangling::assign_pairs_with_blockers(
                 cz_pairs,
                 &root,
                 arch,
+                &self.index,
                 &dist_table,
                 0,
                 None,
                 0.0,
                 opts.congestion_weight,
+                opts.occupancy_penalty,
+                MOVE_PENALTY,
+                true,
             )
         };
 
@@ -746,24 +790,36 @@ impl MoveSolver {
             use crate::generators::LooseTargetGenerator;
 
             let arch_arc = Arc::new(arch.clone());
+            let index_arc: Arc<LaneIndex> = Arc::new(self.index.clone());
             let dt_arc = dist_table.clone(); // Arc clone (cheap)
             let congestion_weight = opts.congestion_weight;
+            let occupancy_penalty = opts.occupancy_penalty;
 
             let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
+            // Clone future layers once so the per-restart generator
+            // closure can re-use them as its lookahead inputs.
+            let future_layers_owned: Vec<Vec<(u32, u32)>> = future_cz_layers.to_vec();
             let make_generator = move |seed: u64, policy: DeadlockPolicy| {
                 let inner = HeuristicGenerator::new()
                     .with_deadlock_policy(policy)
                     .with_lookahead(lookahead)
                     .with_top_c(3)
                     .with_seed(seed);
-                LooseTargetGenerator::new(
+                let mut generator = LooseTargetGenerator::new(
                     inner,
                     cz_pairs_owned.clone(),
                     arch_arc.clone(),
+                    index_arc.clone(),
                     dt_arc.clone(),
                     seed,
                     congestion_weight,
-                )
+                    occupancy_penalty,
+                    MOVE_PENALTY,
+                );
+                if !future_layers_owned.is_empty() {
+                    generator = generator.with_lookahead(future_layers_owned.clone(), 0.2);
+                }
+                generator
             };
 
             run_with_components(

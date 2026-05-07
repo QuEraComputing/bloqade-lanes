@@ -196,6 +196,12 @@ def main():
         help="Congestion-aware Hungarian weight for loose-goal (0.0 = off, 1.0 = default)",
     )
     parser.add_argument(
+        "--occupancy-penalty",
+        type=float,
+        default=1.0,
+        help="Spectator-occupancy penalty for loose-goal Hungarian (0.0 = occupancy-blind, 1.0 = default)",
+    )
+    parser.add_argument(
         "--deadlock-policy",
         choices=["skip", "move_blockers", "all_moves"],
         default="move_blockers",
@@ -222,7 +228,10 @@ def main():
         arch_spec=arch_spec
     )
 
-    loose_suffix = f"cw={args.congestion_weight}, dl={args.deadlock_policy}"
+    loose_suffix = (
+        f"cw={args.congestion_weight}, op={args.occupancy_penalty}, "
+        f"dl={args.deadlock_policy}"
+    )
     nohome_suffix = f"dl={args.deadlock_policy}"
 
     strategies: dict[str, dict] = {}
@@ -261,6 +270,7 @@ def main():
                 restarts=20,
                 lookahead=True,
                 congestion_weight=args.congestion_weight,
+                occupancy_penalty=args.occupancy_penalty,
                 deadlock_policy=args.deadlock_policy,
             ),
             "insert_return_moves": False,

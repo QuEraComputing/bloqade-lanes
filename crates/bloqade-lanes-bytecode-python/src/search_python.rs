@@ -800,7 +800,7 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false, congestion_weight=0.0))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false, congestion_weight=0.0, occupancy_penalty=1.0))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         strategy: PySearchStrategy,
@@ -813,6 +813,7 @@ impl PySolveOptions {
         w_t: f64,
         collect_entropy_trace: bool,
         congestion_weight: f64,
+        occupancy_penalty: f64,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -839,6 +840,11 @@ impl PySolveOptions {
                 "congestion_weight must be a finite non-negative float",
             ));
         }
+        if !occupancy_penalty.is_finite() || occupancy_penalty < 0.0 {
+            return Err(PyValueError::new_err(
+                "occupancy_penalty must be a finite non-negative float",
+            ));
+        }
         Ok(Self {
             inner: SolveOptions {
                 strategy: strategy.to_rs(),
@@ -851,6 +857,7 @@ impl PySolveOptions {
                 w_t,
                 collect_entropy_trace,
                 congestion_weight,
+                occupancy_penalty,
             },
         })
     }
@@ -858,6 +865,11 @@ impl PySolveOptions {
     #[getter]
     fn congestion_weight(&self) -> f64 {
         self.inner.congestion_weight
+    }
+
+    #[getter]
+    fn occupancy_penalty(&self) -> f64 {
+        self.inner.occupancy_penalty
     }
 
     #[getter]

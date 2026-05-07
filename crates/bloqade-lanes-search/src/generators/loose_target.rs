@@ -27,21 +27,38 @@ use crate::entangling;
 use crate::generators::heuristic::HeuristicGenerator;
 use crate::graph::NodeId;
 use crate::heuristic::DistanceTable;
+use crate::lane_index::LaneIndex;
 use crate::traits::MoveGenerator;
 
 /// Move generator that wraps a [`HeuristicGenerator`] and overrides
 /// `ctx.targets` with a per-instance seeded greedy assignment.
 ///
 /// Targets are computed once on the first `generate` call using the
-/// instance's `seed` and `congestion_weight`, then reused unchanged.
+/// instance's `seed`, `congestion_weight`, and `occupancy_penalty`, then
+/// reused unchanged. When `with_lookahead(...)` has supplied future layers
+/// and a non-zero β, the per-restart computation uses
+/// [`entangling::lookahead_assign_pairs`] instead of plain
+/// [`entangling::greedy_assign_pairs`] so the search expansion sees the
+/// same lookahead refinement that `solve_entangling` computes for
+/// `ctx.targets`.
 pub struct LooseTargetGenerator {
     inner: HeuristicGenerator,
     cz_pairs: Vec<(u32, u32)>,
     arch: Arc<ArchSpec>,
+    index: Arc<LaneIndex>,
     dist_table: Arc<DistanceTable>,
     seed: u64,
     /// Forwarded to greedy_assign_pairs; 0.0 = standard min-sum assignment.
     congestion_weight: f64,
+    /// Forwarded to greedy_assign_pairs; 0.0 = occupancy-blind assignment.
+    occupancy_penalty: f64,
+    /// Forwarded to assign_pairs_with_blockers; per-atom-moved cost added
+    /// to each Hungarian cell to bias toward stay-in-place. 0.0 disables.
+    move_penalty: f64,
+    /// Future CZ layers for lookahead. Empty disables lookahead.
+    future_layers: Vec<Vec<(u32, u32)>>,
+    /// Lookahead blend weight (β). 0.0 disables lookahead.
+    lookahead_beta: f64,
     cached_targets: RefCell<Vec<(u32, u64)>>,
     cache_initialized: Cell<bool>,
 }
@@ -54,29 +71,61 @@ impl LooseTargetGenerator {
     /// * `inner` — The underlying heuristic generator to delegate to.
     /// * `cz_pairs` — Required CZ pairs for target assignment.
     /// * `arch` — Architecture spec (shared, immutable).
+    /// * `index` — Lane index used by the iterative blocker detection
+    ///   (Case-B egress check); shared, immutable.
     /// * `dist_table` — Distance table targeting entangling locations (shared).
     /// * `seed` — Seed for greedy-assignment perturbation. Different seeds
     ///   across parallel restarts give different target assignments.
     /// * `congestion_weight` — Forwarded to greedy assignment for spreading
     ///   targets across word pairs; 0.0 = standard min-sum.
+    /// * `occupancy_penalty` — Forwarded to greedy assignment to bias
+    ///   targets away from spectator-occupied entangling slot positions;
+    ///   `0.0` = occupancy-blind. Must be finite and non-negative;
+    ///   fractional values are supported.
+    /// * `move_penalty` — Per-atom-moved cost added to each Hungarian
+    ///   cell. Slightly biases the assignment toward stay-in-place
+    ///   when the cost is otherwise close. `0.0` disables.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         inner: HeuristicGenerator,
         cz_pairs: Vec<(u32, u32)>,
         arch: Arc<ArchSpec>,
+        index: Arc<LaneIndex>,
         dist_table: Arc<DistanceTable>,
         seed: u64,
         congestion_weight: f64,
+        occupancy_penalty: f64,
+        move_penalty: f64,
     ) -> Self {
         Self {
             inner,
             cz_pairs,
             arch,
+            index,
             dist_table,
             seed,
             congestion_weight,
+            occupancy_penalty,
+            move_penalty,
+            future_layers: Vec::new(),
+            lookahead_beta: 0.0,
             cached_targets: RefCell::new(Vec::new()),
             cache_initialized: Cell::new(false),
         }
+    }
+
+    /// Enable lookahead-aware target assignment.
+    ///
+    /// When `future_layers` is non-empty and `beta > 0.0`, the per-restart
+    /// target computation uses [`entangling::lookahead_assign_pairs`]
+    /// instead of plain [`entangling::greedy_assign_pairs`]. The forward /
+    /// backward sweep biases the current layer's assignment toward
+    /// positions that are well-placed for the upcoming layers, weighted
+    /// by `beta`.
+    pub fn with_lookahead(mut self, future_layers: Vec<Vec<(u32, u32)>>, beta: f64) -> Self {
+        self.future_layers = future_layers;
+        self.lookahead_beta = beta;
+        self
     }
 }
 
@@ -90,18 +139,42 @@ impl MoveGenerator for LooseTargetGenerator {
         out: &mut Vec<MoveCandidate>,
     ) {
         // First call: compute initial targets using this instance's seed.
-        // Subsequent calls reuse the same targets unchanged.
+        // Subsequent calls reuse the same targets unchanged. Both branches
+        // route through `assign_pairs_with_blockers` (directly or via
+        // `lookahead_assign_pairs`), so the cached targets include any
+        // spectator displacements needed to break Case-A or Case-B
+        // deadlocks before the search starts.
         if !self.cache_initialized.get() {
-            let targets = entangling::greedy_assign_pairs(
-                &self.cz_pairs,
-                config,
-                &self.arch,
-                &self.dist_table,
-                self.seed,
-                None,
-                0.0,
-                self.congestion_weight,
-            );
+            let targets = if self.future_layers.is_empty() || self.lookahead_beta == 0.0 {
+                entangling::assign_pairs_with_blockers(
+                    &self.cz_pairs,
+                    config,
+                    &self.arch,
+                    &self.index,
+                    &self.dist_table,
+                    self.seed,
+                    None,
+                    0.0,
+                    self.congestion_weight,
+                    self.occupancy_penalty,
+                    self.move_penalty,
+                    true,
+                )
+            } else {
+                entangling::lookahead_assign_pairs(
+                    &self.cz_pairs,
+                    config,
+                    &self.arch,
+                    &self.index,
+                    &self.dist_table,
+                    self.seed,
+                    &self.future_layers,
+                    self.lookahead_beta,
+                    self.congestion_weight,
+                    self.occupancy_penalty,
+                    self.move_penalty,
+                )
+            };
             *self.cached_targets.borrow_mut() = targets;
             self.cache_initialized.set(true);
         }
@@ -147,6 +220,7 @@ mod tests {
     fn loose_target_produces_candidates() {
         let index = make_index();
         let arch = Arc::new(make_arch());
+        let index_arc = Arc::new(index.clone());
         let locs = entangling::all_entangling_locations(&arch);
         let dist_table = Arc::new(DistanceTable::new(&locs, &index));
 
@@ -156,8 +230,11 @@ mod tests {
             inner,
             cz_pairs.clone(),
             arch.clone(),
+            index_arc.clone(),
             dist_table.clone(),
             0,
+            0.0,
+            0.0,
             0.0,
         );
 
@@ -186,6 +263,7 @@ mod tests {
     fn loose_target_adapts_to_config() {
         let index = make_index();
         let arch = Arc::new(make_arch());
+        let index_arc = Arc::new(index.clone());
         let locs = entangling::all_entangling_locations(&arch);
         let dist_table = Arc::new(DistanceTable::new(&locs, &index));
 
@@ -195,8 +273,11 @@ mod tests {
             inner1,
             cz_pairs.clone(),
             arch.clone(),
+            index_arc.clone(),
             dist_table.clone(),
             0,
+            0.0,
+            0.0,
             0.0,
         );
         let inner2 = HeuristicGenerator::new();
@@ -204,8 +285,11 @@ mod tests {
             inner2,
             cz_pairs.clone(),
             arch.clone(),
+            index_arc.clone(),
             dist_table.clone(),
             0,
+            0.0,
+            0.0,
             0.0,
         );
 

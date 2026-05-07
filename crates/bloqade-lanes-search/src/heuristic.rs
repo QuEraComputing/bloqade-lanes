@@ -714,6 +714,7 @@ mod tests {
             None,
             0.0,
             0.0,
+            0.0,
         );
         let blocked = HashSet::new();
         let ctx = SearchContext {
