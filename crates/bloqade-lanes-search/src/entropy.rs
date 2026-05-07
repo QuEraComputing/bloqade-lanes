@@ -997,6 +997,37 @@ pub fn entropy_search(
     loop {
         iterations += 1;
         if nodes_expanded >= hard_limit || iterations >= hard_limit * 2 {
+            // Budget exhausted: try a greedy sequential fallback from
+            // root before bailing out, mirroring the Python
+            // `EntropyGuidedSearch._sequential_fallback` behaviour. May
+            // recover a "messy but valid" solution under tight budgets.
+            if let Some(t) = trace.as_mut() {
+                let cfg = graph.config(root_id);
+                t.steps.push(EntropyTraceStep {
+                    event: "fallback_start".to_string(),
+                    node_id: root_id.0,
+                    parent_node_id: graph.parent(root_id).map(|id| id.0),
+                    depth: graph.depth(root_id),
+                    entropy: 0,
+                    unresolved_count: unresolved_count(cfg, ctx.targets),
+                    moveset: None,
+                    candidate_movesets: Vec::new(),
+                    candidate_index: None,
+                    reason: Some("budget_exhausted".to_string()),
+                    state_seen_node_id: None,
+                    no_valid_moves_qubit: None,
+                    trigger_node_id: None,
+                    configuration: config_as_trace_tuples(cfg),
+                    parent_configuration: None,
+                    moveset_score: None,
+                    best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
+                });
+            }
+            let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
+            nodes_expanded += fb_expanded;
+            if let Some(gid) = goal_id {
+                found_goals.push(gid);
+            }
             break;
         }
         if let Some(depth_cap) = best_goal_depth
@@ -1656,6 +1687,19 @@ mod tests {
     fn budget_exceeded_returns_no_goal() {
         let r = run_entropy([(0, loc(0, 0))], [(0, loc(99, 99))], Some(10));
         assert!(r.goal.is_none());
+    }
+
+    #[test]
+    fn budget_exhaustion_invokes_sequential_fallback() {
+        // With a tight budget that the entropy search cannot satisfy,
+        // the sequential fallback should still recover a valid goal by
+        // walking the qubit greedily from root. Mirrors the Python
+        // EntropyGuidedSearch._sequential_fallback budget-exhausted path.
+        let r = run_entropy([(0, loc(0, 0))], [(0, loc(0, 5))], Some(1));
+        assert!(
+            r.goal.is_some(),
+            "sequential fallback should find the goal under tight budget"
+        );
     }
 
     #[test]
