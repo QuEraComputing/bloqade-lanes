@@ -62,6 +62,7 @@ from bloqade.lanes.bytecode._native import (
     SiteBus as SiteBus,
     SolveOptions as SolveOptions,
     SolveResult as SolveResult,
+    TargetPolicyRunner as TargetPolicyRunner,
     TransportPath as TransportPath,
     Word as Word,
     WordBus as WordBus,

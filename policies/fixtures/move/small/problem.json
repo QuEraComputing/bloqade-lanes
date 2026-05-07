@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "kind": "move",
+  "arch": "arch.json",
+  "initial": [[0, [0, 0, 0]], [1, [0, 0, 1]]],
+  "target":  [[0, [0, 0, 1]], [1, [0, 0, 0]]],
+  "blocked": [],
+  "budget": { "max_expansions": 1000, "timeout_s": 5.0 },
+  "policy_params": {}
+}

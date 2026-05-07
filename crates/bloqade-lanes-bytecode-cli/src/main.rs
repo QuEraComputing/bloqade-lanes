@@ -4,6 +4,8 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 
+mod policy;
+
 use bloqade_lanes_bytecode_core::arch::ArchSpec;
 use bloqade_lanes_bytecode_core::bytecode::program::Program;
 use bloqade_lanes_bytecode_core::bytecode::text;
@@ -57,6 +59,42 @@ enum Command {
         #[command(subcommand)]
         command: Option<ArchCommand>,
     },
+    /// Run a policy end-to-end and print a single result summary.
+    EvalPolicy {
+        #[arg(long)]
+        policy: PathBuf,
+        #[arg(long)]
+        problem: PathBuf,
+        #[arg(long)]
+        params: Option<PathBuf>,
+        #[arg(long)]
+        max_expansions: Option<u64>,
+        #[arg(long)]
+        timeout: Option<f64>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        seed: Option<u64>,
+    },
+    /// Run a policy with a verbose observer and emit a step-by-step trace.
+    TracePolicy {
+        #[arg(long)]
+        policy: PathBuf,
+        #[arg(long)]
+        problem: PathBuf,
+        #[arg(long)]
+        params: Option<PathBuf>,
+        #[arg(long)]
+        max_expansions: Option<u64>,
+        #[arg(long)]
+        timeout: Option<f64>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        seed: Option<u64>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -84,6 +122,42 @@ fn main() {
             (None, Some(input)) => cmd_show_arch_spec(&input),
             (None, None) => Err("provide an ArchSpec JSON file or use a subcommand".to_string()),
         },
+        Command::EvalPolicy {
+            policy,
+            problem,
+            params,
+            max_expansions,
+            timeout,
+            json,
+            seed,
+        } => policy::run_eval_policy(
+            &policy,
+            &problem,
+            params.as_deref(),
+            max_expansions,
+            timeout,
+            json,
+            seed,
+        ),
+        Command::TracePolicy {
+            policy,
+            problem,
+            params,
+            max_expansions,
+            timeout,
+            json,
+            seed,
+            out,
+        } => policy::run_trace_policy(
+            &policy,
+            &problem,
+            params.as_deref(),
+            max_expansions,
+            timeout,
+            json,
+            seed,
+            out.as_deref(),
+        ),
     };
 
     if let Err(e) = result {

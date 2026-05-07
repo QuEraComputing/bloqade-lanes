@@ -67,6 +67,9 @@ jobs:
       - name: Verify header freshness and syntax
         run: just check-header
 
+      - name: Check policies/primer.md is up to date
+        run: just check-primer
+
       - name: Build and run C smoke test
         run: just test-c-ffi
 

@@ -73,6 +73,53 @@ just develop           # Dev install with bundled CLI + C lib
 
 Direct test run: `uv run coverage run -m pytest python/tests`
 
+## Move Policy DSL
+
+The Move Policy DSL lets you author search policies in Starlark (a deterministic Python-syntax subset) instead of Rust. Policies live in `policies/reference/` and can be invoked from Python or Rust:
+
+```python
+from bloqade.lanes.bytecode import MoveSolver
+import json
+
+solver = MoveSolver.from_json(arch_json)
+result = solver.solve(
+    initial=[(0, loc_a), (1, loc_b)],
+    target=[(0, loc_c), (1, loc_d)],
+    blocked=[],
+    policy_path="policies/reference/entropy.star",
+    policy_params={"e_max": 12},   # overrides PARAMS["e_max"]
+    max_expansions=10_000,
+    timeout_s=30.0,
+)
+print(result.policy_status)        # "solved" / "fallback: ..." / etc.
+print(json.loads(result.policy_params))  # echoes the override dict
+```
+
+A policy is a single `.star` file exporting `init(root, ctx) -> GlobalState` and `step(graph, gs, ctx, lib) -> Action | list[Action]`. See `policies/reference/entropy.star` for a worked example reproducing `Strategy::Entropy`.
+
+### Sandbox constraints
+
+Policies are evaluated in a deterministic sandbox:
+
+- No I/O, no network, no `load()` of external `.star` files.
+- No randomness — all tie-breaking is via `lib.stable_sort` / `lib.argmax`.
+- Per-tick step budget and per-solve heap cap (defaults configurable via `SandboxConfig`).
+- `load("...", ...)` is rejected outright — each policy is a single self-contained file.
+
+### Available primitives
+
+Bound as Starlark globals into every policy environment:
+
+- **Verbs** (returned by `step()` to drive the kernel): `insert_child`, `update_node_state`, `update_global_state`, `emit_solution`, `halt`, `invoke_builtin`.
+- **Utilities**: `stable_sort(items, key_fn, desc=False)`, `argmax(items, key_fn)`, `normalize(values)`.
+- **Per-solve handles**: `graph` (read-only `SearchGraph` view), `lib` (distance/mobility/candidate-pipeline helpers), `ctx` (architecture, targets, blocked).
+
+The reference policy `entropy.star` includes a thorough top-of-file docstring documenting the adaptations from spec to actual bindings — read it before authoring new policies.
+
+### Implementation status
+
+This is Plan A: the `bloqade-lanes-dsl-core` crate (shared substrate) plus the Move Policy DSL inside `bloqade-lanes-search`. Plan B (a parallel Target Generator DSL) and Plan C (DFS/BFS/IDS reference policies, CLI harness, auto-generated primer) are documented as follow-ups in `docs/superpowers/plans/2026-04-29-move-policy-dsl.md`.
+
 ## Linting & Formatting
 
 Pre-commit hooks enforce all checks. When hooks must be bypassed (e.g. committing on orphan branches like `gh-pages` that lack `.pre-commit-config.yaml`), use `git commit -n`.
