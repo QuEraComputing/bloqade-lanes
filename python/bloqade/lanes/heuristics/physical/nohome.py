@@ -79,7 +79,6 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
     strategy: str = "ids"
     max_expansions: int | None = 100
     restarts: int = 20
-    lookahead: bool = True
     deadlock_policy: str = "move_blockers"  # "skip" | "move_blockers" | "all_moves"
     gamma: float = 0.85
     lambda_lookahead: float = 0.5
@@ -123,7 +122,7 @@ class NoHomePlacementStrategy(PlacementStrategyABC):
         return _native.SolveOptions(
             strategy=self._STRATEGY_MAP[self.strategy],
             restarts=self.restarts,
-            lookahead=self.lookahead,
+            lookahead=True,
             deadlock_policy=self._DEADLOCK_MAP[self.deadlock_policy],
         )
 

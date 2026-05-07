@@ -14,7 +14,8 @@ use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::entropy::{EntropyTrace, EntropyTraceStep};
 use bloqade_lanes_search::nohome::NoHomeOptions;
 use bloqade_lanes_search::solve::{
-    InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
+    EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
+    SolveResult, SolveStatus, Strategy,
 };
 use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGenerator};
 
@@ -457,10 +458,13 @@ impl PyMoveSolver {
     ///     blocked: List of LocationAddress for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
     ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
+    ///     entropy_options: Entropy-strategy parameters (EntropyOptions).
+    ///         Only consumed when the strategy is entropy.
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None, entropy_options=None))]
+    #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
         py: Python<'_>,
@@ -469,6 +473,7 @@ impl PyMoveSolver {
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
     ) -> PyResult<PySolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
@@ -476,6 +481,7 @@ impl PyMoveSolver {
             target.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let entropy_opts = entropy_options.map(|o| o.inner.clone());
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -486,6 +492,7 @@ impl PyMoveSolver {
                     blocked_locs,
                     max_expansions,
                     &opts,
+                    entropy_opts.as_ref(),
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -507,7 +514,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     MultiSolveResult with per-candidate debug info.
-    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None))]
+    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None, entropy_options=None))]
     #[allow(clippy::too_many_arguments)]
     fn solve_with_generator(
         &self,
@@ -519,11 +526,13 @@ impl PyMoveSolver {
         generator: Option<&PyDefaultTargetGenerator>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
     ) -> PyResult<PyMultiSolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let entropy_opts = entropy_options.map(|o| o.inner.clone());
 
         // Currently only DefaultTargetGenerator is supported. Reject explicit
         // generator arguments until multiple generator types are implemented.
@@ -544,6 +553,7 @@ impl PyMoveSolver {
                     rust_gen.as_ref(),
                     max_expansions,
                     &opts,
+                    entropy_opts.as_ref(),
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -601,7 +611,7 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     SolveResult with the discovered entangling placement.
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, future_cz_layers=None))]
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, entangling_options=None, future_cz_layers=None))]
     #[allow(clippy::too_many_arguments)]
     fn solve_entangling(
         &self,
@@ -611,12 +621,16 @@ impl PyMoveSolver {
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
+        entangling_options: Option<&PyEntanglingOptions>,
         future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
     ) -> PyResult<PySolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let ent_opts = entangling_options
+            .map(|o| o.inner.clone())
+            .unwrap_or_default();
         let future = future_cz_layers.unwrap_or_default();
 
         let result = py
@@ -627,6 +641,7 @@ impl PyMoveSolver {
                     blocked_locs,
                     max_expansions,
                     &opts,
+                    &ent_opts,
                     &future,
                 )
             })
@@ -783,10 +798,7 @@ impl PyNoHomeOptions {
 
 // ── Solve options ──
 
-/// Search-tuning parameters shared across solve methods.
-///
-/// Bundles strategy, heuristic weight, restarts, and other tuning knobs
-/// into a single reusable object.
+/// Core search-tuning parameters shared by every `MoveSolver` entry point.
 #[pyclass(
     name = "SolveOptions",
     frozen,
@@ -800,20 +812,106 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false, congestion_weight=0.0, occupancy_penalty=1.0))]
-    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None))]
     fn new(
         strategy: PySearchStrategy,
-        max_movesets_per_group: usize,
-        max_goal_candidates: usize,
         weight: f64,
         restarts: u32,
-        lookahead: bool,
         deadlock_policy: PyDeadlockPolicy,
+        lookahead: bool,
+        top_c: Option<usize>,
+    ) -> PyResult<Self> {
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(PyValueError::new_err(
+                "weight must be a finite float greater than 0.0",
+            ));
+        }
+        if matches!(top_c, Some(0)) {
+            return Err(PyValueError::new_err(
+                "top_c must be None or an integer >= 1",
+            ));
+        }
+        Ok(Self {
+            inner: SolveOptions {
+                strategy: strategy.to_rs(),
+                weight,
+                restarts,
+                deadlock_policy: deadlock_policy.to_rs(),
+                lookahead,
+                top_c,
+            },
+        })
+    }
+
+    #[getter]
+    fn strategy(&self) -> PySearchStrategy {
+        PySearchStrategy::from_rs(&self.inner.strategy)
+    }
+
+    #[getter]
+    fn weight(&self) -> f64 {
+        self.inner.weight
+    }
+
+    #[getter]
+    fn restarts(&self) -> u32 {
+        self.inner.restarts
+    }
+
+    #[getter]
+    fn deadlock_policy(&self) -> PyDeadlockPolicy {
+        PyDeadlockPolicy::from_rs(&self.inner.deadlock_policy)
+    }
+
+    #[getter]
+    fn lookahead(&self) -> bool {
+        self.inner.lookahead
+    }
+
+    #[getter]
+    fn top_c(&self) -> Option<usize> {
+        self.inner.top_c
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?})",
+            self.strategy().name(),
+            self.inner.weight,
+            self.inner.restarts,
+            self.deadlock_policy().name(),
+            self.inner.lookahead,
+            self.inner.top_c,
+        )
+    }
+}
+
+// ── Entropy options ──
+
+/// Entropy-strategy-specific parameters.
+///
+/// Only consumed when the chosen strategy is entropy (or a Cascade variant
+/// whose inner is entropy). Pass via the optional `entropy_opts` argument
+/// to `MoveSolver.solve`.
+#[pyclass(
+    name = "EntropyOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyEntropyOptions {
+    inner: EntropyOptions,
+}
+
+#[pymethods]
+impl PyEntropyOptions {
+    #[new]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false))]
+    fn new(
+        max_movesets_per_group: usize,
+        max_goal_candidates: usize,
         w_t: f64,
         collect_entropy_trace: bool,
-        congestion_weight: f64,
-        occupancy_penalty: f64,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -825,16 +923,75 @@ impl PySolveOptions {
                 "max_goal_candidates must be an integer >= 1",
             ));
         }
-        if !weight.is_finite() || weight <= 0.0 {
-            return Err(PyValueError::new_err(
-                "weight must be a finite float greater than 0.0",
-            ));
-        }
         if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
             return Err(PyValueError::new_err(
                 "w_t must be a finite float in the range [0.0, 1.0]",
             ));
         }
+        Ok(Self {
+            inner: EntropyOptions {
+                max_movesets_per_group,
+                max_goal_candidates,
+                w_t,
+                collect_entropy_trace,
+            },
+        })
+    }
+
+    #[getter]
+    fn max_movesets_per_group(&self) -> usize {
+        self.inner.max_movesets_per_group
+    }
+
+    #[getter]
+    fn max_goal_candidates(&self) -> usize {
+        self.inner.max_goal_candidates
+    }
+
+    #[getter]
+    fn w_t(&self) -> f64 {
+        self.inner.w_t
+    }
+
+    #[getter]
+    fn collect_entropy_trace(&self) -> bool {
+        self.inner.collect_entropy_trace
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EntropyOptions(max_movesets_per_group={}, max_goal_candidates={}, w_t={}, collect_entropy_trace={})",
+            self.inner.max_movesets_per_group,
+            self.inner.max_goal_candidates,
+            self.inner.w_t,
+            self.inner.collect_entropy_trace,
+        )
+    }
+}
+
+// ── Entangling options ──
+
+/// Loose-goal entangling-search parameters consumed by
+/// `MoveSolver.solve_entangling`.
+#[pyclass(
+    name = "EntanglingOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyEntanglingOptions {
+    inner: EntanglingOptions,
+}
+
+#[pymethods]
+impl PyEntanglingOptions {
+    #[new]
+    #[pyo3(signature = (congestion_weight=0.0, occupancy_penalty=1.0, hungarian_horizon=Some(4)))]
+    fn new(
+        congestion_weight: f64,
+        occupancy_penalty: f64,
+        hungarian_horizon: Option<usize>,
+    ) -> PyResult<Self> {
         if !congestion_weight.is_finite() || congestion_weight < 0.0 {
             return Err(PyValueError::new_err(
                 "congestion_weight must be a finite non-negative float",
@@ -846,18 +1003,10 @@ impl PySolveOptions {
             ));
         }
         Ok(Self {
-            inner: SolveOptions {
-                strategy: strategy.to_rs(),
-                max_movesets_per_group,
-                max_goal_candidates,
-                weight,
-                restarts,
-                lookahead,
-                deadlock_policy: deadlock_policy.to_rs(),
-                w_t,
-                collect_entropy_trace,
+            inner: EntanglingOptions {
                 congestion_weight,
                 occupancy_penalty,
+                hungarian_horizon,
             },
         })
     }
@@ -873,57 +1022,16 @@ impl PySolveOptions {
     }
 
     #[getter]
-    fn strategy(&self) -> PySearchStrategy {
-        PySearchStrategy::from_rs(&self.inner.strategy)
-    }
-
-    #[getter]
-    fn max_movesets_per_group(&self) -> usize {
-        self.inner.max_movesets_per_group
-    }
-
-    #[getter]
-    fn max_goal_candidates(&self) -> usize {
-        self.inner.max_goal_candidates
-    }
-
-    #[getter]
-    fn weight(&self) -> f64 {
-        self.inner.weight
-    }
-
-    #[getter]
-    fn restarts(&self) -> u32 {
-        self.inner.restarts
-    }
-
-    #[getter]
-    fn lookahead(&self) -> bool {
-        self.inner.lookahead
-    }
-
-    #[getter]
-    fn deadlock_policy(&self) -> PyDeadlockPolicy {
-        PyDeadlockPolicy::from_rs(&self.inner.deadlock_policy)
-    }
-
-    #[getter]
-    fn w_t(&self) -> f64 {
-        self.inner.w_t
-    }
-
-    #[getter]
-    fn collect_entropy_trace(&self) -> bool {
-        self.inner.collect_entropy_trace
+    fn hungarian_horizon(&self) -> Option<usize> {
+        self.inner.hungarian_horizon
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={})",
-            self.strategy().name(),
-            self.inner.weight,
-            self.inner.restarts,
-            self.deadlock_policy().name(),
+            "EntanglingOptions(congestion_weight={}, occupancy_penalty={}, hungarian_horizon={:?})",
+            self.inner.congestion_weight,
+            self.inner.occupancy_penalty,
+            self.inner.hungarian_horizon,
         )
     }
 }

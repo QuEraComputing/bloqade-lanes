@@ -45,6 +45,8 @@ from bloqade.lanes.bytecode._native import (
     DeadlockPolicy as DeadlockPolicy,
     DefaultTargetGenerator as DefaultTargetGenerator,
     Direction as Direction,
+    EntanglingOptions as EntanglingOptions,
+    EntropyOptions as EntropyOptions,
     EntropyTrace as EntropyTrace,
     EntropyTraceStep as EntropyTraceStep,
     Grid as Grid,

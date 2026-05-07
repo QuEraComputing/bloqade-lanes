@@ -64,22 +64,30 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         occupancy-blind behaviour. Default ``1.0`` was tuned on the 80q
         / depth 3 / max_pairs 10 regime; deeper sparse-pair circuits
         prefer larger values (~2–3). Fractional values are supported.
+    hungarian_horizon:
+        Cap on the number of future CZ layers fed to the Hungarian
+        forward/backward sweep. ``0`` disables lookahead entirely;
+        ``None`` is unbounded (all future layers). Each extra layer
+        costs an extra Hungarian pass per restart, so solve time grows
+        linearly in horizon. Default ``4`` keeps solve time bounded
+        regardless of circuit depth.
+    top_c:
+        Per-qubit move-candidate pruning cap inside ``HeuristicGenerator``.
+        ``None`` keeps all scored bus options. Default ``3`` matches the
+        previously-hardcoded behaviour. Larger values broaden the search
+        but slow per-node expansion.
+    deadlock_policy:
+        ``"skip"`` | ``"move_blockers"`` (default) | ``"all_moves"``.
     """
 
     strategy: str = "ids"
     max_expansions: int | None = 100
     restarts: int = 20
-    lookahead: bool = True
     congestion_weight: float = 0.0
     occupancy_penalty: float = 1.0
-    H_lookahead: int = 4
-    """Number of future CZ layers to feed the Hungarian's
-    forward/backward sweep. ``0`` disables lookahead entirely; ``None``
-    is unbounded (all future layers). Each extra layer costs an extra
-    Hungarian forward + backward pass per restart, so depth grows
-    linearly in solve time. Default ``4`` matches the logical-placement
-    strategy."""
-    deadlock_policy: str = "move_blockers"  # "skip" | "move_blockers" | "all_moves"
+    hungarian_horizon: int | None = 4
+    top_c: int | None = 3
+    deadlock_policy: str = "move_blockers"
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
@@ -113,15 +121,20 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         repr=False,
     )
 
-    def _make_options(self) -> _native.SolveOptions:
-        return _native.SolveOptions(
+    def _make_options(self) -> tuple[_native.SolveOptions, _native.EntanglingOptions]:
+        opts = _native.SolveOptions(
             strategy=self._STRATEGY_MAP[self.strategy],
             restarts=self.restarts,
-            lookahead=self.lookahead,
+            lookahead=True,
+            deadlock_policy=self._DEADLOCK_MAP[self.deadlock_policy],
+            top_c=self.top_c,
+        )
+        ent_opts = _native.EntanglingOptions(
             congestion_weight=self.congestion_weight,
             occupancy_penalty=self.occupancy_penalty,
-            deadlock_policy=self._DEADLOCK_MAP[self.deadlock_policy],
+            hungarian_horizon=self.hungarian_horizon,
         )
+        return opts, ent_opts
 
     def validate_initial_layout(
         self, initial_layout: tuple[LocationAddress, ...]
@@ -142,7 +155,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
             return AtomState.top()
 
         solver = self._get_solver()
-        options = self._make_options()
+        options, entangling_options = self._make_options()
 
         # Build initial placement: qubit_id → native location.
         initial = {qid: state.layout[qid]._inner for qid in range(len(state.layout))}
@@ -153,19 +166,12 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
         # Blocked locations: occupied by atoms not in this circuit.
         blocked = [loc._inner for loc in state.occupied]
 
-        # Extract future CZ layers for lookahead-aware assignment.
-        # lookahead_cz_layers[0] is the current layer (skip it),
-        # lookahead_cz_layers[1:] are future layers.
-        # ``H_lookahead`` caps the horizon so solve time stays bounded
-        # regardless of circuit depth: ``0`` disables, ``None`` is
-        # unbounded.
+        # Forward all future CZ layers to Rust unclipped — the Hungarian
+        # horizon clip lives Rust-side via ``EntanglingOptions.hungarian_horizon``.
+        # lookahead_cz_layers[0] is the current layer (skip it).
         future = None
-        if self.H_lookahead != 0 and len(lookahead_cz_layers) > 1:
-            tail = lookahead_cz_layers[1:]
-            if self.H_lookahead is not None:
-                tail = tail[: self.H_lookahead]
-            if tail:
-                future = [list(zip(ctrls, tgts)) for ctrls, tgts in tail]
+        if len(lookahead_cz_layers) > 1:
+            future = [list(zip(ctrls, tgts)) for ctrls, tgts in lookahead_cz_layers[1:]]
 
         result = solver.solve_entangling(
             initial,
@@ -173,6 +179,7 @@ class LooseGoalPlacementStrategy(PlacementStrategyABC):
             blocked,
             max_expansions=self.max_expansions,
             options=options,
+            entangling_options=entangling_options,
             future_cz_layers=future,
         )
 

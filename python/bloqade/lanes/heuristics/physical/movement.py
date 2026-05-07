@@ -26,10 +26,8 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     _validate_candidate,
 )
 from bloqade.lanes.layout import (
-    Direction,
     LaneAddress,
     LocationAddress,
-    MoveType,
 )
 from bloqade.lanes.search import (
     BFSTraversal,
@@ -452,10 +450,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         blocked_native = [loc._inner for loc in state.occupied]
         opts = _native.SolveOptions(
             strategy=_STRATEGY_MAP[self.traversal.strategy],
-            max_movesets_per_group=self.traversal.max_movesets_per_group,
-            max_goal_candidates=self.traversal.max_goal_candidates,
             restarts=self.traversal.restarts,
             lookahead=self.traversal.lookahead,
+        )
+        entropy_opts = _native.EntropyOptions(
+            max_movesets_per_group=self.traversal.max_movesets_per_group,
+            max_goal_candidates=self.traversal.max_goal_candidates,
             collect_entropy_trace=(
                 should_trace and self.traversal.collect_entropy_trace
             ),
@@ -473,6 +473,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 blocked_native,
                 max_expansions=remaining,
                 options=opts,
+                entropy_options=entropy_opts,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:

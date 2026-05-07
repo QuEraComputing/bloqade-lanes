@@ -211,6 +211,13 @@ def main():
         "'all_moves' = exhaustive single-atom escapes.",
     )
     parser.add_argument(
+        "--loose-strategy",
+        choices=["ids", "entropy", "both"],
+        default="both",
+        help="Inner strategy to run for Loose and NoHome variants. "
+        "Baseline variants always run both inners. Default: both.",
+    )
+    parser.add_argument(
         "--visualize",
         action="store_true",
         help="Open the visualizer on the best seed of each strategy",
@@ -235,8 +242,12 @@ def main():
     nohome_suffix = f"dl={args.deadlock_policy}"
 
     strategies: dict[str, dict] = {}
-    inners: tuple[Literal["ids", "entropy"], ...] = ("ids", "entropy")
-    for idx, inner in enumerate(inners):
+    baseline_inners: tuple[Literal["ids", "entropy"], ...] = ("ids", "entropy")
+    if args.loose_strategy == "both":
+        loose_inners: tuple[Literal["ids", "entropy"], ...] = ("ids", "entropy")
+    else:
+        loose_inners = (args.loose_strategy,)
+    for idx, inner in enumerate(baseline_inners):
         offset = idx * 4
         strategies[f"{offset + 1} Baseline ({inner})"] = {
             "strategy": PhysicalPlacementStrategy(
@@ -262,13 +273,14 @@ def main():
             ),
             "insert_return_moves": True,
         }
-        strategies[f"{offset + 3} Loose ({inner}, {loose_suffix})"] = {
+    for idx, inner in enumerate(loose_inners):
+        offset = len(baseline_inners) * 4 + idx * 2
+        strategies[f"{offset + 1} Loose ({inner}, {loose_suffix})"] = {
             "strategy": LooseGoalPlacementStrategy(
                 arch_spec=arch_spec,
                 strategy=inner,
                 max_expansions=args.max_expansions,
                 restarts=20,
-                lookahead=True,
                 congestion_weight=args.congestion_weight,
                 occupancy_penalty=args.occupancy_penalty,
                 deadlock_policy=args.deadlock_policy,
@@ -276,13 +288,12 @@ def main():
             "insert_return_moves": False,
             "merge_heuristic": always_merge_heuristic,
         }
-        strategies[f"{offset + 4} NoHome ({inner}, {nohome_suffix})"] = {
+        strategies[f"{offset + 2} NoHome ({inner}, {nohome_suffix})"] = {
             "strategy": NoHomePlacementStrategy(
                 arch_spec=arch_spec,
                 strategy=inner,
                 max_expansions=args.max_expansions,
                 restarts=20,
-                lookahead=True,
                 deadlock_policy=args.deadlock_policy,
             ),
             "insert_return_moves": False,

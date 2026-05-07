@@ -940,44 +940,75 @@ class DeadlockPolicy:
 
 @final
 class SolveOptions:
-    """Search-tuning parameters for MoveSolver."""
+    """Core search-tuning parameters shared by every MoveSolver entry point."""
 
     def __init__(
         self,
         strategy: SearchStrategy = SearchStrategy.ASTAR,
-        max_movesets_per_group: int = 3,
-        max_goal_candidates: int = 3,
         weight: float = 1.0,
         restarts: int = 1,
-        lookahead: bool = False,
         deadlock_policy: DeadlockPolicy = DeadlockPolicy.SKIP,
-        w_t: float = 0.05,
-        collect_entropy_trace: bool = False,
-        congestion_weight: float = 0.0,
-        occupancy_penalty: float = 1.0,
+        lookahead: bool = False,
+        top_c: int | None = None,
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
-    @property
-    def max_movesets_per_group(self) -> int: ...
-    @property
-    def max_goal_candidates(self) -> int: ...
     @property
     def weight(self) -> float: ...
     @property
     def restarts(self) -> int: ...
     @property
+    def deadlock_policy(self) -> DeadlockPolicy: ...
+    @property
     def lookahead(self) -> bool: ...
     @property
-    def deadlock_policy(self) -> DeadlockPolicy: ...
+    def top_c(self) -> int | None: ...
+    def __repr__(self) -> str: ...
+
+@final
+class EntropyOptions:
+    """Entropy-strategy-specific parameters.
+
+    Only consumed when the strategy is entropy (or a Cascade variant whose
+    inner is entropy). Pass via the optional ``entropy_options`` argument to
+    ``MoveSolver.solve``.
+    """
+
+    def __init__(
+        self,
+        max_movesets_per_group: int = 3,
+        max_goal_candidates: int = 3,
+        w_t: float = 0.05,
+        collect_entropy_trace: bool = False,
+    ) -> None: ...
+    @property
+    def max_movesets_per_group(self) -> int: ...
+    @property
+    def max_goal_candidates(self) -> int: ...
     @property
     def w_t(self) -> float: ...
     @property
     def collect_entropy_trace(self) -> bool: ...
+    def __repr__(self) -> str: ...
+
+@final
+class EntanglingOptions:
+    """Loose-goal entangling-search parameters consumed by
+    ``MoveSolver.solve_entangling``.
+    """
+
+    def __init__(
+        self,
+        congestion_weight: float = 0.0,
+        occupancy_penalty: float = 1.0,
+        hungarian_horizon: int | None = 4,
+    ) -> None: ...
     @property
     def congestion_weight(self) -> float: ...
     @property
     def occupancy_penalty(self) -> float: ...
+    @property
+    def hungarian_horizon(self) -> int | None: ...
     def __repr__(self) -> str: ...
 
 @final
@@ -1132,6 +1163,7 @@ class MoveSolver:
         blocked: list[LocationAddress],
         max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
+        entropy_options: EntropyOptions | None = None,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
@@ -1141,6 +1173,8 @@ class MoveSolver:
             blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
             options: Search-tuning parameters. Defaults to SolveOptions().
+            entropy_options: Entropy-strategy parameters. Only consumed when
+                the strategy is entropy.
 
         Returns:
             SolveResult with status indicating outcome.
@@ -1156,6 +1190,7 @@ class MoveSolver:
         generator: DefaultTargetGenerator | None = None,
         max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
+        entropy_options: EntropyOptions | None = None,
     ) -> MultiSolveResult:
         """Solve using a target generator with shared expansion budget.
 
@@ -1167,6 +1202,8 @@ class MoveSolver:
             generator: Rust-side target generator (currently must be None).
             max_expansions: Total expansion budget across all candidates.
             options: Search-tuning parameters. Defaults to SolveOptions().
+            entropy_options: Entropy-strategy parameters. Only consumed when
+                the strategy is entropy.
 
         Returns:
             MultiSolveResult with per-candidate debug info.
@@ -1180,6 +1217,7 @@ class MoveSolver:
         blocked: list[LocationAddress],
         max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
+        entangling_options: EntanglingOptions | None = None,
         future_cz_layers: list[list[tuple[int, int]]] | None = None,
     ) -> SolveResult:
         """Solve a loose-goal entangling placement + routing problem.
@@ -1194,9 +1232,12 @@ class MoveSolver:
             blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
             options: Search-tuning parameters. Defaults to SolveOptions().
+            entangling_options: Hungarian / loose-goal tuning. Defaults to
+                EntanglingOptions() (hungarian_horizon=4).
             future_cz_layers: Optional list of future CZ pair layers for
                 lookahead-aware Hungarian assignment. Each layer is a list
-                of (qubit_a, qubit_b) tuples.
+                of (qubit_a, qubit_b) tuples. Clipped Rust-side to
+                ``entangling_options.hungarian_horizon`` layers.
 
         Returns:
             SolveResult with the discovered entangling placement.

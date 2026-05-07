@@ -122,31 +122,80 @@ pub struct SolveResult {
     pub entropy_trace: Option<EntropyTrace>,
 }
 
-/// Grouping of search-tuning parameters for [`MoveSolver::solve`].
+/// Core search-tuning parameters shared by every [`MoveSolver`] entry point.
 ///
-/// Keeps the `solve()` signature compact. Problem-specific data
-/// (`initial`, `target`, `blocked`, `max_expansions`) remain as direct
-/// arguments.
+/// Strategy-specific knobs live in [`EntropyOptions`] (entropy-search
+/// parameters) and [`EntanglingOptions`] (loose-goal Hungarian parameters).
+/// Problem-specific data (`initial`, `target`, `blocked`, `max_expansions`)
+/// remain as direct arguments.
 #[derive(Debug, Clone)]
 pub struct SolveOptions {
     /// Search strategy to use.
     pub strategy: Strategy,
-    /// Max movesets generated per bus group.
-    pub max_movesets_per_group: usize,
-    /// Number of goal candidates to collect before stopping entropy search.
-    pub max_goal_candidates: usize,
     /// Heuristic weight for A* (1.0 = standard, >1.0 = bounded suboptimal).
     pub weight: f64,
     /// Number of parallel restarts with perturbed scoring (1 = no restarts).
     pub restarts: u32,
-    /// Enable 2-step lookahead scoring.
-    pub lookahead: bool,
     /// How to handle deadlocks (no improving moves).
     pub deadlock_policy: DeadlockPolicy,
+    /// Enable 2-step lookahead scoring inside [`HeuristicGenerator`].
+    /// Affects every strategy that goes through that generator.
+    pub lookahead: bool,
+    /// Per-qubit move-candidate pruning passed to [`HeuristicGenerator`].
+    /// `None` keeps all scored triples (default for the basic [`solve`]
+    /// path); `Some(n)` keeps the top `n` bus options per qubit by score.
+    /// [`solve_entangling`] defaults this to `Some(3)` when not set.
+    pub top_c: Option<usize>,
+}
+
+impl Default for SolveOptions {
+    fn default() -> Self {
+        Self {
+            strategy: Strategy::AStar,
+            weight: 1.0,
+            restarts: 1,
+            deadlock_policy: DeadlockPolicy::Skip,
+            lookahead: false,
+            top_c: None,
+        }
+    }
+}
+
+/// Entropy-strategy-specific parameters.
+///
+/// Only consumed when [`SolveOptions::strategy`] is [`Strategy::Entropy`]
+/// (or a [`Strategy::Cascade`] variant whose inner is entropy). Pass via
+/// [`MoveSolver::solve`]'s optional `entropy_opts` argument; otherwise
+/// defaults are used.
+#[derive(Debug, Clone)]
+pub struct EntropyOptions {
+    /// Max movesets generated per bus group.
+    pub max_movesets_per_group: usize,
+    /// Number of goal candidates to collect before stopping entropy search.
+    pub max_goal_candidates: usize,
     /// Time-distance blend weight (0.0 = hop-count only, 1.0 = time only).
     pub w_t: f64,
-    /// Collect entropy-step trace payload when using entropy strategy.
+    /// Collect entropy-step trace payload for visualization/debugging.
     pub collect_entropy_trace: bool,
+}
+
+impl Default for EntropyOptions {
+    fn default() -> Self {
+        Self {
+            max_movesets_per_group: 3,
+            max_goal_candidates: 3,
+            w_t: 0.05,
+            collect_entropy_trace: false,
+        }
+    }
+}
+
+/// Loose-goal entangling-search parameters consumed by
+/// [`MoveSolver::solve_entangling`].
+///
+/// Ignored by [`MoveSolver::solve`] and [`MoveSolver::solve_nohome`].
+#[derive(Debug, Clone)]
+pub struct EntanglingOptions {
     /// Congestion penalty weight for the entangling Hungarian assignment.
     ///
     /// `0.0` (default): standard min-sum-distance assignment.
@@ -154,8 +203,6 @@ pub struct SolveOptions {
     /// `congestion_weight × (load - ideal_load)` to slots on overloaded
     /// entangling word pairs. Spreads CZ pairs across word pairs to reduce
     /// routing serialization at high occupancy.
-    /// Only used by [`MoveSolver::solve_entangling`]; ignored by
-    /// [`MoveSolver::solve`] and [`MoveSolver::solve_nohome`].
     pub congestion_weight: f64,
     /// Spectator-occupancy penalty (in lane-hop units) added to each
     /// entangling Hungarian cost cell *per spectator-occupied slot half*.
@@ -176,25 +223,21 @@ pub struct SolveOptions {
     /// `(spectator_half_count * occupancy_penalty).round() as u32`, so
     /// fractional values (e.g. `0.5`, `1.5`) provide meaningful sub-hop
     /// granularity for sweeps. Must be finite and non-negative.
-    /// Only used by [`MoveSolver::solve_entangling`]; ignored by
-    /// [`MoveSolver::solve`] and [`MoveSolver::solve_nohome`].
     pub occupancy_penalty: f64,
+    /// Cap on the number of future CZ layers fed to the Hungarian
+    /// forward/backward sweep. `None` is unbounded; `Some(0)` disables
+    /// lookahead entirely (single-layer Hungarian); `Some(n)` for n > 0
+    /// keeps the first `n` future layers. Default `Some(4)` keeps solve
+    /// time bounded regardless of circuit depth.
+    pub hungarian_horizon: Option<usize>,
 }
 
-impl Default for SolveOptions {
+impl Default for EntanglingOptions {
     fn default() -> Self {
         Self {
-            strategy: Strategy::AStar,
-            max_movesets_per_group: 3,
-            max_goal_candidates: 3,
-            weight: 1.0,
-            restarts: 1,
-            lookahead: false,
-            deadlock_policy: DeadlockPolicy::Skip,
-            w_t: 0.05,
-            collect_entropy_trace: false,
             congestion_weight: 0.0,
             occupancy_penalty: OCCUPANCY_PENALTY_DEFAULT,
+            hungarian_horizon: Some(4),
         }
     }
 }
@@ -264,6 +307,7 @@ fn run_with_components<Go, Gen, Hmax, Hsum, MkGen>(
     ctx: &SearchContext,
     max_expansions: Option<u32>,
     opts: &SolveOptions,
+    entropy_opts: Option<&EntropyOptions>,
 ) -> SolveResult
 where
     Go: Goal + Sync,
@@ -276,9 +320,12 @@ where
     let weight = opts.weight;
     let restarts = opts.restarts;
     let deadlock_policy = opts.deadlock_policy;
-    let max_movesets_per_group = opts.max_movesets_per_group;
-    let max_goal_candidates = opts.max_goal_candidates;
-    let collect_entropy_trace = opts.collect_entropy_trace;
+    let entropy_defaults = EntropyOptions::default();
+    let entropy = entropy_opts.unwrap_or(&entropy_defaults);
+    let max_movesets_per_group = entropy.max_movesets_per_group;
+    let max_goal_candidates = entropy.max_goal_candidates;
+    let collect_entropy_trace = entropy.collect_entropy_trace;
+    let w_t = entropy.w_t;
 
     let scorer = DistanceScorer;
     let cost_fn = UniformCost;
@@ -327,7 +374,7 @@ where
                     max_movesets_per_group,
                     max_goal_candidates,
                     lookahead: opts.lookahead,
-                    w_t: opts.w_t,
+                    w_t,
                     ..crate::entropy::EntropyParams::default()
                 };
                 let mut entropy_trace = if collect_entropy_trace {
@@ -638,6 +685,7 @@ impl MoveSolver {
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
         opts: &SolveOptions,
+        entropy_opts: Option<&EntropyOptions>,
     ) -> Result<SolveResult, ConfigError> {
         let root = Config::new(initial)?;
         let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
@@ -649,7 +697,8 @@ impl MoveSolver {
 
         // Build distance table and heuristic (shared across restarts).
         let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
-        let dist_table = if opts.w_t > 0.0 {
+        let w_t = entropy_opts.map_or(EntropyOptions::default().w_t, |e| e.w_t);
+        let dist_table = if w_t > 0.0 {
             DistanceTable::new(&target_locs, &self.index).with_time_distances(&self.index)
         } else {
             DistanceTable::new(&target_locs, &self.index)
@@ -686,6 +735,7 @@ impl MoveSolver {
             &ctx,
             max_expansions,
             opts,
+            entropy_opts,
         ))
     }
 
@@ -714,6 +764,7 @@ impl MoveSolver {
     /// # Errors
     ///
     /// Returns [`ConfigError`] if `initial` contains duplicate qubit IDs.
+    #[allow(clippy::too_many_arguments)]
     pub fn solve_entangling(
         &self,
         initial: impl IntoIterator<Item = (u32, LocationAddr)>,
@@ -721,6 +772,7 @@ impl MoveSolver {
         blocked: impl IntoIterator<Item = LocationAddr>,
         max_expansions: Option<u32>,
         opts: &SolveOptions,
+        ent_opts: &EntanglingOptions,
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
         use crate::goals::EntanglingConstraintGoal;
@@ -745,12 +797,21 @@ impl MoveSolver {
         // share the same view of immobile atoms.
         let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
-        // Use lookahead assignment if future layers are available.
+        // Apply the Hungarian future-layer horizon: `Some(0)` disables
+        // multi-layer lookahead; `None` is unbounded; `Some(n>0)` keeps the
+        // first `n` future layers.
+        let clipped_future: &[Vec<(u32, u32)>] = match ent_opts.hungarian_horizon {
+            Some(0) => &[],
+            Some(n) => &future_cz_layers[..future_cz_layers.len().min(n)],
+            None => future_cz_layers,
+        };
+
+        // Use lookahead assignment if (clipped) future layers are available.
         // Both branches go through `assign_pairs_with_blockers` (directly
         // or via `lookahead_assign_pairs`), so the produced target list
         // includes any spectator displacements needed to break Case-A,
         // Case-B, or accidental-CZ deadlocks.
-        let greedy_targets = if !future_cz_layers.is_empty() {
+        let greedy_targets = if !clipped_future.is_empty() {
             entangling::lookahead_assign_pairs(
                 cz_pairs,
                 &root,
@@ -759,10 +820,10 @@ impl MoveSolver {
                 &dist_table,
                 &blocked_encoded,
                 0,
-                future_cz_layers,
+                clipped_future,
                 LOOKAHEAD_BETA,
-                opts.congestion_weight,
-                opts.occupancy_penalty,
+                ent_opts.congestion_weight,
+                ent_opts.occupancy_penalty,
                 MOVE_PENALTY,
             )
         } else {
@@ -776,8 +837,8 @@ impl MoveSolver {
                 0,
                 None,
                 0.0,
-                opts.congestion_weight,
-                opts.occupancy_penalty,
+                ent_opts.congestion_weight,
+                ent_opts.occupancy_penalty,
                 MOVE_PENALTY,
                 true,
             )
@@ -792,6 +853,7 @@ impl MoveSolver {
         };
 
         let lookahead = opts.lookahead;
+        let top_c = opts.top_c.unwrap_or(3);
         // Loose-goal entangling search needs at least MoveBlockers to handle
         // qubits competing for entangling positions; preserve AllMoves if
         // explicitly requested.
@@ -812,18 +874,18 @@ impl MoveSolver {
             let arch_arc = Arc::new(arch.clone());
             let index_arc: Arc<LaneIndex> = Arc::new(self.index.clone());
             let dt_arc = dist_table.clone(); // Arc clone (cheap)
-            let congestion_weight = opts.congestion_weight;
-            let occupancy_penalty = opts.occupancy_penalty;
+            let congestion_weight = ent_opts.congestion_weight;
+            let occupancy_penalty = ent_opts.occupancy_penalty;
 
             let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
-            // Clone future layers once so the per-restart generator
-            // closure can re-use them as its lookahead inputs.
-            let future_layers_owned: Vec<Vec<(u32, u32)>> = future_cz_layers.to_vec();
+            // Clone the (clipped) future layers once so the per-restart
+            // generator closure can re-use them as its lookahead inputs.
+            let future_layers_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
             let make_generator = move |seed: u64, policy: DeadlockPolicy| {
                 let inner = HeuristicGenerator::new()
                     .with_deadlock_policy(policy)
                     .with_lookahead(lookahead)
-                    .with_top_c(3)
+                    .with_top_c(top_c)
                     .with_seed(seed);
                 let mut generator = LooseTargetGenerator::new(
                     inner,
@@ -852,6 +914,7 @@ impl MoveSolver {
                 &ctx,
                 max_expansions,
                 opts,
+                None,
             )
         };
 
@@ -898,6 +961,7 @@ impl MoveSolver {
                     blocked_locs.iter().copied(),
                     max_expansions,
                     opts,
+                    None,
                 );
 
                 if let Ok(cleanup) = cleanup_result
@@ -1048,6 +1112,7 @@ impl MoveSolver {
                 blocked_locs.iter().copied(),
                 max_expansions,
                 opts,
+                None,
             );
         }
 
@@ -1085,6 +1150,7 @@ impl MoveSolver {
                 blocked_locs.iter().copied(),
                 max_expansions,
                 opts,
+                None,
             )?;
 
             total_expanded += return_result.nodes_expanded;
@@ -1129,6 +1195,7 @@ impl MoveSolver {
             blocked_locs.iter().copied(),
             max_expansions,
             opts,
+            None,
         )?;
 
         total_expanded += entangling_result.nodes_expanded;
@@ -1204,6 +1271,7 @@ impl MoveSolver {
         generator: &dyn TargetGenerator,
         max_expansions: Option<u32>,
         opts: &SolveOptions,
+        entropy_opts: Option<&EntropyOptions>,
     ) -> Result<MultiSolveResult, ConfigError> {
         let initial_pairs: Vec<(u32, LocationAddr)> = initial.into_iter().collect();
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -1252,6 +1320,7 @@ impl MoveSolver {
                 blocked_locs.iter().copied(),
                 remaining_budget,
                 opts,
+                entropy_opts,
             )?;
 
             total_expansions += result.nodes_expanded;
@@ -1341,12 +1410,9 @@ mod tests {
     use super::*;
     use crate::test_utils::{example_arch_json, loc};
 
-    /// Default test options: A*, w_t=0.0.
+    /// Default test options: A*.
     fn default_opts() -> SolveOptions {
-        SolveOptions {
-            w_t: 0.0,
-            ..SolveOptions::default()
-        }
+        SolveOptions::default()
     }
 
     #[test]
@@ -1359,6 +1425,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1378,6 +1445,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1398,6 +1466,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1418,6 +1487,7 @@ mod tests {
                 std::iter::empty(),
                 Some(1000),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1437,6 +1507,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1456,6 +1527,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &opts,
+                None,
             )
             .unwrap();
 
@@ -1466,6 +1538,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &opts,
+                None,
             )
             .unwrap();
 
@@ -1485,6 +1558,7 @@ mod tests {
                 [loc(0, 5)],
                 Some(100),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1504,6 +1578,7 @@ mod tests {
                 std::iter::empty(),
                 Some(1000),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1526,9 +1601,9 @@ mod tests {
                 Some(1000),
                 &SolveOptions {
                     strategy: Strategy::Ids,
-                    w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                None,
             )
             .unwrap();
 
@@ -1542,9 +1617,9 @@ mod tests {
                     strategy: Strategy::Cascade {
                         inner: InnerStrategy::Ids,
                     },
-                    w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                None,
             )
             .unwrap();
 
@@ -1572,6 +1647,7 @@ mod tests {
                 &DefaultTargetGenerator,
                 Some(1000),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1596,6 +1672,7 @@ mod tests {
                 &DefaultTargetGenerator,
                 Some(1000),
                 &default_opts(),
+                None,
             )
             .unwrap();
 
@@ -1618,6 +1695,11 @@ mod tests {
     #[test]
     fn entropy_strategy_can_collect_trace() {
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let entropy_opts = EntropyOptions {
+            w_t: 0.0,
+            collect_entropy_trace: true,
+            ..EntropyOptions::default()
+        };
         let result = solver
             .solve(
                 [(0, loc(0, 0))],
@@ -1626,10 +1708,9 @@ mod tests {
                 Some(100),
                 &SolveOptions {
                     strategy: Strategy::Entropy,
-                    w_t: 0.0,
-                    collect_entropy_trace: true,
                     ..SolveOptions::default()
                 },
+                Some(&entropy_opts),
             )
             .unwrap();
 
@@ -1654,6 +1735,7 @@ mod tests {
                 std::iter::empty(),
                 Some(5000),
                 &default_opts(),
+                &EntanglingOptions::default(),
                 &[],
             )
             .unwrap();
@@ -1682,6 +1764,7 @@ mod tests {
                 std::iter::empty(),
                 Some(100),
                 &default_opts(),
+                &EntanglingOptions::default(),
                 &[],
             )
             .unwrap();
@@ -1706,6 +1789,7 @@ mod tests {
                 std::iter::empty(),
                 Some(10000),
                 &default_opts(),
+                &EntanglingOptions::default(),
                 &[],
             )
             .unwrap();
@@ -1736,6 +1820,7 @@ mod tests {
                 std::iter::empty(),
                 Some(5000),
                 &default_opts(),
+                &EntanglingOptions::default(),
                 &[],
             )
             .unwrap();
@@ -1756,9 +1841,9 @@ mod tests {
                 Some(5000),
                 &SolveOptions {
                     strategy: Strategy::Ids,
-                    w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                &EntanglingOptions::default(),
                 &[],
             )
             .unwrap();
@@ -1779,9 +1864,9 @@ mod tests {
                     strategy: Strategy::Cascade {
                         inner: InnerStrategy::Ids,
                     },
-                    w_t: 0.0,
                     ..SolveOptions::default()
                 },
+                &EntanglingOptions::default(),
                 &[],
             )
             .unwrap();
