@@ -48,6 +48,7 @@ class DemoTask:
     task: Any
     observable_frame: ObservableFrame = ObservableFrame.RAW
     observable_reference: Any | None = None
+    # TODO: this is SOLELY to pass down the "special" logical kernel for the "prefix_prepare" path.
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __getattr__(self, name: str) -> Any:

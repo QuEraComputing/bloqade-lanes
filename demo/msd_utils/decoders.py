@@ -20,9 +20,9 @@ from .core import (
     fidelity_from_counts,
     fidelity_from_zero_one_counts,
     iter_task_datasets,
+    normalize_valid_factory_targets,
     pack_boolean_array,
     packed_bits_to_int,
-    resolve_valid_factory_targets,
     run_task,
     split_factory_bits,
     unpack_packed_bits,
@@ -37,6 +37,9 @@ class DecoderAdapter:
     factory_decoder: Any
     decode_factory: Callable[[Any], tuple[tuple[int, ...], float]]
     decode_full: Callable[[Any], tuple[int, ...]]
+    # NOTE: so currently, the reason for factory_score_mode is more for backwards compatibility with bloqade-decoders -- it's to make sure that bloqade-decoders has
+    # the ability to 'decode_with_confidence'. But if we assume that bloqade-decoders ALWAYS has that functionality, then factory_score_mode isn't necessary.
+    # However, this might be worth keeping, because reasonably, for the same decoder, we might want to have different ways of computing the "confidence" score for decoding.
     factory_score_mode: str
 
 
@@ -298,17 +301,13 @@ def estimate_mld_ancilla_scores(
     decoder_by_basis: Mapping[str, tuple[Any, Any]],
     ranking_data_by_basis: Mapping[str, BasisDataset],
     *,
-    factory_target: np.ndarray | Sequence[int] | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> np.ndarray:
-    targets = resolve_valid_factory_targets(
-        factory_target=factory_target,
-        valid_factory_targets=valid_factory_targets,
-    )
+    targets = normalize_valid_factory_targets(valid_factory_targets)
     if set(decoder_by_basis) != set(basis_labels):
         raise ValueError(
             "Need X/Y/Z decoder pairs to estimate shared MLD postselection scores."
@@ -475,8 +474,7 @@ def estimate_mld_ancilla_scores_from_tasks(
     ranking_tasks_by_basis: Mapping[str, Any],
     shots: int,
     *,
-    factory_target: np.ndarray | Sequence[int] | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
@@ -485,10 +483,7 @@ def estimate_mld_ancilla_scores_from_tasks(
     with_noise: bool = True,
     sim_type: str = "tsim",
 ) -> np.ndarray:
-    targets = resolve_valid_factory_targets(
-        factory_target=factory_target,
-        valid_factory_targets=valid_factory_targets,
-    )
+    targets = normalize_valid_factory_targets(valid_factory_targets)
     if set(decoder_by_basis) != set(basis_labels):
         raise ValueError(
             "Need X/Y/Z decoder pairs to estimate shared MLD postselection scores."
@@ -1065,8 +1060,7 @@ def evaluate_curve(
     posterior_samples: int,
     threshold_points: int,
     metric: str,
-    factory_target: np.ndarray | Sequence[int] | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
@@ -1081,7 +1075,6 @@ def evaluate_curve(
             actual_data,
             decoder_map,
             posterior_samples=posterior_samples,
-            factory_target=factory_target,
             valid_factory_targets=valid_factory_targets,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
@@ -1093,10 +1086,7 @@ def evaluate_curve(
     if selection_mode != "threshold":
         raise ValueError("selection_mode must be 'threshold' or 'pattern_rank'.")
 
-    targets = resolve_valid_factory_targets(
-        factory_target=factory_target,
-        valid_factory_targets=valid_factory_targets,
-    )
+    targets = normalize_valid_factory_targets(valid_factory_targets)
     (
         per_basis_tables,
         score_array,
@@ -1135,8 +1125,7 @@ def evaluate_mld_curve(
     decoder_map: Mapping[str, DecoderAdapter],
     *,
     posterior_samples: int,
-    factory_target: np.ndarray | Sequence[int] | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
@@ -1144,10 +1133,7 @@ def evaluate_mld_curve(
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
 ) -> dict[str, np.ndarray]:
-    targets = resolve_valid_factory_targets(
-        factory_target=factory_target,
-        valid_factory_targets=valid_factory_targets,
-    )
+    targets = normalize_valid_factory_targets(valid_factory_targets)
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
     corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
     pattern_scores: dict[int, float] = {}

@@ -26,6 +26,7 @@ class BasisDataset:
     observables: np.ndarray
 
 
+# This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask.
 def _run_simulator_task(
     task: Any,
     shots: int,
@@ -425,38 +426,21 @@ def split_factory_bits(
     )
 
 
+# This is used for us to help us, via simulation, get the noiseless expected observable from the circuit.
 def normalize_valid_factory_targets(
-    factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
 ) -> np.ndarray:
-    targets = np.asarray(factory_targets, dtype=np.uint8)
+    targets = np.asarray(valid_factory_targets, dtype=np.uint8)
     if targets.ndim == 1:
         targets = targets.reshape(1, -1)
     if targets.ndim != 2:
         raise ValueError(
-            "Factory targets must be a 1D syndrome or a 2D array of valid syndromes."
+            "valid_factory_targets must be a 1D factory syndrome or a 2D array "
+            "of valid factory syndromes."
         )
     if targets.shape[0] == 0 or targets.shape[1] == 0:
         raise ValueError("Need at least one non-empty valid factory syndrome.")
     return np.unique(targets, axis=0)
-
-
-def resolve_valid_factory_targets(
-    *,
-    factory_target: np.ndarray | Sequence[int] | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
-) -> np.ndarray:
-    if factory_target is not None and valid_factory_targets is not None:
-        raise ValueError(
-            "Pass either factory_target or valid_factory_targets, not both."
-        )
-    targets = (
-        valid_factory_targets if valid_factory_targets is not None else factory_target
-    )
-    if targets is None:
-        raise ValueError(
-            "Need either factory_target or valid_factory_targets for postselection."
-        )
-    return normalize_valid_factory_targets(targets)
 
 
 def ancilla_matches_valid_targets(
@@ -512,17 +496,13 @@ def infer_factory_target(
 
 def infer_distilled_sign_vector(
     task_map: Mapping[str, Any],
-    factory_target: np.ndarray | Sequence[int] | None = None,
     *,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     shots: int = 12_000,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
 ) -> np.ndarray:
-    targets = resolve_valid_factory_targets(
-        factory_target=factory_target,
-        valid_factory_targets=valid_factory_targets,
-    )
+    targets = normalize_valid_factory_targets(valid_factory_targets)
     corrected: dict[str, np.ndarray] = {}
     for basis in basis_labels:
         data = run_task(task_map[basis], shots, with_noise=False)
@@ -602,9 +582,8 @@ def naive_injected_summary(
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_distilled_summary(
     task_map: Mapping[str, Any],
-    factory_target: np.ndarray | Sequence[int] | None = None,
     *,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     sign_vector: Sequence[float],
     posterior_samples: int,
     shots: int,
@@ -613,10 +592,7 @@ def naive_distilled_summary(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
 ) -> dict[str, Any]:
-    targets = resolve_valid_factory_targets(
-        factory_target=factory_target,
-        valid_factory_targets=valid_factory_targets,
-    )
+    targets = normalize_valid_factory_targets(valid_factory_targets)
     corrected: dict[str, np.ndarray] = {}
     accepted_fraction_by_basis: dict[str, float] = {}
     total_kept = 0
@@ -650,6 +626,4 @@ def naive_distilled_summary(
     summary["valid_factory_targets"] = tuple(
         tuple(int(x) for x in row.tolist()) for row in targets
     )
-    if len(targets) == 1:
-        summary["factory_target"] = tuple(int(x) for x in targets[0].tolist())
     return summary

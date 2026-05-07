@@ -25,6 +25,7 @@ from demo.msd_utils.common import SyndromeLayout
 from demo.msd_utils.core import (
     BasisDataset,
     fidelity_from_counts,
+    normalize_valid_factory_targets,
     pack_boolean_array,
     split_factory_bits,
 )
@@ -80,6 +81,11 @@ def test_split_factory_bits_and_pack_boolean_array():
     assert anc_det.tolist() == [[1, 0], [0, 1]]
     assert anc_obs.tolist() == [[0, 1], [1, 0]]
     assert pack_boolean_array(anc_det).tolist() == [0b01, 0b10]
+
+
+def test_normalize_valid_factory_targets_wraps_single_target():
+    targets = normalize_valid_factory_targets([0, 1, 0])
+    assert targets.tolist() == [[0, 1, 0]]
 
 
 def test_kernel_builders_return_expected_basis_maps():
@@ -443,7 +449,7 @@ def test_evaluate_curve_returns_monotone_acceptance():
         posterior_samples=64,
         threshold_points=3,
         metric="test",
-        factory_target=np.array([0], dtype=np.uint8),
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
     )
@@ -663,7 +669,7 @@ def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
         {"X": dataset, "Y": dataset, "Z": dataset},
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
         posterior_samples=64,
-        factory_target=np.array([0], dtype=np.uint8),
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
     )
@@ -719,7 +725,7 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
         {"X": dataset, "Y": dataset, "Z": dataset},
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
         posterior_samples=64,
-        factory_target=np.array([0], dtype=np.uint8),
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
     )
@@ -730,7 +736,7 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
         posterior_samples=64,
         threshold_points=4,
         metric="test",
-        factory_target=np.array([0], dtype=np.uint8),
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
         selection_mode="pattern_rank",
@@ -803,7 +809,7 @@ def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
         posterior_samples=64,
         threshold_points=3,
         metric="test",
-        factory_target=np.array([0], dtype=np.uint8),
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
         threshold_policy="quantile",
@@ -819,7 +825,7 @@ def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
         posterior_samples=64,
         threshold_points=3,
         metric="test",
-        factory_target=np.array([0], dtype=np.uint8),
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
         threshold_policy="quantile",

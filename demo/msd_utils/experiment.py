@@ -93,7 +93,7 @@ class MSDRunConfig:
     mle_threshold_policy: str = "quantile"
     uncertainty_backend: str = "wilson"
     mld_rank_train_shots: int | None = None
-    factory_target: tuple[int, ...] = (0, 0, 0, 0)
+    valid_factory_targets: tuple[tuple[int, ...], ...] = ((0, 0, 0, 0),)
     basis_labels: tuple[str, ...] = DEFAULT_BASIS_LABELS
     mld_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
     injected_raw_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
@@ -316,7 +316,7 @@ def train_mld_experiment(
     actual_tasks: Mapping[str, DemoTask],
     train_shots: int,
     table_decoder_cls: type,
-    factory_target: np.ndarray,
+    valid_factory_targets: np.ndarray,
     sign_vector: Sequence[float],
     ranking_train_shots: int | None = None,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
@@ -360,7 +360,7 @@ def train_mld_experiment(
     ancilla_scores = estimate_mld_ancilla_scores(
         decoder_pairs_by_basis,
         ranking_data_by_basis,
-        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
         basis_labels=basis_labels,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
@@ -403,7 +403,7 @@ def evaluate_decoder_experiment(
     posterior_samples: int,
     table_decoder_cls: type,
     gurobi_decoder_cls: type,
-    factory_target: np.ndarray,
+    valid_factory_targets: np.ndarray,
     sign_vector: Sequence[float],
     injected_corrected_sign_vector: Sequence[float],
     injected_raw_sign_vector: Sequence[float],
@@ -432,7 +432,7 @@ def evaluate_decoder_experiment(
         actual_data_by_basis,
         mld_decoder_map,
         posterior_samples=posterior_samples,
-        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
         basis_labels=basis_labels,
@@ -445,7 +445,7 @@ def evaluate_decoder_experiment(
         posterior_samples=posterior_samples,
         threshold_points=mle_threshold_points,
         metric="MLE logical gap",
-        factory_target=factory_target,
+        valid_factory_targets=valid_factory_targets,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
         basis_labels=basis_labels,
@@ -524,7 +524,10 @@ def run_msd_fig3b_experiment(
         train_shots=run_config.mld_train_shots,
         ranking_train_shots=run_config.mld_rank_train_shots,
         table_decoder_cls=table_decoder_cls,
-        factory_target=np.asarray(run_config.factory_target, dtype=np.uint8),
+        valid_factory_targets=np.asarray(
+            run_config.valid_factory_targets,
+            dtype=np.uint8,
+        ),
         sign_vector=run_config.mld_sign_vector,
         target_bloch=target_bloch,
         basis_labels=run_config.basis_labels,
@@ -540,7 +543,10 @@ def run_msd_fig3b_experiment(
         posterior_samples=run_config.posterior_samples,
         table_decoder_cls=table_decoder_cls,
         gurobi_decoder_cls=gurobi_decoder_cls,
-        factory_target=np.asarray(run_config.factory_target, dtype=np.uint8),
+        valid_factory_targets=np.asarray(
+            run_config.valid_factory_targets,
+            dtype=np.uint8,
+        ),
         sign_vector=run_config.mld_sign_vector,
         injected_corrected_sign_vector=run_config.injected_corrected_sign_vector,
         injected_raw_sign_vector=run_config.injected_raw_sign_vector,

@@ -12,8 +12,7 @@ def build_shared_mld_postselection_scores(
     training_data_by_basis: Mapping[str, BasisDataset],
     *,
     table_decoder_cls: type,
-    factory_target: np.ndarray | Sequence[int] | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | None = None,
+    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     ranking_data_by_basis: Mapping[str, BasisDataset] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
@@ -42,7 +41,6 @@ def build_shared_mld_postselection_scores(
     return estimate_mld_ancilla_scores(
         decoder_by_basis,
         score_data_by_basis,
-        factory_target=factory_target,
         valid_factory_targets=valid_factory_targets,
         basis_labels=basis_labels,
         sign_vector=sign_vector,
