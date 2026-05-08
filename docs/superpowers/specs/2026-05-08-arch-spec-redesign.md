@@ -1,5 +1,18 @@
 # ArchSpec Redesign Proposal: Decoupled Physical Layout and Address Space
 
+## Executive Summary
+
+The current `ArchSpec` entangles physical hardware geometry with the virtual addressing scheme, making it impossible to evolve either independently. This proposal splits the description into three clean layers — [`PhysicalSpec`](#layer-1-physicalspec) (flair-owned hardware geometry), [`AddressSpace`](#layer-2-addressspace) (lanes-owned virtual addressing), and [`MachineModel`](#layer-3-machinemodel) (derived on demand) — and promotes bus identifiers from zone-local integers to stable human-readable string keys.
+
+**What this fixes:**
+
+- Zone word/site addressing can change without touching [`PhysicalSpec`](#layer-1-physicalspec) or any bus definition.
+- Right-direction moves and any future AOD bus types are first-class entries in `PhysicalSpec.buses` — no hardcoded extensions needed. The string keys also drive downstream kernel dispatch directly, eliminating the hardcoded `{0: ..., 8: ...}` lookup in `lanes2flair` (see [Impact on Downstream Consumers](#impact-on-downstream-consumers)).
+- `bus_id` is a stable dict key, not a list position — reordering never silently invalidates encoded addresses (see [New `LaneAddress` Encoding](#new-laneaddress-encoding)).
+- `MoveType` (SITE / WORD / ZONE) disappears from the encoding; `MachineModel.bus_graph` is the single source of truth for move semantics (see [Impact on Downstream Consumers](#impact-on-downstream-consumers)).
+- Architectural subset checking becomes compositional: [`PhysicalSpec`](#physicalspec-subsetting), [`AddressSpace`](#addressspace-subsetting), and [`MachineModel`](#machinemodel-subsetting) are each checked independently.
+- Ownership is explicit: flair evolves `PhysicalSpec`, lanes evolves `AddressSpace`, and `MachineModel` is always a pure function of the two (see [Ownership and Responsibility](#ownership-and-responsibility)).
+
 ## Motivation
 
 The current `ArchSpec` couples bus definitions to the word/site address space. Buses are defined as index-level src→dst pairs within a zone (`SiteBus.src/dst` are site indices; `WordBus.src/dst` are word indices). This means:
@@ -389,10 +402,3 @@ arch_spec.derive(physical_noise_spec: PhysicalNoiseSpec) -> MachineModel
 
 **Open questions:**
 1. Should `T1`/`T2` be global scalars or per-grid (atoms in different grids may have different coherence)?
-
-## What This Fixes
-
-- Changing zone word/site addressing does not touch `PhysicalSpec` or bus definitions
-- Right-direction and any future AOD bus types are first-class entries in `PhysicalSpec.buses`, not hardcoded extensions
-- `bus_id` is a stable dict key, not a list position — reordering never silently invalidates encoded addresses
-- `MoveType` disappears from the encoding; the bus graph is the single source of truth for move semantics
