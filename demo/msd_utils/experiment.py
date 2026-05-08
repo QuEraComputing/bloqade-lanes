@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import numpy as np
+from bloqade.decoders import ConfidenceDecoder
 
 from bloqade.lanes import GeminiLogicalSimulator
 
@@ -26,6 +27,7 @@ from .core import (
 )
 from .decoders import (
     DecoderAdapter,
+    TableDecoderClass,
     build_mld_decoders_from_pair,
     build_mle_decoders,
     estimate_mld_ancilla_scores,
@@ -34,6 +36,8 @@ from .decoders import (
     injected_baseline,
     train_mld_decoder_pair,
 )
+
+SpecialTsimCircuitStrategy = Literal["prefix_prepare", "compiled_inverse_prefix"]
 
 
 @dataclass(frozen=True)
@@ -100,8 +104,10 @@ class MSDRunConfig:
     injected_raw_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
     injected_corrected_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
     mle_score_mode: str = "best_available"
-    target_bloch: tuple[float, float, float] = tuple(
-        float(x) for x in DEFAULT_TARGET_BLOCH
+    target_bloch: tuple[float, float, float] = (
+        float(DEFAULT_TARGET_BLOCH[0]),
+        float(DEFAULT_TARGET_BLOCH[1]),
+        float(DEFAULT_TARGET_BLOCH[2]),
     )
 
     @classmethod
@@ -192,7 +198,11 @@ def resolve_msd_prep_parameters(
         theta=theta,
         phi=phi,
         lam=lam,
-        prep_bloch=tuple(float(x) for x in prep_bloch.tolist()),
+        prep_bloch=(
+            float(prep_bloch[0]),
+            float(prep_bloch[1]),
+            float(prep_bloch[2]),
+        ),
         prep_fidelity=float(prep_fidelity),
     )
 
@@ -207,7 +217,7 @@ def build_experiment_task_maps(
     injected_measurement_maps: tuple[Any, Any],
     simulator: GeminiLogicalSimulator | None = None,
     append_measurements: bool = False,
-    special_tsim_circuit_strategy: str | None = "prefix_prepare",
+    special_tsim_circuit_strategy: SpecialTsimCircuitStrategy | None = "prefix_prepare",
 ) -> ExperimentTaskMaps:
     sim = simulator if simulator is not None else GeminiLogicalSimulator()
     noisy_initializer = make_noisy_steane7_initializer(sim)
@@ -316,7 +326,7 @@ def train_mld_experiment(
     special_tasks: Mapping[str, DemoTask],
     actual_tasks: Mapping[str, DemoTask],
     train_shots: int,
-    table_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
     valid_factory_targets: np.ndarray,
     sign_vector: Sequence[float],
     ranking_train_shots: int | None = None,
@@ -402,8 +412,8 @@ def evaluate_decoder_experiment(
     mld_decoder_map: Mapping[str, DecoderAdapter],
     eval_shots: int,
     binary_precision: int | None = None,
-    table_decoder_cls: type,
-    gurobi_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
+    gurobi_decoder_cls: type[ConfidenceDecoder],
     valid_factory_targets: np.ndarray,
     sign_vector: Sequence[float],
     injected_corrected_sign_vector: Sequence[float],
@@ -495,8 +505,8 @@ def run_msd_fig3b_experiment(
     *,
     prep_config: MSDPrepConfig,
     run_config: MSDRunConfig,
-    table_decoder_cls: type,
-    gurobi_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
+    gurobi_decoder_cls: type[ConfidenceDecoder],
     plot_config: MSDPlotConfig | None = None,
     simulator: GeminiLogicalSimulator | None = None,
     append_measurements: bool = False,
@@ -504,7 +514,10 @@ def run_msd_fig3b_experiment(
 ) -> MSDFig3BExperimentResult:
     resolved_plot_config = plot_config if plot_config is not None else MSDPlotConfig()
     target_bloch = np.asarray(run_config.target_bloch, dtype=np.float64)
-    prep = resolve_msd_prep_parameters(prep_config, target_bloch=target_bloch)
+    prep = resolve_msd_prep_parameters(
+        prep_config,
+        target_bloch=run_config.target_bloch,
+    )
     kernel_bundle = build_decoder_kernel_bundle(
         prep.theta,
         prep.phi,

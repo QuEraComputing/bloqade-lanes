@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -10,13 +9,15 @@ import numpy as np
 import stim
 from beliefmatching import detector_error_model_to_check_matrices
 
+# NOTE: this file depends on the version of bloqade-decoders with a ConfidenceDecoder abstract class
+from bloqade.decoders import BaseDecoder, ConfidenceDecoder, TableDecoder
+
 from .common import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout
 from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
     ancilla_matches_valid_targets,
-    bits_to_key,
     fidelity_from_counts,
     fidelity_from_zero_one_counts,
     iter_task_datasets,
@@ -27,30 +28,19 @@ from .core import (
     split_factory_bits,
     unpack_packed_bits,
 )
+from .decoder_classes import SparseTableDecoder
 
-# TODO: continue reading the code here, May 8
-SyndromeKey: TypeAlias = int | str
+TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]
 
 
+# NOTE: maybe this little wrapper around TableDecoder should go in the bloqade.decoders package?
 @dataclass(frozen=True)
-class DecoderAdapter:
-    full_decoder: Any
-    factory_decoder: Any
-    decode_factory: Callable[[Any], tuple[tuple[int, ...], float]]
-    decode_full: Callable[[Any], tuple[int, ...]]
-    # NOTE: so currently, the reason for factory_score_mode is more for backwards compatibility with bloqade-decoders -- it's to make sure that bloqade-decoders has
-    # the ability to 'decode_with_confidence'. But if we assume that bloqade-decoders ALWAYS has that functionality, then factory_score_mode isn't necessary.
-    # However, this might be worth keeping, because reasonably, for the same decoder, we might want to have different ways of computing the "confidence" score for decoding.
-    factory_score_mode: str
-
-
-@dataclass(frozen=True)
-class TableDecoderWithConfidence:
-    decoder: Any
+class TableDecoderWithConfidence(ConfidenceDecoder):
+    decoder: BaseDecoder
     syndrome_confidence: np.ndarray
     confidence_score_mode: str = "mld_output_fidelity"
 
-    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
         return np.asarray(self.decoder.decode(detector_bits), dtype=np.bool_)
 
     def decode_with_confidence(
@@ -69,6 +59,19 @@ class TableDecoderWithConfidence:
             else float("nan")
         )
         return correction, np.float64(score)
+
+
+# This is for the use case where you have some ancillas you want to decode without destroying the coherence of the "data" state that you want.
+@dataclass(frozen=True)
+class DecoderAdapter:
+    full_decoder: BaseDecoder | None
+    factory_decoder: ConfidenceDecoder | None
+    decode_factory: Callable[[int], tuple[tuple[int, ...], float]]
+    decode_full: Callable[[int], tuple[int, ...]]
+    # NOTE: so currently, the reason for factory_score_mode is more for backwards compatibility with bloqade-decoders -- it's to make sure that bloqade-decoders has
+    # the ability to 'decode_with_confidence'. But if we assume that bloqade-decoders ALWAYS has that functionality, then factory_score_mode isn't necessary.
+    # However, this might be worth keeping, because reasonably, for the same decoder, we might want to have different ways of computing the "confidence" score for decoding.
+    factory_score_mode: str
 
 
 def make_layout_only_dem(
@@ -109,6 +112,8 @@ def matrix_to_dem(
     return stim.DetectorErrorModel("\n".join(lines))
 
 
+# TODO: for here, and other places where task: Any, make it a more constrained type/a type that is abstracted with necessary methods from
+# GeminiLogicalSimulatorTask/etc.?
 def compute_dem_data(task: Any) -> dict[str, np.ndarray]:
     dem_matrix = detector_error_model_to_check_matrices(
         task.detector_error_model,
@@ -140,9 +145,9 @@ def select_output_observables(
 def train_mld_decoder_pair(
     training_dataset: BasisDataset,
     *,
-    table_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
-) -> tuple[Any, Any]:
+) -> tuple[BaseDecoder, BaseDecoder]:
     output_obs = select_output_observables(
         training_dataset.observables,
         layout=layout,
@@ -187,12 +192,12 @@ def train_mld_decoder_pair_from_task(
     task: Any,
     shots: int,
     *,
-    table_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     chunk_size: int | None = 1_000_000,
     with_noise: bool = True,
     sim_type: str = "tsim",
-) -> tuple[Any, Any]:
+) -> tuple[BaseDecoder, BaseDecoder]:
     chunk_iter = iter_task_datasets(
         task,
         shots,
@@ -246,34 +251,32 @@ def train_mld_decoder_pair_from_task(
 
 def _make_decoder_adapter(
     *,
-    full_decoder: Any,
-    factory_decoder: Any,
+    full_decoder: BaseDecoder,
+    factory_decoder: ConfidenceDecoder,
     full_syndrome_length: int,
     factory_syndrome_length: int,
     factory_decode_impl: Callable[[np.ndarray], tuple[np.ndarray, float]],
     factory_score_mode: str,
 ) -> DecoderAdapter:
-    def _normalize_syndrome_key(key: SyndromeKey, length: int) -> np.ndarray:
-        if isinstance(key, str):
-            bits = np.fromiter((1 if c == "1" else 0 for c in key), dtype=np.uint8)
-            if len(bits) != length:
-                raise ValueError(
-                    f"Syndrome key has length {len(bits)} but expected {length} bits."
-                )
-            return bits.astype(bool)
-        return unpack_packed_bits(int(key), length).astype(bool)
-
+    # NOTE: the reason why we have to pack/unpack these bits is because lru_cache doesn't work for numpy arrays
+    # but works for ints. So that's why the signature here for decode_factory takes in an int for the syndrome.
     @lru_cache(maxsize=None)
-    def decode_factory(packed_syndrome: SyndromeKey):
-        syndrome = _normalize_syndrome_key(packed_syndrome, factory_syndrome_length)
+    def decode_factory(packed_syndrome: int):
+        syndrome = unpack_packed_bits(
+            int(packed_syndrome),
+            factory_syndrome_length,
+        ).astype(bool)
         correction, score = factory_decode_impl(syndrome)
         return tuple(
             int(x) for x in np.asarray(correction, dtype=np.uint8).tolist()
         ), float(score)
 
     @lru_cache(maxsize=None)
-    def decode_full(packed_syndrome: SyndromeKey):
-        syndrome = _normalize_syndrome_key(packed_syndrome, full_syndrome_length)
+    def decode_full(packed_syndrome: int):
+        syndrome = unpack_packed_bits(
+            int(packed_syndrome),
+            full_syndrome_length,
+        ).astype(bool)
         correction = np.asarray(full_decoder.decode(syndrome), dtype=np.uint8)
         return tuple(int(x) for x in correction.tolist())
 
@@ -287,19 +290,14 @@ def _make_decoder_adapter(
 
 
 def _call_decoder_fn(
-    fn: Callable[[SyndromeKey], Any],
+    fn: Callable[[int], Any],
     bits: np.ndarray,
 ) -> Any:
-    packed = packed_bits_to_int(bits)
-    try:
-        return fn(packed)
-    except TypeError:
-        return fn(bits_to_key(bits))
+    return fn(packed_bits_to_int(bits))
 
 
 def estimate_mld_ancilla_scores(
-    # TODO: the types need to be more specific here
-    decoder_by_basis: Mapping[str, tuple[Any, Any]],
+    decoder_by_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
     ranking_data_by_basis: Mapping[str, BasisDataset],
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
@@ -370,6 +368,9 @@ def _mld_scores_from_pattern_counts(
 
     scores = np.full(1 << ancilla_detectors, np.nan, dtype=np.float64)
     all_patterns = set()
+    # TODO: ideally, we don't hardcode to just single qubit logical tomography; but this would require additional refactoring
+    # Plus, I think our current fidelity path is coupled to single qubit (it's bloch-sphere based).. not sure how it would
+    # work with multi-qubit logical tomography
     for basis in basis_labels:
         all_patterns.update(corrected_by_pattern[basis].keys())
 
@@ -404,8 +405,8 @@ def _accumulate_mld_pattern_counts(
     pattern_counts: defaultdict[int, np.ndarray],
     dataset: BasisDataset,
     *,
-    full_decoder: Any,
-    factory_decoder: Any,
+    full_decoder: BaseDecoder,
+    factory_decoder: BaseDecoder,
     packed_targets: set[int],
     layout: SyndromeLayout,
 ) -> int:
@@ -471,7 +472,7 @@ def _accumulate_mld_pattern_counts(
 
 
 def estimate_mld_ancilla_scores_from_tasks(
-    decoder_by_basis: Mapping[str, tuple[Any, Any]],
+    decoder_by_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
     ranking_tasks_by_basis: Mapping[str, Any],
     shots: int,
     *,
@@ -543,7 +544,7 @@ def build_mld_decoders(
     training_dataset: BasisDataset,
     ancilla_scores: np.ndarray,
     *,
-    table_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
     anc_det, anc_obs = split_factory_bits(
@@ -567,8 +568,8 @@ def build_mld_decoders(
 
 def build_mld_decoders_from_pair(
     *,
-    full_decoder: Any,
-    factory_decoder: Any,
+    full_decoder: BaseDecoder,
+    factory_decoder: BaseDecoder,
     full_syndrome_length: int,
     factory_syndrome_length: int,
     ancilla_scores: np.ndarray,
@@ -600,67 +601,20 @@ def build_mld_decoders_from_pair(
 
 
 class MLEFactoryScorer:
-    def __init__(self, decoder: Any, *, score_mode: str):
+    def __init__(self, decoder: ConfidenceDecoder, *, score_mode: str):
         self.decoder = decoder
         self.score_mode = score_mode
-        self.decode_signature = inspect.signature(decoder.decode)
 
     def decode(self, syndrome: np.ndarray) -> tuple[np.ndarray, float, str]:
-        return _score_from_decoder(
-            self.decoder,
-            syndrome,
-            score_mode=self.score_mode,
+        correction, confidence = self.decoder.decode_with_confidence(
+            syndrome.astype(bool)
         )
-
-
-def _score_from_decoder(
-    decoder: Any,
-    syndrome: np.ndarray,
-    *,
-    score_mode: str,
-) -> tuple[np.ndarray, float, str]:
-    if hasattr(decoder, "decode_with_confidence"):
-        correction, confidence = decoder.decode_with_confidence(syndrome.astype(bool))
-        score_kind = getattr(decoder, "confidence_score_mode", "confidence")
+        score_kind = getattr(self.decoder, "confidence_score_mode", "confidence")
         return (
             np.asarray(correction, dtype=np.uint8),
             float(np.float64(confidence)),
             str(score_kind),
         )
-
-    decode_signature = inspect.signature(decoder.decode)
-
-    if "return_logical_gap" in decode_signature.parameters:
-        result = decoder.decode(syndrome, return_logical_gap=True)
-        correction, logical_gap = result[:2]
-        logical_gap = np.asarray(logical_gap, dtype=np.float64)
-        return (
-            np.asarray(correction, dtype=np.uint8),
-            float(logical_gap[0]),
-            "logical_gap",
-        )
-
-    if hasattr(decoder, "decode_with_logical_gap"):
-        correction, logical_gap = decoder.decode_with_logical_gap(syndrome)
-        logical_gap = np.asarray(logical_gap, dtype=np.float64)
-        return (
-            np.asarray(correction, dtype=np.uint8),
-            float(logical_gap[0]),
-            "logical_gap",
-        )
-
-    if score_mode == "logical_gap":
-        raise RuntimeError(
-            "Requested logical-gap MLE scoring, but this GurobiDecoder does not expose logical-gap support."
-        )
-
-    if "return_weights" in decode_signature.parameters:
-        correction, weights = decoder.decode(syndrome, return_weights=True)
-        weights = np.asarray(weights, dtype=np.float64)
-        return np.asarray(correction, dtype=np.uint8), float(weights[0]), "weight"
-
-    correction = np.asarray(decoder.decode(syndrome), dtype=np.uint8)
-    return correction, float("nan"), "none"
 
 
 def _packed_pattern_targets(
@@ -671,6 +625,7 @@ def _packed_pattern_targets(
     }
 
 
+# TODO: refactor this; probably reused logic from quantile logic in bayesian_tomography.py?
 def _weighted_quantiles_from_counts(
     values: np.ndarray,
     weights: np.ndarray,
@@ -909,7 +864,7 @@ def _evaluate_cached_threshold_curve(
     score_array: np.ndarray,
     *,
     score_weights: np.ndarray | None = None,
-    binary_precision: int,
+    binary_precision: int | None,
     threshold_points: int,
     sign_vector: Sequence[float],
     target_bloch: np.ndarray,
@@ -1011,7 +966,7 @@ def _evaluate_cached_threshold_curve(
 def build_mle_decoders(
     task: Any,
     *,
-    gurobi_decoder_cls: type,
+    gurobi_decoder_cls: type[ConfidenceDecoder],
     score_mode: str = "best_available",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
@@ -1250,7 +1205,7 @@ def injected_baseline(
     *,
     eval_shots: int,
     binary_precision: int | None = None,
-    table_decoder_cls: type,
+    table_decoder_cls: TableDecoderClass,
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     raw: bool = False,

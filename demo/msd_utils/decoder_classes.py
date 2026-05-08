@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import stim
+from bloqade.decoders import BaseDecoder
 
 from .core import pack_boolean_array, unpack_packed_bits
 
@@ -10,7 +11,7 @@ from .core import pack_boolean_array, unpack_packed_bits
 # ^ To be honest, this probably won't be used in production that much (we will probably stick to a np.array lookup table for fast lookups), so not reviewing it super carefully atm.
 # ^ for a couple reasons -- we'd probably want our tabledecoder to NOT be that sparse if it was good (we'd want to have seen a lot of different detector patterns) -- this was more
 # just implemented for prototyping reasons.
-class SparseTableDecoder:
+class SparseTableDecoder(BaseDecoder):
     """Sparse lookup-table decoder with the same MLD argmax semantics.
 
     Stores only observed detector/observable pairs, then decodes each detector
@@ -104,21 +105,10 @@ class SparseTableDecoder:
             correction[det] = best_obs
         self._maximum_likelihood_correction = correction
 
-    def decode(self, detector_bits: np.ndarray) -> np.ndarray:
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
         arr = np.asarray(detector_bits, dtype=np.uint8)
         self.cache_correction()
         assert self._maximum_likelihood_correction is not None
-        if arr.ndim == 1:
-            packed = int(pack_boolean_array(arr)[0])
-            obs = self._maximum_likelihood_correction.get(packed, 0)
-            return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
-
-        packed = pack_boolean_array(arr).astype(np.uint64)
-        obs = np.array(
-            [self._maximum_likelihood_correction.get(int(p), 0) for p in packed],
-            dtype=np.uint64,
-        )
-        if self.num_observables == 0:
-            return np.zeros((len(obs), 0), dtype=np.bool_)
-        shifts = np.arange(self.num_observables, dtype=np.uint64).reshape(1, -1)
-        return ((obs.reshape(-1, 1) >> shifts) & 1).astype(np.bool_)
+        packed = int(pack_boolean_array(arr)[0])
+        obs = self._maximum_likelihood_correction.get(packed, 0)
+        return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
