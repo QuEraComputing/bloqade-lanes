@@ -89,6 +89,7 @@ class MSDRunConfig:
     mld_train_shots: int = 10_000_000
     eval_shots: int = 1_000_000
     binary_precision: int = 9
+    max_grid_points: int = 1_500_000
     mle_threshold_points: int = 64
     mle_threshold_policy: str = "quantile"
     uncertainty_backend: str = "wilson"
@@ -414,6 +415,7 @@ def evaluate_decoder_experiment(
     mle_threshold_policy: str = "quantile",
     uncertainty_backend: str = "wilson",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    max_grid_points: int = 1_500_000,
 ) -> DecoderSweepEvaluation:
     actual_data_by_basis = {
         basis: run_task(task, eval_shots, with_noise=True)
@@ -438,6 +440,7 @@ def evaluate_decoder_experiment(
         basis_labels=basis_labels,
         layout=layout,
         uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
     )
     mle_curve = evaluate_curve(
         actual_data_by_basis,
@@ -452,6 +455,7 @@ def evaluate_decoder_experiment(
         threshold_policy=mle_threshold_policy,
         layout=layout,
         uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
     )
     injected_summary_corrected = injected_baseline(
         injected_tasks,
@@ -463,6 +467,7 @@ def evaluate_decoder_experiment(
         training_task_map=injected_decoder_tasks,
         basis_labels=basis_labels,
         uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
     )
     injected_summary_raw = injected_baseline(
         injected_tasks,
@@ -474,6 +479,7 @@ def evaluate_decoder_experiment(
         raw=True,
         basis_labels=basis_labels,
         uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
     )
     return DecoderSweepEvaluation(
         actual_data_by_basis=actual_data_by_basis,
@@ -556,6 +562,7 @@ def run_msd_fig3b_experiment(
         basis_labels=run_config.basis_labels,
         mle_threshold_policy=run_config.mle_threshold_policy,
         uncertainty_backend=run_config.uncertainty_backend,
+        max_grid_points=run_config.max_grid_points,
     )
     return MSDFig3BExperimentResult(
         prep=prep,

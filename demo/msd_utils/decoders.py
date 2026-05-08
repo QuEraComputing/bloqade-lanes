@@ -918,6 +918,7 @@ def _evaluate_cached_threshold_curve(
     threshold_policy: str,
     total_shots: int,
     uncertainty_backend: str,
+    max_grid_points: int,
 ) -> dict[str, np.ndarray]:
     if len(score_array) == 0:
         raise RuntimeError("No factory-accepted shots found for threshold sweep")
@@ -984,6 +985,7 @@ def _evaluate_cached_threshold_curve(
             sign_vector=sign_vector,
             target_bloch=target_bloch,
             uncertainty_backend=uncertainty_backend,
+            max_grid_points=max_grid_points,
         )
         accepted_fractions.append(total_kept / total_shots)
         fidelities.append(summary["median"])
@@ -1070,6 +1072,7 @@ def evaluate_curve(
     selection_mode: str = "threshold",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, np.ndarray]:
     if selection_mode == "pattern_rank":
         return evaluate_mld_curve(
@@ -1083,6 +1086,7 @@ def evaluate_curve(
             min_accepted_per_basis=min_accepted_per_basis,
             layout=layout,
             uncertainty_backend=uncertainty_backend,
+            max_grid_points=max_grid_points,
         )
     if selection_mode != "threshold":
         raise ValueError("selection_mode must be 'threshold' or 'pattern_rank'.")
@@ -1114,6 +1118,7 @@ def evaluate_curve(
             threshold_policy=threshold_policy,
             total_shots=total_shots,
             uncertainty_backend=uncertainty_backend,
+            max_grid_points=max_grid_points,
         )
     except RuntimeError as exc:
         raise RuntimeError(
@@ -1133,6 +1138,7 @@ def evaluate_mld_curve(
     min_accepted_per_basis: int = 50,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, np.ndarray]:
     targets = normalize_valid_factory_targets(valid_factory_targets)
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
@@ -1225,6 +1231,7 @@ def evaluate_mld_curve(
             sign_vector=sign_vector,
             target_bloch=target_bloch,
             uncertainty_backend=uncertainty_backend,
+            max_grid_points=max_grid_points,
         )
         total_kept = sum(len(cumulative_bits[basis]) for basis in basis_labels)
         accepted_fractions.append(total_kept / total_shots)
@@ -1251,6 +1258,7 @@ def injected_baseline(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     uncertainty_backend: str = "wilson",
     sim_type: str = "tsim",
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, Any]:
     corrected = {}
     for basis in basis_labels:
@@ -1300,4 +1308,5 @@ def injected_baseline(
         sign_vector=sign_vector,
         target_bloch=target_bloch,
         uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
     )

@@ -20,6 +20,7 @@ def weighted_quantile(
     return np.interp(np.asarray(quantiles, dtype=np.float64), cdf, values)
 
 
+# TODO: make the prior for fidelity computation configurable
 def _bures_measure(points: np.ndarray) -> np.ndarray:
     radii_sq = np.sum(points * points, axis=1)
     weights = np.zeros(len(points), dtype=np.float64)
@@ -28,6 +29,7 @@ def _bures_measure(points: np.ndarray) -> np.ndarray:
     return weights
 
 
+# TODO: get rid of the 9 binary precision cap, to allow for the user to get arbitrarily precise tomography estimates.
 def _grid_axis_points(binary_precision: int) -> int:
     return 2 ** min(9, max(4, int(binary_precision))) + 1
 
@@ -38,27 +40,26 @@ def _grid_axis_values(axis_points: int) -> np.ndarray:
     return (edges[:-1] + edges[1:]) / 2.0
 
 
-# NOTE: is meant to help reduce the set of vectors we calculate likelihoods over for tomography, for speed (may have some impact on the resulting
-# fidelity distribution, tho)
-# TODO: What if someone doesn't want to do this because it impacts the precision on their results?
-def _axis_window(
-    values: np.ndarray, n_i: int, k_i: int, *, min_points: int = 33
+def _axis_likelihood_window(
+    values: np.ndarray,
+    n_i: int,
+    k_i: int,
+    *,
+    binary_precision: int,
+    min_points: int = 33,
 ) -> np.ndarray:
     if n_i <= 0 or len(values) <= min_points:
         return values
 
-    p = float(np.clip(k_i / n_i, 1e-6, 1.0 - 1e-6))
-    mean = 2.0 * p - 1.0
-    sigma = 2.0 * np.sqrt(max(p * (1.0 - p), 1.0 / max(4 * n_i, 1)) / n_i)
-    half_width = max(0.08, 8.0 * sigma)
-    low = max(-1.0, mean - half_width)
-    high = min(1.0, mean + half_width)
+    probs = np.clip((1.0 + values) / 2.0, 1e-12, 1.0 - 1e-12)
+    log_likelihood = k_i * np.log(probs) + (n_i - k_i) * np.log1p(-probs)
+    relative_log_likelihood = log_likelihood - np.max(log_likelihood)
+    mask = relative_log_likelihood > -float(binary_precision) * np.log(2.0)
 
-    mask = (values >= low) & (values <= high)
-    if int(mask.sum()) >= min_points:
+    if np.any(mask) and int(mask.sum()) >= min_points:
         return values[mask]
 
-    center = int(np.argmin(np.abs(values - mean)))
+    center = int(np.argmax(log_likelihood))
     radius = min_points // 2
     start = max(0, center - radius)
     stop = min(len(values), center + radius + 1)
@@ -77,17 +78,28 @@ def _downsample_axis(values: np.ndarray, keep: int) -> np.ndarray:
     return values[np.unique(indices)]
 
 
+# TODO: I think this "adaptive bloch ball thing" can give us maybe 'faster' estimates of the fidelity.
+# If you really wanted to be more precise at the cost of more compute, then you could consider switching this implementation. -- a TODO would
+# be to make this implementation more extensible/allow the user to choose the precision of their bloch ball estimates.
 def _adaptive_bloch_ball_grid(
-    axis_points: int, n: np.ndarray, k: np.ndarray
+    axis_points: int,
+    n: np.ndarray,
+    k: np.ndarray,
+    *,
+    binary_precision: int,
+    max_grid_points: int,
 ) -> np.ndarray:
     axis_values = _grid_axis_values(axis_points)
     subsets = [
-        _axis_window(axis_values, int(n_i), int(k_i))
+        _axis_likelihood_window(
+            axis_values,
+            int(n_i),
+            int(k_i),
+            binary_precision=binary_precision,
+        )
         for n_i, k_i in zip(n, k, strict=True)
     ]
 
-    # TODO: should max_grid_points be hardcoded here?
-    max_grid_points = 1_500_000
     total_points = len(subsets[0]) * len(subsets[1]) * len(subsets[2])
     if total_points > max_grid_points:
         scale = (total_points / max_grid_points) ** (1.0 / 3.0)
@@ -115,13 +127,20 @@ def posterior_fidelity_summary(
     sign: np.ndarray,
     target_bloch: np.ndarray,
     binary_precision: int | None = None,
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, float | tuple[float, float, float]]:
     if binary_precision is None:
         binary_precision = 9
     else:
         binary_precision = max(4, int(binary_precision))
     axis_points = _grid_axis_points(binary_precision)
-    points = _adaptive_bloch_ball_grid(axis_points, n, k)
+    points = _adaptive_bloch_ball_grid(
+        axis_points,
+        n,
+        k,
+        binary_precision=binary_precision,
+        max_grid_points=max_grid_points,
+    )
 
     probs = np.clip((1.0 + points) / 2.0, 1e-12, 1.0 - 1e-12)
     log_likelihood = (k * np.log(probs) + (n - k) * np.log1p(-probs)).sum(axis=1)

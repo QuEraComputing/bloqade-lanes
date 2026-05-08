@@ -120,6 +120,7 @@ def fidelity_from_counts(
     sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, Any]:
     x_zero = int(np.sum(np.asarray(x_bits) == 0))
     x_one = int(np.sum(np.asarray(x_bits) != 0))
@@ -139,6 +140,7 @@ def fidelity_from_counts(
         sign_vector=sign_vector,
         target_bloch=target_bloch,
         uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
     )
 
 
@@ -154,6 +156,7 @@ def fidelity_from_zero_one_counts(
     sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, Any]:
     sign = np.asarray(sign_vector, dtype=np.float64)
     target = np.asarray(target_bloch, dtype=np.float64)
@@ -193,6 +196,7 @@ def fidelity_from_zero_one_counts(
             sign=sign,
             target_bloch=target,
             binary_precision=binary_precision,
+            max_grid_points=max_grid_points,
         )
         low = posterior["low"]
         high = posterior["high"]
@@ -548,6 +552,7 @@ def naive_injected_summary(
     min_accepted_per_basis: int = 50,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, Any]:
     corrected: dict[str, np.ndarray] = {}
     accepted_fraction_by_basis: dict[str, float] = {}
@@ -571,6 +576,7 @@ def naive_injected_summary(
         binary_precision,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
+        max_grid_points=max_grid_points,
     )
     summary["accepted_fraction"] = float(
         np.mean(list(accepted_fraction_by_basis.values()))
@@ -591,6 +597,7 @@ def naive_distilled_summary(
     min_accepted_per_basis: int = 50,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    max_grid_points: int = 1_500_000,
 ) -> dict[str, Any]:
     targets = normalize_valid_factory_targets(valid_factory_targets)
     corrected: dict[str, np.ndarray] = {}
@@ -620,6 +627,7 @@ def naive_distilled_summary(
         binary_precision,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
+        max_grid_points=max_grid_points,
     )
     summary["accepted_fraction"] = total_kept / total_shots
     summary["accepted_fraction_by_basis"] = accepted_fraction_by_basis
