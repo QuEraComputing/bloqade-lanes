@@ -142,15 +142,16 @@ class BusGraph:
 
 
 class MachineModel:
-    arch_spec: ArchSpec     # back-reference to the parent ArchSpec (e.g. for visualization)
+    arch_spec: ArchSpec              # back-reference to the parent ArchSpec (e.g. for visualization)
     capacity: CapacityInfo
     gate_info: GateInfo
     bus_graph: BusGraph
+    noise: NoiseModel | None         # None when derived without a PhysicalNoiseSpec
 ```
 
 **CZ pairs are not stored in `ArchSpec` — they are computed by `derive()`.** For each entry in `PhysicalSpec.rydberg_tophats` (in canonical key order), all pairs of addressed sites that both fall within `[y_min, y_max]` and are at or below `PhysicalSpec.blockade_radius` apart are collected into a `TopHatCZ` and emitted as `MachineModel.gate_info.top_hats`.
 
-`bus_graph` is produced by resolving the physical grid positions in each `PhysicalSpec.PhysicalBus` through the zone `AddressMapping`s. `Bus` captures only the virtual src/dst `LocationAddress` pairs; intermediate waypoints remain in `PhysicalSpec`.
+`bus_graph` is produced by resolving the physical grid positions in each `PhysicalBus` through the zone `AddressMapping`s. `Bus` captures only the virtual src/dst `LocationAddress` pairs; intermediate waypoints remain in `PhysicalSpec`.
 
 `gate_info.top_hats` is derived by iterating over `PhysicalSpec.rydberg_tophats` in canonical key order. For each top-hat, a `TopHatCZ` is produced by finding all pairs of addressed sites whose physical positions both fall within `[y_min, y_max]` and whose mutual distance is at or below `PhysicalSpec.blockade_radius`. There is no assumption that pairs are intra-zone or between whole words — any two addressable sites that co-occur within a top-hat beam and are within blockade range form a CZ pair.
 
@@ -214,13 +215,13 @@ The 2 bits freed by removing `mt` are absorbed into `pad` (5 → 7 bits). All ot
 | `dir` | 1 | 0=FORWARD, 1=BACKWARD | Transport direction along the bus |
 | `pad` | 7 | — | Reserved, must be zero |
 | `zone_id` | 8 | 0..255 | Key into `AddressSpace.zones`; use `ArchSpec.name_bridge.zone_labels` for human-readable name |
-| `bus_id` | 16 | 0..65535 | Index into `MachineModel.bus_graph`; assigned canonically during derivation |
+| `bus_id` | 16 | 0..65535 | Index into `MachineModel.bus_graph.buses`; assigned canonically during derivation |
 
 `PhysicalSpec.buses` uses human-readable string keys; `bus_id` (integer) is assigned by `MachineModel` construction using a deterministic canonical ordering of those keys. `zone_id` remains a separate field from `word_id` because zones can reference differently-sized grids and `word_id`s are not unique across zones.
 
 ## Impact on Downstream Consumers
 
-- **`gemini.logical` dialect**: `SiteBusMove` and `WordBusMove` collapse into a single `BusMove` statement; `bus_id` is the integer key into `MachineModel.bus_graph`. `MoveType` attribute is removed.
+- **`gemini.logical` dialect**: `SiteBusMove` and `WordBusMove` collapse into a single `BusMove` statement; `bus_id` is the integer key into `MachineModel.bus_graph.buses`. `MoveType` attribute is removed.
 - **`lanes2flair` rewrites** (bloqade-flair): the hardcoded `{bus_id: lib_fn}` dict in `RewriteSiteBusMove` is replaced by a lookup driven by `MachineModel.bus_graph`. New bus types (right-direction, etc.) are handled without modifying the rewrite rule.
 - **`iter_all_lanes` / `check_lane_group`**: rewritten in terms of `MachineModel.bus_graph` rather than per-zone bus enumeration.
 - **Validation**: bus membership checks operate on `LocationAddress` lists directly, no `MoveType` dispatch needed.
@@ -304,10 +305,10 @@ def is_subset(self: PhysicalSpec, other: PhysicalSpec) -> bool:
 
 ### `MachineModel` subsetting
 
-`derived_1 ⊆ derived_2` is a consequence of the above — it does not need to be checked directly. If both `PhysicalSpec` and `AddressSpace` satisfy the subset relation, `MachineModel` is guaranteed to follow:
-- Every `bus_id` in `derived_1.bus_graph.buses` will exist in `derived_2.bus_graph.buses` with the same `src`/`dst`.
-- For each `TopHatCZ` in `derived_1.gate_info.top_hats`, the corresponding `TopHatCZ` in `derived_2.gate_info.top_hats` will contain a superset of its `cz_pairs`.
-- Every address in `derived_1.gate_info.local_gate_addresses` will exist in `derived_2.gate_info.local_gate_addresses`.
+`machine_model_1 ⊆ machine_model_2` is a consequence of the above — it does not need to be checked directly. If both `PhysicalSpec` and `AddressSpace` satisfy the subset relation, `MachineModel` is guaranteed to follow:
+- Every `bus_id` in `machine_model_1.bus_graph.buses` will exist in `machine_model_2.bus_graph.buses` with the same `src`/`dst`.
+- For each `TopHatCZ` in `machine_model_1.gate_info.top_hats`, the corresponding `TopHatCZ` in `machine_model_2.gate_info.top_hats` will contain a superset of its `cz_pairs`.
+- Every address in `machine_model_1.gate_info.local_gate_addresses` will exist in `machine_model_2.gate_info.local_gate_addresses`.
 
 ### Why the dict structure is essential here
 
@@ -319,7 +320,7 @@ For buses, string dict keys mean the subset check is purely key-and-value equali
 
 The noise model is a natural third derived artifact alongside `MachineModel`. The rough shape:
 
-- `NoiseModel` is derived from `PhysicalSpec` — gate fidelities, coherence times, SPAM errors, and crosstalk are all physical hardware properties that live in (or alongside) `PhysicalSpec`.
+- `NoiseModel` is derived from `PhysicalSpec` — gate fidelities, coherence times, SPAM errors, and crosstalk are all physical hardware properties that live alongside `PhysicalSpec`.
 - Once derived, the noise model can be attached to `MachineModel` to produce an enriched model suitable for noisy simulation or error-aware compilation.
 
 The proposed API shape:
@@ -373,14 +374,6 @@ class NoiseModel:
     spam_noise: dict[LocationAddress, SPAMNoiseParams]            # per site; derived by expanding per-grid SPAM noise
     T1: float
     T2: float
-
-
-class MachineModel:
-    arch_spec: ArchSpec
-    capacity: CapacityInfo
-    gate_info: GateInfo
-    bus_graph: BusGraph
-    noise: NoiseModel | None   # None when derived without noise
 
 
 # derive() without noise:
