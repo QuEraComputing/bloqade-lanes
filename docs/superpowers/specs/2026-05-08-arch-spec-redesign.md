@@ -322,6 +322,12 @@ def is_subset(self: PhysicalSpec, other: PhysicalSpec) -> bool:
 - `len(address_space_1.zones)` ≤ `len(address_space_2.zones)` — every zone_id (list index) in spec_1 exists in spec_2.
 - For each zone_id, every `word_id` in `address_space_1.zones[zone_id].words` exists at the same index in `address_space_2.zones[zone_id].words` with identical `x_indices`/`y_indices`.
 
+### `NameBridge` subsetting
+
+`name_bridge_1 ⊆ name_bridge_2` iff:
+- Every zone name in `name_bridge_1.zone_labels` exists in `name_bridge_2.zone_labels` with the **same integer value** — zone_id maps directly into the `LaneAddress` encoding, so key presence alone is not sufficient; the assigned integer must match.
+- Every top-hat key in `name_bridge_1.top_hat_index` exists in `name_bridge_2.top_hat_index` with the **same integer value** — the index positions `TopHatCZ` entries in `MachineModel.gate_info.top_hats` and must be stable across specs for compiled programs to remain valid.
+
 ### `MachineModel` subsetting
 
 `machine_model_1 ⊆ machine_model_2` is a consequence of the above — it does not need to be checked directly. If both `PhysicalSpec` and `AddressSpace` satisfy the subset relation, `MachineModel` is guaranteed to follow:
