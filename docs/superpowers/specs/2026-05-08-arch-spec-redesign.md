@@ -125,7 +125,7 @@ A `LocationAddress` is therefore `(zone_id, word_id, site_id)` where `site_id` k
 2. No two sites share an abstract grid position (no overlap across `SiteSlice`s).
 3. The union of all sites covers all `n_x * n_y` positions (full coverage required).
 
-`zones` is a list where the list index is the `zone_id`, mapping directly into the `LaneAddress` encoding. `ArchSpec.name_bridge.zone_labels` provides the human-readable names. `zone_id` is NOT derivable from `word_id` — different zones can reference grids of different sizes, and `word_id`s are local to each zone's `AddressMapping`.
+`zones` is a list where the list index is the `zone_id`, mapping directly into the `LaneAddress` encoding. `ArchSpec.name_bridge.zone_names[zone_id]` gives the human-readable name. `zone_id` is NOT derivable from `word_id` — different zones can reference grids of different sizes, and `word_id`s are local to each zone's `AddressMapping`.
 
 ### Layer 3: `MachineModel`
 
@@ -152,12 +152,12 @@ class TopHatCZ:
 
 
 class GateInfo:
-    top_hats: list[TopHatCZ]                     # one entry per key in PhysicalSpec.rydberg_tophats (canonical order)
+    top_hats: list[TopHatCZ]                     # top-hat index = list index; ordered by NameBridge.top_hat_names
     local_gate_addresses: list[LocationAddress]  # sites addressable by local single-qubit gates
 
 
 class BusGraph:
-    buses: dict[int, Bus]   # bus_id → Bus; bus_id sourced from NameBridge.bus_index
+    buses: dict[int, Bus]   # bus_id → Bus; bus_id = list index in NameBridge.bus_names
 
 
 class MachineModel:
@@ -168,13 +168,13 @@ class MachineModel:
     noise: NoiseModel | None         # None when derived without a PhysicalNoiseSpec
 ```
 
-**CZ pairs are not stored in `ArchSpec` — they are computed by `derive()`.** For each entry in `PhysicalSpec.rydberg_tophats` (in canonical key order), all pairs of addressed sites that both fall within `[y_min, y_max]` and are at or below `PhysicalSpec.blockade_radius` apart are collected into a `TopHatCZ` and emitted as `MachineModel.gate_info.top_hats`.
+**CZ pairs are not stored in `ArchSpec` — they are computed by `derive()`.** For each name in `NameBridge.top_hat_names` (in list order), all pairs of addressed sites that both fall within `[y_min, y_max]` and are at or below `PhysicalSpec.blockade_radius` apart are collected into a `TopHatCZ` and emitted as `MachineModel.gate_info.top_hats`.
 
-`bus_graph` is produced by resolving the physical grid positions in each `PhysicalBus` through the zone `AddressMapping`s. `Bus` captures only the virtual src/dst `LocationAddress` pairs; intermediate waypoints remain in `PhysicalSpec`.
+`bus_graph` is produced by resolving the physical grid positions in each `PhysicalBus` through the zone `AddressMapping`s. `Bus` captures only the virtual src/dst `LocationAddress` pairs; intermediate waypoints remain in `PhysicalSpec`. The integer `bus_id` for each bus is its index in `NameBridge.bus_names`.
 
-`gate_info.top_hats` is derived by iterating over `PhysicalSpec.rydberg_tophats` in canonical key order. For each top-hat, a `TopHatCZ` is produced by finding all pairs of addressed sites whose physical positions both fall within `[y_min, y_max]` and whose mutual distance is at or below `PhysicalSpec.blockade_radius`. There is no assumption that pairs are intra-zone or between whole words — any two addressable sites that co-occur within a top-hat beam and are within blockade range form a CZ pair.
+`gate_info.top_hats` is derived by iterating over `NameBridge.top_hat_names` in list order. For each top-hat, a `TopHatCZ` is produced by finding all pairs of addressed sites whose physical positions both fall within `[y_min, y_max]` and whose mutual distance is at or below `PhysicalSpec.blockade_radius`. There is no assumption that pairs are intra-zone or between whole words — any two addressable sites that co-occur within a top-hat beam and are within blockade range form a CZ pair.
 
-`gate_info.local_gate_addresses` is derived by collecting all `LocationAddress`es whose zone maps (via `ArchSpec.name_bridge.zone_labels`) to a grid key present in `PhysicalSpec.local_gate_grids`.
+`gate_info.local_gate_addresses` is derived by collecting all `LocationAddress`es whose zone maps (via `ArchSpec.name_bridge.zone_names[zone_id]`) to a grid key present in `PhysicalSpec.local_gate_grids`.
 
 `capacity.words_per_zone` is indexed by `zone_id` and gives the number of words in `AddressSpace.zones[zone_id].words`.
 
@@ -184,15 +184,15 @@ class MachineModel:
 
 ```python
 class NameBridge:
-    zone_labels: dict[str, int]    # zone name → zone_id; maps PhysicalSpec grid keys to AddressSpace zone indices
-    top_hat_index: dict[str, int]  # top-hat key → index into MachineModel.gate_info.top_hats
-    bus_index: dict[str, int]      # bus_key → bus_id; pins the integer bus_id for each PhysicalSpec.buses key
+    zone_names: list[str]     # zone_id = list index → PhysicalSpec.slm_grids key
+    top_hat_names: list[str]  # top-hat index = list index → PhysicalSpec.rydberg_tophats key
+    bus_names: list[str]      # bus_id = list index → PhysicalSpec.buses key
 
 
 ArchSpec(
     physical_spec: PhysicalSpec,        # slm_grids, buses, modes, local_gate_grids, rydberg_tophats, blockade_radius, feed_forward, atom_reloading
     address_space: AddressSpace,        # word_shape (n_x, n_y), site_slices, zones
-    name_bridge: NameBridge,            # zone_labels, top_hat_index, bus_index — string↔int mappings across the PhysicalSpec/AddressSpace boundary
+    name_bridge: NameBridge,            # zone_names, top_hat_names, bus_names — list-indexed string↔int mappings across the PhysicalSpec/AddressSpace boundary
 )
 
 # MachineModel is not stored — call derive() to emit it on demand:
@@ -200,10 +200,11 @@ arch_spec.derive() -> MachineModel
 ```
 
 **Validation rules for `ArchSpec`** (cross-layer; requires both `PhysicalSpec` and `AddressSpace`):
-1. Every zone name in `name_bridge.zone_labels` must exist as a key in `PhysicalSpec.slm_grids` — zone name = grid name.
-2. `len(address_space.zones)` must equal `len(name_bridge.zone_labels)` — every zone_id (list index) must have a corresponding entry in `name_bridge.zone_labels`.
-3. For each zone, all `x_indices` and `y_indices` in every `Word` must be within the bounds of `PhysicalSpec.slm_grids[zone_name]`.
-4. Every key in `name_bridge.top_hat_index` must exist in `PhysicalSpec.rydberg_tophats`, and the indices must be a valid permutation of `range(len(rydberg_tophats))`.
+1. Every name in `name_bridge.zone_names` must exist as a key in `PhysicalSpec.slm_grids` — zone name = grid name.
+2. `len(address_space.zones)` must equal `len(name_bridge.zone_names)` — every zone_id (list index) must have a corresponding entry in `name_bridge.zone_names`.
+3. For each zone, all `x_indices` and `y_indices` in every `Word` must be within the bounds of `PhysicalSpec.slm_grids[name_bridge.zone_names[zone_id]]`.
+4. `name_bridge.top_hat_names` must be a permutation of `PhysicalSpec.rydberg_tophats.keys()`.
+5. `name_bridge.bus_names` must be a permutation of `PhysicalSpec.buses.keys()`.
 
 ## New `LaneAddress` Encoding
 
@@ -234,10 +235,10 @@ The 2 bits freed by removing `mt` are absorbed into `pad` (5 → 7 bits). All ot
 | `site_id` | 16 | 0..65535 | List index into `AddressSpace.site_slices` |
 | `dir` | 1 | 0=FORWARD, 1=BACKWARD | Transport direction along the bus |
 | `pad` | 7 | — | Reserved, must be zero |
-| `zone_id` | 8 | 0..255 | Key into `AddressSpace.zones`; use `ArchSpec.name_bridge.zone_labels` for human-readable name |
-| `bus_id` | 16 | 0..65535 | Index into `MachineModel.bus_graph.buses`; sourced from `ArchSpec.name_bridge.bus_index` |
+| `zone_id` | 8 | 0..255 | List index into `AddressSpace.zones`; `ArchSpec.name_bridge.zone_names[zone_id]` gives the human-readable name |
+| `bus_id` | 16 | 0..65535 | List index into `ArchSpec.name_bridge.bus_names`; keys into `MachineModel.bus_graph.buses` |
 
-`PhysicalSpec.buses` uses human-readable string keys; the integer `bus_id` is pinned by `ArchSpec.name_bridge.bus_index` — the same way `zone_id` is pinned by `zone_labels` and the top-hat index is pinned by `top_hat_index`. This ensures that compiled programs remain valid across spec revisions: adding a new bus to `PhysicalSpec.buses` does not shift the integer IDs of existing buses. `zone_id` remains a separate field from `word_id` because zones can reference differently-sized grids and `word_id`s are not unique across zones.
+`PhysicalSpec.buses` uses human-readable string keys; the integer `bus_id` is the list index into `ArchSpec.name_bridge.bus_names` — the same way `zone_id` is the list index into `zone_names` and the top-hat index is the list index into `top_hat_names`. This ensures that compiled programs remain valid across spec revisions: adding a new bus to `PhysicalSpec.buses` does not shift the integer IDs of existing buses. `zone_id` remains a separate field from `word_id` because zones can reference differently-sized grids and `word_id`s are not unique across zones.
 
 ## Impact on Downstream Consumers
 
@@ -326,9 +327,9 @@ def is_subset(self: PhysicalSpec, other: PhysicalSpec) -> bool:
 ### `NameBridge` subsetting
 
 `name_bridge_1 ⊆ name_bridge_2` iff:
-- Every zone name in `name_bridge_1.zone_labels` exists in `name_bridge_2.zone_labels` with the **same integer value** — zone_id maps directly into the `LaneAddress` encoding, so key presence alone is not sufficient; the assigned integer must match.
-- Every top-hat key in `name_bridge_1.top_hat_index` exists in `name_bridge_2.top_hat_index` with the **same integer value** — the index positions `TopHatCZ` entries in `MachineModel.gate_info.top_hats` and must be stable across specs for compiled programs to remain valid.
-- Every bus key in `name_bridge_1.bus_index` exists in `name_bridge_2.bus_index` with the **same integer value** — bus_id maps directly into the `LaneAddress` encoding and into `MachineModel.bus_graph.buses`; a shift in assignment would silently corrupt compiled move programs.
+- `name_bridge_1.zone_names[i] == name_bridge_2.zone_names[i]` for all `i < len(name_bridge_1.zone_names)`, and `len(name_bridge_1.zone_names) ≤ len(name_bridge_2.zone_names)` — the list index is the zone_id in the `LaneAddress` encoding, so position must be preserved.
+- `name_bridge_1.top_hat_names[i] == name_bridge_2.top_hat_names[i]` for all `i < len(name_bridge_1.top_hat_names)`, and `len(name_bridge_1.top_hat_names) ≤ len(name_bridge_2.top_hat_names)` — the list index positions `TopHatCZ` entries in `MachineModel.gate_info.top_hats` and must be stable.
+- `name_bridge_1.bus_names[i] == name_bridge_2.bus_names[i]` for all `i < len(name_bridge_1.bus_names)`, and `len(name_bridge_1.bus_names) ≤ len(name_bridge_2.bus_names)` — the list index is the bus_id in the `LaneAddress` encoding; a position shift would silently corrupt compiled move programs.
 
 ### `MachineModel` subsetting
 
@@ -337,9 +338,9 @@ def is_subset(self: PhysicalSpec, other: PhysicalSpec) -> bool:
 - For each `TopHatCZ` in `machine_model_1.gate_info.top_hats`, the corresponding `TopHatCZ` in `machine_model_2.gate_info.top_hats` will contain a superset of its `cz_pairs`.
 - Every address in `machine_model_1.gate_info.local_gate_addresses` will exist in `machine_model_2.gate_info.local_gate_addresses`.
 
-### Why the dict structure is essential here
+### Why `NameBridge` uses lists
 
-For buses, the string keys in `PhysicalSpec.buses` enable key-and-value equality checks independent of insertion order, but the integer `bus_id` values that appear in compiled programs are pinned by `NameBridge.bus_index` — not derived from key ordering. This is the same pattern used for zones (`zone_labels`) and top-hats (`top_hat_index`): all integer identifiers that appear in the `LaneAddress` encoding are explicitly assigned in `NameBridge`, never inferred. Zones and words use list indices intentionally: zone_id and word_id are architecture-stable identifiers that map directly into the `LaneAddress` encoding and are never independently reordered.
+All integer identifiers that appear in the `LaneAddress` encoding — `zone_id`, `bus_id`, and the top-hat index — are pinned by list position in `NameBridge`. The list index IS the integer: `zone_names[zone_id]`, `bus_names[bus_id]`, `top_hat_names[top_hat_index]`. This is the same pattern used throughout the design (`zones: list[AddressMapping]`, `site_slices: list[SiteSlice]`): stable integer identifiers are list indices, never inferred from dict key ordering. `PhysicalSpec.buses` and `PhysicalSpec.rydberg_tophats` remain dicts with human-readable string keys for their own equality and subset checks, but it is `NameBridge` that controls which integer is assigned to each key.
 
 ## Open Question: Noise Model
 
