@@ -88,7 +88,7 @@ class MSDPrepConfig:
 class MSDRunConfig:
     mld_train_shots: int = 10_000_000
     eval_shots: int = 1_000_000
-    posterior_samples: int = 200_000
+    binary_precision: int = 9
     mle_threshold_points: int = 64
     mle_threshold_policy: str = "quantile"
     uncertainty_backend: str = "wilson"
@@ -108,7 +108,7 @@ class MSDRunConfig:
         return cls(
             mld_train_shots=20_000,
             eval_shots=4_000,
-            posterior_samples=20_000,
+            binary_precision=7,
             mle_threshold_points=24,
         )
 
@@ -400,7 +400,7 @@ def evaluate_decoder_experiment(
     injected_decoder_tasks: Mapping[str, DemoTask],
     mld_decoder_map: Mapping[str, DecoderAdapter],
     eval_shots: int,
-    posterior_samples: int,
+    binary_precision: int | None = None,
     table_decoder_cls: type,
     gurobi_decoder_cls: type,
     valid_factory_targets: np.ndarray,
@@ -431,7 +431,7 @@ def evaluate_decoder_experiment(
     mld_curve = evaluate_mld_curve(
         actual_data_by_basis,
         mld_decoder_map,
-        posterior_samples=posterior_samples,
+        binary_precision=binary_precision,
         valid_factory_targets=valid_factory_targets,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
@@ -442,7 +442,7 @@ def evaluate_decoder_experiment(
     mle_curve = evaluate_curve(
         actual_data_by_basis,
         mle_decoders,
-        posterior_samples=posterior_samples,
+        binary_precision=binary_precision,
         threshold_points=mle_threshold_points,
         metric="MLE logical gap",
         valid_factory_targets=valid_factory_targets,
@@ -456,7 +456,7 @@ def evaluate_decoder_experiment(
     injected_summary_corrected = injected_baseline(
         injected_tasks,
         eval_shots=eval_shots,
-        posterior_samples=posterior_samples,
+        binary_precision=binary_precision,
         table_decoder_cls=table_decoder_cls,
         sign_vector=injected_corrected_sign_vector,
         target_bloch=target_bloch,
@@ -467,7 +467,7 @@ def evaluate_decoder_experiment(
     injected_summary_raw = injected_baseline(
         injected_tasks,
         eval_shots=eval_shots,
-        posterior_samples=posterior_samples,
+        binary_precision=binary_precision,
         table_decoder_cls=table_decoder_cls,
         sign_vector=injected_raw_sign_vector,
         target_bloch=target_bloch,
@@ -540,7 +540,7 @@ def run_msd_fig3b_experiment(
         injected_decoder_tasks=task_maps.injected_decoder_tasks,
         mld_decoder_map=mld_training.decoder_map_by_basis,
         eval_shots=run_config.eval_shots,
-        posterior_samples=run_config.posterior_samples,
+        binary_precision=run_config.binary_precision,
         table_decoder_cls=table_decoder_cls,
         gurobi_decoder_cls=gurobi_decoder_cls,
         valid_factory_targets=np.asarray(

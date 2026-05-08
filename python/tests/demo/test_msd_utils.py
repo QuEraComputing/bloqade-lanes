@@ -48,7 +48,7 @@ def test_fidelity_from_counts_returns_ordered_interval():
         np.array([0, 0, 1, 0], dtype=np.uint8),
         np.array([0, 1, 0, 0], dtype=np.uint8),
         np.array([0, 0, 0, 1], dtype=np.uint8),
-        posterior_samples=256,
+        binary_precision=4,
     )
     assert set(summary) >= {"point", "median", "low", "high", "bloch"}
     assert summary["low"] <= summary["median"] <= summary["high"]
@@ -64,7 +64,7 @@ def test_fidelity_from_counts_realistic_interval_is_finite_and_noncollapsed():
         x_bits,
         y_bits,
         z_bits,
-        posterior_samples=20_000,
+        binary_precision=7,
     )
 
     assert np.isfinite(summary["point"])
@@ -446,7 +446,7 @@ def test_evaluate_curve_returns_monotone_acceptance():
     curves = evaluate_curve(
         {"X": dataset, "Y": dataset, "Z": dataset},
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
-        posterior_samples=64,
+        binary_precision=4,
         threshold_points=3,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
@@ -513,7 +513,7 @@ def test_evaluate_curve_cached_generic_threshold_matches_legacy_loop():
     curves = evaluate_curve(
         actual_data,
         decoder_map,
-        posterior_samples=256,
+        binary_precision=4,
         threshold_points=5,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
@@ -668,7 +668,7 @@ def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
     curves = evaluate_mld_curve(
         {"X": dataset, "Y": dataset, "Z": dataset},
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
-        posterior_samples=64,
+        binary_precision=4,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
@@ -724,7 +724,7 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
     legacy_curves = evaluate_mld_curve(
         {"X": dataset, "Y": dataset, "Z": dataset},
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
-        posterior_samples=64,
+        binary_precision=4,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
         sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
@@ -733,7 +733,7 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
     curves = evaluate_curve(
         {"X": dataset, "Y": dataset, "Z": dataset},
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
-        posterior_samples=64,
+        binary_precision=4,
         threshold_points=4,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
@@ -806,7 +806,7 @@ def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
             "Y": make_adapter("mld_output_fidelity"),
             "Z": make_adapter("mld_output_fidelity"),
         },
-        posterior_samples=64,
+        binary_precision=4,
         threshold_points=3,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
@@ -822,7 +822,7 @@ def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
             "Y": make_adapter("logical_gap"),
             "Z": make_adapter("logical_gap"),
         },
-        posterior_samples=64,
+        binary_precision=4,
         threshold_points=3,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),

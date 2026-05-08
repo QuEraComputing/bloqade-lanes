@@ -7,8 +7,6 @@ import numpy as np
 from scipy.special import logsumexp
 
 
-# NOTE: this "bayesian_bloch_ball" I might not look at; because we probably aren't going to use 'bayesian_bloch_ball' in the final code
-# (we are probably going to focus more on the 'wilson' path)
 def weighted_quantile(
     values: np.ndarray,
     quantiles: Sequence[float],
@@ -30,12 +28,8 @@ def _bures_measure(points: np.ndarray) -> np.ndarray:
     return weights
 
 
-def _grid_axis_points(posterior_samples: int) -> int:
-    binary_precision = max(
-        4,
-        int(round(np.log2(float(max(posterior_samples, 1))) / 2.0)),
-    )
-    return min(513, 2**binary_precision + 1)
+def _grid_axis_points(binary_precision: int) -> int:
+    return 2 ** min(9, max(4, int(binary_precision))) + 1
 
 
 @lru_cache(maxsize=None)
@@ -44,6 +38,9 @@ def _grid_axis_values(axis_points: int) -> np.ndarray:
     return (edges[:-1] + edges[1:]) / 2.0
 
 
+# NOTE: is meant to help reduce the set of vectors we calculate likelihoods over for tomography, for speed (may have some impact on the resulting
+# fidelity distribution, tho)
+# TODO: What if someone doesn't want to do this because it impacts the precision on their results?
 def _axis_window(
     values: np.ndarray, n_i: int, k_i: int, *, min_points: int = 33
 ) -> np.ndarray:
@@ -117,9 +114,13 @@ def posterior_fidelity_summary(
     *,
     sign: np.ndarray,
     target_bloch: np.ndarray,
-    posterior_samples: int,
+    binary_precision: int | None = None,
 ) -> dict[str, float | tuple[float, float, float]]:
-    axis_points = _grid_axis_points(posterior_samples)
+    if binary_precision is None:
+        binary_precision = 9
+    else:
+        binary_precision = max(4, int(binary_precision))
+    axis_points = _grid_axis_points(binary_precision)
     points = _adaptive_bloch_ball_grid(axis_points, n, k)
 
     probs = np.clip((1.0 + points) / 2.0, 1e-12, 1.0 - 1e-12)
