@@ -23,14 +23,22 @@ class Mode:
     grid_keys: list[str]    # ordered slm_grid keys; order = bitstring order across grids
 
 
+class TopHat:
+    y_min: float            # lower edge of the top-hat beam (µm)
+    y_max: float            # upper edge of the top-hat beam (µm)
+    y_min_keepout: float    # keepout boundary below the beam
+    y_max_keepout: float    # keepout boundary above the beam
+
+
 class PhysicalSpec:
-    slm_grids: dict[str, Grid]        # grid_key → Grid; human-readable stable key
-    buses: dict[str, PhysicalBus]     # bus_key → PhysicalBus; human-readable stable key
-    modes: dict[int, Mode]            # mode_index → Mode
-    local_gate_zones: set[str]        # grid_keys where local single-qubit gates are supported
-    blockade_radius: float             # Rydberg blockade radius (µm)
-    feed_forward: bool                # supports mid-circuit measurement with classical feedback
-    atom_reloading: bool              # supports reloading atoms after initial fill
+    slm_grids: dict[str, Grid]           # grid_key → Grid; human-readable stable key
+    buses: dict[str, PhysicalBus]        # bus_key → PhysicalBus; human-readable stable key
+    modes: dict[int, Mode]               # mode_index → Mode
+    local_gate_zones: set[str]           # grid_keys where local single-qubit gates are supported
+    rydberg_tophats: dict[str, TopHat]   # tophat_key → TopHat; named Rydberg top-hat beam regions
+    blockade_radius: float               # Rydberg blockade radius (µm)
+    feed_forward: bool                   # supports mid-circuit measurement with classical feedback
+    atom_reloading: bool                 # supports reloading atoms after initial fill
 ```
 
 ```python
@@ -203,6 +211,7 @@ The dict-keyed structure makes this check compositional: each layer is checked i
 - `physical_spec_1.slm_grids.keys() ⊆ physical_spec_2.slm_grids.keys()` and all shared keys map to equal `Grid` values.
 - Every `bus_id` in `physical_spec_1.buses` exists in `physical_spec_2.buses` with compatible `PhysicalBus`.
 - `physical_spec_1.local_gate_zones ⊆ physical_spec_2.local_gate_zones` (every local-gate-capable zone in spec_1 must also support local gates in spec_2).
+- `physical_spec_1.rydberg_tophats.keys() ⊆ physical_spec_2.rydberg_tophats.keys()` and all shared keys map to equal `TopHat` values.
 - `physical_spec_1.blockade_radius` ≥ `physical_spec_2.blockade_radius` (a stricter radius is a subset — fewer CZ pairs are permitted).
 
 ### `AddressSpace` subsetting
