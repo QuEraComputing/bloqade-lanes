@@ -102,7 +102,7 @@ A `LocationAddress` is therefore `(zone_id, word_id, site_id)` where `site_id` k
 2. No two sites share an abstract grid position (no overlap across `SiteSlice`s).
 3. The union of all sites covers all `n_x * n_y` positions (full coverage required).
 
-**CZ pairs are inferred, not stored.** CZ pairs are computed globally by finding all `LocationAddress` pairs whose physical distance is within `PhysicalSpec.blockade_radius`.
+**CZ pairs are inferred, not stored.** CZ pairs are computed by iterating over `PhysicalSpec.rydberg_tophats` and, for each top-hat, finding all pairs of addressed sites that both fall within `[y_min, y_max]` and are at or below `PhysicalSpec.blockade_radius` apart.
 
 `zones` is keyed by integer `zone_id`, which maps directly into the `LaneAddress` encoding. `zone_labels` provides the human-readable names. `zone_id` is NOT derivable from `word_id` — different zones can reference grids of different sizes, and `word_id`s are local to each zone's `AddressMapping`.
 
@@ -128,7 +128,7 @@ class DerivedSpec:
 
 `bus_graph` is produced by resolving the physical grid positions in each `PhysicalSpec.PhysicalBus` through the zone `AddressMapping`s. `Bus` captures only the logical src/dst `LocationAddress` pairs; intermediate waypoints remain in `PhysicalSpec`.
 
-`cz_pairs` is a flat global list of `LocationAddress` pairs whose physical distance is within `PhysicalSpec.blockade_radius`. There is no assumption that pairs are intra-zone or between whole words — any two addressable sites anywhere in the layout can form a CZ pair.
+`cz_pairs` is derived by iterating over all `TopHat` regions in `PhysicalSpec.rydberg_tophats` and, for each top-hat, finding all pairs of addressed sites whose physical positions both fall within the top-hat's `[y_min, y_max]` range and whose mutual distance is at or below `PhysicalSpec.blockade_radius`. There is no assumption that pairs are intra-zone or between whole words — any two addressable sites that co-occur within a top-hat beam and are within blockade range form a CZ pair.
 
 `DerivedSpec` is constructed by a factory that takes `PhysicalSpec` and `AddressSpace` as inputs after both have been individually validated.
 
