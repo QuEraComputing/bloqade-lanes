@@ -30,7 +30,7 @@ Split the architecture description into three layers:
 - **[`AddressSpace`](#layer-2-addressspace)** — lanes-owned, virtual addressing. Defines how grid positions are grouped into words and how words are partitioned into sites. A single `word_shape: tuple[int, int]` applies uniformly across all zones; `site_slices` partitions that abstract grid into named sites; `zones` is a list of `AddressMapping`s (one per zone_id).
 - **[`MachineModel`](#layer-3-machinemodel)** — computed on demand by calling `ArchSpec.derive()`, never stored. Resolves the two layers above into a `BusGraph` of virtual `LocationAddress` src/dst pairs, a `GateInfo` with CZ pairs per top-hat and local gate site addresses, and a `CapacityInfo` with word/site counts. An optional `NoiseModel` is included when `derive(physical_noise_spec=...)` is called.
 
-These three layers combine into a single **[`ArchSpec`](#combined-archspec)** object, plus a **[`NameBridge`](#combined-archspec)** that maps human-readable zone/top-hat names to their integer indices.
+These three layers combine into a single **[`ArchSpec`](#combined-archspec)** object, plus a **[`NameBridge`](#combined-archspec)** that pins the integer indices for zone names, top-hat keys, and bus keys — ensuring compiled programs remain valid across spec revisions.
 
 ### Layer 1: `PhysicalSpec`
 
@@ -157,7 +157,7 @@ class GateInfo:
 
 
 class BusGraph:
-    buses: dict[int, Bus]   # bus_id → Bus; bus_id assigned canonically during derivation
+    buses: dict[int, Bus]   # bus_id → Bus; bus_id sourced from NameBridge.bus_index
 
 
 class MachineModel:
@@ -186,12 +186,13 @@ class MachineModel:
 class NameBridge:
     zone_labels: dict[str, int]    # zone name → zone_id; maps PhysicalSpec grid keys to AddressSpace zone indices
     top_hat_index: dict[str, int]  # top-hat key → index into MachineModel.gate_info.top_hats
+    bus_index: dict[str, int]      # bus_key → bus_id; pins the integer bus_id for each PhysicalSpec.buses key
 
 
 ArchSpec(
     physical_spec: PhysicalSpec,        # slm_grids, buses, modes, local_gate_grids, rydberg_tophats, blockade_radius, feed_forward, atom_reloading
     address_space: AddressSpace,        # word_shape (n_x, n_y), site_slices, zones
-    name_bridge: NameBridge,            # zone_labels, top_hat_index — string↔int mappings across the PhysicalSpec/AddressSpace boundary
+    name_bridge: NameBridge,            # zone_labels, top_hat_index, bus_index — string↔int mappings across the PhysicalSpec/AddressSpace boundary
 )
 
 # MachineModel is not stored — call derive() to emit it on demand:
@@ -234,9 +235,9 @@ The 2 bits freed by removing `mt` are absorbed into `pad` (5 → 7 bits). All ot
 | `dir` | 1 | 0=FORWARD, 1=BACKWARD | Transport direction along the bus |
 | `pad` | 7 | — | Reserved, must be zero |
 | `zone_id` | 8 | 0..255 | Key into `AddressSpace.zones`; use `ArchSpec.name_bridge.zone_labels` for human-readable name |
-| `bus_id` | 16 | 0..65535 | Index into `MachineModel.bus_graph.buses`; assigned canonically during derivation |
+| `bus_id` | 16 | 0..65535 | Index into `MachineModel.bus_graph.buses`; sourced from `ArchSpec.name_bridge.bus_index` |
 
-`PhysicalSpec.buses` uses human-readable string keys; `bus_id` (integer) is assigned by `MachineModel` construction using a deterministic canonical ordering of those keys. `zone_id` remains a separate field from `word_id` because zones can reference differently-sized grids and `word_id`s are not unique across zones.
+`PhysicalSpec.buses` uses human-readable string keys; the integer `bus_id` is pinned by `ArchSpec.name_bridge.bus_index` — the same way `zone_id` is pinned by `zone_labels` and the top-hat index is pinned by `top_hat_index`. This ensures that compiled programs remain valid across spec revisions: adding a new bus to `PhysicalSpec.buses` does not shift the integer IDs of existing buses. `zone_id` remains a separate field from `word_id` because zones can reference differently-sized grids and `word_id`s are not unique across zones.
 
 ## Impact on Downstream Consumers
 
@@ -327,6 +328,7 @@ def is_subset(self: PhysicalSpec, other: PhysicalSpec) -> bool:
 `name_bridge_1 ⊆ name_bridge_2` iff:
 - Every zone name in `name_bridge_1.zone_labels` exists in `name_bridge_2.zone_labels` with the **same integer value** — zone_id maps directly into the `LaneAddress` encoding, so key presence alone is not sufficient; the assigned integer must match.
 - Every top-hat key in `name_bridge_1.top_hat_index` exists in `name_bridge_2.top_hat_index` with the **same integer value** — the index positions `TopHatCZ` entries in `MachineModel.gate_info.top_hats` and must be stable across specs for compiled programs to remain valid.
+- Every bus key in `name_bridge_1.bus_index` exists in `name_bridge_2.bus_index` with the **same integer value** — bus_id maps directly into the `LaneAddress` encoding and into `MachineModel.bus_graph.buses`; a shift in assignment would silently corrupt compiled move programs.
 
 ### `MachineModel` subsetting
 
@@ -337,7 +339,7 @@ def is_subset(self: PhysicalSpec, other: PhysicalSpec) -> bool:
 
 ### Why the dict structure is essential here
 
-For buses, string dict keys mean the subset check is purely key-and-value equality, independent of insertion order — reordering never silently breaks comparison. Zones and words use list indices intentionally: zone_id and word_id are architecture-stable identifiers that map directly into the `LaneAddress` encoding and are never independently reordered.
+For buses, the string keys in `PhysicalSpec.buses` enable key-and-value equality checks independent of insertion order, but the integer `bus_id` values that appear in compiled programs are pinned by `NameBridge.bus_index` — not derived from key ordering. This is the same pattern used for zones (`zone_labels`) and top-hats (`top_hat_index`): all integer identifiers that appear in the `LaneAddress` encoding are explicitly assigned in `NameBridge`, never inferred. Zones and words use list indices intentionally: zone_id and word_id are architecture-stable identifiers that map directly into the `LaneAddress` encoding and are never independently reordered.
 
 ## Open Question: Noise Model
 
