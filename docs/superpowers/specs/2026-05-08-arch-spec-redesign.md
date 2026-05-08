@@ -11,7 +11,7 @@ The current `ArchSpec` entangles physical hardware geometry with the virtual add
 - `bus_id` is a stable dict key, not a list position — reordering never silently invalidates encoded addresses (see [New `LaneAddress` Encoding](#new-laneaddress-encoding)).
 - `MoveType` (SITE / WORD / ZONE) disappears from the encoding; `MachineModel.bus_graph` is the single source of truth for move semantics (see [Impact on Downstream Consumers](#impact-on-downstream-consumers)).
 - Ownership is explicit: flair evolves `PhysicalSpec`, lanes evolves `AddressSpace`, and `MachineModel` is always a pure function of the two (see [Ownership and Responsibility](#ownership-and-responsibility)).
-- Architectural subset checking becomes compositional: [`PhysicalSpec`](#physicalspec-subsetting), [`AddressSpace`](#addressspace-subsetting), and [`MachineModel`](#machinemodel-subsetting) are each checked independently. This enables backward-compatibility validation at the spec level — if `arch_spec_1 ⊆ arch_spec_2`, any compiled move program that is valid under `arch_spec_1` is also valid under `arch_spec_2` without recompilation. The compiled artifact is portable across compatible specs.
+- Architectural [subset checking](#subset-checking-arch_spec_1--arch_spec_2) enables backward-compatibility validation at the spec level — if `arch_spec_1 ⊆ arch_spec_2`, any compiled move program that is valid under `arch_spec_1` is also valid under `arch_spec_2` without recompilation.
 
 ## Motivation
 
