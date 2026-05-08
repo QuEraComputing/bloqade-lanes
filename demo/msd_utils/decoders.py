@@ -304,6 +304,8 @@ def estimate_mld_ancilla_scores(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    binary_precision: int | None = 4,
+    uncertainty_backend: str = "wilson",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> np.ndarray:
     targets = normalize_valid_factory_targets(valid_factory_targets)
@@ -352,6 +354,8 @@ def estimate_mld_ancilla_scores(
         basis_labels=basis_labels,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
+        binary_precision=binary_precision,
+        uncertainty_backend=uncertainty_backend,
     )
 
 
@@ -362,6 +366,8 @@ def _mld_scores_from_pattern_counts(
     basis_labels: Sequence[str],
     sign_vector: Sequence[float],
     target_bloch: np.ndarray,
+    binary_precision: int | None = 4,
+    uncertainty_backend: str = "wilson",
 ) -> np.ndarray:
     if ancilla_detectors is None:
         raise ValueError("Need at least one ancilla detector to score MLD patterns.")
@@ -392,10 +398,10 @@ def _mld_scores_from_pattern_counts(
             int(counts_y[1]),
             int(counts_z[0]),
             int(counts_z[1]),
-            binary_precision=4,
+            binary_precision=binary_precision,
             sign_vector=sign_vector,
             target_bloch=target_bloch,
-            uncertainty_backend="wilson",
+            uncertainty_backend=uncertainty_backend,
         )["point"]
     return scores
 
@@ -480,6 +486,8 @@ def estimate_mld_ancilla_scores_from_tasks(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+    binary_precision: int | None = 4,
+    uncertainty_backend: str = "wilson",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     chunk_size: int | None = 1_000_000,
     with_noise: bool = True,
@@ -537,6 +545,8 @@ def estimate_mld_ancilla_scores_from_tasks(
         basis_labels=basis_labels,
         sign_vector=sign_vector,
         target_bloch=target_bloch,
+        binary_precision=binary_precision,
+        uncertainty_backend=uncertainty_backend,
     )
 
 
@@ -625,7 +635,7 @@ def _packed_pattern_targets(
     }
 
 
-# TODO: refactor this; probably reused logic from quantile logic in bayesian_tomography.py?
+# TODO: refactor this; probably reused logic from quantile logic in bayesian_tomography.py? Can continue here on 05/11
 def _weighted_quantiles_from_counts(
     values: np.ndarray,
     weights: np.ndarray,
