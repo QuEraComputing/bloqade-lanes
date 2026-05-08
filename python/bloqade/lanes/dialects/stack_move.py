@@ -60,35 +60,35 @@ TYPE_TAG: dict[int, types.TypeAttribute] = {
 
 @statement(dialect=dialect)
 class ConstFloat(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure(), ir.ConstantLike()})
     value: float = info.attribute()
     result: ir.ResultValue = info.result(types.Float)
 
 
 @statement(dialect=dialect)
 class ConstInt(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure(), ir.ConstantLike()})
     value: int = info.attribute()
     result: ir.ResultValue = info.result(types.Int)
 
 
 @statement(dialect=dialect)
 class ConstLoc(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure(), ir.ConstantLike()})
     value: LocationAddress = info.attribute()
     result: ir.ResultValue = info.result(LocationAddressType)
 
 
 @statement(dialect=dialect)
 class ConstLane(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure(), ir.ConstantLike()})
     value: LaneAddress = info.attribute()
     result: ir.ResultValue = info.result(LaneAddressType)
 
 
 @statement(dialect=dialect)
 class ConstZone(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure(), ir.ConstantLike()})
     value: ZoneAddress = info.attribute()
     result: ir.ResultValue = info.result(ZoneAddressType)
 
