@@ -7,7 +7,7 @@ The current `ArchSpec` entangles physical hardware geometry with the virtual add
 **What this fixes:**
 
 - Zone word/site addressing can change without touching [`PhysicalSpec`](#layer-1-physicalspec) or any bus definition.
-- Right-direction moves and any future AOD bus types are first-class entries in `PhysicalSpec.buses` — no hardcoded extensions needed. The string keys also drive downstream kernel dispatch directly, eliminating the hardcoded `{0: ..., 8: ...}` lookup in `lanes2flair` (see [Impact on Downstream Consumers](#impact-on-downstream-consumers)).
+- New bus types are first-class entries in `PhysicalSpec.buses` and require no changes to the rewrite pipeline — string keys drive downstream kernel dispatch directly (see [Impact on Downstream Consumers](#impact-on-downstream-consumers)).
 - `bus_id` is a stable dict key, not a list position — reordering never silently invalidates encoded addresses (see [New `LaneAddress` Encoding](#new-laneaddress-encoding)).
 - `MoveType` (SITE / WORD / ZONE) disappears from the encoding; `MachineModel.bus_graph` is the single source of truth for move semantics (see [Impact on Downstream Consumers](#impact-on-downstream-consumers)).
 - Architectural subset checking becomes compositional: [`PhysicalSpec`](#physicalspec-subsetting), [`AddressSpace`](#addressspace-subsetting), and [`MachineModel`](#machinemodel-subsetting) are each checked independently.
