@@ -26,6 +26,12 @@ The current `ArchSpec` couples bus definitions to the word/site address space. B
 
 Split the architecture description into three layers:
 
+- **[`PhysicalSpec`](#layer-1-physicalspec)** — flair-owned, hardware-only. Describes SLM grids, AOD buses, Rydberg top-hat beams, and device capabilities (`feed_forward`, `atom_reloading`). No zones, words, or sites. Uses human-readable string keys throughout so downstream consumers (e.g. `lanes2flair`) can dispatch on bus name without hardcoded integer IDs.
+- **[`AddressSpace`](#layer-2-addressspace)** — lanes-owned, virtual addressing. Defines how grid positions are grouped into words and how words are partitioned into sites. A single `word_shape: tuple[int, int]` applies uniformly across all zones; `site_slices` partitions that abstract grid into named sites; `zones` is a list of `AddressMapping`s (one per zone_id).
+- **[`MachineModel`](#layer-3-machinemodel)** — computed on demand by calling `ArchSpec.derive()`, never stored. Resolves the two layers above into a `BusGraph` of virtual `LocationAddress` src/dst pairs, a `GateInfo` with CZ pairs per top-hat and local gate site addresses, and a `CapacityInfo` with word/site counts. An optional `NoiseModel` is included when `derive(physical_noise_spec=...)` is called.
+
+These three layers combine into a single **[`ArchSpec`](#combined-archspec)** object, plus a **[`NameBridge`](#combined-archspec)** that maps human-readable zone/top-hat names to their integer indices.
+
 ### Layer 1: `PhysicalSpec`
 
 Pure physical description — no virtual addressing.
