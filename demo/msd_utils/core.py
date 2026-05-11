@@ -50,14 +50,6 @@ def _run_simulator_task(
     return task.run(shots, with_noise=with_noise, run_detectors=run_detectors)
 
 
-def bits_to_key(bits: np.ndarray | Sequence[bool] | Sequence[int]) -> str:
-    return "".join("1" if int(x) else "0" for x in bits)
-
-
-def key_to_bits(key: str) -> np.ndarray:
-    return np.fromiter((1 if c == "1" else 0 for c in key), dtype=np.uint8)
-
-
 def pack_boolean_array(arr: np.ndarray) -> np.ndarray:
     arr = np.asarray(arr, dtype=np.uint64)
     if arr.ndim == 1:
@@ -224,27 +216,6 @@ def fidelity_from_zero_one_counts(
         "error": float(fidelity_err),
         "bloch": tuple(float(x) for x in bloch),
     }
-
-
-def magic_state_fidelity_point_from_counts(
-    x_bits: np.ndarray,
-    y_bits: np.ndarray,
-    z_bits: np.ndarray,
-    *,
-    sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
-    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-) -> float:
-    return float(
-        fidelity_from_counts(
-            x_bits,
-            y_bits,
-            z_bits,
-            binary_precision=6,
-            sign_vector=sign_vector,
-            target_bloch=target_bloch,
-            uncertainty_backend="wilson",
-        )["point"]
-    )
 
 
 def sample_task_raw(

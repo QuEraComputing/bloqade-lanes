@@ -68,9 +68,7 @@ class DecoderAdapter:
     factory_decoder: ConfidenceDecoder | None
     decode_factory: Callable[[int], tuple[tuple[int, ...], float]]
     decode_full: Callable[[int], tuple[int, ...]]
-    # NOTE: so currently, the reason for factory_score_mode is more for backwards compatibility with bloqade-decoders -- it's to make sure that bloqade-decoders has
-    # the ability to 'decode_with_confidence'. But if we assume that bloqade-decoders ALWAYS has that functionality, then factory_score_mode isn't necessary.
-    # However, this might be worth keeping, because reasonably, for the same decoder, we might want to have different ways of computing the "confidence" score for decoding.
+    # Names the score returned by decode_factory so callers can label plots/logs.
     factory_score_mode: str
 
 
@@ -86,12 +84,6 @@ def make_layout_only_dem(
         raise ValueError("Need at least one detector or observable.")
     # NOTE: this DEM only carries detector/observable layout metadata.
     return stim.DetectorErrorModel("\n".join(f"error(0.5) {term}" for term in terms))
-
-
-def make_shape_only_dem(
-    num_detectors: int, num_observables: int
-) -> stim.DetectorErrorModel:
-    return make_layout_only_dem(num_detectors, num_observables)
 
 
 def matrix_to_dem(
@@ -550,32 +542,6 @@ def estimate_mld_ancilla_scores_from_tasks(
     )
 
 
-def build_mld_decoders(
-    training_dataset: BasisDataset,
-    ancilla_scores: np.ndarray,
-    *,
-    table_decoder_cls: TableDecoderClass,
-    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
-) -> DecoderAdapter:
-    anc_det, anc_obs = split_factory_bits(
-        training_dataset.detectors,
-        training_dataset.observables,
-        layout=layout,
-    )
-    full_decoder, factory_decoder = train_mld_decoder_pair(
-        training_dataset,
-        table_decoder_cls=table_decoder_cls,
-        layout=layout,
-    )
-    return build_mld_decoders_from_pair(
-        full_decoder=full_decoder,
-        factory_decoder=factory_decoder,
-        full_syndrome_length=training_dataset.detectors.shape[1],
-        factory_syndrome_length=anc_det.shape[1],
-        ancilla_scores=ancilla_scores,
-    )
-
-
 def build_mld_decoders_from_pair(
     *,
     full_decoder: BaseDecoder,
@@ -611,9 +577,8 @@ def build_mld_decoders_from_pair(
 
 
 class MLEFactoryScorer:
-    def __init__(self, decoder: ConfidenceDecoder, *, score_mode: str):
+    def __init__(self, decoder: ConfidenceDecoder):
         self.decoder = decoder
-        self.score_mode = score_mode
 
     def decode(self, syndrome: np.ndarray) -> tuple[np.ndarray, float, str]:
         correction, confidence = self.decoder.decode_with_confidence(
@@ -995,7 +960,7 @@ def build_mle_decoders(
 
     full_decoder = gurobi_decoder_cls(full_dem)
     factory_decoder = gurobi_decoder_cls(factory_dem)
-    scorer = MLEFactoryScorer(factory_decoder, score_mode=score_mode)
+    scorer = MLEFactoryScorer(factory_decoder)
     resolved_mode: str = score_mode
 
     def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
@@ -1251,7 +1216,7 @@ def injected_baseline(
             )
 
         decoder = table_decoder_cls.from_det_obs_shots(
-            make_shape_only_dem(
+            make_layout_only_dem(
                 training_dataset.detectors.shape[1],
                 training_dataset.observables.shape[1],
             ),

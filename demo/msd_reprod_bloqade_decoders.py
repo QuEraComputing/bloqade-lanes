@@ -97,7 +97,7 @@ from demo.msd_utils.decoders import (  # noqa: E402
     estimate_mld_ancilla_scores,
     evaluate_curve,
     injected_baseline,
-    make_shape_only_dem,
+    make_layout_only_dem,
     train_mld_decoder_pair,
 )
 
@@ -461,8 +461,8 @@ def build_mld_decoders_debug(training_dataset: BasisDataset):
     anc_det, anc_obs = split_factory_bits(det, obs)
     print("anc det/obs:", anc_det.shape, anc_obs.shape)
 
-    full_dem = make_shape_only_dem(det.shape[1], obs.shape[1])
-    factory_dem = make_shape_only_dem(anc_det.shape[1], anc_obs.shape[1])
+    full_dem = make_layout_only_dem(det.shape[1], obs.shape[1])
+    factory_dem = make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1])
     print(
         "dem sizes:",
         full_dem.num_detectors,
@@ -953,7 +953,7 @@ def injected_baseline_debug(task_map, posterior_samples: int, shots: int = 4000)
         ).astype(bool)
 
         decoder = TableDecoder.from_det_obs_shots(
-            make_shape_only_dem(
+            make_layout_only_dem(
                 dataset.detectors.shape[1], dataset.observables.shape[1]
             ),
             train_det_obs,
