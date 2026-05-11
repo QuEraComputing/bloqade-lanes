@@ -139,21 +139,24 @@ class _StackMoveEmit(MethodTable):
     def initial_fill(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.InitialFill
     ) -> tuple:
-        emit.instructions.append(Instruction.initial_fill(len(stmt.locations)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.initial_fill(arity))
         return ()
 
     @impl(stack_move.Fill)
     def fill(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Fill
     ) -> tuple:
-        emit.instructions.append(Instruction.fill(len(stmt.locations)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.fill(arity))
         return ()
 
     @impl(stack_move.Move)
     def move(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Move
     ) -> tuple:
-        emit.instructions.append(Instruction.move_(len(stmt.lanes)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.move_(arity))
         return ()
 
     # ── Gates ──────────────────────────────────────────────────────────────
@@ -162,14 +165,16 @@ class _StackMoveEmit(MethodTable):
     def local_r(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.LocalR
     ) -> tuple:
-        emit.instructions.append(Instruction.local_r(len(stmt.locations)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.local_r(arity))
         return ()
 
     @impl(stack_move.LocalRz)
     def local_rz(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.LocalRz
     ) -> tuple:
-        emit.instructions.append(Instruction.local_rz(len(stmt.locations)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.local_rz(arity))
         return ()
 
     @impl(stack_move.GlobalR)
@@ -197,7 +202,8 @@ class _StackMoveEmit(MethodTable):
     def measure(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Measure
     ) -> tuple:
-        emit.instructions.append(Instruction.measure(len(stmt.zones)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.measure(arity))
         return ()
 
     @impl(stack_move.AwaitMeasure)
@@ -222,7 +228,8 @@ class _StackMoveEmit(MethodTable):
     def get_item(
         self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.GetItem
     ) -> tuple:
-        emit.instructions.append(Instruction.get_item(len(stmt.indices)))
+        arity = stmt.get_present_trait(stack_move.HasArity).arity(stmt)
+        emit.instructions.append(Instruction.get_item(arity))
         return ()
 
     # ── Annotations ────────────────────────────────────────────────────────

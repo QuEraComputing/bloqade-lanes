@@ -1,6 +1,7 @@
 """stack_move dialect — 1:1 SSA image of the bytecode."""
 
 import typing
+from dataclasses import dataclass
 
 from bloqade.decoders.dialects.annotate.types import (
     DetectorType,
@@ -9,11 +10,31 @@ from bloqade.decoders.dialects.annotate.types import (
 )
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
+from kirin.ir import StmtTrait
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.types import ArrayType, MeasurementFutureType
 
 dialect = ir.Dialect(name="lanes.stack_move")
+
+
+# ── Traits ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class HasArity(StmtTrait):
+    """Marks a statement whose bytecode opcode takes a variable-length arity argument.
+
+    ``arity(stmt)`` returns ``len(stmt.args) - n_fixed``, where ``n_fixed`` is
+    the number of leading scalar (non-variadic) SSA arguments — e.g. 2 for
+    ``LocalR`` (axis_angle + rotation_angle), 1 for ``LocalRz``/``GetItem``,
+    0 for statements whose only args are the variadic group.
+    """
+
+    n_fixed: int = 0
+
+    def arity(self, stmt: ir.Statement) -> int:
+        return len(stmt.args) - self.n_fixed
 
 
 # ── SSA types ──────────────────────────────────────────────────────────
@@ -131,19 +152,19 @@ class Swap(ir.Statement):
 
 @statement(dialect=dialect)
 class InitialFill(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), HasArity()})
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
 
 @statement(dialect=dialect)
 class Fill(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), HasArity()})
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
 
 @statement(dialect=dialect)
 class Move(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), HasArity()})
     lanes: tuple[ir.SSAValue, ...] = info.argument(type=LaneAddressType)
 
 
@@ -152,7 +173,7 @@ class Move(ir.Statement):
 
 @statement(dialect=dialect)
 class LocalR(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), HasArity(n_fixed=2)})
     axis_angle: ir.SSAValue = info.argument(type=types.Float)
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
@@ -160,7 +181,7 @@ class LocalR(ir.Statement):
 
 @statement(dialect=dialect)
 class LocalRz(ir.Statement):
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), HasArity(n_fixed=1)})
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
     locations: tuple[ir.SSAValue, ...] = info.argument(type=LocationAddressType)
 
@@ -193,7 +214,7 @@ class Measure(ir.Statement):
     pushes `arity` measure futures. Zone grouping (dedup of distinct
     zones when lowering to move.Measure) happens in stack_move2move."""
 
-    traits = frozenset({lowering.FromPythonCall()})
+    traits = frozenset({lowering.FromPythonCall(), HasArity()})
     zones: tuple[ir.SSAValue, ...] = info.argument(type=ZoneAddressType)
 
     def __init__(self, zones: typing.Sequence[ir.SSAValue]) -> None:
@@ -304,7 +325,7 @@ class GetItem(ir.Statement):
     later, the same way the Rust validator defers to type simulation.
     """
 
-    traits = frozenset({lowering.FromPythonCall(), ir.Pure()})
+    traits = frozenset({lowering.FromPythonCall(), ir.Pure(), HasArity(n_fixed=1)})
     array: ir.SSAValue = info.argument(type=ArrayType[ElemType, types.Any, types.Any])
     indices: tuple[ir.SSAValue, ...] = info.argument(type=types.Int)
     result: ir.ResultValue = info.result(ElemType)
