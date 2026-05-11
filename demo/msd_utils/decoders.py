@@ -636,6 +636,7 @@ def _packed_pattern_targets(
 
 
 # TODO: refactor this; probably reused logic from quantile logic in bayesian_tomography.py? Can continue here on 05/11
+# ^ not sure if this is really repeated logic..
 def _weighted_quantiles_from_counts(
     values: np.ndarray,
     weights: np.ndarray,
@@ -939,6 +940,7 @@ def _evaluate_cached_threshold_curve(
         ):
             continue
 
+        # TODO: generalize beyond just single-qubit tomography?
         summary = fidelity_from_zero_one_counts(
             counts_by_basis["X"][0],
             counts_by_basis["X"][1],
@@ -1091,6 +1093,8 @@ def evaluate_curve(
         ) from exc
 
 
+# This is SPECIFICALLY for the pattern rank case where we don't compute explicit thresholds, but rather literally have
+# the points plotted on the curve based on MLD fidelity.
 def evaluate_mld_curve(
     actual_data: Mapping[str, BasisDataset],
     decoder_map: Mapping[str, DecoderAdapter],

@@ -25,6 +25,7 @@ class LogicalKernelSpec:
     observable_frame: ObservableFrame = ObservableFrame.RAW
 
 
+# To specify the number of output qubits we want to do tomography on.
 @dataclass(frozen=True)
 class SyndromeLayout:
     output_detector_count: int = 3

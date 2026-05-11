@@ -144,6 +144,9 @@ def fidelity_from_counts(
     )
 
 
+# TODO: make this function more general than just logical single qubit tomography?
+# I think we had to explicitly pass in x_zero, x_one, ... because of some speed/runtime issues to not convert massive numpy arrays back
+# and forth, but i'm not sure if that's really generic enough of a speed bottleneck to optimize for in general
 def fidelity_from_zero_one_counts(
     x_zero: int,
     x_one: int,
