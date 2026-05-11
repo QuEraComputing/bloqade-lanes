@@ -1,3 +1,6 @@
+.cargo/**
+vendor/**
+
 # agents
 .agents
 AGENTS.md
