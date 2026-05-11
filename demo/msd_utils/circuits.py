@@ -12,8 +12,9 @@ from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.device import GeminiLogicalSimulatorTask
 from bloqade.gemini.logical.stdlib import default_post_processing
 from bloqade.lanes import GeminiLogicalSimulator
+from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.transform import MoveToSquin
+from bloqade.lanes.transform import MoveToSquinLogical
 
 from .common import DemoTask, LogicalKernelSpec, ObservableFrame
 
@@ -50,6 +51,41 @@ class DecoderPrimitiveSet:
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
+
+
+class _LogicalInitializeOverride(LogicalNoiseModelABC):
+    def __init__(self, base: LogicalNoiseModelABC, noisy_initializer: Any):
+        self._base = base
+        clean_initializer, _ = base.get_logical_initialize()
+        self._clean_initializer = clean_initializer
+        self._noisy_initializer = noisy_initializer
+
+    def get_logical_initialize(self):
+        return self._clean_initializer, self._noisy_initializer
+
+    def get_lane_noise(self, lane):
+        return self._base.get_lane_noise(lane)
+
+    def get_bus_idle_noise(self, move_type, bus_id):
+        return self._base.get_bus_idle_noise(move_type, bus_id)
+
+    def get_cz_unpaired_noise(self, zone_address):
+        return self._base.get_cz_unpaired_noise(zone_address)
+
+    def get_cz_paired_noise(self, zone_address):
+        return self._base.get_cz_paired_noise(zone_address)
+
+    def get_global_rz_noise(self):
+        return self._base.get_global_rz_noise()
+
+    def get_local_rz_noise(self, locations):
+        return self._base.get_local_rz_noise(locations)
+
+    def get_global_r_noise(self):
+        return self._base.get_global_r_noise()
+
+    def get_local_r_noise(self, locations):
+        return self._base.get_local_r_noise(locations)
 
 
 def build_measurement_maps(num_logical_qubits: int) -> tuple[Any, Any]:
@@ -122,7 +158,11 @@ def _prepend_inverse_tsim_circuit(
     circuit_to_invert: Any,
 ) -> None:
     inverse_prefix = circuit_to_invert.without_noise().inverse()
-    _override_task_tsim_circuit(task, inverse_prefix + task.tsim_circuit)
+    _override_task_tsim_circuit(
+        task,
+        inverse_prefix + task.tsim_circuit,
+        noiseless_circuit=inverse_prefix + task.noiseless_tsim_circuit,
+    )
 
 
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
@@ -135,10 +175,16 @@ def _build_compiled_unitary_prefix_circuit(task: GeminiLogicalSimulatorTask):
 def _override_task_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
     circuit: Any,
+    *,
+    noiseless_circuit: Any | None = None,
 ) -> None:
     _set_task_override(task, "tsim_circuit", circuit)
+    if noiseless_circuit is not None:
+        _set_task_override(task, "noiseless_tsim_circuit", noiseless_circuit)
     _clear_task_tsim_artifacts(task)
     _set_task_override(task, "tsim_circuit", circuit)
+    if noiseless_circuit is not None:
+        _set_task_override(task, "noiseless_tsim_circuit", noiseless_circuit)
 
 
 def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSpec:
@@ -595,10 +641,13 @@ def build_task(
         _set_task_override(
             task,
             "physical_squin_kernel",
-            MoveToSquin(
-                task.physical_arch_spec,
-                logical_initialization=noisy_initializer,
-                noise_model=simulator.noise_model,
+            MoveToSquinLogical(
+                arch_spec=task.physical_arch_spec,
+                noise_model=_LogicalInitializeOverride(
+                    simulator.noise_model,
+                    noisy_initializer,
+                ),
+                add_noise=True,
             ).emit(task.physical_move_kernel),
         )
 
