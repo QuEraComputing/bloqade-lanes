@@ -31,6 +31,7 @@ NONUNITARY_PREFIXES = (
 )
 
 
+# TODO: integrate naive into decoderkernelbundle -- a naive decoder (decoder that does nothing) is just a type of decoder
 @dataclass(frozen=True)
 class NaiveKernelBundle:
     distilled: dict[str, LogicalKernelSpec]
@@ -44,6 +45,7 @@ class DecoderKernelBundle:
     injected: dict[str, LogicalKernelSpec]
 
 
+# TODO: make types not Any?
 @dataclass(frozen=True)
 class DecoderPrimitiveSet:
     state_injection_circuit: Any
@@ -389,6 +391,7 @@ def build_naive_kernel_bundle(
 
 def build_decoder_kernel_bundle(
     *primitive_args: float,
+    # TODO: get rid of logical qubits argument here?
     num_logical_qubits: int = 5,
     output_qubit: int = 0,
     build_primitives: Callable[..., DecoderPrimitiveSet | Mapping[str, Any]] = (
