@@ -146,11 +146,14 @@ def stackify(method: ir.Method) -> None:
             insertion_plan.append((dup, stmts[const_run_start[idx]]))
             stmt.args[i] = dup.results[0]
 
-            # Swap goes immediately after the consumer so the live copy
-            # bubbles back to the top for the next consumer.
-            swap = stack_move.Swap(in_top=stmt.results[0], in_bot=live)
-            insertion_plan.append((swap, stmts[idx + 1]))
-            current_live[arg] = swap.out_top
+            if stmt.results:
+                # Consumer produces a result: Swap brings the live copy back to
+                # TOS so the next consumer finds it there.
+                swap = stack_move.Swap(in_top=stmt.results[0], in_bot=live)
+                insertion_plan.append((swap, stmts[idx + 1]))
+                current_live[arg] = swap.out_top
+            # else: 0-result consumer (e.g. Pop) — after it executes the Dup
+            # copy is gone and `live` is already at TOS; no Swap needed.
 
     for new_stmt, target in insertion_plan:
         new_stmt.insert_before(target)
