@@ -1189,19 +1189,19 @@ class EntropyScorer:
     def metrics(
         self,
         current_config: dict[int, LocationAddress],
-        moveset: list[tuple[int, int, int, int, int, int]],
+        moveset: list[LaneAddress],
     ) -> MovesetMetrics:
         """Compute the metrics breakdown after applying ``moveset`` to ``current_config``.
 
-        ``moveset`` entries are ``(direction, move_type, zone_id, word_id, site_id, bus_id)``
-        tuples matching the format returned by ``SolveResult.move_layers``.
+        ``moveset`` entries are ``LaneAddress`` objects matching the format
+        returned by ``SolveResult.move_layers``.
         """
         ...
 
     def score_moveset(
         self,
         current_config: dict[int, LocationAddress],
-        moveset: list[tuple[int, int, int, int, int, int]],
+        moveset: list[LaneAddress],
     ) -> float:
         """Shorthand for ``scorer.metrics(current, moveset).score``."""
         ...

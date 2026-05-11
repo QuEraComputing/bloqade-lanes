@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::config::Config;
 use bloqade_lanes_search::context::SearchContext;
@@ -525,37 +525,11 @@ impl PyEntropyScorer {
     fn apply_moveset(
         &self,
         config: &Config,
-        moveset: &[(u8, u8, u32, u32, u32, u32)],
+        moveset: &[PyRef<'_, PyLaneAddr>],
     ) -> PyResult<Config> {
         let mut moves: Vec<(u32, LocationAddr)> = Vec::with_capacity(moveset.len());
-        for &(dir, mt, zone, word, site, bus) in moveset {
-            let direction = match dir {
-                0 => Direction::Forward,
-                1 => Direction::Backward,
-                other => {
-                    return Err(PyValueError::new_err(format!(
-                        "invalid direction {other} (must be 0 or 1)"
-                    )));
-                }
-            };
-            let move_type = match mt {
-                0 => MoveType::SiteBus,
-                1 => MoveType::WordBus,
-                2 => MoveType::ZoneBus,
-                other => {
-                    return Err(PyValueError::new_err(format!(
-                        "invalid move_type {other} (must be 0, 1, or 2)"
-                    )));
-                }
-            };
-            let lane = LaneAddr {
-                direction,
-                move_type,
-                zone_id: zone,
-                word_id: word,
-                site_id: site,
-                bus_id: bus,
-            };
+        for lane_ref in moveset {
+            let lane = lane_ref.inner;
             let Some((src, dst)) = self.index.endpoints(&lane) else {
                 return Err(PyValueError::new_err(
                     "lane endpoints missing from arch index",
@@ -632,11 +606,10 @@ impl PyEntropyScorer {
     }
 
     /// Compute the full metrics breakdown after applying ``moveset``.
-    #[allow(clippy::type_complexity)]
     fn metrics(
         &self,
         current_config: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        moveset: Vec<(u8, u8, u32, u32, u32, u32)>,
+        moveset: Vec<PyRef<'_, PyLaneAddr>>,
     ) -> PyResult<PyMovesetMetrics> {
         let pairs: Vec<(u32, LocationAddr)> = current_config
             .iter()
@@ -671,11 +644,10 @@ impl PyEntropyScorer {
     }
 
     /// Shorthand for `scorer.metrics(current, moveset).score`.
-    #[allow(clippy::type_complexity)]
     fn score_moveset(
         &self,
         current_config: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        moveset: Vec<(u8, u8, u32, u32, u32, u32)>,
+        moveset: Vec<PyRef<'_, PyLaneAddr>>,
     ) -> PyResult<f64> {
         Ok(self.metrics(current_config, moveset)?.score())
     }

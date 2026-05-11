@@ -11,7 +11,7 @@ from bloqade.lanes.bytecode._native import (
     EntropyScorer,
     LocationAddress as NativeLocationAddress,
 )
-from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.visualize.arch import ArchVisualizer
 from bloqade.lanes.visualize.entropy_tree.state import NodeState, TreeFrameState
 
@@ -51,24 +51,6 @@ def format_entropy_reason(
     if reason == "entropy":
         return "entropy bump reason: reached entropy threshold/reversion condition"
     return f"entropy bump reason: {reason}"
-
-
-def _moveset_to_tuples(
-    moveset: frozenset[LaneAddress],
-) -> list[tuple[int, int, int, int, int, int]]:
-    """Convert a Python ``LaneAddress`` moveset into the `(dir, mt, zone, word, site, bus)`
-    tuple format the Rust scorer consumes."""
-    return [
-        (
-            int(lane.direction),
-            int(lane.move_type),
-            lane.zone_id,
-            lane.word_id,
-            lane.site_id,
-            lane.bus_id,
-        )
-        for lane in moveset
-    ]
 
 
 def _configuration_to_native(
@@ -765,7 +747,7 @@ def draw_focus_panel(
         if candidate is not None:
             metrics = scorer.metrics(
                 _configuration_to_native(node.configuration),
-                _moveset_to_tuples(candidate.moveset),
+                [lane._inner for lane in candidate.moveset],
             )
             info_lines = [
                 f"score={metrics.score:.3f}",

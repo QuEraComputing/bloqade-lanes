@@ -56,10 +56,14 @@ def convert_move_layers(
 class RustPlacementTraversal:
     """Config for the Rust MoveSolver.
 
-    Note: The Rust ``MoveSolver.solve()`` accepts additional tuning parameters
-    (``weight``, ``deadlock_policy``, ``w_t``) that are not yet exposed here;
-    Rust defaults are used. These will be threaded through once validated via
-    Rust-only benchmarking.
+    ``restarts`` and ``lookahead`` are now exposed and threaded into
+    ``SolveOptions``; per-strategy entropy knobs (``max_movesets_per_group``,
+    ``max_goal_candidates``, ``collect_entropy_trace``) feed ``EntropyOptions``
+    via :func:`solve_options_from_traversal`.
+
+    Not yet exposed (Rust defaults used): ``weight``, ``deadlock_policy``,
+    ``w_t``. These will be threaded through once validated via Rust-only
+    benchmarking.
     """
 
     strategy: Literal[
