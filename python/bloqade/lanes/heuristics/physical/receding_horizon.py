@@ -143,7 +143,8 @@ class RecedingHorizonLooseGoalPlacementStrategy(PlacementStrategyABC):
     weight_grid: tuple[tuple[float, float], ...] | None = None
     fallback_x_decrement: int = 1
     branch_parallel: bool = True
-    max_expansions_per_rollout: int = 1000
+    max_expansions_per_rollout: int = 300
+    greedy_first: bool = True
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
@@ -214,6 +215,7 @@ class RecedingHorizonLooseGoalPlacementStrategy(PlacementStrategyABC):
             fallback_x_decrement=self.fallback_x_decrement,
             branch_parallel=self.branch_parallel,
             max_expansions_per_rollout=self.max_expansions_per_rollout,
+            greedy_first=self.greedy_first,
         )
         return opts, ent_opts, rh_opts
 

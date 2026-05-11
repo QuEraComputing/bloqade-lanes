@@ -39,7 +39,7 @@ use crate::lane_index::LaneIndex;
 use crate::observer::NoOpObserver;
 use crate::scorers::DistanceScorer;
 use crate::solve::{EntanglingOptions, SolveOptions, SolveResult, SolveStatus};
-use crate::traits::{Goal, Heuristic};
+use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
 /// Per-rollout-iteration move penalty added to each Hungarian cost cell.
 /// Matches `MOVE_PENALTY` in [`crate::solve`].
@@ -133,6 +133,14 @@ pub struct RecedingHorizonOptions {
     /// Per-rollout expansion budget. Each inner IDS call is capped at this
     /// many node expansions to bound runaway rollouts.
     pub max_expansions_per_rollout: u32,
+    /// If `true` (default), each rollout first tries a cheap greedy walk
+    /// (depth-bounded, no backtracking) before falling back to full IDS
+    /// only when greedy hits a dead-end. Greedy is ~50× cheaper per
+    /// rollout but produces lower-quality solutions when atoms need to
+    /// route around blockers. Setting `false` skips the greedy attempt
+    /// and always runs IDS — slower (~10× more wall-clock) but more
+    /// reliable quality at high atom density.
+    pub greedy_first: bool,
 }
 
 impl Default for RecedingHorizonOptions {
@@ -150,7 +158,13 @@ impl Default for RecedingHorizonOptions {
             weight_grid: default_weight_grid(),
             fallback_x_decrement: 1,
             branch_parallel: true,
-            max_expansions_per_rollout: 1000,
+            // Reduced from 1000 after profiling: with the greedy-first
+            // rollout path, IDS fallback only fires when greedy gets stuck
+            // (rare). Keep the IDS budget tight so a single stuck rollout
+            // can't dominate stage wall-clock; the orchestrator's all-drop
+            // fallback handles cases where the budget is genuinely needed.
+            max_expansions_per_rollout: 300,
+            greedy_first: true,
         }
     }
 }
@@ -372,6 +386,117 @@ pub(crate) struct RolloutOutcome {
     pub(crate) nodes_expanded: u32,
 }
 
+/// Fast greedy walk used as the first attempt inside [`run_inner_rollout`].
+///
+/// At each step, asks the generator for candidate moves, scores them with
+/// `DistanceScorer`, applies the single highest-scored candidate, and
+/// repeats. No backtracking — succeeds by reaching the goal or
+/// completing `max_depth` cleanly; fails (returns `goal_node = None`
+/// with `max_depth_reached < max_depth`) when the generator emits no
+/// candidates from some node (dead-end), in which case the caller
+/// should fall back to full IDS.
+///
+/// Approximate per-rollout cost: `max_depth` generator-and-scorer calls.
+/// For typical default `x = 5` that's ~5 expansions vs IDS's 100–500,
+/// a 20–100× speedup per rollout when greedy succeeds.
+fn greedy_rollout<G: Goal>(
+    root: Config,
+    generator: &LooseTargetGenerator,
+    blocked: &HashSet<u64>,
+    cz_pairs: &[(u32, u32)],
+    targets: &[(u32, u64)],
+    goal: &G,
+    max_depth: u32,
+) -> RolloutOutcome {
+    let mut graph = SearchGraph::new(root);
+    let scorer = DistanceScorer;
+    let mut search_state = SearchState::default();
+    let mut candidates: Vec<crate::context::MoveCandidate> = Vec::new();
+    let mut current = graph.root();
+    let mut nodes_expanded: u32 = 0;
+
+    let ctx = SearchContext {
+        index: generator.index_ref(),
+        dist_table: generator.dist_table_ref(),
+        blocked,
+        targets,
+        cz_pairs: Some(cz_pairs),
+    };
+
+    // Root goal check.
+    if goal.is_goal(graph.config(current)) {
+        return RolloutOutcome {
+            goal_node: Some(current),
+            max_depth_reached: 0,
+            nodes_expanded: 0,
+            graph,
+        };
+    }
+
+    for _ in 0..max_depth {
+        candidates.clear();
+        generator.generate(
+            graph.config(current),
+            current,
+            &ctx,
+            &mut search_state,
+            &mut candidates,
+        );
+        nodes_expanded = nodes_expanded.saturating_add(1);
+
+        if candidates.is_empty() {
+            // Dead-end at this depth — return tier-2 outcome so caller
+            // can fall back to IDS.
+            let depth = graph.depth(current);
+            return RolloutOutcome {
+                goal_node: None,
+                max_depth_reached: depth,
+                nodes_expanded,
+                graph,
+            };
+        }
+
+        // Score and pick the single best candidate.
+        let cur_cfg = graph.config(current).clone();
+        let best_idx = candidates
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                scorer
+                    .score(a, &cur_cfg, &ctx)
+                    .total_cmp(&scorer.score(b, &cur_cfg, &ctx))
+            })
+            .map(|(i, _)| i)
+            .unwrap();
+        let best = candidates.swap_remove(best_idx);
+
+        // Apply.
+        let new_g = graph.g_score(current) + 1.0;
+        let (next, _is_new) = graph.insert(current, best.move_set, best.new_config, new_g);
+        current = next;
+
+        // Goal check on the new node.
+        if goal.is_goal(graph.config(current)) {
+            let depth = graph.depth(current);
+            return RolloutOutcome {
+                goal_node: Some(current),
+                max_depth_reached: depth,
+                nodes_expanded,
+                graph,
+            };
+        }
+    }
+
+    // Completed max_depth without finding goal — tier-1 outcome.
+    let depth = graph.depth(current);
+    RolloutOutcome {
+        goal_node: None,
+        max_depth_reached: depth,
+        nodes_expanded,
+        graph,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     root: Config,
@@ -389,6 +514,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     inner_lookahead: bool,
     top_c: usize,
     restart_seed: u64,
+    greedy_first: bool,
 ) -> RolloutOutcome {
     let inner = HeuristicGenerator::new()
         .with_deadlock_policy(deadlock_policy)
@@ -407,6 +533,29 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     let generator =
         LooseTargetGenerator::from_targets(inner, targets, cz_pairs, arch, index, dist_table);
 
+    // ── Phase 1: try cheap greedy walk first (if enabled) ──────────────
+    // Most rollouts succeed under greedy at moderate density. Only when
+    // greedy hits a dead-end (no candidates available at some node) do
+    // we fall back to IDS, which can backtrack around blockers. Greedy
+    // is ~20–100× cheaper per rollout when it succeeds.
+    if greedy_first {
+        let greedy_outcome = greedy_rollout(
+            root.clone(),
+            &generator,
+            blocked,
+            &cz_pairs_for_ctx,
+            &targets_for_ctx,
+            goal,
+            max_depth,
+        );
+        let greedy_completed_full_depth = greedy_outcome.max_depth_reached >= max_depth;
+        let greedy_reached_goal = greedy_outcome.goal_node.is_some();
+        if greedy_reached_goal || greedy_completed_full_depth {
+            return greedy_outcome;
+        }
+    }
+
+    // ── Phase 2: greedy got stuck; fall back to full IDS ───────────────
     let scorer = DistanceScorer;
     let cost_fn = UniformCost;
     let mut frontier = IdsFrontier::new(h_sum);
@@ -786,6 +935,7 @@ pub fn solve_entangling_rh_single(
                 inner_lookahead,
                 top_c,
                 stage_seed,
+                rh_opts.greedy_first,
             );
             classify_into_tier(outcome, x, heuristic)
         };

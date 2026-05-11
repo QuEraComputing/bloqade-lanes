@@ -1387,7 +1387,8 @@ impl PyRecedingHorizonOptions {
         weight_grid = None,
         fallback_x_decrement = 1,
         branch_parallel = true,
-        max_expansions_per_rollout = 1000,
+        max_expansions_per_rollout = 300,
+        greedy_first = true,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -1399,6 +1400,7 @@ impl PyRecedingHorizonOptions {
         fallback_x_decrement: u32,
         branch_parallel: bool,
         max_expansions_per_rollout: u32,
+        greedy_first: bool,
     ) -> PyResult<Self> {
         if k_candidates == 0 {
             return Err(PyValueError::new_err("k_candidates must be positive"));
@@ -1437,6 +1439,7 @@ impl PyRecedingHorizonOptions {
                 fallback_x_decrement: fallback_x_decrement.max(1),
                 branch_parallel,
                 max_expansions_per_rollout: max_expansions_per_rollout.max(1),
+                greedy_first,
             },
         })
     }
@@ -1473,10 +1476,14 @@ impl PyRecedingHorizonOptions {
     fn max_expansions_per_rollout(&self) -> u32 {
         self.inner.max_expansions_per_rollout
     }
+    #[getter]
+    fn greedy_first(&self) -> bool {
+        self.inner.greedy_first
+    }
 
     fn __repr__(&self) -> String {
         format!(
-            "RecedingHorizonOptions(k_candidates={}, rollout_horizon={}, commit_depth={}, tier0_next_h_weight={}, fallback_x_decrement={}, branch_parallel={}, max_expansions_per_rollout={}, weight_grid_len={})",
+            "RecedingHorizonOptions(k_candidates={}, rollout_horizon={}, commit_depth={}, tier0_next_h_weight={}, fallback_x_decrement={}, branch_parallel={}, max_expansions_per_rollout={}, greedy_first={}, weight_grid_len={})",
             self.inner.k_candidates,
             self.inner.rollout_horizon,
             self.inner.commit_depth,
@@ -1484,6 +1491,7 @@ impl PyRecedingHorizonOptions {
             self.inner.fallback_x_decrement,
             self.inner.branch_parallel,
             self.inner.max_expansions_per_rollout,
+            self.inner.greedy_first,
             self.inner.weight_grid.len(),
         )
     }
