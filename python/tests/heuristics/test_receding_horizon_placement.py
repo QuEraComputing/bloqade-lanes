@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from bloqade.lanes.analysis.placement import ConcreteState, ExecuteCZ
+from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode.encoding import LocationAddress
+from bloqade.lanes.heuristics.physical.receding_horizon import (
+    RecedingHorizonLooseGoalPlacementStrategy,
+)
+
+
+def _make_state() -> ConcreteState:
+    return ConcreteState(
+        occupied=frozenset(),
+        layout=(
+            LocationAddress(0, 0),
+            LocationAddress(1, 0),
+        ),
+        move_count=(0, 0),
+    )
+
+
+def test_receding_horizon_default_construction():
+    strategy = RecedingHorizonLooseGoalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+    )
+    assert strategy.strategy == "ids"
+    assert strategy.k_candidates == 5
+    assert strategy.rollout_horizon == 5
+    assert strategy.commit_depth == 5
+    assert strategy.tier0_next_h_weight == 0.5
+    assert strategy.restarts == 1
+
+
+def test_receding_horizon_cz_placements_smoke():
+    """End-to-end: solve_entangling_rh dispatches and returns ExecuteCZ.
+
+    Initial state is already entangling-feasible (the two qubits sit on a
+    valid CZ pair location), so the trajectory terminates immediately with
+    no committed move layers — but the full dispatch path still runs:
+    options construction, solve_entangling_rh invocation, result decoding.
+    """
+    strategy = RecedingHorizonLooseGoalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        max_expansions=300,
+        k_candidates=3,
+        rollout_horizon=3,
+        commit_depth=1,
+    )
+    state = _make_state()
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)
+    assert len(out.layout) == len(state.layout)
+
+
+def test_receding_horizon_with_multiple_restarts():
+    """With ``restarts=2``, the rayon wrapper engages and `pick_best`
+    selects across two independent trajectories."""
+    strategy = RecedingHorizonLooseGoalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        max_expansions=300,
+        restarts=2,
+        k_candidates=3,
+        rollout_horizon=3,
+        commit_depth=1,
+        branch_parallel=False,  # leave cores for restart parallelism
+    )
+    state = _make_state()
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(out, ExecuteCZ)
+    assert len(out.layout) == len(state.layout)

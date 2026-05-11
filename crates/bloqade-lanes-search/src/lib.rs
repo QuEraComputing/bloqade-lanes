@@ -22,6 +22,7 @@ pub mod lane_index;
 pub mod nohome;
 pub mod observer;
 pub(crate) mod ordering;
+pub mod receding_horizon;
 pub mod scorers;
 pub mod solve;
 pub mod target_generator;
@@ -42,6 +43,7 @@ pub use heuristic::PairDistanceHeuristic;
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use lane_index::LaneIndex;
 pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
+pub use receding_horizon::{RecedingHorizonOptions, default_weight_grid};
 pub use scorers::{DistanceScorer, EntropyScorer};
 pub use solve::{CandidateAttempt, InnerStrategy, MultiSolveResult, SolveOptions, Strategy};
 pub use target_generator::{

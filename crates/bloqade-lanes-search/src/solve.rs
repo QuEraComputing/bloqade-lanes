@@ -978,6 +978,158 @@ impl MoveSolver {
         Ok(result)
     }
 
+    /// Receding-horizon (MPC-style) loose-goal entangling solve.
+    ///
+    /// Instead of committing to one Hungarian assignment up-front like
+    /// [`solve_entangling`](MoveSolver::solve_entangling), this entry runs a
+    /// sequence of K-candidate-rollout stages. At each stage:
+    ///   1. Generate K diverse Hungarian candidates from the current state.
+    ///   2. Roll out each for `rollout_horizon` move layers via the existing
+    ///      IDS infrastructure.
+    ///   3. Pick the best branch by stratified score (tier-0: goal reached
+    ///      mid-rollout; tier-1: completed full horizon; tier-2: dropped).
+    ///   4. Commit the winning branch's path (full for tier-0, `commit_depth`
+    ///      layers for tier-1) and re-plan from the new state.
+    ///
+    /// Restarts wrap the entire trajectory: `opts.restarts` parallel calls,
+    /// each running its own independent receding-horizon trajectory with a
+    /// distinct seed; `pick_best` returns the lowest-layer-count winner.
+    ///
+    /// Positioned as a tool for high-occupancy regimes where the baseline
+    /// loose-goal under-uses parallelism. See
+    /// `plans/2026-05-11-receding-horizon-loose-goal-design.md`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn solve_entangling_rh(
+        &self,
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        cz_pairs: &[(u32, u32)],
+        blocked: impl IntoIterator<Item = LocationAddr>,
+        max_expansions: Option<u32>,
+        opts: &SolveOptions,
+        ent_opts: &EntanglingOptions,
+        rh_opts: &crate::receding_horizon::RecedingHorizonOptions,
+        future_cz_layers: &[Vec<(u32, u32)>],
+    ) -> Result<SolveResult, ConfigError> {
+        use crate::goals::EntanglingConstraintGoal;
+        use crate::heuristic::PairDistanceHeuristic;
+
+        let root = Config::new(initial)?;
+        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+        let arch = self.index.arch_spec();
+
+        let cache = self.entangling_cache();
+        let dist_table = cache.dist_table.clone();
+
+        let heuristic = PairDistanceHeuristic::new(cz_pairs, &cache.wpd);
+        let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
+        let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+
+        // Apply the Hungarian future-layer horizon (same convention as
+        // solve_entangling).
+        let clipped_future: &[Vec<(u32, u32)>] = match ent_opts.hungarian_horizon {
+            Some(0) => &[],
+            Some(n) => &future_cz_layers[..future_cz_layers.len().min(n)],
+            None => future_cz_layers,
+        };
+        let future_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
+
+        // Upgrade Skip -> MoveBlockers (same as solve_entangling).
+        let upgraded_opts;
+        let opts = if matches!(opts.deadlock_policy, DeadlockPolicy::Skip) {
+            upgraded_opts = SolveOptions {
+                deadlock_policy: DeadlockPolicy::MoveBlockers,
+                ..opts.clone()
+            };
+            &upgraded_opts
+        } else {
+            opts
+        };
+
+        let arch_arc = Arc::new(arch.clone());
+        let index_arc: Arc<LaneIndex> = Arc::new(self.index.clone());
+
+        let restarts = opts.restarts.max(1);
+        let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
+
+        // Fallback closure: when receding-horizon gives up (all branches
+        // drop at horizon=1, or candidate generation returns empty), fall
+        // back to a standard `solve_entangling` from the current state. Use
+        // `restarts = 1` for the inner call to avoid nested rayon
+        // parallelism that could oversubscribe threads. Captures `&self` to
+        // call back into the solver.
+        let single_opts = SolveOptions {
+            restarts: 1,
+            ..opts.clone()
+        };
+        let make_fallback = |state: &Config| -> SolveResult {
+            let initial: Vec<(u32, LocationAddr)> = state.iter().collect();
+            self.solve_entangling(
+                initial,
+                cz_pairs,
+                blocked_locs.iter().copied(),
+                max_expansions,
+                &single_opts,
+                ent_opts,
+                future_cz_layers,
+            )
+            .unwrap_or_else(|_| SolveResult {
+                status: SolveStatus::Unsolvable,
+                move_layers: Vec::new(),
+                goal_config: state.clone(),
+                nodes_expanded: 0,
+                cost: 0.0,
+                deadlocks: 0,
+                entropy_trace: None,
+            })
+        };
+
+        // Run restarts in parallel.
+        let results: Vec<SolveResult> = if restarts <= 1 {
+            vec![crate::receding_horizon::solve_entangling_rh_single(
+                root.clone(),
+                &cz_pairs_owned,
+                blocked_encoded.clone(),
+                arch_arc.clone(),
+                index_arc.clone(),
+                dist_table.clone(),
+                &goal,
+                &heuristic,
+                opts,
+                ent_opts,
+                rh_opts,
+                &future_owned,
+                max_expansions,
+                /*restart_seed*/ 0,
+                make_fallback,
+            )]
+        } else {
+            (0..restarts)
+                .into_par_iter()
+                .map(|i| {
+                    crate::receding_horizon::solve_entangling_rh_single(
+                        root.clone(),
+                        &cz_pairs_owned,
+                        blocked_encoded.clone(),
+                        arch_arc.clone(),
+                        index_arc.clone(),
+                        dist_table.clone(),
+                        &goal,
+                        &heuristic,
+                        opts,
+                        ent_opts,
+                        rh_opts,
+                        &future_owned,
+                        max_expansions,
+                        /*restart_seed*/ (i + 1) as u64,
+                        make_fallback,
+                    )
+                })
+                .collect()
+        };
+
+        Ok(pick_best(results))
+    }
+
     /// Get or build the cached no-home precomputation.
     fn nohome_cache(&self) -> &NoHomeCache {
         self.nohome_cache.get_or_init(|| {

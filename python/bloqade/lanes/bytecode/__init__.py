@@ -60,6 +60,7 @@ from bloqade.lanes.bytecode._native import (
     MoveType as MoveType,
     MultiSolveResult as MultiSolveResult,
     Program as Program,
+    RecedingHorizonOptions as RecedingHorizonOptions,
     SearchStrategy as SearchStrategy,
     SiteBus as SiteBus,
     SolveOptions as SolveOptions,

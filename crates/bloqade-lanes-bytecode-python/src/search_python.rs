@@ -19,6 +19,7 @@ use bloqade_lanes_search::entropy::{
 use bloqade_lanes_search::heuristic::DistanceTable;
 use bloqade_lanes_search::lane_index::LaneIndex;
 use bloqade_lanes_search::nohome::NoHomeOptions;
+use bloqade_lanes_search::receding_horizon::{RecedingHorizonOptions, default_weight_grid};
 use bloqade_lanes_search::solve::{
     EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
     SolveResult, SolveStatus, Strategy,
@@ -958,6 +959,73 @@ impl PyMoveSolver {
         Ok(PySolveResult { inner: result })
     }
 
+    /// Receding-horizon (MPC-style) loose-goal entangling solve.
+    ///
+    /// Like `solve_entangling`, but instead of committing to one Hungarian
+    /// assignment up front, the solver generates K diverse candidate
+    /// assignments at each stage, rolls each out for `rollout_horizon` move
+    /// layers, commits the winning branch's path, and re-plans. Targeted at
+    /// high-occupancy regimes where the baseline loose-goal under-uses
+    /// parallelism.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+    ///         entangling positions.
+    ///     blocked: List of LocationAddress for immovable obstacle locations.
+    ///     max_expansions: Optional limit on total node expansions across all stages.
+    ///     options: Search-tuning parameters (SolveOptions).
+    ///     entangling_options: Hungarian cost parameters (EntanglingOptions).
+    ///     rh_options: Receding-horizon orchestration parameters
+    ///         (RecedingHorizonOptions).
+    ///     future_cz_layers: Future CZ layers for lookahead (clipped by
+    ///         `entangling_options.hungarian_horizon`).
+    ///
+    /// Returns:
+    ///     SolveResult with the committed move-layer trajectory and the
+    ///     final entangling-feasible configuration.
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, entangling_options=None, rh_options=None, future_cz_layers=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn solve_entangling_rh(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        options: Option<&PySolveOptions>,
+        entangling_options: Option<&PyEntanglingOptions>,
+        rh_options: Option<&PyRecedingHorizonOptions>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let ent_opts = entangling_options
+            .map(|o| o.inner.clone())
+            .unwrap_or_default();
+        let rh_opts = rh_options.map(|o| o.inner.clone()).unwrap_or_default();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_entangling_rh(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &opts,
+                    &ent_opts,
+                    &rh_opts,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
     fn __repr__(&self) -> String {
         "MoveSolver(...)".to_string()
     }
@@ -1287,6 +1355,136 @@ impl PyEntanglingOptions {
             self.inner.congestion_weight,
             self.inner.occupancy_penalty,
             self.inner.hungarian_horizon,
+        )
+    }
+}
+
+// ── Receding-horizon options ──
+
+/// Orchestration parameters for `MoveSolver.solve_entangling_rh`.
+///
+/// Controls how many candidate Hungarian assignments are tried per stage,
+/// how far each rollout searches forward, how many layers of the winning
+/// branch get committed before re-planning, and other tuning knobs.
+#[pyclass(
+    name = "RecedingHorizonOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyRecedingHorizonOptions {
+    inner: RecedingHorizonOptions,
+}
+
+#[pymethods]
+impl PyRecedingHorizonOptions {
+    #[new]
+    #[pyo3(signature = (
+        k_candidates = 5,
+        rollout_horizon = 5,
+        commit_depth = 5,
+        tier0_next_h_weight = 0.5,
+        weight_grid = None,
+        fallback_x_decrement = 1,
+        branch_parallel = true,
+        max_expansions_per_rollout = 1000,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        k_candidates: usize,
+        rollout_horizon: u32,
+        commit_depth: u32,
+        tier0_next_h_weight: f64,
+        weight_grid: Option<Vec<(f64, f64)>>,
+        fallback_x_decrement: u32,
+        branch_parallel: bool,
+        max_expansions_per_rollout: u32,
+    ) -> PyResult<Self> {
+        if k_candidates == 0 {
+            return Err(PyValueError::new_err("k_candidates must be positive"));
+        }
+        if rollout_horizon == 0 {
+            return Err(PyValueError::new_err("rollout_horizon must be positive"));
+        }
+        if commit_depth == 0 || commit_depth > rollout_horizon {
+            return Err(PyValueError::new_err(
+                "commit_depth must satisfy 1 <= commit_depth <= rollout_horizon",
+            ));
+        }
+        if !tier0_next_h_weight.is_finite() || tier0_next_h_weight < 0.0 {
+            return Err(PyValueError::new_err(
+                "tier0_next_h_weight must be a finite non-negative float",
+            ));
+        }
+        let grid = weight_grid.unwrap_or_else(default_weight_grid);
+        if grid.is_empty() {
+            return Err(PyValueError::new_err("weight_grid must not be empty"));
+        }
+        for &(cw, op) in &grid {
+            if !cw.is_finite() || cw < 0.0 || !op.is_finite() || op < 0.0 {
+                return Err(PyValueError::new_err(
+                    "weight_grid entries must be finite non-negative pairs",
+                ));
+            }
+        }
+        Ok(Self {
+            inner: RecedingHorizonOptions {
+                k_candidates,
+                rollout_horizon,
+                commit_depth,
+                tier0_next_h_weight,
+                weight_grid: grid,
+                fallback_x_decrement: fallback_x_decrement.max(1),
+                branch_parallel,
+                max_expansions_per_rollout: max_expansions_per_rollout.max(1),
+            },
+        })
+    }
+
+    #[getter]
+    fn k_candidates(&self) -> usize {
+        self.inner.k_candidates
+    }
+    #[getter]
+    fn rollout_horizon(&self) -> u32 {
+        self.inner.rollout_horizon
+    }
+    #[getter]
+    fn commit_depth(&self) -> u32 {
+        self.inner.commit_depth
+    }
+    #[getter]
+    fn tier0_next_h_weight(&self) -> f64 {
+        self.inner.tier0_next_h_weight
+    }
+    #[getter]
+    fn weight_grid(&self) -> Vec<(f64, f64)> {
+        self.inner.weight_grid.clone()
+    }
+    #[getter]
+    fn fallback_x_decrement(&self) -> u32 {
+        self.inner.fallback_x_decrement
+    }
+    #[getter]
+    fn branch_parallel(&self) -> bool {
+        self.inner.branch_parallel
+    }
+    #[getter]
+    fn max_expansions_per_rollout(&self) -> u32 {
+        self.inner.max_expansions_per_rollout
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RecedingHorizonOptions(k_candidates={}, rollout_horizon={}, commit_depth={}, tier0_next_h_weight={}, fallback_x_decrement={}, branch_parallel={}, max_expansions_per_rollout={}, weight_grid_len={})",
+            self.inner.k_candidates,
+            self.inner.rollout_horizon,
+            self.inner.commit_depth,
+            self.inner.tier0_next_h_weight,
+            self.inner.fallback_x_decrement,
+            self.inner.branch_parallel,
+            self.inner.max_expansions_per_rollout,
+            self.inner.weight_grid.len(),
         )
     }
 }

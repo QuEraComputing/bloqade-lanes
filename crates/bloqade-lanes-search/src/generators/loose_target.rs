@@ -127,6 +127,50 @@ impl LooseTargetGenerator {
         self.lookahead_beta = beta;
         self
     }
+
+    /// Construct with pre-computed targets, bypassing the lazy seed-based
+    /// computation used by [`Self::new`]. Used by the receding-horizon
+    /// orchestrator, which generates K candidate target assignments at each
+    /// stage outside the generator and injects one per branch.
+    ///
+    /// `cz_pairs`, `arch`, `index`, and `dist_table` are still required for
+    /// API parity with [`Self::new`] but are not consulted by `generate`
+    /// when `cache_initialized = true` (the [`MoveGenerator::generate`]
+    /// implementation uses `ctx.*` for those data, not the struct fields).
+    pub fn from_targets(
+        inner: HeuristicGenerator,
+        targets: Vec<(u32, u64)>,
+        cz_pairs: Vec<(u32, u32)>,
+        arch: Arc<ArchSpec>,
+        index: Arc<LaneIndex>,
+        dist_table: Arc<DistanceTable>,
+    ) -> Self {
+        Self {
+            inner,
+            cz_pairs,
+            arch,
+            index,
+            dist_table,
+            seed: 0,
+            congestion_weight: 0.0,
+            occupancy_penalty: 0.0,
+            move_penalty: 0.0,
+            future_layers: Vec::new(),
+            lookahead_beta: 0.0,
+            cached_targets: RefCell::new(targets),
+            cache_initialized: Cell::new(true),
+        }
+    }
+
+    /// Internal accessor used by the receding-horizon orchestrator.
+    pub(crate) fn index_ref(&self) -> &LaneIndex {
+        &self.index
+    }
+
+    /// Internal accessor used by the receding-horizon orchestrator.
+    pub(crate) fn dist_table_ref(&self) -> &DistanceTable {
+        &self.dist_table
+    }
 }
 
 impl MoveGenerator for LooseTargetGenerator {
