@@ -125,6 +125,12 @@ pub fn default_weight_grid() -> Vec<(f64, f64)> {
 ///
 /// Tier-2 (failed to reach depth x) is represented by `None` from
 /// [`classify_into_tier`] — dropped branches are not stored.
+///
+/// Tier-1's leaf-Hungarian cost (`c_prime`) is **not** stored here — it's
+/// only consulted when ranking against other tier-1 branches in the
+/// absence of any tier-0 winner. When at least one tier-0 exists, all
+/// tier-1 branches lose by definition, so computing their leaf Hungarian
+/// would be wasted work. [`pick_best_branch`] computes it lazily.
 pub(crate) enum BranchResult {
     /// Rollout reached `EntanglingConstraintGoal` at `depth ≤ rollout_horizon`.
     /// Commit the full `path` regardless of `commit_depth`.
@@ -135,9 +141,9 @@ pub(crate) enum BranchResult {
         nodes_expanded: u32,
     },
     /// Rollout completed exactly `rollout_horizon` layers without reaching
-    /// the goal. `c_prime` is the Hungarian cost at the leaf.
+    /// the goal. The leaf Hungarian cost is computed lazily in
+    /// [`pick_best_branch`] only when no tier-0 branch exists.
     Tier1 {
-        c_prime: u32,
         path: Vec<MoveSet>,
         leaf_config: Config,
         nodes_expanded: u32,
@@ -182,7 +188,11 @@ impl BranchResult {
 /// 1. For each `(congestion_weight, occupancy_penalty)` in `weight_grid`,
 ///    call Hungarian with a `restart_seed`-derived seed (so each restart
 ///    sees genuinely different cost-matrix perturbations across stages).
-/// 2. Dedup by the canonical (sorted) target list.
+///    These K calls are independent and run in parallel via rayon when
+///    `parallel = true` (gated on the same `branch_parallel` flag that
+///    controls rollout parallelism, so we don't oversubscribe cores when
+///    the outer restart loop is already parallel).
+/// 2. Dedup by the canonical (sorted) target list, take first k unique.
 /// 3. Top up with additive-noise variants if the unique set is still < k.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_k_candidates(
@@ -197,17 +207,16 @@ pub(crate) fn generate_k_candidates(
     weight_grid: &[(f64, f64)],
     k: usize,
     restart_seed: u64,
+    parallel: bool,
 ) -> Vec<Vec<(u32, u64)>> {
-    let mut signatures: HashSet<Vec<(u32, u64)>> = HashSet::new();
-    let mut candidates: Vec<Vec<(u32, u64)>> = Vec::with_capacity(k);
-
     let grid_len = weight_grid.len().max(1) as u64;
 
-    for (i, &(cw, op)) in weight_grid.iter().enumerate() {
+    // ── Phase 1: per-weight Hungarian (parallel if requested) ──────────
+    let one_candidate = |i: usize, cw: f64, op: f64| -> Vec<(u32, u64)> {
         let seed = restart_seed
             .wrapping_mul(grid_len)
             .wrapping_add(i as u64 + 1);
-        let targets = if !future_layers.is_empty() {
+        if !future_layers.is_empty() {
             entangling::lookahead_assign_pairs(
                 cz_pairs,
                 state,
@@ -238,7 +247,27 @@ pub(crate) fn generate_k_candidates(
                 MOVE_PENALTY,
                 true,
             )
-        };
+        }
+    };
+
+    let raw_candidates: Vec<Vec<(u32, u64)>> = if parallel {
+        weight_grid
+            .par_iter()
+            .enumerate()
+            .map(|(i, &(cw, op))| one_candidate(i, cw, op))
+            .collect()
+    } else {
+        weight_grid
+            .iter()
+            .enumerate()
+            .map(|(i, &(cw, op))| one_candidate(i, cw, op))
+            .collect()
+    };
+
+    // ── Phase 2: dedup, take first k unique ───────────────────────────
+    let mut signatures: HashSet<Vec<(u32, u64)>> = HashSet::new();
+    let mut candidates: Vec<Vec<(u32, u64)>> = Vec::with_capacity(k);
+    for targets in raw_candidates {
         if targets.is_empty() {
             continue;
         }
@@ -450,16 +479,12 @@ pub(crate) fn hungarian_cost_at_leaf(
 
 /// Convert a [`RolloutOutcome`] into a [`BranchResult`].
 /// Returns `None` for tier-2 (the rollout couldn't extend to `rollout_horizon`).
-#[allow(clippy::too_many_arguments)]
+///
+/// Cheap — does no Hungarian work. The leaf Hungarian for tier-1 ranking
+/// is deferred to [`pick_best_branch`].
 pub(crate) fn classify_into_tier(
     outcome: RolloutOutcome,
     rollout_horizon: u32,
-    cz_pairs: &[(u32, u32)],
-    arch: &ArchSpec,
-    index: &LaneIndex,
-    dist_table: &DistanceTable,
-    blocked: &HashSet<u64>,
-    ent_opts: &EntanglingOptions,
     heuristic: &PairDistanceHeuristic,
 ) -> Option<BranchResult> {
     let RolloutOutcome {
@@ -493,17 +518,9 @@ pub(crate) fn classify_into_tier(
     }
     let path = graph.reconstruct_path(leaf);
     let leaf_config = graph.config(leaf).clone();
-    let c_prime = hungarian_cost_at_leaf(
-        &leaf_config,
-        cz_pairs,
-        arch,
-        index,
-        dist_table,
-        blocked,
-        ent_opts,
-    );
+    // Note: c_prime (Hungarian cost at leaf) is computed lazily in
+    // pick_best_branch, only when needed (i.e., when no tier-0 branch exists).
     Some(BranchResult::Tier1 {
-        c_prime,
         path,
         leaf_config,
         nodes_expanded,
@@ -516,10 +533,16 @@ pub(crate) fn classify_into_tier(
 /// at the leaf for the next CZ layer (zero if no next layer).
 /// Tier-1 score = `c_prime` (the leaf-state Hungarian cost for the current
 /// CZ layer).
+///
+/// Hungarian leaf-scoring is **lazy** — tier-1 `c_prime` and tier-0 `next_h`
+/// (when `future_layers` is empty) are not computed at all. When a tier-0
+/// branch exists, all tier-1 are infeasible and skip their Hungarian work
+/// entirely (saves up to K Hungarian calls per stage).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pick_best_branch<'a>(
     branches: &'a [BranchResult],
     alpha: f64,
+    cz_pairs: &[(u32, u32)],
     future_layers: &[Vec<(u32, u32)>],
     arch: &ArchSpec,
     index: &LaneIndex,
@@ -531,13 +554,11 @@ pub(crate) fn pick_best_branch<'a>(
 
     let mut best: Option<(&BranchResult, f64)> = None;
     for b in branches {
-        // Cross-tier ordering: when any tier-0 exists, tier-1 branches
-        // are infeasible (push to +∞).
         let score: f64 = match b {
             BranchResult::Tier0 {
                 depth, leaf_config, ..
             } => {
-                let next_h = if !future_layers.is_empty() {
+                let next_h = if !future_layers.is_empty() && alpha != 0.0 {
                     hungarian_cost_at_leaf(
                         leaf_config,
                         &future_layers[0],
@@ -552,11 +573,21 @@ pub(crate) fn pick_best_branch<'a>(
                 };
                 *depth as f64 + alpha * next_h
             }
-            BranchResult::Tier1 { c_prime, .. } => {
+            BranchResult::Tier1 { leaf_config, .. } => {
+                // Cross-tier short-circuit: when any tier-0 exists, all
+                // tier-1 are infeasible and we skip the Hungarian.
                 if has_tier0 {
                     f64::INFINITY
                 } else {
-                    *c_prime as f64
+                    hungarian_cost_at_leaf(
+                        leaf_config,
+                        cz_pairs,
+                        arch,
+                        index,
+                        dist_table,
+                        blocked,
+                        ent_opts,
+                    ) as f64
                 }
             }
         };
@@ -649,6 +680,7 @@ pub fn solve_entangling_rh_single(
             &rh_opts.weight_grid,
             rh_opts.k_candidates,
             stage_seed,
+            rh_opts.branch_parallel,
         );
 
         if candidates.is_empty() {
@@ -676,17 +708,7 @@ pub fn solve_entangling_rh_single(
                 top_c,
                 stage_seed,
             );
-            classify_into_tier(
-                outcome,
-                x,
-                cz_pairs,
-                &arch,
-                &index,
-                &dist_table,
-                &blocked,
-                ent_opts,
-                heuristic,
-            )
+            classify_into_tier(outcome, x, heuristic)
         };
 
         let branches: Vec<BranchResult> = if rh_opts.branch_parallel {
@@ -711,6 +733,7 @@ pub fn solve_entangling_rh_single(
         let best = match pick_best_branch(
             &branches,
             rh_opts.tier0_next_h_weight,
+            cz_pairs,
             future_layers,
             &arch,
             &index,
@@ -1009,8 +1032,9 @@ mod tests {
             &EntanglingOptions::default(),
             &[],
             &grid,
-            3, // k
-            1, // restart_seed
+            3,     // k
+            1,     // restart_seed
+            false, // parallel
         );
         assert!(candidates.len() <= 3, "must respect k cap");
     }
@@ -1051,6 +1075,7 @@ mod tests {
             &grid,
             10,
             1,
+            false,
         );
         let cands_seed_2 = generate_k_candidates(
             &config,
@@ -1064,6 +1089,7 @@ mod tests {
             &grid,
             10,
             2,
+            false,
         );
 
         // Convert each candidate to a canonical sorted signature.
