@@ -1,8 +1,8 @@
 import pytest
 
 from bloqade.lanes.arch.gemini import logical, physical
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
 )
 

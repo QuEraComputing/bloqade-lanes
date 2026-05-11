@@ -6,6 +6,7 @@ from kirin.dialects import ilist
 from kirin.lattice.empty import EmptyLattice
 
 from bloqade import types as bloqade_types
+from bloqade.gemini.star import validate_steane_star_support
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -13,6 +14,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     PlacementAnalysis,
 )
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.types import StateType
 
 dialect = ir.Dialect(name="lanes.place")
@@ -33,22 +35,51 @@ class LogicalInitialize(ir.Statement):
     qubits: tuple[ir.SSAValue, ...] = info.argument(bloqade_types.QubitType)
 
 
+@statement(init=False)
+class _NewQubitBase(ir.Statement):
+    """Shared abstract base for qubit-allocation statements.
+
+    Holds the two fields common to both ``NewPinnedQubit`` (physical) and
+    ``NewLogicalQubit`` (logical) so that isinstance guards throughout the
+    codebase can match "any qubit allocation" without one type being a subtype
+    of the other.  Neither class should be used where only one flavour is
+    intended; use the concrete subclass directly in those cases.
+    """
+
+    traits = frozenset()
+    location_address: LocationAddress | None = info.attribute(default=None)
+    result: ir.ResultValue = info.result(bloqade_types.QubitType)
+
+
 @statement(dialect=dialect)
-class NewLogicalQubit(ir.Statement):
-    """Allocate new logical qubits with initial state u3(theta, phi, lam)|0>.
+class NewPinnedQubit(_NewQubitBase):
+    """Allocate a physical qubit at an optional pinned location.
+
+    No initialization angles — physical qubits have a location but no associated
+    initialization sequence.  location_address=None means the layout heuristic will
+    assign a site; after ResolvePinnedAddresses runs this is never None in well-formed IR.
+    """
+
+
+@statement(dialect=dialect)
+class NewLogicalQubit(_NewQubitBase):
+    """Allocate a logical qubit with initial state u3(theta, phi, lam)|0>.
+
+    location_address and result are inherited from _NewQubitBase.
 
     Args:
         theta (float): Angle for rotation around the Y axis
         phi (float): angle for rotation around the Z axis
         lam (float): angle for rotation around the Z axis
+        location_address (LocationAddress | None): Pinned physical address; None means
+            the layout heuristic chooses. After ResolvePinnedAddresses runs, this is
+            never None in well-formed IR.
 
     """
 
-    traits = frozenset()
     theta: ir.SSAValue = info.argument(types.Float)
     phi: ir.SSAValue = info.argument(types.Float)
     lam: ir.SSAValue = info.argument(types.Float)
-    result: ir.ResultValue = info.result(bloqade_types.QubitType)
 
 
 @statement(init=False)
@@ -102,6 +133,19 @@ class R(QuantumStmt):
 class Rz(QuantumStmt):
     qubits: tuple[int, ...] = info.attribute()
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+
+@statement(dialect=dialect)
+class StarRz(QuantumStmt):
+    qubits: tuple[int, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
 
 
 @statement(dialect=dialect)
@@ -222,8 +266,12 @@ class PlacementMethods(interp.MethodTable):
 
     @interp.impl(R)
     @interp.impl(Rz)
+    @interp.impl(StarRz)
     def impl_single_qubit_gate(
-        self, _interp: PlacementAnalysis, frame: ForwardFrame[AtomState], stmt: R | Rz
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: R | Rz | StarRz,
     ):
         return (
             _interp.placement_strategy.sq_placements(
@@ -288,6 +336,28 @@ class PlacementMethods(interp.MethodTable):
 @dialect.register(key="place.layout")
 class InitialLayoutMethods(interp.MethodTable):
 
+    @interp.impl(NewLogicalQubit)
+    @interp.impl(NewPinnedQubit)
+    def new_qubit_layout(
+        self,
+        _interp: LayoutAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        stmt: _NewQubitBase,
+    ):
+        if stmt.location_address is None:
+            return (EmptyLattice.bottom(),)
+        addr_entry = _interp.address_entries.get(stmt.result)
+        if not isinstance(addr_entry, address.AddressQubit):
+            return (EmptyLattice.bottom(),)
+        qubit_id = addr_entry.data
+        pinned_values = _interp.location_addresses.values()
+        if stmt.location_address in pinned_values:
+            raise interp.InterpreterError(
+                f"Duplicate pinned location address: {stmt.location_address}"
+            )
+        _interp.location_addresses[qubit_id] = stmt.location_address
+        return (EmptyLattice.bottom(),)
+
     @interp.impl(CZ)
     def cz(
         self,
@@ -327,11 +397,12 @@ class InitialLayoutMethods(interp.MethodTable):
 class QubitAddressAnalysis(interp.MethodTable):
 
     @interp.impl(NewLogicalQubit)
-    def new_logical_qubit(
+    @interp.impl(NewPinnedQubit)
+    def new_qubit_address(
         self,
         _interp: address.AddressAnalysis,
         frame: ForwardFrame[address.Address],
-        stmt: NewLogicalQubit,
+        stmt: _NewQubitBase,
     ):
         addr = address.AddressQubit(_interp.next_address)
         _interp.next_address += 1

@@ -29,7 +29,7 @@ from bloqade.lanes.analysis.placement import (
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import MoveSolver
-from bloqade.lanes.layout import (
+from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
     ZoneAddress,

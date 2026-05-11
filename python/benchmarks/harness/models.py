@@ -12,6 +12,8 @@ from bloqade.lanes.analysis.placement import PlacementStrategyABC
 
 Backend = Literal["python", "rust"]
 
+BUILTIN_ARCH_SPEC_ID = "builtin"
+
 
 @dataclass(frozen=True)
 class BenchmarkCase:
@@ -31,6 +33,7 @@ class StrategyConfig:
     backend: Backend
     generator_id: str
     build_placement_strategy: Callable[[], PlacementStrategyABC]
+    arch_spec_id: str = BUILTIN_ARCH_SPEC_ID
     notes: str = ""
 
 
@@ -57,5 +60,6 @@ class BenchmarkRow:
     estimated_fidelity: float | None
     nodes_explored: int | None
     max_depth_reached: int | None
+    arch_spec_id: str = BUILTIN_ARCH_SPEC_ID
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)

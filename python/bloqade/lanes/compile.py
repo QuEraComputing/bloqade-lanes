@@ -10,15 +10,11 @@ from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics.physical.layout import (
-    PhysicalLayoutHeuristicGraphPartitionCenterOut,
-)
-from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.transform import MoveToSquinPhysical
-from bloqade.lanes.upstream import squin_to_move
 
 __all__ = [
     "compile_squin_to_move",
@@ -37,21 +33,12 @@ def compile_squin_to_move(
     insert_return_moves: bool = True,
 ) -> ir.Method:
     """Compile a physical squin kernel to the move dialect."""
-    arch_spec = get_physical_arch_spec()
-    if layout_heuristic is None:
-        layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
-            arch_spec=arch_spec
-        )
-    if placement_strategy is None:
-        placement_strategy = PhysicalPlacementStrategy(arch_spec=arch_spec)
-
-    return squin_to_move(
-        mt,
+    return PhysicalPipeline(
+        arch_spec=get_physical_arch_spec(),
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
         insert_return_moves=insert_return_moves,
-        no_raise=no_raise,
-    )
+    ).emit(mt, no_raise=no_raise)
 
 
 def _count_move_events(mt: ir.Method) -> int:

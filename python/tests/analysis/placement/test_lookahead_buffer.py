@@ -3,9 +3,9 @@ from kirin import ir
 from kirin.interp.exceptions import InterpreterError
 
 from bloqade.lanes.analysis.placement import PlacementAnalysis
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
-from bloqade.lanes.layout import LocationAddress
 
 
 def _build_analysis() -> PlacementAnalysis:

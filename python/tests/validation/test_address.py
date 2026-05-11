@@ -5,13 +5,13 @@ from kirin.validation import ValidationSuite
 
 from bloqade.lanes._prelude import kernel as lanes_kernel
 from bloqade.lanes.arch.gemini.logical import validation
-from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LocationAddress,
     SiteLaneAddress,
     ZoneAddress,
 )
+from bloqade.lanes.dialects import move
 from bloqade.lanes.types import State
 
 

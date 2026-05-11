@@ -5,10 +5,10 @@ from types import MappingProxyType
 
 from kirin.interp import InterpreterError
 
-from bloqade.lanes._wrapper import RustWrapper
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import AtomStateData as _RustAtomStateData
-from bloqade.lanes.layout import LaneAddress, LocationAddress, ZoneAddress
-from bloqade.lanes.layout.arch import ArchSpec
+from bloqade.lanes.bytecode._wrapper import RustWrapper
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 
 class AtomStateData(RustWrapper[_RustAtomStateData]):

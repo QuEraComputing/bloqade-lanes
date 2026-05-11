@@ -10,8 +10,8 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
-from bloqade.lanes.layout.path import PathFinder
+from bloqade.lanes.arch.path import PathFinder
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 
 
 def _build_pathfinder() -> PathFinder:
@@ -204,7 +204,7 @@ def test_find_path_respects_per_bus_word_scoping():
         },
         layout=DeviceLayout(sites_per_word=4),
     )
-    from bloqade.lanes.arch.topology import MatchingTopology
+    from bloqade.lanes.arch.build.topology import MatchingTopology
 
     result = build_arch(bp, connections={("a", "b"): MatchingTopology()})
     arch = result.arch

@@ -7,9 +7,9 @@ from kirin.analysis.forward import Forward, ForwardFrame
 from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
 
 
 @dataclass
@@ -66,12 +66,19 @@ class _MoveMethods(interp.MethodTable):
     @interp.impl(move.LogicalInitialize)
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
+    @interp.impl(move.StarRz)
     @interp.impl(move.Fill)
     def location_checker(
         self,
         _interp: _ValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        node: move.LogicalInitialize | move.LocalR | move.LocalRz | move.Fill,
+        node: (
+            move.LogicalInitialize
+            | move.LocalR
+            | move.LocalRz
+            | move.StarRz
+            | move.Fill
+        ),
     ):
         _interp.report_location_errors(node, node.location_addresses)
         return (EmptyLattice.bottom(),)

@@ -7,13 +7,18 @@ Total: 30 words, 510 sites, 5 entangling pairs (85 CZ locations).
 
 from __future__ import annotations
 
-from bloqade.lanes.arch.builder import ArchResult, build_arch
-from bloqade.lanes.arch.topology import (
+from bloqade.lanes.arch.build.blueprint import (
+    ArchBlueprint,
+    ArchResult,
+    DeviceLayout,
+    ZoneSpec,
+    build_arch,
+)
+from bloqade.lanes.arch.build.topology import (
     DiagonalWordTopology,
     HypercubeSiteTopology,
     MatchingTopology,
 )
-from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 
 _SITES_PER_WORD = 17
 _NUM_ROWS = 5

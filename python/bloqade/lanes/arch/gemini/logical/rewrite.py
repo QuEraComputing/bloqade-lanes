@@ -4,8 +4,8 @@ from kirin import ir, types
 from kirin.dialects import ilist, py
 from kirin.rewrite import abc as rewrite_abc
 
+from bloqade.lanes.bytecode.encoding import MoveType
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import MoveType
 
 from . import stmts
 

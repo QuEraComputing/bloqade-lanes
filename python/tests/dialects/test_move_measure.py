@@ -1,7 +1,7 @@
 from kirin import ir
 
+from bloqade.lanes.bytecode.encoding import ZoneAddress
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import ZoneAddress
 
 
 def test_measure_fields():

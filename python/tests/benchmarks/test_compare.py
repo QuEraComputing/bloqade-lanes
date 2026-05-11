@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ from benchmarks.harness.compare import (
     BenchmarkComparisonReport,
     compare_against_baseline,
     load_baseline_csv,
+    render_comparison_report,
 )
 from benchmarks.harness.models import BenchmarkRow
 from benchmarks.harness.output import write_csv
@@ -46,6 +48,33 @@ def test_load_baseline_csv_round_trips_rows(tmp_path: Path):
     assert loaded == rows
 
 
+def test_load_baseline_csv_defaults_missing_arch_spec_id_to_builtin(tmp_path: Path):
+    path = tmp_path / "legacy_baseline.csv"
+    # Legacy schema: no arch_spec_id column.
+    path.write_text(
+        "case_id,strategy_id,backend,generator_id,success,wall_time_ms,"
+        "move_count_events,move_count_lanes,estimated_fidelity,nodes_explored,"
+        "max_depth_reached,notes\n"
+        "ghz_4,python_entropy,python,heuristic,True,10.0,10,10,0.9,10,10,\n",
+        encoding="utf-8",
+    )
+    loaded = load_baseline_csv(path)
+    assert len(loaded) == 1
+    assert loaded[0].arch_spec_id == "builtin"
+
+
+def test_load_baseline_csv_preserves_arch_spec_id_when_present(tmp_path: Path):
+    rows = [_row()]
+    # Force a non-default arch_spec_id by replacing on the dataclass.
+    from dataclasses import replace
+
+    rows = [replace(rows[0], arch_spec_id="full")]
+    path = tmp_path / "baseline.csv"
+    write_csv(rows, path)
+    loaded = load_baseline_csv(path)
+    assert loaded[0].arch_spec_id == "full"
+
+
 def test_compare_detects_matrix_mismatch():
     baseline_rows = [_row(case_id="ghz_4")]
     current_rows = [_row(case_id="ghz_4"), _row(case_id="ghz_6")]
@@ -55,7 +84,7 @@ def test_compare_detects_matrix_mismatch():
 
     assert report.matrix_mismatch is True
     assert report.has_differences is True
-    assert report.missing_from_baseline == (("ghz_6", "python_entropy"),)
+    assert report.missing_from_baseline == (("ghz_6", "python_entropy", "builtin"),)
     assert report.missing_from_current == ()
 
 
@@ -109,6 +138,52 @@ def test_compare_ignores_wall_time_improvements():
     )
 
     assert report.has_differences is False
+
+
+def test_compare_distinguishes_rows_by_arch_spec_id():
+    baseline_rows = [
+        replace(_row(), arch_spec_id="builtin"),
+        replace(_row(), arch_spec_id="full"),
+    ]
+    # Current only has the "full" archspec — the "builtin" entry is missing.
+    current_rows = [replace(_row(), arch_spec_id="full")]
+
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+
+    assert report.missing_from_current == (("ghz_4", "python_entropy", "builtin"),)
+    assert report.missing_from_baseline == ()
+
+
+def test_compare_treats_same_case_strategy_across_archspecs_as_distinct():
+    baseline_rows = [
+        replace(_row(move_count_events=10), arch_spec_id="full"),
+        replace(_row(move_count_events=10), arch_spec_id="simple"),
+    ]
+    current_rows = [
+        replace(_row(move_count_events=10), arch_spec_id="full"),
+        replace(_row(move_count_events=20), arch_spec_id="simple"),
+    ]
+
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+
+    assert len(report.diffs) == 1
+    assert report.diffs[0].arch_spec_id == "simple"
+    assert report.diffs[0].field == "move_count_events"
+
+
+def test_render_comparison_report_includes_arch_spec_id():
+    baseline_rows = [replace(_row(move_count_events=10), arch_spec_id="full")]
+    current_rows = [replace(_row(move_count_events=20), arch_spec_id="full")]
+
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    rendered = render_comparison_report(report)
+    assert "full" in rendered
 
 
 def test_load_baseline_csv_rejects_invalid_bool(tmp_path: Path):

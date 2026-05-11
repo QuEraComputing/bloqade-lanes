@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from itertools import chain
+from dataclasses import dataclass, field
 from typing import Callable
 
 from bloqade.analysis import address
@@ -10,32 +9,25 @@ from bloqade.rewrite.passes.callgraph import CallGraphPass
 from bloqade.squin.rewrite.non_clifford_to_U3 import RewriteNonCliffordToU3
 from kirin import ir, passes, rewrite
 from kirin.dialects.scf import scf2cf
+from kirin.ir.exception import ValidationErrorGroup
 from kirin.ir.method import Method
 from kirin.rewrite.abc import RewriteRule
 
+from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.layout.encoding import LaneAddress
-from bloqade.lanes.rewrite import circuit2place, place2move, state
-
-
-def default_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
-    return all(
-        isinstance(stmt, (place.R, place.Rz, place.Yield))
-        for stmt in chain(region_a.walk(), region_b.walk())
-    )
-
-
-def always_merge_heuristic(region_a: ir.Region, region_b: ir.Region) -> bool:
-    """Always allow merging; all CZs end up in one region in the Place IR."""
-    return True
+from bloqade.lanes.passes import SequentialPlacePass
+from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 
 
 @dataclass
 class NativeToPlace:
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic
     logical_initialize: bool = True
+    arch_spec: ArchSpec | None = field(default=None)
+    place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True):
         out = mt.similar(mt.dialects.add(place))
@@ -56,6 +48,21 @@ class NativeToPlace:
 
         rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
 
+        if self.arch_spec is not None:
+            from bloqade.gemini.common.validation.duplicate_address import (
+                DuplicateAddressValidation,
+            )
+            from bloqade.lanes.validation.address import Validation
+
+            errors: list[ir.ValidationError] = []
+            _, per_stmt_errors = Validation(arch_spec=self.arch_spec).run(out)
+            errors.extend(per_stmt_errors)
+            _, dup_errors = DuplicateAddressValidation().run(out)
+            errors.extend(dup_errors)
+            if errors:
+                message = f"Gemini IR validation failed with {len(errors)} error(s)"
+                raise ValidationErrorGroup(message, errors=errors)
+
         if self.logical_initialize:
             rewrite.Walk(circuit2place.RewriteInitializeToLogicalInitialize()).rewrite(
                 out.code
@@ -64,8 +71,12 @@ class NativeToPlace:
             rewrite.Walk(circuit2place.RewriteLogicalInitializeToNewLogical()).rewrite(
                 out.code
             )
-            rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
             rewrite.Walk(circuit2place.CleanUpLogicalInitialize()).rewrite(out.code)
+
+        # Must run unconditionally: NewAt statements can appear in physical
+        # circuits (not just logical ones gated on arch_spec). A follow-up PR
+        # will separate the logical and physical compilation pipelines properly.
+        rewrite.Walk(circuit2place.InitializeNewQubits()).rewrite(out.code)
 
         rewrite.Walk(
             circuit2place.RewritePlaceOperations(),
@@ -77,19 +88,9 @@ class NativeToPlace:
             )
         ).rewrite(out.code)
 
-        rewrite.Walk(circuit2place.HoistConstants()).rewrite(out.code)
+        self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
-        rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
-        ).rewrite(out.code)
-
-        rewrite.Walk(circuit2place.HoistNewQubitsUp()).rewrite(out.code)
-
-        rewrite.Fixpoint(
-            rewrite.Walk(circuit2place.MergePlacementRegions(self.merge_heuristic)),
-        ).rewrite(out.code)
-
-        out = out.similar(out.dialects.discard(native_gate))
+        out = out.similar(out.dialects.discard(native_gate).discard(gemini_qubit))
         passes.TypeInfer(out.dialects, no_raise=True)(out)
 
         if not no_raise:
@@ -120,6 +121,13 @@ class PlaceToMove:
                 out.dialects, self.layout_heuristic, address_frame.entries, all_qubits
             ).get_layout_no_raise(out)
 
+            rewrite.Walk(
+                resolve_pinned.ResolvePinnedAddresses(
+                    address_entries=address_frame.entries,
+                    initial_layout=initial_layout,
+                )
+            ).rewrite(out.code)
+
             placement_analysis = placement.PlacementAnalysis(
                 out.dialects,
                 initial_layout,
@@ -133,6 +141,14 @@ class PlaceToMove:
             initial_layout = layout.LayoutAnalysis(
                 out.dialects, self.layout_heuristic, address_frame.entries, all_qubits
             ).get_layout(out)
+
+            rewrite.Walk(
+                resolve_pinned.ResolvePinnedAddresses(
+                    address_entries=address_frame.entries,
+                    initial_layout=initial_layout,
+                )
+            ).rewrite(out.code)
+
             placement_frame, _ = placement.PlacementAnalysis(
                 out.dialects,
                 initial_layout,
@@ -140,12 +156,10 @@ class PlaceToMove:
                 self.placement_strategy,
             ).run(out)
 
-        rules: list[RewriteRule] = [place2move.InsertFill(initial_layout)]
+        rules: list[RewriteRule] = [place2move.InsertFill()]
         if self.logical_initialize:
             # Insert logical initialize operations based on the address frame and initial layout.
-            rules.append(
-                place2move.InsertInitialize(address_frame.entries, initial_layout)
-            )
+            rules.append(place2move.InsertInitialize())
 
         rules.extend(
             (
@@ -203,9 +217,9 @@ def squin_to_move(
         [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
         tuple[tuple[LaneAddress, ...], ...] | None,
     ] = place2move.palindrome_move_layers,
-    merge_heuristic: Callable[[ir.Region, ir.Region], bool] = default_merge_heuristic,
     no_raise: bool = True,
     logical_initialize: bool = True,
+    place_opt_type: type[passes.Pass] = SequentialPlacePass,
 ) -> ir.Method:
     """
     Compile a squin kernel to move dialect.
@@ -218,17 +232,19 @@ def squin_to_move(
         revert_initial_position (Callable, optional): Callback returning move
             layers to insert near the end of each static placement region.
             Defaults to palindrome_move_layers.
-        merge_heuristic (Callable[[ir.Region, ir.Region], bool], optional): Heuristic for merging placement regions. Defaults to default_merge_heuristic.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
+        place_opt_type (type[passes.Pass], optional): Place-dialect optimization pass class. Defaults to SequentialPlacePass.
 
     Returns:
         ir.Method: The compiled move dialect method.
     """
 
+    arch_spec: ArchSpec | None = getattr(layout_heuristic, "arch_spec", None)
     out = NativeToPlace(
-        merge_heuristic=merge_heuristic,
         logical_initialize=logical_initialize,
+        arch_spec=arch_spec,
+        place_opt_type=place_opt_type,
     ).emit(mt, no_raise=no_raise)
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,

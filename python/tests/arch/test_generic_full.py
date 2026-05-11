@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from bloqade.lanes.arch.build.blueprint import DeviceLayout, ZoneSpec
+from bloqade.lanes.arch.build.topology import DiagonalWordTopology
+from bloqade.lanes.arch.build.word_factory import WordGrid, create_zone_words
 from bloqade.lanes.arch.generic_full import get_arch
-from bloqade.lanes.arch.topology import DiagonalWordTopology
-from bloqade.lanes.arch.word_factory import WordGrid, create_zone_words
-from bloqade.lanes.arch.zone import DeviceLayout, ZoneSpec
 
 # ── DiagonalWordTopology: multi-column support ──
 

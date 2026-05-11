@@ -23,8 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 
 from .lattice import IListResult, MeasureResult, MoveExecution
 

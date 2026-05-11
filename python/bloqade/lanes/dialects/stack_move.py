@@ -10,7 +10,7 @@ from bloqade.decoders.dialects.annotate.types import (
 from kirin import ir, lowering, types
 from kirin.decl import info, statement
 
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.types import ArrayType, MeasurementFutureType
 
 dialect = ir.Dialect(name="lanes.stack_move")

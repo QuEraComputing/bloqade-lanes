@@ -9,32 +9,28 @@ from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.heuristics.physical.layout import (
-    PhysicalLayoutHeuristicGraphPartitionCenterOut,
-)
-from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
 
 
 def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
     captured = {}
 
-    def fake_squin_to_move(
-        mt,
-        layout_heuristic=None,
-        placement_strategy=None,
-        insert_return_moves=True,
-        no_raise=True,
-        logical_initialize=True,
-    ):
-        captured["mt"] = mt
-        captured["layout_heuristic"] = layout_heuristic
-        captured["placement_strategy"] = placement_strategy
-        captured["insert_return_moves"] = insert_return_moves
-        captured["no_raise"] = no_raise
-        captured["logical_initialize"] = logical_initialize
-        return "move_ir"
+    class FakeLogicalPipeline:
+        def __init__(
+            self,
+            layout_heuristic=None,
+            placement_strategy=None,
+            insert_return_moves=True,
+            **kwargs,
+        ):
+            captured["layout_heuristic"] = layout_heuristic
+            captured["placement_strategy"] = placement_strategy
+            captured["insert_return_moves"] = insert_return_moves
 
-    monkeypatch.setattr(logical_mvp, "squin_to_move", fake_squin_to_move)
+        def emit(self, mt, no_raise=True):
+            captured["mt"] = mt
+            return "move_ir"
+
+    monkeypatch.setattr(logical_mvp, "LogicalPipeline", FakeLogicalPipeline)
 
     marker = cast(ir.Method, object())
     out = logical_mvp.compile_squin_to_move(marker)
@@ -46,27 +42,28 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
     )
     assert isinstance(captured["placement_strategy"], LogicalPlacementStrategyNoHome)
     assert captured["insert_return_moves"] is True
-    assert captured["logical_initialize"] is True
 
 
 def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
     captured = {}
 
-    def fake_squin_to_move(
-        mt,
-        layout_heuristic=None,
-        placement_strategy=None,
-        insert_return_moves=True,
-        no_raise=True,
-    ):
-        captured["mt"] = mt
-        captured["layout_heuristic"] = layout_heuristic
-        captured["placement_strategy"] = placement_strategy
-        captured["insert_return_moves"] = insert_return_moves
-        captured["no_raise"] = no_raise
-        return "move_ir"
+    class FakePhysicalPipeline:
+        def __init__(
+            self,
+            layout_heuristic=None,
+            placement_strategy=None,
+            insert_return_moves=True,
+            **kwargs,
+        ):
+            captured["layout_heuristic"] = layout_heuristic
+            captured["placement_strategy"] = placement_strategy
+            captured["insert_return_moves"] = insert_return_moves
 
-    monkeypatch.setattr(compile_api, "squin_to_move", fake_squin_to_move)
+        def emit(self, mt, no_raise=True):
+            captured["mt"] = mt
+            return "move_ir"
+
+    monkeypatch.setattr(compile_api, "PhysicalPipeline", FakePhysicalPipeline)
 
     marker = cast(ir.Method, object())
     custom_layout = cast(LayoutHeuristicABC, object())
@@ -88,26 +85,22 @@ def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
 def test_physical_compile_to_move_defaults_are_physical(monkeypatch):
     captured = {}
 
-    def fake_squin_to_move(
-        mt,
-        layout_heuristic=None,
-        placement_strategy=None,
-        insert_return_moves=True,
-        no_raise=True,
-    ):
-        captured["layout_heuristic"] = layout_heuristic
-        captured["placement_strategy"] = placement_strategy
-        return "move_ir"
+    class FakePhysicalPipeline:
+        def __init__(self, layout_heuristic=None, placement_strategy=None, **kwargs):
+            captured["layout_heuristic"] = layout_heuristic
+            captured["placement_strategy"] = placement_strategy
 
-    monkeypatch.setattr(compile_api, "squin_to_move", fake_squin_to_move)
+        def emit(self, mt, no_raise=True):
+            return "move_ir"
+
+    monkeypatch.setattr(compile_api, "PhysicalPipeline", FakePhysicalPipeline)
 
     marker = cast(ir.Method, object())
     out = compile_api.compile_squin_to_move(marker)
     assert out == "move_ir"
-    assert isinstance(
-        captured["layout_heuristic"], PhysicalLayoutHeuristicGraphPartitionCenterOut
-    )
-    assert isinstance(captured["placement_strategy"], PhysicalPlacementStrategy)
+    # None means PhysicalPipeline.emit will use the physical defaults internally.
+    assert captured["layout_heuristic"] is None
+    assert captured["placement_strategy"] is None
 
 
 def test_physical_compile_has_no_transversal_or_placement_mode():

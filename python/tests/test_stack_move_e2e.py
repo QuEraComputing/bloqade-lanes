@@ -11,8 +11,8 @@ from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode import Instruction, Program
 from bloqade.lanes.bytecode._native import Direction, MoveType
 from bloqade.lanes.bytecode.decode import load_program
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.rewrite.measure_lower import MeasureLower
 from bloqade.lanes.rewrite.stack_move2move import RewriteStackMoveToMove
 

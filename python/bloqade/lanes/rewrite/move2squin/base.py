@@ -7,9 +7,9 @@ from kirin.rewrite import abc as rewrite_abc
 
 from bloqade import qubit
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import LocationAddress
-from bloqade.lanes.layout.arch import ArchSpec
 
 
 @dataclass

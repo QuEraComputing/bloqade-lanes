@@ -11,7 +11,7 @@ from kirin.lattice import (
 )
 from typing_extensions import Self
 
-from bloqade.lanes import layout
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 
 from ._visitor import _ElemVisitor
 from .atom_state_data import AtomStateData
@@ -112,7 +112,7 @@ class AtomState(MoveExecution):
 @final
 @dataclass
 class MeasureFuture(MoveExecution):
-    results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]]
+    results: dict[ZoneAddress, dict[LocationAddress, int]]
     measurement_count: int
 
     def copy(self):
@@ -129,7 +129,7 @@ class MeasureFuture(MoveExecution):
 @dataclass
 class MeasureResult(MoveExecution):
     qubit_id: int
-    location_address: layout.LocationAddress
+    location_address: LocationAddress
 
     def copy(self):
         return MeasureResult(self.qubit_id, self.location_address)

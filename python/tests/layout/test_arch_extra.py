@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode._native import (
     Grid as RustGrid,
     LocationAddress as RustLocAddr,
@@ -10,8 +11,7 @@ from bloqade.lanes.bytecode._native import (
     WordBus,
     Zone as RustZone,
 )
-from bloqade.lanes.layout.arch import ArchSpec
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
     LocationAddress,
@@ -20,7 +20,7 @@ from bloqade.lanes.layout.encoding import (
     WordLaneAddress,
     ZoneAddress,
 )
-from bloqade.lanes.layout.word import Word
+from bloqade.lanes.bytecode.word import Word
 from bloqade.lanes.visualize.arch import ArchVisualizer
 
 word = Word(sites=((0, 0), (1, 0)))

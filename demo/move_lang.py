@@ -1,12 +1,12 @@
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
-from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
     SiteLaneAddress,
     WordLaneAddress,
     ZoneAddress,
 )
+from bloqade.lanes.dialects import move
 from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.transform import MoveToSquinPhysical
 

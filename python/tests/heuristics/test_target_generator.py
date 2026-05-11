@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.movement import PhysicalPlacementStrategy
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
@@ -21,8 +21,8 @@ def _make_state() -> ConcreteState:
     return ConcreteState(
         occupied=frozenset(),
         layout=(
-            layout.LocationAddress(0, 0),
-            layout.LocationAddress(1, 0),
+            LocationAddress(0, 0),
+            LocationAddress(1, 0),
         ),
         move_count=(0, 0),
     )
@@ -98,7 +98,7 @@ def test_validate_candidate_rejects_non_cz_pair():
     ctx = _make_valid_ctx()
     # (0,0) and (2,0) are NOT CZ partners on logical.get_arch_spec()
     # — partner((0,0))=(1,0); partner((2,0))=(3,0). Both checks fail.
-    non_partner = layout.LocationAddress(2, 0)
+    non_partner = LocationAddress(2, 0)
     candidate = {0: ctx.state.layout[0], 1: non_partner}
     with pytest.raises(ValueError, match="blockade"):
         _validate_candidate(ctx, candidate)
@@ -120,7 +120,7 @@ def test_validate_candidate_rejects_unknown_location():
     ctx = _make_valid_ctx()
     # LocationAddress with a wildly out-of-range word_id will fail
     # arch_spec.check_location_group
-    bogus = layout.LocationAddress(999, 999)
+    bogus = LocationAddress(999, 999)
     candidate = {0: bogus, 1: ctx.state.layout[1]}
     with pytest.raises(ValueError, match="invalid locations"):
         _validate_candidate(ctx, candidate)
@@ -147,7 +147,7 @@ def test_callable_target_generator_wraps_function():
     ctx = _make_valid_ctx()
     expected = DefaultTargetGenerator().generate(ctx)
 
-    def fn(c: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+    def fn(c: TargetContext) -> list[dict[int, LocationAddress]]:
         assert c is ctx
         return expected
 
@@ -162,7 +162,7 @@ def test_coerce_target_generator_passthrough_for_abc():
 
 
 def test_coerce_target_generator_wraps_callable():
-    def fn(c: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+    def fn(c: TargetContext) -> list[dict[int, LocationAddress]]:
         return []
 
     gen = _coerce_target_generator(fn)
@@ -185,7 +185,7 @@ def test_strategy_accepts_abc_target_generator():
 
 
 def test_strategy_wraps_callable_target_generator():
-    def fn(ctx: TargetContext) -> list[dict[int, layout.LocationAddress]]:
+    def fn(ctx: TargetContext) -> list[dict[int, LocationAddress]]:
         return []
 
     s = PhysicalPlacementStrategy(target_generator=fn)
@@ -251,47 +251,9 @@ def test_build_candidates_preserves_plugin_order_with_default_last():
 def test_build_candidates_raises_on_malformed():
     def fn(c):
         # (0,0) and (2,0) are NOT CZ partners — partner((0,0))=(1,0), partner((2,0))=(3,0)
-        return [{0: c.state.layout[0], 1: layout.LocationAddress(2, 0)}]
+        return [{0: c.state.layout[0], 1: LocationAddress(2, 0)}]
 
     strategy = _make_strategy_with_generator(fn)
     ctx = _make_valid_ctx()
     with pytest.raises(ValueError, match="blockade"):
         strategy._build_candidates(ctx)
-
-
-# ── PlacementTraversalABC.with_max_expansions ──
-
-
-def test_with_max_expansions_default_uses_replace():
-    """The default ABC method clones the dataclass with a new budget."""
-    from bloqade.lanes.heuristics.physical.movement import EntropyPlacementTraversal
-
-    t = EntropyPlacementTraversal(max_expansions=100)
-    t2 = t.with_max_expansions(25)
-    assert t2.max_expansions == 25
-    assert t.max_expansions == 100  # original unchanged
-    assert type(t2) is type(t)
-
-
-def test_with_max_expansions_override_is_honored():
-    """A non-dataclass subclass can override with_max_expansions."""
-    from bloqade.lanes.heuristics.physical.movement import PlacementTraversalABC
-    from bloqade.lanes.search.traversal.goal import SearchResult
-
-    class _NonDataclassTraversal(PlacementTraversalABC):
-        def __init__(self, max_expansions: int | None = None) -> None:
-            self.max_expansions = max_expansions
-
-        def path_to_target_config(self, **kwargs) -> SearchResult:  # type: ignore[override]
-            _ = kwargs
-            raise NotImplementedError
-
-        def with_max_expansions(
-            self, max_expansions: int | None
-        ) -> PlacementTraversalABC:
-            return _NonDataclassTraversal(max_expansions=max_expansions)
-
-    t = _NonDataclassTraversal(max_expansions=50)
-    t2 = t.with_max_expansions(5)
-    assert t2.max_expansions == 5
-    assert t.max_expansions == 50

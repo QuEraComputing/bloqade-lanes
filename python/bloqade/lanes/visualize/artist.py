@@ -14,8 +14,8 @@ from matplotlib.axes import Axes
 from scipy.interpolate import interp1d
 
 from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import ArchSpec
 from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
@@ -575,7 +575,7 @@ class StateArtist:
         for word_id in range(len(self.arch_spec.words)):
             word = self.arch_spec.words[word_id]
             for site_id in range(len(word.site_indices)):
-                from bloqade.lanes.layout.encoding import LocationAddress
+                from bloqade.lanes.bytecode.encoding import LocationAddress
 
                 pos = self.arch_spec.get_position(
                     LocationAddress(word_id, site_id, zone_id)

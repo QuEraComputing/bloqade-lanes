@@ -11,8 +11,13 @@ from kirin.rewrite import abc as rewrite_abc
 
 from bloqade import qubit
 from bloqade.lanes.analysis import atom
+from bloqade.lanes.bytecode.encoding import (
+    LaneAddress,
+    LocationAddress,
+    MoveType,
+    ZoneAddress,
+)
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import LaneAddress, LocationAddress, MoveType, ZoneAddress
 
 from ... import utils
 from .base import AtomStateRewriter

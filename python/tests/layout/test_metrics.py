@@ -1,7 +1,7 @@
 import pytest
 
 from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.layout.move_metric import MoveMetricCalculator
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
 
 
 def _build_move_calc() -> MoveMetricCalculator:

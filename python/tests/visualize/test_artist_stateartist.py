@@ -5,8 +5,9 @@ from kirin import ir
 from matplotlib import pyplot as plt
 
 from bloqade.lanes.analysis.atom import AtomState, AtomStateData
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress, SiteLaneAddress
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import ArchSpec, LocationAddress, SiteLaneAddress
 from bloqade.lanes.visualize import artist
 from bloqade.lanes.visualize.arch import ArchVisualizer
 

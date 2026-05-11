@@ -1,3 +1,13 @@
+# agents
+.agents
+AGENTS.md
+
+# demo
+demo/star_demo.ipynb
+demo/test_demo_logarch.ipynb
+demo/star_injection_steane7_physical_squin.ipynb
+demo/scratch.ipynb
+
 # misc
 .DS_Store
 .tmp*
@@ -28,6 +38,9 @@ Cargo.lock
 # Distribution / packaging
 .Python
 build/
+# ...but any ``build/`` directory inside python/ is a real source subpackage,
+# not a build artefact (e.g. bloqade.lanes.arch.build):
+!python/**/build/
 develop-eggs/
 dist/
 downloads/

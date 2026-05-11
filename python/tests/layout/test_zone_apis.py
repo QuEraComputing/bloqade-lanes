@@ -12,8 +12,8 @@ from bloqade.lanes.arch import (
     ZoneSpec,
     build_arch,
 )
-from bloqade.lanes.layout import Direction, MoveType
-from bloqade.lanes.layout.arch_geometry import ArchSpecGeometry, BusDescriptor
+from bloqade.lanes.arch.geometry import ArchSpecGeometry, BusDescriptor
+from bloqade.lanes.bytecode.encoding import Direction, MoveType
 
 
 def _single_zone_arch():
@@ -229,7 +229,7 @@ class TestGetGridEndpoints:
 
 def test_arch_spec_geometry_accepts_python_arch():
     """ArchSpecGeometry should wrap a Python ArchSpec."""
-    from bloqade.lanes.layout.arch_geometry import ArchSpecGeometry
+    from bloqade.lanes.arch.geometry import ArchSpecGeometry
 
     arch_spec = _single_zone_arch()
     geom = ArchSpecGeometry(arch_spec)
@@ -238,7 +238,7 @@ def test_arch_spec_geometry_accepts_python_arch():
 
 def test_arch_spec_geometry_accepts_rust_arch():
     """ArchSpecGeometry should also wrap a raw Rust _RustArchSpec."""
-    from bloqade.lanes.layout.arch_geometry import ArchSpecGeometry
+    from bloqade.lanes.arch.geometry import ArchSpecGeometry
 
     arch_spec = _single_zone_arch()
     geom = ArchSpecGeometry(arch_spec._inner)

@@ -1,5 +1,5 @@
 from bloqade.lanes.analysis.atom import lattice
-from bloqade.lanes.layout.encoding import LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 def test_unknown_and_bottom_singleton():

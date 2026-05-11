@@ -5,7 +5,7 @@ from kirin import ir
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 
-from bloqade.lanes.layout import ArchSpec
+from bloqade.lanes.arch.spec import ArchSpec
 
 from .app import DebuggerController
 from .artist import get_drawer, render_generator

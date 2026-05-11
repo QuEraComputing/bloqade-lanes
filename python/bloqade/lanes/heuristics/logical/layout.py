@@ -3,19 +3,20 @@ from itertools import chain, combinations
 
 from kirin import interp
 
-from bloqade.lanes import layout
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
-    arch_spec: layout.ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
 
     def score_parallelism(
         self,
         edges: dict[tuple[int, int], float],
-        qubit_map: dict[int, layout.LocationAddress],
+        qubit_map: dict[int, LocationAddress],
     ) -> float:
         move_weights: dict[tuple[int, int], float] = {}
         for n, m in combinations(qubit_map.keys(), 2):
@@ -43,22 +44,53 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
 
         return score
 
+    def _validate_pinned(
+        self,
+        all_qubits: tuple[int, ...],
+        pinned: dict[int, LocationAddress],
+    ) -> None:
+        if len(set(pinned.values())) < len(pinned):
+            raise ValueError(
+                "pinned addresses must be unique; two qubit IDs share the same address"
+            )
+        extra_keys = set(pinned) - set(all_qubits)
+        if extra_keys:
+            raise ValueError(
+                f"pinned contains qubit IDs not in all_qubits: {sorted(extra_keys)}"
+            )
+        self._validate_pinned_in_arch(pinned, self.arch_spec)
+
     def _compute_layout_from_weighted_edges(
         self,
         all_qubits: tuple[int, ...],
         edges: dict[tuple[int, int], float],
-    ) -> tuple[layout.LocationAddress, ...]:
+        pinned: dict[int, LocationAddress],
+    ) -> tuple[LocationAddress, ...]:
         if len(all_qubits) > self.arch_spec.max_qubits:
             raise interp.InterpreterError(
-                f"Number of qubits in circuit ({len(all_qubits)}) exceeds maximum supported by logical architecture ({self.arch_spec.max_qubits})"
+                f"Number of qubits in circuit ({len(all_qubits)}) exceeds "
+                f"maximum supported by logical architecture ({self.arch_spec.max_qubits})"
             )
 
-        available_addresses = set(self.arch_spec.home_sites)
+        pinned_addresses = set(pinned.values())
+        available_addresses = set(self.arch_spec.home_sites) - pinned_addresses
 
-        qubit_map: dict[int, layout.LocationAddress] = {}
-        layout_map: dict[layout.LocationAddress, int] = {}
-        for qubit in sorted(all_qubits):
-            scores: dict[layout.LocationAddress, float] = {}
+        unpinned_qubits = [q for q in sorted(all_qubits) if q not in pinned]
+
+        if len(unpinned_qubits) > len(available_addresses):
+            raise ValueError(
+                f"layout heuristic cannot place {len(unpinned_qubits)} un-pinned qubits: "
+                f"arch provides {len(self.arch_spec.home_sites)} total sites, "
+                f"{len(pinned_addresses)} are pinned, leaving {len(available_addresses)} available; "
+                "no legal positions remain"
+            )
+
+        # Pre-seed pinned qubits so score_parallelism sees them as context.
+        qubit_map: dict[int, LocationAddress] = dict(pinned)
+        layout_map: dict[LocationAddress, int] = {addr: q for q, addr in pinned.items()}
+
+        for qubit in unpinned_qubits:
+            scores: dict[LocationAddress, float] = {}
             for addr in available_addresses:
                 qubit_map = qubit_map.copy()
                 qubit_map[qubit] = addr
@@ -79,7 +111,10 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
-    ) -> tuple[layout.LocationAddress, ...]:
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
+        pinned = {} if pinned is None else pinned
+        self._validate_pinned(all_qubits, pinned)
         edges: dict[tuple[int, int], float] = {}
 
         for control, target in chain.from_iterable(stages):
@@ -87,7 +122,7 @@ class LogicalLayoutHeuristic(LayoutHeuristicABC):
             edge_weight = edges.get((n, m), 0)
             edges[(n, m)] = edge_weight + 1
 
-        return self._compute_layout_from_weighted_edges(all_qubits, edges)
+        return self._compute_layout_from_weighted_edges(all_qubits, edges, pinned)
 
 
 @dataclass
@@ -109,7 +144,10 @@ class LogicalLayoutHeuristicRecencyWeighted(LogicalLayoutHeuristic):
         self,
         all_qubits: tuple[int, ...],
         stages: list[tuple[tuple[int, int], ...]],
-    ) -> tuple[layout.LocationAddress, ...]:
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
+        pinned = {} if pinned is None else pinned
+        self._validate_pinned(all_qubits, pinned)
         if self.layout_lookahead_layers is None:
             considered_layers = stages
         else:
@@ -123,4 +161,4 @@ class LogicalLayoutHeuristicRecencyWeighted(LogicalLayoutHeuristic):
                 edge_weight = edges.get((n, m), 0.0)
                 edges[(n, m)] = edge_weight + decay_weight
 
-        return self._compute_layout_from_weighted_edges(all_qubits, edges)
+        return self._compute_layout_from_weighted_edges(all_qubits, edges, pinned)

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from kirin import ir, types
 
-from bloqade.lanes._wrapper import KirinRustWrapper, RustWrapper
 from bloqade.lanes.bytecode._native import LocationAddress as RustLocationAddress
+from bloqade.lanes.bytecode._wrapper import KirinRustWrapper, RustWrapper
 
 # ── Test fixtures: minimal subclasses backed by a real Rust type ──
 

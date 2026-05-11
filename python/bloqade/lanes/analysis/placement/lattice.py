@@ -8,7 +8,8 @@ from kirin.lattice import (
     SingletonMeta,
 )
 
-from bloqade.lanes.layout import ArchSpec, LaneAddress, LocationAddress, ZoneAddress
+from bloqade.lanes.arch.spec import ArchSpec
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 
 @dataclass

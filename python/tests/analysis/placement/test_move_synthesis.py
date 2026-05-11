@@ -2,15 +2,15 @@
 
 from bloqade.lanes.analysis.placement import ConcreteState
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.bytecode.encoding import (
+    Direction,
+    LocationAddress,
+    MoveType,
+)
 from bloqade.lanes.heuristics.move_synthesis import (
     compute_move_layers,
     move_to_entangle,
     move_to_left,
-)
-from bloqade.lanes.layout.encoding import (
-    Direction,
-    LocationAddress,
-    MoveType,
 )
 
 

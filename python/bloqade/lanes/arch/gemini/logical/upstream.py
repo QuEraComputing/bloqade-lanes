@@ -4,10 +4,11 @@ from kirin import ir, rewrite
 from kirin.dialects import debug, ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes.layout.encoding import LaneAddress, LocationAddress
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.rewrite.transversal import (
     RewriteGetItem,
     RewriteLogicalToPhysicalConversion,
+    RewriteStarRz,
 )
 
 from .rewrite import RewriteFill, RewriteInitialize, RewriteMoves
@@ -220,6 +221,7 @@ class SpecializeGemini:
 
         rewrite.Walk(
             rewrite.Chain(
+                RewriteStarRz(steane7_transversal_map),
                 RewriteMoves(sites_per_word=self.sites_per_word),
                 RewriteFill(),
                 RewriteInitialize(),
