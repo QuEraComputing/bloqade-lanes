@@ -5,18 +5,14 @@ from bloqade.analysis.fidelity import FidelityAnalysis, FidelityRange
 from kirin import ir
 
 from bloqade.lanes.analysis.placement.strategy import PlacementStrategyABC
-from bloqade.lanes.arch.gemini import logical
+from bloqade.lanes.arch.metrics import MoveMetricCalculator
 from bloqade.lanes.dialects import move
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.layout.move_metric import MoveMetricCalculator
+from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.logical_mvp import transversal_rewrites
-from bloqade.lanes.noise_model import generate_simple_noise_model
-from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
-from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.upstream import (
-    default_merge_heuristic,
-    squin_to_move,
-)
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
+from bloqade.lanes.transform import MoveToSquinLogical
+from bloqade.lanes.upstream import squin_to_move
 
 
 @dataclass(frozen=True)
@@ -72,7 +68,7 @@ class Metrics:
     """
 
     arch_spec: Any  # ArchSpec — use Any to avoid circular import
-    noise_model: NoiseModelABC | None = None
+    noise_model: LogicalNoiseModelABC | None = None
     move_calc: MoveMetricCalculator = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -86,24 +82,26 @@ class Metrics:
         *,
         placement_strategy: PlacementStrategyABC,
         insert_return_moves: bool,
-        merge_heuristic=default_merge_heuristic,
     ) -> ir.Method:
-        noise_model = self.noise_model
-        if noise_model is None:
-            noise_model = generate_simple_noise_model()
+        noise_model: LogicalNoiseModelABC
+        if self.noise_model is None:
+            noise_model = generate_logical_noise_model()
+        elif isinstance(self.noise_model, LogicalNoiseModelABC):
+            noise_model = self.noise_model
+        else:
+            noise_model = generate_logical_noise_model()
 
         move_mt = squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
-            merge_heuristic=merge_heuristic,
         )
         move_mt = transversal_rewrites(move_mt)
-        transformer = MoveToSquin(
+        transformer = MoveToSquinLogical(
             arch_spec=self.arch_spec,
-            logical_initialization=logical.steane7_initialize,
             noise_model=noise_model,
+            add_noise=True,
             aggressive_unroll=False,
         )
         return transformer.emit(move_mt)
@@ -116,13 +114,11 @@ class Metrics:
         *,
         placement_strategy: PlacementStrategyABC,
         insert_return_moves: bool,
-        merge_heuristic=default_merge_heuristic,
     ) -> KernelFidelityMetrics:
         physical_squin = self._compile_to_noisy_physical_squin(
             mt,
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
-            merge_heuristic=merge_heuristic,
         )
         analysis = FidelityAnalysis(physical_squin.dialects)
         analysis.run(physical_squin)
@@ -138,14 +134,12 @@ class Metrics:
         *,
         placement_strategy: PlacementStrategyABC,
         insert_return_moves: bool,
-        merge_heuristic=default_merge_heuristic,
     ) -> KernelMoveMetrics:
         move_mt = squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
-            merge_heuristic=merge_heuristic,
         )
         move_event_count, moved_lane_count = _count_move_events_and_lanes(move_mt)
         return KernelMoveMetrics(
@@ -161,7 +155,6 @@ class Metrics:
         *,
         placement_strategy: PlacementStrategyABC,
         insert_return_moves: bool,
-        merge_heuristic=default_merge_heuristic,
         flair_amplitude_delta: float = 1.0,
     ) -> KernelMoveTimeMetrics:
         move_mt = squin_to_move(
@@ -169,7 +162,6 @@ class Metrics:
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
             insert_return_moves=insert_return_moves,
-            merge_heuristic=merge_heuristic,
         )
         return self.analyze_move_time_from_move_ir(
             move_mt,

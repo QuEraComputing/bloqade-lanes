@@ -1,7 +1,10 @@
 .version 1
 ; Minimal valid program: load two sites, fill, halt
+; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
+; zone 0, word 0, site 0 = 0x0000000000000000
+; zone 0, word 0, site 1 = 0x0000000001000000
 
-const_loc 0x00000000    ; word 0, site 0
-const_loc 0x00000001    ; word 0, site 1
+const_loc 0x0000000000000000    ; zone 0, word 0, site 0
+const_loc 0x0000000001000000    ; zone 0, word 0, site 1
 initial_fill 2
 halt

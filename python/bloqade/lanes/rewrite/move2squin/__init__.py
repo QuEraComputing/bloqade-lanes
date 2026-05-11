@@ -8,6 +8,8 @@ from .gates import (
 )
 from .noise import (
     InsertNoise as InsertNoise,
+    LogicalNoiseModelABC as LogicalNoiseModelABC,
     NoiseModelABC as NoiseModelABC,
+    SimpleLogicalNoiseModel as SimpleLogicalNoiseModel,
     SimpleNoiseModel as SimpleNoiseModel,
 )

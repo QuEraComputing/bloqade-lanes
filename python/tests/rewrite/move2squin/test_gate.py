@@ -7,10 +7,10 @@ from kirin.analysis import forward
 from kirin.dialects import func, ilist, py
 
 from bloqade import qubit, squin, types as bloqade_types
-from bloqade.lanes import layout
 from bloqade.lanes._prelude import kernel
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite.move2squin import base, gates
 
@@ -45,7 +45,7 @@ def test_gate_rewrite_cz():
     state = ir.TestValue()
 
     test_block = ir.Block(
-        [gate_node := move.CZ(current_state=state, zone_address=layout.ZoneAddress(0))]
+        [gate_node := move.CZ(current_state=state, zone_address=ZoneAddress(0))]
     )
 
     physical_ssa_values = {
@@ -53,11 +53,12 @@ def test_gate_rewrite_cz():
         1: (one := ir.TestValue()),
     }
     arch_spec = get_arch_spec()
+    # CZ partners: word 0 ↔ word 1 (entangling pair within zone 0)
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -100,8 +101,8 @@ def test_gate_rewrite_global_rz():
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -153,8 +154,8 @@ def test_gate_rewrite_global_r():
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -198,8 +199,8 @@ def test_gate_rewrite_local_r():
                 rotation_angle=rotation_angle,
                 axis_angle=axis_angle,
                 location_addresses=(
-                    layout.LocationAddress(0, 0),
-                    layout.LocationAddress(0, 5),
+                    LocationAddress(0, 0),
+                    LocationAddress(1, 0),
                 ),
             )
         ]
@@ -213,8 +214,8 @@ def test_gate_rewrite_local_r():
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -252,8 +253,8 @@ def test_gate_rewrite_local_rz():
                 current_state=state,
                 rotation_angle=rotation_angle,
                 location_addresses=(
-                    layout.LocationAddress(0, 0),
-                    layout.LocationAddress(0, 5),
+                    LocationAddress(0, 0),
+                    LocationAddress(1, 0),
                 ),
             )
         ]
@@ -267,8 +268,8 @@ def test_gate_rewrite_local_rz():
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -310,8 +311,8 @@ def test_gate_rewrite_logical_initialize():
                 phis=(phi, phi),
                 lams=(lam, lam),
                 location_addresses=(
-                    layout.LocationAddress(0, 0),
-                    layout.LocationAddress(0, 5),
+                    LocationAddress(0, 0),
+                    LocationAddress(1, 0),
                 ),
             )
         ]
@@ -325,8 +326,8 @@ def test_gate_rewrite_logical_initialize():
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -367,8 +368,8 @@ def test_gate_rewrite_physical_initialize():
                 phis=(phi, phi),
                 lams=(lam, lam),
                 location_addresses=(
-                    (layout.LocationAddress(0, 0),),
-                    (layout.LocationAddress(0, 5),),
+                    (LocationAddress(0, 0),),
+                    (LocationAddress(1, 0),),
                 ),
             )
         ]
@@ -382,8 +383,8 @@ def test_gate_rewrite_physical_initialize():
     atom_state = atom.AtomState(
         atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 5),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
             }
         )
     )
@@ -431,8 +432,8 @@ def test_insert_measurements():
         [
             gate_node := move.GetFutureResult(
                 future,
-                zone_address=layout.ZoneAddress(0),
-                location_address=layout.LocationAddress(0, 0),
+                zone_address=ZoneAddress(0),
+                location_address=LocationAddress(0, 0),
             )
         ]
     )
@@ -442,7 +443,8 @@ def test_insert_measurements():
     }
 
     frame: forward.ForwardFrame[atom.MoveExecution] = forward.ForwardFrame(
-        gate_node, entries={gate_node.result: atom.MeasureResult(0)}
+        gate_node,
+        entries={gate_node.result: atom.MeasureResult(0, LocationAddress(0, 0))},
     )
 
     rule = gates.InsertMeasurements(

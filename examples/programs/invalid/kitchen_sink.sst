@@ -1,8 +1,9 @@
 .version 1
 ; Multiple errors in one file to demonstrate multi-error collection.
+; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
 
 ; Error 1: invalid location (word 5 doesn't exist)
-const_loc 0x00000500    ; word 5, site 0
+const_loc 0x0000050000000000    ; zone 0, word 5, site 0
 
 ; Error 2: invalid zone (zone 5 doesn't exist)
 const_zone 0x00000005   ; zone 5

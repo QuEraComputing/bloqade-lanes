@@ -19,7 +19,7 @@ jobs:
         with:
           components: rustfmt
 
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
 
       - run: just format-check
 
@@ -35,7 +35,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
 
       - run: just lint
 

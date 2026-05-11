@@ -11,28 +11,27 @@ from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
-from bloqade.gemini.analysis.logical_validation import GeminiLogicalValidation
-from bloqade.gemini.analysis.measurement_validation import (
-    GeminiTerminalMeasurementValidation,
-)
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
+)
+from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
+from bloqade.gemini.logical.validation.measurement.analysis import (
+    GeminiTerminalMeasurementValidation,
 )
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.arch.gemini import logical
-from bloqade.lanes.arch.gemini.impls import generate_arch_hypercube
+from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
-from bloqade.lanes.heuristics import logical_layout
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.noise_model import generate_simple_noise_model
+from bloqade.lanes.heuristics.logical import layout as logical_layout
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.pipeline import LogicalPipeline
 from bloqade.lanes.rewrite import transversal
-from bloqade.lanes.rewrite.move2squin.noise import NoiseModelABC
+from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.transform import MoveToSquin
-from bloqade.lanes.upstream import squin_to_move
+from bloqade.lanes.transform import MoveToSquinLogical
 
 __all__ = [
     "run_squin_kernel_validation",
@@ -86,6 +85,7 @@ def transversal_rewrites(mt: ir.Method):
 
     rewrite.Walk(
         rewrite.Chain(
+            transversal.RewriteStarRz(logical.steane7_transversal_map),
             transversal.RewriteLocations(logical.steane7_transversal_map),
             transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
             transversal.RewriteMoves(logical.steane7_transversal_map),
@@ -123,14 +123,11 @@ def compile_squin_to_move(
     if layout_heuristic is None:
         layout_heuristic = logical_layout.LogicalLayoutHeuristic()
 
-    mt = squin_to_move(
-        mt,
+    mt = LogicalPipeline(
         layout_heuristic=layout_heuristic,
         placement_strategy=LogicalPlacementStrategyNoHome(),
         insert_return_moves=insert_return_moves,
-        no_raise=no_raise,
-        logical_initialize=True,
-    )
+    ).emit(mt, no_raise=no_raise)
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
 
@@ -165,7 +162,7 @@ def compile_squin_to_move_and_visualize(
         layout_heuristic=layout_heuristic,
     )
     if transversal_rewrite:
-        arch_spec = generate_arch_hypercube(4)
+        arch_spec = physical.get_arch_spec()
         marker = "o"
     else:
         arch_spec = logical.get_arch_spec()
@@ -181,7 +178,7 @@ def compile_squin_to_move_and_visualize(
 
 def compile_to_physical_squin_noise_model(
     mt: ir.Method,
-    noise_model: NoiseModelABC | None = None,
+    noise_model: LogicalNoiseModelABC | None = None,
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> ir.Method:
@@ -189,8 +186,8 @@ def compile_to_physical_squin_noise_model(
 
     Args:
         mt (ir.Method): The logical squin method to compile.
-        noise_model (NoiseModelABC | None, optional): The noise model to insert during
-            compilation. Defaults to ``None`` (uses :func:`generate_simple_noise_model`).
+        noise_model (LogicalNoiseModelABC | None, optional): The logical noise model to insert
+            during compilation. Defaults to ``None`` (uses :func:`generate_logical_noise_model`).
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
             placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
@@ -200,7 +197,7 @@ def compile_to_physical_squin_noise_model(
 
     """
     if noise_model is None:
-        noise_model = generate_simple_noise_model()
+        noise_model = generate_logical_noise_model()
 
     move_mt = compile_squin_to_move(
         mt,
@@ -208,10 +205,10 @@ def compile_to_physical_squin_noise_model(
         no_raise=no_raise,
         layout_heuristic=layout_heuristic,
     )
-    transformer = MoveToSquin(
-        arch_spec=generate_arch_hypercube(4),
-        logical_initialization=logical.steane7_initialize,
+    transformer = MoveToSquinLogical(
+        arch_spec=physical.get_arch_spec(),
         noise_model=noise_model,
+        add_noise=True,
         aggressive_unroll=False,
     )
     return transformer.emit(move_mt, no_raise=no_raise)
@@ -219,7 +216,7 @@ def compile_to_physical_squin_noise_model(
 
 def compile_to_stim_program(
     mt: ir.Method,
-    noise_model: NoiseModelABC | None = None,
+    noise_model: LogicalNoiseModelABC | None = None,
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
 ) -> str:
@@ -415,7 +412,7 @@ def compile_task(
 
     run_squin_kernel_validation(logical_squin_kernel).raise_if_invalid()
 
-    physical_arch_spec = generate_arch_hypercube(4)
+    physical_arch_spec = physical.get_arch_spec()
     physical_move_kernel = compile_squin_to_move(
         logical_squin_kernel, transversal_rewrite=True
     )

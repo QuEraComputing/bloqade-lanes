@@ -6,7 +6,10 @@ from bloqade.gemini.device import (
 )
 
 from .metrics import Metrics as Metrics
-from .noise_model import generate_simple_noise_model as generate_simple_noise_model
+from .noise_model import (
+    generate_logical_noise_model as generate_logical_noise_model,
+    generate_simple_noise_model as generate_simple_noise_model,
+)
 from .rewrite.move2squin.noise import NoiseModelABC as NoiseModelABC
 from .steane_defaults import (
     steane7_m2dets as steane7_m2dets,

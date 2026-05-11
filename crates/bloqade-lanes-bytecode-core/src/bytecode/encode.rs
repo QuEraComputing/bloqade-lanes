@@ -55,8 +55,10 @@ impl Instruction {
                 let data1 = (bits >> 32) as u32;
                 (opcode, data0, data1, 0)
             }
-            // ConstLoc: LocationAddr in data0
-            Instruction::LaneConst(LaneConstInstruction::ConstLoc(v)) => (opcode, *v, 0, 0),
+            // ConstLoc: 64-bit LocationAddr split across data0 (low) and data1 (high)
+            Instruction::LaneConst(LaneConstInstruction::ConstLoc(v)) => {
+                (opcode, *v as u32, (*v >> 32) as u32, 0)
+            }
             // ConstLane: two u32 words (data0, data1)
             Instruction::LaneConst(LaneConstInstruction::ConstLane(d0, d1)) => {
                 (opcode, *d0, *d1, 0)
@@ -138,7 +140,7 @@ impl Instruction {
                 use super::opcode::LaneConstInstCode::*;
                 match lc_op {
                     ConstLoc => Ok(Instruction::LaneConst(LaneConstInstruction::ConstLoc(
-                        data0,
+                        (data0 as u64) | ((data1 as u64) << 32),
                     ))),
                     ConstLane => Ok(Instruction::LaneConst(LaneConstInstruction::ConstLane(
                         data0, data1,

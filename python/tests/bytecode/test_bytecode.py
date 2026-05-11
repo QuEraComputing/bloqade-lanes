@@ -26,25 +26,25 @@ from bloqade.lanes.bytecode.exceptions import (
 
 class TestLocationAddress:
     def test_construct_and_getters(self):
-        addr = LocationAddress(word_id=1, site_id=2)
+        addr = LocationAddress(zone_id=0, word_id=1, site_id=2)
         assert addr.word_id == 1
         assert addr.site_id == 2
 
     def test_encode_decode_round_trip(self):
-        addr = LocationAddress(word_id=3, site_id=7)
+        addr = LocationAddress(zone_id=0, word_id=3, site_id=7)
         bits = addr.encode()
         decoded = LocationAddress.decode(bits)
         assert decoded == addr
 
     def test_repr(self):
-        addr = LocationAddress(word_id=0, site_id=1)
+        addr = LocationAddress(zone_id=0, word_id=0, site_id=1)
         assert "LocationAddress" in repr(addr)
         assert "word_id=0" in repr(addr)
         assert "site_id=1" in repr(addr)
 
     def test_hash(self):
-        a = LocationAddress(word_id=0, site_id=1)
-        b = LocationAddress(word_id=0, site_id=1)
+        a = LocationAddress(zone_id=0, word_id=0, site_id=1)
+        b = LocationAddress(zone_id=0, word_id=0, site_id=1)
         assert hash(a) == hash(b)
         d = {a: "value"}
         assert d[b] == "value"
@@ -54,6 +54,7 @@ class TestLaneAddress:
     def test_construct_and_getters(self):
         addr = LaneAddress(
             move_type=MoveType.SITE,
+            zone_id=0,
             word_id=0,
             site_id=1,
             bus_id=0,
@@ -68,6 +69,7 @@ class TestLaneAddress:
     def test_default_direction(self):
         addr = LaneAddress(
             move_type=MoveType.SITE,
+            zone_id=0,
             word_id=0,
             site_id=1,
             bus_id=0,
@@ -77,6 +79,7 @@ class TestLaneAddress:
     def test_encode_decode_round_trip(self):
         addr = LaneAddress(
             move_type=MoveType.WORD,
+            zone_id=0,
             word_id=1,
             site_id=2,
             bus_id=3,
@@ -95,8 +98,12 @@ class TestLaneAddress:
         assert int(MoveType.WORD) == 1
 
     def test_hash(self):
-        a = LaneAddress(move_type=MoveType.SITE, word_id=0, site_id=1, bus_id=0)
-        b = LaneAddress(move_type=MoveType.SITE, word_id=0, site_id=1, bus_id=0)
+        a = LaneAddress(
+            move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0
+        )
+        b = LaneAddress(
+            move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=1, bus_id=0
+        )
         assert hash(a) == hash(b)
         d = {a: "value"}
         assert d[b] == "value"
@@ -139,12 +146,13 @@ class TestInstruction:
         assert inst.opcode == 0x0200  # Cpu device=0x00, inst=0x02
 
     def test_const_loc(self):
-        inst = Instruction.const_loc(word_id=0, site_id=1)
+        inst = Instruction.const_loc(zone_id=0, word_id=0, site_id=1)
         assert inst.opcode == 0x000F  # LaneConst device=0x0F, inst=0x00
 
     def test_const_lane(self):
         inst = Instruction.const_lane(
             move_type=MoveType.SITE,
+            zone_id=0,
             word_id=0,
             site_id=1,
             bus_id=0,
@@ -204,31 +212,121 @@ class TestInstruction:
         assert a != c
 
 
+class TestInstructionAccessors:
+    def test_op_name_covers_every_opcode(self):
+        # Exhaustive mapping of factory → expected op_name.
+        cases = [
+            (Instruction.const_float(0.0), "const_float"),
+            (Instruction.const_int(0), "const_int"),
+            (Instruction.const_loc(0, 0, 0), "const_loc"),
+            (Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0), "const_lane"),
+            (Instruction.const_zone(0), "const_zone"),
+            (Instruction.pop(), "pop"),
+            (Instruction.dup(), "dup"),
+            (Instruction.swap(), "swap"),
+            (Instruction.initial_fill(1), "initial_fill"),
+            (Instruction.fill(1), "fill"),
+            (Instruction.move_(1), "move"),
+            (Instruction.local_r(1), "local_r"),
+            (Instruction.local_rz(1), "local_rz"),
+            (Instruction.global_r(), "global_r"),
+            (Instruction.global_rz(), "global_rz"),
+            (Instruction.cz(), "cz"),
+            (Instruction.measure(1), "measure"),
+            (Instruction.await_measure(), "await_measure"),
+            (Instruction.new_array(0, 1), "new_array"),
+            (Instruction.get_item(1), "get_item"),
+            (Instruction.set_detector(), "set_detector"),
+            (Instruction.set_observable(), "set_observable"),
+            (Instruction.return_(), "return"),
+            (Instruction.halt(), "halt"),
+        ]
+        for instr, expected in cases:
+            assert instr.op_name() == expected, (instr, expected)
+
+    def test_arity_returns_field(self):
+        assert Instruction.initial_fill(3).arity() == 3
+        assert Instruction.fill(4).arity() == 4
+        assert Instruction.move_(5).arity() == 5
+        assert Instruction.local_r(2).arity() == 2
+        assert Instruction.local_rz(1).arity() == 1
+        assert Instruction.measure(7).arity() == 7
+
+    def test_arity_raises_on_inapplicable_opcodes(self):
+        with pytest.raises(RuntimeError):
+            Instruction.const_float(0.0).arity()
+        with pytest.raises(RuntimeError):
+            Instruction.pop().arity()
+        with pytest.raises(RuntimeError):
+            Instruction.cz().arity()
+
+    def test_float_value(self):
+        assert Instruction.const_float(3.14).float_value() == 3.14
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).float_value()
+
+    def test_int_value(self):
+        assert Instruction.const_int(42).int_value() == 42
+        with pytest.raises(RuntimeError):
+            Instruction.const_float(0.0).int_value()
+
+    def test_location_address(self):
+        addr = Instruction.const_loc(0, 1, 2).location_address()
+        assert addr == LocationAddress(0, 1, 2)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).location_address()
+
+    def test_lane_address(self):
+        addr = Instruction.const_lane(MoveType.SITE, 0, 0, 0, 0).lane_address()
+        assert addr == LaneAddress(MoveType.SITE, 0, 0, 0, 0)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).lane_address()
+
+    def test_zone_address(self):
+        addr = Instruction.const_zone(3).zone_address()
+        assert addr == ZoneAddress(3)
+        with pytest.raises(RuntimeError):
+            Instruction.const_int(0).zone_address()
+
+    def test_new_array_accessors(self):
+        instr = Instruction.new_array(7, 4, 2)
+        assert instr.type_tag() == 7
+        assert instr.dim0() == 4
+        assert instr.dim1() == 2
+        with pytest.raises(RuntimeError):
+            Instruction.pop().type_tag()
+
+    def test_get_item_ndims(self):
+        assert Instruction.get_item(3).ndims() == 3
+        with pytest.raises(RuntimeError):
+            Instruction.pop().ndims()
+
+
 class TestInstructionAddressValidation:
     """Instruction address constants validate 16-bit range."""
 
     def test_const_loc_negative_word_id(self):
         with pytest.raises(ValueError, match="must be non-negative"):
-            Instruction.const_loc(word_id=-1, site_id=0)
+            Instruction.const_loc(zone_id=0, word_id=-1, site_id=0)
 
     def test_const_loc_negative_site_id(self):
         with pytest.raises(ValueError, match="must be non-negative"):
-            Instruction.const_loc(word_id=0, site_id=-1)
+            Instruction.const_loc(zone_id=0, word_id=0, site_id=-1)
 
     def test_const_loc_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
-            Instruction.const_loc(word_id=0x10000, site_id=0)
+            Instruction.const_loc(zone_id=0, word_id=0x10000, site_id=0)
 
     def test_const_lane_negative(self):
         with pytest.raises(ValueError, match="must be non-negative"):
             Instruction.const_lane(
-                move_type=MoveType.SITE, word_id=-1, site_id=0, bus_id=0
+                move_type=MoveType.SITE, zone_id=0, word_id=-1, site_id=0, bus_id=0
             )
 
     def test_const_lane_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
             Instruction.const_lane(
-                move_type=MoveType.SITE, word_id=0, site_id=0, bus_id=0x10000
+                move_type=MoveType.SITE, zone_id=0, word_id=0, site_id=0, bus_id=0x10000
             )
 
     def test_const_zone_negative(self):
@@ -237,14 +335,18 @@ class TestInstructionAddressValidation:
 
     def test_const_zone_overflow(self):
         with pytest.raises(ValueError, match="exceeds maximum"):
-            Instruction.const_zone(zone_id=0x10000)
+            Instruction.const_zone(zone_id=0x100)
 
     def test_max_valid_values(self):
-        Instruction.const_loc(word_id=0xFFFF, site_id=0xFFFF)
+        Instruction.const_loc(zone_id=0, word_id=0xFFFF, site_id=0xFFFF)
         Instruction.const_lane(
-            move_type=MoveType.SITE, word_id=0xFFFF, site_id=0xFFFF, bus_id=0xFFFF
+            move_type=MoveType.SITE,
+            zone_id=0,
+            word_id=0xFFFF,
+            site_id=0xFFFF,
+            bus_id=0xFFFF,
         )
-        Instruction.const_zone(zone_id=0xFFFF)
+        Instruction.const_zone(zone_id=0xFF)
 
 
 class TestInstructionArityValidation:
@@ -288,7 +390,7 @@ class TestProgramConstruction:
         program = Program(
             version=(1, 0),
             instructions=[
-                Instruction.const_loc(word_id=0, site_id=0),
+                Instruction.const_loc(zone_id=0, word_id=0, site_id=0),
                 Instruction.initial_fill(1),
                 Instruction.halt(),
             ],
@@ -410,20 +512,26 @@ initial_fill 1
 
 
 MINIMAL_ARCH_JSON = """{
-    "version": "1.0",
-    "geometry": {
-        "sites_per_word": 2,
-        "words": [{
-            "positions": {"x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0], "y_spacing": []},
-            "site_indices": [[0, 0], [1, 0]]
-        }]
-    },
-    "buses": {"site_buses": [], "word_buses": []},
-    "words_with_site_buses": [],
-    "sites_with_word_buses": [],
-    "zones": [{"words": [0]}],
-    "entangling_zones": [],
-    "measurement_mode_zones": [0]
+    "version": "2.0",
+    "words": [
+        {"sites": [[0, 0], [1, 0]]}
+    ],
+    "zones": [
+        {
+            "grid": {
+                "x_start": 0.0, "y_start": 0.0,
+                "x_spacing": [1.0], "y_spacing": []
+            },
+            "site_buses": [],
+            "word_buses": [],
+            "words_with_site_buses": [],
+            "sites_with_word_buses": []
+        }
+    ],
+    "zone_buses": [],
+    "modes": [
+        {"name": "default", "zones": [0], "bitstring_order": []}
+    ]
 }"""
 
 

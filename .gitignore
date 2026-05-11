@@ -1,3 +1,16 @@
+.cargo/**
+vendor/**
+
+# agents
+.agents
+AGENTS.md
+
+# demo
+demo/star_demo.ipynb
+demo/test_demo_logarch.ipynb
+demo/star_injection_steane7_physical_squin.ipynb
+demo/scratch.ipynb
+
 # for stdlib code
 demo/msd_utils/noise.py
 skills
@@ -14,6 +27,7 @@ python/tests/demo/test_qet_utils.py
 .tmp*
 debug/
 Thumbs.db
+.claude/worktrees
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -38,6 +52,9 @@ Cargo.lock
 # Distribution / packaging
 .Python
 build/
+# ...but any ``build/`` directory inside python/ is a real source subpackage,
+# not a build artefact (e.g. bloqade.lanes.arch.build):
+!python/**/build/
 develop-eggs/
 dist/
 downloads/
@@ -173,8 +190,9 @@ cython_debug/
 *.swo
 *~
 
-# Local Claude settings (not skills)
+# Local Claude settings and agents
 .claude/settings.local.json
+.claude/agents/
 
 # Managed by ion
 .agents/skills/ion-cli
@@ -207,3 +225,8 @@ cython_debug/
 .claude/skills/writing-plans
 .agents/skills/writing-skills
 .claude/skills/writing-skills
+.superpowers/
+*.png
+scripts/visualize_arch.py
+.superpowers/
+bench/

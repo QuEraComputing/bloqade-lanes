@@ -9,7 +9,7 @@ from kirin.analysis.forward import ForwardFrame
 from kirin.interp.exceptions import InterpreterError
 from typing_extensions import Self
 
-from bloqade.lanes.layout import LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 from .lattice import AtomState, ConcreteState
 from .strategy import PlacementStrategyABC

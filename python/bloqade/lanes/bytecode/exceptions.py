@@ -164,14 +164,17 @@ class LocationGroupError(Exception):
 class DuplicateLocationAddressError(LocationGroupError):
     def __init__(self, address: int):
         self.address = address
-        super().__init__(f"duplicate location address 0x{address:04x}")
+        super().__init__(f"duplicate location address 0x{address:016x}")
 
 
 class InvalidLocationAddressError(LocationGroupError):
-    def __init__(self, word_id: int, site_id: int):
+    def __init__(self, zone_id: int, word_id: int, site_id: int):
+        self.zone_id = zone_id
         self.word_id = word_id
         self.site_id = site_id
-        super().__init__(f"invalid location word_id={word_id}, site_id={site_id}")
+        super().__init__(
+            f"invalid location zone_id={zone_id}, word_id={word_id}, site_id={site_id}"
+        )
 
 
 # ── Lane group errors (from ArchSpec.check_lanes) ──

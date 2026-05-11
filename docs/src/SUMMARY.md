@@ -5,6 +5,7 @@
 # Architecture
 
 - [Architecture Specification](arch/archspec.md)
+- [Zone-Centric Concepts (Visual Guide)](arch/zone-centric-concepts.md)
 
 # Bytecode
 

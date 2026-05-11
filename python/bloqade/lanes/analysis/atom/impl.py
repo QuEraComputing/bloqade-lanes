@@ -3,7 +3,8 @@ from kirin import interp
 from kirin.analysis.forward import ForwardFrame
 from kirin.dialects import func, ilist, py
 
-from bloqade.lanes import layout
+from bloqade.lanes.analysis.atom.atom_state_data import AtomStateData
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
 
 from ...dialects import move
 from .analysis import (
@@ -21,6 +22,55 @@ from .lattice import (
     TupleResult,
     Value,
 )
+
+
+def _restore_collisions_to_pre_move(
+    pre_data: AtomStateData, post_data: AtomStateData
+) -> AtomStateData:
+    """Restore collided atoms to their pre-move positions.
+
+    When ``apply_moves`` detects a collision (two atoms at the same site),
+    it removes both from the location maps and records them in the collision
+    dict.  For the abstract-interpretation use case the atoms must remain
+    trackable, so this helper puts newly collided atoms back at their
+    *original* (pre-move) positions so that subsequent ``get_qubit_pairing``
+    calls and return-move ``apply_moves`` calls work correctly.
+    """
+    pre_collision = pre_data.collision
+    new_collisions = {
+        mover: displaced
+        for mover, displaced in post_data.collision.items()
+        if mover not in pre_collision
+    }
+
+    if not new_collisions:
+        return post_data
+
+    # Build updated location maps: start from post_data maps, then add back
+    # each newly collided atom at its pre-move position.
+    locations_to_qubit: dict[LocationAddress, int] = dict(post_data.locations_to_qubit)
+    qubit_to_locations: dict[int, LocationAddress] = dict(post_data.qubit_to_locations)
+
+    for mover, displaced in new_collisions.items():
+        # Restore mover to its pre-move position
+        if mover in pre_data.qubit_to_locations:
+            mover_loc = pre_data.qubit_to_locations[mover]
+            qubit_to_locations[mover] = mover_loc
+            locations_to_qubit[mover_loc] = mover
+
+        # Restore displaced to its pre-move position (which is its home)
+        if displaced in pre_data.qubit_to_locations:
+            displaced_loc = pre_data.qubit_to_locations[displaced]
+            qubit_to_locations[displaced] = displaced_loc
+            locations_to_qubit[displaced_loc] = displaced
+
+    return AtomStateData.from_fields(
+        locations_to_qubit=locations_to_qubit,
+        qubit_to_locations=qubit_to_locations,
+        collision=dict(post_data.collision),
+        prev_lanes=dict(post_data.prev_lanes),
+        move_count=dict(post_data.move_count),
+    )
 
 
 @annotate.dialect.register(key="atom")
@@ -61,6 +111,12 @@ class Move(interp.MethodTable):
 
         if isinstance(current_state, AtomState):
             new_data = current_state.data.apply_moves(stmt.lanes, interp_.arch_spec)
+            if new_data is not None and len(new_data.collision) > len(
+                current_state.data.collision
+            ):
+                # New collisions: restore collided atoms to pre-move positions
+                # so they remain trackable through CZ + return move patterns.
+                new_data = _restore_collisions_to_pre_move(current_state.data, new_data)
         else:
             new_data = None
 
@@ -72,6 +128,7 @@ class Move(interp.MethodTable):
     @interp.impl(move.CZ)
     @interp.impl(move.LocalR)
     @interp.impl(move.LocalRz)
+    @interp.impl(move.StarRz)
     @interp.impl(move.GlobalR)
     @interp.impl(move.GlobalRz)
     @interp.impl(move.LogicalInitialize)
@@ -117,18 +174,75 @@ class Move(interp.MethodTable):
     ):
         current_state = frame.get(stmt.current_state)
         interp_.current_state = current_state
+        interp_.final_measurement_count += 1
 
         if not isinstance(current_state, AtomState):
             return (MoveExecution.bottom(),)
 
-        results: dict[layout.ZoneAddress, dict[layout.LocationAddress, int]] = {}
+        results: dict[ZoneAddress, dict[LocationAddress, int]] = {}
         for zone_address in stmt.zone_addresses:
             result = results.setdefault(zone_address, {})
             for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):
                 if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
                     result[loc_addr] = qubit_id
 
-        return (MeasureFuture(results),)
+        return (
+            MeasureFuture(
+                results=results,
+                measurement_count=interp_.final_measurement_count,
+            ),
+        )
+
+    @interp.impl(move.ConstZone)
+    def const_zone_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.ConstZone,
+    ):
+        return (Value(stmt.value),)
+
+    @interp.impl(move.Measure)
+    def measure_impl(
+        self,
+        interp_: AtomInterpreter,
+        frame: ForwardFrame[MoveExecution],
+        stmt: move.Measure,
+    ):
+        current_state = frame.get(stmt.current_state)
+        interp_.current_state = current_state
+
+        # Read zones directly from the compile-time attribute — no frame
+        # lookup needed now that zones are an attribute tuple.
+        zone_addresses = list(stmt.zone_addresses)
+
+        # Track site + count for the measure_lower rewrite downstream.
+        interp_.measure_sites.append({"stmt": stmt, "zones": tuple(zone_addresses)})
+        interp_.final_measurement_count += 1
+
+        if not isinstance(current_state, AtomState):
+            return (MoveExecution.bottom(), MoveExecution.bottom())
+
+        # Build the MeasurementFuture by mirroring end_measure_impl: for
+        # each zone, walk every location in the zone, and record any qubit
+        # currently at that location.
+        results: dict[ZoneAddress, dict[LocationAddress, int]] = {}
+        for zone_address in zone_addresses:
+            result = results.setdefault(zone_address, {})
+            for loc_addr in interp_.arch_spec.yield_zone_locations(zone_address):
+                if (qubit_id := current_state.data.get_qubit(loc_addr)) is not None:
+                    result[loc_addr] = qubit_id
+
+        # move.Measure has two results: (new_state, future). Measurement
+        # observes the state but does not reshape it on the Python
+        # analysis side, so we thread ``current_state`` forward unchanged.
+        return (
+            current_state,
+            MeasureFuture(
+                results=results,
+                measurement_count=interp_.final_measurement_count,
+            ),
+        )
 
     @interp.impl(move.Store)
     def store_impl(
@@ -152,24 +266,19 @@ class Move(interp.MethodTable):
         future = frame.get(stmt.measurement_future)
 
         if not isinstance(future, MeasureFuture):
-            print("GetFutureResult: future is not MeasureFuture")
             return (Bottom(),)
 
         result = future.results.get(stmt.zone_address)
 
         if result is None:
-            print(f"GetFutureResult: no result for zone address {stmt.zone_address}")
             return (Bottom(),)
 
         qubit_id = result.get(stmt.location_address)
 
         if qubit_id is None:
-            print(
-                f"GetFutureResult: no qubit id for location address {stmt.zone_address} {stmt.location_address}"
-            )
             return (Bottom(),)
 
-        return (MeasureResult(qubit_id),)
+        return (MeasureResult(qubit_id, stmt.location_address),)
 
 
 @py.constant.dialect.register(key="atom")

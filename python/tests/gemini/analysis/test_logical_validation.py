@@ -7,11 +7,11 @@ from kirin.ir.exception import ValidationErrorGroup
 from kirin.validation import ValidationSuite
 
 import bloqade.gemini as gemini
-from bloqade.gemini.analysis.logical_validation.analysis import (
+from bloqade.gemini.logical.validation.clifford.analysis import (
     GeminiLogicalValidation,
     _GeminiLogicalValidationAnalysis,
 )
-from bloqade.gemini.analysis.measurement_validation.analysis import (
+from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 
@@ -119,6 +119,25 @@ def test_clifford_gates():
         ).run_no_raise(invalid)
 
         invalid.print(analysis=frame.entries)
+
+
+def test_star_rz_marks_qubit_as_acted_on_without_rejecting_mid_circuit_use():
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def valid():
+        q = squin.qalloc(1)
+        squin.h(q[0])
+        gemini.logical.star_rz(0.125, q[0])
+
+    validator = ValidationSuite([GeminiLogicalValidation])
+    validator.validate(valid).raise_if_invalid()
+
+    with pytest.raises(ValidationErrorGroup):
+
+        @gemini.logical.kernel(aggressive_unroll=True, no_raise=False)
+        def invalid():
+            q = squin.qalloc(1)
+            gemini.logical.star_rz(0.125, q[0])
+            squin.u3(0.1, 0.2, 0.3, q[0])
 
 
 def test_qalloc_and_terminal_measure_type_valid():

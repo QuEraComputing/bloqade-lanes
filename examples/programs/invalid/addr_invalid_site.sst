@@ -1,5 +1,7 @@
 .version 1
 ; Invalid: site_id=15 out of range (only 10 sites per word)
+; LocationAddr (64-bit): [zone_id:8][word_id:16][site_id:16][pad:24]
+; zone 0, word 0, site 15 = (15 << 24) = 0x000000000f000000
 
-const_loc 0x0000000f    ; word 0, site 15
+const_loc 0x000000000f000000    ; zone 0, word 0, site 15
 halt

@@ -25,8 +25,8 @@ pub enum CpuInstruction {
 /// Lane-specific constant instructions (device code `0x0F`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneConstInstruction {
-    /// Push a packed [`LocationAddr`](crate::arch::addr::LocationAddr). Opcode `0x000F`.
-    ConstLoc(u32),
+    /// Push a packed [`LocationAddr`](crate::arch::addr::LocationAddr) as 64-bit. Opcode `0x000F`.
+    ConstLoc(u64),
     /// Push a packed [`LaneAddr`](crate::arch::addr::LaneAddr) as (data0, data1). Opcode `0x010F`.
     ConstLane(u32, u32),
     /// Push a packed [`ZoneAddr`](crate::arch::addr::ZoneAddr). Opcode `0x020F`.

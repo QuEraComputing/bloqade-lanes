@@ -7,9 +7,15 @@ from kirin.analysis import forward
 from kirin.dialects import func, ilist
 
 from bloqade import qubit, squin
-from bloqade.lanes import layout
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
+from bloqade.lanes.bytecode.encoding import (
+    LocationAddress,
+    MoveType,
+    SiteLaneAddress,
+    WordLaneAddress,
+    ZoneAddress,
+)
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite.move2squin import noise
 
@@ -75,24 +81,19 @@ MODEL = noise.SimpleNoiseModel(
 def test_simple_noise_model_methods():
 
     assert (
-        MODEL.get_bus_idle_noise(layout.MoveType.SITE, 1) is bus_idle_noise_kernel
+        MODEL.get_bus_idle_noise(MoveType.SITE, 1) is bus_idle_noise_kernel
     ), "bus idle noise lookup failed"
     assert (
-        MODEL.get_cz_paired_noise(layout.ZoneAddress(0)) is cz_paired_noise_kernel
+        MODEL.get_cz_paired_noise(ZoneAddress(0)) is cz_paired_noise_kernel
     ), "cz paired noise lookup failed"
     assert (
-        MODEL.get_cz_unpaired_noise(layout.ZoneAddress(0)) is cz_unpaired_noise_kernel
+        MODEL.get_cz_unpaired_noise(ZoneAddress(0)) is cz_unpaired_noise_kernel
     ), "cz unpaired noise lookup failed"
-    assert MODEL.get_lane_noise(layout.SiteLaneAddress(0, 1, 1)) is lane_noise_kernel
+    assert MODEL.get_lane_noise(SiteLaneAddress(0, 1, 1)) is lane_noise_kernel
     assert MODEL.get_global_rz_noise() is global_rz_noise_kernel
-    assert (
-        MODEL.get_local_rz_noise((layout.LocationAddress(0, 1),))
-        is local_rz_noise_kernel
-    )
+    assert MODEL.get_local_rz_noise((LocationAddress(0, 1),)) is local_rz_noise_kernel
     assert MODEL.get_global_r_noise() is global_r_noise_kernel
-    assert (
-        MODEL.get_local_r_noise((layout.LocationAddress(0, 1),)) is local_r_noise_kernel
-    )
+    assert MODEL.get_local_r_noise((LocationAddress(0, 1),)) is local_r_noise_kernel
 
 
 def test_insert_move_noise_no_op():
@@ -106,7 +107,7 @@ def test_insert_move_noise_no_op():
 
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
-            {0: layout.LocationAddress(0, 0), 1: layout.LocationAddress(0, 1)}
+            {0: LocationAddress(0, 0), 1: LocationAddress(2, 0)}
         )
     )
 
@@ -134,17 +135,18 @@ def test_insert_move_noise_no_op():
 
 def test_insert_move_noise_lane_noise():
     state = ir.TestValue()
-    test_block = ir.Block(
-        [node := move.Move(state, lanes=(layout.SiteLaneAddress(0, 0, 1),))]
-    )
+    # Use word bus 0 (shift 0): word 0 → word 1
+    test_block = ir.Block([node := move.Move(state, lanes=(WordLaneAddress(0, 0, 0),))])
 
     physical_ssa_values = {
         0: (zero := ir.TestValue()),
         1: (one := ir.TestValue()),
     }
+    # state_after: qubit 0 moved from word 0 to word 1 via word bus 0;
+    # qubit 1 remains at word 2
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
-            {0: layout.LocationAddress(0, 6), 1: layout.LocationAddress(0, 1)}
+            {0: LocationAddress(1, 0), 1: LocationAddress(2, 0)}
         )
     )
 
@@ -166,7 +168,7 @@ def test_insert_move_noise_lane_noise():
             func.Invoke(inputs=(zero,), callee=lane_noise_kernel),
             reg := ilist.New((one,)),
             func.Invoke(inputs=(reg.result,), callee=bus_idle_noise_kernel),
-            move.Move(state, lanes=(layout.SiteLaneAddress(0, 0, 1),)),
+            move.Move(state, lanes=(WordLaneAddress(0, 0, 0),)),
         ]
     )
 
@@ -175,7 +177,7 @@ def test_insert_move_noise_lane_noise():
 
 def test_insert_cz_noise():
     state = ir.TestValue()
-    test_block = ir.Block([node := move.CZ(state, zone_address=layout.ZoneAddress(0))])
+    test_block = ir.Block([node := move.CZ(state, zone_address=ZoneAddress(0))])
 
     physical_ssa_values = {
         0: (zero := ir.TestValue()),
@@ -183,13 +185,17 @@ def test_insert_cz_noise():
         2: (two := ir.TestValue()),
         3: (three := ir.TestValue()),
     }
+    # Intra-zone CZ: entangling_pairs=[[0,1],[2,3],...].
+    # Qubit 1 at word 0 pairs with qubit 2 at word 1 (entangling pair [0,1]).
+    # Qubits 0 at word 2 and 3 at word 4 are unpaired (word 2↔3 is a pair,
+    # but qubit 3 is at word 4 not word 3).
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 6),
-                1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                0: LocationAddress(2, 0),
+                1: LocationAddress(0, 0),
+                2: LocationAddress(1, 0),
+                3: LocationAddress(4, 0),
             }
         )
     )
@@ -207,9 +213,12 @@ def test_insert_cz_noise():
 
     rewriter.rewrite(test_block)
     test_block.print()
+    # Qubit 1 (word 0) and qubit 2 (word 1) are paired.
+    # Qubit 0 (word 2) is unpaired (partner word 3 has no qubit).
+    # Qubit 3 (word 4) is unpaired (partner word 5 has no qubit).
     expected_block = ir.Block(
         [
-            move.CZ(state, zone_address=layout.ZoneAddress(0)),
+            move.CZ(state, zone_address=ZoneAddress(0)),
             controls_reg := ilist.New((one,)),
             targets_reg := ilist.New((two,)),
             func.Invoke(
@@ -235,7 +244,7 @@ def test_insert_local_gate_noise():
                 state,
                 axis_angle,
                 rotation_angle,
-                location_addresses=(layout.LocationAddress(0, 1),),
+                location_addresses=(LocationAddress(0, 1),),
             )
         ]
     )
@@ -249,10 +258,10 @@ def test_insert_local_gate_noise():
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(0, 1),
+                2: LocationAddress(2, 0),
+                3: LocationAddress(2, 1),
             }
         )
     )
@@ -276,7 +285,7 @@ def test_insert_local_gate_noise():
                 state,
                 axis_angle,
                 rotation_angle,
-                location_addresses=(layout.LocationAddress(0, 1),),
+                location_addresses=(LocationAddress(0, 1),),
             ),
             reg := ilist.New((one,)),
             func.Invoke(
@@ -312,10 +321,10 @@ def test_insert_global_gate_noise():
     atom_state: Any = atom.AtomState(
         data=atom.AtomStateData.new(
             {
-                0: layout.LocationAddress(0, 0),
-                1: layout.LocationAddress(0, 1),
-                2: layout.LocationAddress(0, 2),
-                3: layout.LocationAddress(0, 3),
+                0: LocationAddress(0, 0),
+                1: LocationAddress(0, 1),
+                2: LocationAddress(2, 0),
+                3: LocationAddress(2, 1),
             }
         )
     )

@@ -1,15 +1,18 @@
 from dataclasses import dataclass
 
-from kirin import ir, lowering, types
+from kirin import exception, ir, lowering, types
 from kirin.decl import info, statement
 from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
+from bloqade.gemini.star import validate_steane_star_support
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
-from ..layout.encoding import LaneAddress, LocationAddress, ZoneAddress
 from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
 
 dialect = ir.Dialect(name="lanes.move")
+
+ZoneAddressType = types.PyClass(ZoneAddress)
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,22 @@ class EmitsState(ir.Trait):
 
     def get_state_result(self, stmt: ir.Statement) -> ir.ResultValue:
         return stmt.results[0]
+
+
+@statement(dialect=dialect)
+class ConstZone(ir.Statement):
+    """Constant ZoneAddress producing an SSA value.
+
+    The current stack_move2move rewrite does not emit ConstZone — zones
+    are lifted into ``move.Measure.zone_addresses`` / ``move.CZ.zone_address``
+    as compile-time attributes instead. ConstZone stays in the dialect for
+    frontends that produce ``move`` IR directly and need a zone address as
+    an SSA value.
+    """
+
+    traits = frozenset({lowering.FromPythonCall()})
+    value: ZoneAddress = info.attribute()
+    result: ir.ResultValue = info.result(ZoneAddressType)
 
 
 @statement(dialect=dialect)
@@ -107,6 +126,19 @@ class LocalRz(StatefulStatement):
 
 
 @statement(dialect=dialect)
+class StarRz(StatefulStatement):
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
+
+
+@statement(dialect=dialect)
 class GlobalRz(StatefulStatement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
@@ -124,6 +156,22 @@ class EndMeasure(ir.Statement):
     current_state: ir.SSAValue = info.argument(StateType)
     zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
     result: ir.ResultValue = info.result(MeasurementFutureType)
+
+
+@statement(dialect=dialect)
+class Measure(StatefulStatement):
+    """Multi-zone measurement produced by stack_move2move. Consumed by
+    measure_lower, which validates single-zone + single-final-measurement
+    invariants and rewrites to EndMeasure.
+
+    Inherits ``current_state`` input and ``result: StateType`` output from
+    ``StatefulStatement`` (state-threading). Adds ``zone_addresses`` as a
+    compile-time attribute tuple and ``future`` as the measurement-future
+    result value.
+    """
+
+    zone_addresses: tuple[ZoneAddress, ...] = info.attribute()
+    future: ir.ResultValue = info.result(MeasurementFutureType)
 
 
 @statement(dialect=dialect)
@@ -201,6 +249,16 @@ def local_rz(
     rotation_angle: float,
     *,
     location_addresses: tuple[LocationAddress, ...],
+) -> State: ...
+
+
+@wraps(StarRz)
+def star_rz(
+    current_state: State,
+    rotation_angle: float,
+    *,
+    location_addresses: tuple[LocationAddress, ...],
+    qubit_indices: tuple[int, int, int],
 ) -> State: ...
 
 

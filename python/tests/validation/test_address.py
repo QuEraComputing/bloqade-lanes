@@ -5,13 +5,13 @@ from kirin.validation import ValidationSuite
 
 from bloqade.lanes._prelude import kernel as lanes_kernel
 from bloqade.lanes.arch.gemini.logical import validation
-from bloqade.lanes.dialects import move
-from bloqade.lanes.layout.encoding import (
+from bloqade.lanes.bytecode.encoding import (
     Direction,
     LocationAddress,
     SiteLaneAddress,
     ZoneAddress,
 )
+from bloqade.lanes.dialects import move
 from bloqade.lanes.types import State
 
 
@@ -19,7 +19,7 @@ def invalid_methods():
     @lanes_kernel
     def invalid_location(state: State):
 
-        return move.fill(state, location_addresses=(LocationAddress(2, 1),))
+        return move.fill(state, location_addresses=(LocationAddress(99, 0),))
 
     yield invalid_location
 

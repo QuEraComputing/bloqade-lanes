@@ -12,7 +12,7 @@
 # %%
 from bloqade import squin
 from bloqade.gemini import logical as gemini_logical
-from bloqade.lanes.heuristics.logical_placement import LogicalPlacementStrategy
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
 
 
 @gemini_logical.kernel(aggressive_unroll=True)
@@ -67,7 +67,7 @@ example_kernel.print()
 from bloqade.analysis import address  # noqa: E402
 
 from bloqade.lanes.analysis import layout  # noqa: E402
-from bloqade.lanes.heuristics import logical_layout  # noqa: E402
+from bloqade.lanes.heuristics.logical import layout as logical_layout  # noqa: E402
 
 address_frame, _ = address.AddressAnalysis(example_kernel.dialects).run(example_kernel)
 
@@ -87,10 +87,11 @@ print(initial_layout)
 
 # %%
 from bloqade.lanes.arch.gemini.logical import get_arch_spec  # noqa: E402
+from bloqade.lanes.visualize.arch import ArchVisualizer  # noqa: E402
 
 logical_arch = get_arch_spec()
 
-ax = logical_arch.plot(show_words=(0, 1))
+ax = ArchVisualizer(logical_arch).plot(show_words=(0, 1))
 
 pos_0 = logical_arch.get_position(initial_layout[0])
 pos_1 = logical_arch.get_position(initial_layout[1])
@@ -181,9 +182,11 @@ example_kernel.print()
 # architecture to get the atom states on physical qubits.
 
 # %%
-from bloqade.lanes.arch.gemini.impls import generate_arch  # noqa: E402
+from bloqade.lanes.arch.gemini.physical import (  # noqa: E402
+    get_arch_spec as get_physical_arch_spec,
+)
 
-physical_arch = generate_arch(4)
+physical_arch = get_physical_arch_spec()
 
 frame, _ = atom.AtomInterpreter(example_kernel.dialects, arch_spec=physical_arch).run(
     example_kernel
@@ -192,22 +195,20 @@ example_kernel.print(analysis=frame.entries)
 
 # %% [markdown]
 # from here we can rewrite the physical move program to physical squin with noise models inserted.
-# This is done using the `MoveToSquin` transformer inside the `bloqade.lanes.transform` module.
-# this transformation requires the physical architecture spec, a logical initialization function
-# to prepare logical qubit from the physical qubits, and a noise model to insert noise channels during
-# the compilation.
+# This is done using the `MoveToSquinLogical` transformer inside the `bloqade.lanes.transform` module.
+# This transformation requires the physical architecture spec and a logical noise model that provides
+# both initialization kernels and noise channels for the compilation.
 
 # %%
 
-from bloqade.lanes import generate_simple_noise_model  # noqa: E402
-from bloqade.lanes.arch.gemini.logical import steane7_initialize  # noqa: E402
-from bloqade.lanes.transform import MoveToSquin  # noqa: E402
+from bloqade.lanes.noise_model import generate_logical_noise_model  # noqa: E402
+from bloqade.lanes.transform import MoveToSquinLogical  # noqa: E402
 
-noise_model = generate_simple_noise_model()
-example_kernel = MoveToSquin(
+noise_model = generate_logical_noise_model()
+example_kernel = MoveToSquinLogical(
     arch_spec=physical_arch,
-    logical_initialization=steane7_initialize,
     noise_model=noise_model,
+    add_noise=True,
 ).emit(example_kernel)
 
 example_kernel.print()

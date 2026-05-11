@@ -257,29 +257,26 @@ fn test_validate_with_arch_spec() {
     fs::write(&input, ARCH_VALID_PROGRAM).unwrap();
 
     let arch_json = r#"{
-        "version": "1.0",
-        "geometry": {
-            "sites_per_word": 5,
-            "words": [
-                {
-                    "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
-                    "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]
-                }
-            ]
-        },
-        "buses": {
-            "site_buses": [
-                { "src": [0, 1], "dst": [3, 4] }
-            ],
-            "word_buses": []
-        },
-        "words_with_site_buses": [0],
-        "sites_with_word_buses": [],
-        "zones": [
-            { "words": [0] }
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
         ],
-        "entangling_zones": [],
-        "measurement_mode_zones": [0]
+        "zones": [
+            {
+                "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
+                "site_buses": [
+                    { "src": [0, 1], "dst": [3, 4] }
+                ],
+                "word_buses": [],
+                "words_with_site_buses": [0],
+                "sites_with_word_buses": []
+            }
+        ],
+        "zone_buses": [],
+
+        "modes": [
+            { "name": "default", "zones": [0], "bitstring_order": [] }
+        ]
     }"#;
     let arch_path = dir.path().join("arch.json");
     fs::write(&arch_path, arch_json).unwrap();
@@ -332,22 +329,24 @@ fn test_validate_detects_invalid_arch_addresses() {
     fs::write(&input, SAMPLE_PROGRAM).unwrap();
 
     let arch_json = r#"{
-        "version": "1.0",
-        "geometry": {
-            "sites_per_word": 2,
-            "words": [
-                {
-                    "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
-                    "site_indices": [[0, 0], [0, 1]]
-                }
-            ]
-        },
-        "buses": { "site_buses": [], "word_buses": [] },
-        "words_with_site_buses": [],
-        "sites_with_word_buses": [],
-        "zones": [{ "words": [0] }],
-        "entangling_zones": [],
-        "measurement_mode_zones": [0]
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0], [0, 1]] }
+        ],
+        "zones": [
+            {
+                "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [], "y_spacing": [2.0] },
+                "site_buses": [],
+                "word_buses": [],
+                "words_with_site_buses": [],
+                "sites_with_word_buses": []
+            }
+        ],
+        "zone_buses": [],
+
+        "modes": [
+            { "name": "default", "zones": [0], "bitstring_order": [] }
+        ]
     }"#;
     let arch_path = dir.path().join("arch.json");
     fs::write(&arch_path, arch_json).unwrap();
@@ -399,7 +398,7 @@ fn test_disassemble_invalid_binary() {
 #[test]
 fn test_arch_pretty_print() {
     let dir = TempDir::new().unwrap();
-    let arch_json = r#"{"version":"1.0","geometry":{"sites_per_word":2,"words":[{"positions":{"x_start":1.0,"y_start":2.0,"x_spacing":[],"y_spacing":[2.0]},"site_indices":[[0,0],[0,1]]}]},"buses":{"site_buses":[],"word_buses":[]},"words_with_site_buses":[],"sites_with_word_buses":[],"zones":[{"words":[0]}],"entangling_zones":[],"measurement_mode_zones":[0]}"#;
+    let arch_json = r#"{"version":"2.0","words":[{"sites":[[0,0],[0,1]]}],"zones":[{"grid":{"x_start":1.0,"y_start":2.0,"x_spacing":[],"y_spacing":[2.0]},"site_buses":[],"word_buses":[],"words_with_site_buses":[],"sites_with_word_buses":[]}],"zone_buses":[],"modes":[{"name":"default","zones":[0],"bitstring_order":[]}]}"#;
     let arch_path = dir.path().join("arch.json");
     fs::write(&arch_path, arch_json).unwrap();
 
@@ -407,10 +406,10 @@ fn test_arch_pretty_print() {
         .args(["arch", arch_path.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ArchSpec v1.0"))
+        .stdout(predicate::str::contains("ArchSpec v2.0"))
         .stdout(predicate::str::contains("1 word(s), 2 sites/word"))
-        .stdout(predicate::str::contains("site_indices: (0,0) (0,1)"))
-        .stdout(predicate::str::contains("Zone 0: words=[0]"));
+        .stdout(predicate::str::contains("Word 0: sites=[(0,0) (0,1)]"))
+        .stdout(predicate::str::contains("Zone 0: 1x2 grid"));
 }
 
 #[test]
@@ -430,29 +429,26 @@ fn test_arch_pretty_print_invalid_json() {
 fn test_validate_arch_spec_valid() {
     let dir = TempDir::new().unwrap();
     let arch_json = r#"{
-        "version": "1.0",
-        "geometry": {
-            "sites_per_word": 5,
-            "words": [
-                {
-                    "positions": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
-                    "site_indices": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]
-                }
-            ]
-        },
-        "buses": {
-            "site_buses": [
-                { "src": [0, 1], "dst": [3, 4] }
-            ],
-            "word_buses": []
-        },
-        "words_with_site_buses": [0],
-        "sites_with_word_buses": [],
-        "zones": [
-            { "words": [0] }
+        "version": "2.0",
+        "words": [
+            { "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] }
         ],
-        "entangling_zones": [],
-        "measurement_mode_zones": [0]
+        "zones": [
+            {
+                "grid": { "x_start": 1.0, "y_start": 2.0, "x_spacing": [2.0, 2.0, 2.0, 2.0], "y_spacing": [] },
+                "site_buses": [
+                    { "src": [0, 1], "dst": [3, 4] }
+                ],
+                "word_buses": [],
+                "words_with_site_buses": [0],
+                "sites_with_word_buses": []
+            }
+        ],
+        "zone_buses": [],
+
+        "modes": [
+            { "name": "default", "zones": [0], "bitstring_order": [] }
+        ]
     }"#;
     let arch_path = dir.path().join("arch.json");
     fs::write(&arch_path, arch_json).unwrap();
@@ -469,7 +465,7 @@ fn test_validate_arch_spec_invalid() {
     let dir = TempDir::new().unwrap();
     // measurement_mode_zones[0] is not zone 0 — should fail validation
     let arch_json = r#"{
-        "version": "1.0",
+        "version": "2.0",
         "geometry": {
             "sites_per_word": 2,
             "words": [

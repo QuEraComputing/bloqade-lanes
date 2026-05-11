@@ -3,10 +3,14 @@ use pyo3::prelude::*;
 use bloqade_lanes_bytecode_core::arch::addr as rs_addr;
 use bloqade_lanes_bytecode_core::bytecode::instruction as rs;
 
-use crate::arch_python::{PyDirection, PyMoveType};
+use crate::arch_python::{PyDirection, PyLaneAddr, PyLocationAddr, PyMoveType, PyZoneAddr};
 use crate::validation::validate_field;
 
-#[pyclass(name = "Instruction", frozen, module = "bloqade.lanes.bytecode")]
+#[pyclass(
+    name = "Instruction",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
 #[derive(Clone)]
 pub struct PyInstruction {
     pub(crate) inner: rs::Instruction,
@@ -31,30 +35,38 @@ impl PyInstruction {
     }
 
     #[staticmethod]
-    fn const_loc(word_id: i64, site_id: i64) -> PyResult<Self> {
+    fn const_loc(zone_id: i64, word_id: i64, site_id: i64) -> PyResult<Self> {
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let word_id = validate_field::<u16>("word_id", word_id)? as u32;
         let site_id = validate_field::<u16>("site_id", site_id)? as u32;
-        let addr = rs_addr::LocationAddr { word_id, site_id };
+        let addr = rs_addr::LocationAddr {
+            zone_id,
+            word_id,
+            site_id,
+        };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(addr.encode())),
         })
     }
 
     #[staticmethod]
-    #[pyo3(signature = (move_type, word_id, site_id, bus_id, direction=PyDirection::Forward))]
+    #[pyo3(signature = (move_type, zone_id, word_id, site_id, bus_id, direction=PyDirection::Forward))]
     fn const_lane(
         move_type: &PyMoveType,
+        zone_id: i64,
         word_id: i64,
         site_id: i64,
         bus_id: i64,
         direction: PyDirection,
     ) -> PyResult<Self> {
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let word_id = validate_field::<u16>("word_id", word_id)? as u32;
         let site_id = validate_field::<u16>("site_id", site_id)? as u32;
         let bus_id = validate_field::<u16>("bus_id", bus_id)? as u32;
         let addr = rs_addr::LaneAddr {
             direction: direction.to_rs(),
             move_type: move_type.to_rs(),
+            zone_id,
             word_id,
             site_id,
             bus_id,
@@ -67,7 +79,7 @@ impl PyInstruction {
 
     #[staticmethod]
     fn const_zone(zone_id: i64) -> PyResult<Self> {
-        let zone_id = validate_field::<u16>("zone_id", zone_id)? as u32;
+        let zone_id = validate_field::<u8>("zone_id", zone_id)? as u32;
         let addr = rs_addr::ZoneAddr { zone_id };
         Ok(Self {
             inner: rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(addr.encode())),
@@ -251,6 +263,161 @@ impl PyInstruction {
         self.inner.opcode()
     }
 
+    fn op_name(&self) -> &'static str {
+        match &self.inner {
+            rs::Instruction::Cpu(cpu) => match cpu {
+                rs::CpuInstruction::ConstFloat(_) => "const_float",
+                rs::CpuInstruction::ConstInt(_) => "const_int",
+                rs::CpuInstruction::Pop => "pop",
+                rs::CpuInstruction::Dup => "dup",
+                rs::CpuInstruction::Swap => "swap",
+                rs::CpuInstruction::Return => "return",
+                rs::CpuInstruction::Halt => "halt",
+            },
+            rs::Instruction::LaneConst(lc) => match lc {
+                rs::LaneConstInstruction::ConstLoc(_) => "const_loc",
+                rs::LaneConstInstruction::ConstLane(_, _) => "const_lane",
+                rs::LaneConstInstruction::ConstZone(_) => "const_zone",
+            },
+            rs::Instruction::AtomArrangement(aa) => match aa {
+                rs::AtomArrangementInstruction::InitialFill { .. } => "initial_fill",
+                rs::AtomArrangementInstruction::Fill { .. } => "fill",
+                rs::AtomArrangementInstruction::Move { .. } => "move",
+            },
+            rs::Instruction::QuantumGate(qg) => match qg {
+                rs::QuantumGateInstruction::LocalR { .. } => "local_r",
+                rs::QuantumGateInstruction::LocalRz { .. } => "local_rz",
+                rs::QuantumGateInstruction::GlobalR => "global_r",
+                rs::QuantumGateInstruction::GlobalRz => "global_rz",
+                rs::QuantumGateInstruction::CZ => "cz",
+            },
+            rs::Instruction::Measurement(m) => match m {
+                rs::MeasurementInstruction::Measure { .. } => "measure",
+                rs::MeasurementInstruction::AwaitMeasure => "await_measure",
+            },
+            rs::Instruction::Array(arr) => match arr {
+                rs::ArrayInstruction::NewArray { .. } => "new_array",
+                rs::ArrayInstruction::GetItem { .. } => "get_item",
+            },
+            rs::Instruction::DetectorObservable(dob) => match dob {
+                rs::DetectorObservableInstruction::SetDetector => "set_detector",
+                rs::DetectorObservableInstruction::SetObservable => "set_observable",
+            },
+        }
+    }
+
+    fn float_value(&self) -> PyResult<f64> {
+        match &self.inner {
+            rs::Instruction::Cpu(rs::CpuInstruction::ConstFloat(f)) => Ok(*f),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "float_value() is only valid on const_float",
+            )),
+        }
+    }
+
+    fn int_value(&self) -> PyResult<i64> {
+        match &self.inner {
+            rs::Instruction::Cpu(rs::CpuInstruction::ConstInt(n)) => Ok(*n),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "int_value() is only valid on const_int",
+            )),
+        }
+    }
+
+    fn location_address(&self) -> PyResult<PyLocationAddr> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLoc(bits)) => {
+                let addr = rs_addr::LocationAddr::decode(*bits);
+                Ok(PyLocationAddr { inner: addr })
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "location_address() is only valid on const_loc",
+            )),
+        }
+    }
+
+    fn lane_address(&self) -> PyResult<PyLaneAddr> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstLane(d0, d1)) => {
+                let addr = rs_addr::LaneAddr::decode(*d0, *d1);
+                Ok(PyLaneAddr { inner: addr })
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "lane_address() is only valid on const_lane",
+            )),
+        }
+    }
+
+    fn zone_address(&self) -> PyResult<PyZoneAddr> {
+        match &self.inner {
+            rs::Instruction::LaneConst(rs::LaneConstInstruction::ConstZone(bits)) => {
+                let addr = rs_addr::ZoneAddr::decode(*bits);
+                Ok(PyZoneAddr { inner: addr })
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "zone_address() is only valid on const_zone",
+            )),
+        }
+    }
+
+    fn type_tag(&self) -> PyResult<u8> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { type_tag, .. }) => {
+                Ok(*type_tag)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "type_tag() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn dim0(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim0, .. }) => Ok(*dim0),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "dim0() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn dim1(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::NewArray { dim1, .. }) => Ok(*dim1),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "dim1() is only valid on new_array",
+            )),
+        }
+    }
+
+    fn ndims(&self) -> PyResult<u16> {
+        match &self.inner {
+            rs::Instruction::Array(rs::ArrayInstruction::GetItem { ndims }) => Ok(*ndims),
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "ndims() is only valid on get_item",
+            )),
+        }
+    }
+
+    fn arity(&self) -> PyResult<u32> {
+        match &self.inner {
+            rs::Instruction::AtomArrangement(
+                rs::AtomArrangementInstruction::InitialFill { arity }
+                | rs::AtomArrangementInstruction::Fill { arity }
+                | rs::AtomArrangementInstruction::Move { arity },
+            ) => Ok(*arity),
+            rs::Instruction::QuantumGate(
+                rs::QuantumGateInstruction::LocalR { arity }
+                | rs::QuantumGateInstruction::LocalRz { arity },
+            ) => Ok(*arity),
+            rs::Instruction::Measurement(rs::MeasurementInstruction::Measure { arity }) => {
+                Ok(*arity)
+            }
+            _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "arity() not applicable to this opcode",
+            )),
+        }
+    }
+
     fn __repr__(&self) -> String {
         format_instruction(&self.inner)
     }
@@ -275,8 +442,8 @@ fn format_instruction(instr: &rs::Instruction) -> String {
             rs::LaneConstInstruction::ConstLoc(bits) => {
                 let addr = rs_addr::LocationAddr::decode(*bits);
                 format!(
-                    "Instruction.const_loc(word_id={}, site_id={})",
-                    addr.word_id, addr.site_id
+                    "Instruction.const_loc(zone_id={}, word_id={}, site_id={})",
+                    addr.zone_id, addr.word_id, addr.site_id
                 )
             }
             rs::LaneConstInstruction::ConstLane(d0, d1) => {
@@ -288,10 +455,11 @@ fn format_instruction(instr: &rs::Instruction) -> String {
                 let mt = match addr.move_type {
                     rs_addr::MoveType::SiteBus => "MoveType.SITE",
                     rs_addr::MoveType::WordBus => "MoveType.WORD",
+                    rs_addr::MoveType::ZoneBus => "MoveType.ZONE",
                 };
                 format!(
-                    "Instruction.const_lane(move_type={}, word_id={}, site_id={}, bus_id={}, direction={})",
-                    mt, addr.word_id, addr.site_id, addr.bus_id, dir
+                    "Instruction.const_lane(move_type={}, zone_id={}, word_id={}, site_id={}, bus_id={}, direction={})",
+                    mt, addr.zone_id, addr.word_id, addr.site_id, addr.bus_id, dir
                 )
             }
             rs::LaneConstInstruction::ConstZone(bits) => {

@@ -222,8 +222,10 @@ impl AtomStateData {
         zone: &ZoneAddr,
         arch_spec: &ArchSpec,
     ) -> Option<(Vec<u32>, Vec<u32>, Vec<u32>)> {
-        let zone_data = arch_spec.zone_by_id(zone.zone_id)?;
-        let word_ids: std::collections::HashSet<u32> = zone_data.words.iter().copied().collect();
+        // In the zone-centric model, all zones share the same words.
+        // Filter qubits by checking if their zone_id matches the requested zone.
+        let _zone_data = arch_spec.zone_by_id(zone.zone_id)?;
+        let zone_id = zone.zone_id;
 
         let mut controls = Vec::new();
         let mut targets = Vec::new();
@@ -242,11 +244,11 @@ impl AtomStateData {
             }
             visited.insert(qubit);
 
-            if !word_ids.contains(&loc.word_id) {
+            if loc.zone_id != zone_id {
                 continue;
             }
 
-            let blockaded = match arch_spec.get_blockaded_location(&loc) {
+            let blockaded = match arch_spec.get_cz_partner(&loc) {
                 Some(b) => b,
                 None => {
                     unpaired.push(qubit);
@@ -280,7 +282,74 @@ impl Default for AtomStateData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::example_arch_spec;
+    use crate::arch::addr::{SiteRef, WordRef, ZonedWordRef};
+    use crate::arch::types::{Bus, Grid, Mode, Word, Zone};
+    use crate::version::Version;
+
+    /// Build the same two-zone spec used by the arch module tests.
+    /// Zone 0 has site bus 0 (site 0 -> site 1) and word bus 0 (word 0 -> word 1).
+    /// Entangling pair: zones [0, 1].
+    fn make_test_spec() -> crate::arch::ArchSpec {
+        let grid0 = Grid::from_positions(&[0.0, 5.0, 10.0], &[0.0, 3.0]);
+        let grid1 = Grid::from_positions(&[0.0, 7.5, 15.0], &[0.0, 4.0]);
+
+        crate::arch::ArchSpec {
+            version: Version::new(2, 0),
+            words: vec![
+                Word {
+                    sites: vec![[0, 0], [0, 1]],
+                },
+                Word {
+                    sites: vec![[1, 0], [1, 1]],
+                },
+            ],
+            zones: vec![
+                Zone {
+                    name: String::new(),
+                    grid: grid0,
+                    site_buses: vec![Bus {
+                        src: vec![SiteRef(0)],
+                        dst: vec![SiteRef(1)],
+                    }],
+                    word_buses: vec![Bus {
+                        src: vec![WordRef(0)],
+                        dst: vec![WordRef(1)],
+                    }],
+                    words_with_site_buses: vec![0, 1],
+                    sites_with_word_buses: vec![0],
+                    entangling_pairs: vec![[0, 1]],
+                },
+                Zone {
+                    name: String::new(),
+                    grid: grid1,
+                    site_buses: vec![],
+                    word_buses: vec![],
+                    words_with_site_buses: vec![],
+                    sites_with_word_buses: vec![],
+                    entangling_pairs: vec![],
+                },
+            ],
+            zone_buses: vec![Bus {
+                src: vec![ZonedWordRef {
+                    zone_id: 0,
+                    word_id: 0,
+                }],
+                dst: vec![ZonedWordRef {
+                    zone_id: 1,
+                    word_id: 0,
+                }],
+            }],
+            modes: vec![Mode {
+                name: "full".to_string(),
+                zones: vec![0, 1],
+                bitstring_order: vec![],
+            }],
+            paths: None,
+            feed_forward: false,
+            atom_reloading: false,
+            blockade_radius: None,
+        }
+    }
 
     #[test]
     fn new_state_is_empty() {
@@ -298,6 +367,7 @@ mod tests {
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -305,6 +375,7 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 1,
                     site_id: 0,
                 },
@@ -313,6 +384,7 @@ mod tests {
         let state = AtomStateData::from_locations(&locs);
         assert_eq!(
             state.get_qubit(&LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0
             }),
@@ -320,6 +392,7 @@ mod tests {
         );
         assert_eq!(
             state.get_qubit(&LocationAddr {
+                zone_id: 0,
                 word_id: 1,
                 site_id: 0
             }),
@@ -331,10 +404,12 @@ mod tests {
     fn add_atoms_succeeds_and_fields_match() {
         let state = AtomStateData::new();
         let loc0 = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
         };
         let loc1 = LocationAddr {
+            zone_id: 0,
             word_id: 1,
             site_id: 0,
         };
@@ -355,6 +430,7 @@ mod tests {
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
@@ -362,6 +438,7 @@ mod tests {
         let result = state.add_atoms(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 1,
                 site_id: 0,
             },
@@ -374,6 +451,7 @@ mod tests {
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
@@ -381,6 +459,7 @@ mod tests {
         let result = state.add_atoms(&[(
             1,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
@@ -390,11 +469,13 @@ mod tests {
 
     #[test]
     fn apply_moves_basic() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
+        // Zone 0 site bus 0: site 0 -> site 1
         let state = AtomStateData::from_locations(&[
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -402,16 +483,18 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 1,
                     site_id: 0,
                 },
             ),
         ]);
 
-        // Site bus 0 moves site 0 -> site 5 (forward)
+        // Site bus 0 moves site 0 -> site 1 (forward) in zone 0
         let lane = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -420,13 +503,15 @@ mod tests {
         let new_state = state.apply_moves(&[lane], &spec).unwrap();
         assert_eq!(
             new_state.get_qubit(&LocationAddr {
+                zone_id: 0,
                 word_id: 0,
-                site_id: 5
+                site_id: 1
             }),
             Some(0)
         );
         assert_eq!(
             new_state.get_qubit(&LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0
             }),
@@ -437,11 +522,13 @@ mod tests {
 
     #[test]
     fn apply_moves_collision() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
+        // Place qubit 0 at site 0 and qubit 1 at site 1 (the destination of site bus 0)
         let state = AtomStateData::from_locations(&[
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -449,8 +536,9 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
-                    site_id: 5,
+                    site_id: 1,
                 },
             ),
         ]);
@@ -458,6 +546,7 @@ mod tests {
         let lane = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -471,16 +560,19 @@ mod tests {
 
     #[test]
     fn apply_moves_verifies_all_fields() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
         let loc_0_0 = LocationAddr {
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
         };
-        let loc_0_5 = LocationAddr {
+        let loc_0_1 = LocationAddr {
+            zone_id: 0,
             word_id: 0,
-            site_id: 5,
+            site_id: 1,
         };
         let loc_1_0 = LocationAddr {
+            zone_id: 0,
             word_id: 1,
             site_id: 0,
         };
@@ -489,6 +581,7 @@ mod tests {
         let lane = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -496,9 +589,9 @@ mod tests {
 
         let new_state = state.apply_moves(&[lane], &spec).unwrap();
 
-        // Qubit 0 moved from (0,0) to (0,5)
-        assert_eq!(new_state.qubit_to_locations[&0], loc_0_5);
-        assert_eq!(new_state.locations_to_qubit[&loc_0_5], 0);
+        // Qubit 0 moved from (0,0,0) to (0,0,1)
+        assert_eq!(new_state.qubit_to_locations[&0], loc_0_1);
+        assert_eq!(new_state.locations_to_qubit[&loc_0_1], 0);
         // Qubit 1 didn't move
         assert_eq!(new_state.qubit_to_locations[&1], loc_1_0);
         assert_eq!(new_state.locations_to_qubit[&loc_1_0], 1);
@@ -515,11 +608,12 @@ mod tests {
 
     #[test]
     fn apply_moves_collision_verifies_all_fields() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
         let state = AtomStateData::from_locations(&[
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -527,8 +621,9 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
-                    site_id: 5,
+                    site_id: 1,
                 },
             ),
         ]);
@@ -536,6 +631,7 @@ mod tests {
         let lane = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -556,11 +652,12 @@ mod tests {
 
     #[test]
     fn apply_moves_skips_empty_source() {
-        let spec = example_arch_spec();
-        // Only qubit at (1,0), no qubit at (0,0)
+        let spec = make_test_spec();
+        // Only qubit at (0,1,0), no qubit at (0,0,0)
         let state = AtomStateData::from_locations(&[(
             1,
             LocationAddr {
+                zone_id: 0,
                 word_id: 1,
                 site_id: 0,
             },
@@ -569,6 +666,7 @@ mod tests {
         let lane = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -583,10 +681,11 @@ mod tests {
 
     #[test]
     fn apply_moves_invalid_lane_returns_none() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
@@ -595,6 +694,7 @@ mod tests {
         let bad_lane = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 99, // invalid bus
@@ -605,19 +705,21 @@ mod tests {
 
     #[test]
     fn apply_moves_accumulates_move_count() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
         )]);
 
-        // Move forward: site 0 -> site 5
+        // Move forward: site 0 -> site 1
         let lane_fwd = LaneAddr {
             direction: crate::arch::addr::Direction::Forward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -625,11 +727,12 @@ mod tests {
         let state2 = state.apply_moves(&[lane_fwd], &spec).unwrap();
         assert_eq!(state2.move_count[&0], 1);
 
-        // Move backward: site 5 -> site 0
+        // Move backward: site 1 -> site 0
         // site_id is always the forward source (0), direction flips endpoints
         let lane_bwd = LaneAddr {
             direction: crate::arch::addr::Direction::Backward,
             move_type: crate::arch::addr::MoveType::SiteBus,
+            zone_id: 0,
             word_id: 0,
             site_id: 0,
             bus_id: 0,
@@ -643,12 +746,14 @@ mod tests {
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
         )]);
         assert_eq!(
             state.get_qubit(&LocationAddr {
+                zone_id: 0,
                 word_id: 1,
                 site_id: 0
             }),
@@ -658,13 +763,14 @@ mod tests {
 
     #[test]
     fn get_qubit_pairing_all_unpaired() {
-        let spec = example_arch_spec();
-        // Place qubits at sites 0, 1, 2 — site 0 pairs with 5, site 1 with 6,
-        // site 2 with 7, but none of the pair sites are occupied.
+        let spec = make_test_spec();
+        // Zone 0 entangling_pairs: [[0, 1]] — word 0 paired with word 1.
+        // Place both qubits in word 0 only — no qubit in word 1, so all unpaired.
         let state = AtomStateData::from_locations(&[
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -672,15 +778,9 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 1,
-                },
-            ),
-            (
-                2,
-                LocationAddr {
-                    word_id: 1,
-                    site_id: 0,
                 },
             ),
         ]);
@@ -690,18 +790,22 @@ mod tests {
 
         assert!(controls.is_empty());
         assert!(targets.is_empty());
-        assert_eq!(unpaired.len(), 3);
+        assert_eq!(unpaired.len(), 2);
     }
 
     #[test]
     fn get_qubit_pairing_with_pairs() {
-        let spec = example_arch_spec();
-        // Site 0 pairs with site 5 in the same word. Place qubits at both.
-        // Also place unpaired qubit at site 1 (pair site 6 is empty).
+        let spec = make_test_spec();
+        // Zone 0 entangling_pairs: [[0, 1]] — word 0 paired with word 1.
+        // Place qubit 0 at (zone 0, word 0, site 0) and qubit 1 at (zone 0, word 1, site 0)
+        // -> paired (same zone, partner words, same site).
+        // Place qubit 2 at (zone 0, word 0, site 1) without partner at (zone 0, word 1, site 1)
+        // -> unpaired.
         let state = AtomStateData::from_locations(&[
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -709,27 +813,15 @@ mod tests {
             (
                 1,
                 LocationAddr {
-                    word_id: 0,
-                    site_id: 5,
-                },
-            ),
-            (
-                2,
-                LocationAddr {
+                    zone_id: 0,
                     word_id: 1,
                     site_id: 0,
                 },
             ),
             (
-                3,
+                2,
                 LocationAddr {
-                    word_id: 1,
-                    site_id: 5,
-                },
-            ),
-            (
-                4,
-                LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 1,
                 },
@@ -739,21 +831,21 @@ mod tests {
         let zone = ZoneAddr { zone_id: 0 };
         let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
 
-        // Qubits 0+1 and 2+3 should be paired
-        assert_eq!(controls.len(), 2);
-        assert_eq!(targets.len(), 2);
+        // Qubits 0 and 1 should be paired (word 0 and word 1 at site 0 in zone 0)
+        assert_eq!(controls.len(), 1);
+        assert_eq!(targets.len(), 1);
         use std::collections::HashSet;
         let control_set: HashSet<u32> = controls.iter().copied().collect();
         let target_set: HashSet<u32> = targets.iter().copied().collect();
-        assert_eq!(control_set, HashSet::from([0, 2]));
-        assert_eq!(target_set, HashSet::from([1, 3]));
-        // Qubit 4 is unpaired (site 1, pair site 6 is empty)
-        assert_eq!(unpaired, vec![4]);
+        assert_eq!(control_set, HashSet::from([0]));
+        assert_eq!(target_set, HashSet::from([1]));
+        // Qubit 2 is unpaired (zone 0 word 0 site 1, partner word 1 site 1 is empty)
+        assert_eq!(unpaired, vec![2]);
     }
 
     #[test]
     fn get_qubit_pairing_invalid_zone() {
-        let spec = example_arch_spec();
+        let spec = make_test_spec();
         let state = AtomStateData::new();
         let zone = ZoneAddr { zone_id: 99 };
         assert!(state.get_qubit_pairing(&zone, &spec).is_none());
@@ -761,18 +853,19 @@ mod tests {
 
     #[test]
     fn get_qubit_pairing_skips_qubits_outside_zone() {
-        let spec = example_arch_spec();
-        // Zone 0 contains words [0, 1]. Place a qubit at word 99 (out of zone).
-        // But word 99 doesn't exist in the spec, so this qubit won't match any zone.
+        let spec = make_test_spec();
+        // Zone 0 entangling_pairs: [[0, 1]] — word 0 paired with word 1.
+        // Place a qubit only at word 0 — partner word 1 has no qubit.
         let state = AtomStateData::from_locations(&[(
             0,
             LocationAddr {
+                zone_id: 0,
                 word_id: 0,
                 site_id: 0,
             },
         )]);
 
-        // Use zone 0 — qubit at (0,0) is in zone but has no CZ pair
+        // Use zone 0 — qubit at (0,0,0), partner at (0,1,0) is empty
         let zone = ZoneAddr { zone_id: 0 };
         let (controls, targets, unpaired) = state.get_qubit_pairing(&zone, &spec).unwrap();
 
@@ -794,6 +887,7 @@ mod tests {
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -801,6 +895,7 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 1,
                     site_id: 0,
                 },
@@ -818,6 +913,7 @@ mod tests {
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },
@@ -825,6 +921,7 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 1,
                     site_id: 0,
                 },
@@ -834,6 +931,7 @@ mod tests {
             (
                 1,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 1,
                     site_id: 0,
                 },
@@ -841,6 +939,7 @@ mod tests {
             (
                 0,
                 LocationAddr {
+                    zone_id: 0,
                     word_id: 0,
                     site_id: 0,
                 },

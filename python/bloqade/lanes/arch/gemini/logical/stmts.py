@@ -2,8 +2,8 @@ from kirin import decl, ir, types
 from kirin.decl import info
 from kirin.dialects import ilist
 
+from bloqade.lanes.bytecode.encoding import Direction
 from bloqade.lanes.dialects.move import StatefulStatement
-from bloqade.lanes.layout.encoding import Direction
 
 dialect = ir.Dialect("gemini.logical")
 
@@ -28,15 +28,20 @@ class LogicalInitialize(StatefulStatement):
     )
 
 
+SitesPerWord = types.TypeVar("SitesPerWord")
+
+
 @decl.statement(dialect=dialect)
 class SiteBusMove(StatefulStatement):
-    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
+    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, SitesPerWord])
     word: int = info.attribute()
     bus_id: int = info.attribute()
     direction: Direction = info.attribute()
+    sites_per_word: int = info.attribute()
 
 
 @decl.statement(dialect=dialect)
 class WordBusMove(StatefulStatement):
-    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, types.Literal(5)])
+    y_mask: ir.SSAValue = info.argument(ilist.IListType[types.Bool, SitesPerWord])
     direction: Direction = info.attribute()
+    sites_per_word: int = info.attribute()

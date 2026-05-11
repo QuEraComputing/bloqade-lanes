@@ -1,4 +1,5 @@
 from bloqade.lanes.analysis.atom import lattice
+from bloqade.lanes.bytecode.encoding import LocationAddress
 
 
 def test_unknown_and_bottom_singleton():
@@ -28,19 +29,25 @@ def test_atomstate_structural_and_subset():
 
 
 def test_measurefuture_copy_and_subset():
-    mf1 = lattice.MeasureFuture({})  # empty results
-    mf2 = lattice.MeasureFuture({})
+    mf1 = lattice.MeasureFuture({}, measurement_count=1)  # empty results
+    mf2 = lattice.MeasureFuture({}, measurement_count=1)
+    mf3 = lattice.MeasureFuture({}, measurement_count=2)
     assert mf1.copy() == mf1
     assert mf1.is_subseteq_MeasureFuture(mf2)
+    assert not mf1.is_subseteq_MeasureFuture(mf3)
 
 
 def test_measureresult_copy_and_subset():
-    mr1 = lattice.MeasureResult(1)
-    mr2 = lattice.MeasureResult(1)
-    mr3 = lattice.MeasureResult(2)
+    addr = LocationAddress(0, 0, 0)
+    other = LocationAddress(1, 0, 0)
+    mr1 = lattice.MeasureResult(1, addr)
+    mr2 = lattice.MeasureResult(1, addr)
+    mr3 = lattice.MeasureResult(2, addr)
+    mr4 = lattice.MeasureResult(1, other)
     assert mr1.copy() == mr1
     assert mr1.is_subseteq_MeasureResult(mr2)
     assert not mr1.is_subseteq_MeasureResult(mr3)
+    assert not mr1.is_subseteq_MeasureResult(mr4)
 
 
 def test_detector_and_observable_result():

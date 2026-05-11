@@ -14,8 +14,9 @@ from matplotlib.axes import Axes
 from scipy.interpolate import interp1d
 
 from bloqade.lanes.analysis.atom import AtomInterpreter, AtomState, MoveExecution, Value
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move
-from bloqade.lanes.layout import ArchSpec
+from bloqade.lanes.visualize.arch import ArchVisualizer
 
 
 class QuEraColorCode(str, Enum):
@@ -338,6 +339,10 @@ class StateArtist:
     y_min: float
     y_max: float
 
+    @cached_property
+    def _visualizer(self) -> ArchVisualizer:
+        return ArchVisualizer(self.arch_spec)
+
     def _get_aod_paths(self, speed, move_execution: AtomState):
         waypoints: list[tuple[set[float], set[float]]] = []
         path_len = None
@@ -524,7 +529,7 @@ class StateArtist:
 
     def _show_local(self, stmt: move.LocalR | move.LocalRz, color: str):
         positions = list(
-            self.arch_spec.words[location.word_id].site_position(location.site_id)
+            self.arch_spec.get_position(location)
             for location in stmt.location_addresses
         )
         x_pos, y_pos = zip(*positions) if len(positions) > 0 else ([], [])
@@ -537,12 +542,12 @@ class StateArtist:
         self._show_local(stmt, color=self.plot_params.local_rz_color)
 
     def _show_global(self, stmt: move.GlobalR | move.GlobalRz, color: str):
-        x_min, x_max = self.arch_spec.x_bounds
+        x_min, x_max = self._visualizer.x_bounds
         x_width = x_max - x_min
         x_min -= 0.5 * x_width
         x_max += 0.5 * x_width
 
-        y_min, y_max = self.arch_spec.y_bounds
+        y_min, y_max = self._visualizer.y_bounds
         y_width = y_max - y_min
         y_min -= 0.5 * y_width
         y_max += 0.5 * y_width
@@ -562,20 +567,23 @@ class StateArtist:
         self._show_global(stmt, color=self.plot_params.global_rz_color)
 
     def show_cz(self, stmt: move.CZ):
-        words = tuple(
-            self.arch_spec.words[word_id]
-            for word_id in self.arch_spec.zones[stmt.zone_address.zone_id]
-        )
+        zone_id = stmt.zone_address.zone_id
 
         y_min = float("inf")
         y_max = float("-inf")
 
-        for word in words:
-            for _, y_pos in word.all_positions():
-                y_min = min(y_min, y_pos)
-                y_max = max(y_max, y_pos)
+        for word_id in range(len(self.arch_spec.words)):
+            word = self.arch_spec.words[word_id]
+            for site_id in range(len(word.site_indices)):
+                from bloqade.lanes.bytecode.encoding import LocationAddress
 
-        x_min, x_max = self.arch_spec.x_bounds
+                pos = self.arch_spec.get_position(
+                    LocationAddress(word_id, site_id, zone_id)
+                )
+                y_min = min(y_min, pos[1])
+                y_max = max(y_max, pos[1])
+
+        x_min, x_max = self._visualizer.x_bounds
         y_width = y_max - y_min
         y_min -= 0.1 * y_width
         y_max += 0.1 * y_width
@@ -589,7 +597,7 @@ class StateArtist:
         )
 
     def show_slm(self, stmt: ir.Statement, atom_marker: str):
-        self.arch_spec.plot(
+        self._visualizer.plot(
             self.ax,
             show_words=range(len(self.arch_spec.words)),
             **self.plot_params.slm_plot_args,
@@ -599,7 +607,7 @@ class StateArtist:
 def get_state_artist(
     arch_spec: ArchSpec, ax: Axes, atom_marker: str = "o"
 ) -> StateArtist:
-    x_min, x_max, y_min, y_max = arch_spec.path_bounds()
+    x_min, x_max, y_min, y_max = ArchVisualizer(arch_spec).path_bounds()
     x_width = x_max - x_min
     y_width = y_max - y_min
 
