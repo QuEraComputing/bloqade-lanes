@@ -189,7 +189,6 @@ BASIS_LABELS = DEFAULT_BASIS_LABELS
 OUTPUT_QUBIT = 0
 ANCILLA_QUBITS = (1, 2, 3, 4)
 VALID_FACTORY_TARGETS = np.array([[0, 0, 0, 0]], dtype=np.uint8)
-MLE_SCORE_MODE = "best_available"
 SPECIAL_KERNEL_STRATEGY = "compiled_inverse_prefix"
 
 _MSD_PRIMITIVES = _build_msd_primitives(THETA, PHI, LAM)
@@ -608,7 +607,6 @@ mle_decoders = {
     basis: build_mle_decoders(
         task,
         gurobi_decoder_cls=GurobiDecoder,
-        score_mode=MLE_SCORE_MODE,
     )
     for basis, task in special_tasks.items()
 }

@@ -103,7 +103,6 @@ class MSDRunConfig:
     mld_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
     injected_raw_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
     injected_corrected_sign_vector: tuple[float, ...] = (1.0, -1.0, 1.0)
-    mle_score_mode: str = "best_available"
     target_bloch: tuple[float, float, float] = (
         float(DEFAULT_TARGET_BLOCH[0]),
         float(DEFAULT_TARGET_BLOCH[1]),
@@ -419,7 +418,6 @@ def evaluate_decoder_experiment(
     injected_corrected_sign_vector: Sequence[float],
     injected_raw_sign_vector: Sequence[float],
     mle_threshold_points: int,
-    mle_score_mode: str = "best_available",
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     mle_threshold_policy: str = "quantile",
@@ -435,7 +433,6 @@ def evaluate_decoder_experiment(
         basis: build_mle_decoders(
             task,
             gurobi_decoder_cls=gurobi_decoder_cls,
-            score_mode=mle_score_mode,
             layout=layout,
         )
         for basis, task in special_tasks.items()
@@ -570,7 +567,6 @@ def run_msd_fig3b_experiment(
         injected_corrected_sign_vector=run_config.injected_corrected_sign_vector,
         injected_raw_sign_vector=run_config.injected_raw_sign_vector,
         mle_threshold_points=run_config.mle_threshold_points,
-        mle_score_mode=run_config.mle_score_mode,
         target_bloch=target_bloch,
         basis_labels=run_config.basis_labels,
         mle_threshold_policy=run_config.mle_threshold_policy,

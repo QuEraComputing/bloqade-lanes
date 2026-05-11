@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable, Mapping, Sequence, TypeAlias
+from typing import Any, Callable, Mapping, Protocol, Sequence, TypeAlias
 
 import numpy as np
 import stim
@@ -12,11 +12,12 @@ from beliefmatching import detector_error_model_to_check_matrices
 # NOTE: this file depends on the version of bloqade-decoders with a ConfidenceDecoder abstract class
 from bloqade.decoders import BaseDecoder, ConfidenceDecoder, TableDecoder
 
-from .common import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout
+from .common import DEFAULT_SYNDROME_LAYOUT, DemoTask, SyndromeLayout
 from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
+    SimulatorTask,
     ancilla_matches_valid_targets,
     fidelity_from_counts,
     fidelity_from_zero_one_counts,
@@ -31,6 +32,30 @@ from .core import (
 from .decoder_classes import SparseTableDecoder
 
 TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]
+
+
+class DetectorErrorModelTask(Protocol):
+    detector_error_model: Any
+
+
+@dataclass(frozen=True)
+class _MLDTrainingArrays:
+    full_det_obs: np.ndarray
+    factory_det_obs: np.ndarray
+    full_detector_count: int
+    full_observable_count: int
+    factory_detector_count: int
+    factory_observable_count: int
+
+
+@dataclass(frozen=True)
+class _PackedThresholdDataset:
+    anc_det: np.ndarray
+    anc_obs: np.ndarray
+    packed_full_det: np.ndarray
+    packed_anc_det: np.ndarray
+    packed_anc_obs: np.ndarray
+    output_bits: np.ndarray
 
 
 # NOTE: maybe this little wrapper around TableDecoder should go in the bloqade.decoders package?
@@ -104,9 +129,7 @@ def matrix_to_dem(
     return stim.DetectorErrorModel("\n".join(lines))
 
 
-# TODO: for here, and other places where task: Any, make it a more constrained type/a type that is abstracted with necessary methods from
-# GeminiLogicalSimulatorTask/etc.?
-def compute_dem_data(task: Any) -> dict[str, np.ndarray]:
+def compute_dem_data(task: DemoTask | DetectorErrorModelTask) -> dict[str, np.ndarray]:
     dem_matrix = detector_error_model_to_check_matrices(
         task.detector_error_model,
         allow_undecomposed_hyperedges=True,
@@ -134,54 +157,61 @@ def select_output_observables(
     return output_obs
 
 
+# TODO: Not sure if this helper function is the best abstraction that we want. Is the logic here (a) really reused across
+# train_mld_decoder_pair and train_mld_decoder_pair_from_task, and (b) is there a cleaner way to write/do we need train_mld_decoder_pair_from_task?
+# Maybe the task itself should handle the batching/streaming logic.
+def _mld_training_arrays(
+    dataset: BasisDataset,
+    *,
+    layout: SyndromeLayout,
+) -> _MLDTrainingArrays:
+    output_obs = select_output_observables(
+        dataset.observables,
+        layout=layout,
+    )
+    anc_det, anc_obs = split_factory_bits(
+        dataset.detectors,
+        dataset.observables,
+        layout=layout,
+    )
+    return _MLDTrainingArrays(
+        full_det_obs=np.concatenate([dataset.detectors, output_obs], axis=1).astype(
+            bool
+        ),
+        factory_det_obs=np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
+        full_detector_count=dataset.detectors.shape[1],
+        full_observable_count=output_obs.shape[1],
+        factory_detector_count=anc_det.shape[1],
+        factory_observable_count=anc_obs.shape[1],
+    )
+
+
 def train_mld_decoder_pair(
     training_dataset: BasisDataset,
     *,
     table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> tuple[BaseDecoder, BaseDecoder]:
-    output_obs = select_output_observables(
-        training_dataset.observables,
-        layout=layout,
-    )
-    anc_det, anc_obs = split_factory_bits(
-        training_dataset.detectors,
-        training_dataset.observables,
-        layout=layout,
-    )
-
+    training_arrays = _mld_training_arrays(training_dataset, layout=layout)
     full_decoder = table_decoder_cls.from_det_obs_shots(
         make_layout_only_dem(
-            training_dataset.detectors.shape[1],
-            output_obs.shape[1],
+            training_arrays.full_detector_count,
+            training_arrays.full_observable_count,
         ),
-        np.concatenate([training_dataset.detectors, output_obs], axis=1).astype(bool),
+        training_arrays.full_det_obs,
     )
     factory_decoder = table_decoder_cls.from_det_obs_shots(
-        make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1]),
-        np.concatenate([anc_det, anc_obs], axis=1).astype(bool),
+        make_layout_only_dem(
+            training_arrays.factory_detector_count,
+            training_arrays.factory_observable_count,
+        ),
+        training_arrays.factory_det_obs,
     )
     return full_decoder, factory_decoder
 
 
-def _det_obs_arrays_for_chunk(
-    dataset: BasisDataset,
-    *,
-    layout: SyndromeLayout,
-) -> tuple[np.ndarray, np.ndarray]:
-    output_obs = select_output_observables(dataset.observables, layout=layout)
-    anc_det, anc_obs = split_factory_bits(
-        dataset.detectors,
-        dataset.observables,
-        layout=layout,
-    )
-    full_det_obs = np.concatenate([dataset.detectors, output_obs], axis=1).astype(bool)
-    factory_det_obs = np.concatenate([anc_det, anc_obs], axis=1).astype(bool)
-    return full_det_obs, factory_det_obs
-
-
 def train_mld_decoder_pair_from_task(
-    task: Any,
+    task: SimulatorTask,
     shots: int,
     *,
     table_decoder_cls: TableDecoderClass,
@@ -205,38 +235,27 @@ def train_mld_decoder_pair_from_task(
             "Need at least one shot to train an MLD decoder pair."
         ) from exc
 
-    full_det_obs, factory_det_obs = _det_obs_arrays_for_chunk(
-        first_chunk,
-        layout=layout,
-    )
-    anc_det, anc_obs = split_factory_bits(
-        first_chunk.detectors,
-        first_chunk.observables,
-        layout=layout,
-    )
+    training_arrays = _mld_training_arrays(first_chunk, layout=layout)
 
     full_decoder = table_decoder_cls.from_det_obs_shots(
         make_layout_only_dem(
-            first_chunk.detectors.shape[1],
-            select_output_observables(
-                first_chunk.observables,
-                layout=layout,
-            ).shape[1],
+            training_arrays.full_detector_count,
+            training_arrays.full_observable_count,
         ),
-        full_det_obs,
+        training_arrays.full_det_obs,
     )
     factory_decoder = table_decoder_cls.from_det_obs_shots(
-        make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1]),
-        factory_det_obs,
+        make_layout_only_dem(
+            training_arrays.factory_detector_count,
+            training_arrays.factory_observable_count,
+        ),
+        training_arrays.factory_det_obs,
     )
 
     for chunk in chunk_iter:
-        full_chunk_det_obs, factory_chunk_det_obs = _det_obs_arrays_for_chunk(
-            chunk,
-            layout=layout,
-        )
-        full_decoder.update_det_obs_counts(full_chunk_det_obs)
-        factory_decoder.update_det_obs_counts(factory_chunk_det_obs)
+        chunk_arrays = _mld_training_arrays(chunk, layout=layout)
+        full_decoder.update_det_obs_counts(chunk_arrays.full_det_obs)
+        factory_decoder.update_det_obs_counts(chunk_arrays.factory_det_obs)
 
     return full_decoder, factory_decoder
 
@@ -408,23 +427,17 @@ def _accumulate_mld_pattern_counts(
     packed_targets: set[int],
     layout: SyndromeLayout,
 ) -> int:
-    anc_det, anc_obs = split_factory_bits(
-        dataset.detectors,
-        dataset.observables,
-        layout=layout,
-    )
-    if anc_det.shape[1] == 0:
+    packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
+    if packed_dataset.anc_det.shape[1] == 0:
         return 0
 
-    packed_full_det = pack_boolean_array(dataset.detectors).astype(np.uint64)
-    packed_anc_det = pack_boolean_array(anc_det).astype(np.uint64)
-    packed_anc_obs = pack_boolean_array(anc_obs).astype(np.uint64)
-    output_bits = np.asarray(dataset.observables[:, 0], dtype=np.uint8).astype(
-        np.uint64
-    )
-
     grouped = np.column_stack(
-        [packed_anc_det, packed_anc_obs, packed_full_det, output_bits]
+        [
+            packed_dataset.packed_anc_det,
+            packed_dataset.packed_anc_obs,
+            packed_dataset.packed_full_det,
+            packed_dataset.output_bits,
+        ]
     )
     unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
 
@@ -433,7 +446,9 @@ def _accumulate_mld_pattern_counts(
     for packed in unique_anc_det.tolist():
         anc_flip = np.asarray(
             factory_decoder.decode(
-                unpack_packed_bits(int(packed), anc_det.shape[1]).astype(bool)
+                unpack_packed_bits(int(packed), packed_dataset.anc_det.shape[1]).astype(
+                    bool
+                )
             ),
             dtype=np.uint8,
         )
@@ -471,7 +486,7 @@ def _accumulate_mld_pattern_counts(
 
 def estimate_mld_ancilla_scores_from_tasks(
     decoder_by_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
-    ranking_tasks_by_basis: Mapping[str, Any],
+    ranking_tasks_by_basis: Mapping[str, SimulatorTask],
     shots: int,
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
@@ -576,22 +591,6 @@ def build_mld_decoders_from_pair(
     )
 
 
-class MLEFactoryScorer:
-    def __init__(self, decoder: ConfidenceDecoder):
-        self.decoder = decoder
-
-    def decode(self, syndrome: np.ndarray) -> tuple[np.ndarray, float, str]:
-        correction, confidence = self.decoder.decode_with_confidence(
-            syndrome.astype(bool)
-        )
-        score_kind = getattr(self.decoder, "confidence_score_mode", "confidence")
-        return (
-            np.asarray(correction, dtype=np.uint8),
-            float(np.float64(confidence)),
-            str(score_kind),
-        )
-
-
 def _packed_pattern_targets(
     targets: np.ndarray,
 ) -> set[int]:
@@ -650,25 +649,21 @@ def _pack_threshold_dataset(
     dataset: BasisDataset,
     *,
     layout: SyndromeLayout,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> _PackedThresholdDataset:
     anc_det, anc_obs = split_factory_bits(
         dataset.detectors,
         dataset.observables,
         layout=layout,
     )
-    packed_full_det = pack_boolean_array(dataset.detectors).astype(np.uint64)
-    packed_anc_det = pack_boolean_array(anc_det).astype(np.uint64)
-    packed_anc_obs = pack_boolean_array(anc_obs).astype(np.uint64)
-    output_bits = np.asarray(dataset.observables[:, 0], dtype=np.uint8).astype(
-        np.uint64
-    )
-    return (
-        anc_det,
-        anc_obs,
-        packed_full_det,
-        packed_anc_det,
-        packed_anc_obs,
-        output_bits,
+    return _PackedThresholdDataset(
+        anc_det=anc_det,
+        anc_obs=anc_obs,
+        packed_full_det=pack_boolean_array(dataset.detectors).astype(np.uint64),
+        packed_anc_det=pack_boolean_array(anc_det).astype(np.uint64),
+        packed_anc_obs=pack_boolean_array(anc_obs).astype(np.uint64),
+        output_bits=np.asarray(dataset.observables[:, 0], dtype=np.uint8).astype(
+            np.uint64
+        ),
     )
 
 
@@ -755,25 +750,20 @@ def _build_generic_threshold_tables(
     for basis in basis_labels:
         dataset = actual_data[basis]
         total_shots += len(dataset.observables)
-        (
-            anc_det,
-            anc_obs,
-            packed_full_det,
-            packed_anc_det,
-            packed_anc_obs,
-            output_bits,
-        ) = _pack_threshold_dataset(
-            dataset,
-            layout=layout,
-        )
+        packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
 
         ancilla_decode_cache = _build_ancilla_decode_cache(
             decoder_map[basis],
-            packed_anc_det,
-            syndrome_length=anc_det.shape[1],
+            packed_dataset.packed_anc_det,
+            syndrome_length=packed_dataset.anc_det.shape[1],
         )
         grouped = np.column_stack(
-            [packed_anc_det, packed_anc_obs, packed_full_det, output_bits]
+            [
+                packed_dataset.packed_anc_det,
+                packed_dataset.packed_anc_obs,
+                packed_dataset.packed_full_det,
+                packed_dataset.output_bits,
+            ]
         )
         unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
 
@@ -941,15 +931,12 @@ def _evaluate_cached_threshold_curve(
 
 
 def build_mle_decoders(
-    task: Any,
+    # TODO: DetectorErrorModelTask can be Any???
+    task: DemoTask | DetectorErrorModelTask,
     *,
     gurobi_decoder_cls: type[ConfidenceDecoder],
-    score_mode: str = "best_available",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
-    if score_mode not in {"best_available", "logical_gap"}:
-        raise ValueError("score_mode must be 'best_available' or 'logical_gap'.")
-
     dem_data = compute_dem_data(task)
     full_dem = matrix_to_dem(dem_data["H"], dem_data["O"], dem_data["priors"])
     factory_dem = matrix_to_dem(
@@ -960,14 +947,13 @@ def build_mle_decoders(
 
     full_decoder = gurobi_decoder_cls(full_dem)
     factory_decoder = gurobi_decoder_cls(factory_dem)
-    scorer = MLEFactoryScorer(factory_decoder)
-    resolved_mode: str = score_mode
+    score_mode = str(getattr(factory_decoder, "confidence_score_mode", "confidence"))
 
     def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
-        nonlocal resolved_mode
-        correction, score, used_mode = scorer.decode(syndrome)
-        resolved_mode = used_mode
-        return correction, score
+        correction, confidence = factory_decoder.decode_with_confidence(
+            syndrome.astype(bool)
+        )
+        return np.asarray(correction, dtype=np.uint8), float(np.float64(confidence))
 
     adapter = _make_decoder_adapter(
         full_decoder=full_decoder,
@@ -975,16 +961,21 @@ def build_mle_decoders(
         full_syndrome_length=full_dem.num_detectors,
         factory_syndrome_length=factory_dem.num_detectors,
         factory_decode_impl=factory_decode_impl,
-        factory_score_mode=resolved_mode,
+        factory_score_mode=score_mode,
     )
     sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
     adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
+    resolved_score_mode = str(
+        getattr(factory_decoder, "confidence_score_mode", score_mode)
+    )
+    if resolved_score_mode == score_mode:
+        return adapter
     return DecoderAdapter(
         full_decoder=adapter.full_decoder,
         factory_decoder=adapter.factory_decoder,
         decode_factory=adapter.decode_factory,
         decode_full=adapter.decode_full,
-        factory_score_mode=resolved_mode,
+        factory_score_mode=resolved_score_mode,
     )
 
 
@@ -1234,13 +1225,16 @@ def injected_baseline(
             bits.append(int(obs[0] ^ flip[0]))
         corrected[basis] = np.asarray(bits, dtype=np.uint8)
 
-    return fidelity_from_counts(
-        corrected["X"],
-        corrected["Y"],
-        corrected["Z"],
-        binary_precision,
-        sign_vector=sign_vector,
-        target_bloch=target_bloch,
-        uncertainty_backend=uncertainty_backend,
-        max_grid_points=max_grid_points,
-    )
+    # TODO: what's the point of changing this, if it doesn't help with types????
+    return {
+        **fidelity_from_counts(
+            corrected["X"],
+            corrected["Y"],
+            corrected["Z"],
+            binary_precision,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            uncertainty_backend=uncertainty_backend,
+            max_grid_points=max_grid_points,
+        )
+    }

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Sequence
+from typing import Sequence, TypedDict
 
 import numpy as np
 from scipy.special import logsumexp
+
+
+class PosteriorFidelitySummary(TypedDict):
+    point: float
+    median: float
+    low: float
+    high: float
+    error: float
 
 
 def weighted_quantile(
@@ -128,7 +136,7 @@ def posterior_fidelity_summary(
     target_bloch: np.ndarray,
     binary_precision: int | None = None,
     max_grid_points: int = 1_500_000,
-) -> dict[str, float | tuple[float, float, float]]:
+) -> PosteriorFidelitySummary:
     if binary_precision is None:
         binary_precision = 9
     else:

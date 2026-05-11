@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence, TypedDict
 
 import numpy as np
 from scipy.stats import binomtest
@@ -20,6 +20,25 @@ DEFAULT_IDEAL_FACTORY_ACCEPTANCE = 1.0 / 6.0
 DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 
+class FidelitySummary(TypedDict):
+    point: float
+    median: float
+    low: float
+    high: float
+    error: float
+    bloch: tuple[float, float, float]
+
+
+class SimulatorTask(Protocol):
+    def run(
+        self,
+        shots: int,
+        with_noise: bool = True,
+        *,
+        run_detectors: bool = False,
+    ) -> Any: ...
+
+
 @dataclass(frozen=True)
 class BasisDataset:
     detectors: np.ndarray
@@ -28,7 +47,7 @@ class BasisDataset:
 
 # This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask.
 def _run_simulator_task(
-    task: Any,
+    task: DemoTask | SimulatorTask,
     shots: int,
     *,
     with_noise: bool,
@@ -113,7 +132,7 @@ def fidelity_from_counts(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
-) -> dict[str, Any]:
+) -> FidelitySummary:
     x_zero = int(np.sum(np.asarray(x_bits) == 0))
     x_one = int(np.sum(np.asarray(x_bits) != 0))
     y_zero = int(np.sum(np.asarray(y_bits) == 0))
@@ -152,7 +171,7 @@ def fidelity_from_zero_one_counts(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
-) -> dict[str, Any]:
+) -> FidelitySummary:
     sign = np.asarray(sign_vector, dtype=np.float64)
     target = np.asarray(target_bloch, dtype=np.float64)
 
@@ -198,11 +217,11 @@ def fidelity_from_zero_one_counts(
         fidelity_err = posterior["error"]
         return {
             "point": float(point),
-            "median": float(posterior["median"]),
+            "median": posterior["median"],
             "low": float(low),
             "high": float(high),
             "error": float(fidelity_err),
-            "bloch": tuple(float(x) for x in bloch),
+            "bloch": (float(bloch[0]), float(bloch[1]), float(bloch[2])),
         }
     else:
         raise ValueError(
@@ -214,12 +233,12 @@ def fidelity_from_zero_one_counts(
         "low": float(low),
         "high": float(high),
         "error": float(fidelity_err),
-        "bloch": tuple(float(x) for x in bloch),
+        "bloch": (float(bloch[0]), float(bloch[1]), float(bloch[2])),
     }
 
 
 def sample_task_raw(
-    task: Any,
+    task: DemoTask | SimulatorTask,
     shots: int,
     *,
     with_noise: bool = True,
@@ -324,7 +343,7 @@ def rebase_dataset_observables(
 
 
 def normalize_observable_frame(
-    task: Any,
+    task: DemoTask | SimulatorTask,
     dataset: BasisDataset,
     *,
     sim_type: str = "tsim",
@@ -338,7 +357,7 @@ def normalize_observable_frame(
 
 
 def iter_task_datasets(
-    task: Any,
+    task: DemoTask | SimulatorTask,
     shots: int,
     *,
     with_noise: bool = True,
@@ -372,7 +391,7 @@ def iter_task_datasets(
 
 
 def run_task(
-    task: Any,
+    task: DemoTask | SimulatorTask,
     shots: int,
     *,
     with_noise: bool = True,
@@ -543,20 +562,19 @@ def naive_injected_summary(
     if min(len(corrected[basis]) for basis in basis_labels) < min_accepted_per_basis:
         raise RuntimeError("Too few accepted injected shots.")
 
-    summary = fidelity_from_counts(
-        corrected["X"],
-        corrected["Y"],
-        corrected["Z"],
-        binary_precision,
-        sign_vector=sign_vector,
-        target_bloch=target_bloch,
-        max_grid_points=max_grid_points,
-    )
-    summary["accepted_fraction"] = float(
-        np.mean(list(accepted_fraction_by_basis.values()))
-    )
-    summary["accepted_fraction_by_basis"] = accepted_fraction_by_basis
-    return summary
+    return {
+        **fidelity_from_counts(
+            corrected["X"],
+            corrected["Y"],
+            corrected["Z"],
+            binary_precision,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            max_grid_points=max_grid_points,
+        ),
+        "accepted_fraction": float(np.mean(list(accepted_fraction_by_basis.values()))),
+        "accepted_fraction_by_basis": accepted_fraction_by_basis,
+    }
 
 
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
@@ -582,7 +600,7 @@ def naive_distilled_summary(
     for basis in basis_labels:
         data = run_task(task_map[basis], shots, with_noise=True)
         anc_det, anc_obs = split_factory_bits(data.detectors, data.observables)
-        mask = ancilla_matches_valid_targets(anc_obs, targets)
+        mask = np.asarray(ancilla_matches_valid_targets(anc_obs, targets), dtype=bool)
         if require_zero_ancilla_detectors:
             mask &= np.all(anc_det == 0, axis=1)
 
@@ -594,18 +612,19 @@ def naive_distilled_summary(
     if min(len(corrected[basis]) for basis in basis_labels) < min_accepted_per_basis:
         raise RuntimeError("Too few accepted distilled shots.")
 
-    summary = fidelity_from_counts(
-        corrected["X"],
-        corrected["Y"],
-        corrected["Z"],
-        binary_precision,
-        sign_vector=sign_vector,
-        target_bloch=target_bloch,
-        max_grid_points=max_grid_points,
-    )
-    summary["accepted_fraction"] = total_kept / total_shots
-    summary["accepted_fraction_by_basis"] = accepted_fraction_by_basis
-    summary["valid_factory_targets"] = tuple(
-        tuple(int(x) for x in row.tolist()) for row in targets
-    )
-    return summary
+    return {
+        **fidelity_from_counts(
+            corrected["X"],
+            corrected["Y"],
+            corrected["Z"],
+            binary_precision,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            max_grid_points=max_grid_points,
+        ),
+        "accepted_fraction": total_kept / total_shots,
+        "accepted_fraction_by_basis": accepted_fraction_by_basis,
+        "valid_factory_targets": tuple(
+            tuple(int(x) for x in row.tolist()) for row in targets
+        ),
+    }
