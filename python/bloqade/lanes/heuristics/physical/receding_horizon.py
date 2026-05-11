@@ -138,7 +138,7 @@ class RecedingHorizonLooseGoalPlacementStrategy(PlacementStrategyABC):
     # quality at ~3.5× slower.
     k_candidates: int = 5
     rollout_horizon: int = 5
-    commit_depth: int = 5
+    commit_depth: int = 3
     tier0_next_h_weight: float = 0.5
     weight_grid: tuple[tuple[float, float], ...] | None = None
     fallback_x_decrement: int = 1

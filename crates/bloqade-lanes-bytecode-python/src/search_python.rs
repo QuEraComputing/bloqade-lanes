@@ -1382,7 +1382,7 @@ impl PyRecedingHorizonOptions {
     #[pyo3(signature = (
         k_candidates = 5,
         rollout_horizon = 5,
-        commit_depth = 5,
+        commit_depth = 3,
         tier0_next_h_weight = 0.5,
         weight_grid = None,
         fallback_x_decrement = 1,

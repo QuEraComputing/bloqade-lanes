@@ -163,15 +163,19 @@ pub struct RecedingHorizonOptions {
 
 impl Default for RecedingHorizonOptions {
     fn default() -> Self {
-        // Defaults calibrated from the 40q × 20-pair × depth-3 sweep:
-        // K=5 / m=5 sits at the cost/quality knee — ~24% move-layer
-        // reduction vs LooseGoal(cw=1.0) at roughly 8× baseline wall-clock.
-        // Smaller m (1–3) gives ~1–3% better quality at 2–3× more wall-clock;
-        // K=10 gains ~3% at 2× wall-clock. See `scripts/eval_sweep_m.py`.
+        // Defaults recalibrated from the 80q × 30-pair × depth-3 sweep
+        // after the beam-2 + quality-gate inner search landed: cheaper
+        // rollouts shifted the cost/quality math, and m=3 now beats both
+        // m=1 (over-replanning lands in different basins) and m=5
+        // (under-replanning commits 5-layer sequences that may include
+        // bad tail moves). m=3 captures beam-2's 5-layer lookahead value
+        // and re-plans before committing potentially-stale layers. K=5
+        // remains at the cost/quality knee. See
+        // `scripts/eval_sweep_m_80q.py`.
         Self {
             k_candidates: 5,
             rollout_horizon: 5,
-            commit_depth: 5,
+            commit_depth: 3,
             tier0_next_h_weight: 0.5,
             weight_grid: default_weight_grid(),
             fallback_x_decrement: 1,
@@ -1149,9 +1153,10 @@ pub fn solve_entangling_rh_single(
 /// current config (which would indicate an inconsistency between the
 /// rollout's graph and the orchestrator's tracked state).
 ///
-/// Only used when `commit_depth < rollout_horizon`. With the default
-/// (m=x=5), tier-1 commits exhaust the full path and we read the leaf
-/// config directly from the rollout instead.
+/// Used when `commit_depth < rollout_horizon` (the default `m=3 < x=5`),
+/// so the orchestrator commits the first `m` move layers of a tier-1
+/// path and reads the post-commit config from the rollout graph; tier-0
+/// branches always commit their full path and skip this helper.
 fn apply_layers_to<'a>(
     mut config: Config,
     layers: impl IntoIterator<Item = &'a MoveSet>,
@@ -1246,7 +1251,7 @@ mod tests {
         let opts = RecedingHorizonOptions::default();
         assert_eq!(opts.k_candidates, 5);
         assert_eq!(opts.rollout_horizon, 5);
-        assert_eq!(opts.commit_depth, 5);
+        assert_eq!(opts.commit_depth, 3);
         assert_eq!(opts.tier0_next_h_weight, 0.5);
         assert!(opts.commit_depth >= 1 && opts.commit_depth <= opts.rollout_horizon);
         assert_eq!(opts.weight_grid.len(), 10);

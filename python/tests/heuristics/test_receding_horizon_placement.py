@@ -26,7 +26,7 @@ def test_receding_horizon_default_construction():
     assert strategy.strategy == "ids"
     assert strategy.k_candidates == 5
     assert strategy.rollout_horizon == 5
-    assert strategy.commit_depth == 5
+    assert strategy.commit_depth == 3
     assert strategy.tier0_next_h_weight == 0.5
     assert strategy.restarts == 1
 
