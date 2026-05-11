@@ -145,6 +145,7 @@ class RecedingHorizonLooseGoalPlacementStrategy(PlacementStrategyABC):
     branch_parallel: bool = True
     max_expansions_per_rollout: int = 300
     greedy_first: bool = True
+    inner_beam_width: int = 2
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
 
@@ -216,6 +217,7 @@ class RecedingHorizonLooseGoalPlacementStrategy(PlacementStrategyABC):
             branch_parallel=self.branch_parallel,
             max_expansions_per_rollout=self.max_expansions_per_rollout,
             greedy_first=self.greedy_first,
+            inner_beam_width=self.inner_beam_width,
         )
         return opts, ent_opts, rh_opts
 

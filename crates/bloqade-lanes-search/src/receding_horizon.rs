@@ -51,6 +51,19 @@ const LOOKAHEAD_BETA: f64 = 2.0;
 /// weight-grid alone returns fewer than `K` unique assignments.
 const MAX_NOISE_TOP_UP_RETRIES: u64 = 50;
 
+/// Quality gate for the greedy/beam rollout: when the rollout completes
+/// the full horizon without reaching the goal, the leaf's heuristic
+/// score must be at most this fraction of the root's score for us to
+/// accept the result. Otherwise we fall back to IDS — greedy wandered
+/// without making meaningful progress, IDS may yet find a goal.
+///
+/// `1.0` means "any non-increasing score is accepted" (effectively no
+/// gating). `0.85` requires the leaf to be ≤ 85% of the root's score,
+/// i.e. greedy must have closed at least 15% of the distance. Empirical
+/// sweet spot; smaller values are more aggressive (more IDS fallbacks,
+/// better quality, more wall-clock).
+const GREEDY_PROGRESS_THRESHOLD: f64 = 0.85;
+
 /// Environment variable that, when set (to any non-empty value), causes
 /// each call to [`solve_entangling_rh_single`] to print a per-phase
 /// breakdown of wall-clock time and branch-tier counts to stderr. Used
@@ -133,14 +146,19 @@ pub struct RecedingHorizonOptions {
     /// Per-rollout expansion budget. Each inner IDS call is capped at this
     /// many node expansions to bound runaway rollouts.
     pub max_expansions_per_rollout: u32,
-    /// If `true` (default), each rollout first tries a cheap greedy walk
-    /// (depth-bounded, no backtracking) before falling back to full IDS
-    /// only when greedy hits a dead-end. Greedy is ~50× cheaper per
-    /// rollout but produces lower-quality solutions when atoms need to
-    /// route around blockers. Setting `false` skips the greedy attempt
-    /// and always runs IDS — slower (~10× more wall-clock) but more
-    /// reliable quality at high atom density.
+    /// If `true` (default), each rollout first tries a cheap bounded
+    /// beam-search (see `inner_beam_width`) before falling back to full
+    /// IDS only when the beam dead-ends. Set `false` to skip the beam
+    /// attempt and always run IDS — slower (~10× more wall-clock) but
+    /// more reliable quality at high atom density.
     pub greedy_first: bool,
+    /// Beam width for the inner pre-search when `greedy_first = true`.
+    /// `1` is pure greedy (cheapest, most prone to local optima);
+    /// `2` (default) doubles cost but escapes most single-step dead-ends
+    /// and significantly improves quality at high density;
+    /// `3+` provides diminishing returns. Has no effect when
+    /// `greedy_first = false`.
+    pub inner_beam_width: u32,
 }
 
 impl Default for RecedingHorizonOptions {
@@ -165,6 +183,10 @@ impl Default for RecedingHorizonOptions {
             // fallback handles cases where the budget is genuinely needed.
             max_expansions_per_rollout: 300,
             greedy_first: true,
+            // Beam-2: ~2× greedy cost (still ~25× cheaper than IDS) but
+            // escapes most single-step local optima that bite pure-greedy
+            // at high atom density. Empirical sweet spot.
+            inner_beam_width: 2,
         }
     }
 }
@@ -386,20 +408,24 @@ pub(crate) struct RolloutOutcome {
     pub(crate) nodes_expanded: u32,
 }
 
-/// Fast greedy walk used as the first attempt inside [`run_inner_rollout`].
+/// Fast bounded beam-search rollout used as the first attempt inside
+/// [`run_inner_rollout`].
 ///
-/// At each step, asks the generator for candidate moves, scores them with
-/// `DistanceScorer`, applies the single highest-scored candidate, and
-/// repeats. No backtracking — succeeds by reaching the goal or
-/// completing `max_depth` cleanly; fails (returns `goal_node = None`
-/// with `max_depth_reached < max_depth`) when the generator emits no
-/// candidates from some node (dead-end), in which case the caller
-/// should fall back to full IDS.
+/// At each depth step, asks the generator for candidate moves from every
+/// node in the current beam, scores them with `DistanceScorer`, keeps the
+/// top-`beam_width` by score, and applies all of them — producing the
+/// next beam. No backtracking; the rollout succeeds when any beam node
+/// reaches the goal or the beam completes `max_depth` cleanly. It fails
+/// (returns `goal_node = None` with `max_depth_reached < max_depth`)
+/// only when *every* beam node dead-ends at the same step, in which
+/// case the caller should fall back to full IDS.
 ///
-/// Approximate per-rollout cost: `max_depth` generator-and-scorer calls.
-/// For typical default `x = 5` that's ~5 expansions vs IDS's 100–500,
-/// a 20–100× speedup per rollout when greedy succeeds.
-fn greedy_rollout<G: Goal>(
+/// `beam_width = 1` is a pure greedy walk. `beam_width = 2` doubles per-
+/// rollout cost but escapes single-step local optima — empirically much
+/// more robust at high density, where greedy gets trapped in suboptimal
+/// short-term moves. The beam grows up to `beam_width`, never beyond.
+#[allow(clippy::too_many_arguments)]
+fn beam_rollout<G: Goal>(
     root: Config,
     generator: &LooseTargetGenerator,
     blocked: &HashSet<u64>,
@@ -407,12 +433,13 @@ fn greedy_rollout<G: Goal>(
     targets: &[(u32, u64)],
     goal: &G,
     max_depth: u32,
+    beam_width: usize,
 ) -> RolloutOutcome {
+    let beam_width = beam_width.max(1);
     let mut graph = SearchGraph::new(root);
     let scorer = DistanceScorer;
     let mut search_state = SearchState::default();
     let mut candidates: Vec<crate::context::MoveCandidate> = Vec::new();
-    let mut current = graph.root();
     let mut nodes_expanded: u32 = 0;
 
     let ctx = SearchContext {
@@ -424,30 +451,44 @@ fn greedy_rollout<G: Goal>(
     };
 
     // Root goal check.
-    if goal.is_goal(graph.config(current)) {
+    if goal.is_goal(graph.config(graph.root())) {
         return RolloutOutcome {
-            goal_node: Some(current),
+            goal_node: Some(graph.root()),
             max_depth_reached: 0,
             nodes_expanded: 0,
             graph,
         };
     }
 
-    for _ in 0..max_depth {
-        candidates.clear();
-        generator.generate(
-            graph.config(current),
-            current,
-            &ctx,
-            &mut search_state,
-            &mut candidates,
-        );
-        nodes_expanded = nodes_expanded.saturating_add(1);
+    // Active beam: at most `beam_width` nodes alive at the current depth.
+    let mut beam: Vec<NodeId> = vec![graph.root()];
 
-        if candidates.is_empty() {
-            // Dead-end at this depth — return tier-2 outcome so caller
-            // can fall back to IDS.
-            let depth = graph.depth(current);
+    for _ in 0..max_depth {
+        // Collect (parent, candidate, score) for every candidate from every
+        // beam member. The pool is the union of all next-step options.
+        let mut pool: Vec<(NodeId, crate::context::MoveCandidate, f64)> = Vec::new();
+        for &node in &beam {
+            candidates.clear();
+            generator.generate(
+                graph.config(node),
+                node,
+                &ctx,
+                &mut search_state,
+                &mut candidates,
+            );
+            nodes_expanded = nodes_expanded.saturating_add(1);
+            let cur_cfg = graph.config(node).clone();
+            for c in candidates.drain(..) {
+                let s = scorer.score(&c, &cur_cfg, &ctx);
+                pool.push((node, c, s));
+            }
+        }
+
+        if pool.is_empty() {
+            // All beam members dead-ended at this depth — fall back to IDS.
+            // Use the depth of the first beam node (all beam members are
+            // at the same depth by construction).
+            let depth = graph.depth(beam[0]);
             return RolloutOutcome {
                 goal_node: None,
                 max_depth_reached: depth,
@@ -456,39 +497,36 @@ fn greedy_rollout<G: Goal>(
             };
         }
 
-        // Score and pick the single best candidate.
-        let cur_cfg = graph.config(current).clone();
-        let best_idx = candidates
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| {
-                scorer
-                    .score(a, &cur_cfg, &ctx)
-                    .total_cmp(&scorer.score(b, &cur_cfg, &ctx))
-            })
-            .map(|(i, _)| i)
-            .unwrap();
-        let best = candidates.swap_remove(best_idx);
+        // Sort pool by score descending and keep top `beam_width`.
+        pool.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a));
+        pool.truncate(beam_width);
 
-        // Apply.
-        let new_g = graph.g_score(current) + 1.0;
-        let (next, _is_new) = graph.insert(current, best.move_set, best.new_config, new_g);
-        current = next;
-
-        // Goal check on the new node.
-        if goal.is_goal(graph.config(current)) {
-            let depth = graph.depth(current);
-            return RolloutOutcome {
-                goal_node: Some(current),
-                max_depth_reached: depth,
-                nodes_expanded,
-                graph,
-            };
+        // Apply each kept candidate. Goal check on every new node — return
+        // immediately on first hit (a beam node reaching the goal is the
+        // best possible outcome of this rollout).
+        let mut new_beam: Vec<NodeId> = Vec::with_capacity(pool.len());
+        for (parent, c, _) in pool {
+            let new_g = graph.g_score(parent) + 1.0;
+            let (next, _is_new) = graph.insert(parent, c.move_set, c.new_config, new_g);
+            if goal.is_goal(graph.config(next)) {
+                let depth = graph.depth(next);
+                return RolloutOutcome {
+                    goal_node: Some(next),
+                    max_depth_reached: depth,
+                    nodes_expanded,
+                    graph,
+                };
+            }
+            new_beam.push(next);
         }
+        beam = new_beam;
     }
 
-    // Completed max_depth without finding goal — tier-1 outcome.
-    let depth = graph.depth(current);
+    // Completed max_depth without finding goal. The caller's
+    // `extract_best_leaf` picks the lowest-h beam node by walking the
+    // graph; reporting any beam member's depth here is sufficient
+    // (they're all at max_depth).
+    let depth = graph.depth(beam[0]);
     RolloutOutcome {
         goal_node: None,
         max_depth_reached: depth,
@@ -515,6 +553,7 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     top_c: usize,
     restart_seed: u64,
     greedy_first: bool,
+    inner_beam_width: u32,
 ) -> RolloutOutcome {
     let inner = HeuristicGenerator::new()
         .with_deadlock_policy(deadlock_policy)
@@ -534,12 +573,18 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
         LooseTargetGenerator::from_targets(inner, targets, cz_pairs, arch, index, dist_table);
 
     // ── Phase 1: try cheap greedy walk first (if enabled) ──────────────
-    // Most rollouts succeed under greedy at moderate density. Only when
-    // greedy hits a dead-end (no candidates available at some node) do
-    // we fall back to IDS, which can backtrack around blockers. Greedy
-    // is ~20–100× cheaper per rollout when it succeeds.
+    // Most rollouts succeed under greedy at moderate density. We fall
+    // back to IDS in two cases:
+    //   (a) greedy dead-ended (no candidates from some node)
+    //   (b) greedy completed the full horizon but the leaf's heuristic
+    //       score barely dropped from the root's — i.e., greedy
+    //       wandered without making meaningful progress. The quality
+    //       gate uses `h_sum.estimate(...)` (cheap) to detect this.
+    //
+    // Greedy is ~50× cheaper per rollout when it succeeds; the gate
+    // adds two h-score evaluations per gated rollout — negligible.
     if greedy_first {
-        let greedy_outcome = greedy_rollout(
+        let greedy_outcome = beam_rollout(
             root.clone(),
             &generator,
             blocked,
@@ -547,11 +592,30 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
             &targets_for_ctx,
             goal,
             max_depth,
+            inner_beam_width.max(1) as usize,
         );
-        let greedy_completed_full_depth = greedy_outcome.max_depth_reached >= max_depth;
-        let greedy_reached_goal = greedy_outcome.goal_node.is_some();
-        if greedy_reached_goal || greedy_completed_full_depth {
+        if greedy_outcome.goal_node.is_some() {
+            // Tier-0 (goal reached) is always best — accept immediately.
             return greedy_outcome;
+        }
+        if greedy_outcome.max_depth_reached >= max_depth {
+            // Tier-1 candidate: gate on progress.
+            let start_h = h_sum.estimate(&root);
+            // The same h-fn used for ranking leaves below by
+            // extract_best_leaf — pick the lowest-h leaf as the gate
+            // metric (the one classify_into_tier will later pick).
+            let h_fn = |cfg: &Config| h_sum.estimate(cfg);
+            if let Some(leaf) = extract_best_leaf(&greedy_outcome.graph, max_depth, h_fn) {
+                let leaf_h = h_sum.estimate(greedy_outcome.graph.config(leaf));
+                if leaf_h <= GREEDY_PROGRESS_THRESHOLD * start_h {
+                    return greedy_outcome;
+                }
+                // else: greedy made no real progress, fall through to IDS.
+            } else {
+                // No depth-x leaf found in the graph — shouldn't happen
+                // if greedy reported max_depth_reached >= max_depth. Be
+                // defensive and fall through to IDS.
+            }
         }
     }
 
@@ -936,6 +1000,7 @@ pub fn solve_entangling_rh_single(
                 top_c,
                 stage_seed,
                 rh_opts.greedy_first,
+                rh_opts.inner_beam_width,
             );
             classify_into_tier(outcome, x, heuristic)
         };

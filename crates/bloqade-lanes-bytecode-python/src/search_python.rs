@@ -1389,6 +1389,7 @@ impl PyRecedingHorizonOptions {
         branch_parallel = true,
         max_expansions_per_rollout = 300,
         greedy_first = true,
+        inner_beam_width = 2,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -1401,6 +1402,7 @@ impl PyRecedingHorizonOptions {
         branch_parallel: bool,
         max_expansions_per_rollout: u32,
         greedy_first: bool,
+        inner_beam_width: u32,
     ) -> PyResult<Self> {
         if k_candidates == 0 {
             return Err(PyValueError::new_err("k_candidates must be positive"));
@@ -1440,6 +1442,7 @@ impl PyRecedingHorizonOptions {
                 branch_parallel,
                 max_expansions_per_rollout: max_expansions_per_rollout.max(1),
                 greedy_first,
+                inner_beam_width: inner_beam_width.max(1),
             },
         })
     }
@@ -1480,10 +1483,14 @@ impl PyRecedingHorizonOptions {
     fn greedy_first(&self) -> bool {
         self.inner.greedy_first
     }
+    #[getter]
+    fn inner_beam_width(&self) -> u32 {
+        self.inner.inner_beam_width
+    }
 
     fn __repr__(&self) -> String {
         format!(
-            "RecedingHorizonOptions(k_candidates={}, rollout_horizon={}, commit_depth={}, tier0_next_h_weight={}, fallback_x_decrement={}, branch_parallel={}, max_expansions_per_rollout={}, greedy_first={}, weight_grid_len={})",
+            "RecedingHorizonOptions(k_candidates={}, rollout_horizon={}, commit_depth={}, tier0_next_h_weight={}, fallback_x_decrement={}, branch_parallel={}, max_expansions_per_rollout={}, greedy_first={}, inner_beam_width={}, weight_grid_len={})",
             self.inner.k_candidates,
             self.inner.rollout_horizon,
             self.inner.commit_depth,
@@ -1492,6 +1499,7 @@ impl PyRecedingHorizonOptions {
             self.inner.branch_parallel,
             self.inner.max_expansions_per_rollout,
             self.inner.greedy_first,
+            self.inner.inner_beam_width,
             self.inner.weight_grid.len(),
         )
     }
