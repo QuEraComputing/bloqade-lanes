@@ -4,7 +4,7 @@ import pytest
 
 from bloqade.lanes.bytecode import Instruction, MoveType, Program
 from bloqade.lanes.bytecode.decode import load_program
-from bloqade.lanes.bytecode.encode import BytecodeEncoder, EncodingError, dump_program
+from bloqade.lanes.bytecode.encode import EncodingError, dump_program
 
 
 def _roundtrip(instructions: list[Instruction]) -> tuple[Program, Program]:
@@ -301,6 +301,9 @@ def test_roundtrip_set_observable():
 def test_encoding_error_for_unknown_statement():
     from kirin import ir, types
     from kirin.decl import info, statement
+    from kirin.dialects import func
+
+    from bloqade.lanes.dialects import stack_move as sm
 
     unknown_dialect = ir.Dialect(name="test.unknown")
 
@@ -308,6 +311,22 @@ def test_encoding_error_for_unknown_statement():
     class UnknownStmt(ir.Statement):
         result: ir.ResultValue = info.result(types.Int)
 
-    encoder = BytecodeEncoder()
+    # The unknown dialect must be in the method's dialect group so that
+    # frame_eval reaches eval_fallback (rather than raising InterpreterError
+    # for an unsupported dialect) and EncodingError is raised.
+    block = ir.Block(argtypes=(types.MethodType,))
+    ci = sm.ConstInt(value=0)
+    for s in (UnknownStmt(), ci, func.Return(ci.result)):
+        block.stmts.append(s)
+    region = ir.Region(blocks=block)
+    fn = func.Function(
+        sym_name="test",
+        signature=func.Signature((), types.Any),
+        slots=(),
+        body=region,
+    )
+    dialects = ir.DialectGroup([sm.dialect, func.dialect, unknown_dialect])
+    method = ir.Method(dialects=dialects, code=fn, sym_name="test", arg_names=[])
+
     with pytest.raises(EncodingError):
-        encoder._visit(UnknownStmt())
+        dump_program(method)

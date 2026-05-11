@@ -7,7 +7,13 @@ defined first, top-of-stack arg defined last).  ``load_program``
 (``decode.py``) always produces stack-consistent IR, so round-trips
 work unconditionally.  IR produced by compiler rewrites (e.g.
 ``RewriteMoveToStackMove``) may violate the ordering invariant and
-must be normalised by the rewrite pass itself before encoding.
+must be normalised by ``stackify`` before encoding.
+
+Implemented as a kirin ``EmitABC`` pass: each dialect registers its
+own ``MethodTable`` under the key ``"emit.bytecode"``, and the encoder
+dispatches via the standard kirin interpreter machinery.  The encoded
+instructions accumulate in ``BytecodeEncoder.instructions``; call
+``dump_program`` for the one-shot public API.
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ from dataclasses import dataclass, field
 
 from kirin import ir
 from kirin.dialects import func
+from kirin.emit import EmitABC, EmitFrame
+from kirin.interp import MethodTable, impl
 
 from bloqade.lanes.bytecode import Instruction, Program
 from bloqade.lanes.dialects import stack_move
@@ -30,138 +38,241 @@ class EncodingError(Exception):
 
 
 @dataclass
-class BytecodeEncoder:
+class BytecodeEncoder(EmitABC[EmitFrame, Program]):
     """Turn a stack_move ir.Method into a bytecode Program.
 
-    Walks the entry block's statements in order and emits the
-    corresponding Instruction for each stack_move statement.
-    func.ConstantNone is silently skipped; func.Return emits ``halt``
-    when its argument is defined by func.ConstantNone and ``return_``
-    otherwise.
+    Constructed with the method's dialect group
+    (``BytecodeEncoder(dialects=method.dialects)``).  Call ``run(method)``
+    to populate ``self.instructions``, then build the ``Program`` from them.
+    Prefer ``dump_program`` for the one-shot public API.
     """
+
+    keys = ("emit.bytecode",)
+    void = Program(version=(1, 0), instructions=[])
 
     instructions: list[Instruction] = field(default_factory=list)
 
-    def encode(self, method: ir.Method, version: tuple[int, int] = (1, 0)) -> Program:
-        block = method.callable_region.blocks[0]
-        for stmt in block.stmts:
-            self._visit(stmt)
-        return Program(version=version, instructions=self.instructions)
+    def initialize_frame(
+        self, node: ir.Statement, *, has_parent_access: bool = False
+    ) -> EmitFrame:
+        return EmitFrame(node, has_parent_access=has_parent_access)
 
-    def _visit(self, stmt: ir.Statement) -> None:
-        name = type(stmt).__name__
-        handler = getattr(self, f"_visit_{name}", None)
-        if handler is None:
-            raise EncodingError(stmt)
-        handler(stmt)
+    def reset(self) -> None:
+        self.instructions = []
+
+    def eval_fallback(self, frame: EmitFrame, node: ir.Statement) -> tuple:  # type: ignore[override]
+        raise EncodingError(node)
+
+
+@stack_move.dialect.register(key="emit.bytecode")
+class _StackMoveEmit(MethodTable):
 
     # ── Constants ──────────────────────────────────────────────────────────
 
-    def _visit_ConstFloat(self, stmt: stack_move.ConstFloat) -> None:
-        self.instructions.append(Instruction.const_float(stmt.value))
+    @impl(stack_move.ConstFloat)
+    def const_float(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.ConstFloat
+    ) -> tuple:
+        emit.instructions.append(Instruction.const_float(stmt.value))
+        return ()
 
-    def _visit_ConstInt(self, stmt: stack_move.ConstInt) -> None:
-        self.instructions.append(Instruction.const_int(stmt.value))
+    @impl(stack_move.ConstInt)
+    def const_int(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.ConstInt
+    ) -> tuple:
+        emit.instructions.append(Instruction.const_int(stmt.value))
+        return ()
 
-    def _visit_ConstLoc(self, stmt: stack_move.ConstLoc) -> None:
+    @impl(stack_move.ConstLoc)
+    def const_loc(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.ConstLoc
+    ) -> tuple:
         v = stmt.value
-        self.instructions.append(Instruction.const_loc(v.zone_id, v.word_id, v.site_id))
+        emit.instructions.append(Instruction.const_loc(v.zone_id, v.word_id, v.site_id))
+        return ()
 
-    def _visit_ConstLane(self, stmt: stack_move.ConstLane) -> None:
+    @impl(stack_move.ConstLane)
+    def const_lane(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.ConstLane
+    ) -> tuple:
         v = stmt.value
-        self.instructions.append(
+        emit.instructions.append(
             Instruction.const_lane(
                 v.move_type, v.zone_id, v.word_id, v.site_id, v.bus_id, v.direction
             )
         )
+        return ()
 
-    def _visit_ConstZone(self, stmt: stack_move.ConstZone) -> None:
-        self.instructions.append(Instruction.const_zone(stmt.value.zone_id))
+    @impl(stack_move.ConstZone)
+    def const_zone(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.ConstZone
+    ) -> tuple:
+        emit.instructions.append(Instruction.const_zone(stmt.value.zone_id))
+        return ()
 
     # ── Stack manipulation ─────────────────────────────────────────────────
 
-    def _visit_Pop(self, stmt: stack_move.Pop) -> None:
-        self.instructions.append(Instruction.pop())
+    @impl(stack_move.Pop)
+    def pop(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Pop
+    ) -> tuple:
+        emit.instructions.append(Instruction.pop())
+        return ()
 
-    def _visit_Dup(self, stmt: stack_move.Dup) -> None:
-        self.instructions.append(Instruction.dup())
+    @impl(stack_move.Dup)
+    def dup(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Dup
+    ) -> tuple:
+        emit.instructions.append(Instruction.dup())
+        return ()
 
-    def _visit_Swap(self, stmt: stack_move.Swap) -> None:
-        self.instructions.append(Instruction.swap())
+    @impl(stack_move.Swap)
+    def swap(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Swap
+    ) -> tuple:
+        emit.instructions.append(Instruction.swap())
+        return ()
 
     # ── Atom operations ────────────────────────────────────────────────────
 
-    def _visit_InitialFill(self, stmt: stack_move.InitialFill) -> None:
-        self.instructions.append(Instruction.initial_fill(len(stmt.locations)))
+    @impl(stack_move.InitialFill)
+    def initial_fill(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.InitialFill
+    ) -> tuple:
+        emit.instructions.append(Instruction.initial_fill(len(stmt.locations)))
+        return ()
 
-    def _visit_Fill(self, stmt: stack_move.Fill) -> None:
-        self.instructions.append(Instruction.fill(len(stmt.locations)))
+    @impl(stack_move.Fill)
+    def fill(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Fill
+    ) -> tuple:
+        emit.instructions.append(Instruction.fill(len(stmt.locations)))
+        return ()
 
-    def _visit_Move(self, stmt: stack_move.Move) -> None:
-        self.instructions.append(Instruction.move_(len(stmt.lanes)))
+    @impl(stack_move.Move)
+    def move(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Move
+    ) -> tuple:
+        emit.instructions.append(Instruction.move_(len(stmt.lanes)))
+        return ()
 
     # ── Gates ──────────────────────────────────────────────────────────────
 
-    def _visit_LocalR(self, stmt: stack_move.LocalR) -> None:
-        self.instructions.append(Instruction.local_r(len(stmt.locations)))
+    @impl(stack_move.LocalR)
+    def local_r(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.LocalR
+    ) -> tuple:
+        emit.instructions.append(Instruction.local_r(len(stmt.locations)))
+        return ()
 
-    def _visit_LocalRz(self, stmt: stack_move.LocalRz) -> None:
-        self.instructions.append(Instruction.local_rz(len(stmt.locations)))
+    @impl(stack_move.LocalRz)
+    def local_rz(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.LocalRz
+    ) -> tuple:
+        emit.instructions.append(Instruction.local_rz(len(stmt.locations)))
+        return ()
 
-    def _visit_GlobalR(self, stmt: stack_move.GlobalR) -> None:
-        self.instructions.append(Instruction.global_r())
+    @impl(stack_move.GlobalR)
+    def global_r(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.GlobalR
+    ) -> tuple:
+        emit.instructions.append(Instruction.global_r())
+        return ()
 
-    def _visit_GlobalRz(self, stmt: stack_move.GlobalRz) -> None:
-        self.instructions.append(Instruction.global_rz())
+    @impl(stack_move.GlobalRz)
+    def global_rz(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.GlobalRz
+    ) -> tuple:
+        emit.instructions.append(Instruction.global_rz())
+        return ()
 
-    def _visit_CZ(self, stmt: stack_move.CZ) -> None:
-        self.instructions.append(Instruction.cz())
+    @impl(stack_move.CZ)
+    def cz(self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.CZ) -> tuple:
+        emit.instructions.append(Instruction.cz())
+        return ()
 
     # ── Measurement ────────────────────────────────────────────────────────
 
-    def _visit_Measure(self, stmt: stack_move.Measure) -> None:
-        self.instructions.append(Instruction.measure(len(stmt.zones)))
+    @impl(stack_move.Measure)
+    def measure(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.Measure
+    ) -> tuple:
+        emit.instructions.append(Instruction.measure(len(stmt.zones)))
+        return ()
 
-    def _visit_AwaitMeasure(self, stmt: stack_move.AwaitMeasure) -> None:
-        self.instructions.append(Instruction.await_measure())
+    @impl(stack_move.AwaitMeasure)
+    def await_measure(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.AwaitMeasure
+    ) -> tuple:
+        emit.instructions.append(Instruction.await_measure())
+        return ()
 
     # ── Arrays ─────────────────────────────────────────────────────────────
 
-    def _visit_NewArray(self, stmt: stack_move.NewArray) -> None:
-        self.instructions.append(
+    @impl(stack_move.NewArray)
+    def new_array(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.NewArray
+    ) -> tuple:
+        emit.instructions.append(
             Instruction.new_array(stmt.type_tag, stmt.dim0, stmt.dim1)
         )
+        return ()
 
-    def _visit_GetItem(self, stmt: stack_move.GetItem) -> None:
-        self.instructions.append(Instruction.get_item(len(stmt.indices)))
+    @impl(stack_move.GetItem)
+    def get_item(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.GetItem
+    ) -> tuple:
+        emit.instructions.append(Instruction.get_item(len(stmt.indices)))
+        return ()
 
     # ── Annotations ────────────────────────────────────────────────────────
 
-    def _visit_SetDetector(self, stmt: stack_move.SetDetector) -> None:
-        self.instructions.append(Instruction.set_detector())
+    @impl(stack_move.SetDetector)
+    def set_detector(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.SetDetector
+    ) -> tuple:
+        emit.instructions.append(Instruction.set_detector())
+        return ()
 
-    def _visit_SetObservable(self, stmt: stack_move.SetObservable) -> None:
-        self.instructions.append(Instruction.set_observable())
+    @impl(stack_move.SetObservable)
+    def set_observable(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: stack_move.SetObservable
+    ) -> tuple:
+        emit.instructions.append(Instruction.set_observable())
+        return ()
 
-    # ── Control flow (func dialect overlap) ────────────────────────────────
 
-    def _visit_ConstantNone(self, stmt: func.ConstantNone) -> None:
-        # Silently skip — ConstantNone is emitted only to support halt encoding
-        # in the decoder (func.ConstantNone + func.Return pairs).
-        pass
+@func.dialect.register(key="emit.bytecode")
+class _FuncEmit(MethodTable):
 
-    def _visit_Return(self, stmt: func.Return) -> None:
-        # halt was decoded as func.ConstantNone + func.Return(none_result).
-        # Detect that case by checking whether the argument is defined by
-        # func.ConstantNone; emit return_ for any other value.
+    @impl(func.Function)
+    def function(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: func.Function
+    ) -> tuple:
+        for block in stmt.body.blocks:
+            for s in block.stmts:
+                emit.frame_eval(frame, s)
+        return ()
+
+    @impl(func.ConstantNone)
+    def constant_none(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: func.ConstantNone
+    ) -> tuple:
+        return ()
+
+    @impl(func.Return)
+    def return_(
+        self, emit: BytecodeEncoder, frame: EmitFrame, stmt: func.Return
+    ) -> tuple:
         if (
             stmt.args
             and isinstance(stmt.args[0], ir.ResultValue)
             and isinstance(stmt.args[0].owner, func.ConstantNone)
         ):
-            self.instructions.append(Instruction.halt())
+            emit.instructions.append(Instruction.halt())
         else:
-            self.instructions.append(Instruction.return_())
+            emit.instructions.append(Instruction.return_())
+        return ()
 
 
 def dump_program(method: ir.Method, version: tuple[int, int] = (1, 0)) -> Program:
@@ -174,6 +285,8 @@ def dump_program(method: ir.Method, version: tuple[int, int] = (1, 0)) -> Progra
     The *method* must be stack-consistent (each SSA value used exactly
     once, defining statements in stack order).  ``load_program`` always
     produces stack-consistent output; IR from compiler rewrites must be
-    normalised before calling this function.
+    normalised by ``stackify`` before calling this function.
     """
-    return BytecodeEncoder().encode(method, version)
+    encoder = BytecodeEncoder(dialects=method.dialects)
+    encoder.run(method)
+    return Program(version=version, instructions=encoder.instructions)
