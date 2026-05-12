@@ -10,6 +10,7 @@ from bloqade.decoders import ConfidenceDecoder
 from bloqade.lanes import GeminiLogicalSimulator
 
 from .circuits import (
+    SquinKernel,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
@@ -43,7 +44,7 @@ SpecialTsimCircuitStrategy = Literal["prefix_prepare", "compiled_inverse_prefix"
 @dataclass(frozen=True)
 class ExperimentTaskMaps:
     simulator: GeminiLogicalSimulator
-    noisy_initializer: Any
+    noisy_initializer: SquinKernel
     actual_tasks: dict[str, DemoTask]
     special_tasks: dict[str, DemoTask]
     injected_tasks: dict[str, DemoTask]

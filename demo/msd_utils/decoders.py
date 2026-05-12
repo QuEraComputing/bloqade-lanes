@@ -211,6 +211,8 @@ def train_mld_decoder_pair(
     return full_decoder, factory_decoder
 
 
+# TODO: a better fix would to make this independent of a "Task" object and to implement some kind of batched dataloader. however, that might be too complicated for the
+# first iteration of stdlibs
 def train_mld_decoder_pair_from_task(
     task: SimulatorTask,
     shots: int,
@@ -947,6 +949,7 @@ def build_mle_decoders(
 
     full_decoder = gurobi_decoder_cls(full_dem)
     factory_decoder = gurobi_decoder_cls(factory_dem)
+    # TODO: this attribute should be defined by the MLE decoder class
     score_mode = str(getattr(factory_decoder, "confidence_score_mode", "confidence"))
 
     def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
@@ -965,18 +968,7 @@ def build_mle_decoders(
     )
     sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
     adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
-    resolved_score_mode = str(
-        getattr(factory_decoder, "confidence_score_mode", score_mode)
-    )
-    if resolved_score_mode == score_mode:
-        return adapter
-    return DecoderAdapter(
-        full_decoder=adapter.full_decoder,
-        factory_decoder=adapter.factory_decoder,
-        decode_factory=adapter.decode_factory,
-        decode_full=adapter.decode_full,
-        factory_score_mode=resolved_score_mode,
-    )
+    return adapter
 
 
 def evaluate_curve(

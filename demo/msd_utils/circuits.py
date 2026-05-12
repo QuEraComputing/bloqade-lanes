@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, TypeAlias
 
-from kirin import rewrite
+from kirin import ir, rewrite
 from kirin.dialects import ilist
 
 from bloqade import qubit, squin, tsim
@@ -17,6 +17,8 @@ from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquinLogical
 
 from .common import DemoTask, LogicalKernelSpec, ObservableFrame
+
+SquinKernel: TypeAlias = ir.Method[..., Any]
 
 NONUNITARY_PREFIXES = (
     "M",
@@ -45,18 +47,17 @@ class DecoderKernelBundle:
     injected: dict[str, LogicalKernelSpec]
 
 
-# TODO: make types not Any?
 @dataclass(frozen=True)
 class DecoderPrimitiveSet:
-    state_injection_circuit: Any
-    logical_circuit: Any
+    state_injection_circuit: SquinKernel
+    logical_circuit: SquinKernel
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> SquinKernel:
         return getattr(self, key)
 
 
 class _LogicalInitializeOverride(LogicalNoiseModelABC):
-    def __init__(self, base: LogicalNoiseModelABC, noisy_initializer: Any):
+    def __init__(self, base: LogicalNoiseModelABC, noisy_initializer: SquinKernel):
         self._base = base
         clean_initializer, _ = base.get_logical_initialize()
         self._clean_initializer = clean_initializer
@@ -561,7 +562,7 @@ def build_injected_decoder_kernel_map(
 
 # TODO: this noisy initializer should already be implemented in the latest version of bloqade-lanes;
 # adapt to their interface for how to specify noise in the state prep kernel.
-def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator):
+def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator) -> SquinKernel:
     local_r_noise = simulator.noise_model.local_r_noise
     local_rz_noise = simulator.noise_model.local_rz_noise
     cz_paired_noise = simulator.noise_model.cz_paired_noise
@@ -628,7 +629,7 @@ def build_task(
     *,
     m2dets: Any,
     m2obs: Any,
-    noisy_initializer: Any | None = None,
+    noisy_initializer: SquinKernel | None = None,
     append_measurements: bool = True,
 ) -> DemoTask:
     spec = _ensure_kernel_spec(kernel_spec)
@@ -729,7 +730,7 @@ def build_task_map(
     *,
     m2dets: Any,
     m2obs: Any,
-    noisy_initializer: Any | None = None,
+    noisy_initializer: SquinKernel | None = None,
     append_measurements: bool = True,
 ) -> dict[str, DemoTask]:
     return {
