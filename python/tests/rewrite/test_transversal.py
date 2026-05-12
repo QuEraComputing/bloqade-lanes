@@ -3,7 +3,7 @@ from typing import TypeVar
 import pytest
 from bloqade.test_utils import assert_nodes
 from kirin import ir, rewrite
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 
 from bloqade.lanes.bytecode.encoding import (
     Direction,
@@ -20,6 +20,12 @@ AddressType = TypeVar("AddressType", bound=LocationAddress | LaneAddress)
 def trivial_map(address: AddressType) -> tuple[AddressType, ...] | None:
     if address.word_id < 1:
         return (address,)
+    return None
+
+
+def star_map(address: LocationAddress) -> tuple[LocationAddress, ...] | None:
+    if address.word_id < 1 and address.site_id < 2:
+        return tuple(address.replace(site_id=10 + i) for i in range(7))
     return None
 
 
@@ -102,4 +108,70 @@ def test_rewrite_conversion():
         test_block
     )
     assert result.has_done_something
+    assert_nodes(test_block, expected_block)
+
+
+def test_rewrite_star_rz_to_physical_local_rz():
+    test_block = ir.Block()
+    test_block.stmts.append(rotation_angle := py.Constant(0.5))
+    test_block.stmts.append(
+        move.StarRz(
+            current_state := ir.TestValue(),
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 0),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    expected_block = ir.Block()
+    expected_block.stmts.append(rotation_angle := py.Constant(0.5))
+    expected_block.stmts.append(
+        theta_star := func.Invoke(
+            (rotation_angle.result,), callee=transversal.steane_star_theta
+        )
+    )
+    expected_block.stmts.append(
+        move.LocalRz(
+            current_state,
+            theta_star.result,
+            location_addresses=(
+                LocationAddress(0, 14),
+                LocationAddress(0, 15),
+                LocationAddress(0, 16),
+            ),
+        )
+    )
+
+    result = rewrite.Walk(transversal.RewriteStarRz(star_map)).rewrite(test_block)
+
+    assert result.has_done_something
+    assert_nodes(test_block, expected_block)
+
+
+def test_rewrite_star_rz_noop_for_already_physical_location():
+    test_block = ir.Block()
+    test_block.stmts.append(rotation_angle := py.Constant(0.5))
+    test_block.stmts.append(
+        move.StarRz(
+            current_state := ir.TestValue(),
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 4),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    expected_block = ir.Block()
+    expected_block.stmts.append(rotation_angle := py.Constant(0.5))
+    expected_block.stmts.append(
+        move.StarRz(
+            current_state,
+            rotation_angle.result,
+            location_addresses=(LocationAddress(0, 4),),
+            qubit_indices=(4, 5, 6),
+        )
+    )
+
+    result = rewrite.Walk(transversal.RewriteStarRz(star_map)).rewrite(test_block)
+
+    assert not result.has_done_something
     assert_nodes(test_block, expected_block)

@@ -318,6 +318,48 @@ def test_local_rz():
     assert_nodes(test_block, expected_block)
 
 
+def test_star_rz():
+    state_before = ir.TestValue()
+
+    placement_analysis: dict[ir.SSAValue, AtomState] = {}
+
+    rule = rewrite.Walk(place2move.RewriteGates(placement_analysis))
+    test_block = ir.Block(
+        [
+            rotation_angle := py.Constant(0.5),
+            stmt := place.StarRz(
+                state_before,
+                rotation_angle.result,
+                qubits=(0,),
+                qubit_indices=(0, 2, 4),
+            ),
+        ]
+    )
+
+    placement_analysis[stmt.results[0]] = ConcreteState(
+        frozenset(), (LocationAddress(0, 1),), (0,)
+    )
+
+    expected_block = ir.Block(
+        [
+            rotation_angle := py.Constant(0.5),
+            current_state := move.Load(),
+            (
+                current_state := move.StarRz(
+                    current_state.result,
+                    rotation_angle.result,
+                    location_addresses=(LocationAddress(0, 1),),
+                    qubit_indices=(0, 2, 4),
+                )
+            ),
+            move.Store(current_state.result),
+        ],
+    )
+
+    rule.rewrite(test_block)
+    assert_nodes(test_block, expected_block)
+
+
 def test_local_r():
     state_before = ir.TestValue()
 
