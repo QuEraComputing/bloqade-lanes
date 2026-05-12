@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import stim
 from bloqade.decoders import ConfidenceDecoder
 
 from bloqade import squin
@@ -244,7 +245,7 @@ class _ConfidenceGurobi(ConfidenceDecoder):
 
 
 class _FakeTask:
-    detector_error_model = object()
+    detector_error_model = stim.DetectorErrorModel("error(0.1) D0")
 
 
 class _ChunkResult:

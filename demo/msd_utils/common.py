@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
+import stim
 
 
 class ObservableFrame(str, Enum):
@@ -54,6 +55,10 @@ class DemoTask:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.task, name)
+
+    @property
+    def detector_error_model(self) -> stim.DetectorErrorModel:
+        return self.task.detector_error_model
 
     @cached_property
     def clifft_tsim_program(self) -> Any:

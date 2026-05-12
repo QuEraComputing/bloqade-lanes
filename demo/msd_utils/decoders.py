@@ -12,7 +12,7 @@ from beliefmatching import detector_error_model_to_check_matrices
 # NOTE: this file depends on the version of bloqade-decoders with a ConfidenceDecoder abstract class
 from bloqade.decoders import BaseDecoder, ConfidenceDecoder, TableDecoder
 
-from .common import DEFAULT_SYNDROME_LAYOUT, DemoTask, SyndromeLayout
+from .common import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout
 from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
@@ -35,7 +35,8 @@ TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]
 
 
 class DetectorErrorModelTask(Protocol):
-    detector_error_model: Any
+    @property
+    def detector_error_model(self) -> stim.DetectorErrorModel: ...
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ def matrix_to_dem(
     return stim.DetectorErrorModel("\n".join(lines))
 
 
-def compute_dem_data(task: DemoTask | DetectorErrorModelTask) -> dict[str, np.ndarray]:
+def compute_dem_data(task: DetectorErrorModelTask) -> dict[str, np.ndarray]:
     dem_matrix = detector_error_model_to_check_matrices(
         task.detector_error_model,
         allow_undecomposed_hyperedges=True,
@@ -931,8 +932,7 @@ def _evaluate_cached_threshold_curve(
 
 
 def build_mle_decoders(
-    # TODO: DetectorErrorModelTask can be Any???
-    task: DemoTask | DetectorErrorModelTask,
+    task: DetectorErrorModelTask,
     *,
     gurobi_decoder_cls: type[ConfidenceDecoder],
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
