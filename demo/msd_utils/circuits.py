@@ -25,6 +25,7 @@ TsimCircuit: TypeAlias = tsim_backend.Circuit
 MeasurementMap: TypeAlias = list[list[int]]
 
 
+# REFACTOR: this should be an internal helper function for stdlibs
 class _SimpleLogicalNoiseKernels(Protocol):
     local_r_noise: SquinKernel
     local_rz_noise: SquinKernel
@@ -32,6 +33,7 @@ class _SimpleLogicalNoiseKernels(Protocol):
     cz_unpaired_noise: SquinKernel
 
 
+# REFACTOR: this should be an internal constant for stdlibs
 NONUNITARY_PREFIXES = (
     "M",
     "MX",
@@ -43,13 +45,6 @@ NONUNITARY_PREFIXES = (
     "DETECTOR",
     "OBSERVABLE_INCLUDE",
 )
-
-
-# TODO: integrate naive into decoderkernelbundle -- a naive decoder (decoder that does nothing) is just a type of decoder
-@dataclass(frozen=True)
-class NaiveKernelBundle:
-    distilled: dict[str, LogicalKernelSpec]
-    injected: dict[str, LogicalKernelSpec]
 
 
 @dataclass(frozen=True)
@@ -265,11 +260,6 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
     }
 
 
-@gemini_logical.kernel(aggressive_unroll=True, verify=False)
-def _return_none(reg):
-    return
-
-
 @squin.kernel
 def _squin_return_none(reg):
     return
@@ -367,48 +357,6 @@ def _coerce_decoder_primitive_set(
     raise TypeError(
         f"{builder_name} must return a DecoderPrimitiveSet or mapping, got "
         f"{type(primitive_set).__name__}."
-    )
-
-
-def build_naive_kernel_bundle(
-    theta: float,
-    phi: float,
-    lam: float,
-    *,
-    output_qubit: int = 0,
-) -> NaiveKernelBundle:
-    msd_primitives = _build_msd_primitives(theta, phi, lam)
-    tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
-    state_injection_circuit = msd_primitives["state_injection_circuit"]
-    logical_circuit = msd_primitives["logical_circuit"]
-
-    @squin.kernel
-    def distilled_logical_kernel(reg):
-        state_injection_circuit(reg)
-        logical_circuit(reg)
-
-    @squin.kernel
-    def injected_logical_kernel(reg):
-        squin.u3(theta, phi, lam, reg[0])
-
-    distilled_kernels = produce_tomography_kernels(
-        5,
-        distilled_logical_kernel,
-        tomography_primitives,
-        _return_none,
-        "distilled",
-    )
-    injected_kernels = produce_tomography_kernels(
-        1,
-        injected_logical_kernel,
-        tomography_primitives,
-        _return_none,
-        "injected",
-    )
-
-    return NaiveKernelBundle(
-        distilled=_kernel_specs_by_tomography_basis(distilled_kernels),
-        injected=_kernel_specs_by_tomography_basis(injected_kernels),
     )
 
 

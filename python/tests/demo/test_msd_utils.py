@@ -20,7 +20,6 @@ from demo.msd_utils.circuits import (
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_measurement_maps,
-    build_naive_kernel_bundle,
     build_task_map,
     make_noisy_steane7_initializer,
 )
@@ -91,10 +90,7 @@ def test_normalize_valid_factory_targets_wraps_single_target():
 
 
 def test_kernel_builders_return_expected_basis_maps():
-    naive = build_naive_kernel_bundle(0.1, 0.2, 0.3)
     decoder = build_decoder_kernel_bundle(0.1, 0.2, 0.3)
-    assert set(naive.distilled) == {"X", "Y", "Z"}
-    assert set(naive.injected) == {"X", "Y", "Z"}
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert set(decoder.injected) == {"X", "Y", "Z"}

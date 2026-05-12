@@ -238,8 +238,8 @@ def fidelity_from_zero_one_counts(
         posterior = posterior_fidelity_summary(
             n,
             k,
+            target,
             sign=sign,
-            target_bloch=target,
             binary_precision=binary_precision,
             max_grid_points=max_grid_points,
         )

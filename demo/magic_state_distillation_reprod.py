@@ -55,7 +55,7 @@ else:
     raise FileNotFoundError("Could not locate repo root containing demo/msd_utils.")
 
 from demo.msd_utils.circuits import (  # noqa: E402
-    build_naive_kernel_bundle,
+    build_decoder_kernel_bundle,
     build_task_map,
     make_noisy_steane7_initializer,
 )
@@ -124,8 +124,8 @@ M2OBS_1 = steane7_m2obs(1)
 OUTPUT_QUBIT
 
 # %%
-kernel_bundle = build_naive_kernel_bundle(THETA, PHI, LAM, output_qubit=OUTPUT_QUBIT)
-DISTILLED_KERNELS = kernel_bundle.distilled
+kernel_bundle = build_decoder_kernel_bundle(THETA, PHI, LAM, output_qubit=OUTPUT_QUBIT)
+DISTILLED_KERNELS = kernel_bundle.actual
 INJECTED_KERNELS = kernel_bundle.injected
 
 
@@ -133,7 +133,7 @@ INJECTED_KERNELS = kernel_bundle.injected
 kernel_bundle
 
 # %%
-kernel_bundle.distilled["Z"].print()
+kernel_bundle.actual["Z"].print()
 
 # %%
 kernel_bundle.injected["Z"].print()
@@ -214,7 +214,7 @@ distilled_tasks = build_task_map(
     m2dets=M2DETS_5,
     m2obs=M2OBS_5,
     noisy_initializer=noisy_steane7_initialize,
-    append_measurements=True,
+    append_measurements=False,
 )
 injected_tasks = build_task_map(
     sim,
@@ -222,7 +222,7 @@ injected_tasks = build_task_map(
     m2dets=M2DETS_1,
     m2obs=M2OBS_1,
     noisy_initializer=noisy_steane7_initialize,
-    append_measurements=True,
+    append_measurements=False,
 )
 
 print("Built tasks:", list(distilled_tasks), list(injected_tasks))

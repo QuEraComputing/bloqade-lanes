@@ -6,6 +6,9 @@ from typing import Sequence, TypedDict
 import numpy as np
 from scipy.special import logsumexp
 
+# REFACTOR: this should be an internal constant for stdlibs
+DEFAULT_SIGN = np.array((1.0, 1.0, 1.0), dtype=np.float64)
+
 
 # NOTE: technically, this type won't be exposed to the user
 class PosteriorFidelitySummary(TypedDict):
@@ -16,6 +19,7 @@ class PosteriorFidelitySummary(TypedDict):
     error: float
 
 
+# REFACTOR: should be an internal function for stdlib
 def weighted_quantile(
     values: np.ndarray,
     quantiles: Sequence[float],
@@ -30,6 +34,7 @@ def weighted_quantile(
 
 
 # TODO: make the prior for fidelity computation configurable
+# REFACTOR: should be an internal function for stdlib
 def _bures_measure(points: np.ndarray) -> np.ndarray:
     radii_sq = np.sum(points * points, axis=1)
     weights = np.zeros(len(points), dtype=np.float64)
@@ -39,16 +44,19 @@ def _bures_measure(points: np.ndarray) -> np.ndarray:
 
 
 # TODO: get rid of the 9 binary precision cap, to allow for the user to get arbitrarily precise tomography estimates.
+# REFACTOR: should be an internal function for stdlib
 def _grid_axis_points(binary_precision: int) -> int:
     return 2 ** min(9, max(4, int(binary_precision))) + 1
 
 
+# REFACTOR: should be an internal function for stdlib
 @lru_cache(maxsize=None)
 def _grid_axis_values(axis_points: int) -> np.ndarray:
     edges = np.linspace(-1.0, 1.0, axis_points + 1, dtype=np.float64)
     return (edges[:-1] + edges[1:]) / 2.0
 
 
+# REFACTOR: should be an internal function for stdlib
 def _axis_likelihood_window(
     values: np.ndarray,
     n_i: int,
@@ -80,6 +88,7 @@ def _axis_likelihood_window(
     return values[start:stop]
 
 
+# REFACTOR: should be an internal function for stdlib
 def _downsample_axis(values: np.ndarray, keep: int) -> np.ndarray:
     if len(values) <= keep:
         return values
@@ -87,6 +96,7 @@ def _downsample_axis(values: np.ndarray, keep: int) -> np.ndarray:
     return values[np.unique(indices)]
 
 
+# REFACTOR: should be an internal function for stdlib
 # TODO: I think this "adaptive bloch ball thing" can give us maybe 'faster' estimates of the fidelity.
 # If you really wanted to be more precise at the cost of more compute, then you could consider switching this implementation. -- a TODO would
 # be to make this implementation more extensible/allow the user to choose the precision of their bloch ball estimates.
@@ -129,12 +139,13 @@ def _adaptive_bloch_ball_grid(
     return broad_points[np.sum(broad_points * broad_points, axis=1) <= 1.0]
 
 
+# REFACTOR: should be a standard library function
 def posterior_fidelity_summary(
     n: np.ndarray,
     k: np.ndarray,
-    *,
-    sign: np.ndarray,
     target_bloch: np.ndarray,
+    *,
+    sign: np.ndarray = DEFAULT_SIGN,
     binary_precision: int | None = None,
     max_grid_points: int = 1_500_000,
 ) -> PosteriorFidelitySummary:
