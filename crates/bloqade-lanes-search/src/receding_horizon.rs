@@ -86,15 +86,34 @@ struct RhProfile {
     tier2_dropped: u32,
     fallback_triggered: bool,
     horizon_decrements: u32,
+    /// The chosen candidate index at each stage (in order). Candidate 0
+    /// is the "baseline" Hungarian — the first weight-grid entry, which
+    /// matches what a plain `solve_entangling` would use. Indexes > 0
+    /// are the alternative weight-perturbed candidates.
+    chosen_sequence: Vec<usize>,
+    /// Count of stages where the chosen branch was not candidate 0
+    /// (i.e., RH preferred an alternative Hungarian over the baseline).
+    non_baseline_picks: u32,
+    /// Count of stages where the chosen branch differed from the
+    /// previously-chosen one (i.e., the orchestrator switched its
+    /// preference between adjacent stages).
+    branch_switches: u32,
 }
 
 impl RhProfile {
     fn emit(&self, restart_seed: u64, total_layers: usize, total_expansions: u32, wall_ms: f64) {
+        let seq = self
+            .chosen_sequence
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         eprintln!(
             "RH_PROFILE seed={seed} layers={layers} expansions={exp} \
              total_ms={total:.1} cand={cand:.1} rollout={roll:.1} \
              pick={pick:.1} commit={cmt:.1} \
-             stages={stg} t0={t0} t1={t1} t2={t2} fb={fb} dec={dec}",
+             stages={stg} t0={t0} t1={t1} t2={t2} fb={fb} dec={dec} \
+             non_baseline={nb} switches={sw} seq=[{seq}]",
             seed = restart_seed,
             layers = total_layers,
             exp = total_expansions,
@@ -109,6 +128,8 @@ impl RhProfile {
             t2 = self.tier2_dropped,
             fb = if self.fallback_triggered { 1 } else { 0 },
             dec = self.horizon_decrements,
+            nb = self.non_baseline_picks,
+            sw = self.branch_switches,
         );
     }
 }
@@ -225,6 +246,10 @@ pub(crate) enum BranchResult {
     /// Rollout reached `EntanglingConstraintGoal` at `depth ≤ rollout_horizon`.
     /// Commit the full `path` regardless of `commit_depth`.
     Tier0 {
+        /// Index into the per-stage `candidates` vec (== weight-grid
+        /// entry position when no noise-top-up fired). `0` is the
+        /// baseline Hungarian (first weight-grid entry).
+        candidate_idx: usize,
         depth: u32,
         path: Vec<MoveSet>,
         leaf_config: Config,
@@ -234,6 +259,7 @@ pub(crate) enum BranchResult {
     /// the goal. The leaf Hungarian cost is computed lazily in
     /// [`pick_best_branch`] only when no tier-0 branch exists.
     Tier1 {
+        candidate_idx: usize,
         path: Vec<MoveSet>,
         leaf_config: Config,
         nodes_expanded: u32,
@@ -266,6 +292,12 @@ impl BranchResult {
         match self {
             BranchResult::Tier0 { depth, .. } => *depth,
             BranchResult::Tier1 { path, .. } => path.len() as u32,
+        }
+    }
+    fn candidate_idx(&self) -> usize {
+        match self {
+            BranchResult::Tier0 { candidate_idx, .. }
+            | BranchResult::Tier1 { candidate_idx, .. } => *candidate_idx,
         }
     }
 }
@@ -753,6 +785,7 @@ pub(crate) fn classify_into_tier(
     outcome: RolloutOutcome,
     rollout_horizon: u32,
     heuristic: &PairDistanceHeuristic,
+    candidate_idx: usize,
 ) -> Option<BranchResult> {
     let RolloutOutcome {
         graph,
@@ -767,6 +800,7 @@ pub(crate) fn classify_into_tier(
         let depth = graph.depth(goal_id);
         let leaf_config = graph.config(goal_id).clone();
         return Some(BranchResult::Tier0 {
+            candidate_idx,
             depth,
             path,
             leaf_config,
@@ -788,6 +822,7 @@ pub(crate) fn classify_into_tier(
     // Note: c_prime (Hungarian cost at leaf) is computed lazily in
     // pick_best_branch, only when needed (i.e., when no tier-0 branch exists).
     Some(BranchResult::Tier1 {
+        candidate_idx,
         path,
         leaf_config,
         nodes_expanded,
@@ -986,7 +1021,7 @@ pub fn solve_entangling_rh_single(
 
         // (b) Run rollouts (optionally parallel).
         let n_candidates = candidates.len();
-        let rollout = |targets: Vec<(u32, u64)>| -> Option<BranchResult> {
+        let rollout = |idx: usize, targets: Vec<(u32, u64)>| -> Option<BranchResult> {
             let outcome = run_inner_rollout(
                 state.clone(),
                 targets,
@@ -1006,14 +1041,22 @@ pub fn solve_entangling_rh_single(
                 rh_opts.greedy_first,
                 rh_opts.inner_beam_width,
             );
-            classify_into_tier(outcome, x, heuristic)
+            classify_into_tier(outcome, x, heuristic, idx)
         };
 
         let t_roll = Instant::now();
         let branches: Vec<BranchResult> = if rh_opts.branch_parallel {
-            candidates.into_par_iter().filter_map(rollout).collect()
+            candidates
+                .into_par_iter()
+                .enumerate()
+                .filter_map(|(i, t)| rollout(i, t))
+                .collect()
         } else {
-            candidates.into_iter().filter_map(rollout).collect()
+            candidates
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, t)| rollout(i, t))
+                .collect()
         };
         prof.rollouts_ms += t_roll.elapsed().as_secs_f64() * 1000.0;
         // Tier counts: total survivors classified as tier-0 vs tier-1, plus
@@ -1082,6 +1125,21 @@ pub fn solve_entangling_rh_single(
             }
         };
         prof.pick_best_ms += t_pick.elapsed().as_secs_f64() * 1000.0;
+
+        // Track which candidate index won this stage (for switch-counting
+        // telemetry under BLOQADE_RH_PROFILE). Candidate 0 is the
+        // baseline Hungarian.
+        let chosen_idx = best.candidate_idx();
+        prof.chosen_sequence.push(chosen_idx);
+        if chosen_idx != 0 {
+            prof.non_baseline_picks = prof.non_baseline_picks.saturating_add(1);
+        }
+        if prof.chosen_sequence.len() >= 2 {
+            let n = prof.chosen_sequence.len();
+            if prof.chosen_sequence[n - 1] != prof.chosen_sequence[n - 2] {
+                prof.branch_switches = prof.branch_switches.saturating_add(1);
+            }
+        }
 
         // (e) Commit: full path for tier-0, `m` layers for tier-1.
         let t_commit = Instant::now();
