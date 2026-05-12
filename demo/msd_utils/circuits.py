@@ -57,12 +57,14 @@ class DecoderPrimitiveSet:
         return getattr(self, key)
 
 
+# REFACTOR: this should be a standard library function.
 def build_measurement_maps(
     num_logical_qubits: int,
 ) -> tuple[MeasurementMap, MeasurementMap]:
     return steane7_m2dets(num_logical_qubits), steane7_m2obs(num_logical_qubits)
 
 
+# REFACTOR: this should be an internal function for more "application-level" functions.
 def _attach_special_circuit_kernel(
     kernel: KirinKernel,
     special_circuit_kernel: SquinKernel,
@@ -74,6 +76,7 @@ def _attach_special_circuit_kernel(
     return kernel
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 def _build_physical_prefix_source_tsim_circuit(
     special_circuit_kernel: SquinKernel,
     *,
@@ -93,6 +96,7 @@ def _build_physical_prefix_source_tsim_circuit(
     return tsim.Circuit(prefix_kernel)
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 # TODO: this is for the use case of overriding an existing tsim circuit, and overriding the GeminiLogicalSimulatorTask
 # cached attributes. Ideally, we'd add this functionality in GeminiLogicalSimulatorTask.
 def _set_task_override(
@@ -106,6 +110,7 @@ def _set_task_override(
         task.__dict__[attr] = value
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 # TODO: see above.
 def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
     for attr in (
@@ -120,6 +125,7 @@ def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
         task.__dict__.pop(attr, None)
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
 def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     for idx in range(len(circuit)):
@@ -128,6 +134,7 @@ def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     return len(circuit)
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 def _prepend_inverse_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
     circuit_to_invert: TsimCircuit,
