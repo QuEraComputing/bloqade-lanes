@@ -9,7 +9,6 @@ from .circuits import (
     build_measurement_maps,
     build_task,
     build_task_map,
-    make_noisy_steane7_initializer,
     produce_tomography_kernels,
 )
 from .common import (
@@ -98,7 +97,6 @@ __all__ = [
     "iter_task_datasets",
     "logical_expectation",
     "make_layout_only_dem",
-    "make_noisy_steane7_initializer",
     "matrix_to_dem",
     "naive_distilled_summary",
     "naive_injected_summary",

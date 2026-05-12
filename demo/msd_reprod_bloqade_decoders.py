@@ -79,7 +79,6 @@ from demo.msd_utils.circuits import (  # noqa: E402
     build_measurement_maps,
     build_task,
     build_task_map,
-    make_noisy_steane7_initializer,
 )
 from demo.msd_utils.core import (  # noqa: E402
     DEFAULT_BASIS_LABELS,
@@ -298,14 +297,12 @@ def injected_baseline_raw(task_map, posterior_samples: int):
 
 # %%
 sim = GeminiLogicalSimulator()
-noisy_steane7_initialize = make_noisy_steane7_initializer(sim)
 
 actual_tasks = build_task_map(
     sim,
     ACTUAL_KERNELS,
     m2dets=MSD_MEASUREMENT_MAPS[0],
     m2obs=MSD_MEASUREMENT_MAPS[1],
-    noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
 )
 special_tasks = build_task_map(
@@ -313,7 +310,6 @@ special_tasks = build_task_map(
     SPECIAL_KERNELS,
     m2dets=MSD_MEASUREMENT_MAPS[0],
     m2obs=MSD_MEASUREMENT_MAPS[1],
-    noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
 )
 special_tasks = apply_special_tsim_circuit_strategy(
@@ -325,7 +321,6 @@ injected_tasks = build_task_map(
     INJECTED_KERNELS,
     m2dets=INJECTED_MEASUREMENT_MAPS[0],
     m2obs=INJECTED_MEASUREMENT_MAPS[1],
-    noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
 )
 injected_decoder_tasks = build_task_map(
@@ -333,7 +328,6 @@ injected_decoder_tasks = build_task_map(
     INJECTED_DECODER_KERNELS,
     m2dets=INJECTED_MEASUREMENT_MAPS[0],
     m2obs=INJECTED_MEASUREMENT_MAPS[1],
-    noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
 )
 

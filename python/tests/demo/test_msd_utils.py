@@ -21,7 +21,6 @@ from demo.msd_utils.circuits import (
     build_decoder_kernel_bundle,
     build_measurement_maps,
     build_task_map,
-    make_noisy_steane7_initializer,
 )
 from demo.msd_utils.common import SyndromeLayout
 from demo.msd_utils.core import (
@@ -98,7 +97,6 @@ def test_kernel_builders_return_expected_basis_maps():
 
 def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
     sim = GeminiLogicalSimulator()
-    noisy_initializer = make_noisy_steane7_initializer(sim)
     m2dets, m2obs = build_measurement_maps(5)
     decoder = build_decoder_kernel_bundle(
         0.1,
@@ -112,7 +110,6 @@ def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
         {"X": decoder.special["X"]},
         m2dets=m2dets,
         m2obs=m2obs,
-        noisy_initializer=noisy_initializer,
         append_measurements=False,
     )
     demo_task = apply_special_tsim_circuit_strategy(
@@ -131,7 +128,6 @@ def test_demo_task_clifft_backend_matches_result_shapes():
     pytest.importorskip("clifft")
 
     sim = GeminiLogicalSimulator()
-    noisy_initializer = make_noisy_steane7_initializer(sim)
     m2dets, m2obs = build_measurement_maps(5)
     decoder = build_decoder_kernel_bundle(
         0.1,
@@ -144,7 +140,6 @@ def test_demo_task_clifft_backend_matches_result_shapes():
         {"X": decoder.special["X"]},
         m2dets=m2dets,
         m2obs=m2obs,
-        noisy_initializer=noisy_initializer,
         append_measurements=False,
     )
     demo_task = apply_special_tsim_circuit_strategy(

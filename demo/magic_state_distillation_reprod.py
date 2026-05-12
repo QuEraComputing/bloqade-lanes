@@ -57,7 +57,6 @@ else:
 from demo.msd_utils.circuits import (  # noqa: E402
     build_decoder_kernel_bundle,
     build_task_map,
-    make_noisy_steane7_initializer,
 )
 from demo.msd_utils.core import (  # noqa: E402
     DEFAULT_BASIS_LABELS,
@@ -200,20 +199,11 @@ for basis in BASIS_LABELS:
 sim = GeminiLogicalSimulator()
 
 # %%
-sim = GeminiLogicalSimulator()
-noisy_steane7_initialize = make_noisy_steane7_initializer(sim)
-
-
-# %%
-noisy_steane7_initialize.print()
-
-# %%
 distilled_tasks = build_task_map(
     sim,
     DISTILLED_KERNELS,
     m2dets=M2DETS_5,
     m2obs=M2OBS_5,
-    noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
 )
 injected_tasks = build_task_map(
@@ -221,7 +211,6 @@ injected_tasks = build_task_map(
     INJECTED_KERNELS,
     m2dets=M2DETS_1,
     m2obs=M2OBS_1,
-    noisy_initializer=noisy_steane7_initialize,
     append_measurements=False,
 )
 

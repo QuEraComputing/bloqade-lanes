@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, Protocol, TypeAlias, cast
+from typing import Any, Callable, Literal, Mapping, TypeAlias, cast
 
 import tsim as tsim_backend
 from kirin import ir, rewrite
@@ -13,24 +13,16 @@ from bloqade.gemini import logical as gemini_logical
 from bloqade.gemini.device import GeminiLogicalSimulatorTask
 from bloqade.gemini.logical.stdlib import default_post_processing
 from bloqade.lanes import GeminiLogicalSimulator
-from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
-from bloqade.lanes.transform import MoveToSquinLogical
 
 from .common import DemoTask, LogicalKernelSpec, ObservableFrame
 
+# TODO: Apparently we can't type check for kernels written in specific dialects, so all we can check is that something is a Kirin kernel I suppose,
+# which is ir.Method[..., Any]. And we are just "visually enforcing" the types through KirinKernel and SquinKernel. Think about a better way to deal with types here.
 KirinKernel: TypeAlias = ir.Method[..., Any]
 SquinKernel: TypeAlias = KirinKernel
 TsimCircuit: TypeAlias = tsim_backend.Circuit
 MeasurementMap: TypeAlias = list[list[int]]
-
-
-# REFACTOR: this should be an internal helper function for stdlibs
-class _SimpleLogicalNoiseKernels(Protocol):
-    local_r_noise: SquinKernel
-    local_rz_noise: SquinKernel
-    cz_paired_noise: SquinKernel
-    cz_unpaired_noise: SquinKernel
 
 
 # REFACTOR: this should be an internal constant for stdlibs
@@ -47,6 +39,7 @@ NONUNITARY_PREFIXES = (
 )
 
 
+# REFACTOR: This should be a more "application-specific" datatype; I don't think this should live in the standard libraries.
 @dataclass(frozen=True)
 class DecoderKernelBundle:
     actual: dict[str, LogicalKernelSpec]
@@ -54,6 +47,7 @@ class DecoderKernelBundle:
     injected: dict[str, LogicalKernelSpec]
 
 
+# REFACTOR: This should be a more "application-specific" datatype; I don't think this should live in the standard libraries.
 @dataclass(frozen=True)
 class DecoderPrimitiveSet:
     state_injection_circuit: SquinKernel
@@ -61,41 +55,6 @@ class DecoderPrimitiveSet:
 
     def __getitem__(self, key: str) -> SquinKernel:
         return getattr(self, key)
-
-
-class _LogicalInitializeOverride(LogicalNoiseModelABC):
-    def __init__(self, base: LogicalNoiseModelABC, noisy_initializer: SquinKernel):
-        self._base = base
-        clean_initializer, _ = base.get_logical_initialize()
-        self._clean_initializer = clean_initializer
-        self._noisy_initializer = noisy_initializer
-
-    def get_logical_initialize(self):
-        return self._clean_initializer, self._noisy_initializer
-
-    def get_lane_noise(self, lane):
-        return self._base.get_lane_noise(lane)
-
-    def get_bus_idle_noise(self, move_type, bus_id):
-        return self._base.get_bus_idle_noise(move_type, bus_id)
-
-    def get_cz_unpaired_noise(self, zone_address):
-        return self._base.get_cz_unpaired_noise(zone_address)
-
-    def get_cz_paired_noise(self, zone_address):
-        return self._base.get_cz_paired_noise(zone_address)
-
-    def get_global_rz_noise(self):
-        return self._base.get_global_rz_noise()
-
-    def get_local_rz_noise(self, locations):
-        return self._base.get_local_rz_noise(locations)
-
-    def get_global_r_noise(self):
-        return self._base.get_global_r_noise()
-
-    def get_local_r_noise(self, locations):
-        return self._base.get_local_r_noise(locations)
 
 
 def build_measurement_maps(
@@ -532,75 +491,12 @@ def build_injected_decoder_kernel_map(
 
 # TODO: this noisy initializer should already be implemented in the latest version of bloqade-lanes;
 # adapt to their interface for how to specify noise in the state prep kernel.
-def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator) -> SquinKernel:
-    noise_kernels = cast(_SimpleLogicalNoiseKernels, simulator.noise_model)
-    local_r_noise = noise_kernels.local_r_noise
-    local_rz_noise = noise_kernels.local_rz_noise
-    cz_paired_noise = noise_kernels.cz_paired_noise
-    cz_unpaired_noise = noise_kernels.cz_unpaired_noise
-
-    x_axis = 0.0
-    y_axis = 0.25
-    half_turn = 0.5
-    quarter_turn = 0.25
-
-    @squin.kernel
-    def noisy_steane7_initialize(theta, phi, lam, qubits):
-        evens = qubits[::2]
-        odds = qubits[1::2]
-
-        squin.u3(theta, phi, lam, qubits[6])
-        local_r_noise(ilist.IList([qubits[6]]), x_axis, half_turn)
-
-        first6 = qubits[:6]
-        squin.broadcast.sqrt_y_adj(first6)
-        local_r_noise(first6, y_axis, quarter_turn)
-
-        targets1 = evens[1:]
-        squin.broadcast.cz(odds, targets1)
-        cz_paired_noise(odds, targets1)
-        cz_unpaired_noise(ilist.IList([qubits[0]]))
-
-        squin.sqrt_y(qubits[6])
-        local_r_noise(ilist.IList([qubits[6]]), y_axis, quarter_turn)
-
-        controls2 = evens[:-1]
-        targets2 = ilist.IList([qubits[3], qubits[5], qubits[6]])
-        squin.broadcast.cz(controls2, targets2)
-        cz_paired_noise(controls2, targets2)
-        cz_unpaired_noise(ilist.IList([qubits[1]]))
-
-        tail = qubits[2:]
-        squin.broadcast.sqrt_y(tail)
-        local_r_noise(tail, y_axis, quarter_turn)
-
-        controls3 = evens[:-1]
-        targets3 = odds
-        squin.broadcast.cz(controls3, targets3)
-        cz_paired_noise(controls3, targets3)
-        cz_unpaired_noise(ilist.IList([qubits[6]]))
-
-        subset = ilist.IList([qubits[1], qubits[2], qubits[4]])
-        squin.broadcast.sqrt_y(subset)
-        local_r_noise(subset, y_axis, quarter_turn)
-
-        squin.x(qubits[3])
-        local_r_noise(ilist.IList([qubits[3]]), x_axis, half_turn)
-
-        z_subset = ilist.IList([qubits[1], qubits[5]])
-        squin.broadcast.z(z_subset)
-        local_rz_noise(z_subset, half_turn)
-
-    return noisy_steane7_initialize
-
-
 def build_task(
     simulator: GeminiLogicalSimulator,
     kernel_spec: LogicalKernelSpec | KirinKernel,
     *,
-    m2dets: MeasurementMap,
-    m2obs: MeasurementMap,
-    noisy_initializer: SquinKernel | None = None,
+    m2dets: MeasurementMap | None,
+    m2obs: MeasurementMap | None,
     append_measurements: bool = True,
 ) -> DemoTask:
     spec = _ensure_kernel_spec(kernel_spec)
@@ -611,20 +507,6 @@ def build_task(
         m2dets if append_measurements else None,
         m2obs if append_measurements else None,
     )
-
-    if noisy_initializer is not None:
-        _set_task_override(
-            task,
-            "physical_squin_kernel",
-            MoveToSquinLogical(
-                arch_spec=task.physical_arch_spec,
-                noise_model=_LogicalInitializeOverride(
-                    simulator.noise_model,
-                    noisy_initializer,
-                ),
-                add_noise=True,
-            ).emit(task.physical_move_kernel),
-        )
 
     return DemoTask(
         task=task,
@@ -699,9 +581,8 @@ def build_task_map(
     simulator: GeminiLogicalSimulator,
     kernel_map: Mapping[str, LogicalKernelSpec | KirinKernel],
     *,
-    m2dets: MeasurementMap,
-    m2obs: MeasurementMap,
-    noisy_initializer: SquinKernel | None = None,
+    m2dets: MeasurementMap | None,
+    m2obs: MeasurementMap | None,
     append_measurements: bool = True,
 ) -> dict[str, DemoTask]:
     return {
@@ -710,7 +591,6 @@ def build_task_map(
             kernel,
             m2dets=m2dets,
             m2obs=m2obs,
-            noisy_initializer=noisy_initializer,
             append_measurements=append_measurements,
         )
         for basis, kernel in kernel_map.items()
