@@ -80,7 +80,8 @@ class BasisDataset:
 
 
 # REFACTOR: this should be a private standard library function.
-# This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask.
+# TODO: This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask. Ideally, we can substitute this with something that better allows
+# the user to swap either using tsim or clifft as simulator backends.
 def _run_simulator_task(
     task: SimulatorTask,
     shots: int,
@@ -114,20 +115,24 @@ def pack_boolean_array(arr: np.ndarray) -> np.ndarray:
     return np.sum(arr << np.arange(arr.shape[1], dtype=np.uint64), axis=1)
 
 
+# REFACTOR: this should be a private standard library function.
 def packed_bits_to_int(bits: np.ndarray | Sequence[bool] | Sequence[int]) -> int:
     return int(pack_boolean_array(np.asarray(bits, dtype=np.uint8))[0])
 
 
+# REFACTOR: this should be a private standard library function.
 def unpack_packed_bits(packed: int, length: int) -> np.ndarray:
     return ((int(packed) >> np.arange(length, dtype=np.uint64)) & 1).astype(np.uint8)
 
 
+# REFACTOR: this should be a public standard library function.
 def logical_expectation(bits: np.ndarray) -> float:
     if len(bits) == 0:
         return float("nan")
     return float(np.mean(1.0 - 2.0 * np.asarray(bits, dtype=np.float64)))
 
 
+# REFACTOR: this should be a public standard library function.
 def expectation_conf_interval(
     zero_count: int,
     one_count: int,
@@ -144,6 +149,7 @@ def expectation_conf_interval(
     )
 
 
+# REFACTOR: this should be a public standard library function.
 def expectation_with_error_bar(
     zero_count: int,
     one_count: int,
@@ -160,6 +166,8 @@ def expectation_with_error_bar(
     return exp_val, exp_err
 
 
+# REFACTOR: this should be a public standard library function.
+# TODO: as a standard library, DEFAULT_TARGET_BLOCH should not be the default argument here.
 def fidelity_from_counts(
     x_bits: np.ndarray,
     y_bits: np.ndarray,
@@ -193,6 +201,8 @@ def fidelity_from_counts(
     )
 
 
+# REFACTOR: this should be a public standard library function.
+# TODO: as a standard library, DEFAULT_TARGET_BLOCH should not be the default argument here.
 # TODO: make this function more general than just logical single qubit tomography?
 # I think we had to explicitly pass in x_zero, x_one, ... because of some speed/runtime issues to not convert massive numpy arrays back
 # and forth, but i'm not sure if that's really generic enough of a speed bottleneck to optimize for in general
@@ -275,6 +285,10 @@ def fidelity_from_zero_one_counts(
     }
 
 
+# REFACTOR: This should be a private standard library function.
+# TODO: has separate clifft explicit check to avoid converting from np.array -> list -> np.array . I think the problem is that DetectorResult contains lists,
+# so we have to do conversions to numpy arrays. So that's why we are currently calling a clifft method that returns np.array's directly.
+# ^ to change this, we'd need to change the task.run() interface/the DetectorResult return type.
 def sample_task_raw(
     task: SimulatorTask,
     shots: int,
@@ -344,6 +358,7 @@ def sample_task_raw(
     )
 
 
+# REFACTOR: This should be a private application-level function.
 def compute_observable_reference(
     task: DemoTask,
     *,
@@ -370,6 +385,7 @@ def compute_observable_reference(
     return np.asarray(task.observable_reference, dtype=np.uint8)
 
 
+# REFACTOR: This should be a private application-level function.
 def rebase_dataset_observables(
     dataset: BasisDataset,
     reference: np.ndarray,
@@ -380,6 +396,7 @@ def rebase_dataset_observables(
     )
 
 
+# REFACTOR: This should be a private application-level function.
 def normalize_observable_frame(
     task: SimulatorTask,
     dataset: BasisDataset,
@@ -394,6 +411,7 @@ def normalize_observable_frame(
     return rebase_dataset_observables(dataset, reference)
 
 
+# REFACTOR: this should be an internal application-level function.
 def iter_task_datasets(
     task: SimulatorTask,
     shots: int,
@@ -428,6 +446,7 @@ def iter_task_datasets(
         remaining -= batch
 
 
+# REFACTOR: this should be a public standard library function.
 def run_task(
     task: SimulatorTask,
     shots: int,
@@ -449,6 +468,7 @@ def run_task(
     )
 
 
+# REFACTOR: this can be a public standard library fuction.
 def split_factory_bits(
     detectors: np.ndarray,
     observables: np.ndarray,
@@ -461,6 +481,7 @@ def split_factory_bits(
     )
 
 
+# REFACTOR: this should be a private domain standard library function.
 # This is used for us to help us, via simulation, get the noiseless expected observable from the circuit.
 def normalize_valid_factory_targets(
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
@@ -478,6 +499,7 @@ def normalize_valid_factory_targets(
     return np.unique(targets, axis=0)
 
 
+# REFACTOR: this should be a private domain standard library function.
 def ancilla_matches_valid_targets(
     ancilla_observables: np.ndarray,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
@@ -505,6 +527,7 @@ def ancilla_matches_valid_targets(
     raise ValueError("Ancilla observables must be a 1D shot or 2D batch array.")
 
 
+# REFACTOR: this should be a public application-level standard library function.
 def infer_factory_target(
     task_map: Mapping[str, SimulatorTask],
     *,
@@ -529,6 +552,7 @@ def infer_factory_target(
     return np.asarray(ranked[0][0], dtype=np.uint8)
 
 
+# REFACTOR: this should be a public application-level standard library function.
 def infer_distilled_sign_vector(
     task_map: Mapping[str, SimulatorTask],
     *,
@@ -572,6 +596,7 @@ def infer_distilled_sign_vector(
     return scored[0][1]
 
 
+# REFACTOR: this should be a public application-level function.
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_injected_summary(
     task_map: Mapping[str, SimulatorTask],
@@ -615,6 +640,7 @@ def naive_injected_summary(
     }
 
 
+# REFACTOR: this should be a public application-level function.
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_distilled_summary(
     task_map: Mapping[str, SimulatorTask],
