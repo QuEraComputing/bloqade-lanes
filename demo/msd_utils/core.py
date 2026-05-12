@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, Sequence, TypedDict
+from typing import Literal, Mapping, Protocol, Sequence, TypedDict, overload
 
 import numpy as np
 from scipy.stats import binomtest
@@ -29,14 +30,42 @@ class FidelitySummary(TypedDict):
     bloch: tuple[float, float, float]
 
 
+class DetectorObservableResult(Protocol):
+    @property
+    def detectors(self) -> object: ...
+
+    @property
+    def observables(self) -> object: ...
+
+
+# TODO: not sure if I like this overload logic; do we need it?
 class SimulatorTask(Protocol):
+    @overload
     def run(
         self,
         shots: int,
         with_noise: bool = True,
         *,
-        run_detectors: bool = False,
-    ) -> Any: ...
+        run_detectors: Literal[False] = ...,
+    ) -> object: ...
+
+    @overload
+    def run(
+        self,
+        shots: int,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+    ) -> DetectorObservableResult: ...
+
+    @overload
+    def run(
+        self,
+        shots: int,
+        with_noise: bool = True,
+        *,
+        run_detectors: bool,
+    ) -> object | DetectorObservableResult: ...
 
 
 @dataclass(frozen=True)
@@ -53,7 +82,9 @@ def _run_simulator_task(
     with_noise: bool,
     run_detectors: bool,
     sim_type: str,
-) -> Any:
+) -> DetectorObservableResult:
+    if not run_detectors:
+        raise ValueError("_run_simulator_task is only used for detector sampling.")
     if isinstance(task, DemoTask):
         return task.run(
             shots,
@@ -363,7 +394,7 @@ def iter_task_datasets(
     with_noise: bool = True,
     chunk_size: int | None = 1_000_000,
     sim_type: str = "tsim",
-):
+) -> Iterator[BasisDataset]:
     remaining = int(shots)
     if remaining < 0:
         raise ValueError("shots must be non-negative.")
@@ -468,7 +499,7 @@ def ancilla_matches_valid_targets(
 
 
 def infer_factory_target(
-    task_map: Mapping[str, Any],
+    task_map: Mapping[str, SimulatorTask],
     *,
     shots: int = 12_000,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
@@ -492,7 +523,7 @@ def infer_factory_target(
 
 
 def infer_distilled_sign_vector(
-    task_map: Mapping[str, Any],
+    task_map: Mapping[str, SimulatorTask],
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     shots: int = 12_000,
@@ -536,7 +567,7 @@ def infer_distilled_sign_vector(
 
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_injected_summary(
-    task_map: Mapping[str, Any],
+    task_map: Mapping[str, SimulatorTask],
     *,
     sign_vector: Sequence[float],
     binary_precision: int | None = None,
@@ -546,7 +577,7 @@ def naive_injected_summary(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     max_grid_points: int = 1_500_000,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     corrected: dict[str, np.ndarray] = {}
     accepted_fraction_by_basis: dict[str, float] = {}
 
@@ -579,7 +610,7 @@ def naive_injected_summary(
 
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
 def naive_distilled_summary(
-    task_map: Mapping[str, Any],
+    task_map: Mapping[str, SimulatorTask],
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     sign_vector: Sequence[float],
@@ -590,7 +621,7 @@ def naive_distilled_summary(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     max_grid_points: int = 1_500_000,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     targets = normalize_valid_factory_targets(valid_factory_targets)
     corrected: dict[str, np.ndarray] = {}
     accepted_fraction_by_basis: dict[str, float] = {}

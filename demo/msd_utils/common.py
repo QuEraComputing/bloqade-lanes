@@ -4,10 +4,20 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeVar, cast, overload
 
 import numpy as np
 import stim
+import tsim as tsim_backend
+from kirin import ir
+
+from bloqade.gemini.device import DetectorResult, GeminiLogicalSimulatorTask, Result
+
+KirinKernel: TypeAlias = ir.Method[..., object]
+RetType = TypeVar("RetType")
+
+if TYPE_CHECKING:
+    from clifft import Program, SampleResult
 
 
 class ObservableFrame(str, Enum):
@@ -19,7 +29,7 @@ class ObservableFrame(str, Enum):
 # that "observable_frame" is only used by "special_tasks" anyways.
 @dataclass(frozen=True)
 class LogicalKernelSpec:
-    kernel: Any
+    kernel: KirinKernel
     # TODO: for observable_frame, we need to NOT have this auto-correction
     # ^ hmm... on second thought, it might be fine; it is pretty generic I think, and potentially useful when you don't know/care about
     # the 'ideal' observable, so long as it's deterministic
@@ -36,7 +46,7 @@ class SyndromeLayout:
 DEFAULT_SYNDROME_LAYOUT = SyndromeLayout()
 
 
-def _clifft_compatible_stim_text(circuit: Any) -> str:
+def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
     # CliffT currently rejects Stim instruction tags like I_ERROR[loss](0).
     # The tags are metadata, so stripping them preserves the sampled semantics.
     return "\n".join(
@@ -45,15 +55,16 @@ def _clifft_compatible_stim_text(circuit: Any) -> str:
     )
 
 
+# TODO: is this the best way to do it? by overloading methods? but do we really support those overloaded methods?
 @dataclass
-class DemoTask:
-    task: Any
+class DemoTask(Generic[RetType]):
+    task: GeminiLogicalSimulatorTask[RetType]
     observable_frame: ObservableFrame = ObservableFrame.RAW
-    observable_reference: Any | None = None
+    observable_reference: np.ndarray | None = None
     # TODO: this is SOLELY to pass down the "special" logical kernel for the "prefix_prepare" path.
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> object:
         return getattr(self.task, name)
 
     @property
@@ -61,18 +72,48 @@ class DemoTask:
         return self.task.detector_error_model
 
     @cached_property
-    def clifft_tsim_program(self) -> Any:
+    def clifft_tsim_program(self) -> Program:
         import clifft
 
         return clifft.compile(_clifft_compatible_stim_text(self.task.tsim_circuit))
 
     @cached_property
-    def clifft_noiseless_tsim_program(self) -> Any:
+    def clifft_noiseless_tsim_program(self) -> Program:
         import clifft
 
         return clifft.compile(
             _clifft_compatible_stim_text(self.task.noiseless_tsim_circuit)
         )
+
+    @overload
+    def _run_clifft(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[False] = ...,
+        seed: int | None = None,
+    ) -> Result[RetType]: ...
+
+    @overload
+    def _run_clifft(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+        seed: int | None = None,
+    ) -> DetectorResult: ...
+
+    @overload
+    def _run_clifft(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: bool = False,
+        seed: int | None = None,
+    ) -> Result[RetType] | DetectorResult: ...
 
     def _run_clifft(
         self,
@@ -81,9 +122,7 @@ class DemoTask:
         *,
         run_detectors: bool = False,
         seed: int | None = None,
-    ) -> Any:
-        from bloqade.gemini.device import DetectorResult, Result
-
+    ) -> Result[RetType] | DetectorResult:
         sample_result = self._sample_clifft(shots, with_noise=with_noise, seed=seed)
 
         fidelity_min, fidelity_max = self.task.fidelity_bounds()
@@ -104,6 +143,30 @@ class DemoTask:
             fidelity_max,
         )
 
+    # TODO: not sure if I like this overload logic, but it mirrors GeminiLogicalSimulatorTask; do we need it/can we get rid of it?
+    @overload
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[False] = ...,
+        sim_type: str = "tsim",
+        seed: int | None = None,
+    ) -> Result[RetType]: ...
+
+    @overload
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: Literal[True],
+        sim_type: str = "tsim",
+        seed: int | None = None,
+    ) -> DetectorResult: ...
+
+    @overload
     def run(
         self,
         shots: int = 1,
@@ -112,7 +175,17 @@ class DemoTask:
         run_detectors: bool = False,
         sim_type: str = "tsim",
         seed: int | None = None,
-    ) -> Any:
+    ) -> Result[RetType] | DetectorResult: ...
+
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: bool = False,
+        sim_type: str = "tsim",
+        seed: int | None = None,
+    ) -> Result[RetType] | DetectorResult:
         if sim_type == "tsim":
             return self.task.run(
                 shots,
@@ -137,7 +210,7 @@ class DemoTask:
         *,
         with_noise: bool = True,
         seed: int | None = None,
-    ) -> Any:
+    ) -> SampleResult:
         import clifft
 
         program = (
@@ -145,10 +218,10 @@ class DemoTask:
             if with_noise
             else self.clifft_noiseless_tsim_program
         )
-        sample_kwargs: dict[str, Any] = {"shots": int(shots)}
+        sample_kwargs: dict[str, int] = {"shots": int(shots)}
         if seed is not None:
             sample_kwargs["seed"] = int(seed)
-        return clifft.sample(program, **sample_kwargs)
+        return cast("SampleResult", clifft.sample(program, **sample_kwargs))
 
     def sample_clifft_det_obs(
         self,

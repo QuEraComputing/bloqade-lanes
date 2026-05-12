@@ -23,6 +23,7 @@ from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
+    FidelitySummary,
     run_task,
     split_factory_bits,
 )
@@ -74,8 +75,8 @@ class DecoderSweepEvaluation:
     mle_decoders: dict[str, DecoderAdapter]
     mld_curve: dict[str, np.ndarray]
     mle_curve: dict[str, np.ndarray]
-    injected_summary_corrected: dict[str, Any]
-    injected_summary_raw: dict[str, Any]
+    injected_summary_corrected: FidelitySummary
+    injected_summary_raw: FidelitySummary
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable, Mapping, Protocol, Sequence, TypeAlias
+from typing import Callable, Mapping, Protocol, Sequence, TypeAlias, TypeVar
 
 import numpy as np
 import stim
@@ -17,6 +17,7 @@ from .core import (
     DEFAULT_BASIS_LABELS,
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
+    FidelitySummary,
     SimulatorTask,
     ancilla_matches_valid_targets,
     fidelity_from_counts,
@@ -32,6 +33,7 @@ from .core import (
 from .decoder_classes import SparseTableDecoder
 
 TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]
+DecodeResult = TypeVar("DecodeResult")
 
 
 class DetectorErrorModelTask(Protocol):
@@ -304,9 +306,9 @@ def _make_decoder_adapter(
 
 
 def _call_decoder_fn(
-    fn: Callable[[int], Any],
+    fn: Callable[[int], DecodeResult],
     bits: np.ndarray,
-) -> Any:
+) -> DecodeResult:
     return fn(packed_bits_to_int(bits))
 
 
@@ -1163,7 +1165,7 @@ def evaluate_mld_curve(
 
 
 def injected_baseline(
-    task_map: Mapping[str, Any],
+    task_map: Mapping[str, SimulatorTask],
     *,
     eval_shots: int,
     binary_precision: int | None = None,
@@ -1171,13 +1173,13 @@ def injected_baseline(
     sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     raw: bool = False,
-    training_task_map: Mapping[str, Any] | None = None,
+    training_task_map: Mapping[str, SimulatorTask] | None = None,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     uncertainty_backend: str = "wilson",
     sim_type: str = "tsim",
     max_grid_points: int = 1_500_000,
-) -> dict[str, Any]:
-    corrected = {}
+) -> FidelitySummary:
+    corrected: dict[str, np.ndarray] = {}
     for basis in basis_labels:
         evaluation_dataset = run_task(
             task_map[basis],
@@ -1217,16 +1219,13 @@ def injected_baseline(
             bits.append(int(obs[0] ^ flip[0]))
         corrected[basis] = np.asarray(bits, dtype=np.uint8)
 
-    # TODO: what's the point of changing this, if it doesn't help with types????
-    return {
-        **fidelity_from_counts(
-            corrected["X"],
-            corrected["Y"],
-            corrected["Z"],
-            binary_precision,
-            sign_vector=sign_vector,
-            target_bloch=target_bloch,
-            uncertainty_backend=uncertainty_backend,
-            max_grid_points=max_grid_points,
-        )
-    }
+    return fidelity_from_counts(
+        corrected["X"],
+        corrected["Y"],
+        corrected["Z"],
+        binary_precision,
+        sign_vector=sign_vector,
+        target_bloch=target_bloch,
+        uncertainty_backend=uncertainty_backend,
+        max_grid_points=max_grid_points,
+    )
