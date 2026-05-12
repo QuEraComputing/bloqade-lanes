@@ -4,16 +4,14 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
 
 import numpy as np
 import stim
 import tsim as tsim_backend
-from kirin import ir
 
 from bloqade.gemini.device import DetectorResult, GeminiLogicalSimulatorTask, Result
 
-KirinKernel: TypeAlias = ir.Method[..., object]
 RetType = TypeVar("RetType")
 
 if TYPE_CHECKING:
@@ -23,17 +21,6 @@ if TYPE_CHECKING:
 class ObservableFrame(str, Enum):
     RAW = "raw"
     NOISELESS_REFERENCE_FLIPS = "noiseless_reference_flips"
-
-
-# TODO: I wonder if it's possible to remove "observable_frame", because we should just need the kernel itself. Also, it appears
-# that "observable_frame" is only used by "special_tasks" anyways.
-@dataclass(frozen=True)
-class LogicalKernelSpec:
-    kernel: KirinKernel
-    # TODO: for observable_frame, we need to NOT have this auto-correction
-    # ^ hmm... on second thought, it might be fine; it is pretty generic I think, and potentially useful when you don't know/care about
-    # the 'ideal' observable, so long as it's deterministic
-    observable_frame: ObservableFrame = ObservableFrame.RAW
 
 
 # To specify the number of output qubits we want to do tomography on.

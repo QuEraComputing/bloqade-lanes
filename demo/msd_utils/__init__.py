@@ -14,7 +14,6 @@ from .circuits import (
 from .common import (
     DEFAULT_SYNDROME_LAYOUT,
     DemoTask,
-    LogicalKernelSpec,
     ObservableFrame,
     SyndromeLayout,
 )
@@ -70,7 +69,6 @@ __all__ = [
     "DecoderAdapter",
     "DecoderKernelBundle",
     "DecoderPrimitiveSet",
-    "LogicalKernelSpec",
     "ObservableFrame",
     "SparseTableDecoder",
     "SyndromeLayout",

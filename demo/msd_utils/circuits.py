@@ -15,7 +15,7 @@ from bloqade.gemini.logical.stdlib import default_post_processing
 from bloqade.lanes import GeminiLogicalSimulator
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
-from .common import DemoTask, LogicalKernelSpec, ObservableFrame
+from .common import DemoTask, ObservableFrame
 
 # TODO: Apparently we can't type check for kernels written in specific dialects, so all we can check is that something is a Kirin kernel I suppose,
 # which is ir.Method[..., Any]. And we are just "visually enforcing" the types through KirinKernel and SquinKernel. Think about a better way to deal with types here.
@@ -42,9 +42,9 @@ NONUNITARY_PREFIXES = (
 # REFACTOR: This should be a more "application-specific" datatype; I don't think this should live in the standard libraries.
 @dataclass(frozen=True)
 class DecoderKernelBundle:
-    actual: dict[str, LogicalKernelSpec]
-    special: dict[str, LogicalKernelSpec]
-    injected: dict[str, LogicalKernelSpec]
+    actual: dict[str, KirinKernel]
+    special: dict[str, KirinKernel]
+    injected: dict[str, KirinKernel]
 
 
 # REFACTOR: This should be a more "application-specific" datatype; I don't think this should live in the standard libraries.
@@ -155,21 +155,10 @@ def _override_task_tsim_circuit(
     *,
     noiseless_circuit: TsimCircuit | None = None,
 ) -> None:
-    _set_task_override(task, "tsim_circuit", circuit)
-    if noiseless_circuit is not None:
-        _set_task_override(task, "noiseless_tsim_circuit", noiseless_circuit)
     _clear_task_tsim_artifacts(task)
     _set_task_override(task, "tsim_circuit", circuit)
     if noiseless_circuit is not None:
         _set_task_override(task, "noiseless_tsim_circuit", noiseless_circuit)
-
-
-def _ensure_kernel_spec(
-    kernel_like: LogicalKernelSpec | KirinKernel,
-) -> LogicalKernelSpec:
-    if isinstance(kernel_like, LogicalKernelSpec):
-        return kernel_like
-    return LogicalKernelSpec(kernel=kernel_like)
 
 
 # NOTE: this is basically what the user would "instantiate" for this specific MSD experiment
@@ -264,16 +253,11 @@ def produce_tomography_kernels(
 
 
 # This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for downstream consumption
-def _kernel_specs_by_tomography_basis(
+def _kernels_by_tomography_basis(
     kernels: Mapping[str, KirinKernel],
-    *,
-    observable_frame: ObservableFrame = ObservableFrame.RAW,
-) -> dict[str, LogicalKernelSpec]:
+) -> dict[str, KirinKernel]:
     return {
-        kernel_name.split("_")[-1].upper(): LogicalKernelSpec(
-            kernel=kernel,
-            observable_frame=observable_frame,
-        )
+        kernel_name.split("_")[-1].upper(): kernel
         for kernel_name, kernel in kernels.items()
     }
 
@@ -369,7 +353,7 @@ def build_decoder_kernel_bundle(
         default_post_processing,
         "msd_special",
     )
-    special_circuit_sources = _kernel_specs_by_tomography_basis(
+    special_circuit_sources = _kernels_by_tomography_basis(
         produce_tomography_kernels(
             num_logical_qubits,
             special_logical_kernel,
@@ -380,27 +364,21 @@ def build_decoder_kernel_bundle(
         )
     )
 
-    actual = _kernel_specs_by_tomography_basis(actual_kernels)
+    actual = _kernels_by_tomography_basis(actual_kernels)
     if special_kernel_strategy == "prefix_prepare":
         # TODO: think about a cleaner way to pass down this information? Do I have to pass down this "special_kernel_{x, y, z}"?
         special = {
-            basis: LogicalKernelSpec(
-                kernel=_attach_special_circuit_kernel(
-                    spec.kernel,
-                    special_circuit_sources[basis].kernel,
-                    num_qubits=num_logical_qubits,
-                ),
-                observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
+            basis: _attach_special_circuit_kernel(
+                kernel,
+                special_circuit_sources[basis],
+                num_qubits=num_logical_qubits,
             )
-            for basis, spec in _kernel_specs_by_tomography_basis(
+            for basis, kernel in _kernels_by_tomography_basis(
                 special_task_kernels
             ).items()
         }
     else:
-        special = _kernel_specs_by_tomography_basis(
-            actual_kernels,
-            observable_frame=ObservableFrame.NOISELESS_REFERENCE_FLIPS,
-        )
+        special = dict(actual)
 
     resolved_injected_prep_args = injected_prep_args
     if resolved_injected_prep_args is None and len(primitive_args) == 3:
@@ -410,7 +388,7 @@ def build_decoder_kernel_bundle(
             float(primitive_args[2]),
         )
 
-    injected: dict[str, LogicalKernelSpec] = {}
+    injected: dict[str, KirinKernel] = {}
     if resolved_injected_prep_args is not None:
         theta, phi, lam = resolved_injected_prep_args
 
@@ -426,7 +404,7 @@ def build_decoder_kernel_bundle(
             "injected",
         )
 
-        injected = _kernel_specs_by_tomography_basis(injected_kernels)
+        injected = _kernels_by_tomography_basis(injected_kernels)
 
     return DecoderKernelBundle(
         actual=actual,
@@ -438,7 +416,7 @@ def build_decoder_kernel_bundle(
 def build_injected_decoder_kernel_map(
     *,
     output_qubit: int = 0,
-) -> dict[str, LogicalKernelSpec]:
+) -> dict[str, KirinKernel]:
     h_theta = 0.5 * math.pi
     h_phi = 0.0
     hs_theta = 0.5 * math.pi
@@ -459,7 +437,7 @@ def build_injected_decoder_kernel_map(
         squin.u3(0.0, 0.0, 0.0, reg[0])
 
     return {
-        **_kernel_specs_by_tomography_basis(
+        **_kernels_by_tomography_basis(
             produce_tomography_kernels(
                 1,
                 injected_decoder_x_logical_kernel,
@@ -468,7 +446,7 @@ def build_injected_decoder_kernel_map(
                 "injected_decoder",
             )
         ),
-        **_kernel_specs_by_tomography_basis(
+        **_kernels_by_tomography_basis(
             produce_tomography_kernels(
                 1,
                 injected_decoder_y_logical_kernel,
@@ -477,7 +455,7 @@ def build_injected_decoder_kernel_map(
                 "injected_decoder",
             )
         ),
-        **_kernel_specs_by_tomography_basis(
+        **_kernels_by_tomography_basis(
             produce_tomography_kernels(
                 1,
                 injected_decoder_z_logical_kernel,
@@ -489,18 +467,15 @@ def build_injected_decoder_kernel_map(
     }
 
 
-# TODO: this noisy initializer should already be implemented in the latest version of bloqade-lanes;
-# adapt to their interface for how to specify noise in the state prep kernel.
 def build_task(
     simulator: GeminiLogicalSimulator,
-    kernel_spec: LogicalKernelSpec | KirinKernel,
+    kernel: KirinKernel,
     *,
     m2dets: MeasurementMap | None,
     m2obs: MeasurementMap | None,
     append_measurements: bool = True,
 ) -> DemoTask:
-    spec = _ensure_kernel_spec(kernel_spec)
-    logical_kernel = spec.kernel.similar()
+    logical_kernel = kernel.similar()
 
     task = simulator.task(
         logical_kernel,
@@ -510,20 +485,17 @@ def build_task(
 
     return DemoTask(
         task=task,
-        observable_frame=spec.observable_frame,
-        metadata={"logical_kernel_spec": spec},
+        metadata={"logical_kernel": kernel},
     )
 
 
 def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
-    spec = demo_task.metadata.get("logical_kernel_spec")
-    if not isinstance(spec, LogicalKernelSpec):
-        raise ValueError(
-            "prefix_prepare special tasks must preserve " "LogicalKernelSpec metadata."
-        )
+    kernel = demo_task.metadata.get("logical_kernel")
+    if not isinstance(kernel, ir.Method):
+        raise ValueError("prefix_prepare special tasks must preserve kernel metadata.")
 
     special_circuit_kernel = getattr(
-        spec.kernel,
+        kernel,
         "_msd_special_circuit_kernel",
         None,
     )
@@ -533,7 +505,7 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
             "_msd_special_circuit_kernel source."
         )
     special_circuit_num_qubits = getattr(
-        spec.kernel,
+        kernel,
         "_msd_special_circuit_num_qubits",
         None,
     )
@@ -556,6 +528,8 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
 def apply_special_tsim_circuit_strategy(
     task_map: Mapping[str, DemoTask],
     strategy: Literal["prefix_prepare", "compiled_inverse_prefix"] | None,
+    *,
+    normalize_observable_reference: bool = True,
 ) -> dict[str, DemoTask]:
     if strategy is None:
         return dict(task_map)
@@ -574,12 +548,14 @@ def apply_special_tsim_circuit_strategy(
                 demo_task.task,
                 _build_compiled_unitary_prefix_circuit(demo_task.task),
             )
+        if normalize_observable_reference:
+            demo_task.observable_frame = ObservableFrame.NOISELESS_REFERENCE_FLIPS
     return transformed
 
 
 def build_task_map(
     simulator: GeminiLogicalSimulator,
-    kernel_map: Mapping[str, LogicalKernelSpec | KirinKernel],
+    kernel_map: Mapping[str, KirinKernel],
     *,
     m2dets: MeasurementMap | None,
     m2obs: MeasurementMap | None,

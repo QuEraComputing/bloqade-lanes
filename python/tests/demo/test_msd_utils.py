@@ -15,6 +15,7 @@ from bloqade.lanes import GeminiLogicalSimulator
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_extras.qet import build_qet_kernel_maps, build_qet_primitives
+from demo.msd_utils import circuits
 from demo.msd_utils.circuits import (
     DecoderPrimitiveSet,
     apply_special_tsim_circuit_strategy,
@@ -22,7 +23,7 @@ from demo.msd_utils.circuits import (
     build_measurement_maps,
     build_task_map,
 )
-from demo.msd_utils.common import SyndromeLayout
+from demo.msd_utils.common import DemoTask, ObservableFrame, SyndromeLayout
 from demo.msd_utils.core import (
     BasisDataset,
     fidelity_from_counts,
@@ -93,6 +94,26 @@ def test_kernel_builders_return_expected_basis_maps():
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert set(decoder.injected) == {"X", "Y", "Z"}
+
+
+def test_special_strategy_observable_frame_flag(monkeypatch: pytest.MonkeyPatch):
+    def do_nothing(_: DemoTask[object]) -> None:
+        return None
+
+    monkeypatch.setattr(circuits, "_apply_prefix_prepare_to_task", do_nothing)
+
+    normalized = DemoTask(task=object())  # type: ignore[arg-type]
+    raw = DemoTask(task=object())  # type: ignore[arg-type]
+
+    apply_special_tsim_circuit_strategy({"X": normalized}, "prefix_prepare")
+    apply_special_tsim_circuit_strategy(
+        {"X": raw},
+        "prefix_prepare",
+        normalize_observable_reference=False,
+    )
+
+    assert normalized.observable_frame is ObservableFrame.NOISELESS_REFERENCE_FLIPS
+    assert raw.observable_frame is ObservableFrame.RAW
 
 
 def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
