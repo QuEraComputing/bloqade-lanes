@@ -7,6 +7,7 @@ import numpy as np
 from scipy.special import logsumexp
 
 
+# NOTE: technically, this type won't be exposed to the user
 class PosteriorFidelitySummary(TypedDict):
     point: float
     median: float

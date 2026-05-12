@@ -47,7 +47,7 @@ class BasisDataset:
 
 # This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask.
 def _run_simulator_task(
-    task: DemoTask | SimulatorTask,
+    task: SimulatorTask,
     shots: int,
     *,
     with_noise: bool,
@@ -238,7 +238,7 @@ def fidelity_from_zero_one_counts(
 
 
 def sample_task_raw(
-    task: DemoTask | SimulatorTask,
+    task: SimulatorTask,
     shots: int,
     *,
     with_noise: bool = True,
@@ -343,7 +343,7 @@ def rebase_dataset_observables(
 
 
 def normalize_observable_frame(
-    task: DemoTask | SimulatorTask,
+    task: SimulatorTask,
     dataset: BasisDataset,
     *,
     sim_type: str = "tsim",
@@ -357,7 +357,7 @@ def normalize_observable_frame(
 
 
 def iter_task_datasets(
-    task: DemoTask | SimulatorTask,
+    task: SimulatorTask,
     shots: int,
     *,
     with_noise: bool = True,
@@ -391,7 +391,7 @@ def iter_task_datasets(
 
 
 def run_task(
-    task: DemoTask | SimulatorTask,
+    task: SimulatorTask,
     shots: int,
     *,
     with_noise: bool = True,

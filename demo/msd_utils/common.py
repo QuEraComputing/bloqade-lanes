@@ -104,28 +104,25 @@ class DemoTask:
             fidelity_max,
         )
 
-    def run(self, *args: Any, sim_type: str = "tsim", **kwargs: Any) -> Any:
+    def run(
+        self,
+        shots: int = 1,
+        with_noise: bool = True,
+        *,
+        run_detectors: bool = False,
+        sim_type: str = "tsim",
+        seed: int | None = None,
+    ) -> Any:
         if sim_type == "tsim":
-            return self.task.run(*args, **kwargs)
+            return self.task.run(
+                shots,
+                with_noise=with_noise,
+                run_detectors=run_detectors,
+            )
         if sim_type != "clifft":
             raise ValueError(
                 f"sim_type is {sim_type}; currently, the only supported simulator "
                 "backends are 'tsim' and 'clifft'"
-            )
-
-        if len(args) > 2:
-            raise TypeError(
-                "DemoTask.run accepts at most two positional arguments: "
-                "shots and with_noise."
-            )
-        shots = args[0] if len(args) >= 1 else kwargs.pop("shots", 1)
-        with_noise = args[1] if len(args) >= 2 else kwargs.pop("with_noise", True)
-        run_detectors = kwargs.pop("run_detectors", False)
-        seed = kwargs.pop("seed", None)
-        if kwargs:
-            unexpected = next(iter(kwargs))
-            raise TypeError(
-                f"DemoTask.run got an unexpected keyword argument {unexpected!r}"
             )
         return self._run_clifft(
             shots,
