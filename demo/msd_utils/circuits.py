@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, TypeAlias
+from typing import Any, Callable, Literal, Mapping, Protocol, TypeAlias, cast
 
+import tsim as tsim_backend
 from kirin import ir, rewrite
 from kirin.dialects import ilist
 
@@ -18,7 +19,18 @@ from bloqade.lanes.transform import MoveToSquinLogical
 
 from .common import DemoTask, LogicalKernelSpec, ObservableFrame
 
-SquinKernel: TypeAlias = ir.Method[..., Any]
+KirinKernel: TypeAlias = ir.Method[..., Any]
+SquinKernel: TypeAlias = KirinKernel
+TsimCircuit: TypeAlias = tsim_backend.Circuit
+MeasurementMap: TypeAlias = list[list[int]]
+
+
+class _SimpleLogicalNoiseKernels(Protocol):
+    local_r_noise: SquinKernel
+    local_rz_noise: SquinKernel
+    cz_paired_noise: SquinKernel
+    cz_unpaired_noise: SquinKernel
+
 
 NONUNITARY_PREFIXES = (
     "M",
@@ -91,26 +103,28 @@ class _LogicalInitializeOverride(LogicalNoiseModelABC):
         return self._base.get_local_r_noise(locations)
 
 
-def build_measurement_maps(num_logical_qubits: int) -> tuple[Any, Any]:
+def build_measurement_maps(
+    num_logical_qubits: int,
+) -> tuple[MeasurementMap, MeasurementMap]:
     return steane7_m2dets(num_logical_qubits), steane7_m2obs(num_logical_qubits)
 
 
 def _attach_special_circuit_kernel(
-    kernel: Any,
-    special_circuit_kernel: Any,
+    kernel: KirinKernel,
+    special_circuit_kernel: SquinKernel,
     *,
     num_qubits: int,
-) -> Any:
+) -> KirinKernel:
     setattr(kernel, "_msd_special_circuit_kernel", special_circuit_kernel)
     setattr(kernel, "_msd_special_circuit_num_qubits", int(num_qubits))
     return kernel
 
 
 def _build_physical_prefix_source_tsim_circuit(
-    special_circuit_kernel: Any,
+    special_circuit_kernel: SquinKernel,
     *,
     num_logical_qubits: int,
-):
+) -> TsimCircuit:
     from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 
     @squin.kernel
@@ -127,7 +141,11 @@ def _build_physical_prefix_source_tsim_circuit(
 
 # TODO: this is for the use case of overriding an existing tsim circuit, and overriding the GeminiLogicalSimulatorTask
 # cached attributes. Ideally, we'd add this functionality in GeminiLogicalSimulatorTask.
-def _set_task_override(task: GeminiLogicalSimulatorTask, attr: str, value: Any) -> None:
+def _set_task_override(
+    task: GeminiLogicalSimulatorTask,
+    attr: str,
+    value: object,
+) -> None:
     try:
         setattr(task, attr, value)
     except AttributeError:
@@ -149,7 +167,7 @@ def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
 
 
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
-def _first_nonunitary_instruction_index(circuit: Any) -> int:
+def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     for idx in range(len(circuit)):
         if str(circuit[idx]).startswith(NONUNITARY_PREFIXES):
             return idx
@@ -158,7 +176,7 @@ def _first_nonunitary_instruction_index(circuit: Any) -> int:
 
 def _prepend_inverse_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
-    circuit_to_invert: Any,
+    circuit_to_invert: TsimCircuit,
 ) -> None:
     inverse_prefix = circuit_to_invert.without_noise().inverse()
     _override_task_tsim_circuit(
@@ -169,7 +187,9 @@ def _prepend_inverse_tsim_circuit(
 
 
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
-def _build_compiled_unitary_prefix_circuit(task: GeminiLogicalSimulatorTask):
+def _build_compiled_unitary_prefix_circuit(
+    task: GeminiLogicalSimulatorTask,
+) -> TsimCircuit:
     compiled_circuit = task.tsim_circuit
     return compiled_circuit[: _first_nonunitary_instruction_index(compiled_circuit)]
 
@@ -177,9 +197,9 @@ def _build_compiled_unitary_prefix_circuit(task: GeminiLogicalSimulatorTask):
 # TODO: ideally, overriding the tsim circuit could be done in the GeminiLogicalSimulatorTask. See above
 def _override_task_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
-    circuit: Any,
+    circuit: TsimCircuit,
     *,
-    noiseless_circuit: Any | None = None,
+    noiseless_circuit: TsimCircuit | None = None,
 ) -> None:
     _set_task_override(task, "tsim_circuit", circuit)
     if noiseless_circuit is not None:
@@ -190,7 +210,9 @@ def _override_task_tsim_circuit(
         _set_task_override(task, "noiseless_tsim_circuit", noiseless_circuit)
 
 
-def _ensure_kernel_spec(kernel_like: LogicalKernelSpec | Any) -> LogicalKernelSpec:
+def _ensure_kernel_spec(
+    kernel_like: LogicalKernelSpec | KirinKernel,
+) -> LogicalKernelSpec:
     if isinstance(kernel_like, LogicalKernelSpec):
         return kernel_like
     return LogicalKernelSpec(kernel=kernel_like)
@@ -222,7 +244,7 @@ def _build_msd_primitives(
     )
 
 
-def _build_tomography_primitives(*, output_qubit: int):
+def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]:
     @squin.kernel
     def tomography_x(reg):
         squin.h(reg[output_qubit])
@@ -255,14 +277,14 @@ def _squin_return_none(reg):
 
 def produce_tomography_kernels(
     num_qubits: int,
-    logical_kernel: Any,
-    tomography_kernels: Mapping[str, Any],
-    return_val_fn: Any,
+    logical_kernel: KirinKernel,
+    tomography_kernels: Mapping[str, SquinKernel],
+    return_val_fn: KirinKernel,
     kernel_name: str,
     *,
     supply_reg: bool = True,
-) -> Mapping[str, Any]:
-    def make_kernel(tomog_kernel: Any, generated_name: str):
+) -> Mapping[str, KirinKernel]:
+    def make_kernel(tomog_kernel: SquinKernel, generated_name: str) -> KirinKernel:
         def inner_tomog_kernel(reg):
             logical_kernel(reg)
             tomog_kernel(reg)
@@ -294,7 +316,7 @@ def produce_tomography_kernels(
 
 # This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for downstream consumption
 def _kernel_specs_by_tomography_basis(
-    kernels: Mapping[str, Any],
+    kernels: Mapping[str, KirinKernel],
     *,
     observable_frame: ObservableFrame = ObservableFrame.RAW,
 ) -> dict[str, LogicalKernelSpec]:
@@ -309,7 +331,7 @@ def _kernel_specs_by_tomography_basis(
 
 # NOTE: this is to basically enforce typing at runtime for Python.. in part because we don't have compile-time checks
 def _require_primitive_keys(
-    primitives: Mapping[str, Any],
+    primitives: Mapping[str, SquinKernel],
     *,
     keys: tuple[str, ...],
     builder_name: str,
@@ -323,7 +345,7 @@ def _require_primitive_keys(
 
 # NOTE: this is to basically enforce typing at runtime for Python.. in part because we don't have compile-time checks
 def _coerce_decoder_primitive_set(
-    primitive_set: DecoderPrimitiveSet | Mapping[str, Any],
+    primitive_set: DecoderPrimitiveSet | Mapping[str, SquinKernel],
     *,
     builder_name: str,
 ) -> DecoderPrimitiveSet:
@@ -395,7 +417,7 @@ def build_decoder_kernel_bundle(
     # TODO: get rid of logical qubits argument here?
     num_logical_qubits: int = 5,
     output_qubit: int = 0,
-    build_primitives: Callable[..., DecoderPrimitiveSet | Mapping[str, Any]] = (
+    build_primitives: Callable[..., DecoderPrimitiveSet | Mapping[str, SquinKernel]] = (
         _build_msd_primitives
     ),
     injected_prep_args: tuple[float, float, float] | None = None,
@@ -563,10 +585,11 @@ def build_injected_decoder_kernel_map(
 # TODO: this noisy initializer should already be implemented in the latest version of bloqade-lanes;
 # adapt to their interface for how to specify noise in the state prep kernel.
 def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator) -> SquinKernel:
-    local_r_noise = simulator.noise_model.local_r_noise
-    local_rz_noise = simulator.noise_model.local_rz_noise
-    cz_paired_noise = simulator.noise_model.cz_paired_noise
-    cz_unpaired_noise = simulator.noise_model.cz_unpaired_noise
+    noise_kernels = cast(_SimpleLogicalNoiseKernels, simulator.noise_model)
+    local_r_noise = noise_kernels.local_r_noise
+    local_rz_noise = noise_kernels.local_rz_noise
+    cz_paired_noise = noise_kernels.cz_paired_noise
+    cz_unpaired_noise = noise_kernels.cz_unpaired_noise
 
     x_axis = 0.0
     y_axis = 0.25
@@ -625,10 +648,10 @@ def make_noisy_steane7_initializer(simulator: GeminiLogicalSimulator) -> SquinKe
 
 def build_task(
     simulator: GeminiLogicalSimulator,
-    kernel_spec: LogicalKernelSpec | Any,
+    kernel_spec: LogicalKernelSpec | KirinKernel,
     *,
-    m2dets: Any,
-    m2obs: Any,
+    m2dets: MeasurementMap,
+    m2obs: MeasurementMap,
     noisy_initializer: SquinKernel | None = None,
     append_measurements: bool = True,
 ) -> DemoTask:
@@ -691,7 +714,7 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
         )
 
     prefix_source_circuit = _build_physical_prefix_source_tsim_circuit(
-        special_circuit_kernel,
+        cast(SquinKernel, special_circuit_kernel),
         num_logical_qubits=int(special_circuit_num_qubits),
     )
     _prepend_inverse_tsim_circuit(
@@ -726,10 +749,10 @@ def apply_special_tsim_circuit_strategy(
 
 def build_task_map(
     simulator: GeminiLogicalSimulator,
-    kernel_map: Mapping[str, LogicalKernelSpec | Any],
+    kernel_map: Mapping[str, LogicalKernelSpec | KirinKernel],
     *,
-    m2dets: Any,
-    m2obs: Any,
+    m2dets: MeasurementMap,
+    m2obs: MeasurementMap,
     noisy_initializer: SquinKernel | None = None,
     append_measurements: bool = True,
 ) -> dict[str, DemoTask]:
