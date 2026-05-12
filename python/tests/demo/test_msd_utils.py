@@ -14,6 +14,7 @@ from bloqade.lanes import GeminiLogicalSimulator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from demo.msd_extras.qet import build_qet_kernel_maps, build_qet_primitives
 from demo.msd_utils.circuits import (
     DecoderPrimitiveSet,
     apply_special_tsim_circuit_strategy,
@@ -42,7 +43,6 @@ from demo.msd_utils.decoders import (
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
 )
-from demo.msd_utils.qet import build_qet_kernel_maps, build_qet_primitives
 
 
 def test_fidelity_from_counts_returns_ordered_interval():

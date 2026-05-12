@@ -15,6 +15,7 @@ demo/scratch.ipynb
 demo/msd_utils/noise.py
 skills
 .agents
+demo/msd_extras
 
 # for qet code
 demo/msd_utils/qet.py
