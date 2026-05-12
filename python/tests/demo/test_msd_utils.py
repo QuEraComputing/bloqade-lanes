@@ -9,7 +9,6 @@ import pytest
 import stim
 from bloqade.decoders import ConfidenceDecoder
 
-from bloqade import squin
 from bloqade.lanes import GeminiLogicalSimulator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -21,6 +20,7 @@ from demo.msd_utils.circuits import (
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_measurement_maps,
+    build_msd_primitives,
     build_task_map,
 )
 from demo.msd_utils.common import DemoTask, ObservableFrame, SyndromeLayout
@@ -90,7 +90,10 @@ def test_normalize_valid_factory_targets_wraps_single_target():
 
 
 def test_kernel_builders_return_expected_basis_maps():
-    decoder = build_decoder_kernel_bundle(0.1, 0.2, 0.3)
+    decoder = build_decoder_kernel_bundle(
+        build_msd_primitives(0.1, 0.2, 0.3),
+        injected_prep_args=(0.1, 0.2, 0.3),
+    )
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert set(decoder.injected) == {"X", "Y", "Z"}
@@ -120,9 +123,8 @@ def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
     sim = GeminiLogicalSimulator()
     m2dets, m2obs = build_measurement_maps(5)
     decoder = build_decoder_kernel_bundle(
-        0.1,
-        0.2,
-        0.3,
+        build_msd_primitives(0.1, 0.2, 0.3),
+        injected_prep_args=(0.1, 0.2, 0.3),
         special_kernel_strategy="prefix_prepare",
     )
 
@@ -151,9 +153,8 @@ def test_demo_task_clifft_backend_matches_result_shapes():
     sim = GeminiLogicalSimulator()
     m2dets, m2obs = build_measurement_maps(5)
     decoder = build_decoder_kernel_bundle(
-        0.1,
-        0.2,
-        0.3,
+        build_msd_primitives(0.1, 0.2, 0.3),
+        injected_prep_args=(0.1, 0.2, 0.3),
         special_kernel_strategy="prefix_prepare",
     )
     special_tasks = build_task_map(
@@ -190,32 +191,15 @@ def test_demo_task_clifft_backend_matches_result_shapes():
     assert np.asarray(measurement_result.observables, dtype=np.uint8).shape == (4, 5)
 
 
-def test_decoder_kernel_bundle_accepts_variadic_primitive_builder():
-    captured: list[tuple[float, ...]] = []
-
-    @squin.kernel
-    def sentinel(reg):
-        return
-
-    def build_primitives(*args: float) -> DecoderPrimitiveSet:
-        captured.append(args)
-        return DecoderPrimitiveSet(
-            state_injection_circuit=sentinel,
-            logical_circuit=sentinel,
-        )
-
+def test_decoder_kernel_bundle_accepts_decoder_primitive_set():
+    primitive_set = build_qet_primitives(theta=0.1, phi0=0.2, phi1=0.3, phi2=0.4)
     decoder = build_decoder_kernel_bundle(
-        0.1,
-        0.2,
-        0.3,
-        0.4,
+        primitive_set,
         num_logical_qubits=9,
-        build_primitives=build_primitives,
         injected_prep_args=None,
         special_kernel_strategy="compiled_inverse_prefix",
     )
 
-    assert captured == [(0.1, 0.2, 0.3, 0.4)]
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert decoder.injected == {}

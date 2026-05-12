@@ -56,6 +56,7 @@ else:
 
 from demo.msd_utils.circuits import (  # noqa: E402
     build_decoder_kernel_bundle,
+    build_msd_primitives,
     build_task_map,
 )
 from demo.msd_utils.core import (  # noqa: E402
@@ -123,7 +124,12 @@ M2OBS_1 = steane7_m2obs(1)
 OUTPUT_QUBIT
 
 # %%
-kernel_bundle = build_decoder_kernel_bundle(THETA, PHI, LAM, output_qubit=OUTPUT_QUBIT)
+MSD_PRIMITIVES = build_msd_primitives(THETA, PHI, LAM)
+kernel_bundle = build_decoder_kernel_bundle(
+    MSD_PRIMITIVES,
+    output_qubit=OUTPUT_QUBIT,
+    injected_prep_args=(THETA, PHI, LAM),
+)
 DISTILLED_KERNELS = kernel_bundle.actual
 INJECTED_KERNELS = kernel_bundle.injected
 

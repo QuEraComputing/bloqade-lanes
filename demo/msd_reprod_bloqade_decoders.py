@@ -71,12 +71,12 @@ else:
 import bloqade.decoders as bloqade_decoders  # noqa: E402
 from bloqade.decoders import GurobiDecoder, TableDecoder  # noqa: E402
 from demo.msd_utils.circuits import (  # noqa: E402
-    _build_msd_primitives,
     _build_tomography_primitives,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
     build_measurement_maps,
+    build_msd_primitives,
     build_task,
     build_task_map,
 )
@@ -190,7 +190,7 @@ ANCILLA_QUBITS = (1, 2, 3, 4)
 VALID_FACTORY_TARGETS = np.array([[0, 0, 0, 0]], dtype=np.uint8)
 SPECIAL_KERNEL_STRATEGY = "compiled_inverse_prefix"
 
-_MSD_PRIMITIVES = _build_msd_primitives(THETA, PHI, LAM)
+_MSD_PRIMITIVES = build_msd_primitives(THETA, PHI, LAM)
 msd_forward = _MSD_PRIMITIVES["logical_circuit"]
 
 _TOMOGRAPHY_PRIMITIVES = _build_tomography_primitives(output_qubit=OUTPUT_QUBIT)
@@ -221,10 +221,9 @@ MSD_MEASUREMENT_MAPS = build_measurement_maps(5)
 INJECTED_MEASUREMENT_MAPS = build_measurement_maps(1)
 
 kernel_bundle = build_decoder_kernel_bundle(
-    THETA,
-    PHI,
-    LAM,
+    _MSD_PRIMITIVES,
     output_qubit=OUTPUT_QUBIT,
+    injected_prep_args=(THETA, PHI, LAM),
     special_kernel_strategy=SPECIAL_KERNEL_STRATEGY,
 )
 ACTUAL_KERNELS = kernel_bundle.actual

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, TypeAlias, cast
+from typing import Any, Literal, Mapping, TypeAlias, cast
 
 import tsim as tsim_backend
 from kirin import ir, rewrite
@@ -147,6 +147,7 @@ def _prepend_inverse_tsim_circuit(
     )
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
 def _build_compiled_unitary_prefix_circuit(
     task: GeminiLogicalSimulatorTask,
@@ -155,6 +156,7 @@ def _build_compiled_unitary_prefix_circuit(
     return compiled_circuit[: _first_nonunitary_instruction_index(compiled_circuit)]
 
 
+# REFACTOR: this should be an internal function for an application-level function.
 # TODO: ideally, overriding the tsim circuit could be done in the GeminiLogicalSimulatorTask. See above
 def _override_task_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
@@ -168,8 +170,9 @@ def _override_task_tsim_circuit(
         _set_task_override(task, "noiseless_tsim_circuit", noiseless_circuit)
 
 
+# REFACTOR: this should be a public-facing application level function.
 # NOTE: this is basically what the user would "instantiate" for this specific MSD experiment
-def _build_msd_primitives(
+def build_msd_primitives(
     theta: float,
     phi: float,
     lam: float,
@@ -194,6 +197,7 @@ def _build_msd_primitives(
     )
 
 
+# REFACTOR: this should be an private application-level function.
 def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]:
     @squin.kernel
     def tomography_x(reg):
@@ -215,11 +219,13 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
     }
 
 
+# REFACTOR: this should be a private application-level function.
 @squin.kernel
 def _squin_return_none(reg):
     return
 
 
+# REFACTOR: this should be a private application-level function.
 def produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: KirinKernel,
@@ -259,6 +265,7 @@ def produce_tomography_kernels(
     }
 
 
+# REFACTOR: this should be a private application-level function.
 # This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for downstream consumption
 def _kernels_by_tomography_basis(
     kernels: Mapping[str, KirinKernel],
@@ -269,56 +276,14 @@ def _kernels_by_tomography_basis(
     }
 
 
-# NOTE: this is to basically enforce typing at runtime for Python.. in part because we don't have compile-time checks
-def _require_primitive_keys(
-    primitives: Mapping[str, SquinKernel],
-    *,
-    keys: tuple[str, ...],
-    builder_name: str,
-) -> None:
-    missing = [key for key in keys if key not in primitives]
-    if missing:
-        raise ValueError(
-            f"{builder_name} must return keys {keys}; missing {tuple(missing)}."
-        )
-
-
-# NOTE: this is to basically enforce typing at runtime for Python.. in part because we don't have compile-time checks
-def _coerce_decoder_primitive_set(
-    primitive_set: DecoderPrimitiveSet | Mapping[str, SquinKernel],
-    *,
-    builder_name: str,
-) -> DecoderPrimitiveSet:
-    if isinstance(primitive_set, DecoderPrimitiveSet):
-        return primitive_set
-    if isinstance(primitive_set, Mapping):
-        _require_primitive_keys(
-            primitive_set,
-            keys=(
-                "state_injection_circuit",
-                "logical_circuit",
-            ),
-            builder_name=builder_name,
-        )
-        return DecoderPrimitiveSet(
-            state_injection_circuit=primitive_set["state_injection_circuit"],
-            logical_circuit=primitive_set["logical_circuit"],
-        )
-    raise TypeError(
-        f"{builder_name} must return a DecoderPrimitiveSet or mapping, got "
-        f"{type(primitive_set).__name__}."
-    )
-
-
+# REFACTOR: This should be a public application-level function.
 def build_decoder_kernel_bundle(
-    *primitive_args: float,
+    primitive_set: DecoderPrimitiveSet,
     # TODO: get rid of logical qubits argument here?
     num_logical_qubits: int = 5,
     output_qubit: int = 0,
-    build_primitives: Callable[..., DecoderPrimitiveSet | Mapping[str, SquinKernel]] = (
-        _build_msd_primitives
-    ),
     injected_prep_args: tuple[float, float, float] | None = None,
+    # TODO: have to pass down special_kernel_strategy here?
     special_kernel_strategy: Literal[
         "prefix_prepare", "compiled_inverse_prefix"
     ] = "prefix_prepare",
@@ -329,10 +294,6 @@ def build_decoder_kernel_bundle(
             "'compiled_inverse_prefix'."
         )
 
-    primitive_set = _coerce_decoder_primitive_set(
-        build_primitives(*primitive_args),
-        builder_name=getattr(build_primitives, "__name__", "build_primitives"),
-    )
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
     state_injection_circuit = primitive_set.state_injection_circuit
     logical_circuit = primitive_set.logical_circuit
@@ -387,17 +348,9 @@ def build_decoder_kernel_bundle(
     else:
         special = dict(actual)
 
-    resolved_injected_prep_args = injected_prep_args
-    if resolved_injected_prep_args is None and len(primitive_args) == 3:
-        resolved_injected_prep_args = (
-            float(primitive_args[0]),
-            float(primitive_args[1]),
-            float(primitive_args[2]),
-        )
-
     injected: dict[str, KirinKernel] = {}
-    if resolved_injected_prep_args is not None:
-        theta, phi, lam = resolved_injected_prep_args
+    if injected_prep_args is not None:
+        theta, phi, lam = injected_prep_args
 
         @squin.kernel
         def injected_logical_kernel(reg):
@@ -420,6 +373,7 @@ def build_decoder_kernel_bundle(
     )
 
 
+# REFACTOR: This should be a public application-level function.
 def build_injected_decoder_kernel_map(
     *,
     output_qubit: int = 0,
@@ -474,6 +428,7 @@ def build_injected_decoder_kernel_map(
     }
 
 
+# REFACTOR: This should be a private application-level function.
 def build_task(
     simulator: GeminiLogicalSimulator,
     kernel: KirinKernel,
@@ -496,6 +451,7 @@ def build_task(
     )
 
 
+# REFACTOR: this should be a private application-level function.
 def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
     kernel = demo_task.metadata.get("logical_kernel")
     if not isinstance(kernel, ir.Method):
@@ -532,6 +488,7 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
     )
 
 
+# REFACTOR: This should be a public application-level function.
 def apply_special_tsim_circuit_strategy(
     task_map: Mapping[str, DemoTask],
     strategy: Literal["prefix_prepare", "compiled_inverse_prefix"] | None,
@@ -560,6 +517,7 @@ def apply_special_tsim_circuit_strategy(
     return transformed
 
 
+# REFACTOR: this should be a public application-level function.
 def build_task_map(
     simulator: GeminiLogicalSimulator,
     kernel_map: Mapping[str, KirinKernel],
