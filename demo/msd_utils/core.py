@@ -16,11 +16,13 @@ from .common import (
     SyndromeLayout,
 )
 
+# REFACTOR: these should be a public application-level constants.
 DEFAULT_BASIS_LABELS = ("X", "Y", "Z")
 DEFAULT_IDEAL_FACTORY_ACCEPTANCE = 1.0 / 6.0
 DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 
 
+# REFACTOR: this should be a public standard library type.
 class FidelitySummary(TypedDict):
     point: float
     median: float
@@ -30,6 +32,7 @@ class FidelitySummary(TypedDict):
     bloch: tuple[float, float, float]
 
 
+# REFACTOR: this should be a public standard library type.
 class DetectorObservableResult(Protocol):
     @property
     def detectors(self) -> object: ...
@@ -38,6 +41,7 @@ class DetectorObservableResult(Protocol):
     def observables(self) -> object: ...
 
 
+# REFACTOR: this should be a public standard library type.
 # TODO: not sure if I like this overload logic; do we need it?
 class SimulatorTask(Protocol):
     @overload
@@ -68,12 +72,14 @@ class SimulatorTask(Protocol):
     ) -> object | DetectorObservableResult: ...
 
 
+# REFACTOR: this should be a public standard library type.
 @dataclass(frozen=True)
 class BasisDataset:
     detectors: np.ndarray
     observables: np.ndarray
 
 
+# REFACTOR: this should be a private standard library function.
 # This is a wrapper to support both GeminiLogicalSimulatorTask and DemoTask.
 def _run_simulator_task(
     task: SimulatorTask,
@@ -100,6 +106,7 @@ def _run_simulator_task(
     return task.run(shots, with_noise=with_noise, run_detectors=run_detectors)
 
 
+# REFACTOR: this should be a private standard library function.
 def pack_boolean_array(arr: np.ndarray) -> np.ndarray:
     arr = np.asarray(arr, dtype=np.uint64)
     if arr.ndim == 1:
