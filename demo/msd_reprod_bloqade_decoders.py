@@ -70,34 +70,32 @@ else:
 
 import bloqade.decoders as bloqade_decoders  # noqa: E402
 from bloqade.decoders import GurobiDecoder, TableDecoder  # noqa: E402
-from demo.msd_utils.circuits import (  # noqa: E402
-    _build_tomography_primitives,
+from demo.msd_utils import (  # noqa: E402
+    DEFAULT_BASIS_LABELS,
+    BasisDataset,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
     build_measurement_maps,
+    build_mld_decoders_from_pair,
+    build_mle_decoders,
     build_msd_primitives,
-    build_task,
     build_task_map,
-)
-from demo.msd_utils.core import (  # noqa: E402
-    DEFAULT_BASIS_LABELS,
-    BasisDataset,
-    ancilla_matches_valid_targets,
+    estimate_mld_ancilla_scores,
+    evaluate_curve,
     fidelity_from_counts,
+    injected_baseline,
     logical_expectation,
     run_task,
     split_factory_bits,
-)
-from demo.msd_utils.decoders import (  # noqa: E402
-    build_mld_decoders_from_pair,
-    build_mle_decoders,
-    compute_dem_data,
-    estimate_mld_ancilla_scores,
-    evaluate_curve,
-    injected_baseline,
-    make_layout_only_dem,
     train_mld_decoder_pair,
+)
+from demo.msd_utils.domain.kernels import _build_tomography_primitives  # noqa: E402
+from demo.msd_utils.domain.layout import _ancilla_matches_valid_targets  # noqa: E402
+from demo.msd_utils.domain.special_tasks import _build_task  # noqa: E402
+from demo.msd_utils.standard.dem import (  # noqa: E402
+    _compute_dem_data,
+    _make_layout_only_dem,
 )
 
 from bloqade import qubit  # noqa: E402
@@ -453,8 +451,8 @@ def build_mld_decoders_debug(training_dataset: BasisDataset):
     anc_det, anc_obs = split_factory_bits(det, obs)
     print("anc det/obs:", anc_det.shape, anc_obs.shape)
 
-    full_dem = make_layout_only_dem(det.shape[1], obs.shape[1])
-    factory_dem = make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1])
+    full_dem = _make_layout_only_dem(det.shape[1], obs.shape[1])
+    factory_dem = _make_layout_only_dem(anc_det.shape[1], anc_obs.shape[1])
     print(
         "dem sizes:",
         full_dem.num_detectors,
@@ -577,7 +575,7 @@ mld_training
 MLD_SIGN_VECTOR
 
 # %%
-compute_dem_data(actual_tasks["X"])
+_compute_dem_data(actual_tasks["X"])
 
 # %%
 dem_matrix = beliefmatching.detector_error_model_to_check_matrices(
@@ -858,7 +856,7 @@ def dbg_identity_5():
     return default_post_processing(reg)
 
 
-dbg_identity_task = build_task(sim, dbg_identity_5, m2dets=None, m2obs=None)
+dbg_identity_task = _build_task(sim, dbg_identity_5, m2dets=None, m2obs=None)
 summarize_noiseless(dbg_identity_task, label="identity_5")
 
 
@@ -889,7 +887,7 @@ for name, kernel in [
     ("tomo_y", dbg_tomo_y),
     ("tomo_z", dbg_tomo_z),
 ]:
-    task = build_task(sim, kernel, m2dets=None, m2obs=None)
+    task = _build_task(sim, kernel, m2dets=None, m2obs=None)
     summarize_noiseless(task, label=name)
 
 
@@ -899,7 +897,7 @@ for name, kernel in [
     ("tomo_y", dbg_tomo_y),
     ("tomo_z", dbg_tomo_z),
 ]:
-    task = build_task(sim, kernel, m2dets=None, m2obs=None)
+    task = _build_task(sim, kernel, m2dets=None, m2obs=None)
     summarize_noiseless(task, label=name)
 
 
@@ -944,7 +942,7 @@ def injected_baseline_debug(task_map, posterior_samples: int, shots: int = 4000)
         ).astype(bool)
 
         decoder = TableDecoder.from_det_obs_shots(
-            make_layout_only_dem(
+            _make_layout_only_dem(
                 dataset.detectors.shape[1], dataset.observables.shape[1]
             ),
             train_det_obs,
@@ -1038,7 +1036,7 @@ def naive_distilled_summary(
         dataset = actual_data[basis]
         anc_det, anc_obs = split_factory_bits(dataset.detectors, dataset.observables)
 
-        mask = ancilla_matches_valid_targets(anc_obs, valid_factory_targets)
+        mask = _ancilla_matches_valid_targets(anc_obs, valid_factory_targets)
 
         if require_zero_ancilla_detectors:
             mask &= np.all(anc_det == 0, axis=1)
@@ -1340,7 +1338,7 @@ def naive_distilled_summary(
         data = actual_data[basis]
         anc_det, anc_obs = split_factory_bits(data.detectors, data.observables)
 
-        mask = ancilla_matches_valid_targets(anc_obs, valid_factory_targets)
+        mask = _ancilla_matches_valid_targets(anc_obs, valid_factory_targets)
 
         if require_zero_ancilla_detectors:
             mask &= np.all(anc_det == 0, axis=1)

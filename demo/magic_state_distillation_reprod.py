@@ -54,15 +54,13 @@ for candidate in PROJECT_ROOT_CANDIDATES:
 else:
     raise FileNotFoundError("Could not locate repo root containing demo/msd_utils.")
 
-from demo.msd_utils.circuits import (  # noqa: E402
-    build_decoder_kernel_bundle,
-    build_msd_primitives,
-    build_task_map,
-)
-from demo.msd_utils.core import (  # noqa: E402
+from demo.msd_utils import (  # noqa: E402
     DEFAULT_BASIS_LABELS,
     DEFAULT_IDEAL_FACTORY_ACCEPTANCE,
     DEFAULT_TARGET_BLOCH,
+    build_decoder_kernel_bundle,
+    build_msd_primitives,
+    build_task_map,
     infer_distilled_sign_vector,
     infer_factory_target,
     logical_expectation,

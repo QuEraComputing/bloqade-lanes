@@ -14,34 +14,32 @@ from bloqade.lanes import GeminiLogicalSimulator
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_extras.qet import build_qet_kernel_maps, build_qet_primitives
-from demo.msd_utils import circuits
-from demo.msd_utils.circuits import (
+from demo.msd_utils import (
+    BasisDataset,
+    DecoderAdapter,
     DecoderPrimitiveSet,
+    DemoTask,
+    SparseTableDecoder,
+    SyndromeLayout,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_measurement_maps,
+    build_mle_decoders,
     build_msd_primitives,
     build_task_map,
-)
-from demo.msd_utils.common import DemoTask, ObservableFrame, SyndromeLayout
-from demo.msd_utils.core import (
-    BasisDataset,
-    fidelity_from_counts,
-    normalize_valid_factory_targets,
-    pack_boolean_array,
-    split_factory_bits,
-)
-from demo.msd_utils.decoder_classes import SparseTableDecoder
-from demo.msd_utils.decoders import (
-    DecoderAdapter,
-    build_mle_decoders,
     estimate_mld_ancilla_scores,
     estimate_mld_ancilla_scores_from_tasks,
     evaluate_curve,
     evaluate_mld_curve,
+    fidelity_from_counts,
+    pack_boolean_array,
+    split_factory_bits,
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
 )
+from demo.msd_utils.domain import special_tasks as circuits
+from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
+from demo.msd_utils.domain.tasks import _ObservableFrame
 
 
 def test_fidelity_from_counts_returns_ordered_interval():
@@ -85,7 +83,7 @@ def test_split_factory_bits_and_pack_boolean_array():
 
 
 def test_normalize_valid_factory_targets_wraps_single_target():
-    targets = normalize_valid_factory_targets([0, 1, 0])
+    targets = _normalize_valid_factory_targets([0, 1, 0])
     assert targets.tolist() == [[0, 1, 0]]
 
 
@@ -115,8 +113,8 @@ def test_special_strategy_observable_frame_flag(monkeypatch: pytest.MonkeyPatch)
         normalize_observable_reference=False,
     )
 
-    assert normalized.observable_frame is ObservableFrame.NOISELESS_REFERENCE_FLIPS
-    assert raw.observable_frame is ObservableFrame.RAW
+    assert normalized.observable_frame is _ObservableFrame.NOISELESS_REFERENCE_FLIPS
+    assert raw.observable_frame is _ObservableFrame.RAW
 
 
 def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
@@ -268,7 +266,7 @@ class _ChunkTask:
 
 def test_build_mle_decoders_uses_confidence_decoder_api(monkeypatch):
     monkeypatch.setattr(
-        "demo.msd_utils.decoders.detector_error_model_to_check_matrices",
+        "demo.msd_utils.standard.dem.detector_error_model_to_check_matrices",
         lambda *args, **kwargs: _FakeDemMatrix(
             check_matrix=np.array([[1, 0], [0, 1], [1, 1], [0, 1]], dtype=int),
             observables_matrix=np.array([[1, 0], [0, 1]], dtype=int),

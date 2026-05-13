@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import numpy as np
 import stim
-from bloqade.decoders import BaseDecoder
+from bloqade.decoders import BaseDecoder, TableDecoder
 
-from .core import pack_boolean_array, unpack_packed_bits
+from ..standard.bit_packing import pack_boolean_array, unpack_packed_bits
 
 
-# REFACTOR: this should be a public application-level class.
-# NOTE: this basically uses a dictionary opposed to a table for the decoder; this is the case where classical memory is the bottleneck (at the cost of time).
-# ^ To be honest, this probably won't be used in production that much (we will probably stick to a np.array lookup table for fast lookups), so not reviewing it super carefully atm.
-# ^ for a couple reasons -- we'd probably want our tabledecoder to NOT be that sparse if it was good (we'd want to have seen a lot of different detector patterns) -- this was more
-# just implemented for prototyping reasons.
+# NOTE: this basically uses a dictionary opposed to a table for the decoder;
+# this is the case where classical memory is the bottleneck (at the cost of
+# time).
+# To be honest, this probably won't be used in production that much (we will
+# probably stick to a np.array lookup table for fast lookups), so not reviewing
+# it super carefully atm.
+# for a couple reasons -- we'd probably want our tabledecoder to NOT be that
+# sparse if it was good (we'd want to have seen a lot of different detector
+# patterns) -- this was more just implemented for prototyping reasons.
 class SparseTableDecoder(BaseDecoder):
     """Sparse lookup-table decoder with the same MLD argmax semantics.
 
@@ -113,3 +119,6 @@ class SparseTableDecoder(BaseDecoder):
         packed = int(pack_boolean_array(arr)[0])
         obs = self._maximum_likelihood_correction.get(packed, 0)
         return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
+
+
+TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]

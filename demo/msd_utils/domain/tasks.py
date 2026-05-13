@@ -18,25 +18,12 @@ if TYPE_CHECKING:
     from clifft import Program, SampleResult
 
 
-# REFACTOR: this should be a private application-level datatype.
 # TODO: ideally, not sure if we even want this ObservableFrame class.
-class ObservableFrame(str, Enum):
+class _ObservableFrame(str, Enum):
     RAW = "raw"
     NOISELESS_REFERENCE_FLIPS = "noiseless_reference_flips"
 
 
-# REFACTOR: this should be a public application-level datatype.
-# To specify the number of output qubits we want to do tomography on.
-@dataclass(frozen=True)
-class SyndromeLayout:
-    output_detector_count: int = 3
-    output_observable_count: int = 1
-
-
-DEFAULT_SYNDROME_LAYOUT = SyndromeLayout()
-
-
-# REFACTOR: this should be a private application-level function.
 def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
     # CliffT currently rejects Stim instruction tags like I_ERROR[loss](0).
     # The tags are metadata, so stripping them preserves the sampled semantics.
@@ -46,13 +33,10 @@ def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
     )
 
 
-# REFACTOR: This should be a public domain-level type.
-# TODO: is this the best way to do it? by overloading methods? but do we really support those overloaded methods?
-# TODO: later, we can try to integrate clifft with our stack more.
 @dataclass
 class DemoTask(Generic[RetType]):
     task: GeminiLogicalSimulatorTask[RetType]
-    observable_frame: ObservableFrame = ObservableFrame.RAW
+    observable_frame: _ObservableFrame = _ObservableFrame.RAW
     observable_reference: np.ndarray | None = None
     # TODO: this is SOLELY to pass down the "special" logical kernel for the "prefix_prepare" path.
     metadata: dict[str, object] = field(default_factory=dict)
