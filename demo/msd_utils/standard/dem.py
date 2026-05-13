@@ -11,6 +11,8 @@ from .types import DetectorErrorModelTask
 def _make_layout_only_dem(
     num_detectors: int, num_observables: int
 ) -> stim.DetectorErrorModel:
+    """Create a minimal DEM carrying only detector and observable dimensions."""
+
     terms = []
     if num_detectors:
         terms.append(" ".join(f"D{i}" for i in range(num_detectors)))
@@ -27,6 +29,8 @@ def _matrix_to_dem(
     observables_matrix: np.ndarray,
     priors: np.ndarray,
 ) -> stim.DetectorErrorModel:
+    """Convert binary detector/observable matrices into a Stim DEM."""
+
     lines = []
     for col, prior in enumerate(np.asarray(priors, dtype=np.float64)):
         det_targets = [f"D{i}" for i in np.flatnonzero(check_matrix[:, col])]
@@ -41,6 +45,8 @@ def _matrix_to_dem(
 
 
 def _compute_dem_data(task: DetectorErrorModelTask) -> dict[str, np.ndarray]:
+    """Extract check matrices and priors from a task detector error model."""
+
     dem_matrix = detector_error_model_to_check_matrices(
         task.detector_error_model,
         allow_undecomposed_hyperedges=True,
@@ -57,6 +63,8 @@ def _select_output_observables(
     *,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> np.ndarray:
+    """Select logical-output observable columns according to a syndrome layout."""
+
     output_obs = np.asarray(observables, dtype=np.uint8)[
         :, : layout.output_observable_count
     ]

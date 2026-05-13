@@ -22,6 +22,16 @@ from ..standard.types import KirinKernel
 
 @dataclass(frozen=True)
 class DecoderKernelBundle:
+    """Actual, special, and injected tomography kernels for decoder workflows.
+
+    Attributes:
+        actual: Basis-labeled kernels for the full noisy/input-prepared logical
+            circuit.
+        special: Basis-labeled kernels used for special/reference task
+            construction.
+        injected: Basis-labeled kernels for injected-state calibration tasks.
+    """
+
     actual: dict[str, KirinKernel]
     special: dict[str, KirinKernel]
     injected: dict[str, KirinKernel]
@@ -34,6 +44,17 @@ def build_msd_primitives(
     phi: float,
     lam: float,
 ) -> DecoderPrimitiveSet:
+    """Build the state-preparation and logical-circuit primitives for MSD.
+
+    Args:
+        theta: U3 ``theta`` angle for input magic-state preparation.
+        phi: U3 ``phi`` angle for input magic-state preparation.
+        lam: U3 ``lambda`` angle for input magic-state preparation.
+
+    Returns:
+        Primitive Squin kernels for the MSD state injection and logical circuit.
+    """
+
     @squin.kernel
     def msd_magic_prep(reg):
         squin.broadcast.u3(theta, phi, lam, reg)
@@ -59,12 +80,29 @@ def build_decoder_kernel_bundle(
     # TODO: get rid of logical qubits argument here?
     num_logical_qubits: int = 5,
     output_qubit: int = 0,
+    # TODO: might as well pass down the injected kernel instead of injected_prep_args here
     injected_prep_args: tuple[float, float, float] | None = None,
     # TODO: have to pass down special_kernel_strategy here?
     special_kernel_strategy: Literal[
         "prefix_prepare", "compiled_inverse_prefix"
     ] = "prefix_prepare",
 ) -> DecoderKernelBundle:
+    """Build tomography kernels for actual, special, and injected MSD tasks.
+
+    Args:
+        primitive_set: Primitive state-injection and logical-circuit kernels.
+        num_logical_qubits: Number of logical qubits in the MSD logical circuit.
+        output_qubit: Logical qubit measured as the output state.
+        injected_prep_args: Optional U3 angles for injected calibration kernels.
+        special_kernel_strategy: Strategy expected for the special task path.
+
+    Returns:
+        A ``DecoderKernelBundle`` containing basis-labeled kernel maps.
+
+    Raises:
+        ValueError: If ``special_kernel_strategy`` is unsupported.
+    """
+
     if special_kernel_strategy not in {"prefix_prepare", "compiled_inverse_prefix"}:
         raise ValueError(
             "special_kernel_strategy must be 'prefix_prepare' or "
@@ -154,6 +192,15 @@ def build_injected_decoder_kernel_map(
     *,
     output_qubit: int = 0,
 ) -> dict[str, KirinKernel]:
+    """Build ideal injected-state tomography kernels for decoder calibration.
+
+    Args:
+        output_qubit: Logical qubit measured by the tomography kernels.
+
+    Returns:
+        Basis-labeled kernels for ideal X/Y/Z injected reference states.
+    """
+
     h_theta = 0.5 * math.pi
     h_phi = 0.0
     hs_theta = 0.5 * math.pi

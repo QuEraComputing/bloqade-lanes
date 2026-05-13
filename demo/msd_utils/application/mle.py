@@ -16,6 +16,19 @@ def build_mle_decoders(
     gurobi_decoder_cls: type[ConfidenceDecoder],
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
+    """Build full and factory MLE decoder adapters from a task DEM.
+
+    Args:
+        task: Object exposing the full detector error model.
+        gurobi_decoder_cls: Confidence-capable decoder class used for both the
+            full and factory DEMs.
+        layout: Syndrome layout separating output and factory syndrome bits.
+
+    Returns:
+        Decoder adapter with full-output decoding and factory confidence
+        decoding.
+    """
+
     dem_data = _compute_dem_data(task)
     full_dem = _matrix_to_dem(dem_data["H"], dem_data["O"], dem_data["priors"])
     factory_dem = _matrix_to_dem(

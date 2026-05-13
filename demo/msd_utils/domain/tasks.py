@@ -20,11 +20,15 @@ if TYPE_CHECKING:
 
 # TODO: ideally, not sure if we even want this ObservableFrame class.
 class _ObservableFrame(str, Enum):
+    """Observable-frame normalization modes for demo tasks."""
+
     RAW = "raw"
     NOISELESS_REFERENCE_FLIPS = "noiseless_reference_flips"
 
 
 def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
+    """Return Stim text with instruction tags stripped for CliffT parsing."""
+
     # CliffT currently rejects Stim instruction tags like I_ERROR[loss](0).
     # The tags are metadata, so stripping them preserves the sampled semantics.
     return "\n".join(
@@ -35,6 +39,17 @@ def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
 
 @dataclass
 class DemoTask(Generic[RetType]):
+    """Task wrapper adding observable-frame metadata and CliffT sampling.
+
+    Args:
+        task: Underlying Gemini logical simulator task.
+        observable_frame: Observable normalization mode applied by sampling
+            helpers.
+        observable_reference: Optional cached noiseless observable reference
+            used for rebasing special tasks.
+        metadata: Implementation metadata used by special task construction.
+    """
+
     task: GeminiLogicalSimulatorTask[RetType]
     observable_frame: _ObservableFrame = _ObservableFrame.RAW
     observable_reference: np.ndarray | None = None
@@ -92,6 +107,7 @@ class DemoTask(Generic[RetType]):
         seed: int | None = None,
     ) -> Result[RetType] | DetectorResult: ...
 
+    # TODO: check if _run_clifft() is ever called with run()... because I think we might be calling sample_clifft_det_obs always?
     def _run_clifft(
         self,
         shots: int = 1,

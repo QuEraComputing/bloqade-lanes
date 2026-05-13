@@ -35,6 +35,8 @@ DecodeResult = TypeVar("DecodeResult")
 
 @dataclass(frozen=True)
 class _PackedThresholdDataset:
+    """Packed detector/observable arrays used during threshold evaluation."""
+
     anc_det: np.ndarray
     anc_obs: np.ndarray
     packed_full_det: np.ndarray
@@ -45,6 +47,18 @@ class _PackedThresholdDataset:
 
 @dataclass(frozen=True)
 class DecoderAdapter:
+    """Decoder pair plus cached full/factory decode callables.
+
+    Attributes:
+        full_decoder: Decoder used for full detector syndromes, if retained.
+        factory_decoder: Confidence decoder used for factory syndromes, if
+            retained.
+        decode_factory: Callable from packed factory syndrome to
+            ``(factory_correction, confidence_score)``.
+        decode_full: Callable from packed full syndrome to output correction.
+        factory_score_mode: Label for the factory confidence score.
+    """
+
     # NOTE: full_decoder and factory_decoder fields might not be strictly needed; can maybe remove them (and core functionality is preserved.)
     full_decoder: BaseDecoder | None
     factory_decoder: ConfidenceDecoder | None
@@ -63,6 +77,8 @@ def _make_decoder_adapter(
     factory_decode_impl: Callable[[np.ndarray], tuple[np.ndarray, float]],
     factory_score_mode: str,
 ) -> DecoderAdapter:
+    """Create a decoder adapter with integer-keyed cached decode functions."""
+
     # NOTE: the reason why we have to pack/unpack these bits is because lru_cache doesn't work for numpy arrays
     # but works for ints. So that's why the signature here for decode_factory takes in an int for the syndrome.
     @lru_cache(maxsize=None)
@@ -98,6 +114,8 @@ def _call_decoder_fn(
     fn: Callable[[int], DecodeResult],
     bits: np.ndarray,
 ) -> DecodeResult:
+    """Pack syndrome bits and call an integer-keyed decoder function."""
+
     return fn(packed_bits_to_int(bits))
 
 
@@ -109,6 +127,8 @@ def _weighted_quantiles_from_counts(
     weights: np.ndarray,
     quantiles: np.ndarray,
 ) -> np.ndarray:
+    """Compute quantiles from compressed value/count data."""
+
     values = np.asarray(values, dtype=np.float64).reshape(-1)
     weights = np.asarray(weights, dtype=np.int64).reshape(-1)
     quantiles = np.asarray(quantiles, dtype=np.float64).reshape(-1)
@@ -153,6 +173,8 @@ def _pack_threshold_dataset(
     *,
     layout: SyndromeLayout,
 ) -> _PackedThresholdDataset:
+    """Pack repeated threshold-evaluation columns into integer arrays."""
+
     anc_det, anc_obs = split_factory_bits(
         dataset.detectors,
         dataset.observables,
@@ -179,6 +201,8 @@ def _build_ancilla_decode_cache(
     *,
     syndrome_length: int,
 ) -> dict[int, tuple[int, float]]:
+    """Decode each unique ancilla detector pattern once."""
+
     unique_anc_det = np.unique(packed_anc_det)
     ancilla_decode_cache: dict[int, tuple[int, float]] = {}
     for packed in unique_anc_det.tolist():
@@ -202,6 +226,8 @@ def _build_full_decode_cache(
     *,
     syndrome_length: int,
 ) -> dict[int, int]:
+    """Decode each unique full detector pattern once."""
+
     unique_full_det = np.unique(packed_full_det)
     full_decode_cache: dict[int, int] = {}
     for packed in unique_full_det.tolist():
@@ -219,6 +245,8 @@ def _build_full_decode_cache(
 def _score_count_dict_to_arrays(
     score_to_counts: Mapping[float, np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert score-to-zero/one-count mappings into sorted arrays."""
+
     if not score_to_counts:
         return (
             np.array([], dtype=np.float64),
@@ -250,6 +278,8 @@ def _build_generic_threshold_tables(
     np.ndarray,
     int,
 ]:
+    """Build score/count tables shared by threshold-curve evaluators."""
+
     packed_targets = _packed_pattern_targets(targets)
     per_basis_tables: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     global_score_weights: defaultdict[float, int] = defaultdict(int)
@@ -325,6 +355,8 @@ def _counts_for_threshold(
     one_counts: np.ndarray,
     threshold: float,
 ) -> tuple[int, int]:
+    """Sum zero/one counts whose scores are at least the threshold."""
+
     if len(scores) == 0:
         return 0, 0
     idx = int(np.searchsorted(scores, threshold, side="left"))
@@ -352,6 +384,8 @@ def _evaluate_cached_threshold_curve(
     uncertainty_backend: str,
     max_grid_points: int,
 ) -> dict[str, np.ndarray]:
+    """Evaluate a fidelity curve from precomputed score/count tables."""
+
     if len(score_array) == 0:
         raise RuntimeError("No factory-accepted shots found for threshold sweep")
 
@@ -459,6 +493,30 @@ def evaluate_curve(
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
 ) -> dict[str, np.ndarray]:
+    """Evaluate a postselection curve for decoder confidence thresholds.
+
+    Args:
+        actual_data: Basis-labeled detector/observable samples to evaluate.
+        decoder_map: Basis-labeled decoder adapters.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        threshold_points: Number of thresholds to evaluate for continuous
+            threshold policies.
+        metric: Human-readable metric name used in error messages.
+        valid_factory_targets: Valid corrected factory observable patterns.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        basis_labels: Tomography basis labels to evaluate.
+        min_accepted_per_basis: Minimum accepted samples required per basis.
+        threshold_policy: Threshold selection policy.
+        selection_mode: ``"threshold"`` or ``"pattern_rank"``.
+        layout: Syndrome layout separating output and factory bits.
+        uncertainty_backend: Fidelity uncertainty backend.
+        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
+
+    Returns:
+        Dictionary containing accepted fractions, fidelities, and intervals.
+    """
+
     if selection_mode == "pattern_rank":
         return evaluate_mld_curve(
             actual_data,
@@ -528,6 +586,25 @@ def evaluate_mld_curve(
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
 ) -> dict[str, np.ndarray]:
+    """Evaluate the MLD pattern-rank postselection curve.
+
+    Args:
+        actual_data: Basis-labeled detector/observable samples to evaluate.
+        decoder_map: Basis-labeled MLD decoder adapters.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        valid_factory_targets: Valid corrected factory observable patterns.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        basis_labels: Tomography basis labels to evaluate.
+        min_accepted_per_basis: Minimum accepted samples required per basis.
+        layout: Syndrome layout separating output and factory bits.
+        uncertainty_backend: Fidelity uncertainty backend.
+        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
+
+    Returns:
+        Dictionary containing accepted fractions, fidelities, and intervals.
+    """
+
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     pattern_counts_by_basis: dict[str, dict[int, int]] = {}
     corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}

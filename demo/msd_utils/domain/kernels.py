@@ -12,6 +12,14 @@ from ..standard.types import KirinKernel, SquinKernel
 
 @dataclass(frozen=True)
 class DecoderPrimitiveSet:
+    """Primitive Squin kernels needed to build MSD decoder tasks.
+
+    Attributes:
+        state_injection_circuit: Squin kernel that prepares the input logical
+            magic states.
+        logical_circuit: Squin kernel for the logical circuit under test.
+    """
+
     state_injection_circuit: SquinKernel
     logical_circuit: SquinKernel
 
@@ -20,6 +28,8 @@ class DecoderPrimitiveSet:
 
 
 def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]:
+    """Build X/Y/Z tomography-basis Squin kernels for one output qubit."""
+
     @squin.kernel
     def tomography_x(reg):
         squin.h(reg[output_qubit])
@@ -41,6 +51,8 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
 
 
 def _squin_return_none(reg):
+    """Return no value from a generated Squin kernel."""
+
     return
 
 
@@ -53,6 +65,24 @@ def produce_tomography_kernels(
     *,
     supply_reg: bool = True,
 ) -> Mapping[str, KirinKernel]:
+    """Compose logical and tomography kernels into labeled tomography kernels.
+
+    Args:
+        num_qubits: Number of logical qubits to allocate when ``supply_reg`` is
+            true.
+        logical_kernel: Kernel applied before the tomography rotation.
+        tomography_kernels: Mapping from tomography-kernel name to tomography
+            rotation kernel.
+        return_val_fn: Callable applied to the logical register to produce the
+            returned value for allocated Gemini logical kernels.
+        kernel_name: Prefix for generated kernel names.
+        supply_reg: If true, create Gemini logical kernels that allocate their
+            own register. If false, return Squin kernels that accept ``reg``.
+
+    Returns:
+        Mapping from generated kernel names to generated Kirin kernels.
+    """
+
     def make_kernel(tomog_kernel: SquinKernel, generated_name: str) -> KirinKernel:
         def inner_tomog_kernel(reg):
             logical_kernel(reg)
@@ -88,6 +118,8 @@ def produce_tomography_kernels(
 def _kernels_by_tomography_basis(
     kernels: Mapping[str, KirinKernel],
 ) -> dict[str, KirinKernel]:
+    """Rekey generated tomography kernels by basis label."""
+
     return {
         kernel_name.split("_")[-1].upper(): kernel
         for kernel_name, kernel in kernels.items()

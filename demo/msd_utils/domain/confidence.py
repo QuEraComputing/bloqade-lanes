@@ -10,6 +10,16 @@ from ..standard.bit_packing import pack_boolean_array
 
 @dataclass(frozen=True)
 class TableDecoderWithConfidence(ConfidenceDecoder):
+    """Wrap a table decoder with a syndrome-indexed confidence score.
+
+    Attributes:
+        decoder: Underlying decoder used to produce observable corrections.
+        syndrome_confidence: Confidence score table indexed by packed detector
+            syndrome.
+        confidence_score_mode: Label describing the score returned by
+            ``decode_with_confidence``.
+    """
+
     decoder: BaseDecoder
     syndrome_confidence: np.ndarray
     confidence_score_mode: str = "mld_output_fidelity"

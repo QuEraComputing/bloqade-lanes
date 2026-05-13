@@ -9,6 +9,7 @@ from scipy.stats import binomtest
 
 from .types import FidelitySummary, PosteriorFidelitySummary
 
+# TODO: should (1, 1, 1) be the default bloch vector in the standard library???
 DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 _DEFAULT_SIGN = np.array((1.0, 1.0, 1.0), dtype=np.float64)
 
@@ -18,6 +19,8 @@ def _weighted_quantile(
     quantiles: Sequence[float],
     weights: np.ndarray,
 ) -> np.ndarray:
+    """Compute weighted quantiles from explicitly weighted samples."""
+
     order = np.argsort(values)
     values = values[order]
     weights = weights[order]
@@ -28,6 +31,8 @@ def _weighted_quantile(
 
 # TODO: make the prior for fidelity computation configurable
 def _bures_measure(points: np.ndarray) -> np.ndarray:
+    """Evaluate the Bures prior density at Bloch-ball points."""
+
     radii_sq = np.sum(points * points, axis=1)
     weights = np.zeros(len(points), dtype=np.float64)
     mask = radii_sq < 1.0
@@ -38,11 +43,15 @@ def _bures_measure(points: np.ndarray) -> np.ndarray:
 # TODO: get rid of the 9 binary precision cap, to allow for the user to get
 # arbitrarily precise tomography estimates.
 def _grid_axis_points(binary_precision: int) -> int:
+    """Resolve binary precision into a capped number of grid cells per axis."""
+
     return 2 ** min(9, max(4, int(binary_precision))) + 1
 
 
 @lru_cache(maxsize=None)
 def _grid_axis_values(axis_points: int) -> np.ndarray:
+    """Return centered grid values spanning the Bloch coordinate interval."""
+
     edges = np.linspace(-1.0, 1.0, axis_points + 1, dtype=np.float64)
     return (edges[:-1] + edges[1:]) / 2.0
 
@@ -55,6 +64,8 @@ def _axis_likelihood_window(
     binary_precision: int,
     min_points: int = 33,
 ) -> np.ndarray:
+    """Restrict one Bloch coordinate grid to values supported by the likelihood."""
+
     if n_i <= 0 or len(values) <= min_points:
         return values
 
@@ -79,6 +90,8 @@ def _axis_likelihood_window(
 
 
 def _downsample_axis(values: np.ndarray, keep: int) -> np.ndarray:
+    """Downsample an axis grid while preserving endpoints approximately."""
+
     if len(values) <= keep:
         return values
     indices = np.linspace(0, len(values) - 1, num=keep, dtype=int)
@@ -98,6 +111,8 @@ def _adaptive_bloch_ball_grid(
     binary_precision: int,
     max_grid_points: int,
 ) -> np.ndarray:
+    """Build a likelihood-adapted grid of valid Bloch-ball points."""
+
     axis_values = _grid_axis_values(axis_points)
     subsets = [
         _axis_likelihood_window(
@@ -138,6 +153,25 @@ def posterior_fidelity_summary(
     binary_precision: int | None = None,
     max_grid_points: int = 1_500_000,
 ) -> PosteriorFidelitySummary:
+    """Estimate fidelity and credible interval from tomography counts.
+    Applies the Bayesian analysis on Bloch vectors described in the "Estimation
+    of Confidence Intervals" section in the MSD paper: https://arxiv.org/pdf/2412.15165
+
+    Args:
+        n: Number of shots per tomography axis, ordered as X/Y/Z.
+        k: Number of zero outcomes per tomography axis, ordered as X/Y/Z.
+        target_bloch: Target Bloch vector used to convert sampled Bloch points
+            into fidelities.
+        sign: Sign convention applied to candidate Bloch vectors before
+            computing fidelity.
+        binary_precision: Controls the Bloch-ball grid resolution. ``None``
+            uses the default precision.
+        max_grid_points: Maximum number of adaptive grid points to evaluate.
+
+    Returns:
+        Posterior mean, median, credible interval, and error bar.
+    """
+
     if binary_precision is None:
         binary_precision = 9
     else:
@@ -201,6 +235,16 @@ def posterior_fidelity_summary(
 
 
 def logical_expectation(bits: np.ndarray) -> float:
+    """Convert logical 0/1 samples into a Pauli expectation value.
+
+    Args:
+        bits: Logical observable bits, where 0 maps to ``+1`` and 1 maps to
+            ``-1``.
+
+    Returns:
+        Mean Pauli expectation value, or ``nan`` for an empty input.
+    """
+
     if len(bits) == 0:
         return float("nan")
     return float(np.mean(1.0 - 2.0 * np.asarray(bits, dtype=np.float64)))
@@ -213,6 +257,19 @@ def expectation_conf_interval(
     confidence: float = 0.95,
     method: str = "wilson",
 ) -> np.ndarray:
+    """Return a binomial confidence interval for a Pauli expectation.
+    Used to compute the likelihood term in Bayes' rule.
+
+    Args:
+        zero_count: Number of logical-zero outcomes.
+        one_count: Number of logical-one outcomes.
+        confidence: Confidence level for the interval.
+        method: Method passed to ``scipy.stats.binomtest(...).proportion_ci``.
+
+    Returns:
+        Two-element array containing the lower and upper expectation bounds.
+    """
+
     n = max(1, int(zero_count) + int(one_count))
     zero_interval = binomtest(int(zero_count), n).proportion_ci(
         confidence, method=method
@@ -229,6 +286,19 @@ def expectation_with_error_bar(
     confidence: float = 0.95,
     method: str = "wilson",
 ) -> tuple[float, float]:
+    """Return a Pauli expectation and symmetric error bar.
+    Used in the "Wilson" uncertainty method for estimating uncertainty from tomography.
+
+    Args:
+        zero_count: Number of logical-zero outcomes.
+        one_count: Number of logical-one outcomes.
+        confidence: Confidence level for the interval used to derive the error.
+        method: Method passed to ``expectation_conf_interval``.
+
+    Returns:
+        A pair ``(expectation, error_bar)``.
+    """
+
     num_shots = max(int(zero_count) + int(one_count), 1)
     exp_val = float((int(zero_count) - int(one_count)) / num_shots)
     exp_interval = expectation_conf_interval(
@@ -251,6 +321,26 @@ def fidelity_from_counts(
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
 ) -> FidelitySummary:
+    """Compute fidelity summary from X/Y/Z logical observable bit arrays.
+    Switches between "bayesian_bloch_ball" for confidence interval estimation (used
+    in the MSD paper) or "wilson".
+
+    Args:
+        x_bits: Logical observable bits from X-basis tomography.
+        y_bits: Logical observable bits from Y-basis tomography.
+        z_bits: Logical observable bits from Z-basis tomography.
+        binary_precision: Precision used by the Bayesian Bloch-ball backend.
+        sign_vector: Per-axis sign convention applied to reconstructed
+            expectations.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        uncertainty_backend: Either ``"wilson"`` or ``"bayesian_bloch_ball"``.
+        max_grid_points: Maximum adaptive grid size for the Bayesian backend.
+
+    Returns:
+        Fidelity summary including point estimate, interval, error, and Bloch
+        vector.
+    """
+
     x_zero = int(np.sum(np.asarray(x_bits) == 0))
     x_one = int(np.sum(np.asarray(x_bits) != 0))
     y_zero = int(np.sum(np.asarray(y_bits) == 0))
@@ -294,6 +384,29 @@ def fidelity_from_zero_one_counts(
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
 ) -> FidelitySummary:
+    """Compute fidelity summary from X/Y/Z zero/one count pairs.
+    Switches between "bayesian_bloch_ball" for confidence interval estimation (used
+    in the MSD paper) or "wilson".
+
+    Args:
+        x_zero: Number of X-basis zero outcomes.
+        x_one: Number of X-basis one outcomes.
+        y_zero: Number of Y-basis zero outcomes.
+        y_one: Number of Y-basis one outcomes.
+        z_zero: Number of Z-basis zero outcomes.
+        z_one: Number of Z-basis one outcomes.
+        binary_precision: Precision used by the Bayesian Bloch-ball backend.
+        sign_vector: Per-axis sign convention applied to reconstructed
+            expectations.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        uncertainty_backend: Either ``"wilson"`` or ``"bayesian_bloch_ball"``.
+        max_grid_points: Maximum adaptive grid size for the Bayesian backend.
+
+    Returns:
+        Fidelity summary including point estimate, interval, error, and Bloch
+        vector.
+    """
+
     sign = np.asarray(sign_vector, dtype=np.float64)
     target = np.asarray(target_bloch, dtype=np.float64)
 

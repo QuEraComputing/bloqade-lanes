@@ -8,6 +8,15 @@ import numpy as np
 
 @dataclass(frozen=True)
 class SyndromeLayout:
+    """Column layout describing output versus factory syndrome bits.
+
+    Attributes:
+        output_detector_count: Number of leading detector columns that belong
+            to the output logical qubit.
+        output_observable_count: Number of leading observable columns that
+            belong to the output logical qubit.
+    """
+
     output_detector_count: int = 3
     output_observable_count: int = 1
 
@@ -21,6 +30,18 @@ def split_factory_bits(
     *,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Return factory detector and observable bits after output columns.
+
+    Args:
+        detectors: Detector sample matrix.
+        observables: Observable sample matrix.
+        layout: Syndrome layout specifying how many leading columns are output
+            bits.
+
+    Returns:
+        A pair ``(factory_detectors, factory_observables)``.
+    """
+
     return (
         detectors[:, layout.output_detector_count :],
         observables[:, layout.output_observable_count :],
@@ -32,6 +53,8 @@ def split_factory_bits(
 def _normalize_valid_factory_targets(
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
 ) -> np.ndarray:
+    """Normalize one or more valid factory targets into a unique 2D array."""
+
     targets = np.asarray(valid_factory_targets, dtype=np.uint8)
     if targets.ndim == 1:
         targets = targets.reshape(1, -1)
@@ -49,6 +72,8 @@ def _ancilla_matches_valid_targets(
     ancilla_observables: np.ndarray,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
 ) -> np.ndarray | bool:
+    """Test whether ancilla observable rows match any valid target pattern."""
+
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     ancilla_observables = np.asarray(ancilla_observables, dtype=np.uint8)
     if ancilla_observables.ndim == 1:

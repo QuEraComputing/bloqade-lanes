@@ -34,6 +34,8 @@ from ..standard.types import SimulatorTask
 
 @dataclass(frozen=True)
 class _MLDTrainingArrays:
+    """Detector/observable arrays and dimensions used to train MLD decoders."""
+
     full_det_obs: np.ndarray
     factory_det_obs: np.ndarray
     full_detector_count: int
@@ -53,6 +55,8 @@ def _mld_training_arrays(
     *,
     layout: SyndromeLayout,
 ) -> _MLDTrainingArrays:
+    """Build full and factory training arrays from one sampled dataset."""
+
     output_obs = _select_output_observables(
         dataset.observables,
         layout=layout,
@@ -80,6 +84,17 @@ def train_mld_decoder_pair(
     table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> tuple[BaseDecoder, BaseDecoder]:
+    """Train full and factory MLD table decoders from sampled data.
+
+    Args:
+        training_dataset: Detector/observable samples used for table training.
+        table_decoder_cls: Table decoder class to train.
+        layout: Syndrome layout separating output and factory syndrome bits.
+
+    Returns:
+        Pair ``(full_decoder, factory_decoder)``.
+    """
+
     training_arrays = _mld_training_arrays(training_dataset, layout=layout)
     full_decoder = table_decoder_cls.from_det_obs_shots(
         _make_layout_only_dem(
@@ -111,6 +126,24 @@ def train_mld_decoder_pair_from_task(
     with_noise: bool = True,
     sim_type: str = "tsim",
 ) -> tuple[BaseDecoder, BaseDecoder]:
+    """Train full and factory MLD table decoders by sampling a task in chunks.
+
+    Args:
+        task: Simulator task used to generate training data.
+        shots: Number of shots to sample.
+        table_decoder_cls: Table decoder class to train.
+        layout: Syndrome layout separating output and factory syndrome bits.
+        chunk_size: Maximum shots sampled per task call.
+        with_noise: Whether to sample the noisy circuit path.
+        sim_type: Simulator backend for ``DemoTask`` instances.
+
+    Returns:
+        Pair ``(full_decoder, factory_decoder)``.
+
+    Raises:
+        ValueError: If ``shots`` yields no training data.
+    """
+
     chunk_iter = _iter_task_datasets(
         task,
         shots,
@@ -163,6 +196,25 @@ def estimate_mld_ancilla_scores(
     uncertainty_backend: str = "wilson",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> np.ndarray:
+    """Estimate shared ancilla-pattern confidence scores for MLD decoders.
+
+    Args:
+        decoder_by_basis: Mapping from basis label to
+            ``(full_decoder, factory_decoder)`` pairs.
+        ranking_data_by_basis: Mapping from basis label to sampled ranking data.
+        valid_factory_targets: Valid corrected factory observable patterns.
+        basis_labels: Tomography basis labels to evaluate.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        target_bloch: Target Bloch vector for fidelity scoring.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        uncertainty_backend: Fidelity uncertainty backend.
+        layout: Syndrome layout separating output and factory bits.
+
+    Returns:
+        Array indexed by packed ancilla detector pattern containing estimated
+        fidelity scores. Missing patterns are ``nan``.
+    """
+
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     if set(decoder_by_basis) != set(basis_labels):
         raise ValueError(
@@ -224,6 +276,8 @@ def _mld_scores_from_pattern_counts(
     binary_precision: int | None = 4,
     uncertainty_backend: str = "wilson",
 ) -> np.ndarray:
+    """Convert per-pattern tomography counts into fidelity scores."""
+
     if ancilla_detectors is None:
         raise ValueError("Need at least one ancilla detector to score MLD patterns.")
 
@@ -271,6 +325,8 @@ def _accumulate_mld_pattern_counts(
     packed_targets: set[int],
     layout: SyndromeLayout,
 ) -> int:
+    """Accumulate corrected output counts keyed by ancilla detector pattern."""
+
     packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
     if packed_dataset.anc_det.shape[1] == 0:
         return 0
@@ -347,6 +403,29 @@ def estimate_mld_ancilla_scores_from_tasks(
     with_noise: bool = True,
     sim_type: str = "tsim",
 ) -> np.ndarray:
+    """Estimate MLD ancilla scores by sampling ranking tasks in chunks.
+
+    Args:
+        decoder_by_basis: Mapping from basis label to
+            ``(full_decoder, factory_decoder)`` pairs.
+        ranking_tasks_by_basis: Mapping from basis label to simulator task.
+        shots: Number of ranking shots to sample per basis.
+        valid_factory_targets: Valid corrected factory observable patterns.
+        basis_labels: Tomography basis labels to evaluate.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        target_bloch: Target Bloch vector for fidelity scoring.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        uncertainty_backend: Fidelity uncertainty backend.
+        layout: Syndrome layout separating output and factory bits.
+        chunk_size: Maximum shots sampled per task call.
+        with_noise: Whether to sample the noisy circuit path.
+        sim_type: Simulator backend for ``DemoTask`` instances.
+
+    Returns:
+        Array indexed by packed ancilla detector pattern containing estimated
+        fidelity scores. Missing patterns are ``nan``.
+    """
+
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     if set(decoder_by_basis) != set(basis_labels):
         raise ValueError(
@@ -413,6 +492,23 @@ def build_mld_decoders_from_pair(
     factory_syndrome_length: int,
     ancilla_scores: np.ndarray,
 ) -> DecoderAdapter:
+    """Build a decoder adapter from trained full/factory MLD decoders.
+
+    Args:
+        full_decoder: Decoder for full detector syndromes and output flips.
+        factory_decoder: Decoder for factory detector syndromes and factory
+            observable flips.
+        full_syndrome_length: Number of detector bits consumed by
+            ``full_decoder``.
+        factory_syndrome_length: Number of detector bits consumed by
+            ``factory_decoder``.
+        ancilla_scores: Score table indexed by packed factory detector
+            syndrome.
+
+    Returns:
+        Decoder adapter suitable for threshold-curve evaluation.
+    """
+
     if len(ancilla_scores) != (1 << factory_syndrome_length):
         raise ValueError(
             "Ancilla score table has the wrong size for this decoder pair."

@@ -11,6 +11,13 @@ from .types import DetectorObservableResult, SimulatorTask
 
 @dataclass(frozen=True)
 class BasisDataset:
+    """Detector and observable samples for one tomography basis.
+
+    Attributes:
+        detectors: Detector samples with shape ``(shots, num_detectors)``.
+        observables: Observable samples with shape ``(shots, num_observables)``.
+    """
+
     detectors: np.ndarray
     observables: np.ndarray
 
@@ -26,6 +33,8 @@ def _run_simulator_task(
     run_detectors: bool,
     sim_type: str,
 ) -> DetectorObservableResult:
+    """Run a simulator task through the selected backend."""
+
     if not run_detectors:
         raise ValueError("_run_simulator_task is only used for detector sampling.")
     if isinstance(task, DemoTask):
@@ -57,6 +66,8 @@ def _sample_task_raw(
     chunk_size: int | None = 1_000_000,
     sim_type: str = "tsim",
 ) -> BasisDataset:
+    """Sample detector and observable arrays without observable-frame rebasing."""
+
     if isinstance(task, DemoTask) and sim_type == "clifft":
         if chunk_size is None or shots <= chunk_size:
             detectors, observables = task.sample_clifft_det_obs(
@@ -124,6 +135,8 @@ def _compute_observable_reference(
     shots: int = 64,
     sim_type: str = "tsim",
 ) -> np.ndarray:
+    """Compute the deterministic noiseless observable reference for a task."""
+
     if task.observable_reference is not None:
         return np.asarray(task.observable_reference, dtype=np.uint8)
 
@@ -148,6 +161,8 @@ def _rebase_dataset_observables(
     dataset: BasisDataset,
     reference: np.ndarray,
 ) -> BasisDataset:
+    """XOR dataset observables by a reference observable row."""
+
     return BasisDataset(
         detectors=dataset.detectors,
         observables=dataset.observables ^ reference.reshape(1, -1),
@@ -160,6 +175,8 @@ def _normalize_observable_frame(
     *,
     sim_type: str = "tsim",
 ) -> BasisDataset:
+    """Apply task-specific observable-frame normalization to sampled data."""
+
     if not isinstance(task, DemoTask):
         return dataset
     if task.observable_frame != _ObservableFrame.NOISELESS_REFERENCE_FLIPS:
@@ -176,6 +193,8 @@ def _iter_task_datasets(
     chunk_size: int | None = 1_000_000,
     sim_type: str = "tsim",
 ) -> Iterator[BasisDataset]:
+    """Yield sampled datasets in chunks, applying observable-frame normalization."""
+
     remaining = int(shots)
     if remaining < 0:
         raise ValueError("shots must be non-negative.")
@@ -210,6 +229,22 @@ def run_task(
     chunk_size: int | None = 1_000_000,
     sim_type: str = "tsim",
 ) -> BasisDataset:
+    """Sample a simulator task and return detector/observable arrays.
+    Note that the simulator backend is currently configured through the "sim_type" argument.
+
+    Args:
+        task: Simulator task or ``DemoTask`` to sample.
+        shots: Number of shots to sample.
+        with_noise: Whether to sample the noisy circuit path.
+        chunk_size: Maximum shots per simulator call. Use ``None`` to sample
+            all shots in one call.
+        sim_type: Simulator backend, currently ``"tsim"`` or ``"clifft"`` for
+            ``DemoTask`` instances.
+
+    Returns:
+        A ``BasisDataset`` containing detector and observable arrays.
+    """
+
     return _normalize_observable_frame(
         task,
         _sample_task_raw(

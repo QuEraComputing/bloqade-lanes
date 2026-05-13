@@ -25,6 +25,11 @@ class SparseTableDecoder(BaseDecoder):
     syndrome to the most frequently observed observable correction. Ties are
     broken toward the smallest observable index, matching ``np.argmax`` on a
     dense count table.
+
+    Args:
+        dem: Detector error model defining detector and observable dimensions.
+        det_obs_counts: Optional dense count table over packed detector and
+            observable outcomes.
     """
 
     def __init__(

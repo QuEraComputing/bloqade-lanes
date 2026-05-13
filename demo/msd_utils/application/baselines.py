@@ -32,6 +32,19 @@ def infer_factory_target(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     ideal_factory_acceptance: float = DEFAULT_IDEAL_FACTORY_ACCEPTANCE,
 ) -> np.ndarray:
+    """Infer the noiseless factory target branch from simulated task data.
+
+    Args:
+        task_map: Basis-labeled task map to sample without noise.
+        shots: Number of noiseless shots to sample per basis.
+        basis_labels: Basis labels to evaluate.
+        ideal_factory_acceptance: Expected factory acceptance fraction used to
+            choose among observed branches.
+
+    Returns:
+        Factory target observable pattern as a ``uint8`` array.
+    """
+
     counts: Counter[tuple[int, ...]] = Counter()
     for basis in basis_labels:
         data = run_task(task_map[basis], shots, with_noise=False)
@@ -57,6 +70,19 @@ def infer_distilled_sign_vector(
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
 ) -> np.ndarray:
+    """Infer the sign convention aligning accepted outputs to a target state.
+
+    Args:
+        task_map: Basis-labeled task map to sample without noise.
+        valid_factory_targets: Valid corrected factory observable patterns.
+        shots: Number of noiseless shots to sample per basis.
+        basis_labels: Basis labels to evaluate.
+        target_bloch: Target Bloch vector used to choose the sign convention.
+
+    Returns:
+        Three-element sign vector for X/Y/Z tomography.
+    """
+
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     corrected: dict[str, np.ndarray] = {}
     for basis in basis_labels:
@@ -107,6 +133,23 @@ def naive_injected_summary(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     max_grid_points: int = 1_500_000,
 ) -> dict[str, object]:
+    """Summarize the injected baseline without a decoder.
+
+    Args:
+        task_map: Basis-labeled injected task map.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        shots: Number of shots to sample per basis.
+        require_zero_detectors: Whether to postselect on all detector bits zero.
+        min_accepted_per_basis: Minimum accepted samples required per basis.
+        basis_labels: Basis labels to evaluate.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
+
+    Returns:
+        Fidelity summary augmented with accepted-fraction metadata.
+    """
+
     corrected: dict[str, np.ndarray] = {}
     accepted_fraction_by_basis: dict[str, float] = {}
 
@@ -153,6 +196,25 @@ def naive_distilled_summary(
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     max_grid_points: int = 1_500_000,
 ) -> dict[str, object]:
+    """Summarize distilled-task performance with naive factory postselection.
+
+    Args:
+        task_map: Basis-labeled distilled task map.
+        valid_factory_targets: Valid factory observable patterns.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        shots: Number of shots to sample per basis.
+        require_zero_ancilla_detectors: Whether to also require zero factory
+            detector bits.
+        min_accepted_per_basis: Minimum accepted samples required per basis.
+        basis_labels: Basis labels to evaluate.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
+
+    Returns:
+        Fidelity summary augmented with accepted-fraction metadata and targets.
+    """
+
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     corrected: dict[str, np.ndarray] = {}
     accepted_fraction_by_basis: dict[str, float] = {}
@@ -207,6 +269,27 @@ def injected_baseline(
     sim_type: str = "tsim",
     max_grid_points: int = 1_500_000,
 ) -> FidelitySummary:
+    """Estimate injected-state fidelity with an optional table-decoder correction.
+
+    Args:
+        task_map: Basis-labeled injected task map to evaluate.
+        eval_shots: Number of shots to sample per basis.
+        binary_precision: Precision used by Bayesian tomography scoring.
+        table_decoder_cls: Table decoder class used when ``raw`` is false.
+        sign_vector: Per-axis sign convention for fidelity reconstruction.
+        target_bloch: Target Bloch vector for fidelity calculation.
+        raw: If true, skip decoder training and use raw observable bits.
+        training_task_map: Optional separate task map used for decoder training.
+        basis_labels: Basis labels to evaluate.
+        uncertainty_backend: Fidelity uncertainty backend.
+        sim_type: Simulator backend for ``DemoTask`` instances.
+        TODO: be more precise for `max_grid_points`
+        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
+
+    Returns:
+        Fidelity summary for the injected baseline.
+    """
+
     corrected: dict[str, np.ndarray] = {}
     for basis in basis_labels:
         evaluation_dataset = run_task(
