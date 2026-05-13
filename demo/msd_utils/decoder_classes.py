@@ -7,6 +7,7 @@ from bloqade.decoders import BaseDecoder
 from .core import pack_boolean_array, unpack_packed_bits
 
 
+# REFACTOR: this should be a public application-level class.
 # NOTE: this basically uses a dictionary opposed to a table for the decoder; this is the case where classical memory is the bottleneck (at the cost of time).
 # ^ To be honest, this probably won't be used in production that much (we will probably stick to a np.array lookup table for fast lookups), so not reviewing it super carefully atm.
 # ^ for a couple reasons -- we'd probably want our tabledecoder to NOT be that sparse if it was good (we'd want to have seen a lot of different detector patterns) -- this was more

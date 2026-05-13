@@ -32,15 +32,18 @@ from .core import (
 )
 from .decoder_classes import SparseTableDecoder
 
+# REFACTOR: these should be public standard library types.
 TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]
 DecodeResult = TypeVar("DecodeResult")
 
 
+# REFACTOR: this should be a public standard library type.
 class DetectorErrorModelTask(Protocol):
     @property
     def detector_error_model(self) -> stim.DetectorErrorModel: ...
 
 
+# REFACTOR: this should be a private application-level type.
 @dataclass(frozen=True)
 class _MLDTrainingArrays:
     full_det_obs: np.ndarray
@@ -51,6 +54,7 @@ class _MLDTrainingArrays:
     factory_observable_count: int
 
 
+# REFACTOR: this should be a private application-level type.
 @dataclass(frozen=True)
 class _PackedThresholdDataset:
     anc_det: np.ndarray
@@ -61,6 +65,7 @@ class _PackedThresholdDataset:
     output_bits: np.ndarray
 
 
+# REFACTOR: this should be a public domain-level standard library type.
 # NOTE: maybe this little wrapper around TableDecoder should go in the bloqade.decoders package?
 @dataclass(frozen=True)
 class TableDecoderWithConfidence(ConfidenceDecoder):
@@ -89,9 +94,12 @@ class TableDecoderWithConfidence(ConfidenceDecoder):
         return correction, np.float64(score)
 
 
+# REFACTOR: this is a public application-level type.
 # This is for the use case where you have some ancillas you want to decode without destroying the coherence of the "data" state that you want.
+# And, we want to have decoding functions for decoding "ancillas" and functions for decoding the "output" qubit.
 @dataclass(frozen=True)
 class DecoderAdapter:
+    # NOTE: full_decoder and factory_decoder fields might not be strictly needed; can maybe remove them (and core functionality is preserved.)
     full_decoder: BaseDecoder | None
     factory_decoder: ConfidenceDecoder | None
     decode_factory: Callable[[int], tuple[tuple[int, ...], float]]
@@ -100,6 +108,7 @@ class DecoderAdapter:
     factory_score_mode: str
 
 
+# REFACTOR: this should be a private standard library function.
 def make_layout_only_dem(
     num_detectors: int, num_observables: int
 ) -> stim.DetectorErrorModel:
@@ -114,6 +123,7 @@ def make_layout_only_dem(
     return stim.DetectorErrorModel("\n".join(f"error(0.5) {term}" for term in terms))
 
 
+# REFACTOR: this should be a private standard library function.
 def matrix_to_dem(
     check_matrix: np.ndarray,
     observables_matrix: np.ndarray,
@@ -132,6 +142,7 @@ def matrix_to_dem(
     return stim.DetectorErrorModel("\n".join(lines))
 
 
+# REFACTOR: this should be a private standard library function.
 def compute_dem_data(task: DetectorErrorModelTask) -> dict[str, np.ndarray]:
     dem_matrix = detector_error_model_to_check_matrices(
         task.detector_error_model,
@@ -144,6 +155,7 @@ def compute_dem_data(task: DetectorErrorModelTask) -> dict[str, np.ndarray]:
     }
 
 
+# REFACTOR: this should be a private standard library function.
 def select_output_observables(
     observables: np.ndarray,
     *,
@@ -160,9 +172,10 @@ def select_output_observables(
     return output_obs
 
 
+# REFACTOR: this should be a private application-level type.
 # TODO: Not sure if this helper function is the best abstraction that we want. Is the logic here (a) really reused across
 # train_mld_decoder_pair and train_mld_decoder_pair_from_task, and (b) is there a cleaner way to write/do we need train_mld_decoder_pair_from_task?
-# Maybe the task itself should handle the batching/streaming logic.
+# Maybe the task itself should handle the batching/streaming logic. -- see below comment about implementing like a DataLoader class.
 def _mld_training_arrays(
     dataset: BasisDataset,
     *,
@@ -189,6 +202,7 @@ def _mld_training_arrays(
     )
 
 
+# REFACTOR: this should be a public application-level function.
 def train_mld_decoder_pair(
     training_dataset: BasisDataset,
     *,
@@ -213,6 +227,7 @@ def train_mld_decoder_pair(
     return full_decoder, factory_decoder
 
 
+# REFACTOR: this should be a public application-level function.
 # TODO: a better fix would to make this independent of a "Task" object and to implement some kind of batched dataloader. however, that might be too complicated for the
 # first iteration of stdlibs
 def train_mld_decoder_pair_from_task(
@@ -265,6 +280,7 @@ def train_mld_decoder_pair_from_task(
     return full_decoder, factory_decoder
 
 
+# REFACTOR: this should be a private application-level function.
 def _make_decoder_adapter(
     *,
     full_decoder: BaseDecoder,
@@ -305,6 +321,7 @@ def _make_decoder_adapter(
     )
 
 
+# REFACTOR: this should be a private domain-level function.
 def _call_decoder_fn(
     fn: Callable[[int], DecodeResult],
     bits: np.ndarray,
@@ -312,6 +329,7 @@ def _call_decoder_fn(
     return fn(packed_bits_to_int(bits))
 
 
+# REFACTOR: this should be a public application-level function.
 def estimate_mld_ancilla_scores(
     decoder_by_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
     ranking_data_by_basis: Mapping[str, BasisDataset],
@@ -375,6 +393,7 @@ def estimate_mld_ancilla_scores(
     )
 
 
+# REFACTOR: this should be a private domain-level function.
 def _mld_scores_from_pattern_counts(
     corrected_by_pattern: Mapping[str, Mapping[int, np.ndarray]],
     *,
@@ -422,6 +441,7 @@ def _mld_scores_from_pattern_counts(
     return scores
 
 
+# REFACTOR: this should be a private application-level function.
 # TODO: continue reading here, 4/21 11:56 AM
 def _accumulate_mld_pattern_counts(
     pattern_counts: defaultdict[int, np.ndarray],
@@ -489,6 +509,9 @@ def _accumulate_mld_pattern_counts(
     return accepted
 
 
+# REFACTOR: this should be a public application-level function.
+# TODO: ideally, estimating the scores from the tasks is really a batching problem, which should be solved at the dataloader level, NOT
+# by creating an extra function.
 def estimate_mld_ancilla_scores_from_tasks(
     decoder_by_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
     ranking_tasks_by_basis: Mapping[str, SimulatorTask],
@@ -562,6 +585,8 @@ def estimate_mld_ancilla_scores_from_tasks(
     )
 
 
+# REFACTOR: this should be a public application-level function.
+# NOTE: this function is really just putting different pieces/data together.
 def build_mld_decoders_from_pair(
     *,
     full_decoder: BaseDecoder,
@@ -596,6 +621,7 @@ def build_mld_decoders_from_pair(
     )
 
 
+# REFACTOR: this should be a private standard library function.
 def _packed_pattern_targets(
     targets: np.ndarray,
 ) -> set[int]:
@@ -604,6 +630,7 @@ def _packed_pattern_targets(
     }
 
 
+# REFACTOR: this should be a private standard library function.
 # TODO: refactor this; probably reused logic from quantile logic in bayesian_tomography.py? Can continue here on 05/11
 # ^ not sure if this is really repeated logic..
 def _weighted_quantiles_from_counts(
@@ -650,6 +677,7 @@ def _weighted_quantiles_from_counts(
     return out
 
 
+# REFACTOR: this should be a private application-level function.
 def _pack_threshold_dataset(
     dataset: BasisDataset,
     *,
@@ -662,6 +690,7 @@ def _pack_threshold_dataset(
     )
     return _PackedThresholdDataset(
         anc_det=anc_det,
+        # NOTE: anc_obs is not used elsewhere in the code...
         anc_obs=anc_obs,
         packed_full_det=pack_boolean_array(dataset.detectors).astype(np.uint64),
         packed_anc_det=pack_boolean_array(anc_det).astype(np.uint64),
@@ -672,6 +701,8 @@ def _pack_threshold_dataset(
     )
 
 
+# REFACTOR: this should be a private application-level function.
+# TODO: can modify the arguments here; don't need the whole DecoderAdapter; can just take in the decode_factory.
 def _build_ancilla_decode_cache(
     decoder: DecoderAdapter,
     packed_anc_det: np.ndarray,
@@ -693,6 +724,8 @@ def _build_ancilla_decode_cache(
     return ancilla_decode_cache
 
 
+# REFACTOR: this should be a private application-level function.
+# TODO: can modify the arguments here; don't need the whole DecoderAdapter; can just take in the decode_full.
 def _build_full_decode_cache(
     decoder: DecoderAdapter,
     packed_full_det: np.ndarray,
@@ -713,6 +746,7 @@ def _build_full_decode_cache(
     return full_decode_cache
 
 
+# REFACTOR: this should be a private application-level function.
 def _score_count_dict_to_arrays(
     score_to_counts: Mapping[float, np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -734,6 +768,7 @@ def _score_count_dict_to_arrays(
     return scores, zero_counts, one_counts
 
 
+# REFACTOR: this should be a private application-level function.
 def _build_generic_threshold_tables(
     actual_data: Mapping[str, BasisDataset],
     decoder_map: Mapping[str, DecoderAdapter],
@@ -816,6 +851,7 @@ def _build_generic_threshold_tables(
     return per_basis_tables, global_scores, global_weights, total_shots
 
 
+# REFACTOR: this should be a private application-level function.
 def _counts_for_threshold(
     scores: np.ndarray,
     zero_counts: np.ndarray,
@@ -830,6 +866,9 @@ def _counts_for_threshold(
     return int(np.sum(zero_counts[idx:])), int(np.sum(one_counts[idx:]))
 
 
+# REFACTOR: this should be a private application-level function.
+# NOTE: in principle this is pretty generic (just depends on you having scores for your counts), but because the fn's it depend on are application-level, i think this
+# should also be application-level.
 def _evaluate_cached_threshold_curve(
     per_basis_tables: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
     score_array: np.ndarray,
@@ -935,6 +974,7 @@ def _evaluate_cached_threshold_curve(
     }
 
 
+# REFACTOR: this should be a public application-level function.
 def build_mle_decoders(
     task: DetectorErrorModelTask,
     *,
@@ -973,6 +1013,7 @@ def build_mle_decoders(
     return adapter
 
 
+# REFACTOR: this should be a public application-level function.
 def evaluate_curve(
     actual_data: Mapping[str, BasisDataset],
     decoder_map: Mapping[str, DecoderAdapter],
@@ -1043,6 +1084,7 @@ def evaluate_curve(
         ) from exc
 
 
+# REFACTOR: this should be a private application-level function.
 # This is SPECIFICALLY for the pattern rank case where we don't compute explicit thresholds, but rather literally have
 # the points plotted on the curve based on MLD fidelity.
 def evaluate_mld_curve(
@@ -1164,6 +1206,7 @@ def evaluate_mld_curve(
     }
 
 
+# REFACTOR: this should be a public application-level function.
 def injected_baseline(
     task_map: Mapping[str, SimulatorTask],
     *,

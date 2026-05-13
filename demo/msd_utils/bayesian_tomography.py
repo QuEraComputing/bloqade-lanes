@@ -10,6 +10,7 @@ from scipy.special import logsumexp
 DEFAULT_SIGN = np.array((1.0, 1.0, 1.0), dtype=np.float64)
 
 
+# REFACTOR: this should be a public standard library type.
 # NOTE: technically, this type won't be exposed to the user
 class PosteriorFidelitySummary(TypedDict):
     point: float
