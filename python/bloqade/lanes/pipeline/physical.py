@@ -58,13 +58,14 @@ class PhysicalPipeline:
             if self.layout_heuristic is None
             else self.layout_heuristic
         )
-        strategy = (
-            PalindromePlacementStrategy(
+        if self.placement_strategy is None:
+            strategy = PalindromePlacementStrategy(
                 inner=PhysicalPlacementStrategy(arch_spec=self.arch_spec)
             )
-            if self.placement_strategy is None
-            else self.placement_strategy
-        )
+        elif isinstance(self.placement_strategy, PalindromePlacementStrategy):
+            strategy = self.placement_strategy
+        else:
+            strategy = PalindromePlacementStrategy(inner=self.placement_strategy)
 
         out = _PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
             mt, no_raise=no_raise
