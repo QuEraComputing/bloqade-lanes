@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 
 # REFACTOR: this should be a private application-level datatype.
+# TODO: ideally, not sure if we even want this ObservableFrame class.
 class ObservableFrame(str, Enum):
     RAW = "raw"
     NOISELESS_REFERENCE_FLIPS = "noiseless_reference_flips"
@@ -45,7 +46,7 @@ def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
     )
 
 
-# REFACTOR: This should be a public standard library type.
+# REFACTOR: This should be a public domain-level type.
 # TODO: is this the best way to do it? by overloading methods? but do we really support those overloaded methods?
 # TODO: later, we can try to integrate clifft with our stack more.
 @dataclass

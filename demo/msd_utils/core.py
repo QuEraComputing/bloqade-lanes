@@ -358,7 +358,7 @@ def sample_task_raw(
     )
 
 
-# REFACTOR: This should be a private application-level function.
+# REFACTOR: This should be a private domain-level function.
 def compute_observable_reference(
     task: DemoTask,
     *,
@@ -385,7 +385,7 @@ def compute_observable_reference(
     return np.asarray(task.observable_reference, dtype=np.uint8)
 
 
-# REFACTOR: This should be a private application-level function.
+# REFACTOR: This should be a private domain-level function.
 def rebase_dataset_observables(
     dataset: BasisDataset,
     reference: np.ndarray,
@@ -396,7 +396,7 @@ def rebase_dataset_observables(
     )
 
 
-# REFACTOR: This should be a private application-level function.
+# REFACTOR: This should be a private domain-level function.
 def normalize_observable_frame(
     task: SimulatorTask,
     dataset: BasisDataset,
@@ -411,7 +411,7 @@ def normalize_observable_frame(
     return rebase_dataset_observables(dataset, reference)
 
 
-# REFACTOR: this should be an internal application-level function.
+# REFACTOR: this should be an internal domain-level function.
 def iter_task_datasets(
     task: SimulatorTask,
     shots: int,
@@ -481,7 +481,7 @@ def split_factory_bits(
     )
 
 
-# REFACTOR: this should be a private domain standard library function.
+# REFACTOR: this should be a private domain-level function.
 # This is used for us to help us, via simulation, get the noiseless expected observable from the circuit.
 def normalize_valid_factory_targets(
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
@@ -499,7 +499,7 @@ def normalize_valid_factory_targets(
     return np.unique(targets, axis=0)
 
 
-# REFACTOR: this should be a private domain standard library function.
+# REFACTOR: this should be a private domain-level function.
 def ancilla_matches_valid_targets(
     ancilla_observables: np.ndarray,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
@@ -597,7 +597,8 @@ def infer_distilled_sign_vector(
 
 
 # REFACTOR: this should be a public application-level function.
-# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
+# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection) -- ideally, customize decoders path to take in
+# a decoder that just postselects on 0
 def naive_injected_summary(
     task_map: Mapping[str, SimulatorTask],
     *,
@@ -641,7 +642,8 @@ def naive_injected_summary(
 
 
 # REFACTOR: this should be a public application-level function.
-# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection)
+# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook (for naive postselection) -- ideally, customize decoders path to take in
+# a decoder that just postselects on 0
 def naive_distilled_summary(
     task_map: Mapping[str, SimulatorTask],
     *,

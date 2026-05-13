@@ -17,6 +17,7 @@ from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 
 from .common import DemoTask, ObservableFrame
 
+# REFACTOR: these can be public types in the standard library
 # TODO: Apparently we can't type check for kernels written in specific dialects, so all we can check is that something is a Kirin kernel I suppose,
 # which is ir.Method[..., Any]. And we are just "visually enforcing" the types through KirinKernel and SquinKernel. Think about a better way to deal with types here.
 KirinKernel: TypeAlias = ir.Method[..., Any]
@@ -39,7 +40,7 @@ NONUNITARY_PREFIXES = (
 )
 
 
-# REFACTOR: This should be a more "application-specific" datatype; I don't think this should live in the standard libraries.
+# REFACTOR: This should be a more "application-specific" public datatype; I don't think this should live in the standard libraries.
 @dataclass(frozen=True)
 class DecoderKernelBundle:
     actual: dict[str, KirinKernel]
@@ -47,7 +48,7 @@ class DecoderKernelBundle:
     injected: dict[str, KirinKernel]
 
 
-# REFACTOR: This should be a more "application-specific" datatype; I don't think this should live in the standard libraries.
+# REFACTOR: This should be a domain-level public datatype; I don't think this should live in the standard libraries.
 @dataclass(frozen=True)
 class DecoderPrimitiveSet:
     state_injection_circuit: SquinKernel
@@ -57,14 +58,14 @@ class DecoderPrimitiveSet:
         return getattr(self, key)
 
 
-# REFACTOR: this should be a standard library function.
+# REFACTOR: this should be a public standard library function.
 def build_measurement_maps(
     num_logical_qubits: int,
 ) -> tuple[MeasurementMap, MeasurementMap]:
     return steane7_m2dets(num_logical_qubits), steane7_m2obs(num_logical_qubits)
 
 
-# REFACTOR: this should be an internal function for more "application-level" functions.
+# REFACTOR: this should be an internal "domain-level" function.
 def _attach_special_circuit_kernel(
     kernel: KirinKernel,
     special_circuit_kernel: SquinKernel,
@@ -76,7 +77,7 @@ def _attach_special_circuit_kernel(
     return kernel
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 def _build_physical_prefix_source_tsim_circuit(
     special_circuit_kernel: SquinKernel,
     *,
@@ -96,7 +97,7 @@ def _build_physical_prefix_source_tsim_circuit(
     return tsim.Circuit(prefix_kernel)
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 # TODO: this is for the use case of overriding an existing tsim circuit, and overriding the GeminiLogicalSimulatorTask
 # cached attributes. Ideally, we'd add this functionality in GeminiLogicalSimulatorTask.
 def _set_task_override(
@@ -110,7 +111,7 @@ def _set_task_override(
         task.__dict__[attr] = value
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 # TODO: see above.
 def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
     for attr in (
@@ -125,7 +126,7 @@ def _clear_task_tsim_artifacts(task: GeminiLogicalSimulatorTask) -> None:
         task.__dict__.pop(attr, None)
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
 def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     for idx in range(len(circuit)):
@@ -134,7 +135,7 @@ def _first_nonunitary_instruction_index(circuit: TsimCircuit) -> int:
     return len(circuit)
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 def _prepend_inverse_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
     circuit_to_invert: TsimCircuit,
@@ -147,7 +148,7 @@ def _prepend_inverse_tsim_circuit(
     )
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 # TODO: this could be a feature in tsim, to expose the circuit itself w/o measurement, or applying an inversion on the circuit ignoring measurement
 def _build_compiled_unitary_prefix_circuit(
     task: GeminiLogicalSimulatorTask,
@@ -156,7 +157,7 @@ def _build_compiled_unitary_prefix_circuit(
     return compiled_circuit[: _first_nonunitary_instruction_index(compiled_circuit)]
 
 
-# REFACTOR: this should be an internal function for an application-level function.
+# REFACTOR: this should be an internal "domain-level" function.
 # TODO: ideally, overriding the tsim circuit could be done in the GeminiLogicalSimulatorTask. See above
 def _override_task_tsim_circuit(
     task: GeminiLogicalSimulatorTask,
@@ -197,7 +198,7 @@ def build_msd_primitives(
     )
 
 
-# REFACTOR: this should be an private application-level function.
+# REFACTOR: this should be an private domain-level function.
 def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]:
     @squin.kernel
     def tomography_x(reg):
@@ -219,13 +220,13 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
     }
 
 
-# REFACTOR: this should be a private application-level function.
+# REFACTOR: this should be a private domain-level function.
 @squin.kernel
 def _squin_return_none(reg):
     return
 
 
-# REFACTOR: this should be a private application-level function.
+# REFACTOR: this should be a private domain-level function.
 def produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: KirinKernel,
@@ -265,7 +266,7 @@ def produce_tomography_kernels(
     }
 
 
-# REFACTOR: this should be a private application-level function.
+# REFACTOR: this should be a private domain-level function.
 # This is to give us a dictionary of form {"X": ..., "Y": ..., "Z": ...} for downstream consumption
 def _kernels_by_tomography_basis(
     kernels: Mapping[str, KirinKernel],
@@ -428,7 +429,7 @@ def build_injected_decoder_kernel_map(
     }
 
 
-# REFACTOR: This should be a private application-level function.
+# REFACTOR: This should be a private domain-level function.
 def build_task(
     simulator: GeminiLogicalSimulator,
     kernel: KirinKernel,
@@ -451,7 +452,7 @@ def build_task(
     )
 
 
-# REFACTOR: this should be a private application-level function.
+# REFACTOR: this should be a private domain-level function.
 def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
     kernel = demo_task.metadata.get("logical_kernel")
     if not isinstance(kernel, ir.Method):
@@ -488,7 +489,7 @@ def _apply_prefix_prepare_to_task(demo_task: DemoTask) -> None:
     )
 
 
-# REFACTOR: This should be a public application-level function.
+# REFACTOR: This should be a public domain-level function.
 def apply_special_tsim_circuit_strategy(
     task_map: Mapping[str, DemoTask],
     strategy: Literal["prefix_prepare", "compiled_inverse_prefix"] | None,
@@ -517,7 +518,7 @@ def apply_special_tsim_circuit_strategy(
     return transformed
 
 
-# REFACTOR: this should be a public application-level function.
+# REFACTOR: this should be a public domain-level function.
 def build_task_map(
     simulator: GeminiLogicalSimulator,
     kernel_map: Mapping[str, KirinKernel],
