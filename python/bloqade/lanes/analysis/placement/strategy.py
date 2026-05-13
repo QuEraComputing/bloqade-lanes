@@ -1,5 +1,5 @@
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
@@ -147,7 +147,6 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         )
 
 
-@dataclass
 class PalindromePlacementStrategy(PlacementStrategyABC):
     """Wraps any PlacementStrategyABC to emit ExecuteCZReturn for every CZ.
 
@@ -163,11 +162,12 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
     enables palindrome moves; using the bare inner strategy disables them.
     """
 
-    inner: PlacementStrategyABC
-    arch_spec: ArchSpec = field(init=False)
+    def __init__(self, *, inner: PlacementStrategyABC) -> None:
+        self.inner = inner
 
-    def __post_init__(self) -> None:
-        self.arch_spec = self.inner.arch_spec
+    @property  # type: ignore[reportIncompatibleVariableOverride]
+    def arch_spec(self) -> ArchSpec:  # type: ignore[reportIncompatibleVariableOverride]
+        return self.inner.arch_spec
 
     def _unwrap(self, state: AtomState) -> AtomState:
         """Return home ConcreteState when state is ExecuteCZReturn, else pass through."""

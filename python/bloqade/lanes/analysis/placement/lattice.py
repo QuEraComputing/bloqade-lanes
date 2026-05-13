@@ -207,6 +207,7 @@ class ExecuteCZReturn(ExecuteCZ):
     """Palindrome of move_layers; computed at construction."""
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         self.return_move_layers = tuple(
             tuple(lane.reverse() for lane in layer)
             for layer in reversed(self.move_layers)
