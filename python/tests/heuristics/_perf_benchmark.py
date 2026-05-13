@@ -13,11 +13,11 @@ form
 
 and aggregate WIN/TIE/LOSS counts. Parallel execution (16 workers).
 """
+
 from __future__ import annotations
 
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
 
 # ---------------------------------------------------------------------- #
 # Per-benchmark worker                                                    #
@@ -85,7 +85,7 @@ def bench_one(args):
                 new = strat.cz_placements(state, c, t, la)
             except Exception:
                 continue
-            if isinstance(new, ExecuteCZ) or hasattr(new, "move_layers"):
+            if isinstance(new, ExecuteCZ):
                 n_lanes += sum(len(L) for L in new.move_layers)
                 n_trans += 1
                 state = new
@@ -159,9 +159,7 @@ def brick_wall(n, depth):
     layers = []
     for d in range(depth):
         even = d % 2 == 0
-        layers.append(
-            tuple((i, i + 1) for i in range(0 if even else 1, n - 1, 2))
-        )
+        layers.append(tuple((i, i + 1) for i in range(0 if even else 1, n - 1, 2)))
     return qubits, layers
 
 
@@ -171,8 +169,7 @@ def build_specs():
         specs.append((f"GHZ n={n}", *ghz(n)))
     for n in [10, 15, 20, 30, 40, 50, 60]:
         specs.append((f"star n={n}", *star(n)))
-    for H, sp, R in [(2, 4, 3), (3, 4, 3), (3, 6, 3), (3, 8, 3),
-                     (4, 6, 3), (4, 8, 3)]:
+    for H, sp, R in [(2, 4, 3), (3, 4, 3), (3, 6, 3), (3, 8, 3), (4, 6, 3), (4, 8, 3)]:
         specs.append((f"hubswap H={H} sp={sp} R={R}", *hub_swap(H, sp, R)))
     for n in [8, 16, 32, 64]:
         specs.append((f"BV n={n}", *bv(n)))
@@ -244,8 +241,10 @@ def render_table(rows):
 
 def main():
     specs = build_specs()
-    print(f"Running {len(specs)} benchmarks × {len(EXISTING) + len(LA_VARIANTS)} "
-          "configs (16 workers)...")
+    print(
+        f"Running {len(specs)} benchmarks × {len(EXISTING) + len(LA_VARIANTS)} "
+        "configs (16 workers)..."
+    )
     t0 = time.perf_counter()
     results = []
     with ProcessPoolExecutor(max_workers=16) as ex:
