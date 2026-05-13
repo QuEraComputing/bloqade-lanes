@@ -83,14 +83,9 @@ class LogicalPipeline:
         )
         self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
-        if isinstance(self.placement_strategy, PalindromePlacementStrategy):
-            strategy = self.placement_strategy
-        else:
-            strategy = PalindromePlacementStrategy(inner=self.placement_strategy)
-
         out = _PlaceToMove(
             layout_heuristic=self.layout_heuristic,
-            placement_strategy=strategy,
+            placement_strategy=self.placement_strategy,
             insert_initialize=True,
         ).emit(out, no_raise=no_raise)
 
