@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
 
-from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini import logical as logical_arch
 from bloqade.lanes.compile import (
     compile_to_physical_squin_noise_model as compile_physical_noise_model,
@@ -195,8 +194,6 @@ class BenchmarkRunner:
             placement_strategy, PhysicalPlacementStrategy
         ):
             placement_strategy.arch_spec = logical_arch.get_arch_spec()
-        if not isinstance(placement_strategy, PalindromePlacementStrategy):
-            placement_strategy = PalindromePlacementStrategy(inner=placement_strategy)
         return placement_strategy
 
 
