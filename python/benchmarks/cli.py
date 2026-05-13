@@ -22,7 +22,7 @@ from benchmarks.harness.models import BUILTIN_ARCH_SPEC_ID, BenchmarkJob
 from benchmarks.kernels import select_benchmark_cases
 
 from bloqade.lanes.arch import ArchSpec
-from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.arch.gemini import logical as logical_arch, physical
 from bloqade.lanes.bytecode._native import ArchSpec as _RustArchSpec
 
 MAX_LOGICAL_QUBITS = 10
@@ -46,13 +46,18 @@ def main() -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    strategies = tuple(
-        cfg
-        for (arch_id, arch) in arch_spec_pairs
-        for cfg in default_strategy_configs(
-            arch_spec=(arch_id, (lambda arch=arch: arch)),
+    if args.architecture == "logical":
+        strategies = tuple(
+            default_strategy_configs(arch_spec=("logical", logical_arch.get_arch_spec))
         )
-    )
+    else:
+        strategies = tuple(
+            cfg
+            for (arch_id, arch) in arch_spec_pairs
+            for cfg in default_strategy_configs(
+                arch_spec=(arch_id, (lambda arch=arch: arch)),
+            )
+        )
     jobs = expand_benchmark_jobs(
         cases,
         strategies,
