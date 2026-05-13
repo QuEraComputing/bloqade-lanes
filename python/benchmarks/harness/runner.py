@@ -43,7 +43,6 @@ class BenchmarkRunner:
 
     repeats: int = 1
     warmup: int = 0
-    insert_return_moves: bool = True
 
     def run_jobs(
         self,
@@ -132,7 +131,6 @@ class BenchmarkRunner:
             job.case.kernel,
             layout_heuristic=layout_heuristic,
             placement_strategy=placement_strategy,
-            insert_return_moves=self.insert_return_moves,
             logical_initialize=job.case.logical_initialize,
         )
         _assert_move_lowering_complete(move_mt)
@@ -155,7 +153,6 @@ class BenchmarkRunner:
                 job.case.kernel,
                 layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
                 placement_strategy=placement_strategy,
-                insert_return_moves=self.insert_return_moves,
                 logical_initialize=True,
             )
             move_mt = transversal_rewrites(move_mt)
@@ -178,7 +175,6 @@ class BenchmarkRunner:
             job.case.kernel,
             placement_strategy=placement_strategy,
             layout_heuristic=layout_heuristic,
-            insert_return_moves=self.insert_return_moves,
         )
         analysis = FidelityAnalysis(physical_squin.dialects)
         analysis.run(physical_squin)

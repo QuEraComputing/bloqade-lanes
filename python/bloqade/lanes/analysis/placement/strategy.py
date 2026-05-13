@@ -1,10 +1,16 @@
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
-from .lattice import AtomState, ConcreteState, ExecuteCZ, ExecuteMeasure
+from .lattice import (
+    AtomState,
+    ConcreteState,
+    ExecuteCZ,
+    ExecuteCZReturn,
+    ExecuteMeasure,
+)
 
 
 def assert_single_cz_zone(arch_spec: ArchSpec, strategy_name: str) -> None:
@@ -139,3 +145,69 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
             move_count=state.move_count,
             zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )
+
+
+@dataclass
+class PalindromePlacementStrategy(PlacementStrategyABC):
+    """Wraps any PlacementStrategyABC to emit ExecuteCZReturn for every CZ.
+
+    On ``cz_placements``: unwraps ``ExecuteCZReturn`` input to the home
+    ``ConcreteState`` (via ``initial_layout``), delegates to ``inner``, then
+    wraps the resulting ``ExecuteCZ`` in ``ExecuteCZReturn``.
+
+    On ``sq_placements`` and ``measure_placements``: unwraps
+    ``ExecuteCZReturn`` to the home ``ConcreteState`` before delegating, so
+    the inner strategy always sees a plain ``ConcreteState``.
+
+    This replaces the ``insert_return_moves`` flag: choosing this strategy
+    enables palindrome moves; using the bare inner strategy disables them.
+    """
+
+    inner: PlacementStrategyABC
+    arch_spec: ArchSpec = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.arch_spec = self.inner.arch_spec
+
+    def _unwrap(self, state: AtomState) -> AtomState:
+        """Return home ConcreteState when state is ExecuteCZReturn, else pass through."""
+        if isinstance(state, ExecuteCZReturn):
+            return ConcreteState(
+                occupied=state.occupied,
+                layout=state.initial_layout,
+                move_count=state.move_count,
+            )
+        return state
+
+    def validate_initial_layout(
+        self, initial_layout: tuple[LocationAddress, ...]
+    ) -> None:
+        self.inner.validate_initial_layout(initial_layout)
+
+    def cz_placements(
+        self,
+        state: AtomState,
+        controls: tuple[int, ...],
+        targets: tuple[int, ...],
+        lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = (),
+    ) -> AtomState:
+        home = self._unwrap(state)
+        result = self.inner.cz_placements(home, controls, targets, lookahead_cz_layers)
+        if not isinstance(result, ExecuteCZ) or not isinstance(home, ConcreteState):
+            return result
+        return ExecuteCZReturn(
+            occupied=result.occupied,
+            layout=result.layout,
+            move_count=result.move_count,
+            active_cz_zones=result.active_cz_zones,
+            move_layers=result.move_layers,
+            initial_layout=home.layout,
+        )
+
+    def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
+        return self.inner.sq_placements(self._unwrap(state), qubits)
+
+    def measure_placements(
+        self, state: AtomState, qubits: tuple[int, ...]
+    ) -> AtomState:
+        return self.inner.measure_placements(self._unwrap(state), qubits)

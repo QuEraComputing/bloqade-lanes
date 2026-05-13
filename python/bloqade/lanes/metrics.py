@@ -81,7 +81,6 @@ class Metrics:
         mt: ir.Method,
         *,
         placement_strategy: PlacementStrategyABC,
-        insert_return_moves: bool,
     ) -> ir.Method:
         noise_model: LogicalNoiseModelABC
         if self.noise_model is None:
@@ -95,7 +94,6 @@ class Metrics:
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
-            insert_return_moves=insert_return_moves,
         )
         move_mt = transversal_rewrites(move_mt)
         transformer = MoveToSquinLogical(
@@ -113,12 +111,10 @@ class Metrics:
         mt: ir.Method,
         *,
         placement_strategy: PlacementStrategyABC,
-        insert_return_moves: bool,
     ) -> KernelFidelityMetrics:
         physical_squin = self._compile_to_noisy_physical_squin(
             mt,
             placement_strategy=placement_strategy,
-            insert_return_moves=insert_return_moves,
         )
         analysis = FidelityAnalysis(physical_squin.dialects)
         analysis.run(physical_squin)
@@ -133,13 +129,11 @@ class Metrics:
         mt: ir.Method,
         *,
         placement_strategy: PlacementStrategyABC,
-        insert_return_moves: bool,
     ) -> KernelMoveMetrics:
         move_mt = squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
-            insert_return_moves=insert_return_moves,
         )
         move_event_count, moved_lane_count = _count_move_events_and_lanes(move_mt)
         return KernelMoveMetrics(
@@ -154,14 +148,12 @@ class Metrics:
         mt: ir.Method,
         *,
         placement_strategy: PlacementStrategyABC,
-        insert_return_moves: bool,
         flair_amplitude_delta: float = 1.0,
     ) -> KernelMoveTimeMetrics:
         move_mt = squin_to_move(
             mt,
             layout_heuristic=logical_layout.LogicalLayoutHeuristic(),
             placement_strategy=placement_strategy,
-            insert_return_moves=insert_return_moves,
         )
         return self.analyze_move_time_from_move_ir(
             move_mt,
