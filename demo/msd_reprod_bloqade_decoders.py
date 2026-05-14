@@ -29,10 +29,9 @@
 # - The notebook prepends the sibling `../bloqade-decoders/src` path so it uses the current working tree, including the new MLE logical-gap support.
 # - The default configuration is interactive rather than paper-scale.
 #
-
-import itertools
-
+#
 # %%
+import itertools
 import math
 import sys
 from collections import Counter
@@ -75,7 +74,7 @@ from demo.msd_utils import (  # noqa: E402
     BasisDataset,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
-    build_injected_decoder_kernel_map,
+    build_injected_kernel_bundle,
     build_measurement_maps,
     build_mld_decoders_from_pair,
     build_mle_decoders,
@@ -221,13 +220,18 @@ INJECTED_MEASUREMENT_MAPS = build_measurement_maps(1)
 kernel_bundle = build_decoder_kernel_bundle(
     _MSD_PRIMITIVES,
     output_qubit=OUTPUT_QUBIT,
-    injected_prep_args=(THETA, PHI, LAM),
     special_kernel_strategy=SPECIAL_KERNEL_STRATEGY,
+)
+injected_kernel_bundle = build_injected_kernel_bundle(
+    THETA,
+    PHI,
+    LAM,
+    output_qubit=OUTPUT_QUBIT,
 )
 ACTUAL_KERNELS = kernel_bundle.actual
 SPECIAL_KERNELS = kernel_bundle.special
-INJECTED_KERNELS = kernel_bundle.injected
-INJECTED_DECODER_KERNELS = build_injected_decoder_kernel_map()
+INJECTED_KERNELS = injected_kernel_bundle.actual
+INJECTED_DECODER_KERNELS = injected_kernel_bundle.special
 
 
 # %%

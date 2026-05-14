@@ -22,19 +22,17 @@ from ..standard.types import KirinKernel
 
 @dataclass(frozen=True)
 class DecoderKernelBundle:
-    """Actual, special, and injected tomography kernels for decoder workflows.
+    """Actual and special tomography kernels for decoder workflows.
 
     Attributes:
         actual: Basis-labeled kernels for the full noisy/input-prepared logical
             circuit.
         special: Basis-labeled kernels used for special/reference task
             construction.
-        injected: Basis-labeled kernels for injected-state calibration tasks.
     """
 
     actual: dict[str, KirinKernel]
     special: dict[str, KirinKernel]
-    injected: dict[str, KirinKernel]
 
 
 # NOTE: this is basically what the user would "instantiate" for this specific
@@ -80,20 +78,17 @@ def build_decoder_kernel_bundle(
     # TODO: get rid of logical qubits argument here?
     num_logical_qubits: int = 5,
     output_qubit: int = 0,
-    # TODO: might as well pass down the injected kernel instead of injected_prep_args here
-    injected_prep_args: tuple[float, float, float] | None = None,
     # TODO: have to pass down special_kernel_strategy here?
     special_kernel_strategy: Literal[
         "prefix_prepare", "compiled_inverse_prefix"
     ] = "prefix_prepare",
 ) -> DecoderKernelBundle:
-    """Build tomography kernels for actual, special, and injected MSD tasks.
+    """Build tomography kernels for actual and special MSD tasks.
 
     Args:
         primitive_set: Primitive state-injection and logical-circuit kernels.
         num_logical_qubits: Number of logical qubits in the MSD logical circuit.
         output_qubit: Logical qubit measured as the output state.
-        injected_prep_args: Optional U3 angles for injected calibration kernels.
         special_kernel_strategy: Strategy expected for the special task path.
 
     Returns:
@@ -163,28 +158,49 @@ def build_decoder_kernel_bundle(
     else:
         special = dict(actual)
 
-    injected: dict[str, KirinKernel] = {}
-    if injected_prep_args is not None:
-        theta, phi, lam = injected_prep_args
-
-        @squin.kernel
-        def injected_logical_kernel(reg):
-            squin.u3(theta, phi, lam, reg[0])
-
-        injected_kernels = produce_tomography_kernels(
-            1,
-            injected_logical_kernel,
-            tomography_primitives,
-            default_post_processing,
-            "injected",
-        )
-
-        injected = _kernels_by_tomography_basis(injected_kernels)
-
     return DecoderKernelBundle(
         actual=actual,
         special=special,
-        injected=injected,
+    )
+
+
+def build_injected_kernel_bundle(
+    theta: float,
+    phi: float,
+    lam: float,
+    *,
+    output_qubit: int = 0,
+) -> DecoderKernelBundle:
+    """Build injected-state evaluation and decoder-reference kernels.
+
+    Args:
+        theta: U3 ``theta`` angle for the injected input state.
+        phi: U3 ``phi`` angle for the injected input state.
+        lam: U3 ``lambda`` angle for the injected input state.
+        output_qubit: Logical qubit measured by the tomography kernels.
+
+    Returns:
+        A bundle whose ``actual`` kernels prepare the requested injected state
+        and whose ``special`` kernels prepare ideal X/Y/Z decoder references.
+    """
+
+    tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
+
+    @squin.kernel
+    def injected_logical_kernel(reg):
+        squin.u3(theta, phi, lam, reg[0])
+
+    injected_kernels = produce_tomography_kernels(
+        1,
+        injected_logical_kernel,
+        tomography_primitives,
+        default_post_processing,
+        "injected",
+    )
+
+    return DecoderKernelBundle(
+        actual=_kernels_by_tomography_basis(injected_kernels),
+        special=build_injected_decoder_kernel_map(output_qubit=output_qubit),
     )
 
 

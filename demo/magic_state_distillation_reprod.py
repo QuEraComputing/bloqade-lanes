@@ -59,6 +59,7 @@ from demo.msd_utils import (  # noqa: E402
     DEFAULT_IDEAL_FACTORY_ACCEPTANCE,
     DEFAULT_TARGET_BLOCH,
     build_decoder_kernel_bundle,
+    build_injected_kernel_bundle,
     build_msd_primitives,
     build_task_map,
     infer_distilled_sign_vector,
@@ -126,10 +127,15 @@ MSD_PRIMITIVES = build_msd_primitives(THETA, PHI, LAM)
 kernel_bundle = build_decoder_kernel_bundle(
     MSD_PRIMITIVES,
     output_qubit=OUTPUT_QUBIT,
-    injected_prep_args=(THETA, PHI, LAM),
+)
+injected_kernel_bundle = build_injected_kernel_bundle(
+    THETA,
+    PHI,
+    LAM,
+    output_qubit=OUTPUT_QUBIT,
 )
 DISTILLED_KERNELS = kernel_bundle.actual
-INJECTED_KERNELS = kernel_bundle.injected
+INJECTED_KERNELS = injected_kernel_bundle.actual
 
 
 # %%
@@ -139,7 +145,7 @@ kernel_bundle
 kernel_bundle.actual["Z"].print()
 
 # %%
-kernel_bundle.injected["Z"].print()
+injected_kernel_bundle.actual["Z"].print()
 
 # %%
 

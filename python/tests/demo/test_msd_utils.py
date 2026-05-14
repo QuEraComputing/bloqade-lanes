@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -18,21 +19,31 @@ from demo.msd_utils import (
     DEFAULT_TARGET_BLOCH,
     BasisDataset,
     DecoderAdapter,
+    DecoderCurveOptions,
     DecoderPrimitiveSet,
+    DecoderTaskBundle,
     DemoTask,
+    MSDDecoderWorkflowConfig,
     SparseTableDecoder,
     SyndromeLayout,
     TableDecoderWithConfidence,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
+    build_injected_decoder_bundle,
     build_injected_decoder_kernel_map,
+    build_injected_kernel_bundle,
     build_measurement_maps,
+    build_mle_decoder_suite,
     build_mle_decoders,
+    build_msd_decoder_bundle,
     build_msd_primitives,
+    build_msd_task_bundle,
     build_task_map,
     estimate_mld_ancilla_scores,
     estimate_mld_ancilla_scores_from_tasks,
     evaluate_curve,
+    evaluate_decoder_curves,
+    evaluate_injected_baseline,
     evaluate_mld_curve,
     expectation_conf_interval,
     expectation_with_error_bar,
@@ -45,10 +56,13 @@ from demo.msd_utils import (
     naive_injected_summary,
     pack_boolean_array,
     packed_bits_to_int,
+    plot_decoder_curves,
     posterior_fidelity_summary,
+    sample_actual_data,
     split_factory_bits,
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
+    train_mld_decoder_suite,
     unpack_packed_bits,
 )
 from demo.msd_utils.domain import special_tasks as circuits
@@ -162,11 +176,13 @@ def test_normalize_valid_factory_targets_wraps_single_target():
 def test_kernel_builders_return_expected_basis_maps():
     decoder = build_decoder_kernel_bundle(
         build_msd_primitives(0.1, 0.2, 0.3),
-        injected_prep_args=(0.1, 0.2, 0.3),
     )
+    injected = build_injected_kernel_bundle(0.1, 0.2, 0.3)
+
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
-    assert set(decoder.injected) == {"X", "Y", "Z"}
+    assert set(injected.actual) == {"X", "Y", "Z"}
+    assert set(injected.special) == {"X", "Y", "Z"}
 
 
 def test_build_injected_decoder_kernel_map_returns_basis_kernels():
@@ -201,7 +217,6 @@ def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
     m2dets, m2obs = build_measurement_maps(5)
     decoder = build_decoder_kernel_bundle(
         build_msd_primitives(0.1, 0.2, 0.3),
-        injected_prep_args=(0.1, 0.2, 0.3),
         special_kernel_strategy="prefix_prepare",
     )
 
@@ -231,7 +246,6 @@ def test_demo_task_clifft_backend_matches_result_shapes():
     m2dets, m2obs = build_measurement_maps(5)
     decoder = build_decoder_kernel_bundle(
         build_msd_primitives(0.1, 0.2, 0.3),
-        injected_prep_args=(0.1, 0.2, 0.3),
         special_kernel_strategy="prefix_prepare",
     )
     special_tasks = build_task_map(
@@ -273,13 +287,11 @@ def test_decoder_kernel_bundle_accepts_decoder_primitive_set():
     decoder = build_decoder_kernel_bundle(
         primitive_set,
         num_logical_qubits=9,
-        injected_prep_args=None,
         special_kernel_strategy="compiled_inverse_prefix",
     )
 
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
-    assert decoder.injected == {}
 
 
 def test_qet_primitives_integrate_with_decoder_kernel_bundle():
@@ -379,6 +391,197 @@ def _basis_task_map(
         )
         tasks[basis] = _StaticTask(BasisDataset(detectors, observables))
     return tasks
+
+
+def _workflow_config(
+    *,
+    layout: SyndromeLayout = SyndromeLayout(
+        output_detector_count=1,
+        output_observable_count=1,
+    ),
+) -> MSDDecoderWorkflowConfig:
+    return MSDDecoderWorkflowConfig(
+        mld_train_shots=4,
+        eval_shots=4,
+        target_bloch_vector=np.array([1.0, 0.0, 0.0], dtype=np.float64),
+        theta=0.1,
+        phi=0.2,
+        lam=0.3,
+        decoder_primitive_set=build_msd_primitives(0.1, 0.2, 0.3),
+        valid_factory_targets=[0],
+        num_logical_qubits=5,
+        binary_precision=4,
+        basis_labels=("X", "Y", "Z"),
+        sign_vector=(1.0, 1.0, 1.0),
+        layout=layout,
+    )
+
+
+def test_workflow_config_normalizes_inputs():
+    config = _workflow_config()
+
+    assert np.asarray(config.target_bloch_vector).tolist() == [1.0, 0.0, 0.0]
+    assert np.asarray(config.valid_factory_targets).tolist() == [[0]]
+    assert config.resolved_mld_rank_train_shots == config.mld_train_shots
+
+
+def test_workflow_kernel_bundle_builders_return_basis_maps():
+    config = _workflow_config()
+
+    msd_bundle = build_msd_decoder_bundle(config)
+    injected_bundle = build_injected_decoder_bundle(config)
+
+    assert isinstance(msd_bundle.actual, dict)
+    assert set(msd_bundle.actual) == {"X", "Y", "Z"}
+    assert set(msd_bundle.special) == {"X", "Y", "Z"}
+    assert set(injected_bundle.actual) == {"X", "Y", "Z"}
+    assert set(injected_bundle.special) == {"X", "Y", "Z"}
+
+
+def test_workflow_task_bundle_builder_compiles_msd_tasks():
+    sim = GeminiLogicalSimulator()
+    config = _workflow_config()
+    kernel_bundle = build_msd_decoder_bundle(config)
+
+    task_bundle = build_msd_task_bundle(sim, config, kernel_bundle)
+
+    assert isinstance(task_bundle, DecoderTaskBundle)
+    assert set(task_bundle.actual) == {"X", "Y", "Z"}
+    assert set(task_bundle.special) == {"X", "Y", "Z"}
+
+
+def test_workflow_sample_actual_data_uses_config_sampling():
+    config = _workflow_config()
+    task_map = _basis_task_map(
+        {"X": [0, 0, 0, 0], "Y": [1, 1, 1, 1], "Z": [0, 0, 0, 0]},
+    )
+    task_bundle = DecoderTaskBundle(
+        actual=cast(dict[str, DemoTask[object]], task_map),
+        special=cast(dict[str, DemoTask[object]], task_map),
+    )
+
+    data = sample_actual_data(task_bundle, config)
+
+    assert set(data) == {"X", "Y", "Z"}
+    assert data["X"].observables.shape == (4, 1)
+
+
+def test_workflow_mld_suite_trains_from_task_bundle():
+    config = _workflow_config()
+    dataset = BasisDataset(
+        detectors=np.zeros((4, 2), dtype=np.uint8),
+        observables=np.zeros((4, 2), dtype=np.uint8),
+    )
+    task_map = {basis: _StaticTask(dataset) for basis in ("X", "Y", "Z")}
+    task_bundle = DecoderTaskBundle(
+        actual=cast(dict[str, DemoTask[object]], task_map),
+        special=cast(dict[str, DemoTask[object]], task_map),
+    )
+
+    decoders = train_mld_decoder_suite(
+        task_bundle,
+        config,
+        table_decoder_cls=SparseTableDecoder,
+    )
+
+    assert set(decoders) == {"X", "Y", "Z"}
+    assert all(
+        decoder.factory_score_mode == "mld_output_fidelity"
+        for decoder in decoders.values()
+    )
+
+
+def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
+    monkeypatch.setattr(
+        "demo.msd_utils.standard.dem.detector_error_model_to_check_matrices",
+        lambda *args, **kwargs: _FakeDemMatrix(
+            check_matrix=np.array([[1, 0], [0, 1], [1, 1], [0, 1]], dtype=int),
+            observables_matrix=np.array([[1, 0], [0, 1]], dtype=int),
+            priors=np.array([0.1, 0.2], dtype=float),
+        ),
+    )
+    task_bundle = DecoderTaskBundle(
+        actual=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
+        special=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
+    )
+
+    decoders = build_mle_decoder_suite(
+        task_bundle,
+        gurobi_decoder_cls=_ConfidenceGurobi,
+    )
+
+    assert set(decoders) == {"X"}
+    assert decoders["X"].factory_score_mode == "confidence"
+
+
+def test_workflow_evaluate_decoder_curves_supports_multiple_suites():
+    config = _workflow_config()
+    dataset = BasisDataset(
+        detectors=np.zeros((4, 2), dtype=np.uint8),
+        observables=np.zeros((4, 2), dtype=np.uint8),
+    )
+    actual_data = {basis: dataset for basis in ("X", "Y", "Z")}
+
+    def make_adapter(score: float) -> DecoderAdapter:
+        def decode_factory(key: int):
+            return (0,), score
+
+        def decode_full(key: int):
+            return (0,)
+
+        return DecoderAdapter(
+            full_decoder=None,
+            factory_decoder=None,
+            decode_factory=decode_factory,
+            decode_full=decode_full,
+            factory_score_mode="score",
+        )
+
+    suite = {basis: make_adapter(1.0) for basis in ("X", "Y", "Z")}
+
+    curves = evaluate_decoder_curves(
+        actual_data,
+        {"MLD": suite, "MLE": suite},
+        config,
+        curve_options=DecoderCurveOptions(
+            threshold_points=2,
+            min_accepted_per_basis=1,
+        ),
+    )
+
+    assert set(curves) == {"MLD", "MLE"}
+    assert all("accepted_fraction" in curve for curve in curves.values())
+
+
+def test_workflow_injected_baseline_and_plot_helpers():
+    config = _workflow_config()
+    task_map = _basis_task_map(
+        {"X": [0, 0, 0, 0], "Y": [0, 0, 0, 0], "Z": [0, 0, 0, 0]},
+    )
+    task_bundle = DecoderTaskBundle(
+        actual=cast(dict[str, DemoTask[object]], task_map),
+        special=cast(dict[str, DemoTask[object]], task_map),
+    )
+
+    summary = evaluate_injected_baseline(
+        task_bundle,
+        config,
+        table_decoder_cls=SparseTableDecoder,
+        raw=True,
+    )
+    fig, ax = plot_decoder_curves(
+        {
+            "MLD": {
+                "accepted_fraction": np.array([0.5, 1.0]),
+                "fidelity": np.array([0.7, 0.8]),
+                "credible": np.array([[0.6, 0.8], [0.7, 0.9]]),
+            }
+        },
+        injected_summary=summary,
+    )
+
+    assert fig is ax.figure
+    assert len(ax.lines) >= 2
 
 
 def test_infer_factory_target_selects_branch_near_expected_acceptance():
