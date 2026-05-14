@@ -15,14 +15,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_extras.qet import build_qet_kernel_maps, build_qet_primitives
 from demo.msd_utils import (
+    DEFAULT_TARGET_BLOCH,
     BasisDataset,
     DecoderAdapter,
     DecoderPrimitiveSet,
     DemoTask,
     SparseTableDecoder,
     SyndromeLayout,
+    TableDecoderWithConfidence,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
+    build_injected_decoder_kernel_map,
     build_measurement_maps,
     build_mle_decoders,
     build_msd_primitives,
@@ -31,11 +34,22 @@ from demo.msd_utils import (
     estimate_mld_ancilla_scores_from_tasks,
     evaluate_curve,
     evaluate_mld_curve,
+    expectation_conf_interval,
+    expectation_with_error_bar,
     fidelity_from_counts,
+    fidelity_from_zero_one_counts,
+    infer_distilled_sign_vector,
+    infer_factory_target,
+    injected_baseline,
+    naive_distilled_summary,
+    naive_injected_summary,
     pack_boolean_array,
+    packed_bits_to_int,
+    posterior_fidelity_summary,
     split_factory_bits,
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
+    unpack_packed_bits,
 )
 from demo.msd_utils.domain import special_tasks as circuits
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
@@ -52,6 +66,56 @@ def test_fidelity_from_counts_returns_ordered_interval():
     assert set(summary) >= {"point", "median", "low", "high", "bloch"}
     assert summary["low"] <= summary["median"] <= summary["high"]
     assert len(summary["bloch"]) == 3
+
+
+def test_fidelity_from_zero_one_counts_matches_array_counts():
+    x_bits = np.array([0, 0, 1, 0], dtype=np.uint8)
+    y_bits = np.array([1, 1, 0, 1], dtype=np.uint8)
+    z_bits = np.array([0, 1, 1, 1], dtype=np.uint8)
+
+    from_arrays = fidelity_from_counts(
+        x_bits,
+        y_bits,
+        z_bits,
+        sign_vector=(1.0, -1.0, 1.0),
+        target_bloch=np.array([0.0, 1.0, 0.0], dtype=np.float64),
+    )
+    from_counts = fidelity_from_zero_one_counts(
+        3,
+        1,
+        1,
+        3,
+        1,
+        3,
+        sign_vector=(1.0, -1.0, 1.0),
+        target_bloch=np.array([0.0, 1.0, 0.0], dtype=np.float64),
+    )
+
+    assert from_counts["point"] == pytest.approx(from_arrays["point"])
+    assert from_counts["bloch"] == pytest.approx(from_arrays["bloch"])
+
+
+def test_expectation_helpers_return_ordered_interval_and_error_bar():
+    interval = expectation_conf_interval(3, 1)
+    expectation, error = expectation_with_error_bar(3, 1)
+
+    assert interval.shape == (2,)
+    assert interval[0] <= expectation <= interval[1]
+    assert expectation == pytest.approx(0.5)
+    assert error == pytest.approx((interval[1] - interval[0]) / 2.0)
+
+
+def test_posterior_fidelity_summary_returns_ordered_interval():
+    summary = posterior_fidelity_summary(
+        np.array([8, 8, 8], dtype=np.int64),
+        np.array([7, 6, 7], dtype=np.int64),
+        DEFAULT_TARGET_BLOCH,
+        binary_precision=4,
+        max_grid_points=2_000,
+    )
+
+    assert np.isfinite(summary["point"])
+    assert summary["low"] <= summary["median"] <= summary["high"]
 
 
 def test_fidelity_from_counts_realistic_interval_is_finite_and_noncollapsed():
@@ -82,6 +146,14 @@ def test_split_factory_bits_and_pack_boolean_array():
     assert pack_boolean_array(anc_det).tolist() == [0b01, 0b10]
 
 
+def test_bit_packing_round_trip_helpers():
+    bits = np.array([1, 0, 1, 1], dtype=np.uint8)
+    packed = packed_bits_to_int(bits)
+
+    assert packed == 0b1101
+    assert unpack_packed_bits(packed, len(bits)).tolist() == bits.tolist()
+
+
 def test_normalize_valid_factory_targets_wraps_single_target():
     targets = _normalize_valid_factory_targets([0, 1, 0])
     assert targets.tolist() == [[0, 1, 0]]
@@ -95,6 +167,13 @@ def test_kernel_builders_return_expected_basis_maps():
     assert set(decoder.actual) == {"X", "Y", "Z"}
     assert set(decoder.special) == {"X", "Y", "Z"}
     assert set(decoder.injected) == {"X", "Y", "Z"}
+
+
+def test_build_injected_decoder_kernel_map_returns_basis_kernels():
+    kernel_map = build_injected_decoder_kernel_map()
+
+    assert set(kernel_map) == {"X", "Y", "Z"}
+    assert all(hasattr(kernel, "code") for kernel in kernel_map.values())
 
 
 def test_special_strategy_observable_frame_flag(monkeypatch: pytest.MonkeyPatch):
@@ -248,6 +327,18 @@ class _ChunkResult:
         self.observables = observables.tolist()
 
 
+class _StaticTask:
+    def __init__(self, dataset: BasisDataset):
+        self._dataset = dataset
+
+    def run(self, shots: int, with_noise: bool = True, *, run_detectors: bool = False):
+        assert run_detectors
+        return _ChunkResult(
+            self._dataset.detectors[:shots],
+            self._dataset.observables[:shots],
+        )
+
+
 class _ChunkTask:
     def __init__(self, dataset: BasisDataset):
         self._dataset = dataset
@@ -262,6 +353,160 @@ class _ChunkTask:
             self._dataset.detectors[start:stop],
             self._dataset.observables[start:stop],
         )
+
+
+def _basis_task_map(
+    bits_by_basis: dict[str, list[int]],
+    *,
+    factory_bits_by_basis: dict[str, list[int]] | None = None,
+    detector_rows: np.ndarray | None = None,
+) -> dict[str, _StaticTask]:
+    tasks = {}
+    for basis, bits in bits_by_basis.items():
+        output = np.asarray(bits, dtype=np.uint8).reshape(-1, 1)
+        if factory_bits_by_basis is None:
+            observables = output
+        else:
+            factory = np.asarray(
+                factory_bits_by_basis[basis],
+                dtype=np.uint8,
+            ).reshape(-1, 1)
+            observables = np.concatenate([output, factory], axis=1)
+        detectors = (
+            np.zeros((len(output), 1), dtype=np.uint8)
+            if detector_rows is None
+            else detector_rows[: len(output)]
+        )
+        tasks[basis] = _StaticTask(BasisDataset(detectors, observables))
+    return tasks
+
+
+def test_infer_factory_target_selects_branch_near_expected_acceptance():
+    task_map = _basis_task_map(
+        {
+            "X": [0, 0, 0, 0],
+            "Y": [0, 0, 0, 0],
+            "Z": [0, 0, 0, 0],
+        },
+        factory_bits_by_basis={
+            "X": [0, 0, 1, 1],
+            "Y": [0, 0, 1, 1],
+            "Z": [0, 0, 1, 1],
+        },
+    )
+
+    target = infer_factory_target(
+        task_map,
+        shots=4,
+        basis_labels=("X", "Y", "Z"),
+        ideal_factory_acceptance=0.5,
+    )
+
+    assert target.tolist() == [0]
+
+
+def test_infer_distilled_sign_vector_aligns_noiseless_bloch_vector():
+    task_map = _basis_task_map(
+        {
+            "X": [0, 0, 0, 0],
+            "Y": [1, 1, 1, 1],
+            "Z": [0, 0, 0, 0],
+        },
+        factory_bits_by_basis={
+            "X": [0, 0, 0, 0],
+            "Y": [0, 0, 0, 0],
+            "Z": [0, 0, 0, 0],
+        },
+    )
+
+    sign = infer_distilled_sign_vector(
+        task_map,
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
+        shots=4,
+        basis_labels=("X", "Y", "Z"),
+        target_bloch=DEFAULT_TARGET_BLOCH,
+    )
+
+    assert sign.tolist() == [1.0, -1.0, 1.0]
+
+
+def test_naive_injected_summary_postselects_zero_detectors():
+    detector_rows = np.array([[0], [1], [0], [1]], dtype=np.uint8)
+    task_map = _basis_task_map(
+        {"X": [0, 1, 0, 1], "Y": [0, 1, 0, 1], "Z": [0, 1, 0, 1]},
+        detector_rows=detector_rows,
+    )
+
+    summary = naive_injected_summary(
+        task_map,
+        sign_vector=(1.0, 1.0, 1.0),
+        shots=4,
+        require_zero_detectors=True,
+        basis_labels=("X", "Y", "Z"),
+        target_bloch=np.array([1.0, 0.0, 0.0], dtype=np.float64),
+        min_accepted_per_basis=1,
+    )
+
+    assert summary["accepted_fraction"] == pytest.approx(0.5)
+    assert summary["point"] == pytest.approx(1.0)
+
+
+def test_naive_distilled_summary_postselects_factory_targets():
+    task_map = _basis_task_map(
+        {"X": [0, 1, 0, 1], "Y": [0, 1, 0, 1], "Z": [0, 1, 0, 1]},
+        factory_bits_by_basis={
+            "X": [0, 1, 0, 1],
+            "Y": [0, 1, 0, 1],
+            "Z": [0, 1, 0, 1],
+        },
+    )
+
+    summary = naive_distilled_summary(
+        task_map,
+        valid_factory_targets=np.array([[0]], dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        shots=4,
+        basis_labels=("X", "Y", "Z"),
+        min_accepted_per_basis=1,
+    )
+
+    assert summary["accepted_fraction"] == pytest.approx(0.5)
+    assert summary["valid_factory_targets"] == ((0,),)
+
+
+def test_injected_baseline_raw_path_uses_observable_bits_directly():
+    task_map = _basis_task_map(
+        {"X": [0, 0, 0, 0], "Y": [1, 1, 1, 1], "Z": [0, 0, 0, 0]},
+    )
+
+    summary = injected_baseline(
+        task_map,
+        eval_shots=4,
+        table_decoder_cls=SparseTableDecoder,
+        sign_vector=(1.0, -1.0, 1.0),
+        raw=True,
+        basis_labels=("X", "Y", "Z"),
+    )
+
+    assert summary["bloch"] == pytest.approx((1.0, 1.0, 1.0))
+
+
+def test_table_decoder_with_confidence_returns_syndrome_score():
+    decoder = SparseTableDecoder.from_det_obs_shots(
+        stim.DetectorErrorModel("error(0.5) D0 L0"),
+        np.array([[0, 0], [1, 1], [1, 1]], dtype=np.uint8),
+    )
+    wrapped = TableDecoderWithConfidence(
+        decoder=decoder,
+        syndrome_confidence=np.array([0.25, 0.75], dtype=np.float64),
+    )
+
+    correction, score = wrapped.decode_with_confidence(
+        np.array([1], dtype=np.bool_),
+    )
+
+    assert correction.tolist() == [True]
+    assert score == pytest.approx(0.75)
 
 
 def test_build_mle_decoders_uses_confidence_decoder_api(monkeypatch):
