@@ -14,6 +14,7 @@ from bloqade.gemini.star import (
 )
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move
+from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.logical_mvp import compile_squin_to_move
 from bloqade.lanes.rewrite.transversal import steane_star_theta
 
@@ -109,7 +110,7 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
         kernel,
         transversal_rewrite=True,
         no_raise=False,
-        insert_return_moves=False,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
     )
 
     assert not any(
@@ -148,7 +149,7 @@ def test_star_rz_pipeline_accepts_parameterized_theta():
         kernel,
         transversal_rewrite=True,
         no_raise=False,
-        insert_return_moves=False,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
     )
 
     assert not any(
@@ -176,7 +177,7 @@ def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
         kernel,
         transversal_rewrite=True,
         no_raise=False,
-        insert_return_moves=False,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
     )
 
     local_rz_nodes = [
@@ -204,7 +205,7 @@ def test_star_rz_without_transversal_rewrite_remains_logical_move_statement():
         kernel,
         transversal_rewrite=False,
         no_raise=False,
-        insert_return_moves=False,
+        placement_strategy=LogicalPlacementStrategyNoHome(),
     )
 
     star_nodes = [
