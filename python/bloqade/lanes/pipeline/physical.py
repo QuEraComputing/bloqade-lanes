@@ -10,6 +10,7 @@ from bloqade.gemini.common.validation.terminal_measure import (
     PhysicalTerminalMeasurementValidation,
 )
 from bloqade.lanes.analysis import layout, placement
+from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.physical.layout import (
@@ -49,7 +50,6 @@ class PhysicalPipeline:
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
     layout_heuristic: layout.LayoutHeuristicABC | None = None
     placement_strategy: placement.PlacementStrategyABC | None = None
-    insert_return_moves: bool = True
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
@@ -59,7 +59,9 @@ class PhysicalPipeline:
             else self.layout_heuristic
         )
         strategy = (
-            PhysicalPlacementStrategy(arch_spec=self.arch_spec)
+            PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(arch_spec=self.arch_spec)
+            )
             if self.placement_strategy is None
             else self.placement_strategy
         )
@@ -73,7 +75,6 @@ class PhysicalPipeline:
             layout_heuristic=heuristic,
             placement_strategy=strategy,
             insert_initialize=False,
-            insert_return_moves=self.insert_return_moves,
         ).emit(out, no_raise=no_raise)
 
         return out

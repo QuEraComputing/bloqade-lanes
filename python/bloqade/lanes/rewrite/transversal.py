@@ -2,13 +2,22 @@ from dataclasses import dataclass
 from itertools import chain
 
 from kirin import ir, types
-from kirin.dialects import ilist
+from kirin.dialects import func, ilist, math as kmath
 from kirin.rewrite import abc as rewrite_abc
 from typing_extensions import Callable, Iterable
 
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.prelude import kernel
 from bloqade.lanes.utils import no_none_elements
+
+
+@kernel(verify=False)
+def steane_star_theta(theta: float) -> float:
+    return -kmath.copysign(
+        2 * kmath.atan(kmath.fabs(kmath.tan(theta / 2)) ** (1 / 3)),
+        theta,
+    )
 
 
 @dataclass
@@ -79,6 +88,57 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 
         node.replace_by(move.Move(node.current_state, lanes=physical_lanes))
 
+        return rewrite_abc.RewriteResult(has_done_something=True)
+
+
+@dataclass
+class RewriteStarRz(rewrite_abc.RewriteRule):
+    """Lower logical STAR rotations to physical local Rz rotations.
+
+    v1 supports the k=3 Steane STAR protocol. The logical target angle is
+    converted to the physical STAR angle with Kirin math IR, so the angle may
+    be either a literal or an SSA value.
+    """
+
+    transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
+
+    def _theta_star_ir(self, node: move.StarRz) -> ir.SSAValue:
+        theta_star = func.Invoke((node.rotation_angle,), callee=steane_star_theta)
+        theta_star.insert_before(node)
+        return theta_star.result
+
+    def _physical_support(
+        self, logical_address: LocationAddress, support: tuple[int, int, int]
+    ) -> tuple[LocationAddress, ...] | None:
+        iterator = self.transform_location(logical_address)
+        if iterator is None:
+            return None
+
+        physical_addresses = tuple(iterator)
+
+        return tuple(physical_addresses[index] for index in support)
+
+    def rewrite_Statement(self, node: ir.Statement):
+        if not isinstance(node, move.StarRz):
+            return rewrite_abc.RewriteResult()
+
+        iterators = [
+            self._physical_support(address, node.qubit_indices)
+            for address in node.location_addresses
+        ]
+
+        if not no_none_elements(iterators):
+            return rewrite_abc.RewriteResult()
+
+        theta_star = self._theta_star_ir(node)
+        physical_addresses = tuple(chain.from_iterable(iterators))
+        node.replace_by(
+            move.LocalRz(
+                node.current_state,
+                theta_star,
+                location_addresses=physical_addresses,
+            )
+        )
         return rewrite_abc.RewriteResult(has_done_something=True)
 
 

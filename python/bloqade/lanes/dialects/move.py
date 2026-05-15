@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 
-from kirin import ir, lowering, types
+from kirin import exception, ir, lowering, types
 from kirin.decl import info, statement
 from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
+from bloqade.gemini.star import validate_steane_star_support
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 
 from ..types import MeasurementFuture, MeasurementFutureType, State, StateType
@@ -125,6 +126,19 @@ class LocalRz(StatefulStatement):
 
 
 @statement(dialect=dialect)
+class StarRz(StatefulStatement):
+    location_addresses: tuple[LocationAddress, ...] = info.attribute()
+    qubit_indices: tuple[int, int, int] = info.attribute()
+    rotation_angle: ir.SSAValue = info.argument(type=types.Float)
+
+    def check(self) -> None:
+        try:
+            validate_steane_star_support(self.qubit_indices)
+        except ValueError as exc:
+            raise exception.StaticCheckError(str(exc)) from exc
+
+
+@statement(dialect=dialect)
 class GlobalRz(StatefulStatement):
     rotation_angle: ir.SSAValue = info.argument(type=types.Float)
 
@@ -235,6 +249,16 @@ def local_rz(
     rotation_angle: float,
     *,
     location_addresses: tuple[LocationAddress, ...],
+) -> State: ...
+
+
+@wraps(StarRz)
+def star_rz(
+    current_state: State,
+    rotation_angle: float,
+    *,
+    location_addresses: tuple[LocationAddress, ...],
+    qubit_indices: tuple[int, int, int],
 ) -> State: ...
 
 

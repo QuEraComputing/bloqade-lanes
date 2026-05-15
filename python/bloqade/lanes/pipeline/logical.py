@@ -15,6 +15,7 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 from bloqade.lanes.analysis import layout, placement
+from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
@@ -69,9 +70,10 @@ class LogicalPipeline:
         default_factory=LogicalLayoutHeuristic
     )
     placement_strategy: placement.PlacementStrategyABC = field(
-        default_factory=LogicalPlacementStrategyNoHome
+        default_factory=lambda: PalindromePlacementStrategy(
+            inner=LogicalPlacementStrategyNoHome()
+        )
     )
-    insert_return_moves: bool = True
     arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
@@ -85,7 +87,6 @@ class LogicalPipeline:
             layout_heuristic=self.layout_heuristic,
             placement_strategy=self.placement_strategy,
             insert_initialize=True,
-            insert_return_moves=self.insert_return_moves,
         ).emit(out, no_raise=no_raise)
 
         return out

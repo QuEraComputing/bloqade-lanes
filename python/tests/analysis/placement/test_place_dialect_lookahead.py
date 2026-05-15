@@ -21,6 +21,7 @@ class CaptureLookaheadStrategy(PlacementStrategyABC):
     captured_lookahead: list[tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]] = (
         field(default_factory=list)
     )
+    captured_sq: list[tuple[int, ...]] = field(default_factory=list)
 
     def validate_initial_layout(
         self, initial_layout: tuple[LocationAddress, ...]
@@ -39,7 +40,7 @@ class CaptureLookaheadStrategy(PlacementStrategyABC):
         return state
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        _ = qubits
+        self.captured_sq.append(qubits)
         return state
 
     def measure_placements(
@@ -93,3 +94,34 @@ def test_impl_cz_forwards_buffered_lookahead_layers():
         (((0,), (1,)), ((2,), (3,))),
         (((2,), (3,)),),
     ]
+
+
+def test_impl_star_rz_is_single_qubit_placement_noop():
+    strategy = CaptureLookaheadStrategy()
+    analysis = object.__new__(place.PlacementAnalysis)
+    analysis.placement_strategy = strategy
+    state = ConcreteState(
+        occupied=frozenset(),
+        layout=(LocationAddress(0, 0),),
+        move_count=(0,),
+    )
+    frame = _FakeFrame(state)
+    methods = place.PlacementMethods()
+
+    rotation_angle = ir.TestValue()
+    stmt = place.StarRz(
+        ir.TestValue(),
+        rotation_angle,
+        qubits=(0,),
+        qubit_indices=(4, 5, 6),
+    )
+
+    result = cast(
+        tuple[AtomState],
+        methods.impl_single_qubit_gate(
+            analysis, cast(ForwardFrame[AtomState], frame), stmt
+        ),
+    )[0]
+
+    assert result is state
+    assert strategy.captured_sq == [(0,)]

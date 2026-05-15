@@ -95,8 +95,10 @@ def test_physical_pipeline_no_raise_succeeds_without_terminal_measure():
 
 def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     """When layout_heuristic and placement_strategy are None, PhysicalPipeline
-    resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut and
-    PhysicalPlacementStrategy before passing them to the place→move stage."""
+    resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut wrapped in
+    PalindromePlacementStrategy(PhysicalPlacementStrategy) before passing them
+    to the place→move stage."""
+    from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
     from bloqade.lanes.heuristics.physical.layout import (
         PhysicalLayoutHeuristicGraphPartitionCenterOut,
     )
@@ -108,7 +110,7 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
 
     def spy_emit(self_inner, mt, no_raise=True):
         captured["layout_heuristic_type"] = type(self_inner.layout_heuristic)
-        captured["placement_strategy_type"] = type(self_inner.placement_strategy)
+        captured["placement_strategy"] = self_inner.placement_strategy
         return _orig_emit(self_inner, mt, no_raise=no_raise)
 
     monkeypatch.setattr(_PlaceToMove, "emit", spy_emit)
@@ -124,4 +126,6 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
         captured["layout_heuristic_type"]
         is PhysicalLayoutHeuristicGraphPartitionCenterOut
     )
-    assert captured["placement_strategy_type"] is PhysicalPlacementStrategy
+    strategy = captured["placement_strategy"]
+    assert isinstance(strategy, PalindromePlacementStrategy)
+    assert isinstance(strategy.inner, PhysicalPlacementStrategy)

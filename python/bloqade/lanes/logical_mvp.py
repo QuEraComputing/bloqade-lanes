@@ -19,8 +19,9 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
 )
 from bloqade.lanes import visualize
-from bloqade.lanes.analysis import atom
+from bloqade.lanes.analysis import atom, placement
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
+from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.heuristics.logical import layout as logical_layout
@@ -85,6 +86,7 @@ def transversal_rewrites(mt: ir.Method):
 
     rewrite.Walk(
         rewrite.Chain(
+            transversal.RewriteStarRz(logical.steane7_transversal_map),
             transversal.RewriteLocations(logical.steane7_transversal_map),
             transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
             transversal.RewriteMoves(logical.steane7_transversal_map),
@@ -101,7 +103,7 @@ def compile_squin_to_move(
     transversal_rewrite: bool = False,
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
-    insert_return_moves: bool = True,
+    placement_strategy: placement.PlacementStrategyABC | None = None,
 ):
     """Compile a squin kernel to the move dialect.
 
@@ -111,8 +113,10 @@ def compile_squin_to_move(
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         layout_heuristic (LayoutHeuristicABC | None, optional): Layout heuristic for atom
             placement. Defaults to ``None`` (uses ``LogicalLayoutHeuristic``).
-        insert_return_moves (bool, optional): Whether to insert return moves at the end
-            of the program. Defaults to True.
+        placement_strategy (PlacementStrategyABC | None, optional): Placement strategy.
+            Defaults to ``None`` (uses ``PalindromePlacementStrategy`` wrapping
+            ``LogicalPlacementStrategyNoHome``). Pass a bare strategy without
+            ``PalindromePlacementStrategy`` to disable palindrome return moves.
 
     Returns:
         ir.Method: The compiled move dialect method.
@@ -122,10 +126,14 @@ def compile_squin_to_move(
     if layout_heuristic is None:
         layout_heuristic = logical_layout.LogicalLayoutHeuristic()
 
+    if placement_strategy is None:
+        placement_strategy = PalindromePlacementStrategy(
+            inner=LogicalPlacementStrategyNoHome()
+        )
+
     mt = LogicalPipeline(
         layout_heuristic=layout_heuristic,
-        placement_strategy=LogicalPlacementStrategyNoHome(),
-        insert_return_moves=insert_return_moves,
+        placement_strategy=placement_strategy,
     ).emit(mt, no_raise=no_raise)
     if transversal_rewrite:
         mt = transversal_rewrites(mt)
