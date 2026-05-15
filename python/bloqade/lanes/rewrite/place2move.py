@@ -1,19 +1,28 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import singledispatchmethod
-from typing import Callable
 
 from kirin import ir
 from kirin.dialects import func
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
 from bloqade.lanes.analysis import placement
-from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
+from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.utils import no_none_elements
 
 
 @dataclass
 class InsertMoves(RewriteRule):
+    """Insert move layers around each quantum statement.
+
+    For plain ``ExecuteCZ`` (and other ``AtomState`` subtypes): inserts
+    ``Load / Move... / Store`` immediately *before* the gate.
+
+    For ``ExecuteCZReturn``: additionally inserts the palindrome return moves
+    (``return_move_layers``) immediately *after* the gate, so atoms return to
+    their pre-CZ home layout without a separate pass.
+    """
+
     placement_analysis: dict[ir.SSAValue, placement.AtomState]
 
     def rewrite_Statement(self, node: ir.Statement):
@@ -24,72 +33,31 @@ class InsertMoves(RewriteRule):
         if state_after is None:
             return RewriteResult()
 
-        moves = state_after.get_move_layers()
+        has_done_something = False
 
-        if len(moves) == 0:
-            return RewriteResult()
+        forward_moves = state_after.get_move_layers()
+        if forward_moves:
+            (current_state := move.Load()).insert_before(node)
+            for move_lanes in forward_moves:
+                (
+                    current_state := move.Move(current_state.result, lanes=move_lanes)
+                ).insert_before(node)
+            move.Store(current_state.result).insert_before(node)
+            has_done_something = True
 
-        (current_state := move.Load()).insert_before(node)
-        for move_lanes in moves:
-            (
-                current_state := move.Move(current_state.result, lanes=move_lanes)
-            ).insert_before(node)
-        (move.Store(current_state.result)).insert_before(node)
+        if reverse_moves := state_after.get_reverse_moves():
+            prev = node
+            (current_state := move.Load()).insert_after(prev)
+            prev = current_state
+            for move_lanes in reverse_moves:
+                (
+                    current_state := move.Move(current_state.result, lanes=move_lanes)
+                ).insert_after(prev)
+                prev = current_state
+            move.Store(current_state.result).insert_after(prev)
+            has_done_something = True
 
-        return RewriteResult(has_done_something=True)
-
-
-def palindrome_move_layers(
-    placement_analysis: dict[ir.SSAValue, placement.AtomState],
-    node: place.StaticPlacement,
-) -> tuple[tuple[LaneAddress, ...], ...] | None:
-    move_layers: list[tuple[LaneAddress, ...]] = []
-    for stmt in node.body.walk():
-        if not isinstance(stmt, move.Move):
-            continue
-        reversed_layer = tuple(lane.reverse() for lane in stmt.lanes)
-        move_layers.append(reversed_layer)
-
-    return tuple(reversed(move_layers))
-
-
-@dataclass
-class InsertReturnMoves(RewriteRule):
-    """Insert return move layers near the end of each static placement region.
-
-    The default return strategy mirrors existing move layers in reverse order so
-    callers can recover the initial configuration after executing a region.
-    """
-
-    placement_analysis: dict[ir.SSAValue, placement.AtomState] = field(
-        default_factory=dict
-    )
-    revert_initial_position: Callable[
-        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
-        tuple[tuple[LaneAddress, ...], ...] | None,
-    ] = palindrome_move_layers
-
-    def rewrite_Statement(self, node: ir.Statement):
-        if not isinstance(node, place.StaticPlacement):
-            return RewriteResult()
-
-        last_stmt = node.body.blocks[0].last_stmt
-        if last_stmt is None:
-            return RewriteResult()
-
-        move_layers = self.revert_initial_position(self.placement_analysis, node)
-
-        if move_layers is None:
-            return RewriteResult()
-
-        (current_state := move.Load()).insert_before(last_stmt)
-        for move_layer in move_layers:
-            (
-                current_state := move.Move(current_state.result, lanes=move_layer)
-            ).insert_before(last_stmt)
-        (move.Store(current_state.result)).insert_before(last_stmt)
-
-        return RewriteResult(has_done_something=True)
+        return RewriteResult(has_done_something=has_done_something)
 
 
 @dataclass

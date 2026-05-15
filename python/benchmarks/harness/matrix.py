@@ -11,6 +11,7 @@ from benchmarks.harness.models import (
     StrategyConfig,
 )
 
+from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
 from bloqade.lanes.heuristics.physical.placement import (
@@ -40,11 +41,13 @@ def default_strategy_configs(
             strategy_id="rust_entropy_1",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(
-                    strategy="entropy", max_goal_candidates=1, max_expansions=2000
-                ),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="entropy", max_goal_candidates=1, max_expansions=2000
+                    ),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -52,11 +55,13 @@ def default_strategy_configs(
             strategy_id="rust_entropy_5",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(
-                    strategy="entropy", max_goal_candidates=5, max_expansions=2000
-                ),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="entropy", max_goal_candidates=5, max_expansions=2000
+                    ),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -64,11 +69,13 @@ def default_strategy_configs(
             strategy_id="rust_entropy_10",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(
-                    strategy="entropy", max_goal_candidates=10, max_expansions=2000
-                ),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="entropy", max_goal_candidates=10, max_expansions=2000
+                    ),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -76,11 +83,13 @@ def default_strategy_configs(
             strategy_id="rust_entropy_20",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(
-                    strategy="entropy", max_goal_candidates=20, max_expansions=2000
-                ),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="entropy", max_goal_candidates=20, max_expansions=2000
+                    ),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -88,9 +97,11 @@ def default_strategy_configs(
             strategy_id="rust_astar",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(strategy="astar"),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(strategy="astar"),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -98,9 +109,11 @@ def default_strategy_configs(
             strategy_id="rust_ids",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(strategy="ids"),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(strategy="ids"),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -108,9 +121,11 @@ def default_strategy_configs(
             strategy_id="rust_dfs",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(strategy="dfs"),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(strategy="dfs"),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -118,9 +133,11 @@ def default_strategy_configs(
             strategy_id="rust_bfs",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(strategy="bfs"),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(strategy="bfs"),
+                )
             ),
             arch_spec_id=arch_spec_id,
         ),
@@ -128,13 +145,15 @@ def default_strategy_configs(
             strategy_id="rust_greedy",
             backend="rust",
             generator_id="rust_solver",
-            build_placement_strategy=lambda: PhysicalPlacementStrategy(
-                arch_spec=factory(),
-                traversal=RustPlacementTraversal(
-                    strategy="greedy",
-                    max_movesets_per_group=50,
-                    max_expansions=1000,
-                ),
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        strategy="greedy",
+                        max_movesets_per_group=50,
+                        max_expansions=1000,
+                    ),
+                )
             ),
             arch_spec_id=arch_spec_id,
             notes=(
