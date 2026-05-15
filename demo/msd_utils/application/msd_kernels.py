@@ -22,6 +22,7 @@ from ..standard.types import KirinKernel
 
 @dataclass(frozen=True)
 class DecoderKernelBundle:
+    # TODO, mtg: make things specific in the beginning.
     """Actual and special tomography kernels for decoder workflows.
 
     Attributes:

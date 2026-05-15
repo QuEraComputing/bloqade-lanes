@@ -93,7 +93,7 @@ LAM = 0.0
 
 # P_PREP = 0.05
 FAST_SHOTS = 200_000
-POSTERIOR_SAMPLES = 20_000
+BINARY_PRECISION = 7
 
 BASIS_LABELS = DEFAULT_BASIS_LABELS
 OUTPUT_QUBIT = 0
@@ -462,7 +462,7 @@ print("Using factory target:", tuple(int(x) for x in FACTORY_TARGET.tolist()))
 inj_raw = naive_injected_summary(
     injected_tasks,
     sign_vector=INJECTED_SIGN_VECTOR,
-    posterior_samples=POSTERIOR_SAMPLES,
+    binary_precision=BINARY_PRECISION,
     shots=FAST_SHOTS,
     require_zero_detectors=False,
     basis_labels=BASIS_LABELS,
@@ -471,7 +471,7 @@ inj_raw = naive_injected_summary(
 inj_ps = naive_injected_summary(
     injected_tasks,
     sign_vector=INJECTED_SIGN_VECTOR,
-    posterior_samples=POSTERIOR_SAMPLES,
+    binary_precision=BINARY_PRECISION,
     shots=FAST_SHOTS,
     require_zero_detectors=True,
     basis_labels=BASIS_LABELS,
@@ -481,7 +481,7 @@ dist_raw = naive_distilled_summary(
     distilled_tasks,
     FACTORY_TARGET,
     sign_vector=DISTILLED_SIGN_VECTOR,
-    posterior_samples=POSTERIOR_SAMPLES,
+    binary_precision=BINARY_PRECISION,
     shots=FAST_SHOTS,
     require_zero_ancilla_detectors=False,
     basis_labels=BASIS_LABELS,
@@ -491,7 +491,7 @@ dist_flagged = naive_distilled_summary(
     distilled_tasks,
     FACTORY_TARGET,
     sign_vector=DISTILLED_SIGN_VECTOR,
-    posterior_samples=POSTERIOR_SAMPLES,
+    binary_precision=BINARY_PRECISION,
     shots=FAST_SHOTS,
     require_zero_ancilla_detectors=True,
     basis_labels=BASIS_LABELS,

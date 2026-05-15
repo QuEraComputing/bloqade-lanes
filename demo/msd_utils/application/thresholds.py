@@ -66,6 +66,7 @@ class DecoderAdapter:
     decode_full: Callable[[int], tuple[int, ...]]
     # Names the score returned by decode_factory so callers can label plots/logs.
     factory_score_mode: str
+    # NOTE, mtg: add the name of the decoder?
 
 
 def _make_decoder_adapter(

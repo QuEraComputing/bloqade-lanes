@@ -109,7 +109,7 @@ print("Using bloqade.decoders from:", Path(bloqade_decoders.__file__).resolve())
 FAST_CONFIG = {
     "mld_train_shots": 20_000,
     "eval_shots": 4_000,
-    "posterior_samples": 20_000,
+    "binary_precision": 7,
     "mle_threshold_points": 24,
     "mld_threshold_points": 24,
     "mle_threshold_policy": "quantile",
@@ -122,7 +122,7 @@ FAST_CONFIG = {
 PAPER_SCALE_CONFIG = {
     "mld_train_shots": 1_000_000_000,
     "eval_shots": 250_000,
-    "posterior_samples": 200_000,
+    "binary_precision": 9,
     "mle_threshold_points": 64,
     "mld_threshold_points": 64,
     "mle_threshold_policy": "quantile",
@@ -269,24 +269,24 @@ _shared_fidelity_from_counts = fidelity_from_counts
 
 
 def fidelity_from_counts(
-    x_bits, y_bits, z_bits, posterior_samples, sign_vector=(1.0, 1.0, 1.0)
+    x_bits, y_bits, z_bits, binary_precision, sign_vector=(1.0, 1.0, 1.0)
 ):
     return _shared_fidelity_from_counts(
         x_bits,
         y_bits,
         z_bits,
-        posterior_samples,
+        binary_precision,
         sign_vector=sign_vector,
         target_bloch=FIDELITY_TARGET_BLOCH,
     )
 
 
 # %%
-def injected_baseline_raw(task_map, posterior_samples: int):
+def injected_baseline_raw(task_map, binary_precision: int | None):
     return injected_baseline(
         task_map,
         eval_shots=CONFIG["eval_shots"],
-        posterior_samples=posterior_samples,
+        binary_precision=binary_precision,
         table_decoder_cls=TableDecoder,
         sign_vector=INJECTED_RAW_SIGN_VECTOR,
         target_bloch=FIDELITY_TARGET_BLOCH,
@@ -518,9 +518,7 @@ def build_mld_decoders_debug(training_dataset: BasisDataset):
 injected_tasks["X"].tsim_circuit.diagram(height=500)
 
 # %%
-injected_summary_raw = injected_baseline_raw(
-    injected_tasks, CONFIG["posterior_samples"]
-)
+injected_summary_raw = injected_baseline_raw(injected_tasks, CONFIG["binary_precision"])
 
 # %%
 injected_summary_raw
@@ -609,7 +607,7 @@ mle_decoders = {
 mld_curve = evaluate_curve(
     actual_data,
     mld_training,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     threshold_points=CONFIG["mld_threshold_points"],
     metric="MLD confidence",
     valid_factory_targets=VALID_FACTORY_TARGETS,
@@ -623,7 +621,7 @@ mld_curve = evaluate_curve(
 mle_curve = evaluate_curve(
     actual_data,
     mle_decoders,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     threshold_points=CONFIG["mle_threshold_points"],
     metric="MLE logical gap",
     valid_factory_targets=VALID_FACTORY_TARGETS,
@@ -636,7 +634,7 @@ mle_curve = evaluate_curve(
 injected_summary_corrected = injected_baseline(
     injected_tasks,
     eval_shots=CONFIG["eval_shots"],
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     table_decoder_cls=TableDecoder,
     sign_vector=INJECTED_CORRECTED_SIGN_VECTOR,
     target_bloch=FIDELITY_TARGET_BLOCH,
@@ -645,9 +643,7 @@ injected_summary_corrected = injected_baseline(
     uncertainty_backend=CONFIG["uncertainty_backend"],
     sim_type=SIM_TYPE,
 )
-injected_summary_raw = injected_baseline_raw(
-    injected_tasks, CONFIG["posterior_samples"]
-)
+injected_summary_raw = injected_baseline_raw(injected_tasks, CONFIG["binary_precision"])
 
 print("Injected raw baseline fidelity:", injected_summary_raw["point"])
 print("Injected corrected baseline fidelity:", injected_summary_corrected["point"])
@@ -765,15 +761,13 @@ print("MLD first few fidelities:", mld_curve["fidelity"][:5])
 # injected_summary_raw
 
 # %%
-# injected_summary_corr = injected_baseline(injected_tasks, CONFIG['posterior_samples'])
+# injected_summary_corr = injected_baseline(injected_tasks, CONFIG['binary_precision'])
 
 # %%
 # injected_summary_corr
 
 # %%
-injected_summary_raw = injected_baseline_raw(
-    injected_tasks, CONFIG["posterior_samples"]
-)
+injected_summary_raw = injected_baseline_raw(injected_tasks, CONFIG["binary_precision"])
 
 # %%
 injected_summary_raw
@@ -926,7 +920,7 @@ for basis, task in actual_tasks.items():
 
 
 # %%
-def injected_baseline_debug(task_map, posterior_samples: int, shots: int = 4000):
+def injected_baseline_debug(task_map, binary_precision: int | None, shots: int = 4000):
     print("Evaluating injected baseline with SAME data for train and test")
     corrected = {}
 
@@ -967,7 +961,7 @@ def injected_baseline_debug(task_map, posterior_samples: int, shots: int = 4000)
         corrected["X"],
         corrected["Y"],
         corrected["Z"],
-        posterior_samples,
+        binary_precision,
         sign_vector=INJECTED_CORRECTED_SIGN_VECTOR,
     )
     print("\nLeaky injected summary:", summary)
@@ -975,7 +969,9 @@ def injected_baseline_debug(task_map, posterior_samples: int, shots: int = 4000)
 
 
 # %%
-_ = injected_baseline_debug(injected_tasks, posterior_samples=5000, shots=4000)
+_ = injected_baseline_debug(
+    injected_tasks, binary_precision=CONFIG["binary_precision"], shots=4000
+)
 
 
 # %% [markdown]
@@ -985,7 +981,7 @@ _ = injected_baseline_debug(injected_tasks, posterior_samples=5000, shots=4000)
 # %%
 def naive_injected_baseline(
     task_map,
-    posterior_samples: int,
+    binary_precision: int | None,
     shots: int | None = None,
     require_zero_detectors: bool = False,
     min_accepted_per_basis: int = 50,
@@ -1013,7 +1009,7 @@ def naive_injected_baseline(
         corrected["X"],
         corrected["Y"],
         corrected["Z"],
-        posterior_samples,
+        binary_precision,
         sign_vector=INJECTED_RAW_SIGN_VECTOR,
     )
     summary["accepted_fraction"] = float(np.mean(list(accepted_fractions.values())))
@@ -1024,7 +1020,7 @@ def naive_injected_baseline(
 def naive_distilled_summary(
     actual_data,
     valid_factory_targets,
-    posterior_samples: int,
+    binary_precision: int | None,
     require_zero_ancilla_detectors: bool = True,
     require_zero_all_detectors: bool = False,
     min_accepted_per_basis: int = 50,
@@ -1061,7 +1057,7 @@ def naive_distilled_summary(
         corrected["X"],
         corrected["Y"],
         corrected["Z"],
-        posterior_samples,
+        binary_precision,
         sign_vector=(1.0, -1.0, 1.0),
     )
     summary["accepted_fraction"] = total_kept / total_shots
@@ -1079,7 +1075,7 @@ def naive_distilled_summary(
 
 def scan_naive_factory_targets(
     actual_data,
-    posterior_samples: int,
+    binary_precision: int | None,
     require_zero_ancilla_detectors: bool = True,
     require_zero_all_detectors: bool = False,
     min_accepted_per_basis: int = 50,
@@ -1098,7 +1094,7 @@ def scan_naive_factory_targets(
             summary = naive_distilled_summary(
                 actual_data,
                 pattern,
-                posterior_samples=posterior_samples,
+                binary_precision=binary_precision,
                 require_zero_ancilla_detectors=require_zero_ancilla_detectors,
                 require_zero_all_detectors=require_zero_all_detectors,
                 min_accepted_per_basis=min_accepted_per_basis,
@@ -1131,12 +1127,12 @@ actual_data = {
 # %%
 inj_raw = naive_injected_baseline(
     injected_tasks,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_detectors=False,
 )
 inj_ps = naive_injected_baseline(
     injected_tasks,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_detectors=True,
 )
 
@@ -1147,7 +1143,7 @@ print("Injected perfect-stabilizer:", inj_ps)
 # %%
 naive_rows = scan_naive_factory_targets(
     actual_data,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_ancilla_detectors=True,
     require_zero_all_detectors=False,
     min_accepted_per_basis=50,
@@ -1162,7 +1158,7 @@ best_pattern = naive_rows[0]["pattern"]
 naive_best = naive_distilled_summary(
     actual_data,
     best_pattern,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_ancilla_detectors=True,
     require_zero_all_detectors=False,
     min_accepted_per_basis=50,
@@ -1174,7 +1170,7 @@ print("Best naive distilled summary:", naive_best)
 # %%
 naive_rows_no_flags = scan_naive_factory_targets(
     actual_data,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_ancilla_detectors=False,
     require_zero_all_detectors=False,
     min_accepted_per_basis=50,
@@ -1210,7 +1206,11 @@ def scan_noiseless_actual_patterns(task_map, shots: int = 10000):
         y_bits = np.asarray(pattern_output[key]["Y"], dtype=np.uint8)
         z_bits = np.asarray(pattern_output[key]["Z"], dtype=np.uint8)
         summary = fidelity_from_counts(
-            x_bits, y_bits, z_bits, posterior_samples=5000, sign_vector=(1.0, -1.0, 1.0)
+            x_bits,
+            y_bits,
+            z_bits,
+            binary_precision=CONFIG["binary_precision"],
+            sign_vector=(1.0, -1.0, 1.0),
         )
         rows.append(
             {
@@ -1284,7 +1284,7 @@ for basis, task in injected_tasks.items():
 # %%
 def naive_injected_summary(
     task_map,
-    posterior_samples: int,
+    binary_precision: int | None,
     shots: int | None = None,
     require_zero_detectors: bool = False,
     min_accepted_per_basis: int = 50,
@@ -1312,7 +1312,7 @@ def naive_injected_summary(
         corrected["X"],
         corrected["Y"],
         corrected["Z"],
-        posterior_samples,
+        binary_precision,
         sign_vector=INJECTED_RAW_SIGN_VECTOR,
     )
     summary["accepted_fraction"] = float(
@@ -1326,7 +1326,7 @@ def naive_injected_summary(
 def naive_distilled_summary(
     actual_data,
     valid_factory_targets,
-    posterior_samples: int,
+    binary_precision: int | None,
     require_zero_ancilla_detectors: bool = False,
     require_zero_all_detectors: bool = False,
     min_accepted_per_basis: int = 50,
@@ -1362,7 +1362,7 @@ def naive_distilled_summary(
         corrected["X"],
         corrected["Y"],
         corrected["Z"],
-        posterior_samples,
+        binary_precision,
         sign_vector=(1.0, -1.0, 1.0),
     )
     summary["accepted_fraction"] = total_kept / total_shots
@@ -1381,7 +1381,7 @@ def naive_distilled_summary(
 # %%
 def scan_naive_patterns(
     actual_data,
-    posterior_samples: int,
+    binary_precision: int | None,
     require_zero_ancilla_detectors: bool = False,
     require_zero_all_detectors: bool = False,
     min_accepted_per_basis: int = 50,
@@ -1400,7 +1400,7 @@ def scan_naive_patterns(
             s = naive_distilled_summary(
                 actual_data,
                 pattern,
-                posterior_samples=posterior_samples,
+                binary_precision=binary_precision,
                 require_zero_ancilla_detectors=require_zero_ancilla_detectors,
                 require_zero_all_detectors=require_zero_all_detectors,
                 min_accepted_per_basis=min_accepted_per_basis,
@@ -1431,13 +1431,13 @@ actual_data = {
 
 inj_raw = naive_injected_summary(
     injected_tasks,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_detectors=False,
 )
 
 inj_ps = naive_injected_summary(
     injected_tasks,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_detectors=True,
 )
 
@@ -1448,7 +1448,7 @@ print("Injected perfect-stabilizer:", inj_ps)
 # %%
 rows_no_decoder = scan_naive_patterns(
     actual_data,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_ancilla_detectors=False,
     require_zero_all_detectors=False,
     min_accepted_per_basis=50,
@@ -1461,7 +1461,7 @@ for row in rows_no_decoder[:10]:
 # %%
 rows_no_decoder_flagged = scan_naive_patterns(
     actual_data,
-    posterior_samples=CONFIG["posterior_samples"],
+    binary_precision=CONFIG["binary_precision"],
     require_zero_ancilla_detectors=True,
     require_zero_all_detectors=False,
     min_accepted_per_basis=50,
