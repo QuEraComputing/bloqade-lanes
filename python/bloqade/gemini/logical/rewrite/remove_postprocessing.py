@@ -84,5 +84,5 @@ class RemovePostProcessing(Pass):
 
     def unsafe_run(self, mt: Method) -> RewriteResult:
         result = Walk(_DeleteBelowTerminalMeasure()).rewrite(mt.code)
-        Walk(_InsertTerminalMeasureReturn()).rewrite(mt.code)
+        result = Walk(_InsertTerminalMeasureReturn()).rewrite(mt.code).join(result)
         return result
