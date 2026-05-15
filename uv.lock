@@ -189,6 +189,18 @@ tsim = [
 ]
 
 [[package]]
+name = "bloqade-core"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "kirin-toolchain" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ae/ed/4119e1062015c61f99eb641ff6da3733ace9d1e1517305eff5d027e2fa94/bloqade_core-0.6.0.tar.gz", hash = "sha256:bbe1e1d8c0d90d9e71bc78aee7ca2399b34f51fc9b9dd4d7e3182943156c549e", size = 116377, upload-time = "2026-05-15T14:31:25.777Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/19/3ff7bc29635d900b99fa29570b55844ff4c369b6bcba247e0ac6ecf55b41/bloqade_core-0.6.0-py3-none-any.whl", hash = "sha256:b4350f214a5d24c8b10fdbc1cc7e9cf215b54dead557ebb3b195731a60eb69ce", size = 21142, upload-time = "2026-05-15T14:31:24.645Z" },
+]
+
+[[package]]
 name = "bloqade-decoders"
 version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -205,24 +217,12 @@ wheels = [
 ]
 
 [[package]]
-name = "bloqade-geometry"
-version = "0.5.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "kirin-toolchain" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/06/9b5a0c6b06b83c56fe0b630a5bce8969143a3f911059f2d30f550c3a3a81/bloqade_geometry-0.5.3.tar.gz", hash = "sha256:7154e28b09bc268798b5044105800c1075ee4485006c5ae807ce37af7f76575b", size = 120145, upload-time = "2026-03-02T15:48:39.421Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/35/f7ba47371039ad42674fff05131c01cf2d1494cd1f2a37e918c3410d7e55/bloqade_geometry-0.5.3-py3-none-any.whl", hash = "sha256:184c22ae5d32c3bdfe9f43ced84f6299147a55599fa64b9cdd1637928d84c118", size = 21096, upload-time = "2026-03-02T15:48:38.389Z" },
-]
-
-[[package]]
 name = "bloqade-lanes"
 version = "0.10.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "bloqade-circuit", extra = ["cirq", "qasm2", "tsim"] },
-    { name = "bloqade-geometry" },
+    { name = "bloqade-core" },
     { name = "bloqade-tsim" },
     { name = "deprecated" },
     { name = "kahip" },
@@ -284,7 +284,7 @@ doc = [
 [package.metadata]
 requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "qasm2", "tsim"], specifier = "~=0.14.1" },
-    { name = "bloqade-geometry", specifier = "~=0.5.0" },
+    { name = "bloqade-core", specifier = "~=0.6.0" },
     { name = "bloqade-tsim", specifier = "~=0.1.3" },
     { name = "cudaq", marker = "extra == 'cudaq'", specifier = ">=0.13.0" },
     { name = "deprecated", specifier = ">=1.3.1" },
