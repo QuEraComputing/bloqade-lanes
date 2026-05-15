@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Callable
 
 from bloqade.analysis import address
 from bloqade.native.dialects import gate as native_gate
@@ -17,7 +16,6 @@ from bloqade.gemini.common.dialects import qubit as gemini_qubit
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
@@ -104,11 +102,6 @@ class NativeToPlace:
 class PlaceToMove:
     layout_heuristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
-    insert_return_moves: bool = True
-    revert_initial_position: Callable[
-        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
-        tuple[tuple[LaneAddress, ...], ...] | None,
-    ] = place2move.palindrome_move_layers
     logical_initialize: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True):
@@ -171,14 +164,6 @@ class PlaceToMove:
         rule = rewrite.Chain(*rules)
         rewrite.Walk(rule).rewrite(out.code)
 
-        if self.insert_return_moves:
-            rewrite.Walk(
-                place2move.InsertReturnMoves(
-                    placement_analysis=placement_frame.entries,
-                    revert_initial_position=self.revert_initial_position,
-                )
-            ).rewrite(out.code)
-
         rewrite.Walk(
             rewrite.Chain(
                 place2move.LiftMoveStatements(), place2move.DeleteInitialize()
@@ -212,11 +197,6 @@ def squin_to_move(
     mt: ir.Method,
     layout_heuristic: layout.LayoutHeuristicABC,
     placement_strategy: placement.PlacementStrategyABC,
-    insert_return_moves: bool = True,
-    revert_initial_position: Callable[
-        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
-        tuple[tuple[LaneAddress, ...], ...] | None,
-    ] = place2move.palindrome_move_layers,
     no_raise: bool = True,
     logical_initialize: bool = True,
     place_opt_type: type[passes.Pass] = SequentialPlacePass,
@@ -228,10 +208,7 @@ def squin_to_move(
         mt (ir.Method): The Squin kernel to compile.
         layout_heuristic (layout.LayoutHeuristicABC): The layout heuristic to use.
         placement_strategy (placement.PlacementStrategyABC): The placement strategy to use.
-        insert_return_moves (bool, optional): Whether to insert return moves. Defaults to True.
-        revert_initial_position (Callable, optional): Callback returning move
-            layers to insert near the end of each static placement region.
-            Defaults to palindrome_move_layers.
+            Wrap with ``PalindromePlacementStrategy`` to enable palindrome return moves.
         no_raise (bool, optional): Whether to suppress exceptions during compilation. Defaults to True.
         logical_initialize (bool, optional): Whether to apply rewrites that insert logical qubit initialization operations; when False, these rewrites are skipped. Defaults to True.
         place_opt_type (type[passes.Pass], optional): Place-dialect optimization pass class. Defaults to SequentialPlacePass.
@@ -249,8 +226,6 @@ def squin_to_move(
     out = PlaceToMove(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        insert_return_moves=insert_return_moves,
-        revert_initial_position=revert_initial_position,
         logical_initialize=logical_initialize,
     ).emit(out, no_raise=no_raise)
 

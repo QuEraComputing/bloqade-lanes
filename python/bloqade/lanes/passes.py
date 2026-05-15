@@ -20,10 +20,6 @@ from bloqade.lanes.rewrite.reorder_static_placement import (
     alap_reorder_policy,
     asap_reorder_policy,
 )
-from bloqade.lanes.rewrite.split_static_placement import (
-    SplitStaticPlacement,
-    cz_layer_split_policy,
-)
 
 
 @dataclass
@@ -60,12 +56,11 @@ class ASAPPlacePass(passes.Pass):
     """ASAP scheduling optimization for the place dialect.
 
     Merges all pure-gate placements (R, Rz, CZ), reorders gates by ASAP
-    dependency scheduling, fuses adjacent compatible gates, then re-splits
-    on CZ-anchored boundaries.
+    dependency scheduling, then fuses adjacent compatible gates.
 
     ``debug.Info`` statements are stripped at the start of this pass.
     ASAP scheduling cannot reorder across opaque debug nodes, so they must
-    be removed before the merge/reorder/fuse/split sequence.  Use
+    be removed before the merge/reorder/fuse sequence.  Use
     ``SequentialPlacePass`` if debug statements must be preserved.
     """
 
@@ -93,9 +88,6 @@ class ASAPPlacePass(passes.Pass):
         )
         result = result.join(
             rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(mt.code)
-        )
-        result = result.join(
-            rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(mt.code)
         )
         return result
 
@@ -137,8 +129,5 @@ class ALAPPlacePass(passes.Pass):
         )
         result = result.join(
             rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(mt.code)
-        )
-        result = result.join(
-            rewrite.Walk(SplitStaticPlacement(cz_layer_split_policy)).rewrite(mt.code)
         )
         return result
