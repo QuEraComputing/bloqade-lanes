@@ -31,9 +31,9 @@
 # defaults to all 9 in the measure script.
 
 [task]
-name = "dsl-move-policy-ghz4-no-builtin"
-description = "LLM-authored search strategy run on `ghz_4` (smallest kernel; native strategies all solve it in 14 events). Goal: produce ANY valid moveset, then iterate to beat the prior best. invoke_builtin is forbidden so the LLM has to actually implement search. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly — no `logical_initialize` plumbing."
-canonical_branch = "autotune/dsl-move-policy-v2-base"
+name = "dsl-move-policy-v2-steane35-no-builtin"
+description = "LLM-authored search strategy run on `steane_physical_35` (native strategies show meaningful event-count differentiation here: entropy_20=86, entropy_10=88, entropy_5=94, greedy=100, dfs=106, ids=110). Goal: keep success_rate == 1.0 while reducing total move events. invoke_builtin is forbidden so the LLM has to implement search in Starlark. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly — no `logical_initialize` plumbing."
+canonical_branch = "autotune/dsl-move-policy-v2-steane35-base"
 max_iterations = "10"
 
 # No target_metric ceiling — let the loop run all iterations. The first
