@@ -151,9 +151,34 @@ pub fn register_actions(builder: &mut starlark::environment::GlobalsBuilder) {
         // Convert the Starlark list of integers into a Vec<i64>, then
         // re-emit as a Starlark list inside the dict (so the dict
         // round-trips through serde_json cleanly).
+        // Big-int path mirrors `starlark_value_to_json` in kernel.rs.
+        // Physical-Gemini `LaneAddr::encode` routinely produces `u64`
+        // values above `i32::MAX`; without the big-int branch those
+        // values get truncated to `0` here and `insert_child` ends up
+        // decoding the phantom "lane 0". `StarlarkBigInt` is not
+        // publicly re-exported by `starlark-0.13`, so we guard on
+        // `get_type() == "int"` and parse `to_str()`.
         let lanes: Vec<i64> = move_set_encoded
             .iter()
-            .map(|v| v.unpack_i32().map(|i| i as i64).unwrap_or(0))
+            .map(|v| {
+                if let Some(i) = v.unpack_i32() {
+                    return i as i64;
+                }
+                if v.get_type() == "int" {
+                    let s = v.to_str();
+                    if let Ok(i) = s.parse::<i64>() {
+                        return i;
+                    }
+                    // u64 values above `i64::MAX` wrap via two's
+                    // complement; `MoveAction::try_from_json`
+                    // reconstructs the `u64` round-trip with
+                    // `as_i64().map(|i| i as u64)`.
+                    if let Ok(u) = s.parse::<u64>() {
+                        return u as i64;
+                    }
+                }
+                0
+            })
             .collect();
         let dict = AllocDict([
             ("$action", heap.alloc("insert_child")),

@@ -593,6 +593,26 @@ fn starlark_value_to_json(value: starlark::values::Value<'_>) -> Result<serde_js
     if let Some(i) = value.unpack_i32() {
         return Ok(serde_json::Value::Number(serde_json::Number::from(i)));
     }
+    // Big-int path. Starlark stores any integer outside `i32` range as a
+    // `StarlarkBigInt`; without this branch, encoded `LaneAddr` values
+    // (`u64`) above `i32::MAX` fall through to the `Null` sink at the end
+    // of this function. Downstream `MoveAction::try_from_json` then reads
+    // `0` for every truncated lane, and `insert_child` decodes the phantom
+    // "lane 0" — `aod_invalid: lane 0 has no qubit at src`.
+    //
+    // `StarlarkBigInt` is not publicly re-exported by `starlark-0.13`, so
+    // we guard on `get_type() == "int"` and parse the `to_str()` decimal
+    // representation. For a Starlark int this always yields the bare
+    // digits (no quotes).
+    if value.get_type() == "int" {
+        let s = value.to_str();
+        if let Ok(u) = s.parse::<u64>() {
+            return Ok(serde_json::Value::Number(serde_json::Number::from(u)));
+        }
+        if let Ok(i) = s.parse::<i64>() {
+            return Ok(serde_json::Value::Number(serde_json::Number::from(i)));
+        }
+    }
     if let Some(sf) = value.downcast_ref::<starlark::values::float::StarlarkFloat>() {
         return Ok(serde_json::Number::from_f64(sf.0)
             .map(serde_json::Value::Number)
@@ -922,6 +942,83 @@ mod tests {
 
     use super::*;
     use crate::test_utils::example_arch_json;
+
+    /// Regression test: encoded lane values above `i32::MAX` must round-trip
+    /// through the Starlark→JSON marshalling path without being truncated to 0.
+    ///
+    /// Before the fix at `starlark_value_to_json` (kernel.rs) and the
+    /// `insert_child` registered action (actions.rs), Starlark big ints
+    /// (any value outside `i32` range) fell through `unpack_i32` and were
+    /// stored as JSON `Null` or wrapped to `0`. The kernel then decoded
+    /// the "lane 0" and emitted `aod_invalid: lane 0 has no qubit at src`,
+    /// silently corrupting every physical-Gemini `LaneAddr::encode > 2^31-1`.
+    ///
+    /// This test inserts `2_147_483_648 = i32::MAX + 1` (which lies
+    /// outside any valid lane on `example_arch_json`'s small arch) and
+    /// asserts the kernel's `aod_invalid` error references that exact
+    /// decoded value, not `0`. If the truncation regresses, the test
+    /// will fail because the error message will say "lane 0".
+    #[test]
+    fn insert_child_lane_above_i32_max_does_not_truncate_to_zero() {
+        let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+        let index = Arc::new(LaneIndex::new(spec));
+
+        // The policy emits `insert_child` with the lane `i32::MAX + 1`
+        // (an invalid lane index on the small arch, regardless of the
+        // truncation bug). On the next tick it reads `graph.last_insert()`
+        // and halts with `"solved"` iff the kernel's error message
+        // mentions the un-truncated lane value, or `"unsolvable"` if it
+        // sees the truncated "0".
+        let mut tmp = tempfile::NamedTempFile::new().expect("temp file");
+        writeln!(
+            tmp,
+            r#"
+def init(root, ctx):
+    return {{"step": 0}}
+
+def step(graph, gs, ctx, lib):
+    if gs["step"] == 0:
+        return [
+            insert_child(0, [2147483648]),
+            update_global_state({{"step": 1}}),
+        ]
+    outcome = graph.last_insert()
+    if outcome == None or outcome["error"] == None:
+        return halt("unsolvable", "no error outcome")
+    if "2147483648" in outcome["error"]:
+        return halt("solved", "lane round-tripped")
+    return halt("unsolvable", "truncated outcome: " + outcome["error"])
+"#
+        )
+        .expect("write");
+        tmp.flush().expect("flush");
+        let path = tmp.path().to_str().expect("path").to_owned();
+
+        let opts = PolicyOptions {
+            policy_path: path,
+            policy_params: serde_json::Value::Object(Default::default()),
+            max_expansions: 100,
+            timeout_s: Some(5.0),
+            sandbox: SandboxConfig::default(),
+        };
+
+        let result = solve_with_policy(
+            std::iter::empty::<(u32, LocationAddr)>(),
+            std::iter::empty::<(u32, LocationAddr)>(),
+            std::iter::empty::<LocationAddr>(),
+            index,
+            opts,
+            &mut crate::move_policy_dsl::observer::NoOpMoveObserver,
+        )
+        .expect("solve");
+
+        assert_eq!(
+            result.status,
+            PolicyStatus::Solved,
+            "policy reached the halt branch via the truncation outcome, \
+             not the round-tripped one — i32 truncation regressed"
+        );
+    }
 
     /// Trivial halt-only policy: returns `Solved` with no expansions.
     #[test]
