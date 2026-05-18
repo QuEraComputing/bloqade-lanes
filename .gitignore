@@ -22,7 +22,6 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 *$py.class
-.python-version
 
 # C extensions / Rust shared libraries
 *.so

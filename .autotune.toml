@@ -1,0 +1,75 @@
+# Autotune config for the Move Policy DSL.
+#
+# Goal: let an LLM iteratively improve `policies/autotune/candidate.star` so
+# that it solves the full 9-kernel Squin benchmark suite (small + medium +
+# large buckets, physical Gemini arch) with the fewest move lanes while
+# keeping success_rate == 1.0.
+#
+# The bridge that lets `dsl_autotune` plug into the benchmark harness lives
+# at:
+#   python/bloqade/lanes/heuristics/physical/movement.py
+#       (RustPlacementTraversal.policy_path / policy_params / timeout_s)
+#   python/benchmarks/harness/matrix.py
+#       (StrategyConfig "dsl_autotune", reads $BLOQADE_DSL_POLICY)
+#
+# Measure pipeline:
+#   1. autotune runs `scripts/autotune/measure_dsl_policy.py`, which invokes
+#      `python -m benchmarks.cli --strategies dsl_autotune ...` and prints the
+#      resulting CSV to stdout.
+#   2. autotune pipes that stdout into the ScriptAdaptor command
+#      (`scripts/autotune/parse_csv_metrics.py`) which aggregates the rows
+#      into `{total_lanes, success_rate, ...}` JSON.
+#   3. WeightedSumScorer minimises `total_lanes` with `success_rate` as a
+#      no-regression guardrail.
+
+[task]
+name = "dsl-move-policy"
+description = "Evolve a Move Policy DSL .star file that beats Rust's built-in strategies on the full Squin benchmark suite."
+canonical_branch = "jason/move-policy-dsl"
+
+# SMOKE-RUN CONFIG (loop validation): 5 iterations, no target_metric, and
+# the measure script defaults to all 9 kernels but the smoke run overrides
+# via `BLOQADE_DSL_KERNELS=ghz_4,ghz_6` so each iteration finishes in seconds.
+# Once the loop is validated end-to-end, bump max_iterations and re-add the
+# target_metric blocks below.
+max_iterations = "5"
+
+# FULL-RUN CONFIG (commented out — restore after smoke run validates the loop):
+# max_iterations = "50"
+#
+# # `rust_entropy_5` (the best built-in strategy on the full 9-kernel suite)
+# # gets total_lanes=3848 with all 9 kernels solved. Stop when the LLM-authored
+# # policy beats it by ~5% (total_lanes <= 3650).
+# [[task.target_metric]]
+# name = "total_lanes"
+# value = 3650.0
+# direction = "Minimize"
+#
+# [[task.target_metric]]
+# name = "success_rate"
+# value = 1.0
+# direction = "Maximize"
+
+[paths]
+tunable = ["policies/autotune/candidate.star"]
+
+[[measure]]
+name = "dsl_benchmark"
+command = ["python", "scripts/autotune/measure_dsl_policy.py"]
+# `rust_entropy_5` finishes the full 9-kernel suite in ~25s; LLM policies
+# are expected to be 2-5x slower and may hit per-stage timeouts. 30 min
+# keeps a margin for runaway policies (which autotune will then discard).
+timeout = 1800
+adaptor = { type = "script", command = [
+    "python",
+    "scripts/autotune/parse_csv_metrics.py",
+] }
+
+[score]
+type = "weighted_sum"
+primary_metrics = [
+    { name = "total_lanes", direction = "Minimize", weight = 1.0 },
+]
+guardrail_metrics = [
+    { name = "success_rate", direction = "Maximize", max_regression = 0.0 },
+]
