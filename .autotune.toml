@@ -31,25 +31,16 @@
 # defaults to all 9 in the measure script.
 
 [task]
-name = "dsl-move-policy-ghz4"
-description = "First-Keep run: get the LLM to produce *any* Move Policy DSL `.star` file that successfully solves `ghz_4` on the physical Gemini arch. Native strategies all solve ghz_4 in 14 events; the bar is just 'a policy that runs to completion without crashing'."
+name = "dsl-move-policy-ghz4-no-builtin"
+description = "LLM-authored search strategy run: produce *any* valid moveset for `ghz_4` on the physical Gemini arch WITHOUT using invoke_builtin. Each subsequent iteration tries to beat the prior iteration's total_events. The scorer compares against the latest kept result, so the LLM only has to improve on its own previous attempt to land another Keep."
 canonical_branch = "jason/move-policy-dsl"
 max_iterations = "10"
 
-# Any working policy on ghz_4 produces total_events <= 14 (native strategies
-# all hit 14 events). Stop as soon as the LLM clears that bar — at that
-# point `success_rate=1.0` and we have a Kept iteration whose policy file
-# we can build on. The 30 ceiling gives slack for a working-but-suboptimal
-# policy without false-positive Keeps.
-[[task.target_metric]]
-name = "total_events"
-value = 30.0
-direction = "Minimize"
-
-[[task.target_metric]]
-name = "success_rate"
-value = 1.0
-direction = "Maximize"
+# No target_metric ceiling — let the loop run all iterations. The first
+# iteration that produces a working policy will be a huge improvement vs
+# the 2000-event FAIL baseline and Keep automatically. Subsequent
+# iterations are scored against THAT (and so on), so each Keep represents
+# the LLM beating its own previous best.
 
 [paths]
 # Glob form (matches both the exact file and any nested file under it).
