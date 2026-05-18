@@ -81,9 +81,11 @@ first-child dive with argmax over a real heuristic, use a per-node
 """
 
 PARAMS_DEFAULTS = {
-    "top_c": 3,
-    "max_branch": 4,
+    "top_c": 6,
+    "max_branch": 12,
     "w_t": 0.0,
+    "w_arrived": 100.0,
+    "w_progress": 1.0,
 }
 
 def _merge_params(defaults, overrides):
@@ -126,25 +128,32 @@ def _top_c_per_qubit(scored, c):
     return out
 
 
+def _score_candidate(cand, ctx):
+    arrived = 0
+    for t in ctx.targets:
+        qid = t[0]
+        target_loc = t[1]
+        got = cand.new_config.get(qid)
+        if got != None and got == target_loc:
+            arrived = arrived + 1
+    return PARAMS["w_arrived"] * arrived + PARAMS["w_progress"] * cand.score_sum
+
+
 def init(root, ctx):
     return {
         "current": root,
         "pending": None,
-        "branch_index": 0,
     }
 
 
 def step(graph, gs, ctx, lib):
-    """DFS-without-backtracking baseline (copy of policies/reference/dfs.star)."""
+    """Greedy best-first search with parent-pointer backtracking."""
 
     pending = gs["pending"]
     if pending != None:
         outcome = graph.last_insert()
         if outcome != None and outcome["is_new"] and outcome["error"] == None:
-            child_id = outcome["child_id"]
-            return [
-                update_global_state({"current": child_id, "pending": None, "branch_index": 0}),
-            ]
+            return update_global_state({"current": outcome["child_id"], "pending": None})
         return update_global_state({"pending": None})
 
     node = gs["current"]
@@ -166,18 +175,38 @@ def step(graph, gs, ctx, lib):
     topped = _top_c_per_qubit(scored, PARAMS["top_c"])
     cands = lib.pack_aod_rectangles(topped, cfg, ctx)
 
-    branch_index = gs["branch_index"]
+    raw_ns = graph.ns(node)
+    tried = raw_ns["tried"] if "tried" in raw_ns else []
+
+    fresh = []
+    for c in cands:
+        enc = c.move_set.encoded
+        already = False
+        for t_enc in tried:
+            if t_enc == enc:
+                already = True
+                break
+        if not already:
+            fresh = fresh + [c]
+
     max_branch = PARAMS["max_branch"]
+    capped = []
+    cap_limit = len(fresh)
+    if cap_limit > max_branch:
+        cap_limit = max_branch
+    for i in range(0, cap_limit):
+        capped = capped + [fresh[i]]
+    fresh = capped
 
-    limit = len(cands)
-    if limit > max_branch:
-        limit = max_branch
+    if len(fresh) == 0:
+        parent = graph.parent(node)
+        if parent == None:
+            return halt("fallback", "gbfs: root dead-end")
+        return update_global_state({"current": parent, "pending": None})
 
-    if branch_index >= limit:
-        return halt("fallback", "dfs: no remaining candidates")
-
-    best = cands[branch_index]
+    best = argmax(fresh, lambda c: _score_candidate(c, ctx))
     return [
         insert_child(node, best.move_set.encoded),
-        update_global_state({"pending": node, "branch_index": branch_index + 1}),
+        update_node_state(node, {"tried": tried + [best.move_set.encoded]}),
+        update_global_state({"current": node, "pending": node}),
     ]
