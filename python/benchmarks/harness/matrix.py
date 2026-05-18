@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from benchmarks.harness.models import (
@@ -18,6 +19,9 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+
+DSL_POLICY_ENV_VAR = "BLOQADE_DSL_POLICY"
+DEFAULT_DSL_POLICY_PATH = "policies/autotune/candidate.star"
 
 
 def default_strategy_configs(
@@ -159,6 +163,28 @@ def default_strategy_configs(
             notes=(
                 "first-solution Rust solve (non-optimal); "
                 "Rust solver nodes_explored captured from solver output"
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="dsl_autotune",
+            backend="rust",
+            generator_id="dsl",
+            build_placement_strategy=lambda: PalindromePlacementStrategy(
+                inner=PhysicalPlacementStrategy(
+                    arch_spec=factory(),
+                    traversal=RustPlacementTraversal(
+                        policy_path=os.environ.get(
+                            DSL_POLICY_ENV_VAR, DEFAULT_DSL_POLICY_PATH
+                        ),
+                        max_expansions=1000,
+                        timeout_s=30.0,
+                    ),
+                )
+            ),
+            arch_spec_id=arch_spec_id,
+            notes=(
+                f"DSL policy via .star file; path from ${DSL_POLICY_ENV_VAR} "
+                f"(default: {DEFAULT_DSL_POLICY_PATH})"
             ),
         ),
     )

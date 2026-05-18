@@ -45,6 +45,9 @@ def compute_move_layers(
         blocked_native,
         max_expansions=None,
         options=solve_options_from_traversal(traversal),
+        policy_path=traversal.policy_path,
+        policy_params=traversal.policy_params,
+        timeout_s=traversal.timeout_s,
     )
     if result.status != "solved":
         raise RuntimeError(f"move synthesis failed with status={result.status!r}")

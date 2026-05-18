@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -95,6 +95,9 @@ class RustPlacementTraversal:
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
     collect_entropy_trace: bool = False
+    policy_path: str | None = None
+    policy_params: dict[str, Any] | None = None
+    timeout_s: float | None = None
 
 
 def solve_options_from_traversal(
@@ -278,6 +281,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 blocked_native,
                 max_expansions=remaining,
                 options=opts,
+                policy_path=self.traversal.policy_path,
+                policy_params=self.traversal.policy_params,
+                timeout_s=self.traversal.timeout_s,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:
