@@ -1,14 +1,21 @@
 """Measure command for autotune: run the DSL policy and emit aggregated metrics.
 
-Invokes `python -m benchmarks.cli` with the `dsl_autotune` strategy against
-$BLOQADE_DSL_KERNELS (default: the full 9-kernel Squin suite), then reads
-the resulting CSV and prints `AUTOTUNE_METRIC <name> <value>` lines to
-stdout for autotune's RegexAdaptor to extract.
+Calls `bloqade.lanes.compile.compile_squin_to_move` directly with a
+`PhysicalPlacementStrategy(traversal=RustPlacementTraversal(policy_path=...))`
+on each requested benchmark kernel. Prints `AUTOTUNE_METRIC <name> <value>`
+lines to stdout for autotune's RegexAdaptor to extract, and per-case
+diagnostics to stderr.
 
-Primary metric is `total_events` — sum of `move_count_events` across kernels,
-where each event is one parallel move timestep on the architecture. This is
-the meaningful "solution length" measure (fewer timesteps = better), not the
-total individual lane moves.
+Deliberately bypasses `python -m benchmarks.cli` (and its
+`squin_to_move`/`_apply_architecture_mode` plumbing) because that path
+overrides each kernel's `logical_initialize` flag based on the
+`--architecture` argument, which is a logical-qubit concept that has no
+bearing on physical-arch move-policy search. `compile_squin_to_move` is
+the physical-only entry point (wraps `PhysicalPipeline` with the physical
+arch spec) and has no `logical_initialize` parameter.
+
+Primary metric is `total_events` — sum of `move.Move` statement counts
+across kernels (one statement = one parallel move timestep on the arch).
 
 Environment:
   BLOQADE_DSL_POLICY    — relative path to the .star policy under evaluation
@@ -19,12 +26,22 @@ Environment:
 
 from __future__ import annotations
 
-import csv
 import os
-import subprocess
 import sys
-import tempfile
+import time
+import traceback
 from pathlib import Path
+
+from benchmarks.kernels import select_benchmark_cases
+
+from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
+from bloqade.lanes.compile import compile_squin_to_move
+from bloqade.lanes.dialects import move as move_dialect, place as place_dialect
+from bloqade.lanes.heuristics.physical import (
+    PhysicalLayoutHeuristicGraphPartitionCenterOut,
+    PhysicalPlacementStrategy,
+    RustPlacementTraversal,
+)
 
 DEFAULT_KERNELS = (
     "ghz_4,ghz_6,adder_4,steane_logical_5,"
@@ -39,22 +56,56 @@ DEFAULT_KERNELS = (
 FAIL_EVENTS_PENALTY = 2000.0
 
 
-def _to_float(s: str) -> float:
-    return float(s) if s else 0.0
-
-
 def _emit(name: str, value: float) -> None:
     sys.stdout.write(f"AUTOTUNE_METRIC {name} {value}\n")
 
 
+def _count_move_events(mt: object) -> int:
+    return sum(
+        1
+        for stmt in mt.callable_region.walk()  # type: ignore[attr-defined]
+        if isinstance(stmt, move_dialect.Move)
+    )
+
+
+def _build_strategy(
+    policy_path: str,
+) -> tuple[PalindromePlacementStrategy, PhysicalPlacementStrategy]:
+    """Returns (wrapped, inner). The wrapped strategy is what the pipeline
+    consumes (matches the default `PhysicalPipeline` wraps PhysicalPlacementStrategy
+    in PalindromePlacementStrategy). The inner is returned separately so the
+    caller can read `rust_nodes_expanded_total` after the solve."""
+    inner = PhysicalPlacementStrategy(
+        traversal=RustPlacementTraversal(
+            policy_path=policy_path,
+            max_expansions=1000,
+            timeout_s=30.0,
+        ),
+    )
+    return PalindromePlacementStrategy(inner=inner), inner
+
+
+def _has_unlowered_place_cz(mt: object) -> bool:
+    """True iff any `place.CZ` statements remain in the compiled IR.
+
+    `compile_squin_to_move` with `no_raise=True` returns silently even when
+    a placement strategy fails to solve every CZ stage — the leftover
+    `place.CZ` statements are the signal that the solve was incomplete.
+    """
+    return any(
+        isinstance(stmt, place_dialect.CZ)
+        for stmt in mt.callable_region.walk()  # type: ignore[attr-defined]
+    )
+
+
 def main() -> int:
-    kernels = os.environ.get("BLOQADE_DSL_KERNELS", DEFAULT_KERNELS)
+    kernels_csv = os.environ.get("BLOQADE_DSL_KERNELS", DEFAULT_KERNELS)
     policy = os.environ.get("BLOQADE_DSL_POLICY", "policies/autotune/candidate.star")
+    case_ids = {c.strip() for c in kernels_csv.split(",") if c.strip()}
 
     # Archive the policy file content to stderr so autotune's iteration
     # `measure_output/dsl_benchmark.stderr.txt` preserves what the
-    # implementer actually wrote. Without this we lose the policy when
-    # autotune tears down the worktree on a discarded iteration.
+    # implementer actually wrote.
     sys.stderr.write(f"---POLICY FILE: {policy}---\n")
     try:
         sys.stderr.write(Path(policy).read_text())
@@ -62,42 +113,10 @@ def main() -> int:
         sys.stderr.write(f"[could not read policy: {exc}]\n")
     sys.stderr.write("\n---END POLICY FILE---\n")
 
-    with tempfile.TemporaryDirectory() as td:
-        csv_path = Path(td) / "dsl_run.csv"
-        env = os.environ.copy()
-        env["BLOQADE_DSL_POLICY"] = policy
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "benchmarks.cli",
-            "--cases",
-            kernels,
-            "--strategies",
-            "dsl_autotune",
-            "--architecture",
-            "physical",
-            "--repeats",
-            "1",
-            "--output",
-            str(csv_path),
-        ]
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
-        sys.stderr.write(result.stdout)
-        sys.stderr.write(result.stderr)
-        if result.returncode != 0:
-            sys.stderr.write(f"benchmarks.cli exited with {result.returncode}\n")
-            return result.returncode
-
-        if not csv_path.exists():
-            sys.stderr.write(f"expected CSV at {csv_path}, not produced\n")
-            return 1
-
-        with csv_path.open() as f:
-            rows = list(csv.DictReader(f))
-
-    if not rows:
-        sys.stderr.write("measure_dsl_policy: empty CSV — no benchmark rows\n")
+    try:
+        cases = select_benchmark_cases(case_ids)
+    except ValueError as exc:
+        sys.stderr.write(f"measure_dsl_policy: bad kernel filter: {exc}\n")
         return 1
 
     total_events = 0.0
@@ -105,36 +124,58 @@ def main() -> int:
     solved_count = 0
     total_nodes = 0.0
     total_wall = 0.0
+    num_cases = len(cases)
 
-    for row in rows:
-        ok = row.get("success", "").strip().lower() == "true"
-        events = _to_float(row.get("move_count_events", ""))
-        nodes = _to_float(row.get("nodes_explored", ""))
-        wall = _to_float(row.get("wall_time_ms", ""))
+    for case in cases:
+        wrapped_strategy, inner_strategy = _build_strategy(policy)
+        layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut()
 
-        # Always echo the per-case `notes` field to stderr. The benchmark
-        # CLI puts swallowed exception messages there (see
-        # `python/benchmarks/harness/runner.py:122`), and without this
-        # the only signal the iteration produces is the aggregated
-        # AUTOTUNE_METRIC lines on stdout — which lose all diagnostic
-        # detail about *why* a case failed.
-        case_id = row.get("case_id", "?")
-        notes = (row.get("notes") or "").strip()
-        if notes:
-            sys.stderr.write(f"AUTOTUNE_NOTE {case_id} ok={ok}: {notes}\n")
+        start = time.perf_counter()
+        err: str | None = None
+        events = 0
+        unlowered = True
+        try:
+            mt = compile_squin_to_move(
+                case.kernel,
+                no_raise=True,
+                layout_heuristic=layout_heuristic,
+                placement_strategy=wrapped_strategy,
+            )
+            unlowered = _has_unlowered_place_cz(mt)
+            events = _count_move_events(mt)
+        except Exception as exc:  # broad on purpose — surface unexpected errors
+            err = f"{type(exc).__name__}: {exc}"
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        nodes = inner_strategy.rust_nodes_expanded_total
+        ok = (err is None) and (not unlowered)
 
         if ok:
+            sys.stderr.write(
+                f"AUTOTUNE_NOTE {case.case_id} ok=True events={events} "
+                f"nodes={nodes} wall_ms={elapsed_ms:.3f}\n"
+            )
             solved_count += 1
-            solved_events_sum += events
-            total_events += events
+            solved_events_sum += float(events)
+            total_events += float(events)
         else:
+            reason = (
+                err
+                if err is not None
+                else "place.CZ statements remain (policy failed to lower every CZ stage)"
+            )
+            sys.stderr.write(
+                f"AUTOTUNE_NOTE {case.case_id} ok=False nodes={nodes} "
+                f"wall_ms={elapsed_ms:.3f} reason={reason}\n"
+            )
+            if err is not None:
+                sys.stderr.write(traceback.format_exc())
             total_events += FAIL_EVENTS_PENALTY
-        total_nodes += nodes
-        total_wall += wall
+        total_nodes += float(nodes)
+        total_wall += elapsed_ms
 
-    num_cases = len(rows)
     avg_events_solved = solved_events_sum / solved_count if solved_count else 9999.0
-    success_rate = solved_count / num_cases
+    success_rate = solved_count / num_cases if num_cases else 0.0
 
     _emit("total_events", total_events)
     _emit("success_rate", success_rate)

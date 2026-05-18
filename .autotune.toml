@@ -32,7 +32,7 @@
 
 [task]
 name = "dsl-move-policy-ghz4-no-builtin"
-description = "LLM-authored search strategy run: produce *any* valid moveset for `ghz_4` on the physical Gemini arch WITHOUT using invoke_builtin. Each subsequent iteration tries to beat the prior iteration's total_events. The scorer compares against the latest kept result, so the LLM only has to improve on its own previous attempt to land another Keep."
+description = "LLM-authored search strategy run on `ghz_4` (smallest kernel; native strategies all solve it in 14 events). Goal: produce ANY valid moveset, then iterate to beat the prior best. invoke_builtin is forbidden so the LLM has to actually implement search. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly — no `logical_initialize` plumbing."
 canonical_branch = "jason/move-policy-dsl"
 max_iterations = "10"
 

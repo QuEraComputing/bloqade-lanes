@@ -66,14 +66,24 @@ docstring for full annotations):
                               BASELINE POLICY
 ================================================================================
 
-What follows is a deliberately trivial "uniform-cost / first-child chain
-walk" baseline. It picks the first candidate from
-`lib.pack_aod_rectangles(...)` at every step with no scoring, no backtracking,
-no lookahead. It will solve only the simplest problems. Improve it.
+Below is a copy of `policies/reference/dfs.star` — a depth-first search
+that picks `cands[branch_index]` at each node, dives on a successful
+insert, and halts with `halt("fallback", ...)` when it exhausts the
+candidate budget at a node WITHOUT backtracking.
+
+Empirically this baseline EXPANDS ~5 NODES on the synthetic 2-qubit
+physical-arch probe before halting (status=Fallback, move_layers=[],
+goal not reached). It is NOT a working solver — the goal of the
+autotune loop is for YOU to evolve this into one. Typical first
+improvements: add parent-backtracking on dead-end, replace
+first-child dive with argmax over a real heuristic, use a per-node
+`tried_count` in `update_node_state` to make resumption deterministic.
 """
 
 PARAMS_DEFAULTS = {
     "top_c": 3,
+    "max_branch": 4,
+    "w_t": 0.0,
 }
 
 def _merge_params(defaults, overrides):
@@ -87,53 +97,58 @@ def _merge_params(defaults, overrides):
 PARAMS = _merge_params(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
 
 
-def _uniform_score(q, lane, ns, ctx_arg):
-    """Uniform cost: every lane is equally good. Replace with something smarter."""
-    return 0.0
-
-
 def init(root, ctx):
-    """Seed the global state.
-
-    Every key used in `update_global_state` patches MUST appear here, or the
-    kernel raises SchemaError.
-    """
     return {
         "current": root,
         "pending": None,
+        "branch_index": 0,
     }
 
 
 def step(graph, gs, ctx, lib):
-    """Trivial chain walk: pick first candidate, dive, halt if stuck.
-
-    NOT a real search strategy — your job is to replace this with one.
-    See the INSTRUCTIONS block above.
-    """
+    """DFS-without-backtracking baseline (copy of policies/reference/dfs.star)."""
 
     pending = gs["pending"]
     if pending != None:
         outcome = graph.last_insert()
         if outcome != None and outcome["is_new"] and outcome["error"] == None:
             child_id = outcome["child_id"]
-            return update_global_state({"current": child_id, "pending": None})
-        return halt("fallback", "baseline: insert failed or duplicate")
+            return [
+                update_global_state({"current": child_id, "pending": None, "branch_index": 0}),
+            ]
+        return update_global_state({"pending": None})
 
     node = gs["current"]
     if graph.is_goal(node):
         return emit_solution(node)
 
     cfg = graph.config(node)
-    scored = lib.score_lanes(cfg, {}, _uniform_score, ctx)
+
+    def _score_lane_bound(q, lane, ns, ctx_arg):
+        dst = ctx_arg.arch_spec.lane_endpoints(lane)[1]
+        dd = (
+            lib.blended_distance(q["current"], q["target"], PARAMS["w_t"])
+            - lib.blended_distance(dst, q["target"], PARAMS["w_t"])
+        )
+        return dd
+
+    scored = lib.score_lanes(cfg, {}, _score_lane_bound, ctx)
     topped = lib.top_c_per_qubit(scored, PARAMS["top_c"])
     groups = lib.group_by_triplet(topped)
     cands = lib.pack_aod_rectangles(groups, cfg, ctx)
 
-    if len(cands) == 0:
-        return halt("fallback", "baseline: no candidates")
+    branch_index = gs["branch_index"]
+    max_branch = PARAMS["max_branch"]
 
-    best = cands[0]
+    limit = len(cands)
+    if limit > max_branch:
+        limit = max_branch
+
+    if branch_index >= limit:
+        return halt("fallback", "dfs: no remaining candidates")
+
+    best = cands[branch_index]
     return [
         insert_child(node, best.move_set.encoded),
-        update_global_state({"pending": node}),
+        update_global_state({"pending": node, "branch_index": branch_index + 1}),
     ]
