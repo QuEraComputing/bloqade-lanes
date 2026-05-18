@@ -54,7 +54,10 @@ tunable = ["policies/autotune/candidate.star"]
 
 [[measure]]
 name = "dsl_benchmark"
-command = ["python", "scripts/autotune/measure_dsl_policy.py"]
+# Use `uv run` so the worktree's venv is used (the maturin-installed
+# bloqade.lanes.bytecode._native module is what benchmarks.cli imports).
+# `python` is NOT on PATH on this system — only `python3` and `uv`.
+command = ["uv", "run", "python", "scripts/autotune/measure_dsl_policy.py"]
 # `rust_entropy_5` finishes the full 9-kernel suite in ~25s; LLM policies
 # are expected to be 2-5x slower and may hit per-stage timeouts. 30 min
 # keeps a margin for runaway policies (which autotune will then discard).
