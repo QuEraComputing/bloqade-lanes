@@ -31,19 +31,19 @@
 # defaults to all 9 in the measure script.
 
 [task]
-name = "dsl-move-policy-steane"
-description = "Evolve a Move Policy DSL .star file that solves `steane_physical_35` and matches rust_ids (110 events) or better."
+name = "dsl-move-policy-ghz4"
+description = "First-Keep run: get the LLM to produce *any* Move Policy DSL `.star` file that successfully solves `ghz_4` on the physical Gemini arch. Native strategies all solve ghz_4 in 14 events; the bar is just 'a policy that runs to completion without crashing'."
 canonical_branch = "jason/move-policy-dsl"
 max_iterations = "10"
 
-# Stop when the LLM-authored policy reaches the same event count as the
-# worst-but-solving native strategy (`rust_ids`: 110 events). On a single
-# kernel, total_events <= 110 implies success_rate = 1.0 (otherwise the
-# 2000-event FAIL penalty would dominate); the explicit success_rate
-# guardrail below pins it anyway.
+# Any working policy on ghz_4 produces total_events <= 14 (native strategies
+# all hit 14 events). Stop as soon as the LLM clears that bar — at that
+# point `success_rate=1.0` and we have a Kept iteration whose policy file
+# we can build on. The 30 ceiling gives slack for a working-but-suboptimal
+# policy without false-positive Keeps.
 [[task.target_metric]]
 name = "total_events"
-value = 110.0
+value = 30.0
 direction = "Minimize"
 
 [[task.target_metric]]
