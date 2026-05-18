@@ -90,8 +90,15 @@ impl fmt::Display for StarlarkLane {
 impl<'v> StarlarkValue<'v> for StarlarkLane {
     fn get_attr(&self, attr: &str, heap: &'v Heap) -> Option<Value<'v>> {
         match attr {
-            // encode_u64 returns u64; Gemini lane IDs fit in i32 in practice.
-            "encoded" => Some(heap.alloc(self.0.encode_u64() as i32)),
+            // Physical-Gemini lane encodings routinely exceed `i32::MAX` (the
+            // `LaneAddr::encode_u64` packs zone/bus/site bits into the high
+            // half of a `u64`). Casting to `i32` here silently wraps the
+            // value — typically to `0` for the high-bit-only encodings —
+            // and the resulting `lanes: [0]` makes every `insert_child`
+            // call fail with `aod_invalid: lane 0 has no qubit at src`,
+            // silently corrupting every DSL search policy that reads
+            // `lane.encoded` to forward to `insert_child`.
+            "encoded" => Some(heap.alloc(self.0.encode_u64() as i64)),
             // direction and move_type are #[repr(u8)] enums; cast to i32.
             "direction" => Some(heap.alloc(self.0.direction as i32)),
             "move_type" => Some(heap.alloc(self.0.move_type as i32)),
