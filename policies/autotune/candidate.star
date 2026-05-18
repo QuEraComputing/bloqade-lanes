@@ -4,18 +4,19 @@ This file is the subject of the `autotune` loop. The research agent proposes
 mutations and the implementation agent edits this file in a worktree.
 Aggregated metrics from `python -m benchmarks.cli --strategies dsl_autotune`
 are scored against the trivial baseline below; iterations that reduce
-`total_lanes` (and don't regress `success_rate`) are kept.
+`total_events` (and don't regress `success_rate`) are kept.
 
 ================================================================================
                          INSTRUCTIONS FOR THE LLM
 ================================================================================
 
-GOAL: Invent a Move Policy that minimises total move layers across the
-full 9-kernel Squin benchmark suite (`ghz_4`, `ghz_6`, `adder_4`,
+GOAL: Invent a Move Policy that minimises total move EVENTS (parallel move
+timesteps — fewer timesteps = fewer architecture wait/setup cycles) across
+the full 9-kernel Squin benchmark suite (`ghz_4`, `ghz_6`, `adder_4`,
 `steane_logical_5`, `qpe_9`, `adder_64`, `bv_70`, `steane_physical_35`,
 `trotter_rand_35`) on the physical Gemini arch while keeping
 `success_rate == 1.0`. Aim to do so with fewer than 1000 node expansions
-per CZ stage. Beating `rust_entropy_5` (total_lanes=3848 on this suite)
+per CZ stage. Beating `rust_entropy_5` (total_events=3332 on this suite)
 is the headline goal.
 
 RULES:
