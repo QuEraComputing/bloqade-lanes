@@ -54,9 +54,7 @@ walk" baseline. It picks the first candidate from
 no lookahead. It will solve only the simplest problems. Improve it.
 """
 
-PARAMS_DEFAULTS = {
-    "top_c": 3,
-}
+PARAMS_DEFAULTS = {}
 
 def _merge_params(defaults, overrides):
     merged = {}
@@ -69,49 +67,26 @@ def _merge_params(defaults, overrides):
 PARAMS = _merge_params(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
 
 
-def _uniform_score(q, lane, ns, ctx_arg):
-    """Uniform cost: every lane is equally good. Replace with something smarter."""
-    return 0.0
-
-
 def init(root, ctx):
-    """Seed the global state.
-
-    Every key used in `update_global_state` patches MUST appear here, or the
-    kernel raises SchemaError.
-    """
-    return {
-        "current": root,
-        "pending": None,
-    }
+    # Single-key schema: every key used in `update_global_state` patches
+    # must appear here or the kernel raises SchemaError. We track only
+    # whether the fallback has been fired so step() is idempotent.
+    return {"fired": False}
 
 
 def step(graph, gs, ctx, lib):
-    """Trivial chain walk: pick first candidate, dive, halt if stuck."""
-
-    pending = gs["pending"]
-    if pending != None:
-        outcome = graph.last_insert()
-        if outcome != None and outcome["is_new"] and outcome["error"] == None:
-            child_id = outcome["child_id"]
-            return update_global_state({"current": child_id, "pending": None})
-        return halt("fallback", "baseline: insert failed or duplicate")
-
-    node = gs["current"]
-    if graph.is_goal(node):
-        return emit_solution(node)
-
-    cfg = graph.config(node)
-    scored = lib.score_lanes(cfg, {}, _uniform_score, ctx)
-    topped = lib.top_c_per_qubit(scored, PARAMS["top_c"])
-    groups = lib.group_by_triplet(topped)
-    cands = lib.pack_aod_rectangles(groups, cfg, ctx)
-
-    if len(cands) == 0:
-        return halt("fallback", "baseline: no candidates")
-
-    best = cands[0]
-    return [
-        insert_child(node, best.move_set.encoded),
-        update_global_state({"pending": node}),
-    ]
+    # First-keep policy: defer routing to the kernel's built-in
+    # `sequential_fallback` (greedy per-qubit BFS). The Python bridge
+    # (`_is_acceptable_solve` in
+    # python/bloqade/lanes/heuristics/physical/movement.py) accepts a
+    # DSL result iff either status == "solved", or policy_status starts
+    # with "fallback:" AND move_layers is non-empty. The kernel only
+    # populates move_layers when sequential_fallback is actually invoked,
+    # so we MUST emit invoke_builtin BEFORE halt.
+    if not gs["fired"]:
+        return [
+            invoke_builtin("sequential_fallback", {"from_config": graph.config(graph.root)}),
+            update_global_state({"fired": True}),
+            halt("fallback", "first-keep: delegate to sequential_fallback"),
+        ]
+    return halt("fallback", "first-keep: re-entry")
