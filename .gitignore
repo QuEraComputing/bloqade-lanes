@@ -218,3 +218,6 @@ cython_debug/
 scripts/visualize_arch.py
 .superpowers/
 bench/
+
+# Autotune task state (per-run, recoverable via ledger.json; not for commit)
+.autotune/

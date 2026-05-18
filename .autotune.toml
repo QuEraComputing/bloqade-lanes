@@ -50,7 +50,10 @@ max_iterations = "5"
 # direction = "Maximize"
 
 [paths]
-tunable = ["policies/autotune/candidate.star"]
+# Glob form (matches both the exact file and any nested file under it).
+# A literal relative path here was rejected by Claude CLI's path-scoped
+# --allowedTools Edit:<path> matcher during the iter-1 smoke crash.
+tunable = ["policies/autotune/**"]
 
 [[measure]]
 name = "dsl_benchmark"
