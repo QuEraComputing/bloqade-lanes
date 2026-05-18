@@ -1,9 +1,15 @@
 # Autotune config for the Move Policy DSL.
 #
 # Goal: let an LLM iteratively improve `policies/autotune/candidate.star` so
-# that it solves the full 9-kernel Squin benchmark suite (small + medium +
-# large buckets, physical Gemini arch) with the fewest move EVENTS (parallel
-# move timesteps) while keeping success_rate == 1.0.
+# that it solves benchmark kernels on the physical Gemini arch with the
+# fewest move EVENTS (parallel move timesteps) while keeping
+# success_rate == 1.0.
+#
+# Current focus: `steane_physical_35` — the only kernel in the suite where
+# native Rust strategies show meaningful event-count differentiation
+# (rust_entropy_20: 86, rust_entropy_10: 88, rust_entropy_5: 94,
+#  rust_greedy: 100, rust_entropy_1: 104, rust_dfs: 106, rust_ids: 110,
+#  rust_astar/rust_bfs: FAIL).
 #
 # The bridge that lets `dsl_autotune` plug into the benchmark harness lives
 # at:
@@ -20,39 +26,36 @@
 #   2. RegexAdaptor extracts each metric value with a separate regex pattern.
 #   3. WeightedSumScorer minimises `total_events` with `success_rate` as a
 #      no-regression guardrail.
+#
+# The kernel list is controlled by $BLOQADE_DSL_KERNELS (set at launch);
+# defaults to all 9 in the measure script.
 
 [task]
-name = "dsl-move-policy"
-description = "Evolve a Move Policy DSL .star file that beats Rust's built-in strategies on the full Squin benchmark suite."
+name = "dsl-move-policy-steane"
+description = "Evolve a Move Policy DSL .star file that solves `steane_physical_35` and matches rust_ids (110 events) or better."
 canonical_branch = "jason/move-policy-dsl"
+max_iterations = "10"
 
-# SMOKE-RUN CONFIG (loop validation): 5 iterations, no target_metric, and
-# the measure script defaults to all 9 kernels but the smoke run overrides
-# via `BLOQADE_DSL_KERNELS=ghz_4,ghz_6` so each iteration finishes in seconds.
-# Once the loop is validated end-to-end, bump max_iterations and re-add the
-# target_metric blocks below.
-max_iterations = "5"
+# Stop when the LLM-authored policy reaches the same event count as the
+# worst-but-solving native strategy (`rust_ids`: 110 events). On a single
+# kernel, total_events <= 110 implies success_rate = 1.0 (otherwise the
+# 2000-event FAIL penalty would dominate); the explicit success_rate
+# guardrail below pins it anyway.
+[[task.target_metric]]
+name = "total_events"
+value = 110.0
+direction = "Minimize"
 
-# FULL-RUN CONFIG (commented out — restore after smoke run validates the loop):
-# max_iterations = "50"
-#
-# # `rust_entropy_5` (the best built-in strategy on the full 9-kernel suite)
-# # gets total_events=3332 with all 9 kernels solved. Stop when the
-# # LLM-authored policy beats it by ~5% (total_events <= 3150).
-# [[task.target_metric]]
-# name = "total_events"
-# value = 3150.0
-# direction = "Minimize"
-#
-# [[task.target_metric]]
-# name = "success_rate"
-# value = 1.0
-# direction = "Maximize"
+[[task.target_metric]]
+name = "success_rate"
+value = 1.0
+direction = "Maximize"
 
 [paths]
 # Glob form (matches both the exact file and any nested file under it).
 # A literal relative path here was rejected by Claude CLI's path-scoped
-# --allowedTools Edit:<path> matcher during the iter-1 smoke crash.
+# --allowedTools Edit:<path> matcher (separately fixed by the local
+# autotune-implement patch that uses unscoped Edit/Write Allow).
 tunable = ["policies/autotune/**"]
 
 [[measure]]
@@ -61,9 +64,8 @@ name = "dsl_benchmark"
 # bloqade.lanes.bytecode._native module is what benchmarks.cli imports).
 # `python` is NOT on PATH on this system — only `python3` and `uv`.
 command = ["uv", "run", "python", "scripts/autotune/measure_dsl_policy.py"]
-# `rust_entropy_5` finishes the full 9-kernel suite in ~25s; LLM policies
-# are expected to be 2-5x slower and may hit per-stage timeouts. 30 min
-# keeps a margin for runaway policies (which autotune will then discard).
+# steane_physical_35 with rust_entropy_5 takes ~600ms; LLM policies may
+# be slower with retries/lookahead. 30 min keeps a margin.
 timeout = 1800
 adaptor = { type = "regex", patterns = [
     { name = "total_events", pattern = 'AUTOTUNE_METRIC total_events ([0-9.eE+\-]+)' },
