@@ -51,6 +51,17 @@ def main() -> int:
     kernels = os.environ.get("BLOQADE_DSL_KERNELS", DEFAULT_KERNELS)
     policy = os.environ.get("BLOQADE_DSL_POLICY", "policies/autotune/candidate.star")
 
+    # Archive the policy file content to stderr so autotune's iteration
+    # `measure_output/dsl_benchmark.stderr.txt` preserves what the
+    # implementer actually wrote. Without this we lose the policy when
+    # autotune tears down the worktree on a discarded iteration.
+    sys.stderr.write(f"---POLICY FILE: {policy}---\n")
+    try:
+        sys.stderr.write(Path(policy).read_text())
+    except OSError as exc:
+        sys.stderr.write(f"[could not read policy: {exc}]\n")
+    sys.stderr.write("\n---END POLICY FILE---\n")
+
     with tempfile.TemporaryDirectory() as td:
         csv_path = Path(td) / "dsl_run.csv"
         env = os.environ.copy()
@@ -100,6 +111,17 @@ def main() -> int:
         events = _to_float(row.get("move_count_events", ""))
         nodes = _to_float(row.get("nodes_explored", ""))
         wall = _to_float(row.get("wall_time_ms", ""))
+
+        # Always echo the per-case `notes` field to stderr. The benchmark
+        # CLI puts swallowed exception messages there (see
+        # `python/benchmarks/harness/runner.py:122`), and without this
+        # the only signal the iteration produces is the aggregated
+        # AUTOTUNE_METRIC lines on stdout — which lose all diagnostic
+        # detail about *why* a case failed.
+        case_id = row.get("case_id", "?")
+        notes = (row.get("notes") or "").strip()
+        if notes:
+            sys.stderr.write(f"AUTOTUNE_NOTE {case_id} ok={ok}: {notes}\n")
 
         if ok:
             solved_count += 1
