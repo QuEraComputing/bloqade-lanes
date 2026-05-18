@@ -4,10 +4,9 @@ Source: spec §9 template.
 
 No-RNG deterministic regime (spec §8):
   All choices are made by deterministic scoring (argmax over scored
-  candidates).  No random sampling is performed.  Tie-breaking in all
-  pipeline stages (top_c_per_qubit, group_by_triplet, pack_aod_rectangles,
-  argmax) is resolved by the kernel's stable sort (score desc, encoded lane
-  index asc), which is deterministic across runs and platforms.
+  candidates).  No random sampling is performed.  The policy owns top-c
+  pruning and tie-breaking in Starlark before calling the Rust-backed
+  pack_aod_rectangles helper.
 
 Adaptations from the spec §9 template:
   1. `struct(...)` / `record(...)` / `field(...)` are NOT available in the
@@ -27,16 +26,10 @@ Adaptations from the spec §9 template:
   8. `graph.ns(node)` returns a dict; all field accesses use `["key"]`.
   9. `graph.last_insert()` returns a dict `{"child_id", "is_new", "error"}`
      or None; dict indexing is used throughout.
-  10. `graph.config(node)` returns a PLACEHOLDER dict `{"len": N, "node_id": id}`
-      (v1 kernel limitation — Task 14 wires up the full StarlarkConfig but
-      `graph.config` still exposes the placeholder).  `lib.score_lanes` and
-      `lib.pack_aod_rectangles` accept the StarlarkConfig wrapper; since
-      `graph.config(node)` returns a plain dict we CANNOT pass it directly to
-      those methods in v1.  The workaround: `score_lanes` and related pipeline
-      steps are skipped when the config placeholder is detected (len == 0 or no
-      StarlarkConfig available).  The policy degrades gracefully to the
-      entropy-bump / reversion / fallback path in that case.  This is a known
-      v1 limitation; Task 14+ will wire the full Config so the pipeline runs.
+  10. `graph.config(node)` returns a real StarlarkConfig.  The policy uses
+      `lib.unresolved_qubits` and `lib.legal_lanes` to enumerate legal lanes,
+      builds ScoredLane values itself, and calls `lib.pack_aod_rectangles`
+      only after deciding which lanes to keep.
   11. `c.move_set.encoded` — attribute access works on `StarlarkMoveSet`
       (returns a list[int]); `c.score_sum` works on `StarlarkPackedCandidate`.
       Both are accessed via attribute notation as the kernel wraps them.
@@ -106,7 +99,7 @@ def _is_starlark_config(cfg):
     """
     return type(cfg) == "Config"
 
-# ── Lane scorer (called per qubit-lane pair by lib.score_lanes) ───────────────
+# ── Lane scorer (called from policy-owned lane enumeration) ───────────────────
 
 def score_lane(q, lane, ns, ctx, lib_h):
     """
@@ -175,6 +168,34 @@ def score_moveset(c, ns, ctx, lib_h):
 
     return PARAMS["alpha"] * delta_d + PARAMS["beta"] * arrived + PARAMS["gamma"] * delta_m
 
+def top_c_per_qubit(scored, c):
+    """Policy-owned top-c pruning: score desc, lane id asc, per qubit."""
+    if len(scored) == 0 or c <= 0:
+        return []
+
+    qids = []
+    for s in scored:
+        if s.qid not in qids:
+            qids = qids + [s.qid]
+
+    out = []
+    for qid in qids:
+        bucket = []
+        for s in scored:
+            if s.qid == qid:
+                bucket = bucket + [s]
+
+        bucket = stable_sort(bucket, lambda s: s.lane.encoded)
+        bucket = stable_sort(bucket, lambda s: s.score, desc=True)
+
+        limit = len(bucket)
+        if limit > c:
+            limit = c
+        for i in range(0, limit):
+            out = out + [bucket[i]]
+
+    return out
+
 # ── init ─────────────────────────────────────────────────────────────────────
 
 def init(root, ctx):
@@ -192,7 +213,7 @@ def step(g, gs, ctx, lib_h):
     g     — PolicyGraph
     gs    — global state dict {"current": int, "pending_parent": int|None}
     ctx   — Ctx (arch_spec, targets, blocked)
-    lib_h — LibMove (distance / pipeline helpers)
+    lib_h — LibMove (distance, legal-lane, and AOD packing helpers)
 
     The kernel calls:  step(graph, gs, ctx, lib)
     with the per-solve bindings passed positionally.
@@ -251,27 +272,21 @@ def step(g, gs, ctx, lib_h):
             update_global_state({"current": anc}),
         ]
 
-    # ── 5. Candidate pipeline ─────────────────────────────────────────────
+    # ── 5. Candidate construction ─────────────────────────────────────────
     cfg = g.config(node)
 
-    # v1 limitation: graph.config(node) returns a placeholder dict, not a
-    # StarlarkConfig.  The pipeline methods (score_lanes, pack_aod_rectangles)
-    # require a StarlarkConfig.  Detect this and skip the pipeline, falling
-    # back to an entropy bump that will eventually trigger reversion/fallback.
+    # Defensive check for older kernels: query helpers require a real Config.
     if not _is_starlark_config(cfg):
-        # Placeholder config: bump entropy and let the reversion path handle it.
         return update_node_state(node, {"entropy": ns["entropy"] + PARAMS["delta_e"]})
 
-    # Full pipeline (reached when graph.config returns a real StarlarkConfig).
-    # score_lane needs lib_h and ctx, but lib.score_lanes expects a 4-arg
-    # callable (q, lane, ns, ctx).  We wrap score_lane to close over lib_h.
-    def score_lane_bound(q, lane, ns_arg, ctx_arg):
-        return score_lane(q, lane, ns_arg, ctx_arg, lib_h)
+    scored = []
+    for q in lib_h.unresolved_qubits(cfg):
+        for lane in lib_h.legal_lanes(cfg, q["qid"]):
+            score = score_lane(q, lane, ns, ctx, lib_h)
+            scored = scored + [lib_h.scored_lane(q["qid"], lane, score)]
 
-    scored = lib_h.score_lanes(cfg, ns, score_lane_bound, ctx)
-    topped = lib_h.top_c_per_qubit(scored, PARAMS["top_c"])
-    groups = lib_h.group_by_triplet(topped)
-    cands = lib_h.pack_aod_rectangles(groups, cfg, ctx)
+    topped = top_c_per_qubit(scored, PARAMS["top_c"])
+    cands = lib_h.pack_aod_rectangles(topped, cfg, ctx)
 
     # Filter out candidates whose encoded move set has already been tried.
     fresh = []

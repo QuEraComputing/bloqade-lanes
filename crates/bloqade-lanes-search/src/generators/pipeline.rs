@@ -4,9 +4,8 @@
 //! `f64` scores supplied by Starlark policy code (vs. the inline `i32`
 //! distance-improvement scores used inside `HeuristicGenerator`).
 //!
-//! Stage 1 (per-lane scoring) is intentionally not extracted here — for the
-//! DSL the score comes from a user-provided Starlark callable and is driven
-//! directly from `lib_move::score_lanes`.
+//! Stage 1 (per-lane scoring) is intentionally not extracted here — the DSL
+//! policy enumerates legal lanes and constructs scored lane records directly.
 //!
 //! These helpers are `pub(crate)` and intended for use by the DSL primitives
 //! in `move_policy_dsl::lib_move`. The companion file is
@@ -14,10 +13,6 @@
 //! `f64` semantics; mixing them would fight existing tie-breakers).
 //!
 //! Determinism contract:
-//! * `top_c_per_qubit`: per-qubit sort by `(score desc, lane.encoded asc)`,
-//!   then take top `c`. If no entry has a positive score for any qubit, the
-//!   single best (highest-score, then lowest-lane) entry across all qubits
-//!   is retained.
 //! * `group_by_triplet`: groups by `(move_type, bus_id, direction)`, sorted
 //!   ascending on the triplet key.
 //! * `pack_aod_rectangles`: AOD rectangles built per group via
@@ -62,57 +57,9 @@ pub(crate) struct PackedCandidate {
     pub score_sum: f64,
 }
 
-/// Stage 2: for each qubit, retain the top-`c` scored lanes by
-/// `(score desc, lane.encoded asc)`. Falls back to the single best entry
-/// (across all qubits) when no qubit has any positive-scoring lane.
-pub(crate) fn top_c_per_qubit(scored: Vec<ScoredLane>, c: usize) -> Vec<ScoredLane> {
-    if scored.is_empty() || c == 0 {
-        return Vec::new();
-    }
-
-    // Group by qid (BTreeMap for deterministic qid order).
-    let mut per_qubit: BTreeMap<u32, Vec<ScoredLane>> = BTreeMap::new();
-    for entry in scored {
-        per_qubit.entry(entry.qid).or_default().push(entry);
-    }
-
-    // Sort each per-qubit bucket by (score desc, lane.encoded asc).
-    let mut has_positive = false;
-    for entries in per_qubit.values_mut() {
-        entries.sort_by(cmp_scored_lane);
-        if entries.iter().any(|e| e.score > 0.0) {
-            has_positive = true;
-        }
-    }
-
-    if has_positive {
-        let mut out: Vec<ScoredLane> = Vec::new();
-        for entries in per_qubit.into_values() {
-            out.extend(entries.into_iter().take(c));
-        }
-        out
-    } else {
-        // Fallback: single best entry across all qubits.
-        let mut all: Vec<ScoredLane> = per_qubit.into_values().flatten().collect();
-        all.sort_by(cmp_scored_lane);
-        all.into_iter().take(1).collect()
-    }
-}
-
-/// Sort key for `ScoredLane`: highest score first, ties broken by lower
-/// `lane.encoded` first, then lower `qid`.
-fn cmp_scored_lane(a: &ScoredLane, b: &ScoredLane) -> Ordering {
-    b.score
-        .partial_cmp(&a.score)
-        .unwrap_or(Ordering::Equal)
-        .then_with(|| a.lane.encode_u64().cmp(&b.lane.encode_u64()))
-        .then_with(|| a.qid.cmp(&b.qid))
-}
-
 /// Stage 3: group entries by `(move_type, bus_id, direction)`, sorted by
-/// triplet key ascending. Within each group, entries preserve the input
-/// order (which the caller is expected to have made deterministic — e.g.
-/// via [`top_c_per_qubit`]).
+/// triplet key ascending. Within each group, entries preserve the
+/// policy-provided input order.
 pub(crate) fn group_by_triplet(scored: Vec<ScoredLane>) -> Vec<TripletGroup> {
     let mut groups: BTreeMap<TripletKey, Vec<ScoredLane>> = BTreeMap::new();
     for entry in scored {
@@ -267,94 +214,6 @@ mod tests {
             .outgoing_lanes(src)
             .first()
             .expect("at least one outgoing lane")
-    }
-
-    #[test]
-    fn top_c_per_qubit_keeps_best_per_qubit() {
-        let index = make_index();
-        let lane_a = first_outgoing(&index, loc(0, 0));
-        let lane_b = first_outgoing(&index, loc(0, 1));
-
-        let scored = vec![
-            ScoredLane {
-                qid: 0,
-                lane: lane_a,
-                score: 1.0,
-            },
-            ScoredLane {
-                qid: 0,
-                lane: lane_b,
-                score: 5.0,
-            },
-            ScoredLane {
-                qid: 1,
-                lane: lane_a,
-                score: 2.0,
-            },
-        ];
-
-        let topped = top_c_per_qubit(scored, 1);
-        assert_eq!(topped.len(), 2);
-        // qubit 0's best score is 5.0
-        let q0 = topped.iter().find(|e| e.qid == 0).unwrap();
-        assert_eq!(q0.score, 5.0);
-        // qubit 1 has only one entry, score 2.0
-        let q1 = topped.iter().find(|e| e.qid == 1).unwrap();
-        assert_eq!(q1.score, 2.0);
-    }
-
-    #[test]
-    fn top_c_per_qubit_fallback_when_no_positive() {
-        let index = make_index();
-        let lane_a = first_outgoing(&index, loc(0, 0));
-        let lane_b = first_outgoing(&index, loc(0, 1));
-
-        let scored = vec![
-            ScoredLane {
-                qid: 0,
-                lane: lane_a,
-                score: -1.0,
-            },
-            ScoredLane {
-                qid: 1,
-                lane: lane_b,
-                score: -3.0,
-            },
-        ];
-
-        let topped = top_c_per_qubit(scored, 5);
-        assert_eq!(topped.len(), 1, "fallback retains exactly one entry");
-        // The retained entry should be the one with highest score (-1.0).
-        assert_eq!(topped[0].score, -1.0);
-        assert_eq!(topped[0].qid, 0);
-    }
-
-    #[test]
-    fn top_c_per_qubit_lane_tiebreak_ascending() {
-        let index = make_index();
-        let lane_a = first_outgoing(&index, loc(0, 0));
-        let lane_b = first_outgoing(&index, loc(0, 1));
-        // Same qubit, same score; lane with smaller encoded comes first.
-        let (smaller, larger) = if lane_a.encode_u64() < lane_b.encode_u64() {
-            (lane_a, lane_b)
-        } else {
-            (lane_b, lane_a)
-        };
-        let scored = vec![
-            ScoredLane {
-                qid: 0,
-                lane: larger,
-                score: 1.0,
-            },
-            ScoredLane {
-                qid: 0,
-                lane: smaller,
-                score: 1.0,
-            },
-        ];
-        let topped = top_c_per_qubit(scored, 1);
-        assert_eq!(topped.len(), 1);
-        assert_eq!(topped[0].lane.encode_u64(), smaller.encode_u64());
     }
 
     #[test]

@@ -125,36 +125,36 @@ Return the mobility score of `loc`: Σ 1/(1+hop_distance) over outgoing lanes ×
 fn mobility < 'v > (this : & LibMove , loc : & StarlarkLocation , targets : & 'v ListRef < 'v > , heap : & 'v Heap ,) -> starlark :: Result < f64 >
 ```
 
-#### `score_lanes`
+#### `unresolved_qubits`
 
-Stage 1. Score every (qubit, lane) pair via `score_fn`; return a list of `ScoredLane`.
+Return unresolved qubits as dicts: {"qid", "current", "target"}.
 
 ```rust
-fn score_lanes < 'v > (this : & LibMove , config : & StarlarkConfig , ns : Value < 'v > , score_fn : Value < 'v > , ctx : Value < 'v > , eval : & mut starlark :: eval :: Evaluator < 'v , '_ , '_ > ,) -> starlark :: Result < Value < 'v > >
+fn unresolved_qubits < 'v > (this : & LibMove , config : & StarlarkConfig , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
 ```
 
-#### `top_c_per_qubit`
+#### `legal_lanes`
 
-Stage 2. Retain the top-`c` lanes per qubit from `scored`, sorted by score descending.
+Return outgoing legal lanes for `qid`, skipping occupied or blocked destinations.
 
 ```rust
-fn top_c_per_qubit < 'v > (this : & LibMove , scored : & 'v ListRef < 'v > , c : i32 , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
+fn legal_lanes < 'v > (this : & LibMove , config : & StarlarkConfig , qid : i32 , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
 ```
 
-#### `group_by_triplet`
+#### `scored_lane`
 
-Stage 3. Group `scored` lanes by `(move_type, bus_id, direction)` triplet.
+Construct a `ScoredLane` record from policy-owned scoring logic.
 
 ```rust
-fn group_by_triplet < 'v > (this : & LibMove , scored : & 'v ListRef < 'v > , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
+fn scored_lane < 'v > (this : & LibMove , qid : i32 , lane : & StarlarkLane , score : Value < 'v > , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
 ```
 
 #### `pack_aod_rectangles`
 
-Stage 4. Pack triplet groups into AOD-compatible `PackedCandidate` rectangles.
+Pack scored lanes into AOD-compatible `PackedCandidate` rectangles.
 
 ```rust
-fn pack_aod_rectangles < 'v > (this : & LibMove , groups : & 'v ListRef < 'v > , config : & StarlarkConfig , ctx : Value < 'v > , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
+fn pack_aod_rectangles < 'v > (this : & LibMove , scored : & 'v ListRef < 'v > , config : & StarlarkConfig , ctx : Value < 'v > , heap : & 'v Heap ,) -> starlark :: Result < Value < 'v > >
 ```
 
 
@@ -272,7 +272,7 @@ API surface exercised:
 - `graph.last_insert()` — reads the outcome of the previous `insert_child(...)` to decide whether to advance `current` or bump entropy on the parent
 - `graph.ns(node)` — reads and updates per-node `{"entropy": int, "tried": list}` state
 - `update_node_state(node, patch)` / `update_global_state(patch)` — mutates per-node and global state bags
-- `lib.score_lanes(cfg, ns, score_fn, ctx)` → `lib.top_c_per_qubit(...)` → `lib.group_by_triplet(...)` → `lib.pack_aod_rectangles(...)` — the four-stage candidate pipeline
+- `lib.unresolved_qubits(cfg)` + `lib.legal_lanes(cfg, qid)` + `lib.scored_lane(qid, lane, score)` → `lib.pack_aod_rectangles(...)` — policy-owned lane scoring with Rust-backed AOD packing
 - `invoke_builtin("sequential_fallback", {...})` + `halt("fallback")` — graceful fallback path
 
 Illustrative excerpt from `step(...)`:

@@ -41,6 +41,10 @@ pub fn build_globals(_cfg: &SandboxConfig) -> Globals {
         // not registering a `FileLoader` on the evaluator (see
         // `make_evaluator` below).
         .with(crate::primitives::utilities::register_utilities)
+        // Free-construction `Location(...)` / `Lane(...)` + the
+        // `DIR_*` / `MT_*` enum-discriminant constants. Both DSL kernels
+        // route through `build_globals`, so both get these for free.
+        .with(crate::primitives::types::register_address_constructors)
         .build()
 }
 

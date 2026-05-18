@@ -4,12 +4,9 @@
 //! wrappers (placed here rather than in dsl-core to avoid a
 //! search→dsl-core→search dep cycle — see plan §6 / Task 6).
 //!
-//! The candidate-pipeline primitives (`score_lanes`, `top_c_per_qubit`,
-//! `group_by_triplet`, `pack_aod_rectangles`) are wired through
-//! [`crate::generators::pipeline`] (Task 15); each method accepts and
-//! returns typed Starlark wrappers (`StarlarkScoredLane`,
-//! `StarlarkTripletGroup`, `StarlarkPackedCandidate`) so the stages can
-//! be composed without lossy dict round-trips.
+//! The move-query primitives expose legal raw lanes and a Rust-backed AOD
+//! packer. Search policy choices such as lane scoring, top-c pruning, and
+//! branch ordering are intentionally left to Starlark policy code.
 //!
 //! The `Ctx` handle (exposed to policies as `ctx`) lands in Task 16.
 
@@ -28,10 +25,9 @@ use starlark::values::{Heap, NoSerialize, ProvidesStaticType, StarlarkValue, Unp
 
 use crate::config::Config;
 use crate::generators::pipeline::{
-    PackedCandidate, ScoredLane, TripletGroup, group_by_triplet as pipeline_group_by_triplet,
-    pack_aod_rectangles as pipeline_pack_aod_rectangles, top_c_per_qubit as pipeline_top_c,
+    PackedCandidate, ScoredLane, group_by_triplet as pipeline_group_by_triplet,
+    pack_aod_rectangles as pipeline_pack_aod_rectangles,
 };
-use crate::graph::MoveSet;
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
 
@@ -113,50 +109,20 @@ fn register_config_methods(builder: &mut starlark::environment::MethodsBuilder) 
 
 // ── StarlarkMoveSet ────────────────────────────────────────────────────
 
-/// Starlark-visible wrapper around [`MoveSet`].
-///
-/// Exposed attributes:
-/// - `len`     — number of encoded lanes.
-/// - `encoded` — list of encoded lane integers (`list[int]`).
-#[derive(Debug, Clone, ProvidesStaticType, NoSerialize)]
-pub struct StarlarkMoveSet(pub MoveSet);
+// `StarlarkMoveSet` was moved to
+// `bloqade_lanes_dsl_core::primitives::move_set` alongside its
+// inner `MoveSet`, so the dsl-core `ArchSpec` methods can construct it
+// directly without dsl-core depending on this crate. Re-exported so
+// existing `crate::move_policy_dsl::lib_move::StarlarkMoveSet` imports
+// keep working.
+pub use bloqade_lanes_dsl_core::primitives::move_set::StarlarkMoveSet;
 
-impl allocative::Allocative for StarlarkMoveSet {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let v = visitor.enter_self_sized::<Self>();
-        v.exit();
-    }
-}
-
-starlark::starlark_simple_value!(StarlarkMoveSet);
-
-impl std::fmt::Display for StarlarkMoveSet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MoveSet(len={})", self.0.len())
-    }
-}
-
-#[starlark::values::starlark_value(type = "MoveSet")]
-impl<'v> StarlarkValue<'v> for StarlarkMoveSet {
-    fn get_attr(&self, attr: &str, heap: &'v Heap) -> Option<Value<'v>> {
-        match attr {
-            "len" => Some(heap.alloc(self.0.len() as i32)),
-            "encoded" => {
-                // Expose the encoded lane vec as a Starlark list of ints.
-                let lanes: Vec<i64> = self.0.encoded_lanes().iter().map(|&l| l as i64).collect();
-                Some(heap.alloc(AllocList(lanes.into_iter())))
-            }
-            _ => None,
-        }
-    }
-}
-
-// ── Pipeline wrapper types (ScoredLane / TripletGroup / PackedCandidate) ──
+// ── Candidate wrapper types (ScoredLane / PackedCandidate) ────────────────
 //
 // These mirror the pure-Rust types in `crate::generators::pipeline`. They
 // expose `.qid`, `.lane`, `.score` (etc.) attributes so policy code reads
 // them like records. We chose typed wrappers over dicts to avoid lossy
-// round-trips (LaneAddr ⇄ encoded u64 ⇄ LaneAddr) between pipeline stages.
+// round-trips (LaneAddr ⇄ encoded u64 ⇄ LaneAddr) before AOD packing.
 
 /// Starlark-visible wrapper around [`ScoredLane`].
 ///
@@ -195,63 +161,6 @@ impl<'v> StarlarkValue<'v> for StarlarkScoredLane {
             "qid" => Some(heap.alloc(self.0.qid as i32)),
             "lane" => Some(heap.alloc(StarlarkLane(self.0.lane))),
             "score" => Some(heap.alloc(self.0.score)),
-            _ => None,
-        }
-    }
-}
-
-/// Starlark-visible wrapper around [`TripletGroup`].
-///
-/// Exposed attributes:
-/// - `triplet` — `(move_type, bus_id, direction)` 3-tuple of integers.
-/// - `entries` — list of `ScoredLane`.
-#[derive(Debug, Clone, ProvidesStaticType, NoSerialize)]
-pub(crate) struct StarlarkTripletGroup(pub(crate) TripletGroup);
-
-impl Allocative for StarlarkTripletGroup {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let v = visitor.enter_self_sized::<Self>();
-        v.exit();
-    }
-}
-
-starlark::starlark_simple_value!(StarlarkTripletGroup);
-
-impl std::fmt::Display for StarlarkTripletGroup {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (mt, bus, dir) = self.0.key;
-        write!(
-            f,
-            "TripletGroup(({}, {}, {}), entries={})",
-            mt,
-            bus,
-            dir,
-            self.0.entries.len()
-        )
-    }
-}
-
-#[starlark::values::starlark_value(type = "TripletGroup")]
-impl<'v> StarlarkValue<'v> for StarlarkTripletGroup {
-    fn get_attr(&self, attr: &str, heap: &'v Heap) -> Option<Value<'v>> {
-        match attr {
-            "triplet" => {
-                let (mt, bus, dir) = self.0.key;
-                Some(heap.alloc(AllocTuple([
-                    heap.alloc(mt as i32),
-                    heap.alloc(bus as i32),
-                    heap.alloc(dir as i32),
-                ])))
-            }
-            "entries" => {
-                let items: Vec<Value<'v>> = self
-                    .0
-                    .entries
-                    .iter()
-                    .map(|e| heap.alloc(StarlarkScoredLane(e.clone())))
-                    .collect();
-                Some(heap.alloc(AllocList(items.into_iter())))
-            }
             _ => None,
         }
     }
@@ -395,26 +304,26 @@ impl Ctx {
 
 // ── LibMove handle ─────────────────────────────────────────────────────
 
-/// Move-DSL `lib` handle. Exposes distance, mobility, and the candidate
-/// pipeline primitives. The kernel constructs one `LibMove` per solve and
-/// binds it as a Starlark global.
+/// Move-DSL `lib` handle. Exposes distance, mobility, legal-lane queries,
+/// and the AOD packing primitive. The kernel constructs one `LibMove` per
+/// solve and binds it as a Starlark global.
 ///
-/// Nine Starlark methods (registered via [`register_lib_methods`]):
+/// Starlark methods (registered via [`register_lib_methods`]):
 /// - `hop_distance(from, to) -> int | None`
 /// - `time_distance(from, to) -> float | None`
 /// - `blended_distance(from, to, w_t) -> float`
 /// - `fastest_lane_us() -> float`
 /// - `mobility(loc, targets) -> float`
-/// - `score_lanes(config, ns, score_fn, ctx) -> [ScoredLane]`
-/// - `top_c_per_qubit(scored, c) -> [ScoredLane]`
-/// - `group_by_triplet(scored) -> [TripletGroup]`
-/// - `pack_aod_rectangles(groups, config, ctx) -> [PackedCandidate]`
+/// - `unresolved_qubits(config) -> [dict]`
+/// - `legal_lanes(config, qid) -> [Lane]`
+/// - `scored_lane(qid, lane, score) -> ScoredLane`
+/// - `pack_aod_rectangles(scored, config, ctx) -> [PackedCandidate]`
 #[derive(Clone, ProvidesStaticType, NoSerialize)]
 pub struct LibMove {
     pub(super) index: Arc<LaneIndex>,
     pub(super) dist_table: Arc<DistanceTable>,
-    /// Targets as `(qid, encoded_loc)` pairs. Used by `score_lanes` to
-    /// derive each qubit's target. Will also feed `Ctx` in Task 16.
+    /// Targets as `(qid, encoded_loc)` pairs. Used by query helpers to
+    /// derive each qubit's target.
     pub(super) targets: Vec<(u32, u64)>,
     /// Locations blocked from use as move destinations.
     pub(super) blocked: HashSet<u64>,
@@ -447,6 +356,31 @@ impl<'v> StarlarkValue<'v> for LibMove {
         static METHODS: starlark::environment::MethodsStatic =
             starlark::environment::MethodsStatic::new();
         METHODS.methods(register_lib_methods)
+    }
+}
+
+impl LibMove {
+    fn occupied_locations(&self, config: &Config) -> HashSet<u64> {
+        let mut occupied = HashSet::with_capacity(self.blocked.len() + config.len());
+        occupied.extend(&self.blocked);
+        for (_, loc) in config.iter() {
+            occupied.insert(loc.encode());
+        }
+        occupied
+    }
+
+    fn unresolved_qubits_raw(&self, config: &Config) -> Vec<(u32, LocationAddr, LocationAddr)> {
+        self.targets
+            .iter()
+            .filter_map(|&(qid, target_enc)| {
+                let cur = config.location_of(qid)?;
+                if cur.encode() == target_enc {
+                    None
+                } else {
+                    Some((qid, cur, LocationAddr::decode(target_enc)))
+                }
+            })
+            .collect()
     }
 }
 
@@ -561,157 +495,98 @@ fn register_lib_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(sum)
     }
 
-    // ── Candidate pipeline (Task 15) ──────────────────────────────────
-    //
-    // `score_lanes` invokes a user-provided Starlark callable per
-    // `(qubit, lane)` pair, then `top_c_per_qubit` / `group_by_triplet` /
-    // `pack_aod_rectangles` thread the results through the rest of the
-    // pipeline. The pure-Rust core for stages 2–4 lives in
-    // [`crate::generators::pipeline`].
+    // ── Strategy-neutral candidate helpers ────────────────────────────
 
-    /// Stage 1. Score every (qubit, lane) pair via `score_fn`; return a list of `ScoredLane`.
-    ///
-    /// For each unresolved qubit and each outgoing lane (skipping
-    /// lanes whose destination is occupied/blocked), call
-    /// `score_fn(qubit, lane, ns, ctx)` and collect a [`ScoredLane`] per
-    /// successful evaluation.
-    ///
-    /// `qubit` is a 3-key Starlark dict `{"qid", "current", "target"}`.
-    /// `ns` and `ctx` are passed through opaquely.
-    fn score_lanes<'v>(
+    /// Return unresolved qubits as dicts: {"qid", "current", "target"}.
+    fn unresolved_qubits<'v>(
         this: &LibMove,
         config: &StarlarkConfig,
-        ns: Value<'v>,
-        score_fn: Value<'v>,
-        ctx: Value<'v>,
-        eval: &mut starlark::eval::Evaluator<'v, '_, '_>,
+        heap: &'v Heap,
     ) -> starlark::Result<Value<'v>> {
-        // Build occupied set: blocked locations + qubits currently in
-        // this config. Mirrors `HeuristicGenerator::generate`.
-        let mut occupied: HashSet<u64> =
-            HashSet::with_capacity(this.blocked.len() + config.0.len());
-        occupied.extend(&this.blocked);
-        for (_, loc) in config.0.iter() {
-            occupied.insert(loc.encode());
-        }
-
-        // Identify unresolved (qid, current, target) triples.
-        let unresolved: Vec<(u32, LocationAddr, LocationAddr)> = this
-            .targets
-            .iter()
-            .filter_map(|&(qid, target_enc)| {
-                let cur = config.0.location_of(qid)?;
-                if cur.encode() == target_enc {
-                    None
-                } else {
-                    Some((qid, cur, LocationAddr::decode(target_enc)))
-                }
-            })
-            .collect();
-
-        // For each unresolved qubit and each outgoing lane (skipping
-        // blocked dst), call score_fn and accumulate a ScoredLane.
-        let mut out_values: Vec<Value<'v>> = Vec::new();
-        for (qid, cur, target) in unresolved {
-            // Build the per-call qubit dict once per qubit.
-            let qubit_dict = {
-                let heap = eval.heap();
+        let items: Vec<Value<'v>> = this
+            .unresolved_qubits_raw(&config.0)
+            .into_iter()
+            .map(|(qid, cur, target)| {
                 heap.alloc(AllocDict([
                     ("qid", heap.alloc(qid as i32)),
                     ("current", heap.alloc(StarlarkLocation(cur))),
                     ("target", heap.alloc(StarlarkLocation(target))),
                 ]))
-            };
-
-            for &lane in this.index.outgoing_lanes(cur) {
-                let Some((_, dst)) = this.index.endpoints(&lane) else {
-                    continue;
-                };
-                if occupied.contains(&dst.encode()) {
-                    continue;
-                }
-
-                let lane_v = eval.heap().alloc(StarlarkLane(lane));
-                let result = eval.eval_function(score_fn, &[qubit_dict, lane_v, ns, ctx], &[])?;
-                let score = unpack_score(result)?;
-
-                out_values.push(eval.heap().alloc(StarlarkScoredLane(ScoredLane {
-                    qid,
-                    lane,
-                    score,
-                })));
-            }
-        }
-
-        Ok(eval.heap().alloc(AllocList(out_values.into_iter())))
-    }
-
-    /// Stage 2. Retain the top-`c` lanes per qubit from `scored`, sorted by score descending.
-    ///
-    /// Groups `scored` by qid, retains the top-`c` entries per qid
-    /// sorted by `(score desc, lane.encoded asc)`. Falls back to the
-    /// single best entry across all qubits when no entry has positive
-    /// score (matches `HeuristicGenerator::generate`'s fallback).
-    fn top_c_per_qubit<'v>(
-        this: &LibMove,
-        scored: &'v ListRef<'v>,
-        c: i32,
-        heap: &'v Heap,
-    ) -> starlark::Result<Value<'v>> {
-        let _ = this; // method on LibMove, but stage 2 is data-only
-        let raw = unpack_scored_list(scored)?;
-        let topped = pipeline_top_c(raw, c.max(0) as usize);
-        let items: Vec<Value<'v>> = topped
-            .into_iter()
-            .map(|e| heap.alloc(StarlarkScoredLane(e)))
+            })
             .collect();
         Ok(heap.alloc(AllocList(items.into_iter())))
     }
 
-    /// Stage 3. Group `scored` lanes by `(move_type, bus_id, direction)` triplet.
-    ///
-    /// Returns groups sorted ascending by triplet key.
-    fn group_by_triplet<'v>(
+    /// Return outgoing legal lanes for `qid`, skipping occupied or blocked destinations.
+    fn legal_lanes<'v>(
         this: &LibMove,
-        scored: &'v ListRef<'v>,
+        config: &StarlarkConfig,
+        qid: i32,
+        heap: &'v Heap,
+    ) -> starlark::Result<Value<'v>> {
+        if qid < 0 {
+            return Ok(heap.alloc(AllocList(std::iter::empty::<Value<'v>>())));
+        }
+        let Some(cur) = config.0.location_of(qid as u32) else {
+            return Ok(heap.alloc(AllocList(std::iter::empty::<Value<'v>>())));
+        };
+        let occupied = this.occupied_locations(&config.0);
+        let mut lanes: Vec<_> = this
+            .index
+            .outgoing_lanes(cur)
+            .iter()
+            .copied()
+            .filter(|lane| {
+                let Some((_, dst)) = this.index.endpoints(lane) else {
+                    return false;
+                };
+                !occupied.contains(&dst.encode())
+            })
+            .collect();
+        lanes.sort_unstable_by_key(|lane| lane.encode_u64());
+        let items = lanes.into_iter().map(StarlarkLane);
+        Ok(heap.alloc(AllocList(items)))
+    }
+
+    /// Construct a `ScoredLane` record from policy-owned scoring logic.
+    fn scored_lane<'v>(
+        this: &LibMove,
+        qid: i32,
+        lane: &StarlarkLane,
+        score: Value<'v>,
         heap: &'v Heap,
     ) -> starlark::Result<Value<'v>> {
         let _ = this;
-        let raw = unpack_scored_list(scored)?;
-        let groups = pipeline_group_by_triplet(raw);
-        let items: Vec<Value<'v>> = groups
-            .into_iter()
-            .map(|g| heap.alloc(StarlarkTripletGroup(g)))
-            .collect();
-        Ok(heap.alloc(AllocList(items.into_iter())))
+        if qid < 0 {
+            return Err(mk_error(format!(
+                "scored_lane: qid must be non-negative, got {qid}"
+            )));
+        }
+        let score = unpack_score(score)?;
+        Ok(heap.alloc(StarlarkScoredLane(ScoredLane {
+            qid: qid as u32,
+            lane: lane.0,
+            score,
+        })))
     }
 
-    /// Stage 4. Pack triplet groups into AOD-compatible `PackedCandidate` rectangles.
+    /// Pack scored lanes into AOD-compatible `PackedCandidate` rectangles.
     ///
-    /// For each triplet group, builds AOD-compatible rectangles
-    /// via [`crate::aod_grid::BusGridContext`] and lifts to
-    /// [`pipeline::PackedCandidate`]s. Returned candidates are sorted by
-    /// `score_sum desc` with deterministic tie-breakers.
+    /// Starlark owns which lanes to score and keep. Rust groups by
+    /// `(move_type, bus_id, direction)` internally and applies the AOD
+    /// rectangle packer, preserving physical legality.
     ///
     /// `ctx` is currently unused (reserved for the Task 16 `Ctx` wrapper).
     fn pack_aod_rectangles<'v>(
         this: &LibMove,
-        groups: &'v ListRef<'v>,
+        scored: &'v ListRef<'v>,
         config: &StarlarkConfig,
         ctx: Value<'v>,
         heap: &'v Heap,
     ) -> starlark::Result<Value<'v>> {
         let _ = ctx;
-        let raw_groups: Vec<TripletGroup> = groups
-            .iter()
-            .map(|v| {
-                <&StarlarkTripletGroup>::unpack_value(v)?
-                    .map(|g| g.0.clone())
-                    .ok_or_else(|| {
-                        mk_error("pack_aod_rectangles: each group must be a TripletGroup value")
-                    })
-            })
-            .collect::<starlark::Result<Vec<_>>>()?;
+        let raw_scored = unpack_scored_list(scored)?;
+        let raw_groups = pipeline_group_by_triplet(raw_scored);
 
         let candidates =
             pipeline_pack_aod_rectangles(raw_groups, &config.0, &this.index, &this.blocked);
@@ -732,7 +607,7 @@ fn unpack_score(v: Value<'_>) -> starlark::Result<f64> {
     } else if let Some(i) = <i64 as UnpackValue>::unpack_value(v)? {
         Ok(i as f64)
     } else {
-        Err(mk_error(format!("score_fn must return a number, got {v}")))
+        Err(mk_error(format!("score must be a number, got {v}")))
     }
 }
 
@@ -768,6 +643,7 @@ fn mk_error(msg: impl Into<String>) -> starlark::Error {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::graph::MoveSet;
     use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
     #[test]

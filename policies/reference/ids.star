@@ -28,10 +28,10 @@ API surface used:
   graph.parent(node)            — parent node id, or None for root
   graph.config(node)            — StarlarkConfig for a node
   graph.last_insert()           — outcome dict of the previous insert_child
-  lib.score_lanes(cfg, ns, fn, ctx)   — enumerate (qubit, lane) pairs with scores
-  lib.top_c_per_qubit(scored, c)      — keep top-c scored lanes per qubit
-  lib.group_by_triplet(scored)        — group by (move_type, bus_id, direction)
-  lib.pack_aod_rectangles(groups, cfg, ctx) — build packed AOD candidates
+  lib.unresolved_qubits(cfg)          — enumerate unresolved qubit dicts
+  lib.legal_lanes(cfg, qid)           — legal outgoing lanes for a qubit
+  lib.scored_lane(qid, lane, score)   — typed scored lane record
+  lib.pack_aod_rectangles(scored, cfg, ctx) — build packed AOD candidates
   insert_child(parent, encoded)       — emit an insert action
   update_global_state(patch)          — mutate the global state bag
   halt(status)                        — terminate the solve loop
@@ -64,6 +64,36 @@ def _merge_params(defaults, overrides):
     return merged
 
 PARAMS = _merge_params(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
+
+# ── Local scoring helpers ────────────────────────────────────────────────────
+
+def _top_c_per_qubit(scored, c):
+    """Policy-owned top-c pruning: score desc, lane id asc, per qubit."""
+    if len(scored) == 0 or c <= 0:
+        return []
+
+    qids = []
+    for s in scored:
+        if s.qid not in qids:
+            qids = qids + [s.qid]
+
+    out = []
+    for qid in qids:
+        bucket = []
+        for s in scored:
+            if s.qid == qid:
+                bucket = bucket + [s]
+
+        bucket = stable_sort(bucket, lambda s: s.lane.encoded)
+        bucket = stable_sort(bucket, lambda s: s.score, desc=True)
+
+        limit = len(bucket)
+        if limit > c:
+            limit = c
+        for i in range(0, limit):
+            out = out + [bucket[i]]
+
+    return out
 
 # ── init ─────────────────────────────────────────────────────────────────────
 
@@ -141,21 +171,21 @@ def step(graph, gs, ctx, lib):
     if graph.is_goal(node):
         return emit_solution(node)
 
-    # ── 3. Build candidate move sets via pipeline ─────────────────────────
+    # ── 3. Build candidate move sets from policy-scored lanes ─────────────
     cfg = graph.config(node)
 
-    def _score_fn(q, lane, ns, ctx_arg):
-        dst = ctx_arg.arch_spec.lane_endpoints(lane)[1]
-        dd = (
-            lib.blended_distance(q["current"], q["target"], PARAMS["w_t"])
-            - lib.blended_distance(dst, q["target"], PARAMS["w_t"])
-        )
-        return dd
+    scored = []
+    for q in lib.unresolved_qubits(cfg):
+        for lane in lib.legal_lanes(cfg, q["qid"]):
+            dst = ctx.arch_spec.lane_endpoints(lane)[1]
+            dd = (
+                lib.blended_distance(q["current"], q["target"], PARAMS["w_t"])
+                - lib.blended_distance(dst, q["target"], PARAMS["w_t"])
+            )
+            scored = scored + [lib.scored_lane(q["qid"], lane, dd)]
 
-    scored = lib.score_lanes(cfg, {}, _score_fn, ctx)
-    topped = lib.top_c_per_qubit(scored, PARAMS["top_c"])
-    groups = lib.group_by_triplet(topped)
-    cands = lib.pack_aod_rectangles(groups, cfg, ctx)
+    topped = _top_c_per_qubit(scored, PARAMS["top_c"])
+    cands = lib.pack_aod_rectangles(topped, cfg, ctx)
 
     max_branch = PARAMS["max_branch"]
     limit = len(cands)

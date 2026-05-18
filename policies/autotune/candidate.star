@@ -47,8 +47,8 @@ RULES:
        - `graph.is_goal(node)`, `graph.parent(node)`, `graph.children_of(node)`
          to navigate
        - `graph.config(node)` to get the StarlarkConfig for a node
-       - `lib.score_lanes / top_c_per_qubit / group_by_triplet /
-          pack_aod_rectangles` to build candidate move-sets
+      - `lib.unresolved_qubits`, `lib.legal_lanes`, `lib.scored_lane`, and
+        `lib.pack_aod_rectangles` to build candidate move-sets
        - `lib.blended_distance(loc_a, loc_b, w_t)` for a distance heuristic
      Common strategies you could invent: DFS, BFS, greedy best-first,
      A*-with-heuristic, beam search, iterative deepening, or something
@@ -97,6 +97,35 @@ def _merge_params(defaults, overrides):
 PARAMS = _merge_params(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
 
 
+def _top_c_per_qubit(scored, c):
+    """Policy-owned top-c pruning: score desc, lane id asc, per qubit."""
+    if len(scored) == 0 or c <= 0:
+        return []
+
+    qids = []
+    for s in scored:
+        if s.qid not in qids:
+            qids = qids + [s.qid]
+
+    out = []
+    for qid in qids:
+        bucket = []
+        for s in scored:
+            if s.qid == qid:
+                bucket = bucket + [s]
+
+        bucket = stable_sort(bucket, lambda s: s.lane.encoded)
+        bucket = stable_sort(bucket, lambda s: s.score, desc=True)
+
+        limit = len(bucket)
+        if limit > c:
+            limit = c
+        for i in range(0, limit):
+            out = out + [bucket[i]]
+
+    return out
+
+
 def init(root, ctx):
     return {
         "current": root,
@@ -124,18 +153,18 @@ def step(graph, gs, ctx, lib):
 
     cfg = graph.config(node)
 
-    def _score_lane_bound(q, lane, ns, ctx_arg):
-        dst = ctx_arg.arch_spec.lane_endpoints(lane)[1]
-        dd = (
-            lib.blended_distance(q["current"], q["target"], PARAMS["w_t"])
-            - lib.blended_distance(dst, q["target"], PARAMS["w_t"])
-        )
-        return dd
+    scored = []
+    for q in lib.unresolved_qubits(cfg):
+        for lane in lib.legal_lanes(cfg, q["qid"]):
+            dst = ctx.arch_spec.lane_endpoints(lane)[1]
+            dd = (
+                lib.blended_distance(q["current"], q["target"], PARAMS["w_t"])
+                - lib.blended_distance(dst, q["target"], PARAMS["w_t"])
+            )
+            scored = scored + [lib.scored_lane(q["qid"], lane, dd)]
 
-    scored = lib.score_lanes(cfg, {}, _score_lane_bound, ctx)
-    topped = lib.top_c_per_qubit(scored, PARAMS["top_c"])
-    groups = lib.group_by_triplet(topped)
-    cands = lib.pack_aod_rectangles(groups, cfg, ctx)
+    topped = _top_c_per_qubit(scored, PARAMS["top_c"])
+    cands = lib.pack_aod_rectangles(topped, cfg, ctx)
 
     branch_index = gs["branch_index"]
     max_branch = PARAMS["max_branch"]

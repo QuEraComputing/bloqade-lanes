@@ -213,8 +213,8 @@ fn register_graph_methods(builder: &mut starlark::environment::MethodsBuilder) {
     /// Return the qubit configuration at `node` as a `Config` value.
     ///
     /// Returns a real [`StarlarkConfig`] so that
-    /// policy code can call `lib.score_lanes(graph.config(node), ...)` and
-    /// related pipeline methods.
+    /// policy code can call `lib.unresolved_qubits(graph.config(node))`,
+    /// `lib.legal_lanes(...)`, and `lib.pack_aod_rectangles(...)`.
     fn config<'v>(this: &PolicyGraph, node: i32, heap: &'v Heap) -> starlark::Result<Value<'v>> {
         let inner = this.lock();
         let cfg = inner.graph.config(NodeId(node as u32)).clone();

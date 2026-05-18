@@ -379,6 +379,10 @@ fn action_depth(graph: &SearchGraph, action: &MoveAction, last_insert: Option<u6
 fn build_solve_globals() -> starlark::environment::Globals {
     starlark::environment::GlobalsBuilder::standard()
         .with(bloqade_lanes_dsl_core::primitives::utilities::register_utilities)
+        // Free-construction `Location(...)` / `Lane(...)` and the
+        // `DIR_*` / `MT_*` enum-discriminant constants. Same set the
+        // target-generator DSL gets via `dsl_core::sandbox::build_globals`.
+        .with(bloqade_lanes_dsl_core::primitives::types::register_address_constructors)
         .with(register_actions)
         .build()
 }
@@ -663,7 +667,9 @@ fn json_to_starlark<'v>(
         J::Bool(b) => starlark::values::Value::new_bool(b),
         J::Number(n) => {
             if let Some(i) = n.as_i64() {
-                heap.alloc(i as i32)
+                heap.alloc(i)
+            } else if let Some(u) = n.as_u64() {
+                heap.alloc(u as i64)
             } else if let Some(f) = n.as_f64() {
                 heap.alloc(f)
             } else {
