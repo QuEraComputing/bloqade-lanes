@@ -17,6 +17,12 @@ building rectangles that move at-target qubits off their goal, so each
 child config is one where at least one unresolved qubit has moved and h
 remains a faithful progress signal.
 
+Per-lane score is (d_cur - d_dst) * d_cur, weighting forward moves by
+how far the source qubit still is from its target. The packer's output
+order changes accordingly (far qubits' forward moves rank higher), so
+the first-arrival paths recorded by the kernel attack far qubits earlier
+without changing the set of candidates the packer returns.
+
 State machine across step() calls:
   awaiting -> queue -> frontier-pop. On each frontier pop, the chosen
   node's candidate moves are queued; the queue is drained one move per
@@ -101,7 +107,7 @@ def _enumerate(cfg, ctx, lib):
                 d_dst = 100000
             else:
                 d_dst = d_dst_v
-            scored = scored + [lib.scored_lane(qid, lane, float(d_cur - d_dst))]
+            scored = scored + [lib.scored_lane(qid, lane, float((d_cur - d_dst) * d_cur))]
     cands = lib.pack_aod_rectangles(scored, cfg, ctx)
     out = []
     for i in range(0, len(cands)):
