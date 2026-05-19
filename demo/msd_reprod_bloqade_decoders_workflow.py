@@ -53,12 +53,12 @@ from bloqade.decoders import GurobiDecoder, TableDecoder  # noqa: E402
 from demo.msd_utils import (  # noqa: E402
     DecoderCurveOptions,
     MSDDecoderWorkflowConfig,
-    build_injected_decoder_bundle,
-    build_injected_task_bundle,
+    build_injected_tomography_kernels,
+    build_injected_tomography_tasks,
     build_mle_decoder_suite,
-    build_msd_decoder_bundle,
     build_msd_primitives,
-    build_msd_task_bundle,
+    build_msd_tomography_kernels,
+    build_msd_tomography_tasks,
     evaluate_decoder_curves,
     evaluate_injected_baseline,
     plot_decoder_curves,
@@ -119,24 +119,32 @@ config = MSDDecoderWorkflowConfig(
 # %%
 simulator = GeminiLogicalSimulator()
 
-msd_decoder_bundle = build_msd_decoder_bundle(config)
-injected_decoder_bundle = build_injected_decoder_bundle(config)
+msd_tomography_kernels = build_msd_tomography_kernels(config)
+injected_tomography_kernels = build_injected_tomography_kernels(config)
 
-msd_tasks = build_msd_task_bundle(simulator, config, msd_decoder_bundle)
-injected_tasks = build_injected_task_bundle(simulator, config, injected_decoder_bundle)
+msd_tomography_tasks = build_msd_tomography_tasks(
+    simulator,
+    config,
+    msd_tomography_kernels,
+)
+injected_tomography_tasks = build_injected_tomography_tasks(
+    simulator,
+    config,
+    injected_tomography_kernels,
+)
 
 # %% [markdown]
 # ## Decoder Training
 
 # %%
 mld_decoders = train_mld_decoder_suite(
-    msd_tasks,
+    msd_tomography_tasks,
     config,
     table_decoder_cls=TableDecoder,
 )
 
 mle_decoders = build_mle_decoder_suite(
-    msd_tasks,
+    msd_tomography_tasks,
     gurobi_decoder_cls=GurobiDecoder,
     log=config.log,
 )
@@ -145,7 +153,7 @@ mle_decoders = build_mle_decoder_suite(
 # ## Sampling, Curves, And Plot
 
 # %%
-actual_data = sample_actual_data(msd_tasks, config)
+actual_data = sample_actual_data(msd_tomography_tasks, config)
 
 curves = evaluate_decoder_curves(
     actual_data,
@@ -162,7 +170,7 @@ curves = evaluate_decoder_curves(
 )
 
 injected_summary = evaluate_injected_baseline(
-    injected_tasks,
+    injected_tomography_tasks,
     config,
     table_decoder_cls=TableDecoder,
     raw=False,

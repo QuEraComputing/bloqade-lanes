@@ -29,15 +29,15 @@ from demo.msd_utils import (
     TomographyTasks,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
-    build_injected_decoder_bundle,
     build_injected_decoder_kernel_map,
     build_injected_kernel_bundle,
+    build_injected_tomography_kernels,
     build_measurement_maps,
     build_mle_decoder_suite,
     build_mle_decoders,
-    build_msd_decoder_bundle,
     build_msd_primitives,
-    build_msd_task_bundle,
+    build_msd_tomography_kernels,
+    build_msd_tomography_tasks,
     build_task_map,
     estimate_mld_ancilla_scores,
     estimate_mld_ancilla_scores_from_tasks,
@@ -427,30 +427,30 @@ def test_workflow_config_normalizes_inputs():
     assert config.resolved_mld_rank_train_shots == config.mld_train_shots
 
 
-def test_workflow_kernel_bundle_builders_return_basis_maps():
+def test_workflow_tomography_kernels_builders_return_basis_maps():
     config = _workflow_config()
 
-    msd_bundle = build_msd_decoder_bundle(config)
-    injected_bundle = build_injected_decoder_bundle(config)
+    msd_tomography_kernels = build_msd_tomography_kernels(config)
+    injected_tomography_kernels = build_injected_tomography_kernels(config)
 
-    assert isinstance(msd_bundle.actual, dict)
-    assert set(msd_bundle.actual) == {"X", "Y", "Z"}
-    assert set(msd_bundle._special) == {"X", "Y", "Z"}
-    assert set(injected_bundle.actual) == {"X", "Y", "Z"}
-    assert set(injected_bundle._special) == {"X", "Y", "Z"}
+    assert isinstance(msd_tomography_kernels.actual, dict)
+    assert set(msd_tomography_kernels.actual) == {"X", "Y", "Z"}
+    assert set(msd_tomography_kernels._special) == {"X", "Y", "Z"}
+    assert set(injected_tomography_kernels.actual) == {"X", "Y", "Z"}
+    assert set(injected_tomography_kernels._special) == {"X", "Y", "Z"}
 
 
-def test_workflow_task_bundle_builder_compiles_msd_tasks():
+def test_workflow_tomography_tasks_builder_compiles_msd_tomography_tasks():
     sim = GeminiLogicalSimulator()
     config = _workflow_config()
-    kernel_bundle = build_msd_decoder_bundle(config)
+    tomography_kernels = build_msd_tomography_kernels(config)
 
-    task_bundle = build_msd_task_bundle(sim, config, kernel_bundle)
+    tomography_tasks = build_msd_tomography_tasks(sim, config, tomography_kernels)
 
-    assert isinstance(task_bundle, TomographyTasks)
-    assert set(task_bundle.actual) == {"X", "Y", "Z"}
-    assert set(task_bundle._special) == {"X", "Y", "Z"}
-    assert not hasattr(task_bundle, "special")
+    assert isinstance(tomography_tasks, TomographyTasks)
+    assert set(tomography_tasks.actual) == {"X", "Y", "Z"}
+    assert set(tomography_tasks._special) == {"X", "Y", "Z"}
+    assert not hasattr(tomography_tasks, "special")
 
 
 def test_workflow_sample_actual_data_uses_config_sampling():
@@ -458,31 +458,31 @@ def test_workflow_sample_actual_data_uses_config_sampling():
     task_map = _basis_task_map(
         {"X": [0, 0, 0, 0], "Y": [1, 1, 1, 1], "Z": [0, 0, 0, 0]},
     )
-    task_bundle = TomographyTasks(
+    tomography_tasks = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], task_map),
         _special=cast(dict[str, DemoTask[object]], task_map),
     )
 
-    data = sample_actual_data(task_bundle, config)
+    data = sample_actual_data(tomography_tasks, config)
 
     assert set(data) == {"X", "Y", "Z"}
     assert data["X"].observables.shape == (4, 1)
 
 
-def test_workflow_mld_suite_trains_from_task_bundle():
+def test_workflow_mld_suite_trains_from_tomography_tasks():
     config = _workflow_config()
     dataset = BasisDataset(
         detectors=np.zeros((4, 2), dtype=np.uint8),
         observables=np.zeros((4, 2), dtype=np.uint8),
     )
     task_map = {basis: _StaticTask(dataset) for basis in ("X", "Y", "Z")}
-    task_bundle = TomographyTasks(
+    tomography_tasks = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], task_map),
         _special=cast(dict[str, DemoTask[object]], task_map),
     )
 
     decoders = train_mld_decoder_suite(
-        task_bundle,
+        tomography_tasks,
         config,
         table_decoder_cls=SparseTableDecoder,
     )
@@ -503,13 +503,13 @@ def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
             priors=np.array([0.1, 0.2], dtype=float),
         ),
     )
-    task_bundle = TomographyTasks(
+    tomography_tasks = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
         _special=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
     )
 
     decoders = build_mle_decoder_suite(
-        task_bundle,
+        tomography_tasks,
         gurobi_decoder_cls=_ConfidenceGurobi,
     )
 
@@ -610,13 +610,13 @@ def test_workflow_injected_baseline_and_plot_helpers():
     task_map = _basis_task_map(
         {"X": [0, 0, 0, 0], "Y": [0, 0, 0, 0], "Z": [0, 0, 0, 0]},
     )
-    task_bundle = TomographyTasks(
+    tomography_tasks = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], task_map),
         _special=cast(dict[str, DemoTask[object]], task_map),
     )
 
     summary = evaluate_injected_baseline(
-        task_bundle,
+        tomography_tasks,
         config,
         table_decoder_cls=SparseTableDecoder,
         raw=True,

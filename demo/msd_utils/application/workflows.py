@@ -170,12 +170,12 @@ class DecoderCurveOptions:
     min_accepted_per_basis: int = 50
 
 
-def build_msd_decoder_bundle(
+def build_msd_tomography_kernels(
     config: MSDDecoderWorkflowConfig,
     *,
     log: bool | None = None,
 ) -> TomographyKernels:
-    """Build the actual/special kernel bundle for the MSD workflow.
+    """Build the actual/special tomography kernels for the MSD workflow.
 
     Args:
         config: Workflow configuration containing the MSD primitive set and
@@ -189,7 +189,7 @@ def build_msd_decoder_bundle(
 
     log = config.log if log is None else log
     if log:
-        print("Building MSD decoder kernels...")
+        print("Building MSD tomography kernels...")
 
     return build_decoder_kernel_bundle(
         config.decoder_primitive_set,
@@ -199,12 +199,12 @@ def build_msd_decoder_bundle(
     )
 
 
-def build_injected_decoder_bundle(
+def build_injected_tomography_kernels(
     config: MSDDecoderWorkflowConfig,
     *,
     log: bool | None = None,
 ) -> TomographyKernels:
-    """Build the actual/special kernel bundle for the injected workflow.
+    """Build the actual/special tomography kernels for the injected workflow.
 
     Args:
         config: Workflow configuration containing injected U3 angles.
@@ -218,7 +218,7 @@ def build_injected_decoder_bundle(
 
     log = config.log if log is None else log
     if log:
-        print("Building injected decoder kernels...")
+        print("Building injected tomography kernels...")
 
     return build_injected_kernel_bundle(
         config.theta,
@@ -228,10 +228,10 @@ def build_injected_decoder_bundle(
     )
 
 
-def build_msd_task_bundle(
+def build_msd_tomography_tasks(
     simulator: GeminiLogicalSimulator,
     config: MSDDecoderWorkflowConfig,
-    kernel_bundle: TomographyKernels,
+    tomography_kernels: TomographyKernels,
     *,
     log: bool | None = None,
 ) -> TomographyTasks:
@@ -240,8 +240,8 @@ def build_msd_task_bundle(
     Args:
         simulator: Gemini logical simulator used for task construction.
         config: Workflow configuration.
-        kernel_bundle: MSD kernel bundle returned by
-            ``build_msd_decoder_bundle``.
+        tomography_kernels: MSD tomography kernels returned by
+            ``build_msd_tomography_kernels``.
         log: If true, print a progress message. Defaults to ``config.log`` when
             omitted.
 
@@ -257,14 +257,14 @@ def build_msd_task_bundle(
     m2dets, m2obs = build_measurement_maps(config.num_logical_qubits)
     actual = build_task_map(
         simulator,
-        kernel_bundle.actual,
+        tomography_kernels.actual,
         m2dets=m2dets,
         m2obs=m2obs,
         append_measurements=config.append_measurements,
     )
     special = build_task_map(
         simulator,
-        kernel_bundle._special,
+        tomography_kernels._special,
         m2dets=m2dets,
         m2obs=m2obs,
         append_measurements=config.append_measurements,
@@ -277,10 +277,10 @@ def build_msd_task_bundle(
     return TomographyTasks(actual=actual, _special=special)
 
 
-def build_injected_task_bundle(
+def build_injected_tomography_tasks(
     simulator: GeminiLogicalSimulator,
     config: MSDDecoderWorkflowConfig,
-    kernel_bundle: TomographyKernels,
+    tomography_kernels: TomographyKernels,
     *,
     log: bool | None = None,
 ) -> TomographyTasks:
@@ -290,8 +290,8 @@ def build_injected_task_bundle(
         simulator: Gemini logical simulator used for task construction.
         config: Workflow configuration. Only common sampling/task settings are
             used.
-        kernel_bundle: Injected kernel bundle returned by
-            ``build_injected_decoder_bundle``.
+        tomography_kernels: Injected tomography kernels returned by
+            ``build_injected_tomography_kernels``.
         log: If true, print a progress message. Defaults to ``config.log`` when
             omitted.
 
@@ -307,14 +307,14 @@ def build_injected_task_bundle(
     return TomographyTasks(
         actual=build_task_map(
             simulator,
-            kernel_bundle.actual,
+            tomography_kernels.actual,
             m2dets=m2dets,
             m2obs=m2obs,
             append_measurements=config.append_measurements,
         ),
         _special=build_task_map(
             simulator,
-            kernel_bundle._special,
+            tomography_kernels._special,
             m2dets=m2dets,
             m2obs=m2obs,
             append_measurements=config.append_measurements,
@@ -323,7 +323,7 @@ def build_injected_task_bundle(
 
 
 def train_mld_decoder_suite(
-    msd_tasks: TomographyTasks,
+    msd_tomography_tasks: TomographyTasks,
     config: MSDDecoderWorkflowConfig,
     *,
     table_decoder_cls: TableDecoderClass,
@@ -332,8 +332,8 @@ def train_mld_decoder_suite(
     """Train and score MLD decoders for all tomography bases.
 
     Args:
-        msd_tasks: MSD task bundle whose private reference tasks train the
-            tables and whose actual tasks rank ancilla patterns.
+        msd_tomography_tasks: MSD tomography tasks whose private reference
+            tasks train the tables and whose actual tasks rank ancilla patterns.
         config: Workflow configuration.
         table_decoder_cls: Table decoder implementation to train.
         log: If true, print progress messages. Defaults to ``config.log`` when
@@ -353,7 +353,7 @@ def train_mld_decoder_suite(
                 f"with {config.mld_train_shots:,} shots..."
             )
         training_data[basis] = run_task(
-            msd_tasks._special[basis],
+            msd_tomography_tasks._special[basis],
             config.mld_train_shots,
             with_noise=True,
             chunk_size=config.chunk_size,
@@ -369,7 +369,7 @@ def train_mld_decoder_suite(
                 f"with {rank_shots:,} shots..."
             )
         ranking_data[basis] = run_task(
-            msd_tasks.actual[basis],
+            msd_tomography_tasks.actual[basis],
             rank_shots,
             with_noise=True,
             chunk_size=config.chunk_size,
@@ -419,7 +419,7 @@ def train_mld_decoder_suite(
 
 
 def build_mle_decoder_suite(
-    msd_tasks: TomographyTasks,
+    msd_tomography_tasks: TomographyTasks,
     *,
     gurobi_decoder_cls: type[ConfidenceDecoder],
     log: bool = True,
@@ -427,7 +427,7 @@ def build_mle_decoder_suite(
     """Build MLE decoders from all private MSD reference tasks.
 
     Args:
-        msd_tasks: MSD task bundle whose private reference tasks expose
+        msd_tomography_tasks: MSD tomography tasks whose private reference tasks expose
             deterministic DEMs.
         gurobi_decoder_cls: Confidence-capable Gurobi decoder implementation.
         log: If true, print progress messages.
@@ -437,7 +437,7 @@ def build_mle_decoder_suite(
     """
 
     decoders: dict[str, DecoderAdapter] = {}
-    for basis, task in msd_tasks._special.items():
+    for basis, task in msd_tomography_tasks._special.items():
         if log:
             print(f"Building MLE decoder for {basis}...")
         decoders[basis] = build_mle_decoders(
@@ -448,7 +448,7 @@ def build_mle_decoder_suite(
 
 
 def sample_actual_data(
-    task_bundle: TomographyTasks,
+    tomography_tasks: TomographyTasks,
     config: MSDDecoderWorkflowConfig,
     *,
     with_noise: bool = True,
@@ -457,7 +457,7 @@ def sample_actual_data(
     """Sample actual-task detector/observable data for each basis.
 
     Args:
-        task_bundle: Task bundle containing basis-labeled actual tasks.
+        tomography_tasks: Basis-labeled tomography tasks.
         config: Workflow configuration.
         with_noise: Whether to sample the noisy circuit path.
         log: If true, print progress messages. Defaults to ``config.log`` when
@@ -476,7 +476,7 @@ def sample_actual_data(
                 f"Sampling actual data for {basis} with {config.eval_shots:,} shots..."
             )
         data[basis] = run_task(
-            task_bundle.actual[basis],
+            tomography_tasks.actual[basis],
             config.eval_shots,
             with_noise=with_noise,
             chunk_size=config.chunk_size,
@@ -559,7 +559,7 @@ def evaluate_decoder_curves(
 
 
 def evaluate_injected_baseline(
-    injected_tasks: TomographyTasks,
+    injected_tomography_tasks: TomographyTasks,
     config: MSDDecoderWorkflowConfig,
     *,
     table_decoder_cls: TableDecoderClass,
@@ -569,7 +569,7 @@ def evaluate_injected_baseline(
     """Evaluate the injected-state baseline fidelity.
 
     Args:
-        injected_tasks: Injected task bundle.
+        injected_tomography_tasks: Injected tomography tasks.
         config: Workflow configuration.
         table_decoder_cls: Table decoder implementation used for corrected
             injected baselines.
@@ -587,14 +587,14 @@ def evaluate_injected_baseline(
         kind = "raw" if raw else "corrected"
         print(f"Evaluating {kind} injected baseline...")
     return injected_baseline(
-        injected_tasks.actual,
+        injected_tomography_tasks.actual,
         eval_shots=config.eval_shots,
         binary_precision=config.binary_precision,
         table_decoder_cls=table_decoder_cls,
         sign_vector=config.sign_vector,
         target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
         raw=raw,
-        training_task_map=None if raw else injected_tasks._special,
+        training_task_map=None if raw else injected_tomography_tasks._special,
         basis_labels=config.basis_labels,
         uncertainty_backend=config.uncertainty_backend,
         sim_type=config.sim_type,
@@ -678,11 +678,11 @@ __all__ = [
     "DecoderCurveOptions",
     "TomographyTasks",
     "MSDDecoderWorkflowConfig",
-    "build_injected_decoder_bundle",
-    "build_injected_task_bundle",
+    "build_injected_tomography_kernels",
+    "build_injected_tomography_tasks",
     "build_mle_decoder_suite",
-    "build_msd_decoder_bundle",
-    "build_msd_task_bundle",
+    "build_msd_tomography_kernels",
+    "build_msd_tomography_tasks",
     "evaluate_decoder_curves",
     "evaluate_injected_baseline",
     "plot_decoder_curves",
