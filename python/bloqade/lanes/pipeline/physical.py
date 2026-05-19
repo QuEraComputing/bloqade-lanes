@@ -10,13 +10,12 @@ from bloqade.gemini.common.validation.terminal_measure import (
     PhysicalTerminalMeasurementValidation,
 )
 from bloqade.lanes.analysis import layout, placement
-from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
 )
-from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+from bloqade.lanes.heuristics.physical.movement import make_physical_placement_strategy
 from bloqade.lanes.passes import SequentialPlacePass
 from bloqade.lanes.rewrite import circuit2place
 
@@ -49,7 +48,9 @@ class PhysicalPipeline:
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
     layout_heuristic: layout.LayoutHeuristicABC | None = None
-    placement_strategy: placement.PlacementStrategyABC | None = None
+    placement_strategy: placement.PlacementStrategyABC | None = field(
+        default_factory=make_physical_placement_strategy
+    )
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
@@ -59,9 +60,7 @@ class PhysicalPipeline:
             else self.layout_heuristic
         )
         strategy = (
-            PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(arch_spec=self.arch_spec)
-            )
+            make_physical_placement_strategy(arch_spec=self.arch_spec)
             if self.placement_strategy is None
             else self.placement_strategy
         )
