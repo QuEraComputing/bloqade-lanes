@@ -35,6 +35,7 @@ from pathlib import Path
 from benchmarks.kernels import select_benchmark_cases
 
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.compile import compile_squin_to_move
 from bloqade.lanes.dialects import move as move_dialect, place as place_dialect
 from bloqade.lanes.heuristics.physical import (
@@ -76,6 +77,7 @@ def _build_strategy(
     in PalindromePlacementStrategy). The inner is returned separately so the
     caller can read `rust_nodes_expanded_total` after the solve."""
     inner = PhysicalPlacementStrategy(
+        arch_spec=get_physical_arch_spec(),
         traversal=RustPlacementTraversal(
             policy_path=policy_path,
             max_expansions=1000,

@@ -16,10 +16,9 @@
 #       (StrategyConfig "dsl_autotune", reads $BLOQADE_DSL_POLICY)
 #
 # Measure pipeline:
-#   1. autotune runs `scripts/autotune/measure_dsl_policy.py`, which invokes
-#      `python -m benchmarks.cli --strategies dsl_autotune ...`, aggregates
-#      the resulting CSV in-process, and prints
-#      `AUTOTUNE_METRIC <name> <value>` lines to stdout.
+#   1. autotune runs `scripts/autotune/measure_dsl_policy.py`, which calls
+#      `compile_squin_to_move` directly with the physical Gemini arch spec
+#      and prints `AUTOTUNE_METRIC <name> <value>` lines to stdout.
 #   2. RegexAdaptor extracts each metric value with a separate regex pattern.
 #   3. WeightedSumScorer minimises `total_events` with `success_rate` as a
 #      no-regression guardrail.
@@ -35,6 +34,12 @@ max_iterations = "10"
 
 [agent]
 backend = "claude"
+model = "claude-sonnet-4-6"
+
+[agent.research]
+model = "claude-sonnet-4-6"
+
+[agent.implementation]
 model = "claude-sonnet-4-6"
 
 # No target_metric ceiling - let the loop run all iterations. The first
