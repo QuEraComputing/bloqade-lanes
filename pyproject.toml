@@ -43,6 +43,9 @@ python-source = "python"
 python-packages = ["bloqade"]
 
 [tool.uv]
+
+[tool.uv.sources]
+bloqade-core = { git = "https://github.com/QuEraComputing/bloqade-core", branch = "david/device-api-integration" }
 [dependency-groups]
 doc = [
     "griffe-kirin>=0.1.0",
@@ -75,6 +78,7 @@ dev = [
     "ruff>=0.7.3",
     "rust-just>=1.36.0",
     "ipykernel>=7.2.0",
+    "pytest-mock>=3.15.1",
 ]
 
 [tool.isort]
