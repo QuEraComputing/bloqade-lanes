@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
 
 import bloqade.qubit as squin_qubit
 from bloqade.analysis import address
@@ -20,7 +19,6 @@ from bloqade.gemini.common.validation.duplicate_address import (
 )
 from bloqade.lanes.analysis import layout, placement
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.dialects import move, place
 from bloqade.lanes.rewrite import circuit2place, place2move, resolve_pinned, state
 from bloqade.lanes.validation.address import Validation as AddressValidation
@@ -123,11 +121,6 @@ class _PlaceToMove:
     layout_heuristic: layout.LayoutHeuristicABC
     placement_strategy: placement.PlacementStrategyABC
     insert_initialize: bool = False
-    insert_return_moves: bool = True
-    revert_initial_position: Callable[
-        [dict[ir.SSAValue, placement.AtomState], place.StaticPlacement],
-        tuple[tuple[LaneAddress, ...], ...] | None,
-    ] = place2move.palindrome_move_layers
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         out = mt.similar(mt.dialects.add(move))
@@ -179,14 +172,6 @@ class _PlaceToMove:
             place2move.InsertMeasure(placement_frame.entries),
         ]
         rewrite.Walk(rewrite.Chain(*rules)).rewrite(out.code)
-
-        if self.insert_return_moves:
-            rewrite.Walk(
-                place2move.InsertReturnMoves(
-                    placement_analysis=placement_frame.entries,
-                    revert_initial_position=self.revert_initial_position,
-                )
-            ).rewrite(out.code)
 
         rewrite.Walk(
             rewrite.Chain(

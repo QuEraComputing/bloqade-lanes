@@ -6,7 +6,10 @@ from kirin import ir
 
 from bloqade.lanes import compile as compile_api, logical_mvp
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.analysis.placement import PlacementStrategyABC
+from bloqade.lanes.analysis.placement import (
+    PalindromePlacementStrategy,
+    PlacementStrategyABC,
+)
 from bloqade.lanes.heuristics.logical import layout as logical_layout
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 
@@ -19,12 +22,10 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
             self,
             layout_heuristic=None,
             placement_strategy=None,
-            insert_return_moves=True,
             **kwargs,
         ):
             captured["layout_heuristic"] = layout_heuristic
             captured["placement_strategy"] = placement_strategy
-            captured["insert_return_moves"] = insert_return_moves
 
         def emit(self, mt, no_raise=True):
             captured["mt"] = mt
@@ -40,8 +41,9 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
     assert isinstance(
         captured["layout_heuristic"], logical_layout.LogicalLayoutHeuristic
     )
-    assert isinstance(captured["placement_strategy"], LogicalPlacementStrategyNoHome)
-    assert captured["insert_return_moves"] is True
+    strategy = captured["placement_strategy"]
+    assert isinstance(strategy, PalindromePlacementStrategy)
+    assert isinstance(strategy.inner, LogicalPlacementStrategyNoHome)
 
 
 def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
@@ -52,12 +54,10 @@ def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
             self,
             layout_heuristic=None,
             placement_strategy=None,
-            insert_return_moves=True,
             **kwargs,
         ):
             captured["layout_heuristic"] = layout_heuristic
             captured["placement_strategy"] = placement_strategy
-            captured["insert_return_moves"] = insert_return_moves
 
         def emit(self, mt, no_raise=True):
             captured["mt"] = mt
@@ -72,14 +72,12 @@ def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
         marker,
         layout_heuristic=custom_layout,
         placement_strategy=custom_strategy,
-        insert_return_moves=False,
     )
 
     assert out == "move_ir"
     assert captured["mt"] is marker
     assert captured["layout_heuristic"] is custom_layout
     assert captured["placement_strategy"] is custom_strategy
-    assert captured["insert_return_moves"] is False
 
 
 def test_physical_compile_to_move_defaults_are_physical(monkeypatch):

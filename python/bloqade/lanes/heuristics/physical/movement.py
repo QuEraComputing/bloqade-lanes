@@ -129,6 +129,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _rust_entropy_fallback_count: int = field(default=0, init=False, repr=False)
     _traced_rust_entropy_trace: EntropyTrace | None = field(
         default=None, init=False, repr=False
     )
@@ -219,6 +220,11 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         return self._rust_nodes_expanded_total
 
     @property
+    def rust_entropy_fallback_count(self) -> int:
+        """Number of solved Rust entropy stages that used sequential fallback."""
+        return self._rust_entropy_fallback_count
+
+    @property
     def traced_rust_entropy_trace(self) -> EntropyTrace | None:
         return self._traced_rust_entropy_trace
 
@@ -283,7 +289,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             if result.status == "solved":
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:
-                    self._traced_rust_entropy_trace = result.entropy_trace
+                    trace = result.entropy_trace
+                    self._traced_rust_entropy_trace = trace
+                    if trace is not None and any(
+                        step.event == "fallback_start" for step in trace.steps
+                    ):
+                        self._rust_entropy_fallback_count += 1
                 break
 
         self._cz_counter += 1

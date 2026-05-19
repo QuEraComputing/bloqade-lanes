@@ -105,13 +105,13 @@ def test_unannotated_kernel_unchanged():
         "EndMeasure": 1,
         "Fill": 1,
         "GetFutureResult": 2,
-        "Load": 2,
+        "Load": 1,
         "LocalR": 3,
         "LocalRz": 2,
         "LogicalInitialize": 1,
-        "Move": 4,
+        "Move": 2,
         "Return": 1,
-        "Store": 11,
+        "Store": 9,
     }
     assert counts == expected_counts, (
         f"un-pinned kernel statement counts drifted:\n"

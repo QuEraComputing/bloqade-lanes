@@ -30,14 +30,12 @@ def compile_squin_to_move(
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
     placement_strategy: PlacementStrategyABC | None = None,
-    insert_return_moves: bool = True,
 ) -> ir.Method:
     """Compile a physical squin kernel to the move dialect."""
     return PhysicalPipeline(
         arch_spec=get_physical_arch_spec(),
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        insert_return_moves=insert_return_moves,
     ).emit(mt, no_raise=no_raise)
 
 
@@ -55,7 +53,6 @@ def compile_squin_to_move_best(
     strategies: Sequence[tuple[str, PlacementStrategyABC]],
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
-    insert_return_moves: bool = True,
 ) -> tuple[ir.Method, str]:
     """Compile with each ``(label, strategy)`` and return the one producing
     the fewest :class:`move.Move` events.
@@ -82,7 +79,6 @@ def compile_squin_to_move_best(
             no_raise=no_raise,
             layout_heuristic=layout_heuristic,
             placement_strategy=strategy,
-            insert_return_moves=insert_return_moves,
         )
         events = _count_move_events(compiled)
         # strict-less keeps the earliest on ties.
@@ -101,7 +97,6 @@ def compile_squin_to_move_and_visualize(
     no_raise: bool = True,
     layout_heuristic: LayoutHeuristicABC | None = None,
     placement_strategy: PlacementStrategyABC | None = None,
-    insert_return_moves: bool = True,
 ) -> None:
     """Compile a physical squin kernel to moves and visualize the program."""
     mt = compile_squin_to_move(
@@ -109,7 +104,6 @@ def compile_squin_to_move_and_visualize(
         no_raise=no_raise,
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        insert_return_moves=insert_return_moves,
     )
     arch_spec = get_physical_arch_spec()
     marker = "o"
@@ -129,7 +123,6 @@ def compile_to_physical_squin_noise_model(
     arch_spec=None,
     layout_heuristic: LayoutHeuristicABC | None = None,
     placement_strategy: PlacementStrategyABC | None = None,
-    insert_return_moves: bool = True,
 ) -> ir.Method:
     """Compile a physical squin kernel to physical squin with inserted noise channels."""
     if noise_model is None:
@@ -142,7 +135,6 @@ def compile_to_physical_squin_noise_model(
         no_raise=no_raise,
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        insert_return_moves=insert_return_moves,
     )
     transformer = MoveToSquinPhysical(
         arch_spec=arch_spec,
@@ -160,7 +152,6 @@ def compile_to_stim_program(
     arch_spec=None,
     layout_heuristic: LayoutHeuristicABC | None = None,
     placement_strategy: PlacementStrategyABC | None = None,
-    insert_return_moves: bool = True,
 ) -> str:
     """Compile a physical squin kernel to a Stim program string."""
     noise_kernel = compile_to_physical_squin_noise_model(
@@ -170,7 +161,6 @@ def compile_to_stim_program(
         arch_spec=arch_spec,
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
-        insert_return_moves=insert_return_moves,
     )
     RemoveReturn().rewrite(noise_kernel.code)
     noise_kernel = squin_to_stim(noise_kernel)
