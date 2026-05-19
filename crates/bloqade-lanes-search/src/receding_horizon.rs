@@ -20,7 +20,6 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
 
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
@@ -63,76 +62,6 @@ const MAX_NOISE_TOP_UP_RETRIES: u64 = 50;
 /// sweet spot; smaller values are more aggressive (more IDS fallbacks,
 /// better quality, more wall-clock).
 const GREEDY_PROGRESS_THRESHOLD: f64 = 0.85;
-
-/// Environment variable that, when set (to any non-empty value), causes
-/// each call to [`solve_entangling_rh_single`] to print a per-phase
-/// breakdown of wall-clock time and branch-tier counts to stderr. Used
-/// for ad-hoc profiling without polluting the public API.
-const PROFILE_ENV_VAR: &str = "BLOQADE_RH_PROFILE";
-
-/// Per-trajectory profile data accumulated during one
-/// `solve_entangling_rh_single` call. Recorded only when
-/// `BLOQADE_RH_PROFILE` is set in the environment; the no-op path adds
-/// negligible overhead (a few `Instant::now()` calls per stage).
-#[derive(Default, Debug)]
-struct RhProfile {
-    candidate_gen_ms: f64,
-    rollouts_ms: f64,
-    pick_best_ms: f64,
-    commit_ms: f64,
-    stages: u32,
-    tier0_branches: u32,
-    tier1_branches: u32,
-    tier2_dropped: u32,
-    fallback_triggered: bool,
-    horizon_decrements: u32,
-    /// The chosen candidate index at each stage (in order). Candidate 0
-    /// is the "baseline" Hungarian — the first weight-grid entry, which
-    /// matches what a plain `solve_entangling` would use. Indexes > 0
-    /// are the alternative weight-perturbed candidates.
-    chosen_sequence: Vec<usize>,
-    /// Count of stages where the chosen branch was not candidate 0
-    /// (i.e., RH preferred an alternative Hungarian over the baseline).
-    non_baseline_picks: u32,
-    /// Count of stages where the chosen branch differed from the
-    /// previously-chosen one (i.e., the orchestrator switched its
-    /// preference between adjacent stages).
-    branch_switches: u32,
-}
-
-impl RhProfile {
-    fn emit(&self, restart_seed: u64, total_layers: usize, total_expansions: u32, wall_ms: f64) {
-        let seq = self
-            .chosen_sequence
-            .iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        eprintln!(
-            "RH_PROFILE seed={seed} layers={layers} expansions={exp} \
-             total_ms={total:.1} cand={cand:.1} rollout={roll:.1} \
-             pick={pick:.1} commit={cmt:.1} \
-             stages={stg} t0={t0} t1={t1} t2={t2} fb={fb} dec={dec} \
-             non_baseline={nb} switches={sw} seq=[{seq}]",
-            seed = restart_seed,
-            layers = total_layers,
-            exp = total_expansions,
-            total = wall_ms,
-            cand = self.candidate_gen_ms,
-            roll = self.rollouts_ms,
-            pick = self.pick_best_ms,
-            cmt = self.commit_ms,
-            stg = self.stages,
-            t0 = self.tier0_branches,
-            t1 = self.tier1_branches,
-            t2 = self.tier2_dropped,
-            fb = if self.fallback_triggered { 1 } else { 0 },
-            dec = self.horizon_decrements,
-            nb = self.non_baseline_picks,
-            sw = self.branch_switches,
-        );
-    }
-}
 
 /// Options controlling the receding-horizon outer loop.
 ///
@@ -246,10 +175,6 @@ pub(crate) enum BranchResult {
     /// Rollout reached `EntanglingConstraintGoal` at `depth ≤ rollout_horizon`.
     /// Commit the full `path` regardless of `commit_depth`.
     Tier0 {
-        /// Index into the per-stage `candidates` vec (== weight-grid
-        /// entry position when no noise-top-up fired). `0` is the
-        /// baseline Hungarian (first weight-grid entry).
-        candidate_idx: usize,
         depth: u32,
         path: Vec<MoveSet>,
         leaf_config: Config,
@@ -259,7 +184,6 @@ pub(crate) enum BranchResult {
     /// the goal. The leaf Hungarian cost is computed lazily in
     /// [`pick_best_branch`] only when no tier-0 branch exists.
     Tier1 {
-        candidate_idx: usize,
         path: Vec<MoveSet>,
         leaf_config: Config,
         nodes_expanded: u32,
@@ -292,12 +216,6 @@ impl BranchResult {
         match self {
             BranchResult::Tier0 { depth, .. } => *depth,
             BranchResult::Tier1 { path, .. } => path.len() as u32,
-        }
-    }
-    fn candidate_idx(&self) -> usize {
-        match self {
-            BranchResult::Tier0 { candidate_idx, .. }
-            | BranchResult::Tier1 { candidate_idx, .. } => *candidate_idx,
         }
     }
 }
@@ -785,7 +703,6 @@ pub(crate) fn classify_into_tier(
     outcome: RolloutOutcome,
     rollout_horizon: u32,
     heuristic: &PairDistanceHeuristic,
-    candidate_idx: usize,
 ) -> Option<BranchResult> {
     let RolloutOutcome {
         graph,
@@ -800,7 +717,6 @@ pub(crate) fn classify_into_tier(
         let depth = graph.depth(goal_id);
         let leaf_config = graph.config(goal_id).clone();
         return Some(BranchResult::Tier0 {
-            candidate_idx,
             depth,
             path,
             leaf_config,
@@ -822,7 +738,6 @@ pub(crate) fn classify_into_tier(
     // Note: c_prime (Hungarian cost at leaf) is computed lazily in
     // pick_best_branch, only when needed (i.e., when no tier-0 branch exists).
     Some(BranchResult::Tier1 {
-        candidate_idx,
         path,
         leaf_config,
         nodes_expanded,
@@ -944,25 +859,10 @@ pub fn solve_entangling_rh_single(
     let mut stage_iter: u32 = 0;
     let stage_budget_cap: u32 = max_expansions.unwrap_or(u32::MAX);
 
-    let profile_enabled = std::env::var(PROFILE_ENV_VAR)
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let mut prof = RhProfile::default();
-    let wall_start = Instant::now();
-
     while !goal.is_goal(&state) {
         if total_expansions >= stage_budget_cap {
             // Out of global budget — return whatever we've committed plus a
             // BudgetExceeded status.
-            if profile_enabled {
-                let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
-                prof.emit(
-                    restart_seed,
-                    committed_layers.len(),
-                    total_expansions,
-                    wall_ms,
-                );
-            }
             return SolveResult {
                 status: SolveStatus::BudgetExceeded,
                 move_layers: committed_layers,
@@ -974,7 +874,6 @@ pub fn solve_entangling_rh_single(
             };
         }
         stage_iter = stage_iter.saturating_add(1);
-        prof.stages = prof.stages.saturating_add(1);
 
         // (a) Generate K candidate assignments — seeded by restart_seed and
         // stage iteration so consecutive stages within one restart also
@@ -986,7 +885,6 @@ pub fn solve_entangling_rh_single(
         let stage_seed = restart_seed
             .wrapping_mul(1_000_003)
             .wrapping_add(stage_iter as u64);
-        let t_cand = Instant::now();
         let candidates = generate_k_candidates(
             &state,
             cz_pairs,
@@ -1001,27 +899,15 @@ pub fn solve_entangling_rh_single(
             stage_seed,
             rh_opts.branch_parallel,
         );
-        prof.candidate_gen_ms += t_cand.elapsed().as_secs_f64() * 1000.0;
 
         if candidates.is_empty() {
             // No assignment possible from this state — fall back.
-            prof.fallback_triggered = true;
             let fb = fallback(&state);
-            if profile_enabled {
-                let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
-                prof.emit(
-                    restart_seed,
-                    committed_layers.len() + fb.move_layers.len(),
-                    total_expansions,
-                    wall_ms,
-                );
-            }
             return merge_fallback(committed_layers, fb, total_expansions);
         }
 
         // (b) Run rollouts (optionally parallel).
-        let n_candidates = candidates.len();
-        let rollout = |idx: usize, targets: Vec<(u32, u64)>| -> Option<BranchResult> {
+        let rollout = |targets: Vec<(u32, u64)>| -> Option<BranchResult> {
             let outcome = run_inner_rollout(
                 state.clone(),
                 targets,
@@ -1041,36 +927,14 @@ pub fn solve_entangling_rh_single(
                 rh_opts.greedy_first,
                 rh_opts.inner_beam_width,
             );
-            classify_into_tier(outcome, x, heuristic, idx)
+            classify_into_tier(outcome, x, heuristic)
         };
 
-        let t_roll = Instant::now();
         let branches: Vec<BranchResult> = if rh_opts.branch_parallel {
-            candidates
-                .into_par_iter()
-                .enumerate()
-                .filter_map(|(i, t)| rollout(i, t))
-                .collect()
+            candidates.into_par_iter().filter_map(rollout).collect()
         } else {
-            candidates
-                .into_iter()
-                .enumerate()
-                .filter_map(|(i, t)| rollout(i, t))
-                .collect()
+            candidates.into_iter().filter_map(rollout).collect()
         };
-        prof.rollouts_ms += t_roll.elapsed().as_secs_f64() * 1000.0;
-        // Tier counts: total survivors classified as tier-0 vs tier-1, plus
-        // (n_candidates - survivors) tier-2 drops.
-        for b in &branches {
-            if b.is_tier0() {
-                prof.tier0_branches = prof.tier0_branches.saturating_add(1);
-            } else {
-                prof.tier1_branches = prof.tier1_branches.saturating_add(1);
-            }
-        }
-        prof.tier2_dropped = prof
-            .tier2_dropped
-            .saturating_add((n_candidates - branches.len()) as u32);
         total_expansions = total_expansions
             .saturating_add(branches.iter().map(|b| b.nodes_expanded()).sum::<u32>());
 
@@ -1078,25 +942,13 @@ pub fn solve_entangling_rh_single(
         if branches.is_empty() {
             if x > 1 {
                 x = x.saturating_sub(rh_opts.fallback_x_decrement.max(1));
-                prof.horizon_decrements = prof.horizon_decrements.saturating_add(1);
                 continue;
             }
-            prof.fallback_triggered = true;
             let fb = fallback(&state);
-            if profile_enabled {
-                let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
-                prof.emit(
-                    restart_seed,
-                    committed_layers.len() + fb.move_layers.len(),
-                    total_expansions,
-                    wall_ms,
-                );
-            }
             return merge_fallback(committed_layers, fb, total_expansions);
         }
 
         // (d) Pick best branch.
-        let t_pick = Instant::now();
         let best = match pick_best_branch(
             &branches,
             rh_opts.tier0_next_h_weight,
@@ -1110,39 +962,12 @@ pub fn solve_entangling_rh_single(
         ) {
             Some(b) => b,
             None => {
-                prof.fallback_triggered = true;
                 let fb = fallback(&state);
-                if profile_enabled {
-                    let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
-                    prof.emit(
-                        restart_seed,
-                        committed_layers.len() + fb.move_layers.len(),
-                        total_expansions,
-                        wall_ms,
-                    );
-                }
                 return merge_fallback(committed_layers, fb, total_expansions);
             }
         };
-        prof.pick_best_ms += t_pick.elapsed().as_secs_f64() * 1000.0;
-
-        // Track which candidate index won this stage (for switch-counting
-        // telemetry under BLOQADE_RH_PROFILE). Candidate 0 is the
-        // baseline Hungarian.
-        let chosen_idx = best.candidate_idx();
-        prof.chosen_sequence.push(chosen_idx);
-        if chosen_idx != 0 {
-            prof.non_baseline_picks = prof.non_baseline_picks.saturating_add(1);
-        }
-        if prof.chosen_sequence.len() >= 2 {
-            let n = prof.chosen_sequence.len();
-            if prof.chosen_sequence[n - 1] != prof.chosen_sequence[n - 2] {
-                prof.branch_switches = prof.branch_switches.saturating_add(1);
-            }
-        }
 
         // (e) Commit: full path for tier-0, `m` layers for tier-1.
-        let t_commit = Instant::now();
         let commit_count = if best.is_tier0() {
             best.depth() as usize
         } else {
@@ -1150,17 +975,7 @@ pub fn solve_entangling_rh_single(
         };
         if commit_count == 0 {
             // Nothing to commit (shouldn't happen — guards against infinite loop).
-            prof.fallback_triggered = true;
             let fb = fallback(&state);
-            if profile_enabled {
-                let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
-                prof.emit(
-                    restart_seed,
-                    committed_layers.len() + fb.move_layers.len(),
-                    total_expansions,
-                    wall_ms,
-                );
-            }
             return merge_fallback(committed_layers, fb, total_expansions);
         }
         for ms in best.path().iter().take(commit_count) {
@@ -1178,7 +993,6 @@ pub fn solve_entangling_rh_single(
             apply_layers_to(state.clone(), best.path().iter().take(commit_count), &index)
                 .unwrap_or_else(|| best.leaf_config().clone())
         };
-        prof.commit_ms += t_commit.elapsed().as_secs_f64() * 1000.0;
 
         // After commit, refresh x to the configured horizon (it may have
         // been reduced by the fallback path above).
@@ -1186,15 +1000,6 @@ pub fn solve_entangling_rh_single(
     }
 
     let cost = committed_layers.len() as f64;
-    if profile_enabled {
-        let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
-        prof.emit(
-            restart_seed,
-            committed_layers.len(),
-            total_expansions,
-            wall_ms,
-        );
-    }
     SolveResult {
         status: SolveStatus::Solved,
         move_layers: committed_layers,
