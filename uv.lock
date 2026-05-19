@@ -216,12 +216,16 @@ tsim = [
 
 [[package]]
 name = "bloqade-core"
-version = "0.6.0.dev0"
-source = { git = "https://github.com/QuEraComputing/bloqade-core?branch=david%2Fdevice-api-integration#6c9fd33076457d2ce6d5f6a32e02a555d1de516c" }
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kirin-toolchain" },
     { name = "loguru" },
     { name = "qlam-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/8b/5e4bf22c543db86f9b53a46e4fe07f35e20713acda7ef3f8ed9165bb2652/bloqade_core-0.6.1.tar.gz", hash = "sha256:6a4a3a7c265e299cfdd61d0dacd8a87c9b946b99f46720303fcd9db8b871dffe", size = 175232, upload-time = "2026-05-19T11:33:23.984Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/00/a0eee23057d46ae166df66b202313af3a15417a04bc17dc7958a433f7c64/bloqade_core-0.6.1-py3-none-any.whl", hash = "sha256:044c236a15ce5af294c5383e318c4819c20212be213d2533aa0a7596ac2ae820", size = 42904, upload-time = "2026-05-19T11:33:22.422Z" },
 ]
 
 [[package]]
@@ -309,7 +313,7 @@ doc = [
 [package.metadata]
 requires-dist = [
     { name = "bloqade-circuit", extras = ["cirq", "qasm2", "tsim"], specifier = "~=0.14.1" },
-    { name = "bloqade-core", git = "https://github.com/QuEraComputing/bloqade-core?branch=david%2Fdevice-api-integration" },
+    { name = "bloqade-core", specifier = "~=0.6.1" },
     { name = "bloqade-tsim", specifier = "~=0.1.3" },
     { name = "cudaq", marker = "extra == 'cudaq'", specifier = ">=0.13.0" },
     { name = "deprecated", specifier = ">=1.3.1" },
