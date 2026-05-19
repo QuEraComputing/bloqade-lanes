@@ -236,7 +236,7 @@ def build_msd_task_bundle(
     )
     special = build_task_map(
         simulator,
-        kernel_bundle.special,
+        kernel_bundle._special,
         m2dets=m2dets,
         m2obs=m2obs,
         append_measurements=config.append_measurements,
@@ -278,7 +278,7 @@ def build_injected_task_bundle(
         ),
         special=build_task_map(
             simulator,
-            kernel_bundle.special,
+            kernel_bundle._special,
             m2dets=m2dets,
             m2obs=m2obs,
             append_measurements=config.append_measurements,

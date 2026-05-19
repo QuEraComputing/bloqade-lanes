@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from kirin.dialects import ilist
@@ -23,17 +23,17 @@ from ..standard.types import KirinKernel
 @dataclass(frozen=True)
 class DecoderKernelBundle:
     # TODO, mtg: make things specific in the beginning.
-    """Actual and special tomography kernels for decoder workflows.
+    """Actual tomography kernels plus private decoder-reference kernels.
 
     Attributes:
         actual: Basis-labeled kernels for the full noisy/input-prepared logical
             circuit.
-        special: Basis-labeled kernels used for special/reference task
-            construction.
+        _special: Private basis-labeled kernels used internally for
+            special/reference task construction.
     """
 
     actual: dict[str, KirinKernel]
-    special: dict[str, KirinKernel]
+    _special: dict[str, KirinKernel] = field(repr=False)
 
 
 # NOTE: this is basically what the user would "instantiate" for this specific
@@ -161,7 +161,7 @@ def build_decoder_kernel_bundle(
 
     return DecoderKernelBundle(
         actual=actual,
-        special=special,
+        _special=special,
     )
 
 
@@ -201,7 +201,7 @@ def build_injected_kernel_bundle(
 
     return DecoderKernelBundle(
         actual=_kernels_by_tomography_basis(injected_kernels),
-        special=build_injected_decoder_kernel_map(output_qubit=output_qubit),
+        _special=build_injected_decoder_kernel_map(output_qubit=output_qubit),
     )
 
 

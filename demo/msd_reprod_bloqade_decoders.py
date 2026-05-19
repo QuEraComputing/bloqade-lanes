@@ -229,9 +229,9 @@ injected_kernel_bundle = build_injected_kernel_bundle(
     output_qubit=OUTPUT_QUBIT,
 )
 ACTUAL_KERNELS = kernel_bundle.actual
-SPECIAL_KERNELS = kernel_bundle.special
+SPECIAL_KERNELS = kernel_bundle._special
 INJECTED_KERNELS = injected_kernel_bundle.actual
-INJECTED_DECODER_KERNELS = injected_kernel_bundle.special
+INJECTED_DECODER_KERNELS = injected_kernel_bundle._special
 
 
 # %%

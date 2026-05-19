@@ -180,9 +180,11 @@ def test_kernel_builders_return_expected_basis_maps():
     injected = build_injected_kernel_bundle(0.1, 0.2, 0.3)
 
     assert set(decoder.actual) == {"X", "Y", "Z"}
-    assert set(decoder.special) == {"X", "Y", "Z"}
+    assert set(decoder._special) == {"X", "Y", "Z"}
+    assert not hasattr(decoder, "special")
     assert set(injected.actual) == {"X", "Y", "Z"}
-    assert set(injected.special) == {"X", "Y", "Z"}
+    assert set(injected._special) == {"X", "Y", "Z"}
+    assert not hasattr(injected, "special")
 
 
 def test_build_injected_decoder_kernel_map_returns_basis_kernels():
@@ -222,7 +224,7 @@ def test_prefix_prepare_uses_tsim_prefix_and_remains_deterministic():
 
     special_tasks = build_task_map(
         sim,
-        {"X": decoder.special["X"]},
+        {"X": decoder._special["X"]},
         m2dets=m2dets,
         m2obs=m2obs,
         append_measurements=False,
@@ -250,7 +252,7 @@ def test_demo_task_clifft_backend_matches_result_shapes():
     )
     special_tasks = build_task_map(
         sim,
-        {"X": decoder.special["X"]},
+        {"X": decoder._special["X"]},
         m2dets=m2dets,
         m2obs=m2obs,
         append_measurements=False,
@@ -291,7 +293,7 @@ def test_decoder_kernel_bundle_accepts_decoder_primitive_set():
     )
 
     assert set(decoder.actual) == {"X", "Y", "Z"}
-    assert set(decoder.special) == {"X", "Y", "Z"}
+    assert set(decoder._special) == {"X", "Y", "Z"}
 
 
 def test_qet_primitives_integrate_with_decoder_kernel_bundle():
@@ -433,9 +435,9 @@ def test_workflow_kernel_bundle_builders_return_basis_maps():
 
     assert isinstance(msd_bundle.actual, dict)
     assert set(msd_bundle.actual) == {"X", "Y", "Z"}
-    assert set(msd_bundle.special) == {"X", "Y", "Z"}
+    assert set(msd_bundle._special) == {"X", "Y", "Z"}
     assert set(injected_bundle.actual) == {"X", "Y", "Z"}
-    assert set(injected_bundle.special) == {"X", "Y", "Z"}
+    assert set(injected_bundle._special) == {"X", "Y", "Z"}
 
 
 def test_workflow_task_bundle_builder_compiles_msd_tasks():
