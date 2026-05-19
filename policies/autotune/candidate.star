@@ -1,46 +1,37 @@
 """Move Policy DSL - autotune candidate.
 
-Minimal Steane baseline for autotune.
+Best-first search for steane_physical_35 on the physical Gemini arch.
 
-GOAL: Invent and implement a Move Policy SEARCH STRATEGY for
-`steane_physical_35` on the physical Gemini arch while keeping
-success_rate == 1.0 and reducing total move events.
+Search strategy:
+  - Frontier of [priority, node_id] pairs, popped by minimum priority.
+  - Priority is the goal-distance heuristic h, summed over unresolved qubits
+    only (qubits whose current location differs from their target). Pure
+    greedy: no depth term, no tie-breaking other than insertion order.
+  - For each popped node, scored lanes are produced ONLY for unresolved
+    qubits; the AOD rectangle packer is then called on that scored set and
+    every rectangle it produces is enqueued as a child move. No branch caps,
+    no top-k slicing, no per-qubit limits.
 
-Objective hierarchy:
-  1. First produce a valid compilation with success_rate == 1.0.
-  2. Then reduce move_layers, the number of parallel move timesteps.
-  3. Only after both of those consider wall time.
+Restricting scored lanes to unresolved qubits prevents the packer from
+building rectangles that move at-target qubits off their goal, so each
+child config is one where at least one unresolved qubit has moved and h
+remains a faithful progress signal.
 
-If measurement reports "place.CZ statements remain", at least one CZ pair was
-not placed on compatible neighboring physical sites. Fix the search so it
-reaches the target placement; do not optimize runtime for a failing policy.
+State machine across step() calls:
+  awaiting -> queue -> frontier-pop. On each frontier pop, the chosen
+  node's candidate moves are queued; the queue is drained one move per
+  step (insert_child + await last_insert outcome) so the kernel sees each
+  child individually and we can read child_id back from graph.last_insert().
 
-Hard constraints for generated policies:
-  - Do not call `invoke_builtin(...)`.
-  - Do not call `halt("fallback", ...)`.
-  - Do not copy, rename, or lightly edit existing reference strategies.
-  - Do not use the identifiers `top_c`, `max_branch`, `_top_c_per_qubit`,
-    or `top_c_per_qubit`.
-  - Do not add branch caps, beam widths, top-k pruning, per-qubit top-c
-    pruning, or tiny frontier limits that let the policy give up before the
-    kernel expansion budget is reached.
-  - Keep generated policy files ASCII-only. Do not write Unicode comments,
-    separators, arrows, bullets, box-drawing characters, or typographic
-    punctuation. Use plain ASCII comments like "# Parameters" instead.
-
-This seed is intentionally plain. It is a graph enumerator, not a tuned search
-strategy: it keeps an explicit stack of nodes, considers legal moves for every
-qubit in the current config, and relies on the kernel's expansion budget or
-timeout to stop unsuccessful searches. It exists only to provide a valid
-starting point that does not teach fallback behavior or old heuristics.
+Honors the autotune constraints: ASCII only, no builtin invocation,
+no fallback halt status, no capping identifiers, no branch caps, no
+top-k slicing of packer output, no per-qubit limits on legal_lanes.
 """
 
-PARAMS_DEFAULTS = {
-    "w_t": 0.0,
-}
+PARAMS_DEFAULTS = {}
 
 
-def _merge_params(defaults, overrides):
+def _merge(defaults, overrides):
     merged = {}
     for k, v in defaults.items():
         merged[k] = v
@@ -49,7 +40,7 @@ def _merge_params(defaults, overrides):
     return merged
 
 
-PARAMS = _merge_params(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
+PARAMS = _merge(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
 
 
 def _tail(items):
@@ -59,76 +50,114 @@ def _tail(items):
     return out
 
 
-def _prepend(item, items):
-    return [item] + items
-
-
-def _target_for(ctx, qid, current):
+def _target_loc(ctx, qid, current):
     for target in ctx.targets:
         if target[0] == qid:
             return target[1]
     return current
 
 
+def _pop_min(frontier):
+    best_i = 0
+    for i in range(1, len(frontier)):
+        if frontier[i][0] < frontier[best_i][0]:
+            best_i = i
+    chosen = frontier[best_i]
+    rest = []
+    for i in range(0, len(frontier)):
+        if i != best_i:
+            rest = rest + [frontier[i]]
+    return [chosen, rest]
+
+
+def _h_score(cfg, ctx, lib):
+    total = 0
+    for u in lib.unresolved_qubits(cfg):
+        cur = u["current"]
+        tgt = u["target"]
+        d = lib.hop_distance(cur, tgt)
+        if d == None:
+            total = total + 100000
+        else:
+            total = total + d
+    return total
+
+
+def _enumerate(cfg, ctx, lib):
+    scored = []
+    for u in lib.unresolved_qubits(cfg):
+        qid = u["qid"]
+        cur = u["current"]
+        tgt = u["target"]
+        d_cur_v = lib.hop_distance(cur, tgt)
+        if d_cur_v == None:
+            d_cur = 100000
+        else:
+            d_cur = d_cur_v
+        for lane in lib.legal_lanes(cfg, qid):
+            dst = ctx.arch_spec.lane_endpoints(lane)[1]
+            d_dst_v = lib.hop_distance(dst, tgt)
+            if d_dst_v == None:
+                d_dst = 100000
+            else:
+                d_dst = d_dst_v
+            scored = scored + [lib.scored_lane(qid, lane, float(d_cur - d_dst))]
+    cands = lib.pack_aod_rectangles(scored, cfg, ctx)
+    out = []
+    for i in range(0, len(cands)):
+        out = out + [cands[i].move_set.encoded]
+    return out
+
+
 def init(root, ctx):
     return {
-        "stack": [root],
-        "pending": None,
+        "frontier": [[0, root]],
+        "queue": [],
+        "current": None,
+        "awaiting": False,
     }
 
 
 def step(graph, gs, ctx, lib):
-    pending = gs["pending"]
-    if pending != None:
+    if gs["awaiting"]:
         outcome = graph.last_insert()
-        stack = gs["stack"]
-        if outcome != None and outcome["is_new"] and outcome["error"] == None:
-            return update_global_state({
-                "stack": _prepend(outcome["child_id"], stack),
-                "pending": None,
-            })
-        return update_global_state({"pending": None})
+        frontier = gs["frontier"]
+        if outcome != None and outcome["error"] == None and outcome["is_new"] and outcome["child_id"] != None:
+            cid = outcome["child_id"]
+            cfg = graph.config(cid)
+            h = _h_score(cfg, ctx, lib)
+            frontier = frontier + [[h, cid]]
+        return update_global_state({
+            "frontier": frontier,
+            "awaiting": False,
+        })
 
-    stack = gs["stack"]
-    if len(stack) == 0:
-        return halt("unsolvable", "seed enumerator exhausted the graph frontier")
+    queue = gs["queue"]
+    if len(queue) > 0:
+        move = queue[0]
+        rest = _tail(queue)
+        current = gs["current"]
+        return [
+            insert_child(current, move),
+            update_global_state({"queue": rest, "awaiting": True}),
+        ]
 
-    node = stack[0]
-    rest = _tail(stack)
+    frontier = gs["frontier"]
+    if len(frontier) == 0:
+        return halt("unsolvable", "frontier exhausted before goal")
+
+    popped = _pop_min(frontier)
+    chosen = popped[0]
+    rest = popped[1]
+    node = chosen[1]
     if graph.is_goal(node):
         return emit_solution(node)
 
-    ns = graph.ns(node)
-    if "ranked" in ns:
-        ranked = ns["ranked"]
-        idx = ns["idx"]
-    else:
-        cfg = graph.config(node)
-        scored = []
-        for item in cfg.iter():
-            qid = item[0]
-            current = item[1]
-            target = _target_for(ctx, qid, current)
-            for lane in lib.legal_lanes(cfg, qid):
-                dst = ctx.arch_spec.lane_endpoints(lane)[1]
-                score = (
-                    lib.blended_distance(current, target, PARAMS["w_t"])
-                    - lib.blended_distance(dst, target, PARAMS["w_t"])
-                )
-                scored = scored + [lib.scored_lane(qid, lane, score)]
-
-        cands = lib.pack_aod_rectangles(scored, cfg, ctx)
-        ranked = []
-        for i in range(0, len(cands)):
-            ranked = ranked + [cands[i].move_set.encoded]
-        idx = 0
-
-    if idx >= len(ranked):
-        return update_global_state({"stack": rest})
-
-    chosen = ranked[idx]
-    return [
-        insert_child(node, chosen),
-        update_node_state(node, {"ranked": ranked, "idx": idx + 1}),
-        update_global_state({"pending": node, "stack": _prepend(node, rest)}),
-    ]
+    cfg = graph.config(node)
+    moves = _enumerate(cfg, ctx, lib)
+    return update_global_state({
+        "frontier": rest,
+        "queue": moves,
+        "current": node,
+        "awaiting": False,
+    })
