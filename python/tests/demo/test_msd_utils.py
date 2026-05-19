@@ -556,6 +556,55 @@ def test_workflow_evaluate_decoder_curves_supports_multiple_suites():
     assert all("accepted_fraction" in curve for curve in curves.values())
 
 
+def test_workflow_evaluate_decoder_curves_applies_shared_options_and_overrides(
+    monkeypatch,
+):
+    from demo.msd_utils.application import workflows
+
+    config = _workflow_config()
+    calls: dict[str, tuple[int, int, str]] = {}
+
+    def fake_evaluate_curve(*args, **kwargs):
+        calls[str(kwargs["metric"])] = (
+            int(kwargs["threshold_points"]),
+            int(kwargs["min_accepted_per_basis"]),
+            str(kwargs["selection_mode"]),
+        )
+        return {
+            "accepted_fraction": np.array([], dtype=np.float64),
+            "fidelity": np.array([], dtype=np.float64),
+            "credible": np.empty((0, 2), dtype=np.float64),
+        }
+
+    monkeypatch.setattr(workflows, "evaluate_curve", fake_evaluate_curve)
+    suite = cast(dict[str, DecoderAdapter], {})
+
+    curves = workflows.evaluate_decoder_curves(
+        {},
+        {"MLD": suite, "MLE": suite},
+        config,
+        curve_options=DecoderCurveOptions(
+            threshold_points=24,
+            min_accepted_per_basis=2,
+            selection_mode="threshold",
+        ),
+        curve_option_overrides={
+            "MLE": DecoderCurveOptions(
+                threshold_points=48,
+                min_accepted_per_basis=3,
+                selection_mode="pattern_rank",
+            ),
+        },
+        log=False,
+    )
+
+    assert set(curves) == {"MLD", "MLE"}
+    assert calls == {
+        "MLD": (24, 2, "threshold"),
+        "MLE": (48, 3, "pattern_rank"),
+    }
+
+
 def test_workflow_injected_baseline_and_plot_helpers():
     config = _workflow_config()
     task_map = _basis_task_map(

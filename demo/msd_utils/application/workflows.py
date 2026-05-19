@@ -493,6 +493,7 @@ def evaluate_decoder_curves(
     curve_options: (
         Mapping[str, DecoderCurveOptions] | DecoderCurveOptions | None
     ) = None,
+    curve_option_overrides: Mapping[str, DecoderCurveOptions] | None = None,
     log: bool | None = None,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Evaluate postselection curves for one or more decoder suites.
@@ -502,7 +503,13 @@ def evaluate_decoder_curves(
         decoder_suites: Mapping from decoder label to basis-labeled decoder
             adapters, for example ``{"MLD": mld_decoders, "MLE": mle_decoders}``.
         config: Workflow configuration.
-        curve_options: Optional shared or per-decoder curve options.
+        curve_options: Optional shared or per-decoder curve options. If omitted,
+            default ``DecoderCurveOptions`` are used for every decoder suite. If
+            a single ``DecoderCurveOptions`` is provided, it is shared by every
+            decoder suite. If a mapping is provided, labels not present in the
+            mapping use default options.
+        curve_option_overrides: Optional per-decoder options that override the
+            shared or default options from ``curve_options``.
         log: If true, print progress messages. Defaults to ``config.log`` when
             omitted.
 
@@ -512,17 +519,24 @@ def evaluate_decoder_curves(
 
     log = config.log if log is None else log
 
-    curves: dict[str, dict[str, np.ndarray]] = {}
-    for label, decoder_map in decoder_suites.items():
+    def options_for(label: str) -> DecoderCurveOptions:
         if isinstance(curve_options, DecoderCurveOptions):
             options = curve_options
         elif curve_options is None:
             options = DecoderCurveOptions()
         else:
             options = curve_options.get(label, DecoderCurveOptions())
+        if curve_option_overrides is not None:
+            options = curve_option_overrides.get(label, options)
+        return options
+
+    curves: dict[str, dict[str, np.ndarray]] = {}
+    for label, decoder_map in decoder_suites.items():
+        options = options_for(label)
 
         if log:
             print(f"Evaluating {label} curve...")
+        progress_label = label if log and label.upper() == "MLE" else None
         curves[label] = evaluate_curve(
             actual_data,
             decoder_map,
@@ -539,6 +553,7 @@ def evaluate_decoder_curves(
             layout=config.layout,
             uncertainty_backend=config.uncertainty_backend,
             max_grid_points=config.max_grid_points,
+            progress_label=progress_label,
         )
     return curves
 

@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Callable, TypeVar
+from typing import Callable, Protocol, TypeVar
 
 import numpy as np
 from bloqade.decoders import BaseDecoder, ConfidenceDecoder
@@ -31,6 +31,20 @@ from ..standard.tomography import (
 )
 
 DecodeResult = TypeVar("DecodeResult")
+
+
+class _ProgressBar(Protocol):
+    """Small subset of the tqdm progress-bar API used here."""
+
+    total: float | None
+
+    def update(self, n: int = 1) -> object: ...
+
+    def set_description_str(self, desc: str, refresh: bool = True) -> object: ...
+
+    def refresh(self) -> object: ...
+
+    def close(self) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -201,12 +215,13 @@ def _build_ancilla_decode_cache(
     packed_anc_det: np.ndarray,
     *,
     syndrome_length: int,
+    progress_update: Callable[[int], None] | None = None,
 ) -> dict[int, tuple[int, float]]:
     """Decode each unique ancilla detector pattern once."""
 
-    unique_anc_det = np.unique(packed_anc_det)
+    unique_anc_det, shot_counts = np.unique(packed_anc_det, return_counts=True)
     ancilla_decode_cache: dict[int, tuple[int, float]] = {}
-    for packed in unique_anc_det.tolist():
+    for packed, shot_count in zip(unique_anc_det.tolist(), shot_counts, strict=True):
         anc_flip, score = _call_decoder_fn(
             decoder.decode_factory,
             unpack_packed_bits(int(packed), syndrome_length),
@@ -216,6 +231,8 @@ def _build_ancilla_decode_cache(
             int(pack_boolean_array(anc_flip_bits)[0]) if len(anc_flip_bits) else 0,
             float(score),
         )
+        if progress_update is not None:
+            progress_update(int(shot_count))
     return ancilla_decode_cache
 
 
@@ -226,12 +243,30 @@ def _build_full_decode_cache(
     packed_full_det: np.ndarray,
     *,
     syndrome_length: int,
+    shot_counts: np.ndarray | None = None,
+    progress_update: Callable[[int], None] | None = None,
 ) -> dict[int, int]:
     """Decode each unique full detector pattern once."""
 
-    unique_full_det = np.unique(packed_full_det)
+    if shot_counts is None:
+        unique_full_det, unique_shot_counts = np.unique(
+            packed_full_det,
+            return_counts=True,
+        )
+    else:
+        unique_full_det = np.asarray(packed_full_det, dtype=np.uint64)
+        unique_shot_counts = np.asarray(shot_counts, dtype=np.int64)
+        if unique_full_det.shape != unique_shot_counts.shape:
+            raise ValueError(
+                "packed_full_det and shot_counts must have the same shape."
+            )
+
     full_decode_cache: dict[int, int] = {}
-    for packed in unique_full_det.tolist():
+    for packed, shot_count in zip(
+        unique_full_det.tolist(),
+        unique_shot_counts,
+        strict=True,
+    ):
         full_flip = np.asarray(
             _call_decoder_fn(
                 decoder.decode_full,
@@ -240,6 +275,8 @@ def _build_full_decode_cache(
             dtype=np.uint8,
         )
         full_decode_cache[int(packed)] = int(full_flip[0]) if len(full_flip) else 0
+        if progress_update is not None:
+            progress_update(int(shot_count))
     return full_decode_cache
 
 
@@ -273,6 +310,7 @@ def _build_generic_threshold_tables(
     targets: np.ndarray,
     basis_labels: Sequence[str],
     layout: SyndromeLayout,
+    progress_label: str | None = None,
 ) -> tuple[
     dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
     np.ndarray,
@@ -285,63 +323,110 @@ def _build_generic_threshold_tables(
     per_basis_tables: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     global_score_weights: defaultdict[float, int] = defaultdict(int)
     total_shots = 0
+    progress_bars: dict[str, _ProgressBar] = {}
+    if progress_label is not None:
+        from tqdm.auto import tqdm
 
-    for basis in basis_labels:
-        dataset = actual_data[basis]
-        total_shots += len(dataset.observables)
-        packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
+        progress_bars = {
+            basis: tqdm(
+                total=len(actual_data[basis].observables),
+                desc=f"{progress_label} {basis}: factory decode",
+                unit="shots",
+                position=index,
+                leave=True,
+            )
+            for index, basis in enumerate(basis_labels)
+        }
 
-        ancilla_decode_cache = _build_ancilla_decode_cache(
-            decoder_map[basis],
-            packed_dataset.packed_anc_det,
-            syndrome_length=packed_dataset.anc_det.shape[1],
-        )
-        grouped = np.column_stack(
-            [
+    try:
+        for basis in basis_labels:
+            dataset = actual_data[basis]
+            total_shots += len(dataset.observables)
+            packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
+            progress_bar = progress_bars.get(basis)
+
+            def update_basis_progress(advance: int) -> None:
+                if progress_bar is not None:
+                    progress_bar.update(advance)
+
+            ancilla_decode_cache = _build_ancilla_decode_cache(
+                decoder_map[basis],
                 packed_dataset.packed_anc_det,
-                packed_dataset.packed_anc_obs,
-                packed_dataset.packed_full_det,
-                packed_dataset.output_bits,
-            ]
-        )
-        unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
+                syndrome_length=packed_dataset.anc_det.shape[1],
+                progress_update=update_basis_progress,
+            )
+            grouped = np.column_stack(
+                [
+                    packed_dataset.packed_anc_det,
+                    packed_dataset.packed_anc_obs,
+                    packed_dataset.packed_full_det,
+                    packed_dataset.output_bits,
+                ]
+            )
+            unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
 
-        score_to_counts: defaultdict[float, np.ndarray] = defaultdict(
-            lambda: np.zeros(2, dtype=np.int64)
-        )
-        accepted_groups: list[tuple[float, int, int, int]] = []
-        for row, count in zip(unique_groups, group_counts, strict=True):
-            packed_a_det = int(row[0])
-            packed_a_obs = int(row[1])
-            packed_det = int(row[2])
-            output_bit = int(row[3])
+            score_to_counts: defaultdict[float, np.ndarray] = defaultdict(
+                lambda: np.zeros(2, dtype=np.int64)
+            )
+            accepted_groups: list[tuple[float, int, int, int]] = []
+            full_decode_weights: defaultdict[int, int] = defaultdict(int)
+            for row, count in zip(unique_groups, group_counts, strict=True):
+                packed_a_det = int(row[0])
+                packed_a_obs = int(row[1])
+                packed_det = int(row[2])
+                output_bit = int(row[3])
 
-            anc_flip_packed, score = ancilla_decode_cache[packed_a_det]
-            if not np.isfinite(score):
-                continue
-            corrected_anc_packed = packed_a_obs ^ anc_flip_packed
-            if corrected_anc_packed not in packed_targets:
-                continue
+                anc_flip_packed, score = ancilla_decode_cache[packed_a_det]
+                if not np.isfinite(score):
+                    continue
+                corrected_anc_packed = packed_a_obs ^ anc_flip_packed
+                if corrected_anc_packed not in packed_targets:
+                    continue
 
-            accepted_groups.append((float(score), packed_det, output_bit, int(count)))
+                accepted_groups.append(
+                    (float(score), packed_det, output_bit, int(count))
+                )
+                full_decode_weights[packed_det] += int(count)
 
-        accepted_full_dets = np.fromiter(
-            (packed_det for _score, packed_det, _output_bit, _count in accepted_groups),
-            dtype=np.uint64,
-            count=len(accepted_groups),
-        )
-        full_decode_cache = _build_full_decode_cache(
-            decoder_map[basis],
-            accepted_full_dets,
-            syndrome_length=dataset.detectors.shape[1],
-        )
+            if progress_bar is not None:
+                accepted_shots = int(sum(full_decode_weights.values()))
+                progress_bar.set_description_str(
+                    f"{progress_label} {basis}: full decode"
+                )
+                progress_bar.total = len(dataset.observables) + accepted_shots
+                progress_bar.refresh()
 
-        for score, packed_det, output_bit, count in accepted_groups:
-            corrected_output_bit = output_bit ^ full_decode_cache[packed_det]
-            score_to_counts[score][corrected_output_bit] += count
-            global_score_weights[score] += count
+            accepted_full_dets = np.fromiter(
+                full_decode_weights.keys(),
+                dtype=np.uint64,
+                count=len(full_decode_weights),
+            )
+            accepted_full_counts = np.fromiter(
+                full_decode_weights.values(),
+                dtype=np.int64,
+                count=len(full_decode_weights),
+            )
+            full_decode_cache = _build_full_decode_cache(
+                decoder_map[basis],
+                accepted_full_dets,
+                syndrome_length=dataset.detectors.shape[1],
+                shot_counts=accepted_full_counts,
+                progress_update=update_basis_progress,
+            )
 
-        per_basis_tables[basis] = _score_count_dict_to_arrays(score_to_counts)
+            if progress_bar is not None:
+                progress_bar.set_description_str(f"{progress_label} {basis}: decoded")
+                progress_bar.refresh()
+
+            for score, packed_det, output_bit, count in accepted_groups:
+                corrected_output_bit = output_bit ^ full_decode_cache[packed_det]
+                score_to_counts[score][corrected_output_bit] += count
+                global_score_weights[score] += count
+
+            per_basis_tables[basis] = _score_count_dict_to_arrays(score_to_counts)
+    finally:
+        for progress_bar in progress_bars.values():
+            progress_bar.close()
 
     global_scores = np.array(sorted(global_score_weights), dtype=np.float64)
     global_weights = np.array(
@@ -493,6 +578,7 @@ def evaluate_curve(
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
+    progress_label: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Evaluate a postselection curve for decoder confidence thresholds.
 
@@ -513,6 +599,8 @@ def evaluate_curve(
         layout: Syndrome layout separating output and factory bits.
         uncertainty_backend: Fidelity uncertainty backend.
         max_grid_points: Maximum adaptive grid size for Bayesian tomography.
+        progress_label: Optional Rich progress label shown while decoding
+            actual-data syndromes.
 
     Returns:
         Dictionary containing accepted fractions, fidelities, and intervals.
@@ -547,6 +635,7 @@ def evaluate_curve(
         targets=targets,
         basis_labels=basis_labels,
         layout=layout,
+        progress_label=progress_label,
     )
     try:
         return _evaluate_cached_threshold_curve(

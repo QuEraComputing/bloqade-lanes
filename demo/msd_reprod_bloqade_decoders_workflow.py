@@ -154,18 +154,11 @@ curves = evaluate_decoder_curves(
         "MLE": mle_decoders,
     },
     config,
-    curve_options={
-        "MLD": DecoderCurveOptions(
-            threshold_points=24,
-            threshold_policy="quantile",
-            selection_mode="threshold",
-        ),
-        "MLE": DecoderCurveOptions(
-            threshold_points=24,
-            threshold_policy="quantile",
-            selection_mode="threshold",
-        ),
-    },
+    curve_options=DecoderCurveOptions(
+        threshold_points=24,
+        threshold_policy="quantile",
+        selection_mode="threshold",
+    ),
 )
 
 injected_summary = evaluate_injected_baseline(
