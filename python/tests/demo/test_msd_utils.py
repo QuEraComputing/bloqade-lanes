@@ -21,12 +21,12 @@ from demo.msd_utils import (
     DecoderAdapter,
     DecoderCurveOptions,
     DecoderPrimitiveSet,
-    DecoderTaskBundle,
     DemoTask,
     MSDDecoderWorkflowConfig,
     SparseTableDecoder,
     SyndromeLayout,
     TableDecoderWithConfidence,
+    TomographyTasks,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
     build_injected_decoder_bundle,
@@ -447,7 +447,7 @@ def test_workflow_task_bundle_builder_compiles_msd_tasks():
 
     task_bundle = build_msd_task_bundle(sim, config, kernel_bundle)
 
-    assert isinstance(task_bundle, DecoderTaskBundle)
+    assert isinstance(task_bundle, TomographyTasks)
     assert set(task_bundle.actual) == {"X", "Y", "Z"}
     assert set(task_bundle._special) == {"X", "Y", "Z"}
     assert not hasattr(task_bundle, "special")
@@ -458,7 +458,7 @@ def test_workflow_sample_actual_data_uses_config_sampling():
     task_map = _basis_task_map(
         {"X": [0, 0, 0, 0], "Y": [1, 1, 1, 1], "Z": [0, 0, 0, 0]},
     )
-    task_bundle = DecoderTaskBundle(
+    task_bundle = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], task_map),
         _special=cast(dict[str, DemoTask[object]], task_map),
     )
@@ -476,7 +476,7 @@ def test_workflow_mld_suite_trains_from_task_bundle():
         observables=np.zeros((4, 2), dtype=np.uint8),
     )
     task_map = {basis: _StaticTask(dataset) for basis in ("X", "Y", "Z")}
-    task_bundle = DecoderTaskBundle(
+    task_bundle = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], task_map),
         _special=cast(dict[str, DemoTask[object]], task_map),
     )
@@ -503,7 +503,7 @@ def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
             priors=np.array([0.1, 0.2], dtype=float),
         ),
     )
-    task_bundle = DecoderTaskBundle(
+    task_bundle = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
         _special=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
     )
@@ -610,7 +610,7 @@ def test_workflow_injected_baseline_and_plot_helpers():
     task_map = _basis_task_map(
         {"X": [0, 0, 0, 0], "Y": [0, 0, 0, 0], "Z": [0, 0, 0, 0]},
     )
-    task_bundle = DecoderTaskBundle(
+    task_bundle = TomographyTasks(
         actual=cast(dict[str, DemoTask[object]], task_map),
         _special=cast(dict[str, DemoTask[object]], task_map),
     )

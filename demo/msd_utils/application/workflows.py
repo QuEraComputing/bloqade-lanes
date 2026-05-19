@@ -18,7 +18,7 @@ from ..application.mld import (
 )
 from ..application.mle import build_mle_decoders
 from ..application.msd_kernels import (
-    DecoderKernelBundle,
+    TomographyKernels,
     build_decoder_kernel_bundle,
     build_injected_kernel_bundle,
 )
@@ -138,7 +138,7 @@ class MSDDecoderWorkflowConfig:
 
 
 @dataclass(frozen=True)
-class DecoderTaskBundle:
+class TomographyTasks:
     """Actual simulator tasks plus private decoder-reference tasks.
 
     Attributes:
@@ -174,7 +174,7 @@ def build_msd_decoder_bundle(
     config: MSDDecoderWorkflowConfig,
     *,
     log: bool | None = None,
-) -> DecoderKernelBundle:
+) -> TomographyKernels:
     """Build the actual/special kernel bundle for the MSD workflow.
 
     Args:
@@ -203,7 +203,7 @@ def build_injected_decoder_bundle(
     config: MSDDecoderWorkflowConfig,
     *,
     log: bool | None = None,
-) -> DecoderKernelBundle:
+) -> TomographyKernels:
     """Build the actual/special kernel bundle for the injected workflow.
 
     Args:
@@ -231,10 +231,10 @@ def build_injected_decoder_bundle(
 def build_msd_task_bundle(
     simulator: GeminiLogicalSimulator,
     config: MSDDecoderWorkflowConfig,
-    kernel_bundle: DecoderKernelBundle,
+    kernel_bundle: TomographyKernels,
     *,
     log: bool | None = None,
-) -> DecoderTaskBundle:
+) -> TomographyTasks:
     """Compile MSD actual and private reference kernels into simulator tasks.
 
     Args:
@@ -274,16 +274,16 @@ def build_msd_task_bundle(
         config.special_kernel_strategy,
         normalize_observable_reference=True,
     )
-    return DecoderTaskBundle(actual=actual, _special=special)
+    return TomographyTasks(actual=actual, _special=special)
 
 
 def build_injected_task_bundle(
     simulator: GeminiLogicalSimulator,
     config: MSDDecoderWorkflowConfig,
-    kernel_bundle: DecoderKernelBundle,
+    kernel_bundle: TomographyKernels,
     *,
     log: bool | None = None,
-) -> DecoderTaskBundle:
+) -> TomographyTasks:
     """Compile injected actual and private reference kernels into tasks.
 
     Args:
@@ -304,7 +304,7 @@ def build_injected_task_bundle(
         print("Building injected simulator tasks...")
 
     m2dets, m2obs = build_measurement_maps(1)
-    return DecoderTaskBundle(
+    return TomographyTasks(
         actual=build_task_map(
             simulator,
             kernel_bundle.actual,
@@ -323,7 +323,7 @@ def build_injected_task_bundle(
 
 
 def train_mld_decoder_suite(
-    msd_tasks: DecoderTaskBundle,
+    msd_tasks: TomographyTasks,
     config: MSDDecoderWorkflowConfig,
     *,
     table_decoder_cls: TableDecoderClass,
@@ -419,7 +419,7 @@ def train_mld_decoder_suite(
 
 
 def build_mle_decoder_suite(
-    msd_tasks: DecoderTaskBundle,
+    msd_tasks: TomographyTasks,
     *,
     gurobi_decoder_cls: type[ConfidenceDecoder],
     log: bool = True,
@@ -448,7 +448,7 @@ def build_mle_decoder_suite(
 
 
 def sample_actual_data(
-    task_bundle: DecoderTaskBundle,
+    task_bundle: TomographyTasks,
     config: MSDDecoderWorkflowConfig,
     *,
     with_noise: bool = True,
@@ -559,7 +559,7 @@ def evaluate_decoder_curves(
 
 
 def evaluate_injected_baseline(
-    injected_tasks: DecoderTaskBundle,
+    injected_tasks: TomographyTasks,
     config: MSDDecoderWorkflowConfig,
     *,
     table_decoder_cls: TableDecoderClass,
@@ -606,7 +606,7 @@ def plot_decoder_curves(
     curves: Mapping[str, Mapping[str, np.ndarray]],
     *,
     injected_summary: FidelitySummary | None = None,
-    min_accepted_fraction: float = 0.02,
+    min_accepted_fraction: float = 0.04,
     ax: "Axes | None" = None,
     title: str | None = None,
     log: bool = True,
@@ -676,7 +676,7 @@ def plot_decoder_curves(
 
 __all__ = [
     "DecoderCurveOptions",
-    "DecoderTaskBundle",
+    "TomographyTasks",
     "MSDDecoderWorkflowConfig",
     "build_injected_decoder_bundle",
     "build_injected_task_bundle",

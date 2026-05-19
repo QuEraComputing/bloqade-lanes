@@ -21,7 +21,7 @@ from .application.mld import (
 )
 from .application.mle import build_mle_decoders
 from .application.msd_kernels import (
-    DecoderKernelBundle,
+    TomographyKernels,
     build_decoder_kernel_bundle,
     build_injected_decoder_kernel_map,
     build_injected_kernel_bundle,
@@ -31,8 +31,8 @@ from .application.table_decoders import SparseTableDecoder, TableDecoderClass
 from .application.thresholds import DecoderAdapter, evaluate_curve, evaluate_mld_curve
 from .application.workflows import (
     DecoderCurveOptions,
-    DecoderTaskBundle,
     MSDDecoderWorkflowConfig,
+    TomographyTasks,
     build_injected_decoder_bundle,
     build_injected_task_bundle,
     build_mle_decoder_suite,
@@ -84,9 +84,9 @@ __all__ = [
     "DEFAULT_TARGET_BLOCH",
     "DecoderAdapter",
     "DecoderCurveOptions",
-    "DecoderKernelBundle",
+    "TomographyKernels",
     "DecoderPrimitiveSet",
-    "DecoderTaskBundle",
+    "TomographyTasks",
     "DemoTask",
     "DetectorErrorModelTask",
     "DetectorObservableResult",

@@ -21,7 +21,7 @@ from ..standard.types import KirinKernel
 
 
 @dataclass(frozen=True)
-class DecoderKernelBundle:
+class TomographyKernels:
     # TODO, mtg: make things specific in the beginning.
     """Actual tomography kernels plus private decoder-reference kernels.
 
@@ -89,7 +89,7 @@ def build_decoder_kernel_bundle(
     special_kernel_strategy: Literal[
         "prefix_prepare", "compiled_inverse_prefix"
     ] = "prefix_prepare",
-) -> DecoderKernelBundle:
+) -> TomographyKernels:
     """Build tomography kernels for actual and special MSD tasks.
 
     Args:
@@ -99,7 +99,7 @@ def build_decoder_kernel_bundle(
         special_kernel_strategy: Strategy expected for the special task path.
 
     Returns:
-        A ``DecoderKernelBundle`` containing basis-labeled kernel maps.
+        A ``TomographyKernels`` containing basis-labeled kernel maps.
 
     Raises:
         ValueError: If ``special_kernel_strategy`` is unsupported.
@@ -165,7 +165,7 @@ def build_decoder_kernel_bundle(
     else:
         special = dict(actual)
 
-    return DecoderKernelBundle(
+    return TomographyKernels(
         actual=actual,
         _special=special,
     )
@@ -177,7 +177,7 @@ def build_injected_kernel_bundle(
     lam: float,
     *,
     output_qubit: int = 0,
-) -> DecoderKernelBundle:
+) -> TomographyKernels:
     """Build injected-state evaluation and decoder-reference kernels.
 
     Args:
@@ -205,7 +205,7 @@ def build_injected_kernel_bundle(
         "injected",
     )
 
-    return DecoderKernelBundle(
+    return TomographyKernels(
         actual=_kernels_by_tomography_basis(injected_kernels),
         _special=build_injected_decoder_kernel_map(output_qubit=output_qubit),
     )
