@@ -38,7 +38,7 @@ from ..domain.special_tasks import (
 from ..domain.tasks import DemoTask
 from ..standard.measurement_maps import build_measurement_maps
 from ..standard.sampling import BasisDataset, run_task
-from ..standard.types import FidelitySummary
+from ..standard.types import FidelitySummary, SimulatorTask
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -65,7 +65,8 @@ class MSDDecoderWorkflowConfig:
         num_logical_qubits: Number of logical qubits in the MSD task.
         output_qubit: Logical qubit containing the output state.
         sim_type: Simulator backend used by ``DemoTask`` sampling.
-        chunk_size: Maximum shots per simulator call.
+        chunk_size: Optional maximum shots per simulator call. ``None`` samples
+            all requested shots in one call.
         mld_rank_train_shots: Optional separate shot count for MLD ranking data.
             Defaults to ``mld_train_shots`` when omitted.
         binary_precision: Bayesian tomography grid precision.
@@ -94,7 +95,7 @@ class MSDDecoderWorkflowConfig:
     num_logical_qubits: int
     output_qubit: int = 0
     sim_type: str = "tsim"
-    chunk_size: int | None = 1_000_000
+    chunk_size: int | None = None
     mld_rank_train_shots: int | None = None
     binary_precision: int | None = None
     uncertainty_backend: str = "wilson"
@@ -168,6 +169,67 @@ class DecoderCurveOptions:
     threshold_policy: str = "quantile"
     selection_mode: str = "threshold"
     min_accepted_per_basis: int = 50
+
+
+def _sample_task_with_progress(
+    task: SimulatorTask,
+    shots: int,
+    *,
+    description: str,
+    with_noise: bool,
+    chunk_size: int | None,
+    sim_type: str,
+    enabled: bool,
+) -> BasisDataset:
+    """Sample a task in chunks with an optional tqdm progress bar."""
+
+    if shots < 0:
+        raise ValueError("shots must be non-negative.")
+    if shots == 0:
+        return run_task(
+            task,
+            shots,
+            with_noise=with_noise,
+            chunk_size=chunk_size,
+            sim_type=sim_type,
+        )
+    if not enabled:
+        return run_task(
+            task,
+            shots,
+            with_noise=with_noise,
+            chunk_size=chunk_size,
+            sim_type=sim_type,
+        )
+
+    from tqdm.auto import tqdm
+
+    batch_size = shots if chunk_size is None else int(chunk_size)
+    if batch_size <= 0:
+        raise ValueError("chunk_size must be positive when provided.")
+
+    detector_chunks: list[np.ndarray] = []
+    observable_chunks: list[np.ndarray] = []
+    remaining = int(shots)
+    with tqdm(total=shots, desc=description, unit="shots") as progress:
+        while remaining > 0:
+            batch = min(batch_size, remaining)
+            dataset = run_task(
+                task,
+                batch,
+                with_noise=with_noise,
+                chunk_size=None,
+                sim_type=sim_type,
+            )
+            detector_chunks.append(dataset.detectors)
+            observable_chunks.append(dataset.observables)
+            progress.update(batch)
+            remaining -= batch
+
+    return BasisDataset(
+        detectors=np.concatenate(detector_chunks, axis=0),
+        observables=np.concatenate(observable_chunks, axis=0),
+    )
 
 
 def build_msd_tomography_kernels(
@@ -352,12 +414,14 @@ def train_mld_decoder_suite(
                 f"Sampling MLD table-training data for {basis} "
                 f"with {config.mld_train_shots:,} shots..."
             )
-        training_data[basis] = run_task(
+        training_data[basis] = _sample_task_with_progress(
             msd_tomography_tasks._special[basis],
             config.mld_train_shots,
+            description=f"MLD {basis}: table-training samples",
             with_noise=True,
             chunk_size=config.chunk_size,
             sim_type=config.sim_type,
+            enabled=bool(log),
         )
 
     ranking_data: dict[str, BasisDataset] = {}
@@ -368,12 +432,14 @@ def train_mld_decoder_suite(
                 f"Sampling MLD ranking data for {basis} "
                 f"with {rank_shots:,} shots..."
             )
-        ranking_data[basis] = run_task(
+        ranking_data[basis] = _sample_task_with_progress(
             msd_tomography_tasks.actual[basis],
             rank_shots,
+            description=f"MLD {basis}: ranking samples",
             with_noise=True,
             chunk_size=config.chunk_size,
             sim_type=config.sim_type,
+            enabled=bool(log),
         )
 
     decoder_pairs = {

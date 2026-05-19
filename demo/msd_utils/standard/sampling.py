@@ -63,7 +63,7 @@ def _sample_task_raw(
     shots: int,
     *,
     with_noise: bool = True,
-    chunk_size: int | None = 1_000_000,
+    chunk_size: int | None = None,
     sim_type: str = "tsim",
 ) -> BasisDataset:
     """Sample detector and observable arrays without observable-frame rebasing."""
@@ -190,7 +190,7 @@ def _iter_task_datasets(
     shots: int,
     *,
     with_noise: bool = True,
-    chunk_size: int | None = 1_000_000,
+    chunk_size: int | None = None,
     sim_type: str = "tsim",
 ) -> Iterator[BasisDataset]:
     """Yield sampled datasets in chunks, applying observable-frame normalization."""
@@ -226,7 +226,7 @@ def run_task(
     shots: int,
     *,
     with_noise: bool = True,
-    chunk_size: int | None = 1_000_000,
+    chunk_size: int | None = None,
     sim_type: str = "tsim",
 ) -> BasisDataset:
     """Sample a simulator task and return detector/observable arrays.
@@ -236,7 +236,7 @@ def run_task(
         task: Simulator task or ``DemoTask`` to sample.
         shots: Number of shots to sample.
         with_noise: Whether to sample the noisy circuit path.
-        chunk_size: Maximum shots per simulator call. Use ``None`` to sample
+        chunk_size: Optional maximum shots per simulator call. ``None`` samples
             all shots in one call.
         sim_type: Simulator backend, currently ``"tsim"`` or ``"clifft"`` for
             ``DemoTask`` instances.

@@ -122,7 +122,7 @@ def train_mld_decoder_pair_from_task(
     *,
     table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
-    chunk_size: int | None = 1_000_000,
+    chunk_size: int | None = None,
     with_noise: bool = True,
     sim_type: str = "tsim",
 ) -> tuple[BaseDecoder, BaseDecoder]:
@@ -133,7 +133,8 @@ def train_mld_decoder_pair_from_task(
         shots: Number of shots to sample.
         table_decoder_cls: Table decoder class to train.
         layout: Syndrome layout separating output and factory syndrome bits.
-        chunk_size: Maximum shots sampled per task call.
+        chunk_size: Optional maximum shots sampled per task call. ``None``
+            samples all requested shots in one call.
         with_noise: Whether to sample the noisy circuit path.
         sim_type: Simulator backend for ``DemoTask`` instances.
 
@@ -399,7 +400,7 @@ def estimate_mld_ancilla_scores_from_tasks(
     binary_precision: int | None = 4,
     uncertainty_backend: str = "wilson",
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
-    chunk_size: int | None = 1_000_000,
+    chunk_size: int | None = None,
     with_noise: bool = True,
     sim_type: str = "tsim",
 ) -> np.ndarray:
@@ -417,7 +418,8 @@ def estimate_mld_ancilla_scores_from_tasks(
         binary_precision: Precision used by Bayesian tomography scoring.
         uncertainty_backend: Fidelity uncertainty backend.
         layout: Syndrome layout separating output and factory bits.
-        chunk_size: Maximum shots sampled per task call.
+        chunk_size: Optional maximum shots sampled per task call. ``None``
+            samples all requested shots in one call.
         with_noise: Whether to sample the noisy circuit path.
         sim_type: Simulator backend for ``DemoTask`` instances.
 
