@@ -449,7 +449,8 @@ def test_workflow_task_bundle_builder_compiles_msd_tasks():
 
     assert isinstance(task_bundle, DecoderTaskBundle)
     assert set(task_bundle.actual) == {"X", "Y", "Z"}
-    assert set(task_bundle.special) == {"X", "Y", "Z"}
+    assert set(task_bundle._special) == {"X", "Y", "Z"}
+    assert not hasattr(task_bundle, "special")
 
 
 def test_workflow_sample_actual_data_uses_config_sampling():
@@ -459,7 +460,7 @@ def test_workflow_sample_actual_data_uses_config_sampling():
     )
     task_bundle = DecoderTaskBundle(
         actual=cast(dict[str, DemoTask[object]], task_map),
-        special=cast(dict[str, DemoTask[object]], task_map),
+        _special=cast(dict[str, DemoTask[object]], task_map),
     )
 
     data = sample_actual_data(task_bundle, config)
@@ -477,7 +478,7 @@ def test_workflow_mld_suite_trains_from_task_bundle():
     task_map = {basis: _StaticTask(dataset) for basis in ("X", "Y", "Z")}
     task_bundle = DecoderTaskBundle(
         actual=cast(dict[str, DemoTask[object]], task_map),
-        special=cast(dict[str, DemoTask[object]], task_map),
+        _special=cast(dict[str, DemoTask[object]], task_map),
     )
 
     decoders = train_mld_decoder_suite(
@@ -504,7 +505,7 @@ def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
     )
     task_bundle = DecoderTaskBundle(
         actual=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
-        special=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
+        _special=cast(dict[str, DemoTask[object]], {"X": _FakeTask()}),
     )
 
     decoders = build_mle_decoder_suite(
@@ -562,7 +563,7 @@ def test_workflow_injected_baseline_and_plot_helpers():
     )
     task_bundle = DecoderTaskBundle(
         actual=cast(dict[str, DemoTask[object]], task_map),
-        special=cast(dict[str, DemoTask[object]], task_map),
+        _special=cast(dict[str, DemoTask[object]], task_map),
     )
 
     summary = evaluate_injected_baseline(

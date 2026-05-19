@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
@@ -136,15 +136,16 @@ class MSDDecoderWorkflowConfig:
 
 @dataclass(frozen=True)
 class DecoderTaskBundle:
-    """Actual and special simulator tasks for a decoder workflow.
+    """Actual simulator tasks plus private decoder-reference tasks.
 
     Attributes:
         actual: Basis-labeled tasks for noisy/evaluation data.
-        special: Basis-labeled tasks for decoder training or reference data.
+        _special: Private basis-labeled tasks for decoder training or
+            reference data.
     """
 
     actual: dict[str, DemoTask]
-    special: dict[str, DemoTask]
+    _special: dict[str, DemoTask] = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -213,7 +214,7 @@ def build_msd_task_bundle(
     config: MSDDecoderWorkflowConfig,
     kernel_bundle: DecoderKernelBundle,
 ) -> DecoderTaskBundle:
-    """Compile MSD actual/special kernels into simulator tasks.
+    """Compile MSD actual and private reference kernels into simulator tasks.
 
     Args:
         simulator: Gemini logical simulator used for task construction.
@@ -222,8 +223,8 @@ def build_msd_task_bundle(
             ``build_msd_decoder_bundle``.
 
     Returns:
-        Actual tasks and special tasks with the configured special-task circuit
-        strategy applied.
+        Actual tasks and private reference tasks with the configured
+        special-task circuit strategy applied.
     """
 
     m2dets, m2obs = build_measurement_maps(config.num_logical_qubits)
@@ -246,7 +247,7 @@ def build_msd_task_bundle(
         config.special_kernel_strategy,
         normalize_observable_reference=True,
     )
-    return DecoderTaskBundle(actual=actual, special=special)
+    return DecoderTaskBundle(actual=actual, _special=special)
 
 
 def build_injected_task_bundle(
@@ -254,7 +255,7 @@ def build_injected_task_bundle(
     config: MSDDecoderWorkflowConfig,
     kernel_bundle: DecoderKernelBundle,
 ) -> DecoderTaskBundle:
-    """Compile injected actual/special kernels into simulator tasks.
+    """Compile injected actual and private reference kernels into tasks.
 
     Args:
         simulator: Gemini logical simulator used for task construction.
@@ -264,7 +265,7 @@ def build_injected_task_bundle(
             ``build_injected_decoder_bundle``.
 
     Returns:
-        Actual injected tasks and ideal injected decoder-reference tasks.
+        Actual injected tasks and private ideal decoder-reference tasks.
     """
 
     m2dets, m2obs = build_measurement_maps(1)
@@ -276,7 +277,7 @@ def build_injected_task_bundle(
             m2obs=m2obs,
             append_measurements=config.append_measurements,
         ),
-        special=build_task_map(
+        _special=build_task_map(
             simulator,
             kernel_bundle._special,
             m2dets=m2dets,
@@ -296,8 +297,8 @@ def train_mld_decoder_suite(
     """Train and score MLD decoders for all tomography bases.
 
     Args:
-        msd_tasks: MSD task bundle whose special tasks train the tables and
-            whose actual tasks rank ancilla patterns.
+        msd_tasks: MSD task bundle whose private reference tasks train the
+            tables and whose actual tasks rank ancilla patterns.
         config: Workflow configuration.
         table_decoder_cls: Table decoder implementation to train.
         log: If true, print progress messages.
@@ -314,7 +315,7 @@ def train_mld_decoder_suite(
                 f"with {config.mld_train_shots:,} shots..."
             )
         training_data[basis] = run_task(
-            msd_tasks.special[basis],
+            msd_tasks._special[basis],
             config.mld_train_shots,
             with_noise=True,
             chunk_size=config.chunk_size,
@@ -385,10 +386,11 @@ def build_mle_decoder_suite(
     gurobi_decoder_cls: type[ConfidenceDecoder],
     log: bool = False,
 ) -> dict[str, DecoderAdapter]:
-    """Build MLE decoders for all special MSD tasks.
+    """Build MLE decoders from all private MSD reference tasks.
 
     Args:
-        msd_tasks: MSD task bundle whose special tasks expose deterministic DEMs.
+        msd_tasks: MSD task bundle whose private reference tasks expose
+            deterministic DEMs.
         gurobi_decoder_cls: Confidence-capable Gurobi decoder implementation.
         log: If true, print progress messages.
 
@@ -397,7 +399,7 @@ def build_mle_decoder_suite(
     """
 
     decoders: dict[str, DecoderAdapter] = {}
-    for basis, task in msd_tasks.special.items():
+    for basis, task in msd_tasks._special.items():
         if log:
             print(f"Building MLE decoder for {basis}...")
         decoders[basis] = build_mle_decoders(
@@ -530,7 +532,7 @@ def evaluate_injected_baseline(
         sign_vector=config.sign_vector,
         target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
         raw=raw,
-        training_task_map=None if raw else injected_tasks.special,
+        training_task_map=None if raw else injected_tasks._special,
         basis_labels=config.basis_labels,
         uncertainty_backend=config.uncertainty_backend,
         sim_type=config.sim_type,
