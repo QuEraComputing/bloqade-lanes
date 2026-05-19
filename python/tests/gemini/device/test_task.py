@@ -18,11 +18,8 @@ from qlam_core.plugins.tasks.api.client import TasksClient
 from qlam_core.plugins.tasks.api.tasks_models import Program, Task, TaskStatus
 
 from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.gemini.logical import (
-    GeminiLogicalFuture,
-)
-from bloqade.gemini.logical.device.task import (
+from bloqade.gemini import GeminiLogicalFuture, logical
+from bloqade.gemini.device.logical.task import (
     GeminiKernelBatchTask,
     GeminiParameterScanTask,
     GeminiSingleKernelTask,

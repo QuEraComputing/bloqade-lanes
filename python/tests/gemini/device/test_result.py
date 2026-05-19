@@ -16,9 +16,8 @@ from qlam_core.plugins.tasks.api.tasks_models import (
 )
 
 from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.gemini.logical.device import result as result_module
-from bloqade.gemini.logical.device.result import GeminiLogicalResult
+from bloqade.gemini import GeminiLogicalResult, logical
+from bloqade.gemini.device.logical import result as result_module
 
 CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 

@@ -1,7 +1,6 @@
 from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.gemini.logical import GeminiLogicalDevice
-from bloqade.gemini.logical.device.task import (
+from bloqade.gemini import GeminiLogicalDevice, logical
+from bloqade.gemini.device.logical.task import (
     GeminiKernelBatchTask,
     GeminiParameterScanTask,
     GeminiSingleKernelTask,

@@ -22,9 +22,7 @@ from qlam_core.plugins.tasks.api.tasks_models import (
     TaskStatus,
 )
 
-from bloqade.gemini.logical import (
-    GeminiLogicalFuture,
-)
+from bloqade.gemini import GeminiLogicalFuture
 
 CREATION_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 

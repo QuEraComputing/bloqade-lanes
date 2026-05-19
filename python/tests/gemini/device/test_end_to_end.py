@@ -27,8 +27,7 @@ from qlam_core.plugins.tasks.api.client import TasksClient
 from qlam_core.plugins.tasks.api.tasks_models import Task, TaskStatus
 
 from bloqade import squin
-from bloqade.gemini import logical
-from bloqade.gemini.logical import GeminiLogicalDevice
+from bloqade.gemini import GeminiLogicalDevice, logical
 
 # === response builders ===
 
