@@ -4,7 +4,7 @@ from bloqade.lanes.analysis.placement import ConcreteState, ExecuteCZ
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.receding_horizon import (
-    RecedingHorizonLooseGoalPlacementStrategy,
+    RecedingHorizonNoReturnPlacementStrategy,
 )
 
 
@@ -20,7 +20,7 @@ def _make_state() -> ConcreteState:
 
 
 def test_receding_horizon_default_construction():
-    strategy = RecedingHorizonLooseGoalPlacementStrategy(
+    strategy = RecedingHorizonNoReturnPlacementStrategy(
         arch_spec=logical.get_arch_spec(),
     )
     assert strategy.strategy == "ids"
@@ -39,7 +39,7 @@ def test_receding_horizon_cz_placements_smoke():
     no committed move layers — but the full dispatch path still runs:
     options construction, solve_entangling_rh invocation, result decoding.
     """
-    strategy = RecedingHorizonLooseGoalPlacementStrategy(
+    strategy = RecedingHorizonNoReturnPlacementStrategy(
         arch_spec=logical.get_arch_spec(),
         max_expansions=300,
         k_candidates=3,
@@ -55,7 +55,7 @@ def test_receding_horizon_cz_placements_smoke():
 def test_receding_horizon_with_multiple_restarts():
     """With ``restarts=2``, the rayon wrapper engages and `pick_best`
     selects across two independent trajectories."""
-    strategy = RecedingHorizonLooseGoalPlacementStrategy(
+    strategy = RecedingHorizonNoReturnPlacementStrategy(
         arch_spec=logical.get_arch_spec(),
         max_expansions=300,
         restarts=2,
@@ -68,3 +68,24 @@ def test_receding_horizon_with_multiple_restarts():
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
     assert len(out.layout) == len(state.layout)
+
+
+def test_receding_horizon_exposes_rust_nodes_expanded():
+    """The shared `rust_nodes_expanded_total` counter is exposed and
+    accumulates `SolveResult.nodes_expanded` per call.
+
+    See ``test_no_return_placement::test_no_return_exposes_rust_nodes_expanded``
+    for why this uses ``>=`` rather than strict ``>``.
+    """
+    strategy = RecedingHorizonNoReturnPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        max_expansions=300,
+        k_candidates=3,
+        rollout_horizon=3,
+        commit_depth=1,
+    )
+    state = _make_state()
+    before = strategy.rust_nodes_expanded_total
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert strategy.rust_nodes_expanded_total >= before
+    assert isinstance(strategy.rust_nodes_expanded_total, int)

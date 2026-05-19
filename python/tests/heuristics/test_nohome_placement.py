@@ -42,3 +42,21 @@ def test_nohome_cz_placements_smoke():
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
     assert len(out.layout) == len(state.layout)
+
+
+def test_nohome_exposes_rust_nodes_expanded():
+    """The shared `rust_nodes_expanded_total` counter is exposed and
+    accumulates `SolveResult.nodes_expanded` per call.
+
+    See ``test_no_return_placement::test_no_return_exposes_rust_nodes_expanded``
+    for why this uses ``>=`` rather than strict ``>``.
+    """
+    strategy = NoHomePlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        max_expansions=300,
+    )
+    state = _make_state()
+    before = strategy.rust_nodes_expanded_total
+    strategy.cz_placements(state, controls=(0,), targets=(1,))
+    assert strategy.rust_nodes_expanded_total >= before
+    assert isinstance(strategy.rust_nodes_expanded_total, int)

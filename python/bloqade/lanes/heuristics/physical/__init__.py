@@ -1,18 +1,21 @@
+from bloqade.lanes.heuristics.physical._no_return_base import (
+    NoReturnStrategyBase,
+)
 from bloqade.lanes.heuristics.physical.layout import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
-)
-from bloqade.lanes.heuristics.physical.loose_goal import (
-    LooseGoalPlacementStrategy,
 )
 from bloqade.lanes.heuristics.physical.movement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+from bloqade.lanes.heuristics.physical.no_return import (
+    NoReturnPlacementStrategy,
+)
 from bloqade.lanes.heuristics.physical.nohome import (
     NoHomePlacementStrategy,
 )
 from bloqade.lanes.heuristics.physical.receding_horizon import (
-    RecedingHorizonLooseGoalPlacementStrategy,
+    RecedingHorizonNoReturnPlacementStrategy,
 )
 from bloqade.lanes.heuristics.physical.target_generator import (
     AODClusterTargetGenerator,
@@ -26,11 +29,12 @@ __all__ = [
     "AODClusterTargetGenerator",
     "CongestionAwareTargetGenerator",
     "DefaultTargetGenerator",
-    "LooseGoalPlacementStrategy",
     "NoHomePlacementStrategy",
+    "NoReturnPlacementStrategy",
+    "NoReturnStrategyBase",
     "PhysicalLayoutHeuristicGraphPartitionCenterOut",
     "PhysicalPlacementStrategy",
-    "RecedingHorizonLooseGoalPlacementStrategy",
+    "RecedingHorizonNoReturnPlacementStrategy",
     "RustPlacementTraversal",
     "TargetContext",
     "TargetGeneratorABC",

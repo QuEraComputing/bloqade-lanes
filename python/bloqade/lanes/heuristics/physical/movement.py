@@ -20,6 +20,7 @@ from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
     ZoneAddress,
 )
+from bloqade.lanes.heuristics.physical._solver_dispatch import _STRATEGY_MAP
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
     TargetContext,
@@ -28,19 +29,6 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     _coerce_target_generator,
     _validate_candidate,
 )
-
-_STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
-    "astar": _native.SearchStrategy.ASTAR,
-    "dfs": _native.SearchStrategy.DFS,
-    "bfs": _native.SearchStrategy.BFS,
-    "greedy": _native.SearchStrategy.GREEDY,
-    "ids": _native.SearchStrategy.IDS,
-    "cascade": _native.SearchStrategy.CASCADE_IDS,
-    "cascade-ids": _native.SearchStrategy.CASCADE_IDS,
-    "cascade-dfs": _native.SearchStrategy.CASCADE_DFS,
-    "cascade-entropy": _native.SearchStrategy.CASCADE_ENTROPY,
-    "entropy": _native.SearchStrategy.ENTROPY,
-}
 
 
 def convert_move_layers(
