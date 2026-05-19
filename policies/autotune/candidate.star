@@ -1,4 +1,4 @@
-"""Move Policy DSL — autotune candidate.
+"""Move Policy DSL - autotune candidate.
 
 Minimal Steane baseline for autotune.
 
@@ -11,6 +11,10 @@ success_rate == 1.0 and reducing total move events. Do not call
 This seed is intentionally small: a DFS-style first-candidate baseline.
 It exists so the first autotune iteration always starts from a valid,
 unopinionated policy file rather than from a previous generated strategy.
+
+IMPORTANT: Generated policy files must be ASCII-only. Do not write Unicode
+comments, docstrings, separators, arrows, bullets, box-drawing characters, or
+typographic punctuation. Use plain ASCII comments like "# Parameters" instead.
 """
 
 PARAMS_DEFAULTS = {

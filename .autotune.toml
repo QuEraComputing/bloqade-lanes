@@ -5,7 +5,7 @@
 # fewest move EVENTS (parallel move timesteps) while keeping
 # success_rate == 1.0.
 #
-# Current focus: `steane_physical_35` — the only kernel in the suite where
+# Current focus: `steane_physical_35` - the only kernel in the suite where
 # native Rust strategies show meaningful event-count differentiation
 # (rust_entropy_20: 86, rust_entropy_10: 88, rust_entropy_5: 94,
 #  rust_greedy: 100, rust_entropy_1: 104, rust_dfs: 106, rust_ids: 110,
@@ -32,11 +32,15 @@
 
 [task]
 name = "dsl-move-policy-v2-steane35-no-builtin"
-description = "LLM-authored search strategy run on `steane_physical_35` (native strategies show meaningful event-count differentiation here: entropy_20=86, entropy_10=88, entropy_5=94, greedy=100, dfs=106, ids=110). Goal: keep success_rate == 1.0 while reducing total move events. invoke_builtin is forbidden so the LLM has to implement search in Starlark. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly — no `logical_initialize` plumbing."
+description = "LLM-authored search strategy run on `steane_physical_35` (native strategies show meaningful event-count differentiation here: entropy_20=86, entropy_10=88, entropy_5=94, greedy=100, dfs=106, ids=110). Goal: keep success_rate == 1.0 while reducing total move events. invoke_builtin is forbidden so the LLM has to implement search in Starlark. Generated policy files must be ASCII-only: no Unicode comments, separators, arrows, bullets, box-drawing characters, or typographic punctuation. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly - no `logical_initialize` plumbing."
 canonical_branch = "autotune/dsl-move-policy-v2-steane35-base"
 max_iterations = "10"
 
-# No target_metric ceiling — let the loop run all iterations. The first
+[agent]
+backend = "claude"
+model = "claude-sonnet-4-6"
+
+# No target_metric ceiling - let the loop run all iterations. The first
 # iteration that produces a working policy will be a huge improvement vs
 # the 2000-event FAIL baseline and Keep automatically. Subsequent
 # iterations are scored against THAT (and so on), so each Keep represents
@@ -53,7 +57,7 @@ tunable = ["policies/autotune/**"]
 name = "dsl_benchmark"
 # Use `uv run` so the worktree's venv is used (the maturin-installed
 # bloqade.lanes.bytecode._native module is what benchmarks.cli imports).
-# `python` is NOT on PATH on this system — only `python3` and `uv`.
+# `python` is NOT on PATH on this system - only `python3` and `uv`.
 command = ["uv", "run", "python", "scripts/autotune/measure_dsl_policy.py"]
 # steane_physical_35 with rust_entropy_5 takes ~600ms; LLM policies may
 # be slower with retries/lookahead. 30 min keeps a margin.
