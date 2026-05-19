@@ -1,9 +1,10 @@
 # Autotune config for the Move Policy DSL.
 #
-# Goal: let an LLM iteratively improve `policies/autotune/candidate.star` so
-# that it solves benchmark kernels on the physical Gemini arch with the
-# fewest move EVENTS (parallel move timesteps) while keeping
-# success_rate == 1.0.
+# Goal: let an LLM iteratively improve `policies/autotune/candidate.star` using
+# this strict objective hierarchy:
+#   1. success_rate: solve the physical placement completely.
+#   2. move_layers: reduce move layers only after success is achieved.
+#   3. total_wall_time_ms: diagnostic only; never optimize a failing policy for speed.
 #
 # Current focus: `steane_physical_35` - a physical Gemini kernel where
 # event-count differences are large enough for tuning signal.
@@ -20,40 +21,38 @@
 #      `compile_squin_to_move` directly with the physical Gemini arch spec
 #      and prints `AUTOTUNE_METRIC <name> <value>` lines to stdout.
 #   2. RegexAdaptor extracts each metric value with a separate regex pattern.
-#   3. WeightedSumScorer minimises `total_events` with `success_rate` as a
-#      no-regression guardrail.
+#   3. WeightedSumScorer maximises `success_rate` first, then minimises
+#      `move_layers`. Wall time is emitted only as a diagnostic.
 #
 # The kernel list is controlled by $BLOQADE_DSL_KERNELS and defaults to
 # steane_physical_35 in the measure script.
 
 [task]
 name = "dsl-move-policy-v2-steane35-no-builtin"
-description = "LLM-authored search strategy run on `steane_physical_35`. Goal: keep success_rate == 1.0 while reducing total move events. The LLM must invent the search in this Starlark policy rather than copying existing reference strategies. `invoke_builtin(...)` is forbidden. `halt(\"fallback\", ...)` is also forbidden: do not give up early or request a fallback status. Policies should keep exploring until they emit a solution, exhaust a real frontier, hit the kernel expansion budget, or time out. Generated policy files must be ASCII-only: no Unicode comments, separators, arrows, bullets, box-drawing characters, or typographic punctuation. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly - no `logical_initialize` plumbing."
+description = "LLM-authored search strategy run on `steane_physical_35`. Objective hierarchy is strict: (1) maximize success_rate and produce a valid compilation, (2) only among successful policies minimize move_layers, (3) only after both of those consider wall time. A failed policy with lower wall time is not an improvement. If the measure output says `place.CZ statements remain`, the policy failed to place at least one CZ pair on compatible neighboring physical sites; fix search completeness and target placement, not runtime. The LLM must invent the search in this Starlark policy. Do not inspect, copy, rename, or lightly edit any old reference strategies. `invoke_builtin(...)` is forbidden. `halt(\"fallback\", ...)` is forbidden. The identifiers `top_c`, `max_branch`, `_top_c_per_qubit`, and `top_c_per_qubit` are forbidden because they create premature self-imposed frontiers. Do not add branch caps, beam widths, top-k pruning, per-qubit top-c pruning, or tiny frontier limits before a solution is found. Policies should keep exploring until they emit a solution, exhaust a real frontier, hit the kernel expansion budget, or time out. Generated policy files must be ASCII-only: no Unicode comments, separators, arrows, bullets, box-drawing characters, or typographic punctuation. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly - no `logical_initialize` plumbing."
 canonical_branch = "autotune/dsl-move-policy-v2-steane35-base"
 max_iterations = "10"
 
 [agent]
 backend = "claude"
-model = "claude-sonnet-4-6"
+model = "claude-opus-4-7"
 
 [agent.research]
-model = "claude-sonnet-4-6"
+model = "claude-opus-4-7"
 
 [agent.implementation]
-model = "claude-sonnet-4-6"
+model = "claude-opus-4-7"
 
 # No target_metric ceiling - let the loop run all iterations. The first
-# iteration that produces a working policy will be a huge improvement vs
-# the 2000-event FAIL baseline and Keep automatically. Subsequent
-# iterations are scored against THAT (and so on), so each Keep represents
-# the LLM beating its own previous best.
+# priority is any policy that solves the placement. Runtime-only changes to
+# failing policies are noise and should be discarded.
 
 [paths]
 # Glob form (matches both the exact file and any nested file under it).
-# A literal relative path here was rejected by Claude CLI's path-scoped
-# --allowedTools Edit:<path> matcher (separately fixed by the local
-# autotune-implement patch that uses unscoped Edit/Write Allow).
+# Implementation writes use Bash heredocs inside the per-iteration worktree;
+# only the autotune candidate path should be modified.
 tunable = ["policies/autotune/**"]
+denied = ["policies/reference/**", "docs/superpowers/**"]
 
 [[measure]]
 name = "dsl_benchmark"
@@ -74,6 +73,7 @@ command = [
 timeout = 1800
 adaptor = { type = "regex", patterns = [
     { name = "total_events", pattern = 'AUTOTUNE_METRIC total_events ([0-9.eE+\-]+)' },
+    { name = "move_layers", pattern = 'AUTOTUNE_METRIC move_layers ([0-9.eE+\-]+)' },
     { name = "success_rate", pattern = 'AUTOTUNE_METRIC success_rate ([0-9.eE+\-]+)' },
     { name = "avg_events_solved", pattern = 'AUTOTUNE_METRIC avg_events_solved ([0-9.eE+\-]+)' },
     { name = "total_nodes_explored", pattern = 'AUTOTUNE_METRIC total_nodes_explored ([0-9.eE+\-]+)' },
@@ -85,7 +85,8 @@ adaptor = { type = "regex", patterns = [
 [score]
 type = "weighted_sum"
 primary_metrics = [
-    { name = "total_events", direction = "Minimize", weight = 1.0 },
+    { name = "success_rate", direction = "Maximize", weight = 1000.0 },
+    { name = "move_layers", direction = "Minimize", weight = 1.0 },
 ]
 guardrail_metrics = [
     { name = "success_rate", direction = "Maximize", max_regression = 0.0 },

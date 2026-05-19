@@ -1,6 +1,6 @@
 # Plan C snapshot fixtures
 
-Each subdirectory contains a `problem.json` and one or more
+Each subdirectory may contain a `problem.json` and one or more
 `expected.<policy>.json` files that the snapshot-fixture test driver
 (`crates/bloqade-lanes-search/tests/dsl_snapshot.rs`) consumes.
 
@@ -13,14 +13,14 @@ Wall-time and policy/problem paths are excluded.
 
 ## Sizes
 
-- `move/small/`   — based on `examples/arch/simple.json`. Exercised by every reference policy (entropy, dfs, bfs, ids).
-- `move/medium/`  — based on `examples/arch/gemini-logical.json`. Exercised by `entropy.star` only.
-- `move/large/`   — based on `examples/arch/full.json`. Exercised by `entropy.star` only.
+- `move/small/`   — based on `examples/arch/simple.json`; retained as problem data for ad hoc Move policy checks.
+- `move/medium/`  — based on `examples/arch/gemini-logical.json`; retained as problem data.
+- `move/large/`   — based on `examples/arch/full.json`; retained as problem data.
 - `target/small/` — based on `examples/arch/simple.json`. Exercised by `default_target.star`.
 
 ## Regenerating
 
-When a baseline (kernel, `entropy.star`, `default_target.star`) shifts in a way that legitimately changes a result, regenerate (Task 17 will add the recipe):
+When a target-generator baseline shifts in a way that legitimately changes a result, regenerate:
 
 ```bash
 just regenerate-fixtures

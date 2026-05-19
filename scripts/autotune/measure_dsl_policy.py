@@ -15,7 +15,7 @@ bearing on physical-arch move-policy search. `compile_squin_to_move` is
 the physical-only entry point (wraps `PhysicalPipeline` with the physical
 arch spec) and has no `logical_initialize` parameter.
 
-Primary metric is `total_events` — sum of `move.Move` statement counts
+Primary solution-quality metric is `move_layers` — sum of `move.Move` statement counts
 across kernels (one statement = one parallel move timestep on the arch).
 
 Environment:
@@ -166,7 +166,11 @@ def main() -> int:
             reason = (
                 err
                 if err is not None
-                else "place.CZ statements remain (policy failed to lower every CZ stage)"
+                else (
+                    "place.CZ statements remain (policy failed to lower every CZ "
+                    "stage; this usually means at least one CZ pair was not placed "
+                    "on compatible neighboring physical sites)"
+                )
             )
             sys.stderr.write(
                 f"AUTOTUNE_NOTE {case.case_id} ok=False nodes={nodes} "
@@ -182,6 +186,7 @@ def main() -> int:
     success_rate = solved_count / num_cases if num_cases else 0.0
 
     _emit("total_events", total_events)
+    _emit("move_layers", total_events)
     _emit("success_rate", success_rate)
     _emit("avg_events_solved", avg_events_solved)
     _emit("total_nodes_explored", total_nodes)

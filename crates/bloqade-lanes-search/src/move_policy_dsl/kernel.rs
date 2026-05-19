@@ -786,11 +786,10 @@ fn apply_actions(
                     .map(|m| m.keys().cloned().collect())
                     .unwrap_or_default();
                 // Additive schema: any new key encountered in a patch is
-                // added to the allowed set.  This allows policies (such as
-                // the reference entropy.star) to use different node-state
-                // fields on different code paths without triggering a
-                // SchemaError.  Strict closed-world enforcement is deferred
-                // to Task 19.
+                // added to the allowed set. This allows policies to use
+                // different node-state fields on different code paths without
+                // triggering a SchemaError. Strict closed-world enforcement is
+                // deferred to Task 19.
                 match node_state_schema {
                     None => {
                         *node_state_schema = Some(patch_keys.iter().cloned().collect());

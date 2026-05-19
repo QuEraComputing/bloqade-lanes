@@ -6,11 +6,23 @@ GOAL: Invent and implement a Move Policy SEARCH STRATEGY for
 `steane_physical_35` on the physical Gemini arch while keeping
 success_rate == 1.0 and reducing total move events.
 
+Objective hierarchy:
+  1. First produce a valid compilation with success_rate == 1.0.
+  2. Then reduce move_layers, the number of parallel move timesteps.
+  3. Only after both of those consider wall time.
+
+If measurement reports "place.CZ statements remain", at least one CZ pair was
+not placed on compatible neighboring physical sites. Fix the search so it
+reaches the target placement; do not optimize runtime for a failing policy.
+
 Hard constraints for generated policies:
   - Do not call `invoke_builtin(...)`.
   - Do not call `halt("fallback", ...)`.
   - Do not copy, rename, or lightly edit existing reference strategies.
-  - Do not add tiny branch caps that let the policy give up before the
+  - Do not use the identifiers `top_c`, `max_branch`, `_top_c_per_qubit`,
+    or `top_c_per_qubit`.
+  - Do not add branch caps, beam widths, top-k pruning, per-qubit top-c
+    pruning, or tiny frontier limits that let the policy give up before the
     kernel expansion budget is reached.
   - Keep generated policy files ASCII-only. Do not write Unicode comments,
     separators, arrows, bullets, box-drawing characters, or typographic

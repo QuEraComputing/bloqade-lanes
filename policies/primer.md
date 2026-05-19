@@ -21,9 +21,11 @@ Both subcommands accept `--json` for structured output and `--params <path>` to 
 `PARAMS_DEFAULTS` at load time.
 
 For the full specification see
-`docs/superpowers/specs/2026-05-01-move-policy-dsl-plan-c-design.md`. Working reference
-policies live in `policies/reference/`. Problem fixture JSON files used by the snapshot
-integration tests are in `policies/fixtures/{move,target}/`.
+`docs/superpowers/specs/2026-05-01-move-policy-dsl-plan-c-design.md`. The Move
+Policy DSL surface below is the source of truth for strategy authors. Avoid
+treating old strategy examples as templates: search ordering, pruning, and
+frontier management are policy-owned choices, and premature branch caps can
+prevent the solver from ever reaching a valid placement.
 <!-- END PROSE: intro -->
 
 ## Move Policy surface
@@ -247,128 +249,17 @@ fn last_builtin_result < 'v > (this : & PolicyGraph , heap : & 'v Heap) -> starl
 <!-- END AUTOGEN: graph_handle -->
 
 <!-- BEGIN PROSE: move-tour -->
-The four policies in `policies/reference/` cover the full range of Move policy
-strategies, from a real production heuristic down to three educational examples
-designed to expose specific parts of the API surface. Read them in the order listed
-here.
+Move policy authors should use the API reference above directly rather than copying
+old strategy examples. In particular, do not infer that per-qubit top-k pruning,
+small branch caps, or fallback halts are part of the DSL contract. Those are policy
+choices, not kernel requirements, and they can prevent physical placement from
+reaching the exact target config needed to lower every CZ.
 
-### `entropy.star` — production heuristic (Plan A reference)
-
-`entropy.star` is a Starlark reproduction of `Strategy::Entropy`, the Rust-native
-heuristic that drives bloqade-lanes' default move synthesis. It is used as the
-acid-test for parity between the Starlark DSL and the Rust heuristic: passing the
-snapshot tests against `policies/fixtures/move/` at parity with `Strategy::Entropy`
-is what "the DSL is feature-complete" means in practice.
-
-The strategy is information-theoretic in spirit: each node in the search tree carries
-an `entropy` integer that rises whenever a move attempt fails or a candidate is
-exhausted. Low-entropy nodes prefer distance-reducing moves; high-entropy nodes
-upweight mobility (future reach) to escape local minima. When entropy hits a ceiling
-the policy walks up the ancestor chain and reverts to an earlier node, or falls back
-to the sequential solver if the root itself is saturated.
-
-API surface exercised:
-
-- `graph.last_insert()` — reads the outcome of the previous `insert_child(...)` to decide whether to advance `current` or bump entropy on the parent
-- `graph.ns(node)` — reads and updates per-node `{"entropy": int, "tried": list}` state
-- `update_node_state(node, patch)` / `update_global_state(patch)` — mutates per-node and global state bags
-- `lib.unresolved_qubits(cfg)` + `lib.legal_lanes(cfg, qid)` + `lib.scored_lane(qid, lane, score)` → `lib.pack_aod_rectangles(...)` — policy-owned lane scoring with Rust-backed AOD packing
-- `invoke_builtin("sequential_fallback", {...})` + `halt("fallback")` — graceful fallback path
-
-Illustrative excerpt from `step(...)`:
-
-`return update_global_state({"current": child_id, "pending_parent": None})`
-
-Note that all action verbs (`insert_child`, `update_global_state`, `halt`, etc.) are
-bare top-level globals in the Starlark namespace — there is no `actions.` prefix at
-call sites, even though the AUTOGEN section above labels them `actions.*` for grouping
-purposes.
-
-### `dfs.star` — depth-first search (educational)
-
-`dfs.star` implements the simplest possible tree traversal: always recurse on the most
-recently inserted child. Each tick reads `graph.last_insert()` to discover whether the
-previous `insert_child(...)` produced a new node, then immediately dives into that new
-child by updating `current`. The branch index is tracked in global state so that when
-a node has no new children to produce, the policy advances to the next sibling before
-exhausting and halting with `"fallback"`.
-
-API surface exercised:
-
-- `graph.last_insert()` — the primary dive signal; `outcome["is_new"]` determines whether to recurse
-- `graph.is_goal(node)` — checked after each successful insert and at the top of each tick
-- `graph.config(node)` — passed to the four-stage pipeline to enumerate AOD-compatible move sets
-- `insert_child(node, best.move_set.encoded)` — emits one expansion per tick
-- `update_global_state({"current": child_id, "pending": None, "branch_index": 0})` — advances the frontier
-
-Illustrative excerpt from `step(...)`:
-
-`return update_global_state({"current": child_id, "pending": None, "branch_index": 0})`
-
-`dfs.star` is the right starting point for understanding the tick-based execution
-model. Read it before the other educational policies.
-
-### `bfs.star` — breadth-first search (educational)
-
-`bfs.star` visits nodes level-by-level by maintaining an explicit FIFO queue in policy
-global state. It does not use `graph.last_insert()` to drive recursion; instead it
-tracks a `phase` toggle between "insert" (emit one child of `expanding` per tick) and
-"advance" (enqueue children via `graph.children_of(expanding)`, then pop the queue
-head as the next parent).
-
-There is a known v1 limitation: `insert_child(...)` actions are applied atomically
-within a tick, so the child node-ids from a batch of inserts in one tick are not all
-immediately available. `bfs.star` works around this by queuing *parent* node ids whose
-children have already been inserted, then retrieving those children on the next tick
-via `graph.children_of(parent)`. This approximates true BFS level-order: all nodes at
-depth D are inserted before any node at depth D+1, but siblings within a depth level
-are expanded in queue-pop order rather than strict insertion order.
-
-API surface exercised:
-
-- `graph.children_of(node)` — retrieves children after insertion to enqueue them for future expansion
-- `graph.is_goal(node)` — checked on the expanding node and on each newly inserted child
-- `update_global_state(patch)` — the only global-state mutation; no per-node state is used
-- `insert_child(expanding, best.move_set.encoded)` — one child inserted per tick in the "insert" phase
-- `halt("fallback", message)` — reached when the queue drains without finding the goal
-
-Illustrative excerpt from `step(...)`:
-
-`new_children = graph.children_of(expanding)`
-
-`bfs.star` is the canonical demonstration that `update_global_state(...)` can carry
-arbitrary list-structured state across ticks.
-
-### `ids.star` — depth-bounded DFS (educational)
-
-`ids.star` is documented in its header as "Iterative Deepening Search" but is in
-practice **depth-bounded DFS**: a single solve runs DFS with a fixed depth cap
-(`PARAMS["cap"]`, default 5). When the newly inserted child's depth meets or exceeds
-the cap, the policy refuses to dive and instead tries the next sibling; when all
-siblings are exhausted it backtracks via `graph.parent(node)`. If backtracking reaches
-the root with no remaining candidates the policy halts with `"fallback"`.
-
-True IDS would reset the frontier to the root and re-run with an incremented cap.
-This is not implemented because `actions.reset_to_root()` does not exist in the v1
-DSL surface. To approximate IDS in practice, run `eval-policy` in a loop with
-increasing `--params` values for `cap`. This limitation is documented explicitly in
-the policy's own docstring.
-
-API surface exercised:
-
-- `graph.depth(node)` — reads the depth of a newly inserted child to enforce the cap
-- `graph.parent(node)` — drives backtracking when a node's candidates are exhausted
-- `graph.last_insert()` — reads outcome to determine cap status before the dive decision
-- `update_global_state({"current": parent, ...})` — backtracks the frontier
-- `halt("fallback", message)` — reached when root is exhausted at the current cap
-
-Illustrative excerpt from `step(...)`:
-
-`child_depth = graph.depth(child_id)`
-
-`ids.star` demonstrates that `graph.depth(...)` and `graph.parent(...)` are sufficient
-to implement bounded backtracking without any additional kernel support. It also serves
-as an honest record of what the v1 DSL surface cannot yet do.
+A successful Move policy must keep exploring until it emits a node whose config
+matches the target placement, exhausts a real frontier, hits the kernel expansion
+budget, or times out. If compilation leaves `place.CZ` statements behind, at least
+one CZ pair was not placed on compatible neighboring physical sites; optimize search
+completeness before optimizing move count or wall time.
 <!-- END PROSE: move-tour -->
 
 ## Target Generator surface

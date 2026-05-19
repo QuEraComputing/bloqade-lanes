@@ -134,7 +134,7 @@ impl MoveAction {
 /// The spec §5.5 documents the surface as `actions.X` for readability
 /// in policy code; users who want that exact ergonomic can declare a
 /// `actions = struct(insert_child=insert_child, ...)` line at the top
-/// of their `.star` file. The reference `entropy.star` will do this.
+/// of their `.star` file.
 ///
 /// We chose this path because the alternative (building a frozen struct
 /// at global-register time) requires runtime evaluator access that the

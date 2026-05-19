@@ -3,9 +3,8 @@
 //! schema seeded from `init()`'s return value.
 //!
 //! Note: strict closed-world node-state enforcement is deferred to Task 19.
-//! The reference `entropy.star` policy uses different node-state fields
-//! (`entropy`, `tried`) on different code paths, which requires additive
-//! schema semantics to work correctly.
+//! Policies may patch different node-state fields on different code paths,
+//! which requires additive schema semantics to work correctly.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -47,9 +46,8 @@ fn example_arch_json() -> &'static str {
 
 /// Node-state patches with new keys are accepted (additive schema).
 ///
-/// The reference entropy.star policy uses both "entropy" and "tried" keys
-/// in node-state patches on different code paths.  This test verifies that
-/// a policy which patches different fields across ticks is NOT rejected.
+/// This test verifies that a policy which patches different fields across
+/// ticks is NOT rejected.
 #[test]
 fn node_state_additive_schema_allows_new_keys() {
     // First update establishes {"entropy": int}.
