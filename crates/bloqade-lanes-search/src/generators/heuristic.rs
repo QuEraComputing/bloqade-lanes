@@ -344,8 +344,14 @@ impl MoveGenerator for HeuristicGenerator {
                 // Penalize moving to another qubit's unresolved target.
                 // This avoids routing through destinations that will cause
                 // future deadlocks. Soft penalty: never makes positive
-                // scores negative.
-                if score > 0 && dst_enc != target_enc && contested.contains(&dst_enc) {
+                // scores negative. Gated on `cz_pairs.is_some()` so plain
+                // fixed-target callers (A*/IDS/cascade on main) see the
+                // legacy scoring; loose-goal/no-home/RH get the penalty.
+                if score > 0
+                    && dst_enc != target_enc
+                    && contested.contains(&dst_enc)
+                    && ctx.cz_pairs.is_some()
+                {
                     score -= 1;
                 }
 
@@ -429,10 +435,13 @@ impl MoveGenerator for HeuristicGenerator {
         // leads to a single path that may deadlock again; keeping 3 gives
         // the search enough diversity to find non-monotonic routes (e.g.,
         // on hypercube topologies where shortest paths aren't monotonic).
+        // Gated on `cz_pairs.is_some()`: plain fixed-target callers keep
+        // the legacy truncate(1) behaviour; loose-goal/no-home/RH get the
+        // wider fallback.
         if !has_positive {
             selected.sort_by(cmp_scored_triples);
-            // Keep a small fallback set when no positive-scoring moves exist.
-            selected.truncate(3);
+            let keep = if ctx.cz_pairs.is_some() { 3 } else { 1 };
+            selected.truncate(keep);
         } else {
             selected.retain(|e| e.1.score > 0);
         }
