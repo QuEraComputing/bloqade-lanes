@@ -79,6 +79,8 @@ class MSDDecoderWorkflowConfig:
         basis_labels: Tomography basis labels.
         sign_vector: Per-axis sign convention for reconstructed fidelities.
         layout: Syndrome layout used to split output/factory bits.
+        log: Whether high-level workflow helpers should print progress
+            messages.
     """
 
     mld_train_shots: int
@@ -104,6 +106,7 @@ class MSDDecoderWorkflowConfig:
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS
     sign_vector: Sequence[float] = (1.0, -1.0, 1.0)
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT
+    log: bool = True
 
     def __post_init__(self) -> None:
         target = np.asarray(self.target_bloch_vector, dtype=np.float64)
@@ -169,16 +172,24 @@ class DecoderCurveOptions:
 
 def build_msd_decoder_bundle(
     config: MSDDecoderWorkflowConfig,
+    *,
+    log: bool | None = None,
 ) -> DecoderKernelBundle:
     """Build the actual/special kernel bundle for the MSD workflow.
 
     Args:
         config: Workflow configuration containing the MSD primitive set and
             logical-qubit layout.
+        log: If true, print a progress message. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Basis-labeled actual and special MSD tomography kernels.
     """
+
+    log = config.log if log is None else log
+    if log:
+        print("Building MSD decoder kernels...")
 
     return build_decoder_kernel_bundle(
         config.decoder_primitive_set,
@@ -190,16 +201,24 @@ def build_msd_decoder_bundle(
 
 def build_injected_decoder_bundle(
     config: MSDDecoderWorkflowConfig,
+    *,
+    log: bool | None = None,
 ) -> DecoderKernelBundle:
     """Build the actual/special kernel bundle for the injected workflow.
 
     Args:
         config: Workflow configuration containing injected U3 angles.
+        log: If true, print a progress message. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Basis-labeled injected-state evaluation kernels and ideal injected
         decoder-reference kernels.
     """
+
+    log = config.log if log is None else log
+    if log:
+        print("Building injected decoder kernels...")
 
     return build_injected_kernel_bundle(
         config.theta,
@@ -213,6 +232,8 @@ def build_msd_task_bundle(
     simulator: GeminiLogicalSimulator,
     config: MSDDecoderWorkflowConfig,
     kernel_bundle: DecoderKernelBundle,
+    *,
+    log: bool | None = None,
 ) -> DecoderTaskBundle:
     """Compile MSD actual and private reference kernels into simulator tasks.
 
@@ -221,11 +242,17 @@ def build_msd_task_bundle(
         config: Workflow configuration.
         kernel_bundle: MSD kernel bundle returned by
             ``build_msd_decoder_bundle``.
+        log: If true, print a progress message. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Actual tasks and private reference tasks with the configured
         special-task circuit strategy applied.
     """
+
+    log = config.log if log is None else log
+    if log:
+        print("Building MSD simulator tasks...")
 
     m2dets, m2obs = build_measurement_maps(config.num_logical_qubits)
     actual = build_task_map(
@@ -254,6 +281,8 @@ def build_injected_task_bundle(
     simulator: GeminiLogicalSimulator,
     config: MSDDecoderWorkflowConfig,
     kernel_bundle: DecoderKernelBundle,
+    *,
+    log: bool | None = None,
 ) -> DecoderTaskBundle:
     """Compile injected actual and private reference kernels into tasks.
 
@@ -263,10 +292,16 @@ def build_injected_task_bundle(
             used.
         kernel_bundle: Injected kernel bundle returned by
             ``build_injected_decoder_bundle``.
+        log: If true, print a progress message. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Actual injected tasks and private ideal decoder-reference tasks.
     """
+
+    log = config.log if log is None else log
+    if log:
+        print("Building injected simulator tasks...")
 
     m2dets, m2obs = build_measurement_maps(1)
     return DecoderTaskBundle(
@@ -292,7 +327,7 @@ def train_mld_decoder_suite(
     config: MSDDecoderWorkflowConfig,
     *,
     table_decoder_cls: TableDecoderClass,
-    log: bool = False,
+    log: bool | None = None,
 ) -> dict[str, DecoderAdapter]:
     """Train and score MLD decoders for all tomography bases.
 
@@ -301,11 +336,14 @@ def train_mld_decoder_suite(
             tables and whose actual tasks rank ancilla patterns.
         config: Workflow configuration.
         table_decoder_cls: Table decoder implementation to train.
-        log: If true, print progress messages.
+        log: If true, print progress messages. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Basis-labeled decoder adapters ready for threshold-curve evaluation.
     """
+
+    log = config.log if log is None else log
 
     training_data: dict[str, BasisDataset] = {}
     for basis in config.basis_labels:
@@ -384,7 +422,7 @@ def build_mle_decoder_suite(
     msd_tasks: DecoderTaskBundle,
     *,
     gurobi_decoder_cls: type[ConfidenceDecoder],
-    log: bool = False,
+    log: bool = True,
 ) -> dict[str, DecoderAdapter]:
     """Build MLE decoders from all private MSD reference tasks.
 
@@ -414,7 +452,7 @@ def sample_actual_data(
     config: MSDDecoderWorkflowConfig,
     *,
     with_noise: bool = True,
-    log: bool = False,
+    log: bool | None = None,
 ) -> dict[str, BasisDataset]:
     """Sample actual-task detector/observable data for each basis.
 
@@ -422,11 +460,14 @@ def sample_actual_data(
         task_bundle: Task bundle containing basis-labeled actual tasks.
         config: Workflow configuration.
         with_noise: Whether to sample the noisy circuit path.
-        log: If true, print progress messages.
+        log: If true, print progress messages. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Basis-labeled detector/observable datasets.
     """
+
+    log = config.log if log is None else log
 
     data: dict[str, BasisDataset] = {}
     for basis in config.basis_labels:
@@ -452,7 +493,7 @@ def evaluate_decoder_curves(
     curve_options: (
         Mapping[str, DecoderCurveOptions] | DecoderCurveOptions | None
     ) = None,
-    log: bool = False,
+    log: bool | None = None,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Evaluate postselection curves for one or more decoder suites.
 
@@ -462,11 +503,14 @@ def evaluate_decoder_curves(
             adapters, for example ``{"MLD": mld_decoders, "MLE": mle_decoders}``.
         config: Workflow configuration.
         curve_options: Optional shared or per-decoder curve options.
-        log: If true, print progress messages.
+        log: If true, print progress messages. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Mapping from decoder label to curve arrays.
     """
+
+    log = config.log if log is None else log
 
     curves: dict[str, dict[str, np.ndarray]] = {}
     for label, decoder_map in decoder_suites.items():
@@ -505,7 +549,7 @@ def evaluate_injected_baseline(
     *,
     table_decoder_cls: TableDecoderClass,
     raw: bool = False,
-    log: bool = False,
+    log: bool | None = None,
 ) -> FidelitySummary:
     """Evaluate the injected-state baseline fidelity.
 
@@ -515,11 +559,14 @@ def evaluate_injected_baseline(
         table_decoder_cls: Table decoder implementation used for corrected
             injected baselines.
         raw: If true, skip decoder correction.
-        log: If true, print a progress message.
+        log: If true, print a progress message. Defaults to ``config.log`` when
+            omitted.
 
     Returns:
         Fidelity summary for the injected baseline.
     """
+
+    log = config.log if log is None else log
 
     if log:
         kind = "raw" if raw else "corrected"
@@ -547,6 +594,7 @@ def plot_decoder_curves(
     min_accepted_fraction: float = 0.02,
     ax: "Axes | None" = None,
     title: str | None = None,
+    log: bool = True,
 ) -> tuple["Figure", "Axes"]:
     """Plot decoder threshold curves.
 
@@ -557,10 +605,14 @@ def plot_decoder_curves(
         min_accepted_fraction: Left x-axis limit for accepted fraction.
         ax: Optional Matplotlib axes to draw into.
         title: Optional plot title.
+        log: If true, print a progress message.
 
     Returns:
         Matplotlib ``(figure, axes)`` pair.
     """
+
+    if log:
+        print("Plotting decoder curves...")
 
     import matplotlib.pyplot as plt
 

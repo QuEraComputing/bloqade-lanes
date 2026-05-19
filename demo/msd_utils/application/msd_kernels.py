@@ -42,6 +42,8 @@ def build_msd_primitives(
     theta: float,
     phi: float,
     lam: float,
+    *,
+    log: bool = True,
 ) -> DecoderPrimitiveSet:
     """Build the state-preparation and logical-circuit primitives for MSD.
 
@@ -49,10 +51,14 @@ def build_msd_primitives(
         theta: U3 ``theta`` angle for input magic-state preparation.
         phi: U3 ``phi`` angle for input magic-state preparation.
         lam: U3 ``lambda`` angle for input magic-state preparation.
+        log: If true, print a progress message.
 
     Returns:
         Primitive Squin kernels for the MSD state injection and logical circuit.
     """
+
+    if log:
+        print("Building MSD primitives...")
 
     @squin.kernel
     def msd_magic_prep(reg):

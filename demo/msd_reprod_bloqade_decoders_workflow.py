@@ -110,6 +110,7 @@ config = MSDDecoderWorkflowConfig(
     # these circuits.
     sim_type="clifft",
     binary_precision=4,
+    log=True,
 )
 
 # %% [markdown]
@@ -132,20 +133,19 @@ mld_decoders = train_mld_decoder_suite(
     msd_tasks,
     config,
     table_decoder_cls=TableDecoder,
-    log=True,
 )
 
 mle_decoders = build_mle_decoder_suite(
     msd_tasks,
     gurobi_decoder_cls=GurobiDecoder,
-    log=True,
+    log=config.log,
 )
 
 # %% [markdown]
 # ## Sampling, Curves, And Plot
 
 # %%
-actual_data = sample_actual_data(msd_tasks, config, log=True)
+actual_data = sample_actual_data(msd_tasks, config)
 
 curves = evaluate_decoder_curves(
     actual_data,
@@ -166,7 +166,6 @@ curves = evaluate_decoder_curves(
             selection_mode="threshold",
         ),
     },
-    log=True,
 )
 
 injected_summary = evaluate_injected_baseline(
@@ -174,7 +173,6 @@ injected_summary = evaluate_injected_baseline(
     config,
     table_decoder_cls=TableDecoder,
     raw=False,
-    log=True,
 )
 
 fig, ax = plot_decoder_curves(
