@@ -23,8 +23,8 @@
 #   3. WeightedSumScorer minimises `total_events` with `success_rate` as a
 #      no-regression guardrail.
 #
-# The kernel list is controlled by $BLOQADE_DSL_KERNELS (set at launch);
-# defaults to all 9 in the measure script.
+# The kernel list is controlled by $BLOQADE_DSL_KERNELS and defaults to
+# steane_physical_35 in the measure script.
 
 [task]
 name = "dsl-move-policy-v2-steane35-no-builtin"
@@ -60,7 +60,15 @@ name = "dsl_benchmark"
 # Use `uv run` so the worktree's venv is used (the maturin-installed
 # bloqade.lanes.bytecode._native module is what benchmarks.cli imports).
 # `python` is NOT on PATH on this system - only `python3` and `uv`.
-command = ["uv", "run", "python", "scripts/autotune/measure_dsl_policy.py"]
+command = [
+    "env",
+    "BLOQADE_DSL_KERNELS=steane_physical_35",
+    "MPLCONFIGDIR=.autotune/matplotlib",
+    "uv",
+    "run",
+    "python",
+    "scripts/autotune/measure_dsl_policy.py",
+]
 # steane_physical_35 with rust_entropy_5 takes ~600ms; LLM policies may
 # be slower with retries/lookahead. 30 min keeps a margin.
 timeout = 1800

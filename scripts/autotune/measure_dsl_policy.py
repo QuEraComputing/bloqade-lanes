@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Measure command for autotune: run the DSL policy and emit aggregated metrics.
 
 Calls `bloqade.lanes.compile.compile_squin_to_move` directly with a
@@ -20,8 +21,8 @@ across kernels (one statement = one parallel move timestep on the arch).
 Environment:
   BLOQADE_DSL_POLICY    — relative path to the .star policy under evaluation
                           (default: policies/autotune/candidate.star).
-  BLOQADE_DSL_KERNELS   — comma-separated kernel case_ids (default: full 9
-                          kernels).
+  BLOQADE_DSL_KERNELS   — comma-separated kernel case_ids (default:
+                          steane_physical_35).
 """
 
 from __future__ import annotations
@@ -31,6 +32,11 @@ import sys
 import time
 import traceback
 from pathlib import Path
+
+# Keep third-party imports from trying to write under the user's home
+# directory when autotune runs in a non-interactive sandbox.
+os.environ.setdefault("MPLCONFIGDIR", os.path.abspath(".autotune/matplotlib"))
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from benchmarks.kernels import select_benchmark_cases
 
@@ -44,11 +50,7 @@ from bloqade.lanes.heuristics.physical import (
     RustPlacementTraversal,
 )
 
-DEFAULT_KERNELS = (
-    "ghz_4,ghz_6,adder_4,steane_logical_5,"
-    "qpe_9,"
-    "adder_64,bv_70,steane_physical_35,trotter_rand_35"
-)
+DEFAULT_KERNELS = "steane_physical_35"
 
 # Penalty for a kernel that failed to compile/solve. Must exceed the largest
 # plausible single-kernel `move_count_events` so that "solve poorly" always
