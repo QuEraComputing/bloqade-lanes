@@ -97,20 +97,59 @@ def test_remove_postprocessing_and_terminal_measure():
         return det
 
     # check that we have a detector there
-    assert any(isinstance(stmt, SetDetector) for stmt in main.callable_region.stmts())
+    assert any(
+        isinstance(stmt, (SetDetector, TerminalLogicalMeasurement))
+        for stmt in main.callable_region.stmts()
+    )
 
     result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
     assert result.has_done_something
-
+    # check if type is updated
     assert main.return_type.is_subseteq(types.NoneType)
 
     # check that calling twice doesn't do anything
     result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
     assert not result.has_done_something
     assert not any(
+        isinstance(stmt, (SetDetector, TerminalLogicalMeasurement))
+        for stmt in main.callable_region.stmts()
+    )
+
+
+def test_remove_postprocessing_and_terminal_measure_2():
+    @logical.kernel(aggressive_unroll=True)
+    def main():
+        q = squin.qalloc(2)
+        m = logical.terminal_measure(q)
+        return m
+
+    # rewrite removes terminal measurement
+    result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
+    assert result.has_done_something
+
+    assert not any(
         isinstance(stmt, TerminalLogicalMeasurement)
         for stmt in main.callable_region.stmts()
     )
+
+    assert main.return_type.is_subseteq(types.NoneType)
+
+    # check that calling twice doesn't do anything
+    result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
+    assert not result.has_done_something
+
     assert not any(
-        isinstance(stmt, SetDetector) for stmt in main.callable_region.stmts()
+        isinstance(stmt, TerminalLogicalMeasurement)
+        for stmt in main.callable_region.stmts()
     )
+
+
+def test_remove_postprocessing_and_terminal_measure_3():
+    @logical.kernel(aggressive_unroll=True)
+    def main():
+        squin.qalloc(2)
+
+    # rewrite doesn't do anything
+    result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
+    assert not result.has_done_something
+    assert main.return_type.is_subseteq(types.NoneType)

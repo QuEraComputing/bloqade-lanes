@@ -51,18 +51,33 @@ class _DeleteTerminalMeasure(RewriteRule):
     """
 
     def rewrite_Statement(self, node: Statement) -> RewriteResult:
+        # statement is not a terminal measurement, skip
         if not isinstance(node, func.Function):
             return RewriteResult()
 
         last_stmt = node.body.blocks[-1].last_stmt
-        if not isinstance(last_stmt, TerminalLogicalMeasurement):
-            return RewriteResult()
 
-        (value := func.ConstantNone()).insert_before(last_stmt)
-        last_stmt.replace_by(func.Return(value))
+        if isinstance(last_stmt, TerminalLogicalMeasurement):
+            # In this case the _DeleteBelowTerminalMeasure
+            # Has deleted the return and left only the Terminal measurement
+            # we delete this and add back a return value
+            (none_stmt := func.ConstantNone()).insert_after(last_stmt)
+            func.Return(none_stmt).insert_before(last_stmt)
+            last_stmt.delete()
+            node.signature = func.Signature(node.signature.inputs, types.NoneType)
 
-        node.signature = func.Signature(node.signature.inputs, types.NoneType)
-        return RewriteResult(has_done_something=True)
+            return RewriteResult(has_done_something=True)
+
+        elif isinstance(last_stmt, func.Return) and isinstance(
+            owner := last_stmt.value.owner, TerminalLogicalMeasurement
+        ):
+            # on this case there is no post processing didn't
+            # do anything so we need to just replace the TerminalLogicalMeasurement with None
+            owner.replace_by(func.ConstantNone())
+            node.signature = func.Signature(node.signature.inputs, types.NoneType)
+            return RewriteResult(has_done_something=True)
+
+        return RewriteResult()
 
 
 class _InsertTerminalMeasureReturn(RewriteRule):
