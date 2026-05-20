@@ -6,6 +6,7 @@ from bloqade.lanes.analysis.placement.lattice import (
     AtomState,
     ConcreteState,
     ExecuteCZ,
+    ExecuteCZReturn,
     ExecuteMeasure,
 )
 from bloqade.lanes.arch.spec import ArchSpec
@@ -106,6 +107,7 @@ def test_insert_move():
 
 
 def test_insert_palindrom_moves():
+    """InsertMoves emits return moves after CZ when state_after is ExecuteCZReturn."""
     lane_group = (
         SiteLaneAddress(0, 0, 0, Direction.FORWARD),
         SiteLaneAddress(1, 0, 0, Direction.FORWARD),
@@ -117,46 +119,37 @@ def test_insert_palindrom_moves():
 
     state_before = ir.TestValue()
 
-    rule = rewrite.Walk(place2move.InsertReturnMoves())
-
-    test_body = ir.Region(
-        ir.Block(
-            [
-                (current_state := move.Load()),
-                (current_state := move.Move(current_state.result, lanes=lane_group)),
-                move.Store(current_state.result),
-                stmt := place.CZ(state_before, qubits=(0, 1, 2, 3)),
-                place.Yield(stmt.results[0]),
-            ]
-        )
-    )
-
     test_block = ir.Block(
         [
             py.Constant(10),
-            place.StaticPlacement(
-                qubits := (ir.TestValue(), ir.TestValue()), test_body
-            ),
+            cz_stmt := place.CZ(state_before, qubits=(0, 1, 2, 3)),
         ]
     )
 
-    expected_body = ir.Region(
-        ir.Block(
-            [
-                (current_state := move.Load()),
-                (current_state := move.Move(current_state.result, lanes=lane_group)),
-                move.Store(current_state.result),
-                stmt := place.CZ(state_before, qubits=(0, 1, 2, 3)),
-                (current_state := move.Load()),
-                (current_state := move.Move(current_state.result, lanes=reverse_moves)),
-                move.Store(current_state.result),
-                place.Yield(stmt.results[0]),
-            ]
+    placement_analysis: dict[ir.SSAValue, AtomState] = {
+        cz_stmt.state_after: ExecuteCZReturn(
+            frozenset(),
+            (),
+            (),
+            frozenset([ZoneAddress(0)]),
+            move_layers=(lane_group,),
+            initial_layout=(),
         )
-    )
+    }
+
+    rule = rewrite.Walk(place2move.InsertMoves(placement_analysis))
 
     expected_block = ir.Block(
-        [py.Constant(10), place.StaticPlacement(qubits, expected_body)]
+        [
+            py.Constant(10),
+            (current_state := move.Load()),
+            (current_state := move.Move(current_state.result, lanes=lane_group)),
+            move.Store(current_state.result),
+            place.CZ(state_before, qubits=(0, 1, 2, 3)),
+            (current_state := move.Load()),
+            (current_state := move.Move(current_state.result, lanes=reverse_moves)),
+            move.Store(current_state.result),
+        ]
     )
 
     rule.rewrite(test_block)

@@ -100,8 +100,8 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
     fidelity = runner._estimate_fidelity(job)
     assert fidelity == pytest.approx(expected_fidelity)
     squin_to_move_kwargs = cast(dict[str, object], calls["squin_to_move_kwargs"])
-    assert squin_to_move_kwargs["insert_return_moves"] is True
     assert squin_to_move_kwargs["logical_initialize"] is True
+    assert "insert_return_moves" not in squin_to_move_kwargs
     assert calls["transversal_input"] is fake_move_mt
     assert calls["emit_move_mt"] is fake_move_mt
     assert calls["transform_noise_model"] is fake_noise_model

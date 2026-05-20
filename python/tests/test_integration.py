@@ -5,6 +5,7 @@ from kirin.dialects import ilist
 
 from bloqade import qubit, squin
 from bloqade.gemini import logical as gemini_logical
+from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.heuristics.physical.layout import (
@@ -57,7 +58,7 @@ def test_ghz_move_to_squin_roundtrip_state_vector():
     physical_move = squin_to_move(
         ghz,
         PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PhysicalPlacementStrategy(),
+        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
         logical_initialize=False,
         no_raise=False,
     )
@@ -83,7 +84,7 @@ def test_asap_place_pass_roundtrip_state_vector():
     physical_move = squin_to_move(
         circuit,
         PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PhysicalPlacementStrategy(),
+        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
         logical_initialize=False,
         place_opt_type=ASAPPlacePass,
         no_raise=False,
@@ -118,7 +119,7 @@ def test_alap_place_pass_roundtrip_state_vector():
     physical_move = squin_to_move(
         circuit,
         PhysicalLayoutHeuristicGraphPartitionCenterOut(),
-        PhysicalPlacementStrategy(),
+        PalindromePlacementStrategy(inner=PhysicalPlacementStrategy()),
         logical_initialize=False,
         place_opt_type=ALAPPlacePass,
         no_raise=False,

@@ -8,6 +8,7 @@ from bloqade.lanes.analysis.placement import (
     ConcreteState,
     ExecuteCZ,
     ExecuteMeasure,
+    PalindromePlacementStrategy,
     PlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
@@ -44,6 +45,19 @@ _STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
     "entropy": _native.SearchStrategy.ENTROPY,
 }
 
+SearchStrategyName = Literal[
+    "astar",
+    "dfs",
+    "bfs",
+    "greedy",
+    "ids",
+    "cascade",
+    "cascade-ids",
+    "cascade-dfs",
+    "cascade-entropy",
+    "entropy",
+]
+
 
 _DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
 _MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
@@ -79,18 +93,7 @@ class RustPlacementTraversal:
     once the parameters are validated via Rust-only benchmarking.
     """
 
-    strategy: Literal[
-        "astar",
-        "dfs",
-        "bfs",
-        "greedy",
-        "ids",
-        "cascade",
-        "cascade-ids",
-        "cascade-dfs",
-        "cascade-entropy",
-        "entropy",
-    ] = "entropy"
+    strategy: SearchStrategyName = "entropy"
     max_movesets_per_group: int = 3
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
@@ -135,6 +138,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
     _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
+    _rust_entropy_fallback_count: int = field(default=0, init=False, repr=False)
     _traced_rust_entropy_trace: EntropyTrace | None = field(
         default=None, init=False, repr=False
     )
@@ -225,6 +229,11 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         return self._rust_nodes_expanded_total
 
     @property
+    def rust_entropy_fallback_count(self) -> int:
+        """Number of solved Rust entropy stages that used sequential fallback."""
+        return self._rust_entropy_fallback_count
+
+    @property
     def traced_rust_entropy_trace(self) -> EntropyTrace | None:
         return self._traced_rust_entropy_trace
 
@@ -288,7 +297,12 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             if result.status == "solved":
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:
-                    self._traced_rust_entropy_trace = result.entropy_trace
+                    trace = result.entropy_trace
+                    self._traced_rust_entropy_trace = trace
+                    if trace is not None and any(
+                        step.event == "fallback_start" for step in trace.steps
+                    ):
+                        self._rust_entropy_fallback_count += 1
                 break
 
         self._cz_counter += 1
@@ -340,3 +354,36 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             move_count=state.move_count,
             zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )
+
+
+def make_physical_placement_strategy(
+    *,
+    move_solutions_per_layer: int = 3,
+    search_budget: int | None = 300,
+    strategy: SearchStrategyName = "entropy",
+    arch_spec: ArchSpec | None = None,
+    return_moves: bool = True,
+    target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None,
+) -> PlacementStrategyABC:
+    """Build a physical placement strategy from user-facing search knobs.
+
+    ``move_solutions_per_layer`` maps to the Rust solver's
+    ``max_goal_candidates``. ``search_budget`` maps to the per-CZ-stage
+    ``max_expansions`` budget shared across target candidates.
+    """
+    if move_solutions_per_layer < 1:
+        raise ValueError("move_solutions_per_layer must be >= 1")
+    if search_budget is not None and search_budget < 1:
+        raise ValueError("search_budget must be None or >= 1")
+
+    inner = PhysicalPlacementStrategy(
+        arch_spec=get_physical_arch_spec() if arch_spec is None else arch_spec,
+        traversal=RustPlacementTraversal(
+            strategy=strategy,
+            max_goal_candidates=move_solutions_per_layer,
+            max_expansions=search_budget,
+        ),
+        target_generator=target_generator,
+    )
+
+    return PalindromePlacementStrategy(inner=inner) if return_moves else inner

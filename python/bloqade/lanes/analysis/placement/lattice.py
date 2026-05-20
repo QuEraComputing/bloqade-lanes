@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import final
 
 from kirin.lattice import (
@@ -28,6 +28,9 @@ class AtomState(
         return AnyState()
 
     def get_move_layers(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return ()
+
+    def get_reverse_moves(self) -> tuple[tuple[LaneAddress, ...], ...]:
         return ()
 
 
@@ -78,7 +81,6 @@ class ConcreteState(AtomState):
             return None
 
 
-@final
 @dataclass
 class ExecuteCZ(ConcreteState):
     """Defines the state representing the placement of
@@ -175,4 +177,48 @@ class ExecuteMeasure(ConcreteState):
             super().is_subseteq(other)
             and isinstance(other, ExecuteMeasure)
             and self.zone_maps == other.zone_maps
+        )
+
+
+@final
+@dataclass
+class ExecuteCZReturn(ExecuteCZ):
+    """ExecuteCZ with palindrome return moves encoded at analysis time.
+
+    Produced by ``PalindromePlacementStrategy`` so that ``InsertMoves`` can
+    emit both forward moves (before the CZ gate) and return moves (after the
+    CZ gate) in a single pass, without a separate ``InsertReturnMoves`` pass.
+
+    ``initial_layout`` records the atom layout *before* the forward moves were
+    applied.  ``PalindromePlacementStrategy`` uses this when the next CZ gate
+    arrives and its input state is an ``ExecuteCZReturn`` — it extracts the
+    home ``ConcreteState`` so the next placement starts from the correct
+    position.
+
+    ``return_move_layers`` is the palindrome of ``move_layers``: layer order
+    reversed, each lane direction reversed.  It is computed eagerly from
+    ``move_layers`` in ``__post_init__``.
+    """
+
+    initial_layout: tuple[LocationAddress, ...] = field(kw_only=True)
+    """Atom layout before forward moves were applied (the home position)."""
+
+    return_move_layers: tuple[tuple[LaneAddress, ...], ...] = field(init=False)
+    """Palindrome of move_layers; computed at construction."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.return_move_layers = tuple(
+            tuple(lane.reverse() for lane in layer)
+            for layer in reversed(self.move_layers)
+        )
+
+    def get_reverse_moves(self) -> tuple[tuple[LaneAddress, ...], ...]:
+        return self.return_move_layers
+
+    def is_subseteq(self, other: AtomState) -> bool:
+        return (
+            super().is_subseteq(other)
+            and isinstance(other, ExecuteCZReturn)
+            and self.initial_layout == other.initial_layout
         )
