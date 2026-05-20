@@ -61,7 +61,7 @@ class _DeleteTerminalMeasure(RewriteRule):
             # In this case the _DeleteBelowTerminalMeasure
             # Has deleted the return and left only the Terminal measurement
             # we delete this and add back a return value
-            (none_stmt := func.ConstantNone()).insert_after(last_stmt)
+            (none_stmt := func.ConstantNone()).insert_before(last_stmt)
             func.Return(none_stmt).insert_before(last_stmt)
             last_stmt.delete()
             node.signature = func.Signature(node.signature.inputs, types.NoneType)
