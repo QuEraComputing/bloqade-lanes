@@ -45,7 +45,7 @@ class _DeleteBelowTerminalMeasure(RewriteRule):
 
 
 class _DeleteTerminalMeasure(RewriteRule):
-    """Deletes the terminal measruement after the post processing
+    """Deletes the terminal measurement after the post processing
     has been deleted. This MUST happen after _DeleteBelowTerminalMeasure
     has been run on the kernel.
     """
