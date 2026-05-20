@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from bloqade import squin
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
@@ -9,6 +12,7 @@ from bloqade.lanes.bytecode.encoding import (
 from bloqade.lanes.visualize.entropy_tree.tracer import (
     _decode_config,
     _decode_lane,
+    build_entropy_trace,
 )
 
 
@@ -36,3 +40,26 @@ def test_decode_config_returns_qid_mapping():
         0: LocationAddress(2, 3, 1),
         1: LocationAddress(4, 5, 0),
     }
+
+
+@pytest.mark.slow
+def test_build_entropy_trace_exposes_spectator_qubits_as_blocked_locations():
+    @squin.kernel(typeinfer=True, fold=True)
+    def spectator_kernel():
+        q = squin.qalloc(4)
+        squin.u3(0.1, 0.2, 0.3, q[2])
+        squin.u3(0.1, 0.2, 0.3, q[3])
+        squin.cz(q[0], q[1])
+
+    bundle = build_entropy_trace(
+        kernel=spectator_kernel,
+        kernel_name="spectator_kernel",
+        layer_index=0,
+        max_expansions=5,
+        max_goal_candidates=3,
+    )
+
+    assert len(bundle.traced_target) == 2
+    assert len(bundle.blocked_locations) == 2
+    assert set(bundle.blocked_locations).isdisjoint(bundle.traced_target.values())
+    assert all(loc in bundle.location_to_global_qid for loc in bundle.blocked_locations)
