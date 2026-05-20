@@ -1564,6 +1564,24 @@ mod tests {
     }
 
     #[test]
+    fn test_is_home_position() {
+        let spec = make_valid_two_zone_spec();
+        // Per `test_left_cz_word_ids`, only word_id 0 is a home word.
+        let home = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let staging = LocationAddr {
+            zone_id: 0,
+            word_id: 1,
+            site_id: 0,
+        };
+        assert!(spec.is_home_position(&home));
+        assert!(!spec.is_home_position(&staging));
+    }
+
+    #[test]
     fn test_lane_for_endpoints_site_bus() {
         let spec = make_valid_two_zone_spec();
         // Zone 0 has site_bus: src=[SiteRef(0)] dst=[SiteRef(1)], words_with_site_buses=[0,1].
