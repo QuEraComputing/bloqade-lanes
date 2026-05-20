@@ -142,6 +142,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     _traced_target: dict[int, LocationAddress] = field(
         default_factory=dict, init=False, repr=False
     )
+    _traced_blocked_locations: tuple[LocationAddress, ...] = field(
+        default_factory=tuple, init=False, repr=False
+    )
     _resolved_target_generator: TargetGeneratorABC | None = field(
         default=None, init=False, repr=False
     )
@@ -239,6 +242,11 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         """First candidate target for the traced CZ layer (used by visualizers)."""
         return dict(self._traced_target)
 
+    @property
+    def traced_blocked_locations(self) -> tuple[LocationAddress, ...]:
+        """Occupied non-local locations for the traced CZ layer."""
+        return self._traced_blocked_locations
+
     def _cz_placements_rust(
         self,
         state: ConcreteState,
@@ -261,6 +269,10 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         if should_trace:
             self._traced_rust_entropy_trace = None
             self._traced_target = dict(candidates[0])
+            active_locations = set(ctx.placement.values())
+            self._traced_blocked_locations = tuple(
+                loc for loc in state.occupied if loc not in active_locations
+            )
 
         solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}

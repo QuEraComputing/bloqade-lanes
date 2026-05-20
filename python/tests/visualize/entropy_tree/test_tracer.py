@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from bloqade.lanes.bytecode.encoding import (
     Direction,
     LaneAddress,
@@ -9,6 +11,8 @@ from bloqade.lanes.bytecode.encoding import (
 from bloqade.lanes.visualize.entropy_tree.tracer import (
     _decode_config,
     _decode_lane,
+    build_entropy_trace,
+    load_kernel_from_file,
 )
 
 
@@ -36,3 +40,23 @@ def test_decode_config_returns_qid_mapping():
         0: LocationAddress(2, 3, 1),
         1: LocationAddress(4, 5, 0),
     }
+
+
+def test_build_entropy_trace_exposes_non_layer_qubits_as_blocked_locations():
+    kernel_path = (
+        Path(__file__).parents[3] / "benchmarks/kernels/large/trotter_rand_35.py"
+    )
+    kernel = load_kernel_from_file(kernel_path, "trotter_rand_35")
+
+    bundle = build_entropy_trace(
+        kernel=kernel,
+        kernel_name="trotter_rand_35",
+        layer_index=0,
+        max_expansions=5,
+        max_goal_candidates=3,
+    )
+
+    assert len(bundle.traced_target) == 2
+    assert len(bundle.blocked_locations) == 33
+    assert set(bundle.blocked_locations).isdisjoint(bundle.traced_target.values())
+    assert all(loc in bundle.location_to_global_qid for loc in bundle.blocked_locations)
