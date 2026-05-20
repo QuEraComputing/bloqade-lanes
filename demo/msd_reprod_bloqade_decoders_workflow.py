@@ -50,6 +50,13 @@ for candidate in LOCAL_DECODER_SRC_CANDIDATES:
         break
 
 from bloqade.decoders import GurobiDecoder, TableDecoder  # noqa: E402
+
+# NOTE, mtg: use a class? -- object-oriented methods? -- depends.
+# use claude/codex?
+# NOTE, mtg: TaskBundle in the GeminiFrontend?-- make sure things are aligned?
+# NOTE, mtg: change things in bundles? -- plural and make it an iterator?
+# TODO: add sampling from the DEM directly-- jonathan's class in gemini_benchmarking? -- probably not;
+# can just use stim?
 from demo.msd_utils import (  # noqa: E402
     DecoderCurveOptions,
     MSDDecoderWorkflowConfig,
@@ -72,8 +79,8 @@ from bloqade.lanes import GeminiLogicalSimulator  # noqa: E402
 # ## User Configuration
 
 # %%
-mld_train_shots = 20_000
-eval_shots = 20_000
+mld_train_shots = 10_000_000
+eval_shots = 1_000_000
 
 ideal_theta = 0.3041 * math.pi
 ideal_phi = 0.25 * math.pi
@@ -146,13 +153,15 @@ mld_decoders = train_mld_decoder_suite(
 mle_decoders = build_mle_decoder_suite(
     msd_tomography_tasks,
     gurobi_decoder_cls=GurobiDecoder,
-    log=config.log,
 )
 
 # %% [markdown]
 # ## Sampling, Curves, And Plot
 
 # %%
+# NOTE, mtg: add a log for when MLE decoder starts or ends
+# NOTE, mtg: can show a progress bar?
+# NOTE, mtg: if something runs -- takes 6 minutes -- can split it into extra blocks in the notebook?
 actual_data = sample_actual_data(msd_tomography_tasks, config)
 
 curves = evaluate_decoder_curves(
@@ -176,9 +185,13 @@ injected_summary = evaluate_injected_baseline(
     raw=False,
 )
 
+# TODO: subset the curves so that things under the "min_accepted_fraction" just aren't plotted at all
+# on the curve
 fig, ax = plot_decoder_curves(
     curves,
     injected_summary=injected_summary,
     title="MSD Decoder Postselection Curves",
 )
 fig
+
+# %%
