@@ -8,6 +8,7 @@ from bloqade.lanes.analysis.placement import (
     ConcreteState,
     ExecuteCZ,
     ExecuteMeasure,
+    PalindromePlacementStrategy,
     PlacementStrategyABC,
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
@@ -29,6 +30,19 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     _coerce_target_generator,
     _validate_candidate,
 )
+
+SearchStrategyName = Literal[
+    "astar",
+    "dfs",
+    "bfs",
+    "greedy",
+    "ids",
+    "cascade",
+    "cascade-ids",
+    "cascade-dfs",
+    "cascade-entropy",
+    "entropy",
+]
 
 
 def convert_move_layers(
@@ -54,18 +68,7 @@ class RustPlacementTraversal:
     benchmarking.
     """
 
-    strategy: Literal[
-        "astar",
-        "dfs",
-        "bfs",
-        "greedy",
-        "ids",
-        "cascade",
-        "cascade-ids",
-        "cascade-dfs",
-        "cascade-entropy",
-        "entropy",
-    ] = "entropy"
+    strategy: SearchStrategyName = "entropy"
     max_movesets_per_group: int = 3
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
@@ -334,3 +337,36 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             move_count=state.move_count,
             zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
         )
+
+
+def make_physical_placement_strategy(
+    *,
+    move_solutions_per_layer: int = 3,
+    search_budget: int | None = 300,
+    strategy: SearchStrategyName = "entropy",
+    arch_spec: ArchSpec | None = None,
+    return_moves: bool = True,
+    target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None,
+) -> PlacementStrategyABC:
+    """Build a physical placement strategy from user-facing search knobs.
+
+    ``move_solutions_per_layer`` maps to the Rust solver's
+    ``max_goal_candidates``. ``search_budget`` maps to the per-CZ-stage
+    ``max_expansions`` budget shared across target candidates.
+    """
+    if move_solutions_per_layer < 1:
+        raise ValueError("move_solutions_per_layer must be >= 1")
+    if search_budget is not None and search_budget < 1:
+        raise ValueError("search_budget must be None or >= 1")
+
+    inner = PhysicalPlacementStrategy(
+        arch_spec=get_physical_arch_spec() if arch_spec is None else arch_spec,
+        traversal=RustPlacementTraversal(
+            strategy=strategy,
+            max_goal_candidates=move_solutions_per_layer,
+            max_expansions=search_budget,
+        ),
+        target_generator=target_generator,
+    )
+
+    return PalindromePlacementStrategy(inner=inner) if return_moves else inner
