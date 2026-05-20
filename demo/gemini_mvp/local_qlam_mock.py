@@ -237,10 +237,10 @@ class LocalQlamHandler(BaseHTTPRequestHandler):
     def state(self) -> LocalQlamState:
         return self.server.state  # type: ignore[attr-defined]
 
-    def log_message(self, fmt: str, *args: object) -> None:
+    def log_message(self, format: str, *args: object) -> None:
         if self.server.quiet:  # type: ignore[attr-defined]
             return
-        super().log_message(fmt, *args)
+        super().log_message(format, *args)
 
     def _send_json(self, status: int, payload: dict) -> None:
         data = json.dumps(payload).encode("utf-8")
