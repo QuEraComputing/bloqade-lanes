@@ -146,7 +146,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         default_factory=dict, init=False, repr=False
     )
     _traced_blocked_locations: tuple[LocationAddress, ...] = field(
-        default_factory=tuple, init=False, repr=False
+        default=(), init=False, repr=False
     )
     _resolved_target_generator: TargetGeneratorABC | None = field(
         default=None, init=False, repr=False
@@ -247,7 +247,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
     @property
     def traced_blocked_locations(self) -> tuple[LocationAddress, ...]:
-        """Occupied non-local locations for the traced CZ layer."""
+        """Spectator atom positions for the traced CZ layer (atoms not in the active placement)."""
         return self._traced_blocked_locations
 
     def _cz_placements_rust(
