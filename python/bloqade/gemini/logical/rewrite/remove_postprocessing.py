@@ -58,7 +58,10 @@ class _DeleteTerminalMeasure(RewriteRule):
         if not isinstance(last_stmt, TerminalLogicalMeasurement):
             return RewriteResult()
 
-        last_stmt.delete()
+        (value := func.ConstantNone()).insert_before(last_stmt)
+        last_stmt.replace_by(func.Return(value))
+
+        node.signature = func.Signature(node.signature.inputs, types.NoneType)
         return RewriteResult(has_done_something=True)
 
 
@@ -97,6 +100,9 @@ class RemovePostProcessing(Pass):
     in a logical kernel.
 
     The return value is changed to return the TerminalMeasure result.
+
+    if delete_terminal_measure is true the return value is None and the Terminal measurement
+    is deleted.
 
     **NOTE**: Expects a flat logical kernel. Otherwise may lead to incorrect results.
     """
