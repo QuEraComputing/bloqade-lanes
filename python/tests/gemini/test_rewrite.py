@@ -3,7 +3,7 @@ from bloqade.squin.gate.stmts import U3
 from bloqade.test_utils import assert_nodes
 from bloqade.types import MeasurementResultType
 from kirin import ir, rewrite, types
-from kirin.dialects import ilist, py
+from kirin.dialects import func, ilist, py
 
 from bloqade import squin
 from bloqade.gemini import logical
@@ -110,6 +110,9 @@ def test_remove_postprocessing_and_terminal_measure():
     # check that calling twice doesn't do anything
     result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
     assert not result.has_done_something
+    assert (last_stmt := main.callable_region.blocks[-1].last_stmt) is not None
+    assert isinstance(last_stmt, func.Return)
+    assert isinstance(last_stmt.prev_stmt, func.ConstantNone)
     assert not any(
         isinstance(stmt, (SetDetector, TerminalLogicalMeasurement))
         for stmt in main.callable_region.stmts()
@@ -137,6 +140,9 @@ def test_remove_postprocessing_and_terminal_measure_2():
     # check that calling twice doesn't do anything
     result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
     assert not result.has_done_something
+    assert (last_stmt := main.callable_region.blocks[-1].last_stmt) is not None
+    assert isinstance(last_stmt, func.Return)
+    assert isinstance(last_stmt.prev_stmt, func.ConstantNone)
 
     assert not any(
         isinstance(stmt, TerminalLogicalMeasurement)
