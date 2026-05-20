@@ -44,7 +44,12 @@ class _DeleteBelowTerminalMeasure(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
-class _DeleteTerminalMeasureReturn(RewriteRule):
+class _DeleteTerminalMeasure(RewriteRule):
+    """Deletes the terminal measruement after the post processing
+    has been deleted. This MUST happen after _DeleteBelowTerminalMeasure
+    has been run on the kernel.
+    """
+
     def rewrite_Statement(self, node: Statement) -> RewriteResult:
         if not isinstance(node, func.Function):
             return RewriteResult()
@@ -101,7 +106,7 @@ class RemovePostProcessing(Pass):
     def unsafe_run(self, mt: Method) -> RewriteResult:
         result = Walk(_DeleteBelowTerminalMeasure()).rewrite(mt.code)
         if self.delete_terminal_measure:
-            result = result.join(_DeleteTerminalMeasureReturn().rewrite(mt.code))
+            result = result.join(_DeleteTerminalMeasure().rewrite(mt.code))
         else:
             result = result.join(Walk(_InsertTerminalMeasureReturn()).rewrite(mt.code))
 
