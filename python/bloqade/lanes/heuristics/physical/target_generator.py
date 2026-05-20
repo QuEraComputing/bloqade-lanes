@@ -318,6 +318,11 @@ class _GenerateState:
     as pairs commit. ``committed_lanes`` tracks a per-direction count so
     the weight function can reward strong same-direction clusters and
     penalise mixed-direction contention multiplicatively.
+
+    ``lookahead_cz_layers`` is the per-stage CZ-layer window forwarded
+    from :class:`TargetContext`; subclasses (e.g.
+    :class:`LookaheadCongestionAwareTargetGenerator`) read it for
+    multi-stage cost estimation. Empty tuple by default.
     """
 
     arch_spec: ArchSpec
@@ -325,6 +330,7 @@ class _GenerateState:
     working: dict[int, LocationAddress]
     committed_lanes: dict[_LaneKey, _LaneDirCounts]
     committed_sites: set[LocationAddress]
+    lookahead_cz_layers: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -578,3 +584,164 @@ class AODClusterTargetGenerator(TargetGeneratorABC):
             else:
                 target[tgt] = tgt_partner
         return [target]
+
+
+@dataclass(frozen=True)
+class LookaheadCongestionAwareTargetGenerator(CongestionAwareTargetGenerator):
+    """Congestion-aware target picker with K-stage participation lookahead.
+
+    Extends :class:`CongestionAwareTargetGenerator` by augmenting each
+    pair's cost with a discounted simulation of future-stage path costs.
+    For each candidate direction (move ctrl or move tgt), the score is
+
+        cost = path_cost_now + sum_{k=1..K} gamma^k * stage_cost_k
+
+    where ``stage_cost_k`` simulates stage ``k`` ahead under the chosen
+    commit and computes the per-pair cheapest-direction cost. The
+    lower-total direction wins; path-length tiebreak is preserved from
+    :func:`_choose_control`.
+
+    With ``K=0`` this reduces to :class:`CongestionAwareTargetGenerator`.
+
+    The lookahead favours keeping qubits stable when they are reused in
+    the next K stages — useful for hub-and-spoke patterns (single
+    repeated control), GHZ ladders (chain neighbours), and magic-state
+    factory cycles.
+
+    Attributes:
+        K: Lookahead horizon in stages. Must be ``>= 0``. Default 4.
+        gamma: Per-stage discount factor for simulated future cost. Must
+            be in ``(0, 1]``. Default 0.7.
+        direction_factor / shared_site_factor: Inherited; same semantics
+            as :class:`CongestionAwareTargetGenerator`.
+    """
+
+    K: int = 4
+    gamma: float = 0.7
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.K < 0:
+            raise ValueError(f"K={self.K!r} must be >= 0")
+        if not 0.0 < self.gamma <= 1.0:
+            raise ValueError(f"gamma={self.gamma!r} must be in (0, 1]")
+
+    def _commit_pair(
+        self,
+        state: _GenerateState,
+        ctrl: int,
+        tgt: int,
+    ) -> tuple[int, LocationAddress, _Path] | None:
+        weight = _make_weight_fn(
+            state.pf, state.committed_lanes, state.committed_sites, self
+        )
+        ctrl_partner, tgt_partner, path_ctrl, path_tgt = _probe_pair(
+            state.arch_spec,
+            state.pf,
+            state.working,
+            ctrl,
+            tgt,
+            edge_weight=weight,
+        )
+        cost_ctrl_now = _sum_weighted(path_ctrl, weight) if path_ctrl else math.inf
+        cost_tgt_now = _sum_weighted(path_tgt, weight) if path_tgt else math.inf
+        if cost_ctrl_now == math.inf and cost_tgt_now == math.inf:
+            return None
+
+        future_ctrl = self._simulate_future_cost(
+            state, ctrl, ctrl_partner, path_ctrl is None
+        )
+        future_tgt = self._simulate_future_cost(
+            state, tgt, tgt_partner, path_tgt is None
+        )
+        total_ctrl = cost_ctrl_now + future_ctrl
+        total_tgt = cost_tgt_now + future_tgt
+
+        len_ctrl = float(len(path_ctrl[0])) if path_ctrl is not None else math.inf
+        len_tgt = float(len(path_tgt[0])) if path_tgt is not None else math.inf
+
+        if _choose_control(total_ctrl, total_tgt, len_ctrl, len_tgt):
+            if path_ctrl is None:
+                return None
+            return (ctrl, ctrl_partner, path_ctrl)
+        if path_tgt is None:
+            return None
+        return (tgt, tgt_partner, path_tgt)
+
+    def _simulate_future_cost(
+        self,
+        state: _GenerateState,
+        mover: int,
+        new_loc: LocationAddress | None,
+        infeasible: bool,
+    ) -> float:
+        """Roll forward up to ``K`` lookahead stages assuming the candidate
+        commit, return discounted sum of per-stage cheapest-direction costs.
+        """
+        if infeasible or self.K == 0 or new_loc is None:
+            return math.inf if infeasible else 0.0
+
+        sim = dict(state.working)
+        sim[mover] = new_loc
+
+        def weight_base(lane: LaneAddress) -> float:
+            return state.pf.metrics.get_lane_duration_cost(lane)
+
+        total = 0.0
+        for k, (la_ctrls, la_tgts) in enumerate(state.lookahead_cz_layers[: self.K]):
+            stage_cost = 0.0
+            sim_after = dict(sim)
+            for c, t in zip(la_ctrls, la_tgts):
+                _, _, p_c, p_t = _probe_pair(
+                    state.arch_spec, state.pf, sim, c, t, edge_weight=weight_base
+                )
+                cc = _sum_weighted(p_c, weight_base) if p_c is not None else math.inf
+                ct = _sum_weighted(p_t, weight_base) if p_t is not None else math.inf
+                if cc == math.inf and ct == math.inf:
+                    return math.inf
+                if cc <= ct and p_c is not None:
+                    stage_cost += cc
+                    partner = state.arch_spec.get_cz_partner(sim[t])
+                    if partner is not None:
+                        sim_after[c] = partner
+                else:
+                    stage_cost += ct if p_t is not None else cc
+                    partner = state.arch_spec.get_cz_partner(sim[c])
+                    if partner is not None:
+                        sim_after[t] = partner
+            total += (self.gamma ** (k + 1)) * stage_cost
+            sim = sim_after
+
+        return total
+
+    def generate(self, ctx: TargetContext) -> list[dict[int, LocationAddress]]:
+        """Same as parent's generate(), but threads ``ctx.lookahead_cz_layers``
+        through ``state`` so :meth:`_simulate_future_cost` can read it.
+        """
+        placement = ctx.placement
+        if not ctx.controls:
+            return [dict(placement)]
+
+        pf = PathFinder(ctx.arch_spec)
+        state = _GenerateState(
+            arch_spec=ctx.arch_spec,
+            pf=pf,
+            working=dict(placement),
+            committed_lanes={},
+            committed_sites=set(),
+            lookahead_cz_layers=ctx.lookahead_cz_layers,
+        )
+
+        pairs = self._sort_pairs_longest_first(ctx, pf)
+        for ctrl, tgt in pairs:
+            result = self._commit_pair(state, ctrl, tgt)
+            if result is None:
+                return []
+            mover, new_loc, chosen = result
+            state.working[mover] = new_loc
+            for lane in chosen[0]:
+                counts = state.committed_lanes.setdefault(_lane_key(lane), Counter())
+                counts[lane.direction] += 1
+            state.committed_sites.update(chosen[1])
+
+        return [state.working]
