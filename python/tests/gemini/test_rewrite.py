@@ -7,7 +7,10 @@ from kirin.dialects import ilist, py
 
 from bloqade import squin
 from bloqade.gemini import logical
-from bloqade.gemini.logical.dialects.operations.stmts import Initialize
+from bloqade.gemini.logical.dialects.operations.stmts import (
+    Initialize,
+    TerminalLogicalMeasurement,
+)
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.gemini.logical.rewrite.remove_postprocessing import (
     RemovePostProcessing,
@@ -80,6 +83,34 @@ def test_remove_postprocessing_with_uses():
     result = RemovePostProcessing(main.dialects)(main)
     assert not result.has_done_something
 
+    assert not any(
+        isinstance(stmt, SetDetector) for stmt in main.callable_region.stmts()
+    )
+
+
+def test_remove_postprocessing_and_terminal_measure():
+    @logical.kernel(aggressive_unroll=True)
+    def main():
+        q = squin.qalloc(2)
+        m = logical.terminal_measure(q)
+        det = squin.set_detector(ilist.IList([m[0][0], m[1][0]]), [0, 1])
+        return det
+
+    # check that we have a detector there
+    assert any(isinstance(stmt, SetDetector) for stmt in main.callable_region.stmts())
+
+    result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
+    assert result.has_done_something
+
+    assert main.return_type.is_subseteq(types.NoneType)
+
+    # check that calling twice doesn't do anything
+    result = RemovePostProcessing(main.dialects, delete_terminal_measure=True)(main)
+    assert not result.has_done_something
+    assert not any(
+        isinstance(stmt, TerminalLogicalMeasurement)
+        for stmt in main.callable_region.stmts()
+    )
     assert not any(
         isinstance(stmt, SetDetector) for stmt in main.callable_region.stmts()
     )

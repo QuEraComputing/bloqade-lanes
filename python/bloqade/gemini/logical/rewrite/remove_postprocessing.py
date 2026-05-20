@@ -1,11 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from bloqade.types import MeasurementResultType
 from kirin import types
 from kirin.dialects import func, ilist
 from kirin.ir import Method
 from kirin.ir.nodes.stmt import Statement
-from kirin.passes import Pass
+from kirin.passes import Pass, TypeInfer
 from kirin.rewrite import Walk
 from kirin.rewrite.abc import RewriteResult, RewriteRule
 
@@ -44,6 +44,19 @@ class _DeleteBelowTerminalMeasure(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
+class _DeleteTerminalMeasureReturn(RewriteRule):
+    def rewrite_Statement(self, node: Statement) -> RewriteResult:
+        if not isinstance(node, func.Function):
+            return RewriteResult()
+
+        last_stmt = node.body.blocks[-1].last_stmt
+        if not isinstance(last_stmt, TerminalLogicalMeasurement):
+            return RewriteResult()
+
+        last_stmt.delete()
+        return RewriteResult(has_done_something=True)
+
+
 class _InsertTerminalMeasureReturn(RewriteRule):
     terminal_measure_type = ilist.IListType[
         ilist.IListType[MeasurementResultType, types.Any], types.Any
@@ -73,6 +86,7 @@ class _InsertTerminalMeasureReturn(RewriteRule):
         return RewriteResult(has_done_something=True)
 
 
+@dataclass
 class RemovePostProcessing(Pass):
     """Remove post-processing steps, i.e. everything below a TerminalMeasure statement
     in a logical kernel.
@@ -82,7 +96,14 @@ class RemovePostProcessing(Pass):
     **NOTE**: Expects a flat logical kernel. Otherwise may lead to incorrect results.
     """
 
+    delete_terminal_measure: bool = field(kw_only=True, default=False)
+
     def unsafe_run(self, mt: Method) -> RewriteResult:
         result = Walk(_DeleteBelowTerminalMeasure()).rewrite(mt.code)
-        result = Walk(_InsertTerminalMeasureReturn()).rewrite(mt.code).join(result)
+        if self.delete_terminal_measure:
+            result = result.join(_DeleteTerminalMeasureReturn().rewrite(mt.code))
+        else:
+            result = result.join(Walk(_InsertTerminalMeasureReturn()).rewrite(mt.code))
+
+        TypeInfer(mt.dialects)(mt)
         return result
