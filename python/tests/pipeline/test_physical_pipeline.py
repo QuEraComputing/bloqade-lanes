@@ -8,6 +8,7 @@ from kirin.ir.exception import ValidationErrorGroup
 from bloqade import qubit
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.heuristics.physical.movement import PhysicalPlacementStrategy
 from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewriteQubitsToPinnedQubits
 
@@ -50,6 +51,20 @@ def test_physical_pipeline_smoke():
     assert out is not None
     fills = [s for s in out.callable_region.walk() if isinstance(s, move.Fill)]
     assert len(fills) == 1
+
+
+def test_physical_pipeline_placement_strategy_default_uses_factory():
+    """PhysicalPipeline should eagerly construct the shared default strategy."""
+    from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
+
+    pipeline = PhysicalPipeline()
+
+    assert isinstance(pipeline.placement_strategy, PalindromePlacementStrategy)
+    assert isinstance(pipeline.placement_strategy.inner, PhysicalPlacementStrategy)
+    traversal = pipeline.placement_strategy.inner.traversal
+    assert traversal.strategy == "entropy"
+    assert traversal.max_goal_candidates == 3
+    assert traversal.max_expansions == 300
 
 
 def test_physical_pipeline_no_new_pinned_remaining():

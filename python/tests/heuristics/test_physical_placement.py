@@ -197,6 +197,43 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
     assert lane.direction == BytecodeDirection.FORWARD
 
 
+def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
+    from bloqade.lanes.bytecode._native import LocationAddress as NativeLoc
+
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(collect_entropy_trace=True),
+    )
+    state = _make_state()
+
+    class _FakeTraceStep:
+        event = "fallback_start"
+
+    class _FakeTrace:
+        steps = [_FakeTraceStep()]
+
+    class _FakeResult:
+        status = "solved"
+        nodes_expanded = 1
+        move_layers = []
+        goal_config = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
+        entropy_trace = _FakeTrace()
+
+    class _FakeSolver:
+        def solve(self, *_args, **_kwargs):
+            return _FakeResult()
+
+    monkeypatch.setattr(
+        PhysicalPlacementStrategy,
+        "_get_rust_solver",
+        lambda _self: _FakeSolver(),
+    )
+    out = strategy.cz_placements(state, controls=(0,), targets=(1,))
+
+    assert isinstance(out, ExecuteCZ)
+    assert strategy.rust_entropy_fallback_count == 1
+
+
 # ---------------------------------------------------------------------------
 # target_generator plugin-path tests (shared-budget candidate loop)
 # ---------------------------------------------------------------------------

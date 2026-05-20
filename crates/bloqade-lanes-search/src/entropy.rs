@@ -1005,6 +1005,37 @@ pub(crate) fn find_path_occupied(
 
 // ── Sequential fallback ────────────────────────────────────────────
 
+fn push_fallback_start_trace(
+    trace: &mut Option<&mut EntropyTrace>,
+    graph: &SearchGraph,
+    root_id: NodeId,
+    ctx: &SearchContext,
+    resume_buffer: &[ScoredResumeState],
+) {
+    if let Some(t) = trace.as_deref_mut() {
+        let cfg = graph.config(root_id);
+        t.steps.push(EntropyTraceStep {
+            event: "fallback_start".to_string(),
+            node_id: root_id.0,
+            parent_node_id: graph.parent(root_id).map(|id| id.0),
+            depth: graph.depth(root_id),
+            entropy: 0,
+            unresolved_count: unresolved_count(cfg, ctx.targets),
+            moveset: None,
+            candidate_movesets: Vec::new(),
+            candidate_index: None,
+            reason: None,
+            state_seen_node_id: None,
+            no_valid_moves_qubit: None,
+            trigger_node_id: None,
+            configuration: config_as_trace_tuples(cfg),
+            parent_configuration: None,
+            moveset_score: None,
+            best_buffer_node_ids: trace_buffer_node_ids(resume_buffer),
+        });
+    }
+}
+
 /// Greedy sequential fallback: move each unresolved qubit along its shortest path.
 fn sequential_fallback(
     graph: &mut SearchGraph,
@@ -1126,6 +1157,7 @@ pub fn entropy_search(
     let mut resume_buffer: Vec<ScoredResumeState> = Vec::new();
     let mut resume_insert_order: u64 = 0;
     let mut best_goal_depth: Option<u32> = None;
+    let mut budget_exhausted = false;
 
     // Safety cap: hard iteration limit prevents infinite loops when
     // max_expansions is None and the search gets stuck in reversion cycles.
@@ -1135,6 +1167,7 @@ pub fn entropy_search(
     loop {
         iterations += 1;
         if nodes_expanded >= hard_limit || iterations >= hard_limit * 2 {
+            budget_exhausted = true;
             break;
         }
         if let Some(depth_cap) = best_goal_depth
@@ -1154,8 +1187,9 @@ pub fn entropy_search(
             es.entropy = params.e_max;
         }
 
-        // REVERSION: entropy too high.
-        if es.entropy >= params.e_max {
+        // REVERSION: entropy too high. The root node is allowed to keep
+        // accumulating entropy until the expansion/iteration budget is exhausted.
+        if current != root_id && es.entropy >= params.e_max {
             let trigger_node = current;
             let trigger_entropy = es.entropy;
             let mut ancestor = current;
@@ -1165,39 +1199,6 @@ pub fn entropy_search(
                 } else {
                     break;
                 }
-            }
-
-            let ancestor_entropy = entropy_map.get(&ancestor).map_or(1, |s| s.entropy);
-            if ancestor == root_id && ancestor_entropy >= params.e_max {
-                // Sequential fallback from root.
-                if let Some(t) = trace.as_mut() {
-                    let cfg = graph.config(root_id);
-                    t.steps.push(EntropyTraceStep {
-                        event: "fallback_start".to_string(),
-                        node_id: root_id.0,
-                        parent_node_id: graph.parent(root_id).map(|id| id.0),
-                        depth: graph.depth(root_id),
-                        entropy: 0,
-                        unresolved_count: unresolved_count(cfg, ctx.targets),
-                        moveset: None,
-                        candidate_movesets: Vec::new(),
-                        candidate_index: None,
-                        reason: None,
-                        state_seen_node_id: None,
-                        no_valid_moves_qubit: None,
-                        trigger_node_id: None,
-                        configuration: config_as_trace_tuples(cfg),
-                        parent_configuration: None,
-                        moveset_score: None,
-                        best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-                    });
-                }
-                let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
-                nodes_expanded += fb_expanded;
-                if let Some(gid) = goal_id {
-                    found_goals.push(gid);
-                }
-                break;
             }
 
             let new_ancestor_entropy = {
@@ -1493,6 +1494,15 @@ pub fn entropy_search(
         current = child_id; // descend
     }
 
+    if found_goals.is_empty() && budget_exhausted {
+        push_fallback_start_trace(&mut trace, &graph, root_id, ctx, &resume_buffer);
+        let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
+        nodes_expanded += fb_expanded;
+        if let Some(gid) = goal_id {
+            found_goals.push(gid);
+        }
+    }
+
     // Return the best goal by:
     // 1) shallowest depth, 2) lowest approximate path move time,
     // 3) lexicographic path key (deterministic), 4) node id (deterministic).
@@ -1610,6 +1620,40 @@ mod tests {
             None,
             0,
             None,
+        )
+    }
+
+    fn run_entropy_with_trace(
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        target: impl IntoIterator<Item = (u32, LocationAddr)>,
+        max_expansions: Option<u32>,
+        max_depth: Option<u32>,
+        trace: &mut EntropyTrace,
+    ) -> SearchResult {
+        let index = make_index();
+        let root = Config::new(initial).unwrap();
+        let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
+        let target_encoded: Vec<(u32, u64)> =
+            target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+        };
+        entropy_search(
+            root,
+            &goal,
+            &EntropyParams::default(),
+            &ctx,
+            max_expansions,
+            max_depth,
+            0,
+            Some(trace),
         )
     }
 
@@ -1793,6 +1837,55 @@ mod tests {
     fn budget_exceeded_returns_no_goal() {
         let r = run_entropy([(0, loc(0, 0))], [(0, loc(99, 99))], Some(10));
         assert!(r.goal.is_none());
+    }
+
+    #[test]
+    fn budget_exhaustion_runs_sequential_fallback() {
+        let r = run_entropy([(0, loc(0, 0))], [(0, loc(0, 5))], Some(0));
+        let goal = r
+            .goal
+            .expect("sequential fallback should find reachable target");
+        assert_eq!(r.graph.config(goal).location_of(0), Some(loc(0, 5)));
+    }
+
+    #[test]
+    fn budget_exhaustion_records_fallback_start_trace() {
+        let mut trace = EntropyTrace::default();
+        let r = run_entropy_with_trace(
+            [(0, loc(0, 0))],
+            [(0, loc(0, 5))],
+            Some(0),
+            None,
+            &mut trace,
+        );
+
+        assert!(r.goal.is_some());
+        assert!(
+            trace
+                .steps
+                .iter()
+                .any(|step| step.event == "fallback_start")
+        );
+    }
+
+    #[test]
+    fn root_entropy_limit_continues_without_sequential_fallback() {
+        let mut trace = EntropyTrace::default();
+        let r = run_entropy_with_trace(
+            [(0, loc(0, 0))],
+            [(0, loc(0, 5))],
+            Some(100),
+            Some(0),
+            &mut trace,
+        );
+
+        assert!(r.goal.is_some());
+        assert!(
+            trace
+                .steps
+                .iter()
+                .all(|step| step.event != "fallback_start")
+        );
     }
 
     #[test]
