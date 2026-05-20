@@ -37,9 +37,11 @@ no fallback halt status, no capping identifiers, no branch caps, no
 top-k slicing of packer output, no per-qubit limits on legal_lanes.
 """
 
+# Optional policy knobs. This candidate does not currently expose any.
 PARAMS_DEFAULTS = {}
 
 
+# Merge caller-provided PARAMS_OVERRIDE values into the policy defaults.
 def _merge(defaults, overrides):
     merged = {}
     for k, v in defaults.items():
@@ -49,9 +51,11 @@ def _merge(defaults, overrides):
     return merged
 
 
+# Final parameter dictionary available to the policy.
 PARAMS = _merge(PARAMS_DEFAULTS, PARAMS_OVERRIDE)
 
 
+# Return all items after the head without relying on slicing.
 def _tail(items):
     out = []
     for i in range(1, len(items)):
@@ -59,6 +63,7 @@ def _tail(items):
     return out
 
 
+# Look up qid's target location, falling back to its current location.
 def _target_loc(ctx, qid, current):
     for target in ctx.targets:
         if target[0] == qid:
@@ -66,6 +71,7 @@ def _target_loc(ctx, qid, current):
     return current
 
 
+# Pop the frontier entry with the lowest priority.
 def _pop_min(frontier):
     best_i = 0
     for i in range(1, len(frontier)):
@@ -79,6 +85,7 @@ def _pop_min(frontier):
     return [chosen, rest]
 
 
+# Heuristic: sum remaining hop distances over unresolved qubits.
 def _h_score(cfg, ctx, lib):
     total = 0
     for u in lib.unresolved_qubits(cfg):
@@ -92,6 +99,7 @@ def _h_score(cfg, ctx, lib):
     return total
 
 
+# Generate encoded AOD move candidates from unresolved-qubit legal lanes.
 def _enumerate(cfg, ctx, lib):
     scored = []
     for u in lib.unresolved_qubits(cfg):
@@ -117,7 +125,7 @@ def _enumerate(cfg, ctx, lib):
         out = out + [cands[i].move_set.encoded]
     return out
 
-
+# Initializes the global state.
 def init(root, ctx):
     return {
         "frontier": [[0, root]],
@@ -127,7 +135,9 @@ def init(root, ctx):
     }
 
 
+# Chooses the next solver action(s) for one DSL tick.
 def step(graph, gs, ctx, lib):
+    # If we inserted a child last tick, read Rust's insert outcome now.
     if gs["awaiting"]:
         outcome = graph.last_insert()
         frontier = gs["frontier"]
@@ -141,6 +151,7 @@ def step(graph, gs, ctx, lib):
             "awaiting": False,
         })
 
+    # Drain one queued move from the node currently being expanded.
     queue = gs["queue"]
     if len(queue) > 0:
         move = queue[0]
@@ -151,6 +162,7 @@ def step(graph, gs, ctx, lib):
             update_global_state({"queue": rest, "awaiting": True}),
         ]
 
+    # No queued moves remain, so pick the next frontier node to expand.
     frontier = gs["frontier"]
     if len(frontier) == 0:
         return halt("unsolvable", "frontier exhausted before goal")
@@ -162,6 +174,7 @@ def step(graph, gs, ctx, lib):
     if graph.is_goal(node):
         return emit_solution(node)
 
+    # Queue all candidate moves from the chosen node for future ticks.
     cfg = graph.config(node)
     moves = _enumerate(cfg, ctx, lib)
     return update_global_state({
