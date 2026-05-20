@@ -24,7 +24,6 @@ from ..domain.layout import (
 from ..standard.bit_packing import (
     _packed_pattern_targets,
     pack_boolean_array,
-    unpack_packed_bits,
 )
 from ..standard.dem import _make_layout_only_dem, _select_output_observables
 from ..standard.sampling import BasisDataset, _iter_task_datasets
@@ -83,6 +82,8 @@ def train_mld_decoder_pair(
     *,
     table_decoder_cls: TableDecoderClass,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
+    log: bool = True,
+    label: str | None = None,
 ) -> tuple[BaseDecoder, BaseDecoder]:
     """Train full and factory MLD table decoders from sampled data.
 
@@ -90,12 +91,23 @@ def train_mld_decoder_pair(
         training_dataset: Detector/observable samples used for table training.
         table_decoder_cls: Table decoder class to train.
         layout: Syndrome layout separating output and factory syndrome bits.
+        log: If true, print table-decoder training progress.
+        label: Optional basis/task label included in log messages.
 
     Returns:
         Pair ``(full_decoder, factory_decoder)``.
     """
 
+    prefix = f" for {label}" if label is not None else ""
+    if log:
+        print(f"Preparing MLD table-training arrays{prefix}...", flush=True)
     training_arrays = _mld_training_arrays(training_dataset, layout=layout)
+    if log:
+        print(
+            f"Training full MLD table decoder{prefix} "
+            f"from {len(training_arrays.full_det_obs):,} shots...",
+            flush=True,
+        )
     full_decoder = table_decoder_cls.from_det_obs_shots(
         _make_layout_only_dem(
             training_arrays.full_detector_count,
@@ -103,6 +115,12 @@ def train_mld_decoder_pair(
         ),
         training_arrays.full_det_obs,
     )
+    if log:
+        print(
+            f"Training factory MLD table decoder{prefix} "
+            f"from {len(training_arrays.factory_det_obs):,} shots...",
+            flush=True,
+        )
     factory_decoder = table_decoder_cls.from_det_obs_shots(
         _make_layout_only_dem(
             training_arrays.factory_detector_count,
@@ -110,6 +128,8 @@ def train_mld_decoder_pair(
         ),
         training_arrays.factory_det_obs,
     )
+    if log:
+        print(f"Finished MLD table decoders{prefix}.", flush=True)
     return full_decoder, factory_decoder
 
 
@@ -316,6 +336,63 @@ def _mld_scores_from_pattern_counts(
     return scores
 
 
+def _unpack_packed_array(packed: np.ndarray, length: int) -> np.ndarray:
+    """Unpack little-endian packed integers into a 2D boolean bit matrix."""
+
+    packed = np.asarray(packed, dtype=np.uint64).reshape(-1, 1)
+    if length == 0:
+        return np.zeros((packed.shape[0], 0), dtype=bool)
+    shifts = np.arange(length, dtype=np.uint64).reshape(1, -1)
+    return ((packed >> shifts) & 1).astype(bool)
+
+
+def _batch_decode_packed_corrections(
+    decoder: BaseDecoder,
+    packed_syndromes: np.ndarray,
+    *,
+    syndrome_length: int,
+) -> dict[int, int]:
+    """Decode unique packed syndromes and return packed corrections by syndrome."""
+
+    packed_syndromes = np.asarray(packed_syndromes, dtype=np.uint64).reshape(-1)
+    if len(packed_syndromes) == 0:
+        return {}
+
+    cache_correction = getattr(decoder, "cache_correction", None)
+    if callable(cache_correction):
+        cache_correction()
+    correction_table = getattr(decoder, "_maximum_likelihood_correction", None)
+    if isinstance(correction_table, np.ndarray):
+        packed_corrections = np.asarray(
+            correction_table[packed_syndromes],
+            dtype=np.uint64,
+        )
+    elif isinstance(correction_table, dict):
+        packed_corrections = np.array(
+            [int(correction_table.get(int(packed), 0)) for packed in packed_syndromes],
+            dtype=np.uint64,
+        )
+    else:
+        syndrome_bits = _unpack_packed_array(packed_syndromes, syndrome_length)
+        corrections = np.asarray(decoder.decode(syndrome_bits), dtype=np.uint8)
+        if corrections.ndim == 1:
+            corrections = corrections.reshape(1, -1)
+
+        if corrections.shape[1] == 0:
+            packed_corrections = np.zeros(len(packed_syndromes), dtype=np.uint64)
+        else:
+            packed_corrections = pack_boolean_array(corrections).astype(np.uint64)
+
+    return {
+        int(syndrome): int(correction)
+        for syndrome, correction in zip(
+            packed_syndromes,
+            packed_corrections,
+            strict=True,
+        )
+    }
+
+
 # TODO: continue reading here, 4/21 11:56 AM
 def _accumulate_mld_pattern_counts(
     pattern_counts: defaultdict[int, np.ndarray],
@@ -343,30 +420,20 @@ def _accumulate_mld_pattern_counts(
     unique_groups, group_counts = np.unique(grouped, axis=0, return_counts=True)
 
     unique_anc_det = np.unique(unique_groups[:, 0])
-    ancilla_decode_cache: dict[int, int] = {}
-    for packed in unique_anc_det.tolist():
-        anc_flip = np.asarray(
-            factory_decoder.decode(
-                unpack_packed_bits(int(packed), packed_dataset.anc_det.shape[1]).astype(
-                    bool
-                )
-            ),
-            dtype=np.uint8,
-        )
-        ancilla_decode_cache[int(packed)] = (
-            int(pack_boolean_array(anc_flip)[0]) if len(anc_flip) else 0
-        )
+    ancilla_decode_cache = _batch_decode_packed_corrections(
+        factory_decoder,
+        unique_anc_det,
+        syndrome_length=packed_dataset.anc_det.shape[1],
+    )
 
-    unique_full_det = np.unique(unique_groups[:, 2])
-    full_decode_cache: dict[int, int] = {}
-    for packed in unique_full_det.tolist():
-        full_flip = np.asarray(
-            full_decoder.decode(
-                unpack_packed_bits(int(packed), dataset.detectors.shape[1]).astype(bool)
-            ),
-            dtype=np.uint8,
-        )
-        full_decode_cache[int(packed)] = int(full_flip[0]) if len(full_flip) else 0
+    full_decode_cache = {
+        packed: correction & 1
+        for packed, correction in _batch_decode_packed_corrections(
+            full_decoder,
+            np.unique(unique_groups[:, 2]),
+            syndrome_length=dataset.detectors.shape[1],
+        ).items()
+    }
 
     accepted = 0
     for row, count in zip(unique_groups, group_counts, strict=True):

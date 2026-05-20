@@ -442,14 +442,19 @@ def train_mld_decoder_suite(
             enabled=bool(log),
         )
 
-    decoder_pairs = {
-        basis: train_mld_decoder_pair(
+    decoder_pairs = {}
+    for basis in config.basis_labels:
+        if log:
+            print(f"Training MLD table decoders for {basis}...", flush=True)
+        decoder_pairs[basis] = train_mld_decoder_pair(
             training_data[basis],
             table_decoder_cls=table_decoder_cls,
             layout=config.layout,
+            log=bool(log),
+            label=basis,
         )
-        for basis in config.basis_labels
-    }
+    if log:
+        print("Estimating shared MLD ancilla-pattern fidelity scores...", flush=True)
     ancilla_scores = estimate_mld_ancilla_scores(
         decoder_pairs,
         ranking_data,
@@ -461,9 +466,16 @@ def train_mld_decoder_suite(
         uncertainty_backend=config.uncertainty_backend,
         layout=config.layout,
     )
+    if log:
+        print(
+            "Finished estimating shared MLD ancilla-pattern fidelity scores.",
+            flush=True,
+        )
 
     adapters: dict[str, DecoderAdapter] = {}
     for basis in config.basis_labels:
+        if log:
+            print(f"Assembling MLD decoder adapter for {basis}...", flush=True)
         dataset = training_data[basis]
         anc_det, _ = split_factory_bits(
             dataset.detectors,
