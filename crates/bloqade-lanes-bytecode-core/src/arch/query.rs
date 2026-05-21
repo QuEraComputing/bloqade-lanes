@@ -483,6 +483,14 @@ impl ArchSpec {
         }
     }
 
+    /// Whether a location sits in a "home" word — i.e. its `word_id` is in
+    /// [`Self::left_cz_word_ids`]. Used by the no-home placement strategy
+    /// to identify atoms still at their original home positions vs.
+    /// returners that need re-assigning.
+    pub fn is_home_position(&self, loc: &LocationAddr) -> bool {
+        self.left_cz_word_ids().contains(&loc.word_id)
+    }
+
     /// Get the CZ partner for a given location.
     ///
     /// Searches `zones[loc.zone_id].entangling_pairs` for a pair containing
@@ -1553,6 +1561,24 @@ mod tests {
         // Pair [0, 1] -> home word is 0. Word 1 is the staging word.
         // But there are only 2 words and they're all paired, so home = [0].
         assert_eq!(home, vec![0]);
+    }
+
+    #[test]
+    fn test_is_home_position() {
+        let spec = make_valid_two_zone_spec();
+        // Per `test_left_cz_word_ids`, only word_id 0 is a home word.
+        let home = LocationAddr {
+            zone_id: 0,
+            word_id: 0,
+            site_id: 0,
+        };
+        let staging = LocationAddr {
+            zone_id: 0,
+            word_id: 1,
+            site_id: 0,
+        };
+        assert!(spec.is_home_position(&home));
+        assert!(!spec.is_home_position(&staging));
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::graph::MoveSet;
 pub(crate) type TripletKey = (u8, u32, u8);
 
 /// Shared deterministic tie-breaker for triplet-scored entries.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmp_triplet_entry_tiebreak(
     a_key: &TripletKey,
     a_qubit: u32,

@@ -13,7 +13,11 @@ use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 ///
 /// Built once from an [`ArchSpec`] and reused across multiple searches.
 /// Caches all lane addresses, their endpoints, and location positions.
-#[derive(Debug)]
+///
+/// `Clone` is implemented so callers can wrap the index in an `Arc` and
+/// share it across closures (e.g. `LooseTargetGenerator`); the contents
+/// are immutable hash maps so cloning is `O(n)` in entry count.
+#[derive(Debug, Clone)]
 pub struct LaneIndex {
     arch_spec: ArchSpec,
     /// (MoveType, bus_id, zone_id, Direction) → lanes for that triplet.
