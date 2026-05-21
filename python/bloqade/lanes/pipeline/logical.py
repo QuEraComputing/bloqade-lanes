@@ -64,28 +64,41 @@ class LogicalPipeline:
 
     Includes Clifford/measurement/no-cloning validation and the full logical
     initialization sequence (InsertInitialize for LogicalQubits).
+
+    ``arch_spec`` is the single source of truth: when ``layout_heuristic`` or
+    ``placement_strategy`` are ``None`` (the default), they are constructed in
+    ``emit`` using ``self.arch_spec``, guaranteeing consistency.  Pass explicit
+    instances only when you need a fully custom heuristic or strategy; in that
+    case the caller is responsible for arch-spec consistency.
     """
 
-    layout_heuristic: layout.LayoutHeuristicABC = field(
-        default_factory=LogicalLayoutHeuristic
-    )
-    placement_strategy: placement.PlacementStrategyABC = field(
-        default_factory=lambda: PalindromePlacementStrategy(
-            inner=LogicalPlacementStrategyNoHome()
-        )
-    )
     arch_spec: ArchSpec = field(default_factory=get_logical_arch_spec)
+    layout_heuristic: layout.LayoutHeuristicABC | None = None
+    placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
+        heuristic = (
+            LogicalLayoutHeuristic(arch_spec=self.arch_spec)
+            if self.layout_heuristic is None
+            else self.layout_heuristic
+        )
+        strategy = (
+            PalindromePlacementStrategy(
+                inner=LogicalPlacementStrategyNoHome(arch_spec=self.arch_spec)
+            )
+            if self.placement_strategy is None
+            else self.placement_strategy
+        )
+
         out = _LogicalNativeToPlace(arch_spec=self.arch_spec).emit(
             mt, no_raise=no_raise
         )
         self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = _PlaceToMove(
-            layout_heuristic=self.layout_heuristic,
-            placement_strategy=self.placement_strategy,
+            layout_heuristic=heuristic,
+            placement_strategy=strategy,
             insert_initialize=True,
         ).emit(out, no_raise=no_raise)
 
