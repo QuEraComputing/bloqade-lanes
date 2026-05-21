@@ -21,13 +21,38 @@ use crate::lane_index::LaneIndex;
 ///
 /// Built once via BFS on the reversed lane graph (ignoring occupancy).
 /// Shared between the heuristic and the heuristic move generator.
+///
+/// Storage layout: a side `HashMap<u64, usize>` (`loc_index`) maps every
+/// encoded location to a compact index, and a flat `Vec<u32>` of size
+/// `n_loc × n_loc` holds the hop counts (`u32::MAX` for unreachable).
+/// This is ~50% smaller than a `HashMap<(u64, u64), u32>` and gives better
+/// cache locality on the Hungarian cost-matrix pair × slot scan in
+/// `entangling.rs`.
 #[derive(Debug)]
 pub struct DistanceTable {
-    /// encoded_target → { encoded_location → min hops to target }
-    distance_to: HashMap<u64, HashMap<u64, u32>>,
-    /// Flattened (from, to) → distance for faster single-probe lookup.
-    flat_distance: HashMap<(u64, u64), u32>,
-    /// Optional time-weighted distances: encoded_target → { encoded_location → min time (µs) }
+    /// encoded_location → compact index into the 2D `flat_distance` array.
+    /// Covers every location reachable in the lane graph (sources +
+    /// destinations); BFS targets are a subset.
+    loc_index: HashMap<u64, usize>,
+    /// Inverse mapping: compact index → encoded location. Used by
+    /// `for_each_source` to recover the encoded source when scanning a
+    /// target column.
+    loc_by_index: Vec<u64>,
+    /// 2D distance array stored row-major. `flat_distance[from_idx *
+    /// n_loc + to_idx]` is the minimum lane-hop count from
+    /// `loc_by_index[from_idx]` to `loc_by_index[to_idx]`, or `u32::MAX`
+    /// if unreachable. Only the columns for original BFS targets are
+    /// populated (other columns remain `u32::MAX`).
+    flat_distance: Vec<u32>,
+    /// Side length of `flat_distance`. Equal to `loc_index.len()`.
+    n_loc: usize,
+    /// Deduplicated BFS targets. Retained so `with_time_distances` knows
+    /// which Dijkstra sources to run.
+    targets: Vec<u64>,
+    /// Optional time-weighted distances: `encoded_target → { encoded_location → min time (µs) }`.
+    /// Kept as a nested HashMap because it's only populated when `w_t > 0`
+    /// (an entropy-search-only slow path), and the storage savings of
+    /// flattening don't matter there.
     time_distance_to: Option<HashMap<u64, HashMap<u64, f64>>>,
     /// Fastest lane duration across all lanes (for normalization).
     fastest_lane_us: Option<f64>,
@@ -38,59 +63,82 @@ impl DistanceTable {
     /// location on the reversed lane graph.
     pub fn new(target_locations: &[u64], index: &LaneIndex) -> Self {
         // Deduplicate targets.
-        let unique_targets: Vec<u64> = {
+        let targets: Vec<u64> = {
             let mut v = target_locations.to_vec();
             v.sort_unstable();
             v.dedup();
             v
         };
 
-        // Build reverse adjacency: dst → [src, ...].
+        // Build reverse adjacency: dst → [src, ...]. Also collect every
+        // location encountered (sources, destinations, and targets) so we
+        // can size the compact location index.
         let mut reverse_adj: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut loc_index: HashMap<u64, usize> = HashMap::new();
+        let mut loc_by_index: Vec<u64> = Vec::new();
+        let intern =
+            |loc: u64, loc_index: &mut HashMap<u64, usize>, loc_by_index: &mut Vec<u64>| {
+                if let std::collections::hash_map::Entry::Vacant(e) = loc_index.entry(loc) {
+                    e.insert(loc_by_index.len());
+                    loc_by_index.push(loc);
+                }
+            };
+
         for (mt, bus_id, zone_id, dir) in index.bus_groups() {
             for &lane in index.lanes_for(mt, bus_id, zone_id, dir) {
                 if let Some((src, dst)) = index.endpoints(&lane) {
-                    reverse_adj
-                        .entry(dst.encode())
-                        .or_default()
-                        .push(src.encode());
+                    let src_enc = src.encode();
+                    let dst_enc = dst.encode();
+                    intern(src_enc, &mut loc_index, &mut loc_by_index);
+                    intern(dst_enc, &mut loc_index, &mut loc_by_index);
+                    reverse_adj.entry(dst_enc).or_default().push(src_enc);
                 }
             }
         }
+        // Make sure isolated targets (with no incoming lanes) still get
+        // an index, so distance(target, target) = 0 works.
+        for &t in &targets {
+            intern(t, &mut loc_index, &mut loc_by_index);
+        }
 
-        // BFS from each target on reversed edges.
-        let mut distance_to: HashMap<u64, HashMap<u64, u32>> = HashMap::new();
-        for &target_enc in &unique_targets {
-            let mut dist: HashMap<u64, u32> = HashMap::new();
+        let n_loc = loc_index.len();
+        let mut flat_distance = vec![u32::MAX; n_loc * n_loc];
+
+        // BFS from each target on reversed edges, writing directly into
+        // the flat array by compact index.
+        for &target_enc in &targets {
+            let target_idx = loc_index[&target_enc];
+            let mut dist: Vec<u32> = vec![u32::MAX; n_loc];
             let mut queue: VecDeque<u64> = VecDeque::new();
-            dist.insert(target_enc, 0);
+            dist[target_idx] = 0;
             queue.push_back(target_enc);
 
             while let Some(current) = queue.pop_front() {
-                let current_dist = dist[&current];
+                let current_idx = loc_index[&current];
+                let current_dist = dist[current_idx];
                 if let Some(preds) = reverse_adj.get(&current) {
                     for &pred in preds {
-                        if let std::collections::hash_map::Entry::Vacant(e) = dist.entry(pred) {
-                            e.insert(current_dist + 1);
+                        let pred_idx = loc_index[&pred];
+                        if dist[pred_idx] == u32::MAX {
+                            dist[pred_idx] = current_dist + 1;
                             queue.push_back(pred);
                         }
                     }
                 }
             }
-            distance_to.insert(target_enc, dist);
-        }
 
-        // Build flattened index for single-probe lookups.
-        let mut flat_distance = HashMap::with_capacity(distance_to.values().map(|m| m.len()).sum());
-        for (&target, sources) in &distance_to {
-            for (&source, &dist) in sources {
-                flat_distance.insert((source, target), dist);
+            // Copy this target's column into the flat 2D array.
+            for (from_idx, &d) in dist.iter().enumerate() {
+                flat_distance[from_idx * n_loc + target_idx] = d;
             }
         }
 
         Self {
-            distance_to,
+            loc_index,
+            loc_by_index,
             flat_distance,
+            n_loc,
+            targets,
             time_distance_to: None,
             fastest_lane_us: None,
         }
@@ -122,10 +170,9 @@ impl DistanceTable {
         }
 
         // Dijkstra from each target on reversed weighted edges.
-        let targets: Vec<u64> = self.distance_to.keys().copied().collect();
         let mut time_dist_to: HashMap<u64, HashMap<u64, f64>> = HashMap::new();
 
-        for target_enc in targets {
+        for &target_enc in &self.targets {
             let mut dist: HashMap<u64, f64> = HashMap::new();
             let mut heap = BinaryHeap::new();
             dist.insert(target_enc, 0.0);
@@ -160,11 +207,13 @@ impl DistanceTable {
 
     /// O(1) lookup: minimum lane hops from `from_encoded` to `to_target_encoded`.
     ///
-    /// Returns `None` if the target is unknown or the source is unreachable.
+    /// Returns `None` if either location is unknown to this table, or if
+    /// the source can't reach the target on the lane graph.
     pub fn distance(&self, from_encoded: u64, to_target_encoded: u64) -> Option<u32> {
-        self.flat_distance
-            .get(&(from_encoded, to_target_encoded))
-            .copied()
+        let from_idx = *self.loc_index.get(&from_encoded)?;
+        let to_idx = *self.loc_index.get(&to_target_encoded)?;
+        let d = self.flat_distance[from_idx * self.n_loc + to_idx];
+        if d == u32::MAX { None } else { Some(d) }
     }
 
     /// O(1) lookup: minimum time (µs) from `from_encoded` to `to_target_encoded`.
@@ -188,9 +237,14 @@ impl DistanceTable {
     /// Calls `f(source_encoded, distance)` for every reachable source.
     /// Does nothing if `target_encoded` is unknown.
     pub fn for_each_source(&self, target_encoded: u64, mut f: impl FnMut(u64, u32)) {
-        if let Some(sources) = self.distance_to.get(&target_encoded) {
-            for (&src, &d) in sources {
-                f(src, d);
+        let Some(&to_idx) = self.loc_index.get(&target_encoded) else {
+            return;
+        };
+        // Scan the target's column; columns are strided by n_loc.
+        for from_idx in 0..self.n_loc {
+            let d = self.flat_distance[from_idx * self.n_loc + to_idx];
+            if d != u32::MAX {
+                f(self.loc_by_index[from_idx], d);
             }
         }
     }

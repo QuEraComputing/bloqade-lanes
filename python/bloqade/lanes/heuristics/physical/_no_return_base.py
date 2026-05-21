@@ -31,16 +31,13 @@ from bloqade.lanes.analysis.placement import (
 )
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import MoveSolver
-from bloqade.lanes.bytecode.encoding import (
-    LaneAddress,
-    LocationAddress,
-    ZoneAddress,
+from bloqade.lanes.bytecode._native import (
+    DeadlockPolicy,
+    MoveSolver,
+    SearchStrategy,
 )
-from bloqade.lanes.heuristics.physical._solver_dispatch import (
-    _DEADLOCK_MAP,
-    _STRATEGY_MAP,
-)
+from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.heuristics.physical.movement import convert_move_layers
 
 
 @dataclass
@@ -54,17 +51,21 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         :class:`PlacementStrategyABC`). Must expose exactly one CZ-capable
         zone; multi-zone CZ scheduling is not yet supported.
     strategy:
-        Inner search strategy name. Supported values come from
-        :data:`_solver_dispatch._STRATEGY_MAP` (``"ids"``, ``"cascade"``,
-        ``"astar"``, ``"entropy"``, ``"dfs"``, ``"bfs"``, ``"greedy"`` and
-        their ``"cascade-*"`` variants). Default ``"ids"``.
+        Inner search strategy as a :class:`SearchStrategy` enum (e.g.
+        :py:attr:`SearchStrategy.IDS`, :py:attr:`SearchStrategy.ASTAR`,
+        :py:attr:`SearchStrategy.ENTROPY`, …). Passing a typo'd value
+        fails at construction rather than at solve time. Default
+        :py:attr:`SearchStrategy.IDS`.
     max_expansions:
         Maximum node expansions per solve call. ``None`` means unbounded.
     restarts:
         Number of parallel restarts with perturbed scoring inside each
         Rust solve. Subclasses override the default where appropriate.
     deadlock_policy:
-        ``"skip"`` | ``"move_blockers"`` | ``"all_moves"``.
+        :class:`DeadlockPolicy` enum value:
+        :py:attr:`DeadlockPolicy.SKIP`,
+        :py:attr:`DeadlockPolicy.MOVE_BLOCKERS` (default), or
+        :py:attr:`DeadlockPolicy.ALL_MOVES`.
     top_c:
         Per-qubit move-candidate pruning cap inside ``HeuristicGenerator``.
         ``None`` keeps all scored bus options (default for this base —
@@ -79,10 +80,12 @@ class NoReturnStrategyBase(PlacementStrategyABC):
     init argument), and implement :meth:`_invoke_solver`.
     """
 
-    strategy: str = "ids"
+    strategy: SearchStrategy = field(default_factory=lambda: SearchStrategy.IDS)
     max_expansions: int | None = 100
     restarts: int = 1
-    deadlock_policy: str = "move_blockers"
+    deadlock_policy: DeadlockPolicy = field(
+        default_factory=lambda: DeadlockPolicy.MOVE_BLOCKERS
+    )
     top_c: int | None = None
 
     _solver: MoveSolver | None = field(default=None, init=False, repr=False)
@@ -113,10 +116,10 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         future caller needs it configurable.
         """
         return _native.SolveOptions(
-            strategy=_STRATEGY_MAP[self.strategy],
+            strategy=self.strategy,
             restarts=self.restarts,
             lookahead=True,
-            deadlock_policy=_DEADLOCK_MAP[self.deadlock_policy],
+            deadlock_policy=self.deadlock_policy,
             top_c=self.top_c,
         )
 
@@ -143,6 +146,10 @@ class NoReturnStrategyBase(PlacementStrategyABC):
     def validate_initial_layout(
         self, initial_layout: tuple[LocationAddress, ...]
     ) -> None:
+        # No-op: no-return strategies accept any valid initial layout from
+        # the upstream placement pass. ``PlacementStrategyABC`` declares
+        # this method abstract, so the override is required. Matches the
+        # same no-op pattern used by :class:`PhysicalPlacementStrategy`.
         _ = initial_layout
 
     def cz_placements(
@@ -174,10 +181,7 @@ class NoReturnStrategyBase(PlacementStrategyABC):
         if result.status != "solved":
             return AtomState.bottom()
 
-        move_layers = tuple(
-            tuple(LaneAddress.from_inner(lane) for lane in step)
-            for step in result.move_layers
-        )
+        move_layers = convert_move_layers(result.move_layers)
         goal_map = {
             qid: LocationAddress(loc.word_id, loc.site_id, loc.zone_id)
             for qid, loc in result.goal_config.items()

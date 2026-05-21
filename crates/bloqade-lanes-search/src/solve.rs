@@ -15,6 +15,7 @@ use crate::config::{Config, ConfigError};
 use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
 use crate::entangling::{self, WordPairDistances};
+use crate::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY, OCCUPANCY_PENALTY_DEFAULT};
 use crate::entropy::EntropyTrace;
 use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::generators::HeuristicGenerator;
@@ -28,31 +29,6 @@ use crate::observer::NoOpObserver;
 use crate::scorers::DistanceScorer;
 use crate::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::traits::{Goal, Heuristic, MoveGenerator};
-
-/// Default spectator-occupancy penalty (in lane-hop units). See
-/// [`SolveOptions::occupancy_penalty`] for full semantics.
-const OCCUPANCY_PENALTY_DEFAULT: f64 = 1.0;
-
-/// Per-atom-moved penalty (in lane-hop units) applied by the iterative
-/// Hungarian wrapper. Slightly biases the assignment toward leaving
-/// atoms where they are when the cost is otherwise close, which keeps
-/// shuttling simpler in subsequent search. Default `1.0` ≈ one hop.
-const MOVE_PENALTY: f64 = 1.0;
-
-/// Transition-target blend weight passed to
-/// [`entangling::lookahead_assign_pairs`]. Each future layer's
-/// assigned slot positions are weighted by this factor when biasing
-/// the current layer's Hungarian.
-///
-/// Calibrated by sweep on 80q / mp=10 across d ∈ {3, 5, 8, 12}: the
-/// previous default of 0.2 was strictly worse than 0.0 at d=5/8/12
-/// (the lookahead's forward-sim noise dominated the signal at low
-/// blend weight). 2.0 is the best-tested point — it makes the
-/// transition-target signal heavier than the current-layer move
-/// penalty, which lets the lookahead actually steer each layer
-/// toward configs that stage the next layer well. Wins range from
-/// -2% at d=3 to -5% at d=5, with no failure-rate regressions.
-const LOOKAHEAD_BETA: f64 = 2.0;
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -997,7 +973,7 @@ impl MoveSolver {
     ///
     /// Positioned as a tool for high-occupancy regimes where the baseline
     /// loose-goal under-uses parallelism. See
-    /// `plans/2026-05-11-receding-horizon-loose-goal-design.md`.
+    /// `docs/superpowers/plans/2026-05-11-receding-horizon-loose-goal-design.md`.
     #[allow(clippy::too_many_arguments)]
     pub fn solve_entangling_rh(
         &self,

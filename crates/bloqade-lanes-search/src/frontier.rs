@@ -428,12 +428,16 @@ impl PartialOrd for IdsEntry {
 
 /// Priority-queue frontier for Iterative Diving Search.
 ///
-/// Normally dives depth-first (highest depth popped first), picking the
-/// expander's best candidate via insertion order. When all nodes at the
-/// current depth are exhausted (dead ends, closed), the heap naturally
-/// pops a shallower node with the best heuristic — the "jump-back".
+/// Pop order is primarily by lowest heuristic score (`h_score`) with
+/// depth as a tiebreaker (deeper first within an h-plateau, so the
+/// search dives when scores tie). When the current best-h path
+/// dead-ends, the heap naturally pops the next-best-h node anywhere in
+/// the tree — the "jump-back". A small reversal-aware penalty is mixed
+/// into `h_score` in `receive_children` to break symmetric cycles
+/// within an h-plateau.
 ///
-/// Inspired by Iterative Diving Search (arxiv:2512.13790).
+/// Inspired by Iterative Diving Search (arxiv:2512.13790); the
+/// h-primary ordering matches the algorithm in that paper.
 pub struct IdsFrontier<H> {
     heap: BinaryHeap<IdsEntry>,
     heuristic: H,

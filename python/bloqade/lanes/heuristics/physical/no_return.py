@@ -30,8 +30,9 @@ class NoReturnPlacementStrategy(NoReturnStrategyBase):
     arch_spec:
         Architecture specification.
     strategy:
-        Inner search strategy name (``"ids"``, ``"cascade"``, ``"entropy"``,
-        ``"astar"``, etc. — see :data:`_solver_dispatch._STRATEGY_MAP`).
+        Inner search strategy as a :class:`SearchStrategy` enum (e.g.
+        :py:attr:`SearchStrategy.IDS` (default),
+        :py:attr:`SearchStrategy.ASTAR`, :py:attr:`SearchStrategy.ENTROPY`).
     max_expansions:
         Maximum node expansions per solve call.
     restarts:
@@ -40,7 +41,8 @@ class NoReturnPlacementStrategy(NoReturnStrategyBase):
         producing diverse target layouts; ``pick_best`` keeps the lowest-
         cost result. Default ``20``.
     deadlock_policy:
-        ``"skip"`` | ``"move_blockers"`` (default) | ``"all_moves"``.
+        :class:`DeadlockPolicy` enum value (default
+        :py:attr:`DeadlockPolicy.MOVE_BLOCKERS`).
     top_c:
         Per-qubit move-candidate pruning cap inside ``HeuristicGenerator``.
         ``None`` keeps all scored bus options. Default ``3`` matches the

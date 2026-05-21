@@ -33,7 +33,8 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
     arch_spec:
         Architecture specification.
     strategy:
-        Search strategy name for the routing phases.
+        Inner search strategy as a :class:`SearchStrategy` enum used for
+        the two routing phases. Default :py:attr:`SearchStrategy.IDS`.
     max_expansions:
         Maximum node expansions per solve call (shared across phases).
     restarts:
@@ -42,7 +43,9 @@ class NoHomePlacementStrategy(NoReturnStrategyBase):
         Hungarian assignments themselves are deterministic; diversity
         comes from the candidate-home-layout fan-out. Default ``20``.
     deadlock_policy:
-        How the heuristic generator handles deadlocks during routing.
+        :class:`DeadlockPolicy` enum value controlling how the heuristic
+        generator handles deadlocks during routing. Default
+        :py:attr:`DeadlockPolicy.MOVE_BLOCKERS`.
     gamma:
         Discount factor for future CZ layer weights in the return
         assignment (default ``0.85``).

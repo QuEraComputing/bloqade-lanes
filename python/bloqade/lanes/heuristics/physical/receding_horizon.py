@@ -7,7 +7,7 @@ re-plans. Targeted at high-occupancy regimes where the baseline
 regimes, the K-branch rollout structure is overhead and the baseline is
 preferred.
 
-See ``plans/2026-05-11-receding-horizon-loose-goal-design.md`` for the
+See ``docs/superpowers/plans/2026-05-11-receding-horizon-loose-goal-design.md`` for the
 full design rationale.
 """
 
@@ -51,9 +51,10 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
     arch_spec
         Architecture specification.
     strategy
-        Inner search strategy used for rollouts. Currently only ``"ids"``
-        is exercised; passing other values still works but the receding-
-        horizon orchestration is tuned for IDS.
+        Inner search strategy used for rollouts as a :class:`SearchStrategy`
+        enum. Default :py:attr:`SearchStrategy.IDS` (the orchestration is
+        tuned for IDS; other values still work but aren't routinely
+        exercised).
     max_expansions
         Optional cap on **total** node expansions across all stages of one
         restart's trajectory.
@@ -75,7 +76,8 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
         Per-qubit move-candidate pruning cap inside ``HeuristicGenerator``
         (same as the base no-return strategy).
     deadlock_policy
-        ``"skip"`` | ``"move_blockers"`` (default) | ``"all_moves"``.
+        :class:`DeadlockPolicy` enum value (default
+        :py:attr:`DeadlockPolicy.MOVE_BLOCKERS`).
     k_candidates
         ``K``: number of Hungarian candidates tried per stage. Default 5.
     rollout_horizon

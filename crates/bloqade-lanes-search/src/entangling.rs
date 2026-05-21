@@ -14,6 +14,33 @@ use crate::config::Config;
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
 
+// ── Shared cost-matrix constants ────────────────────────────────────
+
+/// Default spectator-occupancy penalty (in lane-hop units). See
+/// [`crate::solve::EntanglingOptions::occupancy_penalty`] for full semantics.
+pub(crate) const OCCUPANCY_PENALTY_DEFAULT: f64 = 1.0;
+
+/// Per-atom-moved penalty (in lane-hop units) applied by the iterative
+/// Hungarian wrapper. Slightly biases the assignment toward leaving
+/// atoms where they are when the cost is otherwise close, which keeps
+/// shuttling simpler in subsequent search. Default `1.0` ≈ one hop.
+pub(crate) const MOVE_PENALTY: f64 = 1.0;
+
+/// Transition-target blend weight passed to
+/// [`lookahead_assign_pairs`]. Each future layer's assigned slot
+/// positions are weighted by this factor when biasing the current
+/// layer's Hungarian.
+///
+/// Calibrated by sweep on 80q / mp=10 across d ∈ {3, 5, 8, 12}: the
+/// previous default of 0.2 was strictly worse than 0.0 at d=5/8/12
+/// (the lookahead's forward-sim noise dominated the signal at low
+/// blend weight). 2.0 is the best-tested point — it makes the
+/// transition-target signal heavier than the current-layer move
+/// penalty, which lets the lookahead actually steer each layer
+/// toward configs that stage the next layer well. Wins range from
+/// -2% at d=3 to -5% at d=5, with no failure-rate regressions.
+pub(crate) const LOOKAHEAD_BETA: f64 = 2.0;
+
 // ── Entangling word pairs ──────────────────────────────────────────
 
 /// A pair of words within a zone that can perform CZ gates together.

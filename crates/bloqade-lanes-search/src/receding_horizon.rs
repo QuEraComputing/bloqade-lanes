@@ -3,7 +3,7 @@
 //! This module orchestrates a sequence of K-candidate-rollout stages, each
 //! using the existing IDS search infrastructure as the rollout simulator and
 //! the existing Hungarian variants as both the per-candidate compass and the
-//! per-leaf evaluator. See `plans/2026-05-11-receding-horizon-loose-goal-design.md`.
+//! per-leaf evaluator. See `docs/superpowers/plans/2026-05-11-receding-horizon-loose-goal-design.md`.
 //!
 //! High-level shape (one stage of one restart):
 //!   1. Generate K diverse Hungarian assignments from the current state.
@@ -40,12 +40,7 @@ use crate::scorers::DistanceScorer;
 use crate::solve::{EntanglingOptions, SolveOptions, SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
-/// Per-rollout-iteration move penalty added to each Hungarian cost cell.
-/// Matches `MOVE_PENALTY` in [`crate::solve`].
-const MOVE_PENALTY: f64 = 1.0;
-/// Future-layer blend weight for lookahead Hungarian. Matches
-/// `LOOKAHEAD_BETA` in [`crate::solve`].
-const LOOKAHEAD_BETA: f64 = 2.0;
+use crate::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
 /// Cap on how many extra noise-perturbed candidates we try when the
 /// weight-grid alone returns fewer than `K` unique assignments.
 const MAX_NOISE_TOP_UP_RETRIES: u64 = 50;
@@ -968,7 +963,7 @@ pub fn solve_entangling_rh_single(
         };
 
         // (e) Commit: full path for tier-0, `m` layers for tier-1.
-        let commit_count = if best.is_tier0() {
+        let mut commit_count = if best.is_tier0() {
             best.depth() as usize
         } else {
             (rh_opts.commit_depth as usize).min(best.depth() as usize)
@@ -978,21 +973,27 @@ pub fn solve_entangling_rh_single(
             let fb = fallback(&state);
             return merge_fallback(committed_layers, fb, total_expansions);
         }
-        for ms in best.path().iter().take(commit_count) {
-            committed_layers.push(ms.clone());
-        }
-        // Advance state.
+        // Advance state. If the partial-commit replay fails (would only
+        // happen on an internal inconsistency between the rollout graph
+        // and the orchestrator's tracked state — apply_move_set returns
+        // None), promote the commit to the full path so `committed_layers`
+        // and `state` stay consistent (both reach `best.leaf_config()`).
+        // Without this fallback the orchestrator would silently emit a
+        // prefix of moves whose replay does not reproduce `goal_config`.
         state = if commit_count == best.path().len() {
             best.leaf_config().clone()
         } else {
-            // Walk the path from the current state, applying each move.
-            // We need to recover the config after `commit_count` moves
-            // from the rollout. The simplest way: replay the moves to
-            // derive the intermediate config (since the rollout's graph
-            // is dropped at end of stage scope).
-            apply_layers_to(state.clone(), best.path().iter().take(commit_count), &index)
-                .unwrap_or_else(|| best.leaf_config().clone())
+            match apply_layers_to(state.clone(), best.path().iter().take(commit_count), &index) {
+                Some(s) => s,
+                None => {
+                    commit_count = best.path().len();
+                    best.leaf_config().clone()
+                }
+            }
         };
+        for ms in best.path().iter().take(commit_count) {
+            committed_layers.push(ms.clone());
+        }
 
         // After commit, refresh x to the configured horizon (it may have
         // been reduced by the fallback path above).
@@ -1034,17 +1035,35 @@ fn apply_layers_to<'a>(
 /// Apply one [`MoveSet`] to a configuration. Each lane in the move set
 /// describes an atom move from its source location to its destination.
 /// Endpoints are resolved via the [`LaneIndex`].
+///
+/// Move layers are *parallel* in the AOD model — all sources are lifted
+/// before any destination is occupied, so a move layer can validly
+/// contain a chain like `(L1 → L2, L2 → L3)` where one lane's source is
+/// another lane's destination. To preserve that semantics, we snapshot
+/// the source → qubit-index map from the *input* config before applying
+/// any move, then write all destinations against that snapshot. Naively
+/// mutating in place would mis-attribute the chained move to the just-
+/// moved atom rather than the atom originally at L2.
 fn apply_move_set(config: &Config, move_set: &MoveSet, index: &LaneIndex) -> Option<Config> {
     use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
+    use std::collections::HashMap;
 
     let mut next: Vec<(u32, LocationAddr)> = config.iter().collect();
+    // Snapshot source → index-in-`next` from the input config. Multiple
+    // qubits should never share a source location; if they do, treat
+    // the move set as malformed and signal failure.
+    let mut src_to_idx: HashMap<LocationAddr, usize> = HashMap::with_capacity(next.len());
+    for (i, (_, loc)) in next.iter().enumerate() {
+        if src_to_idx.insert(*loc, i).is_some() {
+            return None;
+        }
+    }
 
     for &lane_enc in move_set.encoded_lanes() {
         let lane = LaneAddr::decode_u64(lane_enc);
         let (src, dst) = index.endpoints(&lane)?;
-        // Find the qubit at src and move it to dst.
-        let entry = next.iter_mut().find(|(_, loc)| *loc == src)?;
-        entry.1 = dst;
+        let idx = *src_to_idx.get(&src)?;
+        next[idx].1 = dst;
     }
     Config::new(next).ok()
 }
