@@ -33,6 +33,65 @@ def test_logical_mvp_compile_to_move_passes_through_to_pipeline(monkeypatch):
     assert captured["placement_strategy"] is None
 
 
+def test_logical_pipeline_defaults_built_from_arch_spec(monkeypatch):
+    """LogicalPipeline.emit() constructs the default heuristic and strategy from
+    self.arch_spec, not a hardcoded default — verifies the arch_spec propagation fix."""
+    import bloqade.lanes.pipeline.logical as logical_module
+    from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
+    from bloqade.lanes.arch.gemini.logical import get_arch_spec
+    from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
+    from bloqade.lanes.heuristics.logical.placement import (
+        LogicalPlacementStrategyNoHome,
+    )
+    from bloqade.lanes.pipeline.logical import LogicalPipeline
+
+    custom_spec = get_arch_spec()
+    captured = {}
+
+    class FakeMethod:
+        dialects = cast(ir.DialectGroup, object())
+
+    fake_out = cast(ir.Method, FakeMethod())
+
+    class _NoOpPass:
+        def __init__(self, dialects: object, **kwargs: object) -> None:
+            pass
+
+        def __call__(self, mt: object) -> None:
+            pass
+
+    from kirin import passes
+
+    FakePassType = cast(type[passes.Pass], _NoOpPass)
+
+    class FakeNativeToPlace:
+        def __init__(self, arch_spec=None):
+            pass
+
+        def emit(self, mt, no_raise=True):
+            return fake_out
+
+    class FakePlaceToMove:
+        def __init__(self, layout_heuristic=None, placement_strategy=None, **kwargs):
+            captured["heuristic"] = layout_heuristic
+            captured["strategy"] = placement_strategy
+
+        def emit(self, mt, no_raise=True):
+            return fake_out
+
+    monkeypatch.setattr(logical_module, "_LogicalNativeToPlace", FakeNativeToPlace)
+    monkeypatch.setattr(logical_module, "_PlaceToMove", FakePlaceToMove)
+
+    pipeline = LogicalPipeline(arch_spec=custom_spec, place_opt_type=FakePassType)
+    pipeline.emit(cast(ir.Method, object()))
+
+    assert isinstance(captured["heuristic"], LogicalLayoutHeuristic)
+    assert captured["heuristic"].arch_spec is custom_spec
+    assert isinstance(captured["strategy"], PalindromePlacementStrategy)
+    assert isinstance(captured["strategy"].inner, LogicalPlacementStrategyNoHome)
+    assert captured["strategy"].inner.arch_spec is custom_spec
+
+
 def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
     captured = {}
 
