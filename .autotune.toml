@@ -9,13 +9,15 @@
 # Current focus: `steane_physical_35` - a physical Gemini kernel where
 # event-count differences are large enough for tuning signal.
 #
-# The bridge that lets `dsl_autotune` plug into the benchmark harness lives
-# at:
+# The bridge that lets autotune drive the Move Policy DSL lives at:
 #   python/bloqade/lanes/heuristics/physical/policy_movement.py
 #       (PolicyTraversal.policy_path / policy_params / timeout_s,
 #        PolicyPlacementStrategy — sidecar to PhysicalPlacementStrategy)
-#   python/benchmarks/harness/matrix.py
-#       (StrategyConfig "dsl_autotune", reads $BLOQADE_DSL_POLICY)
+#   scripts/autotune/measure_dsl_policy.py
+#       (builds the strategy directly; reads $BLOQADE_DSL_POLICY)
+# The DSL strategy is intentionally NOT registered in
+# `default_strategy_configs` — `latest_{physical,logical}.csv` baselines
+# stay free of the transient candidate.star content.
 #
 # Measure pipeline:
 #   1. autotune runs `scripts/autotune/measure_dsl_policy.py`, which calls
