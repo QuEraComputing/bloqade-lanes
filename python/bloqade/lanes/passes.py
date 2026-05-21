@@ -142,12 +142,12 @@ class ALAPPlacePass(passes.Pass):
 
 @dataclass
 class TransversalRewritePass(passes.Pass):
-    """This Pass does the rewrite from logical to physical addresses"""
+    """Rewrite from logical to physical addresses."""
 
     name: ClassVar[str] = "transversal"
     transversal_location_map: Callable[..., Any] = field(kw_only=True)
 
-    def unsafe_run(self, mt: ir.Method):
+    def unsafe_run(self, mt: ir.Method) -> RewriteResult:
 
         result = rewrite.Walk(
             rewrite.Chain(
@@ -155,7 +155,7 @@ class TransversalRewritePass(passes.Pass):
                 RewriteLocations(self.transversal_location_map),
                 RewriteMoves(self.transversal_location_map),
                 RewriteStarRz(self.transversal_location_map),
-                # handles the rewrite of physial to logical measurement results
+                # handles the rewrite of physical to logical measurement results
                 RewriteGetItem(self.transversal_location_map),
                 RewriteLogicalToPhysicalConversion(),
             )
