@@ -6,7 +6,7 @@ from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningVali
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
-from kirin import ir, rewrite
+from kirin import ir
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
@@ -29,7 +29,6 @@ from bloqade.lanes.passes import TransversalRewritePass
 from bloqade.lanes.pipeline import LogicalPipeline
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
-from bloqade.lanes.rewrite.transversal import RewriteLogicalInitialize
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
 from bloqade.lanes.transform import MoveToSquinLogical
 
@@ -82,8 +81,6 @@ def transversal_rewrites(mt: ir.Method):
         ir.Method: The rewritten method (same object, mutated in place).
 
     """
-
-    rewrite.Walk(RewriteLogicalInitialize(steane7_transversal_map)).rewrite(mt.code)
 
     TransversalRewritePass(
         mt.dialects, transversal_location_map=steane7_transversal_map
