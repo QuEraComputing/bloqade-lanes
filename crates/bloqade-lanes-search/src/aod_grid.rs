@@ -256,14 +256,13 @@ mod tests {
 
     /// Helper: build a BusGridContext from raw position/lane/collision data.
     fn make_context(
-        positions: &[((f64, f64), u64)], // ((x, y), src_encoded)
+        positions: &[((u64, u64), u64)], // ((x, y), src_encoded)
         lanes: &[(u64, u64)],            // (src_encoded, lane_encoded)
         collisions: &[u64],              // src_encoded values with occupied destinations
     ) -> BusGridContext {
         let mut pos_to_src = HashMap::new();
         let mut src_to_pos = HashMap::new();
-        for &((x, y), src_enc) in positions {
-            let pos = (x.to_bits(), y.to_bits());
+        for &(pos, src_enc) in positions {
             pos_to_src.insert(pos, src_enc);
             src_to_pos.insert(src_enc, pos);
         }
@@ -287,18 +286,13 @@ mod tests {
     fn is_valid_rect_all_movers() {
         // 2×2 grid, all positions are movers, no collisions.
         let ctx = make_context(
-            &[
-                ((0.0, 0.0), 10),
-                ((1.0, 0.0), 11),
-                ((0.0, 1.0), 12),
-                ((1.0, 1.0), 13),
-            ],
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );
         let movers: HashSet<u64> = [10, 11, 12, 13].into_iter().collect();
-        let xs: BTreeSet<u64> = [0.0f64.to_bits(), 1.0f64.to_bits()].into_iter().collect();
-        let ys: BTreeSet<u64> = [0.0f64.to_bits(), 1.0f64.to_bits()].into_iter().collect();
+        let xs: BTreeSet<u64> = [0, 1].into_iter().collect();
+        let ys: BTreeSet<u64> = [0, 1].into_iter().collect();
 
         assert!(ctx.is_valid_rect(&xs, &ys, &movers));
     }
@@ -307,18 +301,13 @@ mod tests {
     fn is_valid_rect_missing_mover() {
         // 2×2 grid but position (1,1) is not a mover.
         let ctx = make_context(
-            &[
-                ((0.0, 0.0), 10),
-                ((1.0, 0.0), 11),
-                ((0.0, 1.0), 12),
-                ((1.0, 1.0), 13),
-            ],
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );
         let movers: HashSet<u64> = [10, 11, 12].into_iter().collect(); // 13 missing
-        let xs: BTreeSet<u64> = [0.0f64.to_bits(), 1.0f64.to_bits()].into_iter().collect();
-        let ys: BTreeSet<u64> = [0.0f64.to_bits(), 1.0f64.to_bits()].into_iter().collect();
+        let xs: BTreeSet<u64> = [0, 1].into_iter().collect();
+        let ys: BTreeSet<u64> = [0, 1].into_iter().collect();
 
         assert!(!ctx.is_valid_rect(&xs, &ys, &movers));
     }
@@ -327,18 +316,13 @@ mod tests {
     fn is_valid_rect_collision() {
         // 2×2 grid, all movers, but (1,0) has a collision.
         let ctx = make_context(
-            &[
-                ((0.0, 0.0), 10),
-                ((1.0, 0.0), 11),
-                ((0.0, 1.0), 12),
-                ((1.0, 1.0), 13),
-            ],
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[11], // collision at src 11
         );
         let movers: HashSet<u64> = [10, 11, 12, 13].into_iter().collect();
-        let xs: BTreeSet<u64> = [0.0f64.to_bits(), 1.0f64.to_bits()].into_iter().collect();
-        let ys: BTreeSet<u64> = [0.0f64.to_bits(), 1.0f64.to_bits()].into_iter().collect();
+        let xs: BTreeSet<u64> = [0, 1].into_iter().collect();
+        let ys: BTreeSet<u64> = [0, 1].into_iter().collect();
 
         assert!(!ctx.is_valid_rect(&xs, &ys, &movers));
     }
@@ -347,12 +331,7 @@ mod tests {
     fn greedy_init_single_cluster() {
         // 2×2 grid, all valid — should form one cluster.
         let ctx = make_context(
-            &[
-                ((0.0, 0.0), 10),
-                ((1.0, 0.0), 11),
-                ((0.0, 1.0), 12),
-                ((1.0, 1.0), 13),
-            ],
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );
@@ -373,10 +352,10 @@ mod tests {
         // A 2×2 rectangle would fail, so should split into smaller clusters.
         let ctx = make_context(
             &[
-                ((0.0, 0.0), 10),
-                ((1.0, 0.0), 11),
-                ((0.0, 1.0), 12),
-                ((1.0, 1.0), 13), // exists on bus but not a mover
+                ((0, 0), 10),
+                ((1, 0), 11),
+                ((0, 1), 12),
+                ((1, 1), 13), // exists on bus but not a mover
             ],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
@@ -394,24 +373,13 @@ mod tests {
 
     #[test]
     fn merge_clusters_combines_compatible() {
-        // Two 1×1 clusters at (0,0) and (1,0). Both are movers, (0,0)-(1,0) row is valid.
-        // Also add (0,1) and (1,1) as non-entry bus positions to make them available.
-        let ctx = make_context(
-            &[((0.0, 0.0), 10), ((1.0, 0.0), 11)],
-            &[(10, 100), (11, 101)],
-            &[],
-        );
+        // Two 1×1 clusters at (0,0) and (1,0). Both are movers.
+        let ctx = make_context(&[((0, 0), 10), ((1, 0), 11)], &[(10, 100), (11, 101)], &[]);
         let movers: HashSet<u64> = [10, 11].into_iter().collect();
 
         let clusters = vec![
-            (
-                [0.0f64.to_bits()].into_iter().collect(),
-                [0.0f64.to_bits()].into_iter().collect(),
-            ),
-            (
-                [1.0f64.to_bits()].into_iter().collect(),
-                [0.0f64.to_bits()].into_iter().collect(),
-            ),
+            ([0u64].into_iter().collect(), [0u64].into_iter().collect()),
+            ([1u64].into_iter().collect(), [0u64].into_iter().collect()),
         ];
 
         let solved = ctx.merge_clusters(clusters, &movers);
@@ -433,12 +401,7 @@ mod tests {
     fn build_aod_grids_end_to_end() {
         // 2×2 grid, all 4 positions are movers.
         let ctx = make_context(
-            &[
-                ((0.0, 0.0), 10),
-                ((1.0, 0.0), 11),
-                ((0.0, 1.0), 12),
-                ((1.0, 1.0), 13),
-            ],
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
         );

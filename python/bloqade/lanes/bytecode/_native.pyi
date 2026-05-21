@@ -940,38 +940,143 @@ class DeadlockPolicy:
 
 @final
 class SolveOptions:
-    """Search-tuning parameters for MoveSolver."""
+    """Core search-tuning parameters shared by every MoveSolver entry point."""
 
     def __init__(
         self,
         strategy: SearchStrategy = SearchStrategy.ASTAR,
-        max_movesets_per_group: int = 3,
-        max_goal_candidates: int = 3,
         weight: float = 1.0,
         restarts: int = 1,
-        lookahead: bool = False,
         deadlock_policy: DeadlockPolicy = DeadlockPolicy.SKIP,
-        w_t: float = 0.05,
-        collect_entropy_trace: bool = False,
+        lookahead: bool = False,
+        top_c: int | None = None,
     ) -> None: ...
     @property
     def strategy(self) -> SearchStrategy: ...
-    @property
-    def max_movesets_per_group(self) -> int: ...
-    @property
-    def max_goal_candidates(self) -> int: ...
     @property
     def weight(self) -> float: ...
     @property
     def restarts(self) -> int: ...
     @property
+    def deadlock_policy(self) -> DeadlockPolicy: ...
+    @property
     def lookahead(self) -> bool: ...
     @property
-    def deadlock_policy(self) -> DeadlockPolicy: ...
+    def top_c(self) -> int | None: ...
+    def __repr__(self) -> str: ...
+
+@final
+class EntropyOptions:
+    """Entropy-strategy-specific parameters.
+
+    Only consumed when the strategy is entropy (or a Cascade variant whose
+    inner is entropy). Pass via the optional ``entropy_options`` argument to
+    ``MoveSolver.solve``.
+    """
+
+    def __init__(
+        self,
+        max_movesets_per_group: int = 3,
+        max_goal_candidates: int = 3,
+        w_t: float = 0.05,
+        collect_entropy_trace: bool = False,
+    ) -> None: ...
+    @property
+    def max_movesets_per_group(self) -> int: ...
+    @property
+    def max_goal_candidates(self) -> int: ...
     @property
     def w_t(self) -> float: ...
     @property
     def collect_entropy_trace(self) -> bool: ...
+    def __repr__(self) -> str: ...
+
+@final
+class EntanglingOptions:
+    """Loose-goal entangling-search parameters consumed by
+    ``MoveSolver.solve_entangling``.
+    """
+
+    def __init__(
+        self,
+        congestion_weight: float = 0.0,
+        occupancy_penalty: float = 1.0,
+        hungarian_horizon: int | None = 4,
+    ) -> None: ...
+    @property
+    def congestion_weight(self) -> float: ...
+    @property
+    def occupancy_penalty(self) -> float: ...
+    @property
+    def hungarian_horizon(self) -> int | None: ...
+    def __repr__(self) -> str: ...
+
+@final
+class NoHomeOptions:
+    """Tuning parameters for the no-home return assignment."""
+
+    def __init__(
+        self,
+        gamma: float = 0.85,
+        lambda_lookahead: float = 0.5,
+        k_candidates: int = 8,
+        top_bus_signatures: int = 6,
+        bus_reward_rho: int = 1,
+    ) -> None: ...
+    @property
+    def gamma(self) -> float: ...
+    @property
+    def lambda_lookahead(self) -> float: ...
+    @property
+    def k_candidates(self) -> int: ...
+    @property
+    def top_bus_signatures(self) -> int: ...
+    @property
+    def bus_reward_rho(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+@final
+class RecedingHorizonOptions:
+    """Orchestration parameters for ``MoveSolver.solve_entangling_rh``.
+
+    Controls how many candidate Hungarian assignments are tried per stage,
+    how far each rollout searches forward, how many layers of the winning
+    branch get committed before re-planning, and other tuning knobs.
+    """
+
+    def __init__(
+        self,
+        k_candidates: int = 5,
+        rollout_horizon: int = 5,
+        commit_depth: int = 3,
+        tier0_next_h_weight: float = 0.5,
+        weight_grid: list[tuple[float, float]] | None = None,
+        fallback_x_decrement: int = 1,
+        branch_parallel: bool = True,
+        max_expansions_per_rollout: int = 300,
+        greedy_first: bool = True,
+        inner_beam_width: int = 2,
+    ) -> None: ...
+    @property
+    def k_candidates(self) -> int: ...
+    @property
+    def rollout_horizon(self) -> int: ...
+    @property
+    def commit_depth(self) -> int: ...
+    @property
+    def tier0_next_h_weight(self) -> float: ...
+    @property
+    def weight_grid(self) -> list[tuple[float, float]]: ...
+    @property
+    def fallback_x_decrement(self) -> int: ...
+    @property
+    def branch_parallel(self) -> bool: ...
+    @property
+    def max_expansions_per_rollout(self) -> int: ...
+    @property
+    def greedy_first(self) -> bool: ...
+    @property
+    def inner_beam_width(self) -> int: ...
     def __repr__(self) -> str: ...
 
 @final
@@ -988,8 +1093,8 @@ class SolveResult:
         ...
 
     @property
-    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
-        """Move layers as lists of (direction, move_type, zone_id, word_id, site_id, bus_id) tuples.
+    def move_layers(self) -> list[list[LaneAddress]]:
+        """Move layers as lists of LaneAddress objects.
 
         Empty when ``status`` is not ``"solved"``.
         """
@@ -1128,19 +1233,19 @@ class EntropyScorer:
     def metrics(
         self,
         current_config: dict[int, LocationAddress],
-        moveset: list[tuple[int, int, int, int, int, int]],
+        moveset: list[LaneAddress],
     ) -> MovesetMetrics:
         """Compute the metrics breakdown after applying ``moveset`` to ``current_config``.
 
-        ``moveset`` entries are ``(direction, move_type, zone_id, word_id, site_id, bus_id)``
-        tuples matching the format returned by ``SolveResult.move_layers``.
+        ``moveset`` entries are ``LaneAddress`` objects matching the format
+        returned by ``SolveResult.move_layers``.
         """
         ...
 
     def score_moveset(
         self,
         current_config: dict[int, LocationAddress],
-        moveset: list[tuple[int, int, int, int, int, int]],
+        moveset: list[LaneAddress],
     ) -> float:
         """Shorthand for ``scorer.metrics(current, moveset).score``."""
         ...
@@ -1176,6 +1281,7 @@ class MoveSolver:
         blocked: list[LocationAddress],
         max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
+        entropy_options: EntropyOptions | None = None,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
@@ -1185,6 +1291,8 @@ class MoveSolver:
             blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
             options: Search-tuning parameters. Defaults to SolveOptions().
+            entropy_options: Entropy-strategy parameters. Only consumed when
+                the strategy is entropy.
 
         Returns:
             SolveResult with status indicating outcome.
@@ -1200,6 +1308,7 @@ class MoveSolver:
         generator: DefaultTargetGenerator | None = None,
         max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
+        entropy_options: EntropyOptions | None = None,
     ) -> MultiSolveResult:
         """Solve using a target generator with shared expansion budget.
 
@@ -1211,9 +1320,114 @@ class MoveSolver:
             generator: Rust-side target generator (currently must be None).
             max_expansions: Total expansion budget across all candidates.
             options: Search-tuning parameters. Defaults to SolveOptions().
+            entropy_options: Entropy-strategy parameters. Only consumed when
+                the strategy is entropy.
 
         Returns:
             MultiSolveResult with per-candidate debug info.
+        """
+        ...
+
+    def solve_entangling(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: Optional[int] = None,
+        options: SolveOptions | None = None,
+        entangling_options: EntanglingOptions | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve a loose-goal entangling placement + routing problem.
+
+        Instead of fixed target locations, receives CZ pair constraints and
+        simultaneously discovers both the entangling placement and routing.
+
+        Args:
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+                entangling positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
+            max_expansions: Optional limit on node expansions.
+            options: Search-tuning parameters. Defaults to SolveOptions().
+            entangling_options: Hungarian / loose-goal tuning. Defaults to
+                EntanglingOptions() (hungarian_horizon=4).
+            future_cz_layers: Optional list of future CZ pair layers for
+                lookahead-aware Hungarian assignment. Each layer is a list
+                of (qubit_a, qubit_b) tuples. Clipped Rust-side to
+                ``entangling_options.hungarian_horizon`` layers.
+
+        Returns:
+            SolveResult with the discovered entangling placement.
+        """
+        ...
+
+    def solve_entangling_rh(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: Optional[int] = None,
+        options: SolveOptions | None = None,
+        entangling_options: EntanglingOptions | None = None,
+        rh_options: RecedingHorizonOptions | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Receding-horizon (MPC-style) loose-goal entangling solve.
+
+        At each stage, generates K diverse Hungarian candidate assignments,
+        runs short forward rollouts of each, commits the best branch's
+        path, and re-plans. Targeted at high-occupancy regimes where the
+        baseline ``solve_entangling`` under-uses parallelism.
+
+        Args:
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+                entangling positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
+            max_expansions: Optional limit on total node expansions across all
+                stages of the trajectory.
+            options: Search-tuning parameters. Defaults to SolveOptions().
+            entangling_options: Hungarian cost parameters.
+            rh_options: Receding-horizon orchestration parameters. Defaults
+                to RecedingHorizonOptions() (K=10, x=5, m=1, alpha=0.5).
+            future_cz_layers: Future CZ layers for lookahead-aware Hungarian
+                candidate generation.
+
+        Returns:
+            SolveResult with the committed move-layer trajectory and the
+            final entangling-feasible configuration.
+        """
+        ...
+
+    def solve_nohome(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: Optional[int] = None,
+        options: SolveOptions | None = None,
+        nohome_options: NoHomeOptions | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Two-phase no-home placement: return assignment + entangling routing.
+
+        Phase 1 assigns displaced qubits to optimal home sites using the
+        Hungarian algorithm with gamma-decayed future CZ partner proximity.
+        Phase 2 routes from the chosen home layout to CZ-staging positions
+        using ``solve_entangling``.
+
+        Args:
+            initial: Mapping of qubit_id to current location.
+            cz_pairs: List of (control, target) qubit pairs for the CZ layer.
+            blocked: List of immovable obstacle locations.
+            max_expansions: Optional node expansion budget.
+            options: Search-tuning parameters for routing phases.
+            nohome_options: Tuning parameters for the return assignment.
+            future_cz_layers: Future CZ layers for lookahead.
+
+        Returns:
+            SolveResult with the combined return + entangling placement.
         """
         ...
 
@@ -1269,7 +1483,7 @@ class MultiSolveResult:
         ...
 
     @property
-    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+    def move_layers(self) -> list[list[LaneAddress]]:
         """Move layers from the winning candidate."""
         ...
 

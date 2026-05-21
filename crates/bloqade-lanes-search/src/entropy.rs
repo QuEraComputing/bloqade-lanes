@@ -1610,6 +1610,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         entropy_search(
             root,
@@ -1644,6 +1645,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         entropy_search(
             root,
@@ -2051,6 +2053,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams::default();
 
@@ -2081,6 +2084,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             w_d: 0.0,
@@ -2114,6 +2118,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 0,
@@ -2136,6 +2141,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 4,

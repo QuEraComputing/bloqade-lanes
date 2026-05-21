@@ -79,4 +79,4 @@ trotter_rand_35,rust_entropy_10,builtin,rust,rust_solver,True,16079.830833,1120,
 trotter_rand_35,rust_entropy_20,builtin,rust,rust_solver,True,17234.039208,1104,1516,0.0000000000,56038,,
 trotter_rand_35,rust_entropy_5,builtin,rust,rust_solver,True,10527.379750,1140,1468,0.0000000000,13972,,
 trotter_rand_35,rust_greedy,builtin,rust,rust_solver,False,,,,,,,first-solution Rust solve (non-optimal); Rust solver nodes_explored captured from solver output; error=Compilation did not fully lower to Move IR; place.CZ statements remain.
-trotter_rand_35,rust_ids,builtin,rust,rust_solver,True,1036.913708,1214,1532,0.0000000000,620,,
+trotter_rand_35,rust_ids,builtin,rust,rust_solver,True,1036.913708,1214,1532,0.0000000000,624,,

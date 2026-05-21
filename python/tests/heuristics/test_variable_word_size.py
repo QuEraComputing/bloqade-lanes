@@ -45,19 +45,7 @@ def _make_placement_methods(word_size_y: int) -> LogicalPlacementMethods:
 
 def _make_nohome(word_size_y: int) -> LogicalPlacementStrategyNoHome:
     arch_spec = _make_arch(word_size_y)
-    placement = LogicalPlacementStrategyNoHome.__new__(LogicalPlacementStrategyNoHome)
-    placement.arch_spec = arch_spec
-    placement.H_lookahead = 4
-    placement.gamma = 0.85
-    placement.lambda_lookahead = 0.5
-    placement.K_candidates = 8
-    placement.large_cost = 1e9
-    placement.lane_move_overhead_cost = 0.0
-    placement.top_bus_signatures = 6
-    placement.bus_reward_rho = 0.7
-    placement._best_path_cache = {}
-    placement.__post_init__()
-    return placement
+    return LogicalPlacementStrategyNoHome(arch_spec=arch_spec)
 
 
 # ── Shared validation helpers ──
