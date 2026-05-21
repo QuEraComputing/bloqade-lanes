@@ -144,6 +144,7 @@ class ALAPPlacePass(passes.Pass):
 class TransversalRewritePass(passes.Pass):
     """This Pass does the rewrite from logical to physical addresses"""
 
+    name: ClassVar[str] = "transversal"
     transversal_location_map: Callable[..., Any] = field(kw_only=True)
 
     def unsafe_run(self, mt: ir.Method):
