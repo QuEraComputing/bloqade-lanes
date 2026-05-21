@@ -230,7 +230,7 @@ def build_entropy_trace(
         best_buffer_size=best_buffer_size,
         arch_spec=arch_spec,
         traced_target=dict(traced_target),
-        blocked_locations=tuple(),
+        blocked_locations=placement_strategy.traced_blocked_locations,
         local_to_global_qid=local_to_global_qid,
         location_to_global_qid=location_to_global_qid,
         kernel_name=kernel_name,
