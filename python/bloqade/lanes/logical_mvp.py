@@ -21,11 +21,8 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom, placement
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
-from bloqade.lanes.heuristics.logical import layout as logical_layout
-from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_logical_noise_model
 from bloqade.lanes.pipeline import LogicalPipeline
 from bloqade.lanes.rewrite import transversal
@@ -122,14 +119,6 @@ def compile_squin_to_move(
         ir.Method: The compiled move dialect method.
 
     """
-
-    if layout_heuristic is None:
-        layout_heuristic = logical_layout.LogicalLayoutHeuristic()
-
-    if placement_strategy is None:
-        placement_strategy = PalindromePlacementStrategy(
-            inner=LogicalPlacementStrategyNoHome()
-        )
 
     mt = LogicalPipeline(
         layout_heuristic=layout_heuristic,
