@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar
+from dataclasses import dataclass, field
+from typing import Any, Callable, ClassVar
 
 from kirin import ir, passes, rewrite
 from kirin.rewrite.abc import RewriteResult
@@ -19,6 +19,13 @@ from bloqade.lanes.rewrite.reorder_static_placement import (
     ReorderStaticPlacement,
     alap_reorder_policy,
     asap_reorder_policy,
+)
+from bloqade.lanes.rewrite.transversal import (
+    RewriteGetItem,
+    RewriteLocations,
+    RewriteLogicalToPhysicalConversion,
+    RewriteMoves,
+    RewriteStarRz,
 )
 
 
@@ -130,4 +137,27 @@ class ALAPPlacePass(passes.Pass):
         result = result.join(
             rewrite.Fixpoint(rewrite.Walk(FuseAdjacentGates())).rewrite(mt.code)
         )
+        return result
+
+
+@dataclass
+class TransversalRewritePass(passes.Pass):
+    """This Pass does the rewrite from logical to physical addresses"""
+
+    transversal_location_map: Callable[..., Any] = field(kw_only=True)
+
+    def unsafe_run(self, mt: ir.Method):
+
+        result = rewrite.Walk(
+            rewrite.Chain(
+                # handles rewriting logical location addresses to groups of physical addresses
+                RewriteLocations(self.transversal_location_map),
+                RewriteMoves(self.transversal_location_map),
+                RewriteStarRz(self.transversal_location_map),
+                # handles the rewrite of physial to logical measurement results
+                RewriteGetItem(self.transversal_location_map),
+                RewriteLogicalToPhysicalConversion(),
+            )
+        ).rewrite(mt.code)
+
         return result

@@ -5,11 +5,7 @@ from kirin.dialects import debug, ilist
 
 from bloqade import qubit, squin
 from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress
-from bloqade.lanes.rewrite.transversal import (
-    RewriteGetItem,
-    RewriteLogicalToPhysicalConversion,
-    RewriteStarRz,
-)
+from bloqade.lanes.passes import TransversalRewritePass
 
 from .rewrite import RewriteFill, RewriteInitialize, RewriteMoves
 from .stmts import dialect
@@ -212,21 +208,21 @@ def steane7_initialize_with_noise(
 
 
 class SpecializeGemini:
-
     def __init__(self, sites_per_word: int = 16):
         self.sites_per_word = sites_per_word
 
     def emit(self, mt: ir.Method, no_raise=True) -> ir.Method:
         out = mt.similar(dialects=mt.dialects.add(dialect))
 
+        TransversalRewritePass(
+            mt.dialects, transversal_location_map=steane7_transversal_map
+        )(mt)
+
         rewrite.Walk(
             rewrite.Chain(
-                RewriteStarRz(steane7_transversal_map),
                 RewriteMoves(sites_per_word=self.sites_per_word),
                 RewriteFill(),
                 RewriteInitialize(),
-                RewriteGetItem(steane7_transversal_map),
-                RewriteLogicalToPhysicalConversion(),
             )
         ).rewrite(out.code)
 
