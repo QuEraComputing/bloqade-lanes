@@ -20,12 +20,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use bloqade_lanes_search::fixture;
+use bloqade_lanes_search::dsl::fixture;
 
-const ACTIONS_SRC: &str = include_str!("../move_policy_dsl/actions.rs");
-const LIB_MOVE_SRC: &str = include_str!("../move_policy_dsl/lib_move.rs");
-const GRAPH_HANDLE_SRC: &str = include_str!("../move_policy_dsl/graph_handle.rs");
-const LIB_TARGET_SRC: &str = include_str!("../target_generator_dsl/lib_target.rs");
+const ACTIONS_SRC: &str = include_str!("../dsl/move_policy_dsl/actions.rs");
+const LIB_MOVE_SRC: &str = include_str!("../dsl/move_policy_dsl/lib_move.rs");
+const GRAPH_HANDLE_SRC: &str = include_str!("../dsl/move_policy_dsl/graph_handle.rs");
+const LIB_TARGET_SRC: &str = include_str!("../dsl/target_generator_dsl/lib_target.rs");
 
 const PRIMER_PATH: &str = "policies/primer.md";
 

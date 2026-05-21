@@ -7,16 +7,16 @@ use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
-use bloqade_lanes_search::fixture::{self, Problem};
-use bloqade_lanes_search::lane_index::LaneIndex;
-use bloqade_lanes_search::move_policy_dsl::{
+use bloqade_lanes_search::dsl::fixture::{self, Problem};
+use bloqade_lanes_search::dsl::move_policy_dsl::{
     GraphDelta, JsonMoveTraceObserver, MoveKernelObserver, PolicyGraphSnapshot, PolicyOptions,
     PolicyStatus, solve_with_policy,
 };
-use bloqade_lanes_search::target_generator_dsl::{
+use bloqade_lanes_search::dsl::target_generator_dsl::{
     CandidateSummary, JsonTargetTraceObserver, TargetContextSnapshot, TargetKernelObserver,
     run_target_policy,
 };
+use bloqade_lanes_search::lane_index::LaneIndex;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_trace_policy(
@@ -68,7 +68,7 @@ fn loc_from_triple(t: &[i32; 3]) -> LocationAddr {
 #[allow(clippy::too_many_arguments)]
 fn trace_move(
     policy: &Path,
-    mp: bloqade_lanes_search::fixture::MoveProblem,
+    mp: bloqade_lanes_search::dsl::fixture::MoveProblem,
     arch: bloqade_lanes_bytecode_core::arch::ArchSpec,
     params: Option<&Path>,
     max_expansions: Option<u64>,
@@ -117,7 +117,7 @@ fn trace_move(
 
 fn trace_target(
     policy: &Path,
-    tp: bloqade_lanes_search::fixture::TargetProblem,
+    tp: bloqade_lanes_search::dsl::fixture::TargetProblem,
     arch: bloqade_lanes_bytecode_core::arch::ArchSpec,
     params: Option<&Path>,
     json: bool,
@@ -195,7 +195,7 @@ impl<W: Write> MoveKernelObserver for HumanMoveTraceObserver<W> {
         &mut self,
         step: u64,
         depth: u32,
-        action: &bloqade_lanes_search::move_policy_dsl::actions::MoveAction,
+        action: &bloqade_lanes_search::dsl::move_policy_dsl::actions::MoveAction,
         _delta: &GraphDelta,
     ) {
         let _ = writeln!(self.w, "step   #{step:04} depth={depth} action={action:?}");

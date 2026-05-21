@@ -24,7 +24,7 @@ use starlark::values::tuple::AllocTuple;
 use starlark::values::{Heap, NoSerialize, ProvidesStaticType, StarlarkValue, UnpackValue, Value};
 
 use crate::config::Config;
-use crate::generators::pipeline::{
+use crate::dsl::pipeline::{
     PackedCandidate, ScoredLane, group_by_triplet as pipeline_group_by_triplet,
     pack_aod_rectangles as pipeline_pack_aod_rectangles,
 };
@@ -113,13 +113,13 @@ fn register_config_methods(builder: &mut starlark::environment::MethodsBuilder) 
 // `bloqade_lanes_dsl_core::primitives::move_set` alongside its
 // inner `MoveSet`, so the dsl-core `ArchSpec` methods can construct it
 // directly without dsl-core depending on this crate. Re-exported so
-// existing `crate::move_policy_dsl::lib_move::StarlarkMoveSet` imports
+// existing `crate::dsl::move_policy_dsl::lib_move::StarlarkMoveSet` imports
 // keep working.
 pub use bloqade_lanes_dsl_core::primitives::move_set::StarlarkMoveSet;
 
 // ── Candidate wrapper types (ScoredLane / PackedCandidate) ────────────────
 //
-// These mirror the pure-Rust types in `crate::generators::pipeline`. They
+// These mirror the pure-Rust types in `crate::dsl::pipeline`. They
 // expose `.qid`, `.lane`, `.score` (etc.) attributes so policy code reads
 // them like records. We chose typed wrappers over dicts to avoid lossy
 // round-trips (LaneAddr ⇄ encoded u64 ⇄ LaneAddr) before AOD packing.

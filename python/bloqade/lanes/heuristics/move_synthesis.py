@@ -10,7 +10,6 @@ from bloqade.lanes.bytecode._native import MoveSolver
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.heuristics.physical.movement import (
     RustPlacementTraversal,
-    _is_acceptable_solve,
     convert_move_layers,
     solve_options_from_traversal,
 )
@@ -46,17 +45,9 @@ def compute_move_layers(
         blocked_native,
         max_expansions=None,
         options=solve_options_from_traversal(traversal),
-        policy_path=traversal.policy_path,
-        policy_params=traversal.policy_params,
-        timeout_s=traversal.timeout_s,
     )
-    # Accept native "solved" OR DSL "fallback:" results with non-empty
-    # move_layers — see `_is_acceptable_solve` for the full contract.
-    if not _is_acceptable_solve(result):
-        raise RuntimeError(
-            f"move synthesis failed with status={result.status!r} "
-            f"policy_status={getattr(result, 'policy_status', None)!r}"
-        )
+    if result.status != "solved":
+        raise RuntimeError(f"move synthesis failed with status={result.status!r}")
     return convert_move_layers(result.move_layers)
 
 

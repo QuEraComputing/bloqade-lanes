@@ -26,10 +26,10 @@ use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
 use thiserror::Error;
 
+use crate::dsl::target_generator_dsl::ctx_handle::StarlarkTargetContext;
+use crate::dsl::target_generator_dsl::lib_target::StarlarkLibTarget;
 use crate::lane_index::LaneIndex;
 use crate::target_generator::{CandidateError, validate_candidate};
-use crate::target_generator_dsl::ctx_handle::StarlarkTargetContext;
-use crate::target_generator_dsl::lib_target::StarlarkLibTarget;
 
 #[derive(Debug, Error)]
 pub enum TargetPolicyError {
@@ -92,9 +92,9 @@ impl TargetPolicyRunner {
         lookahead_cz_layers: Vec<(Vec<u32>, Vec<u32>)>,
         cz_stage_index: u32,
         _policy_params: serde_json::Value,
-        observer: &mut dyn crate::target_generator_dsl::observer::TargetKernelObserver,
+        observer: &mut dyn crate::dsl::target_generator_dsl::observer::TargetKernelObserver,
     ) -> Result<Vec<Vec<(u32, LocationAddr)>>, TargetPolicyError> {
-        use crate::target_generator_dsl::observer::{CandidateSummary, TargetContextSnapshot};
+        use crate::dsl::target_generator_dsl::observer::{CandidateSummary, TargetContextSnapshot};
 
         let snap = TargetContextSnapshot {
             current_qubit_count: placement.len(),
@@ -215,7 +215,7 @@ pub fn run_target_policy(
     cz_stage_index: u32,
     policy_params: serde_json::Value,
     cfg: &SandboxConfig,
-    observer: &mut dyn crate::target_generator_dsl::observer::TargetKernelObserver,
+    observer: &mut dyn crate::dsl::target_generator_dsl::observer::TargetKernelObserver,
 ) -> Result<Vec<Vec<(u32, LocationAddr)>>, TargetPolicyError> {
     let runner = TargetPolicyRunner::from_path(policy_path, cfg)?;
     runner.generate(
@@ -282,7 +282,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
-                &mut crate::target_generator_dsl::NoOpTargetObserver,
+                &mut crate::dsl::target_generator_dsl::NoOpTargetObserver,
             )
             .expect("generate");
         assert_eq!(candidates.len(), 1);
@@ -314,7 +314,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
-                &mut crate::target_generator_dsl::NoOpTargetObserver,
+                &mut crate::dsl::target_generator_dsl::NoOpTargetObserver,
             )
             .expect_err("must reject");
         assert!(
@@ -338,7 +338,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
-                &mut crate::target_generator_dsl::NoOpTargetObserver,
+                &mut crate::dsl::target_generator_dsl::NoOpTargetObserver,
             )
             .expect_err("must reject");
         assert!(
@@ -367,7 +367,7 @@ def generate(ctx, lib):
                 vec![],
                 0,
                 serde_json::Value::Object(Default::default()),
-                &mut crate::target_generator_dsl::NoOpTargetObserver,
+                &mut crate::dsl::target_generator_dsl::NoOpTargetObserver,
             )
             .expect("generate");
         assert!(

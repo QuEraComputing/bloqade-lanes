@@ -6,8 +6,8 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use crate::move_policy_dsl::actions::MoveAction;
-use crate::move_policy_dsl::kernel::PolicyStatus;
+use crate::dsl::move_policy_dsl::actions::MoveAction;
+use crate::dsl::move_policy_dsl::kernel::PolicyStatus;
 
 /// Snapshot of the policy graph at the moment `on_init` is called.
 /// Data-only mirror of relevant fields on `PolicyGraphInner`.
@@ -217,8 +217,8 @@ mod tests {
         use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
         use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
 
+        use crate::dsl::move_policy_dsl::kernel::{PolicyOptions, solve_with_policy};
         use crate::lane_index::LaneIndex;
-        use crate::move_policy_dsl::kernel::{PolicyOptions, solve_with_policy};
         use crate::test_utils::example_arch_json;
 
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -281,8 +281,8 @@ mod tests {
         use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
         use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
 
+        use crate::dsl::move_policy_dsl::kernel::{PolicyOptions, solve_with_policy};
         use crate::lane_index::LaneIndex;
-        use crate::move_policy_dsl::kernel::{PolicyOptions, solve_with_policy};
         use crate::test_utils::{example_arch_json, lane, loc};
 
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();

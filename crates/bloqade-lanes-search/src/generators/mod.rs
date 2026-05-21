@@ -5,7 +5,6 @@ pub mod entropy;
 pub mod exhaustive;
 pub mod greedy;
 pub mod heuristic;
-pub(crate) mod pipeline;
 
 pub use entropy::EntropyGenerator;
 pub use exhaustive::ExhaustiveGenerator;

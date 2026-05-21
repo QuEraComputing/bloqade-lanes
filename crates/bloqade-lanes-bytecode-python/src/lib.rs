@@ -5,12 +5,20 @@
 //! types from [`bloqade_lanes_bytecode_core`] with Python-friendly
 //! constructors, input validation, and error conversion.
 
+// PyO3-bound constructors and methods routinely exceed the default 7-argument
+// clippy threshold because Python kwargs make long signatures idiomatic.
+// Silence the lint crate-wide rather than annotating each `fn` individually,
+// which would put attributes adjacent to lines other branches frequently edit
+// and trigger spurious merge conflicts.
+#![allow(clippy::too_many_arguments)]
+
 use pyo3::prelude::*;
 
 mod arch_python;
 mod atom_state_python;
 pub(crate) mod errors;
 mod instruction_python;
+mod policy_runner_python;
 mod program_python;
 mod search_python;
 mod target_generator_dsl_python;
@@ -56,6 +64,10 @@ fn bloqade_lanes_bytecode(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<search_python::PyMovesetMetrics>()?;
     m.add_class::<search_python::PyDefaultTargetGenerator>()?;
     m.add_class::<search_python::PyMultiSolveResult>()?;
+
+    // Move Policy DSL (sidecar to MoveSolver — Plan A of #597)
+    m.add_class::<policy_runner_python::PyPolicyRunner>()?;
+    m.add_class::<policy_runner_python::PyPolicySolveResult>()?;
 
     // Target Generator DSL (Plan B of #597)
     m.add_class::<target_generator_dsl_python::PyTargetPolicyRunner>()?;

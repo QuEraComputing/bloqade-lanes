@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
+use bloqade_lanes_search::dsl::target_generator_dsl::{TargetPolicyError, TargetPolicyRunner};
 use bloqade_lanes_search::lane_index::LaneIndex;
-use bloqade_lanes_search::target_generator_dsl::{TargetPolicyError, TargetPolicyRunner};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -50,13 +50,14 @@ impl PyTargetPolicyRunner {
     ) -> PyResult<Bound<'py, PyList>> {
         let placement_pairs = pydict_to_placement(placement)?;
         let params_json = match policy_params {
-            Some(d) => crate::search_python::pydict_to_json(d)?,
+            Some(d) => crate::policy_runner_python::pydict_to_json(d)?,
             None => serde_json::Value::Object(Default::default()),
         };
 
         let result = py
             .allow_threads(|| {
-                let mut observer = bloqade_lanes_search::target_generator_dsl::NoOpTargetObserver;
+                let mut observer =
+                    bloqade_lanes_search::dsl::target_generator_dsl::NoOpTargetObserver;
                 self.inner.generate(
                     self.index.clone(),
                     placement_pairs,

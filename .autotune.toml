@@ -11,8 +11,9 @@
 #
 # The bridge that lets `dsl_autotune` plug into the benchmark harness lives
 # at:
-#   python/bloqade/lanes/heuristics/physical/movement.py
-#       (RustPlacementTraversal.policy_path / policy_params / timeout_s)
+#   python/bloqade/lanes/heuristics/physical/policy_movement.py
+#       (PolicyTraversal.policy_path / policy_params / timeout_s,
+#        PolicyPlacementStrategy — sidecar to PhysicalPlacementStrategy)
 #   python/benchmarks/harness/matrix.py
 #       (StrategyConfig "dsl_autotune", reads $BLOQADE_DSL_POLICY)
 #
@@ -28,10 +29,10 @@
 # steane_physical_35 in the measure script.
 
 [task]
-name = "dsl-move-policy-v2-steane35-no-builtin"
+name = "dsl-move-policy-v2-all-kernels-no-builtin"
 description = "LLM-authored search strategy run on `steane_physical_35`. Objective hierarchy is strict: (1) maximize success_rate and produce a valid compilation, (2) only among successful policies minimize move_layers, (3) only after both of those consider wall time. A failed policy with lower wall time is not an improvement. If the measure output says `place.CZ statements remain`, the policy failed to place at least one CZ pair on compatible neighboring physical sites; fix search completeness and target placement, not runtime. The LLM must invent the search in this Starlark policy. Do not inspect, copy, rename, or lightly edit any old reference strategies. `invoke_builtin(...)` is forbidden. `halt(\"fallback\", ...)` is forbidden. The identifiers `top_c`, `max_branch`, `_top_c_per_qubit`, and `top_c_per_qubit` are forbidden because they create premature self-imposed frontiers. Do not add branch caps, beam widths, top-k pruning, per-qubit top-c pruning, or tiny frontier limits before a solution is found. Policies should keep exploring until they emit a solution, exhaust a real frontier, hit the kernel expansion budget, or time out. Generated policy files must be ASCII-only: no Unicode comments, separators, arrows, bullets, box-drawing characters, or typographic punctuation. The measure script bypasses `_apply_architecture_mode` and calls `compile_squin_to_move` (physical pipeline) directly - no `logical_initialize` plumbing."
 canonical_branch = "autotune/dsl-move-policy-v2-steane35-base"
-max_iterations = "10"
+max_iterations = "1000"
 
 [agent]
 backend = "claude"
@@ -61,7 +62,7 @@ name = "dsl_benchmark"
 # `python` is NOT on PATH on this system - only `python3` and `uv`.
 command = [
     "env",
-    "BLOQADE_DSL_KERNELS=steane_physical_35",
+    "BLOQADE_DSL_KERNELS=small,medium,large",
     "MPLCONFIGDIR=.autotune/matplotlib",
     "uv",
     "run",

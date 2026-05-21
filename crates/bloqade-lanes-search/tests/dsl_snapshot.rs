@@ -16,10 +16,12 @@ use std::sync::Arc;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
-use bloqade_lanes_search::fixture::{self, Problem};
+use bloqade_lanes_search::dsl::fixture::{self, Problem};
+use bloqade_lanes_search::dsl::move_policy_dsl::{
+    NoOpMoveObserver, PolicyOptions, solve_with_policy,
+};
+use bloqade_lanes_search::dsl::target_generator_dsl::{NoOpTargetObserver, run_target_policy};
 use bloqade_lanes_search::lane_index::LaneIndex;
-use bloqade_lanes_search::move_policy_dsl::{NoOpMoveObserver, PolicyOptions, solve_with_policy};
-use bloqade_lanes_search::target_generator_dsl::{NoOpTargetObserver, run_target_policy};
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../policies/fixtures")
@@ -193,8 +195,8 @@ fn run_one(problem_path: &Path, expected_path: &Path, policy_path: &Path) -> Res
     }
 }
 
-fn status_label(s: &bloqade_lanes_search::move_policy_dsl::PolicyStatus) -> &'static str {
-    use bloqade_lanes_search::move_policy_dsl::PolicyStatus::*;
+fn status_label(s: &bloqade_lanes_search::dsl::move_policy_dsl::PolicyStatus) -> &'static str {
+    use bloqade_lanes_search::dsl::move_policy_dsl::PolicyStatus::*;
     match s {
         Solved => "Solved",
         Unsolvable => "Unsolvable",
@@ -210,8 +212,8 @@ fn status_label(s: &bloqade_lanes_search::move_policy_dsl::PolicyStatus) -> &'st
     }
 }
 
-fn halt_reason(s: &bloqade_lanes_search::move_policy_dsl::PolicyStatus) -> Option<String> {
-    use bloqade_lanes_search::move_policy_dsl::PolicyStatus::*;
+fn halt_reason(s: &bloqade_lanes_search::dsl::move_policy_dsl::PolicyStatus) -> Option<String> {
+    use bloqade_lanes_search::dsl::move_policy_dsl::PolicyStatus::*;
     match s {
         Solved => Some("policy_halt".into()),
         Fallback(r) => Some(r.clone()),

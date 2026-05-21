@@ -980,19 +980,11 @@ class SolveResult:
 
     Always returned by ``MoveSolver.solve()``. Check ``status`` to determine
     whether a solution was found.
-
-    When produced via the ``policy_path`` kwarg, the ``policy_file``,
-    ``policy_params``, and ``policy_status`` fields are populated; for the
-    strategy-based path they are all ``None``.
     """
 
     @property
     def status(self) -> str:
-        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
-
-        For DSL-path results, also check ``policy_status`` for the full
-        terminal state string from the kernel.
-        """
+        """Status: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``."""
         ...
 
     @property
@@ -1029,31 +1021,6 @@ class SolveResult:
     @property
     def entropy_trace(self) -> Optional[EntropyTrace]:
         """Optional entropy-search trace when ``collect_entropy_trace=True`` was set."""
-        ...
-
-    @property
-    def policy_file(self) -> str | None:
-        """Echo of the ``.star`` policy file path, or ``None`` if not a DSL solve."""
-        ...
-
-    @property
-    def policy_params(self) -> str | None:
-        """JSON-encoded echo of ``policy_params`` dict, or ``None`` if not a DSL solve.
-
-        Use ``json.loads(result.policy_params)`` to recover the original dict.
-        """
-        ...
-
-    @property
-    def policy_status(self) -> str | None:
-        """String representation of the DSL terminal status, or ``None`` if not a
-        DSL solve.
-
-        Possible values: ``"solved"``, ``"unsolvable"``, ``"budget_exhausted"``,
-        ``"timeout"``, ``"fallback: <detail>"``, ``"syntax_error: <detail>"``,
-        ``"runtime_error: <detail>"``, ``"schema_error: <field>"``,
-        ``"bad_policy: <detail>"``, ``"starlark_budget"``, ``"starlark_oom"``.
-        """
         ...
 
     def __repr__(self) -> str: ...
@@ -1207,12 +1174,8 @@ class MoveSolver:
         initial: dict[int, LocationAddress],
         target: dict[int, LocationAddress],
         blocked: list[LocationAddress],
-        *,
-        max_expansions: int | None = None,
+        max_expansions: Optional[int] = None,
         options: SolveOptions | None = None,
-        policy_path: str | None = None,
-        policy_params: dict[str, object] | None = None,
-        timeout_s: float | None = None,
     ) -> SolveResult:
         """Solve a move synthesis problem.
 
@@ -1222,19 +1185,9 @@ class MoveSolver:
             blocked: List of LocationAddress for immovable obstacle locations.
             max_expansions: Optional limit on node expansions.
             options: Search-tuning parameters. Defaults to SolveOptions().
-            policy_path: Path to a ``.star`` Move Policy DSL file. When
-                supplied, routes through ``solve_with_policy`` instead of the
-                strategy-based search path.
-            policy_params: Free-form dict echoed back in
-                ``SolveResult.policy_params`` (JSON-encoded). Only used when
-                ``policy_path`` is supplied.
-            timeout_s: Wall-clock time limit in seconds for the DSL kernel.
-                Only used when ``policy_path`` is supplied.
 
         Returns:
-            SolveResult with status indicating outcome. When ``policy_path``
-            is used, check ``policy_status``, ``policy_file``, and
-            ``policy_params`` on the result for DSL-specific information.
+            SolveResult with status indicating outcome.
         """
         ...
 
@@ -1336,60 +1289,6 @@ class MultiSolveResult:
         ...
 
     def __repr__(self) -> str: ...
-
-# ── Target Generator DSL ──
-
-@final
-class TargetPolicyRunner:
-    """Reusable runner that wraps a parsed `.star` target-generator policy.
-
-    Constructed once per (policy file, ArchSpec) pair. Each ``generate(...)``
-    call invokes the policy's ``generate(ctx, lib)`` function, validates each
-    candidate against architecture invariants (qubit coverage, location
-    validity, CZ-blockade pair invariant), and returns the validated
-    candidates as a list of qubit-id → location dicts.
-
-    Args:
-        policy_path: Path to a ``.star`` Target Generator DSL file.
-        arch_spec: Native ``ArchSpec`` (e.g. from ``Python ArchSpec._inner``).
-            The runner builds an internal ``LaneIndex`` from it.
-
-    Raises:
-        ValueError: If the policy file is missing or fails to parse.
-    """
-
-    def __init__(self, policy_path: str, arch_spec: ArchSpec) -> None: ...
-    def generate(
-        self,
-        placement: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        lookahead_cz_layers: list[tuple[list[int], list[int]]],
-        cz_stage_index: int,
-        policy_params: dict[str, object] | None = None,
-    ) -> list[dict[int, LocationAddress]]:
-        """Run the policy's ``generate(ctx, lib)`` and validate each candidate.
-
-        Args:
-            placement: Current qubit positions (qid → LocationAddress).
-            controls: Control qubit IDs for this CZ stage.
-            targets: Target qubit IDs for this CZ stage.
-            lookahead_cz_layers: Future CZ layers as ``(controls, targets)``
-                pairs. Empty list if no lookahead is wired.
-            cz_stage_index: 0-based index of the current CZ stage (for tracing).
-            policy_params: Optional free-form params dict made available to
-                the policy. Echoed only; the kernel does not interpret it.
-
-        Returns:
-            List of candidate target placements in policy-defined order. Each
-            candidate is a dict mapping every qid in ``placement`` to its
-            target location. An empty list signals "defer to fallback".
-
-        Raises:
-            ValueError: If the policy returns a malformed shape, references an
-                unknown CZ partner, or any candidate fails validation.
-        """
-        ...
 
 # ── AtomStateData ──
 
@@ -2129,3 +2028,172 @@ class Program:
     def __repr__(self) -> str: ...
     def __len__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
+
+# ── Starlark DSL sidecar ──
+#
+# Move Policy DSL and Target Generator DSL surfaces. Sidecars to MoveSolver
+# and the target generator infrastructure — keeps DSL-specific kwargs and
+# fields off the strategy/result types, so the existing surface stays
+# stable. See the project's `policies/primer.md` for the Starlark API.
+
+@final
+class PolicySolveResult:
+    """Result of a Move Policy DSL solve.
+
+    Sidecar to ``SolveResult`` — DSL solves never populate strategy-only
+    fields like ``cost``, ``deadlocks``, or ``entropy_trace``.
+    """
+
+    @property
+    def status(self) -> str:
+        """Native status mirror: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
+
+        Provided for compatibility with strategy-based call sites; prefer
+        ``policy_status`` to inspect the full DSL terminal state.
+        """
+        ...
+
+    @property
+    def policy_file(self) -> str:
+        """Echo of the ``.star`` policy file path."""
+        ...
+
+    @property
+    def policy_params(self) -> str:
+        """JSON-encoded echo of the ``policy_params`` dict.
+
+        Use ``json.loads(result.policy_params)`` to recover the dict.
+        """
+        ...
+
+    @property
+    def policy_status(self) -> str:
+        """Full DSL terminal status string.
+
+        Possible values: ``"solved"``, ``"unsolvable"``, ``"budget_exhausted"``,
+        ``"timeout"``, ``"fallback: <detail>"``, ``"syntax_error: <detail>"``,
+        ``"runtime_error: <detail>"``, ``"schema_error: <field>"``,
+        ``"bad_policy: <detail>"``, ``"starlark_budget"``, ``"starlark_oom"``.
+        """
+        ...
+
+    @property
+    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+        """Move layers as ``(direction, move_type, zone_id, word_id, site_id, bus_id)`` tuples."""
+        ...
+
+    @property
+    def goal_config(self) -> dict[int, LocationAddress]:
+        """Final qubit configuration after applying ``move_layers``."""
+        ...
+
+    @property
+    def nodes_expanded(self) -> int:
+        """Number of nodes expanded by the DSL kernel."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class PolicyRunner:
+    """Reusable Move Policy DSL runner.
+
+    Sidecar to ``MoveSolver``. Construct once from an architecture spec
+    (JSON string or ``ArchSpec``); then call ``solve(...)`` for each move
+    synthesis problem with a ``.star`` policy.
+
+    Args:
+        arch_spec_json: ArchSpec serialized to a JSON string. Use
+            ``PolicyRunner.from_arch_spec(arch)`` to construct from a native
+            ``ArchSpec`` instead.
+
+    Raises:
+        ValueError: If the arch spec is invalid.
+    """
+
+    def __init__(self, arch_spec_json: str) -> None: ...
+    @staticmethod
+    def from_arch_spec(arch: ArchSpec) -> PolicyRunner: ...
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        target: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
+        policy_path: str,
+        *,
+        policy_params: dict[str, object] | None = None,
+        max_expansions: int | None = None,
+        timeout_s: float | None = None,
+    ) -> PolicySolveResult:
+        """Solve a move synthesis problem using a ``.star`` policy.
+
+        Args:
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            target: Mapping of qubit_id to LocationAddress for desired positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
+            policy_path: Path to a ``.star`` Move Policy DSL file.
+            policy_params: Optional free-form dict echoed into the result's
+                ``policy_params`` field (JSON-encoded string).
+            max_expansions: Optional limit on kernel node expansions
+                (defaults to 100_000).
+            timeout_s: Optional wall-clock time limit (seconds) for the kernel.
+
+        Returns:
+            PolicySolveResult with the policy terminal state, move layers,
+            goal configuration, and expansion count.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class TargetPolicyRunner:
+    """Reusable runner that wraps a parsed ``.star`` target-generator policy.
+
+    Constructed once per (policy file, ArchSpec) pair. Each ``generate(...)``
+    call invokes the policy's ``generate(ctx, lib)`` function, validates each
+    candidate against architecture invariants (qubit coverage, location
+    validity, CZ-blockade pair invariant), and returns the validated
+    candidates as a list of qubit-id → location dicts.
+
+    Args:
+        policy_path: Path to a ``.star`` Target Generator DSL file.
+        arch_spec: Native ``ArchSpec`` (e.g. from ``Python ArchSpec._inner``).
+            The runner builds an internal ``LaneIndex`` from it.
+
+    Raises:
+        ValueError: If the policy file is missing or fails to parse.
+    """
+
+    def __init__(self, policy_path: str, arch_spec: ArchSpec) -> None: ...
+    def generate(
+        self,
+        placement: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        lookahead_cz_layers: list[tuple[list[int], list[int]]],
+        cz_stage_index: int,
+        policy_params: dict[str, object] | None = None,
+    ) -> list[dict[int, LocationAddress]]:
+        """Run the policy's ``generate(ctx, lib)`` and validate each candidate.
+
+        Args:
+            placement: Current qubit positions (qid → LocationAddress).
+            controls: Control qubit IDs for this CZ stage.
+            targets: Target qubit IDs for this CZ stage.
+            lookahead_cz_layers: Future CZ layers as ``(controls, targets)``
+                pairs. Empty list if no lookahead is wired.
+            cz_stage_index: 0-based index of the current CZ stage (for tracing).
+            policy_params: Optional free-form params dict made available to
+                the policy. Echoed only; the kernel does not interpret it.
+
+        Returns:
+            List of candidate target placements in policy-defined order. Each
+            candidate is a dict mapping every qid in ``placement`` to its
+            target location. An empty list signals "defer to fallback".
+
+        Raises:
+            ValueError: If the policy returns a malformed shape, references an
+                unknown CZ partner, or any candidate fails validation.
+        """
+        ...

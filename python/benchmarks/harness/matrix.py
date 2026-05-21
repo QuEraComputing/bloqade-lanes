@@ -19,6 +19,10 @@ from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
 )
+from bloqade.lanes.heuristics.physical.policy_movement import (
+    PolicyPlacementStrategy,
+    PolicyTraversal,
+)
 
 DSL_POLICY_ENV_VAR = "BLOQADE_DSL_POLICY"
 DEFAULT_DSL_POLICY_PATH = "policies/autotune/candidate.star"
@@ -170,9 +174,9 @@ def default_strategy_configs(
             backend="rust",
             generator_id="dsl",
             build_placement_strategy=lambda: PalindromePlacementStrategy(
-                inner=PhysicalPlacementStrategy(
+                inner=PolicyPlacementStrategy(
                     arch_spec=factory(),
-                    traversal=RustPlacementTraversal(
+                    traversal=PolicyTraversal(
                         policy_path=os.environ.get(
                             DSL_POLICY_ENV_VAR, DEFAULT_DSL_POLICY_PATH
                         ),

@@ -14,7 +14,7 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
 use bloqade_lanes_search::LaneIndex;
-use bloqade_lanes_search::move_policy_dsl::{
+use bloqade_lanes_search::dsl::move_policy_dsl::{
     PolicyOptions, PolicyResult, PolicyStatus, solve_with_policy,
 };
 use tempfile::NamedTempFile;
@@ -80,7 +80,7 @@ fn run_with_params(
         std::iter::empty::<LocationAddr>(),
         index,
         opts,
-        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
+        &mut bloqade_lanes_search::dsl::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve_with_policy")
 }

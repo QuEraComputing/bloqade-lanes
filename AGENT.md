@@ -75,16 +75,16 @@ Direct test run: `uv run coverage run -m pytest python/tests`
 
 ## Move Policy DSL
 
-The Move Policy DSL lets you author search policies in Starlark (a deterministic Python-syntax subset) instead of Rust. Policies can be invoked from Python or Rust:
+The Move Policy DSL lets you author search policies in Starlark (a deterministic Python-syntax subset) instead of Rust. Policies are invoked through a sidecar `PolicyRunner` (sibling to `MoveSolver`) so the strategy-based solver surface stays untouched:
 
 ```python
-from bloqade.lanes.bytecode import MoveSolver
+from bloqade.lanes.bytecode import PolicyRunner
 import json
 
-solver = MoveSolver.from_json(arch_json)
-result = solver.solve(
-    initial=[(0, loc_a), (1, loc_b)],
-    target=[(0, loc_c), (1, loc_d)],
+runner = PolicyRunner(arch_json)
+result = runner.solve(
+    initial={0: loc_a, 1: loc_b},
+    target={0: loc_c, 1: loc_d},
     blocked=[],
     policy_path="policies/autotune/candidate.star",
     policy_params={},              # optional PARAMS_OVERRIDE values
@@ -94,6 +94,8 @@ result = solver.solve(
 print(result.policy_status)        # "solved" / "fallback: ..." / etc.
 print(json.loads(result.policy_params))  # echoes the override dict
 ```
+
+The strategy-style entry point is `PolicyPlacementStrategy(traversal=PolicyTraversal(policy_path=...))` in `bloqade.lanes.heuristics.physical.policy_movement` — wire that into `PhysicalPipeline` or the autotune harness in place of `PhysicalPlacementStrategy`.
 
 A policy is a single `.star` file exporting `init(root, ctx) -> GlobalState` and `step(graph, gs, ctx, lib) -> Action | list[Action]`.
 

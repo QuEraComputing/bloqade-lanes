@@ -43,15 +43,15 @@ use bloqade_lanes_dsl_core::primitives::arch_spec::StarlarkArchSpec;
 use bloqade_lanes_dsl_core::sandbox::{SandboxConfig, make_evaluator};
 
 use crate::config::Config;
+use crate::dsl::move_policy_dsl::actions::{MoveAction, register_actions};
+use crate::dsl::move_policy_dsl::builtins::sequential_fallback;
+use crate::dsl::move_policy_dsl::graph_handle::{
+    BuiltinOutcome, InsertOutcome, NodeStateMap, PolicyGraph, PolicyGraphInner,
+};
+use crate::dsl::move_policy_dsl::lib_move::{Ctx, LibMove};
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
-use crate::move_policy_dsl::actions::{MoveAction, register_actions};
-use crate::move_policy_dsl::builtins::sequential_fallback;
-use crate::move_policy_dsl::graph_handle::{
-    BuiltinOutcome, InsertOutcome, NodeStateMap, PolicyGraph, PolicyGraphInner,
-};
-use crate::move_policy_dsl::lib_move::{Ctx, LibMove};
 
 // ── public types ─────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ pub fn solve_with_policy(
     blocked: impl IntoIterator<Item = LocationAddr>,
     index: Arc<LaneIndex>,
     opts: PolicyOptions,
-    observer: &mut dyn crate::move_policy_dsl::observer::MoveKernelObserver,
+    observer: &mut dyn crate::dsl::move_policy_dsl::observer::MoveKernelObserver,
 ) -> Result<PolicyResult, DslError> {
     // 1. Build initial / target / blocked sets.
     let initial_cfg =
@@ -196,7 +196,7 @@ pub fn solve_with_policy(
 
     // Notify the observer that we're starting a new solve.
     {
-        use crate::move_policy_dsl::observer::PolicyGraphSnapshot;
+        use crate::dsl::move_policy_dsl::observer::PolicyGraphSnapshot;
         let snap = PolicyGraphSnapshot {
             root_qubits: initial_cfg.iter().map(|(q, _)| q).collect(),
             target_qubits: target_cfg.iter().map(|(q, _)| q).collect(),
@@ -305,7 +305,7 @@ pub fn solve_with_policy(
 
         // Notify the observer for each action applied this tick.
         {
-            use crate::move_policy_dsl::observer::GraphDelta;
+            use crate::dsl::move_policy_dsl::observer::GraphDelta;
             let inner = inner_arc_for_kernel
                 .lock()
                 .expect("PolicyGraphInner mutex poisoned");
@@ -1013,7 +1013,7 @@ def step(graph, gs, ctx, lib):
             std::iter::empty::<LocationAddr>(),
             index,
             opts,
-            &mut crate::move_policy_dsl::observer::NoOpMoveObserver,
+            &mut crate::dsl::move_policy_dsl::observer::NoOpMoveObserver,
         )
         .expect("solve");
 
@@ -1062,7 +1062,7 @@ def step(graph, gs, ctx, lib):
             std::iter::empty::<LocationAddr>(),
             index,
             opts,
-            &mut crate::move_policy_dsl::observer::NoOpMoveObserver,
+            &mut crate::dsl::move_policy_dsl::observer::NoOpMoveObserver,
         )
         .expect("solve");
 

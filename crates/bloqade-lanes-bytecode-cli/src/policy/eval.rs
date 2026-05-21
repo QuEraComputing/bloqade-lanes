@@ -6,12 +6,12 @@ use std::time::Instant;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
-use bloqade_lanes_search::fixture::{self, Problem};
-use bloqade_lanes_search::lane_index::LaneIndex;
-use bloqade_lanes_search::move_policy_dsl::{
+use bloqade_lanes_search::dsl::fixture::{self, Problem};
+use bloqade_lanes_search::dsl::move_policy_dsl::{
     NoOpMoveObserver, PolicyOptions, PolicyStatus, solve_with_policy,
 };
-use bloqade_lanes_search::target_generator_dsl::{NoOpTargetObserver, run_target_policy};
+use bloqade_lanes_search::dsl::target_generator_dsl::{NoOpTargetObserver, run_target_policy};
+use bloqade_lanes_search::lane_index::LaneIndex;
 
 use super::output::{EvalEnvelope, TargetEvalEnvelope, print_human_move, print_human_target};
 
@@ -57,7 +57,7 @@ pub fn run_eval_policy(
 fn run_move(
     policy: &Path,
     problem: &Path,
-    mp: bloqade_lanes_search::fixture::MoveProblem,
+    mp: bloqade_lanes_search::dsl::fixture::MoveProblem,
     arch: bloqade_lanes_bytecode_core::arch::ArchSpec,
     params: Option<&Path>,
     max_expansions: Option<u64>,
@@ -134,7 +134,7 @@ fn run_move(
 fn run_target(
     policy: &Path,
     problem: &Path,
-    tp: bloqade_lanes_search::fixture::TargetProblem,
+    tp: bloqade_lanes_search::dsl::fixture::TargetProblem,
     arch: bloqade_lanes_bytecode_core::arch::ArchSpec,
     params: Option<&Path>,
     json: bool,

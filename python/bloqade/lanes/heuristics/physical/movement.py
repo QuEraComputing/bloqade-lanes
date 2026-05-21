@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from bloqade.lanes.analysis.placement import (
     AtomState,
@@ -98,9 +98,6 @@ class RustPlacementTraversal:
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
     collect_entropy_trace: bool = False
-    policy_path: str | None = None
-    policy_params: dict[str, Any] | None = None
-    timeout_s: float | None = None
 
 
 def solve_options_from_traversal(
@@ -125,36 +122,6 @@ def solve_options_from_traversal(
             else collect_entropy_trace
         ),
     )
-
-
-def _is_acceptable_solve(result: object) -> bool:
-    """Return True iff ``result`` represents a usable solution.
-
-    Accepts:
-    - Native-strategy solves with ``status == "solved"`` (the canonical
-      success path).
-    - DSL solves that halted via ``invoke_builtin("sequential_fallback")``
-      and have a populated ``move_layers``. The Rust kernel's
-      ``make_terminal_result`` (crates/bloqade-lanes-search/src/move_policy_dsl/kernel.rs:912)
-      writes the fallback path into ``move_layers`` and sets
-      ``goal_config = target_cfg`` whenever a policy halts with the
-      ``fallback`` status alongside a recorded ``fallback_path``. The
-      result is a valid (non-optimal) solution; without this clause the
-      Python bridge would silently discard every policy that uses the
-      fallback escape hatch documented in the DSL.
-    """
-    status = getattr(result, "status", None)
-    if status == "solved":
-        return True
-    policy_status = getattr(result, "policy_status", None)
-    if (
-        policy_status is not None
-        and isinstance(policy_status, str)
-        and policy_status.startswith("fallback:")
-        and len(getattr(result, "move_layers", [])) > 0
-    ):
-        return True
-    return False
 
 
 @dataclass
@@ -332,9 +299,6 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 blocked_native,
                 max_expansions=remaining,
                 options=opts,
-                policy_path=self.traversal.policy_path,
-                policy_params=self.traversal.policy_params,
-                timeout_s=self.traversal.timeout_s,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:
@@ -342,7 +306,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 # when unsolvable), so the shared budget makes forward progress
                 # across candidates and this loop terminates.
                 remaining -= int(result.nodes_expanded)
-            if _is_acceptable_solve(result):
+            if result.status == "solved":
                 winning_result = result
                 if should_trace and self.traversal.collect_entropy_trace:
                     trace = result.entropy_trace

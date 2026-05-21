@@ -14,7 +14,13 @@ rayon = "1"
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-allocative = "0.3"
+# Pinned to =0.3.4: starlark_map 0.13.0 requires hashbrown 0.14.3 with the
+# `raw` feature. allocative 0.3.6 bumped its hashbrown to 0.16.1 (and dropped
+# `raw`), so its `Allocative` impls no longer apply to starlark_map's
+# hashbrown 0.14.3 types — manifests as `RawTable<(K, V)>: Allocative` errors
+# in starlark_map at compile time. Revisit when starlark releases a 0.14+
+# that targets a newer hashbrown.
+allocative = "=0.3.4"
 starlark = "0.13"
 thiserror = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

@@ -2,7 +2,7 @@
 """Measure command for autotune: run the DSL policy and emit aggregated metrics.
 
 Calls `bloqade.lanes.compile.compile_squin_to_move` directly with a
-`PhysicalPlacementStrategy(traversal=RustPlacementTraversal(policy_path=...))`
+`PolicyPlacementStrategy(traversal=PolicyTraversal(policy_path=...))`
 on each requested benchmark kernel. Prints `AUTOTUNE_METRIC <name> <value>`
 lines to stdout for autotune's RegexAdaptor to extract, and per-case
 diagnostics to stderr.
@@ -46,8 +46,10 @@ from bloqade.lanes.compile import compile_squin_to_move
 from bloqade.lanes.dialects import move as move_dialect, place as place_dialect
 from bloqade.lanes.heuristics.physical import (
     PhysicalLayoutHeuristicGraphPartitionCenterOut,
-    PhysicalPlacementStrategy,
-    RustPlacementTraversal,
+)
+from bloqade.lanes.heuristics.physical.policy_movement import (
+    PolicyPlacementStrategy,
+    PolicyTraversal,
 )
 
 DEFAULT_KERNELS = "steane_physical_35"
@@ -73,14 +75,14 @@ def _count_move_events(mt: object) -> int:
 
 def _build_strategy(
     policy_path: str,
-) -> tuple[PalindromePlacementStrategy, PhysicalPlacementStrategy]:
+) -> tuple[PalindromePlacementStrategy, PolicyPlacementStrategy]:
     """Returns (wrapped, inner). The wrapped strategy is what the pipeline
-    consumes (matches the default `PhysicalPipeline` wraps PhysicalPlacementStrategy
+    consumes (matches the default `PhysicalPipeline` wraps the inner strategy
     in PalindromePlacementStrategy). The inner is returned separately so the
     caller can read `rust_nodes_expanded_total` after the solve."""
-    inner = PhysicalPlacementStrategy(
+    inner = PolicyPlacementStrategy(
         arch_spec=get_physical_arch_spec(),
-        traversal=RustPlacementTraversal(
+        traversal=PolicyTraversal(
             policy_path=policy_path,
             max_expansions=1000,
             timeout_s=30.0,

@@ -11,9 +11,13 @@ that the Rust-native heuristics see. A Move policy controls how the search tree 
 expanded step-by-step; a Target Generator policy controls which qubit placements are
 offered as CZ-gate candidates at each stage.
 
-From Python, pass `policy_path=` to `MoveSolver.solve(...)` or supply a custom
-`PhysicalPlacementStrategy(target_generator=...)` to route placement through a `.star`
-file. From the command line, use the `bloqade-bytecode` CLI: `eval-policy --policy
+From Python, use `PolicyRunner(arch_json).solve(..., policy_path=...)` for one-shot
+move synthesis, or wire `PolicyPlacementStrategy(traversal=PolicyTraversal(policy_path=...))`
+(from `bloqade.lanes.heuristics.physical.policy_movement`) into a placement
+pipeline. Target Generator DSLs plug in via the existing
+`PhysicalPlacementStrategy(target_generator=...)` extension point.
+
+From the command line, use the `bloqade-bytecode` CLI: `eval-policy --policy
 <file>.star --problem <fixture>.json` runs a policy end-to-end and prints a result
 summary; `trace-policy --policy <file>.star --problem <fixture>.json` runs with a
 verbose observer and emits one record per kernel event, useful for debugging step logic.

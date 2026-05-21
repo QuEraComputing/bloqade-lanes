@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
+use bloqade_lanes_search::dsl::move_policy_dsl::{PolicyOptions, PolicyStatus, solve_with_policy};
 use bloqade_lanes_search::lane_index::LaneIndex;
-use bloqade_lanes_search::move_policy_dsl::{PolicyOptions, PolicyStatus, solve_with_policy};
 use tempfile::NamedTempFile;
 
 /// Minimal two-word arch JSON reused from kernel unit tests.
@@ -76,7 +76,7 @@ def step(graph, gs, ctx, lib):
         std::iter::empty::<bloqade_lanes_bytecode_core::arch::addr::LocationAddr>(),
         index,
         opts,
-        &mut bloqade_lanes_search::move_policy_dsl::NoOpMoveObserver,
+        &mut bloqade_lanes_search::dsl::move_policy_dsl::NoOpMoveObserver,
     )
     .expect("solve");
 
