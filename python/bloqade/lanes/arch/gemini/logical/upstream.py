@@ -215,8 +215,8 @@ class SpecializeGemini:
         out = mt.similar(dialects=mt.dialects.add(dialect))
 
         TransversalRewritePass(
-            mt.dialects, transversal_location_map=steane7_transversal_map
-        )(mt)
+            out.dialects, transversal_location_map=steane7_transversal_map
+        )(out)
 
         rewrite.Walk(
             rewrite.Chain(
