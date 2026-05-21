@@ -6,24 +6,14 @@ from kirin import ir
 
 from bloqade.lanes import compile as compile_api, logical_mvp
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.analysis.placement import (
-    PalindromePlacementStrategy,
-    PlacementStrategyABC,
-)
-from bloqade.lanes.heuristics.logical import layout as logical_layout
-from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
+from bloqade.lanes.analysis.placement import PlacementStrategyABC
 
 
-def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
+def test_logical_mvp_compile_to_move_passes_through_to_pipeline(monkeypatch):
     captured = {}
 
     class FakeLogicalPipeline:
-        def __init__(
-            self,
-            layout_heuristic=None,
-            placement_strategy=None,
-            **kwargs,
-        ):
+        def __init__(self, layout_heuristic=None, placement_strategy=None, **kwargs):
             captured["layout_heuristic"] = layout_heuristic
             captured["placement_strategy"] = placement_strategy
 
@@ -38,12 +28,9 @@ def test_logical_mvp_compile_to_move_uses_logical_defaults(monkeypatch):
 
     assert out == "move_ir"
     assert captured["mt"] is marker
-    assert isinstance(
-        captured["layout_heuristic"], logical_layout.LogicalLayoutHeuristic
-    )
-    strategy = captured["placement_strategy"]
-    assert isinstance(strategy, PalindromePlacementStrategy)
-    assert isinstance(strategy.inner, LogicalPlacementStrategyNoHome)
+    # defaults are None — LogicalPipeline.emit constructs them from arch_spec
+    assert captured["layout_heuristic"] is None
+    assert captured["placement_strategy"] is None
 
 
 def test_modular_compile_to_move_allows_strategy_swapping(monkeypatch):
