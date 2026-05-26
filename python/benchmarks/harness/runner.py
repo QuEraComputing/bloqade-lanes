@@ -209,8 +209,9 @@ def _count_moves(move_mt, arch_spec: ArchSpec) -> tuple[int, int]:
         if isinstance(stmt, move.Move):
             move_count_events += 1
             state = frame.get(stmt.current_state)
-            if not isinstance(state, atom.AtomState):
-                continue
+            assert isinstance(
+                state, atom.AtomState
+            ), "Expected concrete atom state before move.Move while counting lanes"
             move_count_lanes += sum(
                 1
                 for lane in stmt.lanes
