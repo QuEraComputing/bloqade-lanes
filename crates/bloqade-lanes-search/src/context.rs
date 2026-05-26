@@ -21,6 +21,9 @@ pub struct SearchContext<'a> {
     pub dist_table: &'a DistanceTable,
     pub blocked: &'a HashSet<u64>,
     pub targets: &'a [(u32, u64)],
+    /// CZ pairs for loose-goal search. `None` for fixed-target solves.
+    /// Used by the heuristic generator to coordinate pair moves.
+    pub cz_pairs: Option<&'a [(u32, u32)]>,
 }
 
 /// Per-node state for entropy-guided search.

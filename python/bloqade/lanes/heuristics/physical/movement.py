@@ -17,12 +17,11 @@ from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
 from bloqade.lanes.bytecode._native import EntropyTrace, MoveSolver
 from bloqade.lanes.bytecode.encoding import (
-    Direction,
     LaneAddress,
     LocationAddress,
-    MoveType,
     ZoneAddress,
 )
+from bloqade.lanes.heuristics.physical._solver_dispatch import _STRATEGY_MAP
 from bloqade.lanes.heuristics.physical.target_generator import (
     DefaultTargetGenerator,
     TargetContext,
@@ -31,19 +30,6 @@ from bloqade.lanes.heuristics.physical.target_generator import (
     _coerce_target_generator,
     _validate_candidate,
 )
-
-_STRATEGY_MAP: dict[str, _native.SearchStrategy] = {
-    "astar": _native.SearchStrategy.ASTAR,
-    "dfs": _native.SearchStrategy.DFS,
-    "bfs": _native.SearchStrategy.BFS,
-    "greedy": _native.SearchStrategy.GREEDY,
-    "ids": _native.SearchStrategy.IDS,
-    "cascade": _native.SearchStrategy.CASCADE_IDS,
-    "cascade-ids": _native.SearchStrategy.CASCADE_IDS,
-    "cascade-dfs": _native.SearchStrategy.CASCADE_DFS,
-    "cascade-entropy": _native.SearchStrategy.CASCADE_ENTROPY,
-    "entropy": _native.SearchStrategy.ENTROPY,
-}
 
 SearchStrategyName = Literal[
     "astar",
@@ -59,27 +45,12 @@ SearchStrategyName = Literal[
 ]
 
 
-_DIR_MAP = {0: Direction.FORWARD, 1: Direction.BACKWARD}
-_MT_MAP = {0: MoveType.SITE, 1: MoveType.WORD, 2: MoveType.ZONE}
-
-
 def convert_move_layers(
-    raw_layers: list[list[tuple[int, int, int, int, int, int]]],
+    raw_layers,
 ) -> tuple[tuple[LaneAddress, ...], ...]:
-    """Convert Rust solver move_layers to Python LaneAddress tuples."""
+    """Wrap Rust solver move_layers into Python ``LaneAddress`` tuples."""
     return tuple(
-        tuple(
-            LaneAddress(
-                _MT_MAP[mt],
-                word,
-                site,
-                bus,
-                _DIR_MAP[d],
-                zone,
-            )
-            for d, mt, zone, word, site, bus in step
-        )
-        for step in raw_layers
+        tuple(LaneAddress.from_inner(lane) for lane in step) for step in raw_layers
     )
 
 
@@ -87,16 +58,22 @@ def convert_move_layers(
 class RustPlacementTraversal:
     """Config for the Rust MoveSolver.
 
-    Note: The Rust ``MoveSolver.solve()`` accepts additional tuning parameters
-    (weight, restarts, lookahead, deadlock_policy, w_t) that are not yet
-    exposed here; Rust defaults are used. These will be threaded through
-    once the parameters are validated via Rust-only benchmarking.
+    ``restarts`` and ``lookahead`` are now exposed and threaded into
+    ``SolveOptions``; per-strategy entropy knobs (``max_movesets_per_group``,
+    ``max_goal_candidates``, ``collect_entropy_trace``) feed ``EntropyOptions``
+    via :func:`solve_options_from_traversal`.
+
+    Not yet exposed (Rust defaults used): ``weight``, ``deadlock_policy``,
+    ``w_t``. These will be threaded through once validated via Rust-only
+    benchmarking.
     """
 
     strategy: SearchStrategyName = "entropy"
     max_movesets_per_group: int = 3
     max_goal_candidates: int = 3
     max_expansions: int | None = 300
+    restarts: int = 1
+    lookahead: bool = False
     collect_entropy_trace: bool = False
 
 
@@ -104,16 +81,20 @@ def solve_options_from_traversal(
     traversal: RustPlacementTraversal,
     *,
     collect_entropy_trace: bool | None = None,
-) -> _native.SolveOptions:
-    """Build native ``SolveOptions`` from a ``RustPlacementTraversal``.
+) -> tuple[_native.SolveOptions, _native.EntropyOptions]:
+    """Build ``(SolveOptions, EntropyOptions)`` from a ``RustPlacementTraversal``.
 
     Shared by ``PhysicalPlacementStrategy`` and ``move_synthesis`` so the
     two callsites cannot drift on default knob values. ``collect_entropy_trace``
     overrides the traversal's flag when set; this is used by
     ``_cz_placements_rust`` to gate trace capture by stage.
     """
-    return _native.SolveOptions(
+    opts = _native.SolveOptions(
         strategy=_STRATEGY_MAP[traversal.strategy],
+        restarts=traversal.restarts,
+        lookahead=traversal.lookahead,
+    )
+    entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,
         max_goal_candidates=traversal.max_goal_candidates,
         collect_entropy_trace=(
@@ -122,6 +103,7 @@ def solve_options_from_traversal(
             else collect_entropy_trace
         ),
     )
+    return opts, entropy_opts
 
 
 @dataclass
@@ -144,6 +126,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     )
     _traced_target: dict[int, LocationAddress] = field(
         default_factory=dict, init=False, repr=False
+    )
+    _traced_blocked_locations: tuple[LocationAddress, ...] = field(
+        default=(), init=False, repr=False
     )
     _resolved_target_generator: TargetGeneratorABC | None = field(
         default=None, init=False, repr=False
@@ -242,6 +227,11 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         """First candidate target for the traced CZ layer (used by visualizers)."""
         return dict(self._traced_target)
 
+    @property
+    def traced_blocked_locations(self) -> tuple[LocationAddress, ...]:
+        """Spectator atom positions for the traced CZ layer (atoms not in the active placement)."""
+        return self._traced_blocked_locations
+
     def _cz_placements_rust(
         self,
         state: ConcreteState,
@@ -264,11 +254,15 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         if should_trace:
             self._traced_rust_entropy_trace = None
             self._traced_target = dict(candidates[0])
+            active_locations = set(ctx.placement.values())
+            self._traced_blocked_locations = tuple(
+                loc for loc in state.occupied if loc not in active_locations
+            )
 
         solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
         blocked_native = [loc._inner for loc in state.occupied]
-        opts = solve_options_from_traversal(
+        opts, entropy_opts = solve_options_from_traversal(
             self.traversal,
             collect_entropy_trace=(
                 should_trace and self.traversal.collect_entropy_trace
@@ -287,6 +281,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 blocked_native,
                 max_expansions=remaining,
                 options=opts,
+                entropy_options=entropy_opts,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:

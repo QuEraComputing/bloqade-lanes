@@ -654,6 +654,8 @@ pub(crate) fn generate_candidates(
             }
         }
 
+        // Grids may include empty filler lanes so the emitted MoveSet remains
+        // a complete AOD rectangle. Only selected entries add qubit moves.
         let grids = grid_ctx.build_aod_grids(&entries);
         let mut group_candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
         for grid_lanes in grids {
@@ -1608,6 +1610,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         entropy_search(
             root,
@@ -1642,6 +1645,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         entropy_search(
             root,
@@ -2049,6 +2053,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams::default();
 
@@ -2079,6 +2084,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             w_d: 0.0,
@@ -2112,6 +2118,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 0,
@@ -2134,6 +2141,7 @@ mod tests {
             dist_table: &dist_table,
             blocked: &blocked,
             targets: &target_encoded,
+            cz_pairs: None,
         };
         let params = EntropyParams {
             max_movesets_per_group: 4,

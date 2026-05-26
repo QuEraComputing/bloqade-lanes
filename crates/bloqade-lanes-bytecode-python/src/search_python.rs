@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
+use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::config::Config;
 use bloqade_lanes_search::context::SearchContext;
@@ -18,12 +18,15 @@ use bloqade_lanes_search::entropy::{
 };
 use bloqade_lanes_search::heuristic::DistanceTable;
 use bloqade_lanes_search::lane_index::LaneIndex;
+use bloqade_lanes_search::nohome::NoHomeOptions;
+use bloqade_lanes_search::receding_horizon::{RecedingHorizonOptions, default_weight_grid};
 use bloqade_lanes_search::solve::{
-    InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions, SolveResult, SolveStatus, Strategy,
+    EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
+    SolveResult, SolveStatus, Strategy,
 };
 use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGenerator};
 
-use crate::arch_python::{PyArchSpec, PyLocationAddr};
+use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
 
 // ── Enum wrappers ──
 
@@ -196,27 +199,17 @@ impl PySolveResult {
 
     /// Move layers: list of move steps, each a list of lane address tuples.
     ///
-    /// Each lane is represented as `(direction, move_type, zone_id, word_id, site_id, bus_id)`
-    /// where direction is 0=Forward/1=Backward and move_type is 0=SiteBus/1=WordBus/2=ZoneBus.
+    /// Each lane is a ``LaneAddress`` with named attributes for direction,
+    /// move_type, zone_id, word_id, site_id, bus_id.
     #[getter]
-    #[allow(clippy::type_complexity)]
-    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+    fn move_layers(&self) -> Vec<Vec<PyLaneAddr>> {
         self.inner
             .move_layers
             .iter()
             .map(|ms| {
                 ms.decode()
                     .into_iter()
-                    .map(|lane| {
-                        (
-                            lane.direction as u8,
-                            lane.move_type as u8,
-                            lane.zone_id,
-                            lane.word_id,
-                            lane.site_id,
-                            lane.bus_id,
-                        )
-                    })
+                    .map(|lane| PyLaneAddr { inner: lane })
                     .collect()
             })
             .collect()
@@ -533,37 +526,11 @@ impl PyEntropyScorer {
     fn apply_moveset(
         &self,
         config: &Config,
-        moveset: &[(u8, u8, u32, u32, u32, u32)],
+        moveset: &[PyRef<'_, PyLaneAddr>],
     ) -> PyResult<Config> {
         let mut moves: Vec<(u32, LocationAddr)> = Vec::with_capacity(moveset.len());
-        for &(dir, mt, zone, word, site, bus) in moveset {
-            let direction = match dir {
-                0 => Direction::Forward,
-                1 => Direction::Backward,
-                other => {
-                    return Err(PyValueError::new_err(format!(
-                        "invalid direction {other} (must be 0 or 1)"
-                    )));
-                }
-            };
-            let move_type = match mt {
-                0 => MoveType::SiteBus,
-                1 => MoveType::WordBus,
-                2 => MoveType::ZoneBus,
-                other => {
-                    return Err(PyValueError::new_err(format!(
-                        "invalid move_type {other} (must be 0, 1, or 2)"
-                    )));
-                }
-            };
-            let lane = LaneAddr {
-                direction,
-                move_type,
-                zone_id: zone,
-                word_id: word,
-                site_id: site,
-                bus_id: bus,
-            };
+        for lane_ref in moveset {
+            let lane = lane_ref.inner;
             let Some((src, dst)) = self.index.endpoints(&lane) else {
                 return Err(PyValueError::new_err(
                     "lane endpoints missing from arch index",
@@ -640,11 +607,10 @@ impl PyEntropyScorer {
     }
 
     /// Compute the full metrics breakdown after applying ``moveset``.
-    #[allow(clippy::type_complexity)]
     fn metrics(
         &self,
         current_config: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        moveset: Vec<(u8, u8, u32, u32, u32, u32)>,
+        moveset: Vec<PyRef<'_, PyLaneAddr>>,
     ) -> PyResult<PyMovesetMetrics> {
         let pairs: Vec<(u32, LocationAddr)> = current_config
             .iter()
@@ -666,6 +632,7 @@ impl PyEntropyScorer {
             dist_table: &self.dist_table,
             blocked: &self.blocked,
             targets: &self.targets,
+            cz_pairs: None,
         };
         let inner =
             compute_moveset_metrics(&old_config, &new_config, &occupied, &ctx, &self.params);
@@ -678,11 +645,10 @@ impl PyEntropyScorer {
     }
 
     /// Shorthand for `scorer.metrics(current, moveset).score`.
-    #[allow(clippy::type_complexity)]
     fn score_moveset(
         &self,
         current_config: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        moveset: Vec<(u8, u8, u32, u32, u32, u32)>,
+        moveset: Vec<PyRef<'_, PyLaneAddr>>,
     ) -> PyResult<f64> {
         Ok(self.metrics(current_config, moveset)?.score())
     }
@@ -748,10 +714,13 @@ impl PyMoveSolver {
     ///     blocked: List of LocationAddress for immovable obstacle locations.
     ///     max_expansions: Optional limit on node expansions.
     ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
+    ///     entropy_options: Entropy-strategy parameters (EntropyOptions).
+    ///         Only consumed when the strategy is entropy.
     ///
     /// Returns:
     ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None))]
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None, entropy_options=None))]
+    #[allow(clippy::too_many_arguments)]
     fn solve(
         &self,
         py: Python<'_>,
@@ -760,6 +729,7 @@ impl PyMoveSolver {
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
     ) -> PyResult<PySolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
@@ -767,6 +737,7 @@ impl PyMoveSolver {
             target.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let entropy_opts = entropy_options.map(|o| o.inner.clone());
 
         // Release the GIL during search (pure Rust, no Python objects needed).
         let result = py
@@ -777,6 +748,7 @@ impl PyMoveSolver {
                     blocked_locs,
                     max_expansions,
                     &opts,
+                    entropy_opts.as_ref(),
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -798,7 +770,8 @@ impl PyMoveSolver {
     ///
     /// Returns:
     ///     MultiSolveResult with per-candidate debug info.
-    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None))]
+    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None, entropy_options=None))]
+    #[allow(clippy::too_many_arguments)]
     fn solve_with_generator(
         &self,
         py: Python<'_>,
@@ -809,11 +782,13 @@ impl PyMoveSolver {
         generator: Option<&PyDefaultTargetGenerator>,
         max_expansions: Option<u32>,
         options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
     ) -> PyResult<PyMultiSolveResult> {
         let initial_pairs: Vec<(u32, LocationAddr)> =
             initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
         let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
         let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let entropy_opts = entropy_options.map(|o| o.inner.clone());
 
         // Currently only DefaultTargetGenerator is supported. Reject explicit
         // generator arguments until multiple generator types are implemented.
@@ -834,6 +809,7 @@ impl PyMoveSolver {
                     rust_gen.as_ref(),
                     max_expansions,
                     &opts,
+                    entropy_opts.as_ref(),
                 )
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -875,17 +851,277 @@ impl PyMoveSolver {
             .collect())
     }
 
+    /// Solve a loose-goal entangling placement + routing problem.
+    ///
+    /// Instead of fixed target locations, the solver receives CZ pair
+    /// constraints and simultaneously discovers both the entangling
+    /// placement and the routing.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+    ///         entangling positions.
+    ///     blocked: List of LocationAddress for immovable obstacle locations.
+    ///     max_expansions: Optional limit on node expansions.
+    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
+    ///
+    /// Returns:
+    ///     SolveResult with the discovered entangling placement.
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, entangling_options=None, future_cz_layers=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn solve_entangling(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        options: Option<&PySolveOptions>,
+        entangling_options: Option<&PyEntanglingOptions>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let ent_opts = entangling_options
+            .map(|o| o.inner.clone())
+            .unwrap_or_default();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_entangling(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &opts,
+                    &ent_opts,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    /// Two-phase no-home placement: return assignment + entangling routing.
+    ///
+    /// Phase 1 assigns displaced qubits to optimal home sites.
+    /// Phase 2 routes from home to CZ-staging using solve_entangling.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to current location.
+    ///     cz_pairs: List of (control, target) qubit pairs for the CZ layer.
+    ///     blocked: List of immovable obstacle locations.
+    ///     max_expansions: Optional node expansion budget.
+    ///     options: Search-tuning parameters for routing phases.
+    ///     nohome_options: Tuning parameters for the return assignment.
+    ///     future_cz_layers: Future CZ layers for lookahead.
+    ///
+    /// Returns:
+    ///     SolveResult with the combined return + entangling placement.
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, nohome_options=None, future_cz_layers=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn solve_nohome(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        options: Option<&PySolveOptions>,
+        nohome_options: Option<&PyNoHomeOptions>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let nh_opts = nohome_options.map(|o| o.inner.clone()).unwrap_or_default();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_nohome(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &opts,
+                    &nh_opts,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    /// Receding-horizon (MPC-style) loose-goal entangling solve.
+    ///
+    /// Like `solve_entangling`, but instead of committing to one Hungarian
+    /// assignment up front, the solver generates K diverse candidate
+    /// assignments at each stage, rolls each out for `rollout_horizon` move
+    /// layers, commits the winning branch's path, and re-plans. Targeted at
+    /// high-occupancy regimes where the baseline loose-goal under-uses
+    /// parallelism.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
+    ///         entangling positions.
+    ///     blocked: List of LocationAddress for immovable obstacle locations.
+    ///     max_expansions: Optional limit on total node expansions across all stages.
+    ///     options: Search-tuning parameters (SolveOptions).
+    ///     entangling_options: Hungarian cost parameters (EntanglingOptions).
+    ///     rh_options: Receding-horizon orchestration parameters
+    ///         (RecedingHorizonOptions).
+    ///     future_cz_layers: Future CZ layers for lookahead (clipped by
+    ///         `entangling_options.hungarian_horizon`).
+    ///
+    /// Returns:
+    ///     SolveResult with the committed move-layer trajectory and the
+    ///     final entangling-feasible configuration.
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, entangling_options=None, rh_options=None, future_cz_layers=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn solve_entangling_rh(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        options: Option<&PySolveOptions>,
+        entangling_options: Option<&PyEntanglingOptions>,
+        rh_options: Option<&PyRecedingHorizonOptions>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
+        let ent_opts = entangling_options
+            .map(|o| o.inner.clone())
+            .unwrap_or_default();
+        let rh_opts = rh_options.map(|o| o.inner.clone()).unwrap_or_default();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_entangling_rh(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &opts,
+                    &ent_opts,
+                    &rh_opts,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
     fn __repr__(&self) -> String {
         "MoveSolver(...)".to_string()
     }
 }
 
+// ── No-home options ──
+
+/// Tuning parameters for the no-home return assignment.
+///
+/// Controls how displaced qubits are assigned to available home sites
+/// between CZ layers.
+#[pyclass(
+    name = "NoHomeOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyNoHomeOptions {
+    inner: NoHomeOptions,
+}
+
+#[pymethods]
+impl PyNoHomeOptions {
+    #[new]
+    #[pyo3(signature = (gamma=0.85, lambda_lookahead=0.5, k_candidates=8, top_bus_signatures=6, bus_reward_rho=1))]
+    fn new(
+        gamma: f64,
+        lambda_lookahead: f64,
+        k_candidates: usize,
+        top_bus_signatures: usize,
+        bus_reward_rho: u32,
+    ) -> PyResult<Self> {
+        if !gamma.is_finite() || !(0.0..=1.0).contains(&gamma) {
+            return Err(PyValueError::new_err(
+                "gamma must be a finite float in [0.0, 1.0]",
+            ));
+        }
+        if !lambda_lookahead.is_finite() || lambda_lookahead < 0.0 {
+            return Err(PyValueError::new_err(
+                "lambda_lookahead must be a non-negative finite float",
+            ));
+        }
+        if k_candidates == 0 {
+            return Err(PyValueError::new_err("k_candidates must be >= 1"));
+        }
+        Ok(Self {
+            inner: NoHomeOptions {
+                gamma,
+                lambda_lookahead,
+                k_candidates,
+                top_bus_signatures,
+                bus_reward_rho,
+            },
+        })
+    }
+
+    #[getter]
+    fn gamma(&self) -> f64 {
+        self.inner.gamma
+    }
+
+    #[getter]
+    fn lambda_lookahead(&self) -> f64 {
+        self.inner.lambda_lookahead
+    }
+
+    #[getter]
+    fn k_candidates(&self) -> usize {
+        self.inner.k_candidates
+    }
+
+    #[getter]
+    fn top_bus_signatures(&self) -> usize {
+        self.inner.top_bus_signatures
+    }
+
+    #[getter]
+    fn bus_reward_rho(&self) -> u32 {
+        self.inner.bus_reward_rho
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NoHomeOptions(gamma={}, lambda_lookahead={}, k_candidates={}, top_bus_signatures={}, bus_reward_rho={})",
+            self.inner.gamma,
+            self.inner.lambda_lookahead,
+            self.inner.k_candidates,
+            self.inner.top_bus_signatures,
+            self.inner.bus_reward_rho,
+        )
+    }
+}
+
 // ── Solve options ──
 
-/// Search-tuning parameters shared across solve methods.
-///
-/// Bundles strategy, heuristic weight, restarts, and other tuning knobs
-/// into a single reusable object.
+/// Core search-tuning parameters shared by every `MoveSolver` entry point.
 #[pyclass(
     name = "SolveOptions",
     frozen,
@@ -899,49 +1135,33 @@ pub struct PySolveOptions {
 #[pymethods]
 impl PySolveOptions {
     #[new]
-    #[pyo3(signature = (strategy=PySearchStrategy::AStar, max_movesets_per_group=3, max_goal_candidates=3, weight=1.0, restarts=1, lookahead=false, deadlock_policy=PyDeadlockPolicy::Skip, w_t=0.05, collect_entropy_trace=false))]
+    #[pyo3(signature = (strategy=PySearchStrategy::AStar, weight=1.0, restarts=1, deadlock_policy=PyDeadlockPolicy::Skip, lookahead=false, top_c=None))]
     fn new(
         strategy: PySearchStrategy,
-        max_movesets_per_group: usize,
-        max_goal_candidates: usize,
         weight: f64,
         restarts: u32,
-        lookahead: bool,
         deadlock_policy: PyDeadlockPolicy,
-        w_t: f64,
-        collect_entropy_trace: bool,
+        lookahead: bool,
+        top_c: Option<usize>,
     ) -> PyResult<Self> {
-        if max_movesets_per_group == 0 {
-            return Err(PyValueError::new_err(
-                "max_movesets_per_group must be an integer >= 1",
-            ));
-        }
-        if max_goal_candidates == 0 {
-            return Err(PyValueError::new_err(
-                "max_goal_candidates must be an integer >= 1",
-            ));
-        }
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
                 "weight must be a finite float greater than 0.0",
             ));
         }
-        if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
+        if matches!(top_c, Some(0)) {
             return Err(PyValueError::new_err(
-                "w_t must be a finite float in the range [0.0, 1.0]",
+                "top_c must be None or an integer >= 1",
             ));
         }
         Ok(Self {
             inner: SolveOptions {
                 strategy: strategy.to_rs(),
-                max_movesets_per_group,
-                max_goal_candidates,
                 weight,
                 restarts,
-                lookahead,
                 deadlock_policy: deadlock_policy.to_rs(),
-                w_t,
-                collect_entropy_trace,
+                lookahead,
+                top_c,
             },
         })
     }
@@ -949,16 +1169,6 @@ impl PySolveOptions {
     #[getter]
     fn strategy(&self) -> PySearchStrategy {
         PySearchStrategy::from_rs(&self.inner.strategy)
-    }
-
-    #[getter]
-    fn max_movesets_per_group(&self) -> usize {
-        self.inner.max_movesets_per_group
-    }
-
-    #[getter]
-    fn max_goal_candidates(&self) -> usize {
-        self.inner.max_goal_candidates
     }
 
     #[getter]
@@ -972,13 +1182,93 @@ impl PySolveOptions {
     }
 
     #[getter]
+    fn deadlock_policy(&self) -> PyDeadlockPolicy {
+        PyDeadlockPolicy::from_rs(&self.inner.deadlock_policy)
+    }
+
+    #[getter]
     fn lookahead(&self) -> bool {
         self.inner.lookahead
     }
 
     #[getter]
-    fn deadlock_policy(&self) -> PyDeadlockPolicy {
-        PyDeadlockPolicy::from_rs(&self.inner.deadlock_policy)
+    fn top_c(&self) -> Option<usize> {
+        self.inner.top_c
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={}, lookahead={}, top_c={:?})",
+            self.strategy().name(),
+            self.inner.weight,
+            self.inner.restarts,
+            self.deadlock_policy().name(),
+            self.inner.lookahead,
+            self.inner.top_c,
+        )
+    }
+}
+
+// ── Entropy options ──
+
+/// Entropy-strategy-specific parameters.
+///
+/// Only consumed when the chosen strategy is entropy (or a Cascade variant
+/// whose inner is entropy). Pass via the optional `entropy_opts` argument
+/// to `MoveSolver.solve`.
+#[pyclass(
+    name = "EntropyOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyEntropyOptions {
+    inner: EntropyOptions,
+}
+
+#[pymethods]
+impl PyEntropyOptions {
+    #[new]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false))]
+    fn new(
+        max_movesets_per_group: usize,
+        max_goal_candidates: usize,
+        w_t: f64,
+        collect_entropy_trace: bool,
+    ) -> PyResult<Self> {
+        if max_movesets_per_group == 0 {
+            return Err(PyValueError::new_err(
+                "max_movesets_per_group must be an integer >= 1",
+            ));
+        }
+        if max_goal_candidates == 0 {
+            return Err(PyValueError::new_err(
+                "max_goal_candidates must be an integer >= 1",
+            ));
+        }
+        if !w_t.is_finite() || !(0.0..=1.0).contains(&w_t) {
+            return Err(PyValueError::new_err(
+                "w_t must be a finite float in the range [0.0, 1.0]",
+            ));
+        }
+        Ok(Self {
+            inner: EntropyOptions {
+                max_movesets_per_group,
+                max_goal_candidates,
+                w_t,
+                collect_entropy_trace,
+            },
+        })
+    }
+
+    #[getter]
+    fn max_movesets_per_group(&self) -> usize {
+        self.inner.max_movesets_per_group
+    }
+
+    #[getter]
+    fn max_goal_candidates(&self) -> usize {
+        self.inner.max_goal_candidates
     }
 
     #[getter]
@@ -993,11 +1283,224 @@ impl PySolveOptions {
 
     fn __repr__(&self) -> String {
         format!(
-            "SolveOptions(strategy={}, weight={}, restarts={}, deadlock_policy={})",
-            self.strategy().name(),
-            self.inner.weight,
-            self.inner.restarts,
-            self.deadlock_policy().name(),
+            "EntropyOptions(max_movesets_per_group={}, max_goal_candidates={}, w_t={}, collect_entropy_trace={})",
+            self.inner.max_movesets_per_group,
+            self.inner.max_goal_candidates,
+            self.inner.w_t,
+            self.inner.collect_entropy_trace,
+        )
+    }
+}
+
+// ── Entangling options ──
+
+/// Loose-goal entangling-search parameters consumed by
+/// `MoveSolver.solve_entangling`.
+#[pyclass(
+    name = "EntanglingOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyEntanglingOptions {
+    inner: EntanglingOptions,
+}
+
+#[pymethods]
+impl PyEntanglingOptions {
+    #[new]
+    #[pyo3(signature = (congestion_weight=0.0, occupancy_penalty=1.0, hungarian_horizon=Some(4)))]
+    fn new(
+        congestion_weight: f64,
+        occupancy_penalty: f64,
+        hungarian_horizon: Option<usize>,
+    ) -> PyResult<Self> {
+        if !congestion_weight.is_finite() || congestion_weight < 0.0 {
+            return Err(PyValueError::new_err(
+                "congestion_weight must be a finite non-negative float",
+            ));
+        }
+        if !occupancy_penalty.is_finite() || occupancy_penalty < 0.0 {
+            return Err(PyValueError::new_err(
+                "occupancy_penalty must be a finite non-negative float",
+            ));
+        }
+        Ok(Self {
+            inner: EntanglingOptions {
+                congestion_weight,
+                occupancy_penalty,
+                hungarian_horizon,
+            },
+        })
+    }
+
+    #[getter]
+    fn congestion_weight(&self) -> f64 {
+        self.inner.congestion_weight
+    }
+
+    #[getter]
+    fn occupancy_penalty(&self) -> f64 {
+        self.inner.occupancy_penalty
+    }
+
+    #[getter]
+    fn hungarian_horizon(&self) -> Option<usize> {
+        self.inner.hungarian_horizon
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EntanglingOptions(congestion_weight={}, occupancy_penalty={}, hungarian_horizon={:?})",
+            self.inner.congestion_weight,
+            self.inner.occupancy_penalty,
+            self.inner.hungarian_horizon,
+        )
+    }
+}
+
+// ── Receding-horizon options ──
+
+/// Orchestration parameters for `MoveSolver.solve_entangling_rh`.
+///
+/// Controls how many candidate Hungarian assignments are tried per stage,
+/// how far each rollout searches forward, how many layers of the winning
+/// branch get committed before re-planning, and other tuning knobs.
+#[pyclass(
+    name = "RecedingHorizonOptions",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+#[derive(Clone)]
+pub struct PyRecedingHorizonOptions {
+    inner: RecedingHorizonOptions,
+}
+
+#[pymethods]
+impl PyRecedingHorizonOptions {
+    #[new]
+    #[pyo3(signature = (
+        k_candidates = 5,
+        rollout_horizon = 5,
+        commit_depth = 3,
+        tier0_next_h_weight = 0.5,
+        weight_grid = None,
+        fallback_x_decrement = 1,
+        branch_parallel = true,
+        max_expansions_per_rollout = 300,
+        greedy_first = true,
+        inner_beam_width = 2,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        k_candidates: usize,
+        rollout_horizon: u32,
+        commit_depth: u32,
+        tier0_next_h_weight: f64,
+        weight_grid: Option<Vec<(f64, f64)>>,
+        fallback_x_decrement: u32,
+        branch_parallel: bool,
+        max_expansions_per_rollout: u32,
+        greedy_first: bool,
+        inner_beam_width: u32,
+    ) -> PyResult<Self> {
+        if k_candidates == 0 {
+            return Err(PyValueError::new_err("k_candidates must be positive"));
+        }
+        if rollout_horizon == 0 {
+            return Err(PyValueError::new_err("rollout_horizon must be positive"));
+        }
+        if commit_depth == 0 || commit_depth > rollout_horizon {
+            return Err(PyValueError::new_err(
+                "commit_depth must satisfy 1 <= commit_depth <= rollout_horizon",
+            ));
+        }
+        if !tier0_next_h_weight.is_finite() || tier0_next_h_weight < 0.0 {
+            return Err(PyValueError::new_err(
+                "tier0_next_h_weight must be a finite non-negative float",
+            ));
+        }
+        let grid = weight_grid.unwrap_or_else(default_weight_grid);
+        if grid.is_empty() {
+            return Err(PyValueError::new_err("weight_grid must not be empty"));
+        }
+        for &(cw, op) in &grid {
+            if !cw.is_finite() || cw < 0.0 || !op.is_finite() || op < 0.0 {
+                return Err(PyValueError::new_err(
+                    "weight_grid entries must be finite non-negative pairs",
+                ));
+            }
+        }
+        Ok(Self {
+            inner: RecedingHorizonOptions {
+                k_candidates,
+                rollout_horizon,
+                commit_depth,
+                tier0_next_h_weight,
+                weight_grid: grid,
+                fallback_x_decrement: fallback_x_decrement.max(1),
+                branch_parallel,
+                max_expansions_per_rollout: max_expansions_per_rollout.max(1),
+                greedy_first,
+                inner_beam_width: inner_beam_width.max(1),
+            },
+        })
+    }
+
+    #[getter]
+    fn k_candidates(&self) -> usize {
+        self.inner.k_candidates
+    }
+    #[getter]
+    fn rollout_horizon(&self) -> u32 {
+        self.inner.rollout_horizon
+    }
+    #[getter]
+    fn commit_depth(&self) -> u32 {
+        self.inner.commit_depth
+    }
+    #[getter]
+    fn tier0_next_h_weight(&self) -> f64 {
+        self.inner.tier0_next_h_weight
+    }
+    #[getter]
+    fn weight_grid(&self) -> Vec<(f64, f64)> {
+        self.inner.weight_grid.clone()
+    }
+    #[getter]
+    fn fallback_x_decrement(&self) -> u32 {
+        self.inner.fallback_x_decrement
+    }
+    #[getter]
+    fn branch_parallel(&self) -> bool {
+        self.inner.branch_parallel
+    }
+    #[getter]
+    fn max_expansions_per_rollout(&self) -> u32 {
+        self.inner.max_expansions_per_rollout
+    }
+    #[getter]
+    fn greedy_first(&self) -> bool {
+        self.inner.greedy_first
+    }
+    #[getter]
+    fn inner_beam_width(&self) -> u32 {
+        self.inner.inner_beam_width
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RecedingHorizonOptions(k_candidates={}, rollout_horizon={}, commit_depth={}, tier0_next_h_weight={}, fallback_x_decrement={}, branch_parallel={}, max_expansions_per_rollout={}, greedy_first={}, inner_beam_width={}, weight_grid_len={})",
+            self.inner.k_candidates,
+            self.inner.rollout_horizon,
+            self.inner.commit_depth,
+            self.inner.tier0_next_h_weight,
+            self.inner.fallback_x_decrement,
+            self.inner.branch_parallel,
+            self.inner.max_expansions_per_rollout,
+            self.inner.greedy_first,
+            self.inner.inner_beam_width,
+            self.inner.weight_grid.len(),
         )
     }
 }
@@ -1090,8 +1593,7 @@ impl PyMultiSolveResult {
 
     /// Move layers from the winning candidate (same format as SolveResult.move_layers).
     #[getter]
-    #[allow(clippy::type_complexity)]
-    fn move_layers(&self) -> Vec<Vec<(u8, u8, u32, u32, u32, u32)>> {
+    fn move_layers(&self) -> Vec<Vec<PyLaneAddr>> {
         self.inner
             .result
             .move_layers
@@ -1099,16 +1601,7 @@ impl PyMultiSolveResult {
             .map(|ms| {
                 ms.decode()
                     .into_iter()
-                    .map(|lane| {
-                        (
-                            lane.direction as u8,
-                            lane.move_type as u8,
-                            lane.zone_id,
-                            lane.word_id,
-                            lane.site_id,
-                            lane.bus_id,
-                        )
-                    })
+                    .map(|lane| PyLaneAddr { inner: lane })
                     .collect()
             })
             .collect()
