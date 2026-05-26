@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.bytecode._native import EntropyTrace, EntropyTraceStep
 from bloqade.lanes.bytecode.encoding import (
     Direction,
@@ -13,6 +15,8 @@ from bloqade.lanes.bytecode.encoding import (
     LocationAddress,
     MoveType,
 )
+
+CustomLayout = Mapping[int, LocationAddress] | Sequence[LocationAddress]
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,58 @@ class EntropyTraceBundle:
     location_to_global_qid: dict[LocationAddress, int]
     kernel_name: str
     executed_cz_count: int
+
+
+@dataclass
+class _FixedCustomLayoutHeuristic(LayoutHeuristicABC):
+    """Inject a full custom layout through the existing pinned-layout path."""
+
+    base_heuristic: LayoutHeuristicABC
+    custom_layout: CustomLayout
+
+    def compute_layout(
+        self,
+        all_qubits: tuple[int, ...],
+        stages: list[tuple[tuple[int, int], ...]],
+        pinned: dict[int, LocationAddress] | None = None,
+    ) -> tuple[LocationAddress, ...]:
+        _ = stages
+        if pinned:
+            raise ValueError(
+                "custom_layout describes the full initial layout; pinned "
+                "addresses in the IR are not supported at the same time"
+            )
+
+        qids = tuple(sorted(all_qubits))
+        if isinstance(self.custom_layout, Mapping):
+            actual = set(self.custom_layout)
+            expected = set(qids)
+            if actual != expected:
+                missing = sorted(expected - actual)
+                extra = sorted(actual - expected)
+                raise ValueError(
+                    "custom_layout mapping must contain exactly the circuit "
+                    f"qubit IDs; missing={missing}, extra={extra}"
+                )
+            layout = tuple(self.custom_layout[qid] for qid in qids)
+        else:
+            layout = tuple(self.custom_layout)
+            if len(layout) != len(qids):
+                raise ValueError(
+                    "custom_layout sequence length must match the number of "
+                    f"circuit qubits ({len(qids)}), got {len(layout)}"
+                )
+
+        bad_types = [addr for addr in layout if not isinstance(addr, LocationAddress)]
+        if bad_types:
+            raise TypeError("custom_layout values must be LocationAddress instances")
+
+        full_pinned_layout = dict(zip(qids, layout, strict=True))
+        return self.base_heuristic.compute_layout(
+            all_qubits,
+            stages,
+            pinned=full_pinned_layout,
+        )
 
 
 def _decode_lane(lane: tuple[int, int, int, int, int, int]) -> LaneAddress:
@@ -130,12 +186,14 @@ def build_entropy_trace(
     layer_index: int = 0,
     max_expansions: int | None = 1000,
     max_goal_candidates: int | None = None,
+    custom_layout: CustomLayout | None = None,
 ) -> EntropyTraceBundle:
     """Run the compilation pipeline and capture an entropy trace for ``layer_index``.
 
     Drives the full squin->move pipeline with a ``RustPlacementTraversal``
     configured to collect an entropy trace. Returns all the state the
-    visualizer needs to render the trace.
+    visualizer needs to render the trace. When ``custom_layout`` is provided,
+    it must describe the full initial layout for every circuit qubit.
     """
     from bloqade.analysis import address
     from bloqade.analysis.address.lattice import AddressQubit
@@ -151,8 +209,16 @@ def build_entropy_trace(
     from bloqade.lanes.upstream import NativeToPlace, squin_to_move
 
     arch_spec = get_arch_spec()
-    layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
+    default_layout_heuristic = PhysicalLayoutHeuristicGraphPartitionCenterOut(
         arch_spec=arch_spec
+    )
+    layout_heuristic: LayoutHeuristicABC = (
+        default_layout_heuristic
+        if custom_layout is None
+        else _FixedCustomLayoutHeuristic(
+            base_heuristic=default_layout_heuristic,
+            custom_layout=custom_layout,
+        )
     )
 
     goal_candidates = (
