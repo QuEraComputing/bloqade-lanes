@@ -568,9 +568,9 @@ impl MoveGenerator for HeuristicGenerator {
                 }
             }
 
-            // Build rectangular grids via two-phase algorithm.
-            // Every grid lane has a corresponding triple because `is_valid_rect`
-            // requires all grid positions to be in the movers set (derived from entries).
+            // Build rectangular grids via two-phase algorithm. Grids may include
+            // empty filler lanes to keep complete AOD geometry; only lanes that
+            // map back to a scored triple contribute qubit moves and score.
             let grids = grid_ctx.build_aod_grids(&entries);
 
             for grid_lanes in grids {
