@@ -21,6 +21,7 @@ HARVEST OUTPUT (dependency graph, git log, consumer file paths):
 
 Your job: Map the crate's PUBLIC surface and how external consumers actually use it.
 Focus only on pub items — not pub(crate) or private (those are Agent 2's domain).
+You have direct access to all source files in the workspace. Read files under `crates/{{CRATE_NAME}}/src/` and the consumer files listed in HARVEST OUTPUT yourself — do not try to infer content from file paths alone.
 
 STEP 1 — Read the public surface.
 Read src/lib.rs. Follow every `pub use` and `pub mod` to find the full exported
@@ -40,7 +41,10 @@ For each file:
 STEP 3 — Build Responsibility Portraits.
 For each public type, write 2-3 sentences describing what external callers actually
 expect this type to do, inferred from usage evidence — not declarations.
-Answer: "what mental model is the caller holding about this type?"
+Focus on the most common usage pattern. If a type is used in 5+ different ways,
+describe the primary contract (most frequent) and note any significant secondary uses.
+Answer: "If I removed this type's documentation, what would a caller's code tell me
+it expects this type to do?"
 
 STEP 4 — Identify friction and dead surface.
 API friction points: places where a caller reconstructs data the crate could have
@@ -86,6 +90,7 @@ HARVEST OUTPUT (dependency graph, git log, consumer file paths):
 Your job: Map the crate's INTERNAL structure — how modules and pub(crate) types
 interact with each other. Do not focus on the public-facing surface (that is
 Agent 1's domain).
+You have direct access to all source files in the workspace. Read every `.rs` file under `crates/{{CRATE_NAME}}/src/` directly — do not try to infer content from file paths alone.
 
 STEP 1 — Read every source file.
 List every .rs file under crates/{{CRATE_NAME}}/src/ and read them all.
@@ -105,8 +110,10 @@ Draw this as an ASCII diagram or a bulleted handoff list:
 
 STEP 3 — Build Responsibility Portraits for pub(crate) types.
 For each significant pub(crate) type (appears in 2+ modules), write 2-3 sentences
-describing what internal callers expect from it, inferred from usage across modules.
-Answer: "what contract do internal callers hold about this type?"
+describing the contract internal callers hold, inferred from how it is used.
+Focus on what callers assume they can rely on: what invariants do they never check
+because they trust this type to maintain them?
+Answer: "What would break in the calling module if this type's behavior changed?"
 
 STEP 4 — Identify internal coupling hotspots.
 A coupling hotspot is any module that imports from 3 or more sibling modules.
@@ -162,8 +169,12 @@ Your job: Evaluate whether the implementation delivers on its contracts, detect
 emerging patterns, and generate open questions that build systems thinking.
 
 Before starting, extract from HARVEST OUTPUT:
-- HOTSPOT FILES: files appearing in 3+ commits in the log
-- AI COMMITS: commits with "Co-Authored-By: Claude" or 10+ files touched
+The git log section uses format: `<hash> <author> <subject>` followed by the file names
+changed in that commit (one per line, blank line between commits).
+
+- HOTSPOT FILES: file paths that appear after 3 or more different commit headers
+- AI COMMITS: commit headers where the subject contains "Co-Authored-By: Claude",
+  or where more than 10 file paths follow a single commit header
 
 STEP 1 — Contract divergence analysis.
 For each public type in Agent 1's Responsibility Portraits:
