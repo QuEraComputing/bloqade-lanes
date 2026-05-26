@@ -230,8 +230,12 @@ Readiness: all instances stable 20+ days → ready to abstract;
 any instance touched within 7 days → still evolving; 7–20 days → monitor.
 
 STEP 6 — Generate open questions.
-Generate questions grounded in what you found in Steps 1–5 — not generic questions.
-Reference specific types, modules, and patterns by name.
+For each finding area that produced findings (contract divergence, Rust health,
+architectural health, AI-drift, emerging patterns), write 1–3 questions grounded
+in the specific types, modules, and patterns you found. Skip a subsection entirely
+if its corresponding finding section had nothing to report.
+
+Questions must reference specific names — not generic observations.
 
 Return your findings in this exact structure:
 
@@ -258,22 +262,22 @@ Return your findings in this exact structure:
 
 ## Open Questions
 
-### Design Philosophy
-1. [Socratic question about a specific type, boundary, or invariant found in this review]
-2. [...]
-3. [...]
-4. [...]
-5. [...]
-*(aim for 5–8 questions)*
+### Contract Divergence
+*(skip if no GAP findings above)*
+1. [Question grounded in a specific GAP finding — name the type]
 
-### Ownership & Maintainability
-1. [Concrete question about ownership, discoverability, or contributor understanding]
-2. [...]
-3. [...]
-*(aim for 3–5 questions)*
+### Rust Health
+*(skip if no hotspot findings above)*
+1. [Question grounded in a specific Rust health finding — name the file and line]
 
-### Forward-looking Risk
-1. [Open question about what breaks or accumulates if things change]
-2. [...]
-*(aim for 2–3 questions)*
+### Architectural Health
+1. [Question grounded in a specific architectural finding — name the module boundary]
+
+### AI-Drift
+*(skip if no AI-authored commits in harvest window)*
+1. [Question grounded in a specific drift finding — name the commit and the item]
+
+### Emerging Patterns
+*(skip if no patterns detected above)*
+1. [Question grounded in a specific detected pattern — name the pattern and the suggested abstraction]
 ```

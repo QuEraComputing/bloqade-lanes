@@ -107,9 +107,12 @@ structure:
    architectural health, AI-drift findings, ⚠ emerging pattern callouts.
 
 ## 5. Open Questions
-   ### Design Philosophy
-   ### Ownership & Maintainability
-   ### Forward-looking Risk
+   One subsection per finding area that produced findings.
+   ### Contract Divergence
+   ### Rust Health
+   ### Architectural Health
+   ### AI-Drift
+   ### Emerging Patterns
 ```
 
 Save to: `docs/superpowers/reviews/YYYY-MM-DD-<crate-name>-review.md`
