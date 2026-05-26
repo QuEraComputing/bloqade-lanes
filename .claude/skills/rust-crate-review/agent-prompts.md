@@ -51,7 +51,11 @@ API friction points: places where a caller reconstructs data the crate could hav
 provided, or casts/wraps a type the crate could have exposed directly.
 Dead public surface: `pub` items that appear in none of the consumer files.
 
-Return your findings in this exact structure:
+Return your findings in this exact structure.
+
+**Markdown note:** Rust generic types (`Vec<T>`, `Arc<T>`, `Option<T>`) contain angle brackets that many
+Markdown renderers parse as HTML tags. Always wrap any type expression containing `<` or `>` in
+backticks — both in table cells and in prose — to prevent rendering corruption.
 
 ## External API Surface
 
@@ -119,7 +123,10 @@ STEP 4 — Identify internal coupling hotspots.
 A coupling hotspot is any module that imports from 3 or more sibling modules.
 List them with the full import set.
 
-Return your findings in this exact structure:
+Return your findings in this exact structure.
+
+**Markdown note:** Wrap any type expression containing `<` or `>` in backticks (e.g. `Vec<T>`,
+`Arc<ArchSpec>`) to prevent angle brackets from being parsed as HTML tags.
 
 ## Internal Architecture
 
@@ -237,7 +244,10 @@ if its corresponding finding section had nothing to report.
 
 Questions must reference specific names — not generic observations.
 
-Return your findings in this exact structure:
+Return your findings in this exact structure.
+
+**Markdown note:** Wrap any type expression containing `<` or `>` in backticks (e.g. `Vec<T>`,
+`StepResult<A>`) to prevent angle brackets from being parsed as HTML tags.
 
 ## Critical Evaluation
 
