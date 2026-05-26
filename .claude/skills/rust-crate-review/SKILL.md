@@ -107,9 +107,9 @@ structure:
    architectural health, AI-drift findings, ⚠ emerging pattern callouts.
 
 ## 5. Open Questions
-   ### Design Philosophy  [all levels]
-   ### Ownership & Maintainability  [junior focus]
-   ### Forward-looking Risk  [senior focus]
+   ### Design Philosophy
+   ### Ownership & Maintainability
+   ### Forward-looking Risk
 ```
 
 Save to: `docs/superpowers/reviews/YYYY-MM-DD-<crate-name>-review.md`

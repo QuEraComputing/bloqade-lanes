@@ -258,7 +258,7 @@ Return your findings in this exact structure:
 
 ## Open Questions
 
-### Design Philosophy  [all levels]
+### Design Philosophy
 1. [Socratic question about a specific type, boundary, or invariant found in this review]
 2. [...]
 3. [...]
@@ -266,13 +266,13 @@ Return your findings in this exact structure:
 5. [...]
 *(aim for 5–8 questions)*
 
-### Ownership & Maintainability  [junior focus]
+### Ownership & Maintainability
 1. [Concrete question about ownership, discoverability, or contributor understanding]
 2. [...]
 3. [...]
 *(aim for 3–5 questions)*
 
-### Forward-looking Risk  [senior focus]
+### Forward-looking Risk
 1. [Open question about what breaks or accumulates if things change]
 2. [...]
 *(aim for 2–3 questions)*
