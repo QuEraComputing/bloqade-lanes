@@ -5,11 +5,15 @@ from typing import cast
 
 import pytest
 from benchmarks.harness.models import BenchmarkCase, BenchmarkJob, StrategyConfig
-from benchmarks.harness.runner import BenchmarkRunner
+from benchmarks.harness.runner import BenchmarkRunner, _count_moves
 from kirin import ir
 
+from bloqade.lanes._prelude import kernel as move_kernel
 from bloqade.lanes.analysis.placement import PlacementStrategyABC
 from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
+from bloqade.lanes.bytecode.encoding import WordLaneAddress
+from bloqade.lanes.dialects import move
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
@@ -200,6 +204,26 @@ def test_run_jobs_stamps_arch_spec_id_from_strategy(monkeypatch):
 
     rows = runner.run_jobs(jobs)
     assert [row.arch_spec_id for row in rows] == ["full", "simple"]
+
+
+def test_count_moves_ignores_empty_filler_lanes():
+    @move_kernel
+    def main():
+        state0 = move.load()
+        state1 = move.fill(state0, location_addresses=(move.LocationAddress(0, 0),))
+        state2 = move.move(
+            state1,
+            lanes=(
+                WordLaneAddress(0, 0, 0),
+                WordLaneAddress(0, 1, 0),
+            ),
+        )
+        move.store(state2)
+
+    move_count_events, move_count_lanes = _count_moves(main, get_logical_arch_spec())
+
+    assert move_count_events == 1
+    assert move_count_lanes == 1
 
 
 def test_compile_reads_rust_nodes_from_strategy(monkeypatch):
