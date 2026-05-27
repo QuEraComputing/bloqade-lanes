@@ -150,7 +150,7 @@ def test_single_kernel_task_create_task_definition_int_num_shots():
     task = GeminiSingleKernelTask(kernel=bell, num_shots=10)
     task_def = task.create_task_definition()
 
-    assert task_def.program_language == "squin"
+    assert task_def.program_language.startswith("squin.v")
     assert len(task_def.programs) == 1
     assert len(task_def.subtasks) == 1
     subtask = task_def.subtasks[0]
