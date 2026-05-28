@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from benchmarks.harness.models import BenchmarkJob, BenchmarkRow
 from bloqade.analysis.fidelity import FidelityAnalysis
 
+from bloqade.lanes.analysis import atom
+from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.compile import (
     compile_to_physical_squin_noise_model as compile_physical_noise_model,
 )
@@ -31,6 +33,7 @@ from bloqade.lanes.upstream import squin_to_move
 @dataclass(frozen=True)
 class _RunArtifacts:
     move_mt: object
+    arch_spec: ArchSpec
     nodes_explored: int | None
     max_depth_reached: int | None
     notes: str = ""
@@ -61,6 +64,7 @@ class BenchmarkRunner:
     def _run_one(self, job: BenchmarkJob) -> BenchmarkRow:
         elapsed_samples: list[float] = []
         move_mt = None
+        artifacts: _RunArtifacts | None = None
         nodes_explored = None
         max_depth_reached = None
         notes = [job.strategy.notes] if job.strategy.notes else []
@@ -81,10 +85,13 @@ class BenchmarkRunner:
                     if artifacts.notes:
                         notes.append(artifacts.notes)
 
-            if move_mt is None:
+            if move_mt is None or artifacts is None:
                 raise RuntimeError("No benchmark run completed.")
 
-            move_count_events, move_count_lanes = _count_moves(move_mt)
+            move_count_events, move_count_lanes = _count_moves(
+                move_mt,
+                artifacts.arch_spec,
+            )
             fidelity = self._estimate_fidelity(job)
             if fidelity is None:
                 notes.append("fidelity skipped for physical-only compilation mode")
@@ -142,6 +149,7 @@ class BenchmarkRunner:
             nodes = inner.rust_nodes_expanded_total
         return _RunArtifacts(
             move_mt=move_mt,
+            arch_spec=placement_strategy.arch_spec,
             nodes_explored=nodes,
             max_depth_reached=None,
         )
@@ -192,13 +200,24 @@ class BenchmarkRunner:
         return job.strategy.build_placement_strategy()
 
 
-def _count_moves(move_mt) -> tuple[int, int]:
+def _count_moves(move_mt, arch_spec: ArchSpec) -> tuple[int, int]:
+    atom_interp = atom.AtomInterpreter(move_mt.dialects, arch_spec=arch_spec)
+    frame, _ = atom_interp.run(move_mt)
     move_count_events = 0
     move_count_lanes = 0
     for stmt in move_mt.callable_region.walk():
         if isinstance(stmt, move.Move):
             move_count_events += 1
-            move_count_lanes += len(stmt.lanes)
+            state = frame.get(stmt.current_state)
+            assert isinstance(
+                state, atom.AtomState
+            ), "Expected concrete atom state before move.Move while counting lanes"
+            move_count_lanes += sum(
+                1
+                for lane in stmt.lanes
+                if (endpoints := arch_spec.try_get_endpoints(lane)) is not None
+                and endpoints[0] in state.data.locations_to_qubit
+            )
     return move_count_events, move_count_lanes
 
 

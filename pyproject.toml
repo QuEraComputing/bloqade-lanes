@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bloqade-lanes"
-version = "0.10.0-dev"
+version = "0.11.0-dev"
 description = "Components for defining and manipulating lane-based structures in Bloqade for neutral atom quantum computing."
 readme = "README.md"
 authors = [
@@ -13,7 +13,7 @@ authors = [
 dependencies = [
     "bloqade-circuit[cirq, qasm2, tsim]~=0.14.1",
     "bloqade-tsim~=0.1.3",
-    "bloqade-core~=0.6.1",
+    "bloqade-core~=0.6.3",
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",
     "numpy>=2.2.6",

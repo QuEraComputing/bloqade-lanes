@@ -11,7 +11,7 @@ from bloqade.lanes.bytecode.encoding import LocationAddress
 
 @dataclass
 class LogicalLayoutHeuristic(LayoutHeuristicABC):
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
 
     def score_parallelism(
         self,

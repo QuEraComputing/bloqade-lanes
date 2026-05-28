@@ -8,7 +8,7 @@
 //! [`BfsFrontier`], and [`DfsFrontier`] (heuristic depth-first).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use crate::astar::{Expander, SearchResult};
 use crate::config::Config;
@@ -16,6 +16,24 @@ use crate::context::{MoveCandidate, SearchContext, SearchState};
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator};
+
+/// Number of parent-chain steps to inspect when computing the
+/// per-atom recent-source map for the IDS frontier's reversal
+/// tiebreaker. Cycles in the diagnosed failure mode oscillate every
+/// 1–2 steps, so a small window suffices; larger windows catch longer
+/// cycles at modest extra cost.
+const IDS_REVERSAL_LOOKBACK: usize = 10;
+
+/// Penalty added to a child's `h_score` for each atom whose move
+/// (parent → child) returns it to a position vacated within the last
+/// [`IDS_REVERSAL_LOOKBACK`] steps. Breaks the symmetry between
+/// forward and backward moves of the same atom inside h-plateaus,
+/// where the heuristic alone cannot tell the two apart.
+///
+/// Calibrated to be small (≪ 1 atom-distance) so that genuinely
+/// improving moves still dominate the priority order; the penalty
+/// only flips ordering when h would otherwise tie.
+const IDS_REVERSAL_PENALTY: f64 = 0.5;
 
 // ── Frontier trait ──────────────────────────────────────────────────
 
@@ -355,10 +373,22 @@ impl<H: crate::traits::Heuristic> Frontier for DfsFrontier<H> {
 
 // ── IdsFrontier (Iterative Diving Search) ───────────────────────────
 
-/// Priority entry for IDS: depth-first with heuristic jump-back.
+/// Priority entry for IDS: best-first dive (paper-style "Iterative Diving
+/// Search").
 ///
-/// Ordering (max-heap): higher depth first, then lower insertion order
-/// (preserves expander ranking), then lower h (best heuristic on jump-back).
+/// Ordering (max-heap): lower `h_score` first, then deeper (dive when scores
+/// tie), then earlier insertion (preserves expander ranking).
+///
+/// This matches the algorithm in arxiv:2512.13790 — the heuristic drives the
+/// pop order, with depth as a tiebreaker so the search prefers diving into
+/// the cheapest path while still backing up to a shallower node when the
+/// shallower path looks better.
+///
+/// Note: `insertion_order` is unique across all entries (one increment per
+/// `receive_children` call), so it always breaks ties decisively. This
+/// means earlier orderings where `insertion_order` came before `h_score`
+/// effectively never consulted the heuristic — the change to put
+/// `h_score` first activates a previously-dormant signal.
 struct IdsEntry {
     depth: u32,
     insertion_order: u64,
@@ -378,13 +408,15 @@ impl PartialEq for IdsEntry {
 
 impl Ord for IdsEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Max-heap: higher depth = higher priority (depth-first dive).
-        self.depth
-            .cmp(&other.depth)
-            // Tie-break: lower insertion_order = higher priority (expander's ranking).
+        // Primary: lower h_score = higher priority (best-first).
+        other
+            .h_score
+            .total_cmp(&self.h_score)
+            // Secondary: deeper = higher priority (dive within score tier).
+            .then(self.depth.cmp(&other.depth))
+            // Tertiary: earlier insertion = higher priority (preserves
+            // expander ranking among same-depth same-score entries).
             .then(other.insertion_order.cmp(&self.insertion_order))
-            // Tie-break: lower h = higher priority (best heuristic on jump-back).
-            .then(other.h_score.total_cmp(&self.h_score))
     }
 }
 
@@ -396,12 +428,16 @@ impl PartialOrd for IdsEntry {
 
 /// Priority-queue frontier for Iterative Diving Search.
 ///
-/// Normally dives depth-first (highest depth popped first), picking the
-/// expander's best candidate via insertion order. When all nodes at the
-/// current depth are exhausted (dead ends, closed), the heap naturally
-/// pops a shallower node with the best heuristic — the "jump-back".
+/// Pop order is primarily by lowest heuristic score (`h_score`) with
+/// depth as a tiebreaker (deeper first within an h-plateau, so the
+/// search dives when scores tie). When the current best-h path
+/// dead-ends, the heap naturally pops the next-best-h node anywhere in
+/// the tree — the "jump-back". A small reversal-aware penalty is mixed
+/// into `h_score` in `receive_children` to break symmetric cycles
+/// within an h-plateau.
 ///
-/// Inspired by Iterative Diving Search (arxiv:2512.13790).
+/// Inspired by Iterative Diving Search (arxiv:2512.13790); the
+/// h-primary ordering matches the algorithm in that paper.
 pub struct IdsFrontier<H> {
     heap: BinaryHeap<IdsEntry>,
     heuristic: H,
@@ -424,18 +460,104 @@ impl<H: crate::traits::Heuristic> Frontier for IdsFrontier<H> {
     }
 
     fn receive_children(&mut self, children: &[NodeId], graph: &SearchGraph) {
+        if children.is_empty() {
+            return;
+        }
+        // Path-history reversal tiebreaker: within an h-plateau, the
+        // pure h_score / depth ordering can dive into a cycle where
+        // an atom oscillates between two positions while the rest of
+        // the configuration is stuck. Adding a small penalty for
+        // moves that return an atom to a recently-vacated position
+        // breaks the symmetry between the forward and backward leg of
+        // such a cycle without disturbing the priority ordering when
+        // h actually moves.
+        //
+        // All children of a `receive_children` call share the same
+        // parent (the just-expanded node), so the parent-chain walk
+        // and recent-source map are computed once per call, not per
+        // child.
+        let parent_id_opt = graph.parent(children[0]);
+        let recent_sources: Option<HashMap<u32, HashSet<u64>>> =
+            parent_id_opt.map(|pid| compute_recent_sources(graph, pid, IDS_REVERSAL_LOOKBACK));
         for &child_id in children {
             let h = self.heuristic.estimate(graph.config(child_id));
             let depth = graph.depth(child_id);
+            let penalty = match (parent_id_opt, &recent_sources) {
+                (Some(pid), Some(rs)) => count_reversals(graph, pid, child_id, rs),
+                _ => 0,
+            };
+            let h_with_penalty = h + IDS_REVERSAL_PENALTY * penalty as f64;
             self.heap.push(IdsEntry {
                 depth,
                 insertion_order: self.insertion_counter,
-                h_score: h,
+                h_score: h_with_penalty,
                 node_id: child_id,
             });
             self.insertion_counter += 1;
         }
     }
+}
+
+/// Walk the parent chain back up to `lookback` steps from `node_id`
+/// and accumulate, for each qubit that moved along that prefix, the
+/// set of locations it was at *before* each move (i.e. the
+/// destinations of any candidate that would *return* the atom to a
+/// recently-occupied slot).
+fn compute_recent_sources(
+    graph: &SearchGraph,
+    node_id: NodeId,
+    lookback: usize,
+) -> HashMap<u32, HashSet<u64>> {
+    let mut sources: HashMap<u32, HashSet<u64>> = HashMap::new();
+    let mut cur = node_id;
+    let mut steps = 0;
+    while let Some(parent) = graph.parent(cur) {
+        if steps >= lookback {
+            break;
+        }
+        let parent_cfg = graph.config(parent);
+        let child_cfg = graph.config(cur);
+        for (qid, child_loc) in child_cfg.iter() {
+            if let Some(parent_loc) = parent_cfg.location_of(qid) {
+                let parent_enc = parent_loc.encode();
+                if parent_enc != child_loc.encode() {
+                    sources.entry(qid).or_default().insert(parent_enc);
+                }
+            }
+        }
+        cur = parent;
+        steps += 1;
+    }
+    sources
+}
+
+/// Count, for the move from `parent_id` to `child_id`, how many
+/// atoms' new positions are in their recent-source set — i.e. how
+/// many atoms are reversing a recent move.
+fn count_reversals(
+    graph: &SearchGraph,
+    parent_id: NodeId,
+    child_id: NodeId,
+    recent_sources: &HashMap<u32, HashSet<u64>>,
+) -> u32 {
+    let parent_cfg = graph.config(parent_id);
+    let child_cfg = graph.config(child_id);
+    let mut count = 0u32;
+    for (qid, child_loc) in child_cfg.iter() {
+        let Some(parent_loc) = parent_cfg.location_of(qid) else {
+            continue;
+        };
+        let dst = child_loc.encode();
+        if parent_loc.encode() == dst {
+            continue;
+        }
+        if let Some(sources) = recent_sources.get(&qid)
+            && sources.contains(&dst)
+        {
+            count += 1;
+        }
+    }
+    count
 }
 
 // ── Trait-based search loop (v2) ────────────────────────────────────
@@ -1012,6 +1134,7 @@ mod tests {
             dist_table: &table,
             blocked: &blocked,
             targets: &target_enc,
+            cz_pairs: None,
         };
         let mut state = SearchState::default();
 

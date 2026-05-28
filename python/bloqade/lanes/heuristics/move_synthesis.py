@@ -39,12 +39,14 @@ def compute_move_layers(
 
     if solver is None:
         solver = MoveSolver.from_arch_spec(arch_spec._inner)
+    opts, entropy_opts = solve_options_from_traversal(traversal)
     result = solver.solve(
         initial_native,
         target_native,
         blocked_native,
         max_expansions=None,
-        options=solve_options_from_traversal(traversal),
+        options=opts,
+        entropy_options=entropy_opts,
     )
     if result.status != "solved":
         raise RuntimeError(f"move synthesis failed with status={result.status!r}")

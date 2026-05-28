@@ -176,7 +176,7 @@ class LogicalPlacementMethods:
 
 @dataclass
 class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrategyABC):
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
 
     def compute_moves(
         self, state_before: ConcreteState, state_after: ConcreteState
@@ -188,7 +188,7 @@ class LogicalPlacementStrategy(LogicalPlacementMethods, SingleZonePlacementStrat
 
 @dataclass
 class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyABC):
-    arch_spec: ArchSpec = field(default_factory=get_arch_spec, init=False)
+    arch_spec: ArchSpec = field(default_factory=get_arch_spec)
     H_lookahead: int = 4
     gamma: float = 0.85
     lambda_lookahead: float = 0.5

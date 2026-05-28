@@ -6,7 +6,7 @@ from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningVali
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
-from kirin import ir, rewrite
+from kirin import ir
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
@@ -21,14 +21,12 @@ from bloqade.gemini.logical.validation.measurement.analysis import (
 from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom, placement
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
-from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch.gemini import logical, physical
+from bloqade.lanes.arch.gemini.logical.upstream import steane7_transversal_map
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
-from bloqade.lanes.heuristics.logical import layout as logical_layout
-from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.noise_model import generate_logical_noise_model
+from bloqade.lanes.passes import TransversalRewritePass
 from bloqade.lanes.pipeline import LogicalPipeline
-from bloqade.lanes.rewrite import transversal
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
@@ -84,16 +82,9 @@ def transversal_rewrites(mt: ir.Method):
 
     """
 
-    rewrite.Walk(
-        rewrite.Chain(
-            transversal.RewriteStarRz(logical.steane7_transversal_map),
-            transversal.RewriteLocations(logical.steane7_transversal_map),
-            transversal.RewriteLogicalInitialize(logical.steane7_transversal_map),
-            transversal.RewriteMoves(logical.steane7_transversal_map),
-            transversal.RewriteGetItem(logical.steane7_transversal_map),
-            transversal.RewriteLogicalToPhysicalConversion(),
-        )
-    ).rewrite(mt.code)
+    TransversalRewritePass(
+        mt.dialects, transversal_location_map=steane7_transversal_map
+    )(mt)
 
     return mt
 
@@ -122,14 +113,6 @@ def compile_squin_to_move(
         ir.Method: The compiled move dialect method.
 
     """
-
-    if layout_heuristic is None:
-        layout_heuristic = logical_layout.LogicalLayoutHeuristic()
-
-    if placement_strategy is None:
-        placement_strategy = PalindromePlacementStrategy(
-            inner=LogicalPlacementStrategyNoHome()
-        )
 
     mt = LogicalPipeline(
         layout_heuristic=layout_heuristic,

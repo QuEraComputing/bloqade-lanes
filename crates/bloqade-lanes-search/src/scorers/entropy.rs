@@ -61,6 +61,7 @@ mod tests {
             dist_table: &table,
             blocked: &blocked,
             targets: &target_enc,
+            cz_pairs: None,
         };
 
         let from = Config::new([(0, loc(0, 0))]).unwrap();
@@ -92,6 +93,7 @@ mod tests {
             dist_table: &table,
             blocked: &blocked,
             targets: &target_enc,
+            cz_pairs: None,
         };
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
