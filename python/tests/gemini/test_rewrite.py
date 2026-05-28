@@ -1,5 +1,5 @@
 from bloqade.decoders.dialects.annotate.stmts import SetDetector
-from bloqade.squin.gate.stmts import S, SqrtX, U3
+from bloqade.squin.gate.stmts import U3, S, SqrtX
 from bloqade.test_utils import assert_nodes
 from bloqade.types import MeasurementResultType
 from kirin import ir, rewrite, types
@@ -7,9 +7,6 @@ from kirin.dialects import func, ilist, py
 
 from bloqade import squin
 from bloqade.gemini import logical
-from bloqade.gemini.logical.rewrite.steane_transversal import (
-    RewriteSteaneTransversalCliffordAdjoints,
-)
 from bloqade.gemini.logical.dialects.operations.stmts import (
     Initialize,
     TerminalLogicalMeasurement,
@@ -17,6 +14,9 @@ from bloqade.gemini.logical.dialects.operations.stmts import (
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.gemini.logical.rewrite.remove_postprocessing import (
     RemovePostProcessing,
+)
+from bloqade.gemini.logical.rewrite.steane_transversal import (
+    RewriteSteaneTransversalCliffordAdjoints,
 )
 
 TerminalMeasureRetType = ilist.IListType[
