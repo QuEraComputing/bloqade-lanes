@@ -6,16 +6,13 @@ from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningVali
 from bloqade.decoders.dialects.annotate.stmts import SetDetector, SetObservable
 from bloqade.stim.emit.stim_str import EmitStimMain
 from bloqade.stim.upstream.from_squin import squin_to_stim
-from kirin import ir, rewrite
+from kirin import ir
 from kirin.dialects import func, ilist, py
 from kirin.validation import ValidationSuite
 
 from bloqade import qubit
 from bloqade.gemini.logical.dialects.operations.stmts import (
     TerminalLogicalMeasurement,
-)
-from bloqade.gemini.logical.rewrite.steane_transversal import (
-    RewriteSteaneTransversalCliffordAdjoints,
 )
 from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
 from bloqade.gemini.logical.validation.measurement.analysis import (
@@ -84,10 +81,6 @@ def transversal_rewrites(mt: ir.Method):
         ir.Method: The rewritten method (same object, mutated in place).
 
     """
-
-    # For [[7,1,3]] Steane code, we need to account that logical sqrt-X and sqrt-Z are
-    # implemented as transversal sqrt-X-adj and sqrt-Z-adj, respectively.
-    rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()).rewrite(mt.code)
 
     TransversalRewritePass(
         mt.dialects, transversal_location_map=steane7_transversal_map

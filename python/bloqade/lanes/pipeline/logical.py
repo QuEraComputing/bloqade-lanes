@@ -10,6 +10,9 @@ from kirin.ir.method import Method
 from kirin.validation import ValidationSuite
 
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
+from bloqade.gemini.logical.rewrite.steane_transversal import (
+    RewriteSteaneTransversalCliffordAdjoints,
+)
 from bloqade.gemini.logical.validation.clifford.analysis import GeminiLogicalValidation
 from bloqade.gemini.logical.validation.measurement.analysis import (
     GeminiTerminalMeasurementValidation,
@@ -41,6 +44,7 @@ class _LogicalNativeToPlace(_NativeToPlaceBase):
             result.raise_if_invalid()
 
         rule = rewrite.Chain(
+            rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()),
             rewrite.Walk(RewriteNonCliffordToU3()),
             rewrite.Walk(_RewriteU3ToInitialize()),
         )

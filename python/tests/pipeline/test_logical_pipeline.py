@@ -4,10 +4,10 @@ import bloqade.squin as squin
 from bloqade.squin.gate.stmts import S, SqrtX
 
 import bloqade.gemini as gemini
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
-from bloqade.lanes.logical_mvp import transversal_rewrites
 from bloqade.lanes.pipeline import LogicalPipeline
+from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace
 
 
 def test_logical_pipeline_smoke():
@@ -26,8 +26,8 @@ def test_logical_pipeline_smoke():
     assert len(fills) == 1
 
 
-def test_transversal_rewrites_swap_steane_clifford_adjoints():
-    """transversal_rewrites swaps Steane transversal Clifford adjoints."""
+def test_logical_pre_native_rewrites_steane_transversal_adjoints():
+    """Logical pre-native rewrites swap Steane transversal Clifford adjoints."""
 
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():
@@ -38,7 +38,8 @@ def test_transversal_rewrites_swap_steane_clifford_adjoints():
         squin.s_adj(reg[0])
         gemini.logical.terminal_measure(reg)
 
-    out = transversal_rewrites(kernel)
+    out = kernel.similar(kernel.dialects.add(place))
+    _LogicalNativeToPlace()._pre_native_rewrites(kernel, out, no_raise=True)
 
     sqrt_x_gates = [
         stmt for stmt in out.callable_region.walk() if isinstance(stmt, SqrtX)
