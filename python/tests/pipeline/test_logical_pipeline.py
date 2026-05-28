@@ -1,11 +1,13 @@
 """Tests for LogicalPipeline."""
 
 import bloqade.squin as squin
+from bloqade.squin.gate.stmts import S, SqrtX
 
 import bloqade.gemini as gemini
-from bloqade.lanes.dialects import move
+from bloqade.lanes.dialects import move, place
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.pipeline import LogicalPipeline
+from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace
 
 
 def test_logical_pipeline_smoke():
@@ -22,6 +24,30 @@ def test_logical_pipeline_smoke():
     assert out is not None
     fills = [s for s in out.callable_region.walk() if isinstance(s, move.Fill)]
     assert len(fills) == 1
+
+
+def test_logical_pre_native_rewrites_steane_transversal_adjoints():
+    """Logical pre-native rewrites swap Steane transversal Clifford adjoints."""
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(1)
+        squin.sqrt_x(reg[0])
+        squin.sqrt_x_adj(reg[0])
+        squin.s(reg[0])
+        squin.s_adj(reg[0])
+        gemini.logical.terminal_measure(reg)
+
+    out = kernel.similar(kernel.dialects.add(place))
+    _LogicalNativeToPlace()._pre_native_rewrites(kernel, out, no_raise=True)
+
+    sqrt_x_gates = [
+        stmt for stmt in out.callable_region.walk() if isinstance(stmt, SqrtX)
+    ]
+    s_gates = [stmt for stmt in out.callable_region.walk() if isinstance(stmt, S)]
+
+    assert [stmt.adjoint for stmt in sqrt_x_gates] == [True, False]
+    assert [stmt.adjoint for stmt in s_gates] == [True, False]
 
 
 def test_logical_pipeline_produces_logical_initialize():
