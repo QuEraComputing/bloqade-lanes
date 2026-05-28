@@ -27,7 +27,8 @@ def test_logical_pipeline_smoke():
 
 
 def test_logical_pre_native_rewrites_steane_transversal_adjoints():
-    """Logical pre-native rewrites swap Steane transversal Clifford adjoints."""
+    """With transversal_rewrite=True, pre-native rewrites swap Steane transversal
+    Clifford adjoints."""
 
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():
@@ -39,7 +40,9 @@ def test_logical_pre_native_rewrites_steane_transversal_adjoints():
         gemini.logical.terminal_measure(reg)
 
     out = kernel.similar(kernel.dialects.add(place))
-    _LogicalNativeToPlace()._pre_native_rewrites(kernel, out, no_raise=True)
+    _LogicalNativeToPlace(transversal_rewrite=True)._pre_native_rewrites(
+        kernel, out, no_raise=True
+    )
 
     sqrt_x_gates = [
         stmt for stmt in out.callable_region.walk() if isinstance(stmt, SqrtX)
