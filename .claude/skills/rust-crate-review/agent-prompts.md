@@ -32,7 +32,11 @@ surface. For each `pub struct`, `pub enum`, `pub trait`, and top-level `pub fn`:
 
 STEP 2 — Read consumer usage.
 The HARVEST OUTPUT contains a list of consumer file paths (from ripgrep).
-For each file:
+If there are more than 10 consumer files, first rank them by match density —
+run ripgrep again per file, counting distinct pub-type references — and cap
+at the top 10. Note in your output ("Sampled top N of M consumer files") so
+the reader knows coverage is partial.
+For each file in the (possibly capped) set:
 1. grep the file for the names of pub types you found in Step 1
 2. Read 40-60 lines of context around each match
 3. Note: what operations does the caller perform on this type? What data does
@@ -176,12 +180,16 @@ Your job: Evaluate whether the implementation delivers on its contracts, detect
 emerging patterns, and generate open questions that build systems thinking.
 
 Before starting, extract from HARVEST OUTPUT:
-The git log section uses format: `<hash> <author> <subject>` followed by the file names
-changed in that commit (one per line, blank line between commits).
+The harvest contains two relevant git log sections (commands 2 and 4 from
+SKILL.md). Both use the format `<hash> <author> <subject>` followed by the
+file names changed in that commit (one per line, blank line between commits).
 
-- HOTSPOT FILES: file paths that appear after 3 or more different commit headers
-- AI COMMITS: commit headers where the subject contains "Co-Authored-By: Claude",
-  or where more than 10 file paths follow a single commit header
+- HOTSPOT FILES: from command 2's output, file paths that appear after 3 or
+  more different commit headers
+- AI COMMITS: command 4's output is already filtered to commits with a
+  `Co-Authored-By: Claude` trailer — treat every commit listed there as an
+  AI commit. As a secondary signal, also flag commits in command 2 whose
+  subject matches `^feat|^refactor|^chore` and that touch more than 10 files
 
 STEP 1 — Contract divergence analysis.
 For each public type in Agent 1's Responsibility Portraits:

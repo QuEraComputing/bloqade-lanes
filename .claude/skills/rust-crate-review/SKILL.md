@@ -31,8 +31,12 @@ skill reasons about design intent and responsibility boundaries over time, not d
 
 ## Step 1 — Automated Harvest (no agents)
 
-Run these three commands and collect all output before spawning any agents.
+Run these four commands and collect all output before spawning any agents.
 This is fast (seconds) and gives every agent a reliable structural foundation.
+
+Before running command 3, derive `<crate-module>` from `<crate-name>` by
+replacing dashes with underscores
+(e.g., `bloqade-lanes-search` → `bloqade_lanes_search`).
 
 ```bash
 # 1. Workspace dependency graph
@@ -43,18 +47,31 @@ git log --since="30 days ago" --name-only --pretty=format:"%h %an %s" \
   -- crates/<crate-name>/
 
 # 3. Consumer file paths across the workspace
-rg "use bloqade_lanes_<crate_name_underscored>" --type rust -l
+#    Matches `use <crate-module>`, `<crate-module>::Foo`, and
+#    `use <crate-module> as bar` forms; excludes the crate's own sources.
+rg "\b<crate-module>\b" --type rust -l \
+  | grep -v "^crates/<crate-name>/"
+
+# 4. AI-authored commits in the harvest window
+#    `Co-Authored-By:` lives in commit trailers, so this needs its own pass.
+git log --since="30 days ago" --grep="Co-Authored-By: Claude" \
+  --name-only --pretty=format:"%h %an %s" -- crates/<crate-name>/
 ```
 
-**Adjust the `--since` window:**
-- Low-activity crate (< 5 commits in 30 days): use `--since="90 days ago"`
-- Heavily active crate (> 30 commits in 30 days): use `--since="14 days ago"`
+**Default to `--since="30 days ago"` for commands 2 and 4. After running command 2,
+check the count and rerun both if needed:**
+- Output empty or under 5 commits → rerun with `--since="90 days ago"`
+- Output exceeds 30 commits → rerun with `--since="14 days ago"` to focus on
+  recent drift
 
-**From the git log output, extract before proceeding:**
-- **Hotspot files**: files appearing in 3+ commits → pass to Agent 3 for weighted scrutiny
-- **AI-authorship signals**: commits containing `Co-Authored-By: Claude` or
-  messages matching `^feat|^refactor|^chore` with 10+ files touched → flag for
-  AI-drift lens
+**From the harvest output, extract before proceeding:**
+- **Hotspot files**: from command 2, files appearing in 3+ commits →
+  pass to Agent 3 for weighted scrutiny
+- **AI-authored commits**: command 4 already filters to these — pass the
+  commit list (with file names) to Agent 3 for the AI-drift lens
+- **Large non-AI commits** (secondary signal): from command 2, any commit
+  touching 10+ files whose subject matches `^feat|^refactor|^chore` →
+  also flag to Agent 3
 
 ## Step 2 — Phase 1: Parallel Agents
 
@@ -116,6 +133,8 @@ structure:
 ```
 
 Save to: `docs/superpowers/reviews/YYYY-MM-DD-<crate-name>-review.md`
+(create the `docs/superpowers/reviews/` directory if it does not yet exist —
+on first run, only `plans/` and `specs/` are siblings).
 
 After saving, surface the Section 5 questions directly in the conversation as a
 prompt to the user — do not just leave them buried in the document.
