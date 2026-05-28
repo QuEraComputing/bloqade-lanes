@@ -1044,6 +1044,9 @@ fn apply_layers_to<'a>(
 /// any move, then write all destinations against that snapshot. Naively
 /// mutating in place would mis-attribute the chained move to the just-
 /// moved atom rather than the atom originally at L2.
+///
+/// Complete AOD rectangles may also contain empty filler lanes. Those lanes
+/// have no source qubit in the input config, so replay skips them.
 fn apply_move_set(config: &Config, move_set: &MoveSet, index: &LaneIndex) -> Option<Config> {
     use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
     use std::collections::HashMap;
@@ -1062,7 +1065,9 @@ fn apply_move_set(config: &Config, move_set: &MoveSet, index: &LaneIndex) -> Opt
     for &lane_enc in move_set.encoded_lanes() {
         let lane = LaneAddr::decode_u64(lane_enc);
         let (src, dst) = index.endpoints(&lane)?;
-        let idx = *src_to_idx.get(&src)?;
+        let Some(&idx) = src_to_idx.get(&src) else {
+            continue;
+        };
         next[idx].1 = dst;
     }
     Config::new(next).ok()
@@ -1244,6 +1249,23 @@ mod tests {
             &EntanglingOptions::default(),
         );
         assert_eq!(cost, 0, "qubits already entangling-paired → cost 0");
+    }
+
+    #[test]
+    fn apply_move_set_skips_empty_filler_lane_sources() {
+        let solver = MoveSolver::from_json(example_arch_json()).unwrap();
+        let index = solver.index();
+        let move_set = MoveSet::new(vec![
+            crate::test_utils::lane(0, 0, 0),
+            crate::test_utils::lane(0, 1, 0),
+        ]);
+        let config = Config::new([(0, loc(0, 0))]).unwrap();
+
+        let next = apply_move_set(&config, &move_set, index)
+            .expect("empty filler lane should not make replay fail");
+
+        assert_eq!(next.location_of(0), Some(loc(0, 5)));
+        assert_eq!(next.iter().count(), 1);
     }
 
     // ── generate_k_candidates ──

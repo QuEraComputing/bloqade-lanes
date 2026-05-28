@@ -19,16 +19,19 @@ type Cluster = (BTreeSet<u64>, BTreeSet<u64>);
 ///
 /// Built from ALL lanes on the bus (via [`LaneIndex::lanes_for`]), not just
 /// the scored/selected triples. The `movers` set passed to grid construction
-/// restricts which sources are eligible for inclusion.
+/// identifies which sources correspond to selected moving atoms; empty
+/// non-mover sources may still fill out the complete AOD rectangle.
 pub(crate) struct BusGridContext {
     /// `(x_bits, y_bits) → encoded source location` for ALL bus positions.
     pos_to_src: HashMap<(u64, u64), u64>,
     /// `encoded source → encoded lane address` for ALL bus lanes.
     src_to_lane: HashMap<u64, u64>,
+    /// `encoded source → encoded destination location` for ALL bus lanes.
+    src_to_dst: HashMap<u64, u64>,
     /// `encoded source → (x_bits, y_bits)` reverse lookup.
     src_to_pos: HashMap<u64, (u64, u64)>,
-    /// Sources whose lane destination is occupied (collision risk).
-    collision_srcs: HashSet<u64>,
+    /// Locations occupied by atoms or blocked locations in the current config.
+    occupied_locs: HashSet<u64>,
 }
 
 impl BusGridContext {
@@ -46,8 +49,8 @@ impl BusGridContext {
     ) -> Self {
         let mut pos_to_src: HashMap<(u64, u64), u64> = HashMap::new();
         let mut src_to_lane: HashMap<u64, u64> = HashMap::new();
+        let mut src_to_dst: HashMap<u64, u64> = HashMap::new();
         let mut src_to_pos: HashMap<u64, (u64, u64)> = HashMap::new();
-        let mut collision_srcs: HashSet<u64> = HashSet::new();
 
         let lanes_vec: Vec<LaneAddr> = match zone_id {
             Some(z) => index.lanes_for(mt, bus_id, z, dir).to_vec(),
@@ -69,32 +72,52 @@ impl BusGridContext {
 
             pos_to_src.insert(pos, src_enc);
             src_to_lane.insert(src_enc, lane_enc);
+            src_to_dst.insert(src_enc, dst.encode());
             src_to_pos.insert(src_enc, pos);
-
-            if occupied.contains(&dst.encode()) {
-                collision_srcs.insert(src_enc);
-            }
         }
 
         Self {
             pos_to_src,
             src_to_lane,
+            src_to_dst,
             src_to_pos,
-            collision_srcs,
+            occupied_locs: occupied.clone(),
         }
     }
 
     /// Check if every position in the X × Y rectangle is valid.
     ///
-    /// A position is valid if it exists on the bus, its source is in `movers`,
-    /// and it doesn't have a collision (destination occupied).
+    /// A selected mover source is valid when its destination is unoccupied or
+    /// occupied by another atom moving in the same rectangle. A non-mover source
+    /// may only fill the rectangle when both its source and destination avoid
+    /// stationary atoms.
     fn is_valid_rect(&self, xs: &BTreeSet<u64>, ys: &BTreeSet<u64>, movers: &HashSet<u64>) -> bool {
+        let mut rect_sources = HashSet::new();
         for &x in xs {
             for &y in ys {
                 let Some(&src_enc) = self.pos_to_src.get(&(x, y)) else {
                     return false;
                 };
-                if !movers.contains(&src_enc) || self.collision_srcs.contains(&src_enc) {
+                rect_sources.insert(src_enc);
+            }
+        }
+
+        for &x in xs {
+            for &y in ys {
+                let Some(&src_enc) = self.pos_to_src.get(&(x, y)) else {
+                    return false;
+                };
+                let Some(&dst_enc) = self.src_to_dst.get(&src_enc) else {
+                    return false;
+                };
+                let src_is_mover = movers.contains(&src_enc);
+                let dst_is_rect_mover =
+                    movers.contains(&dst_enc) && rect_sources.contains(&dst_enc);
+
+                if !src_is_mover && self.occupied_locs.contains(&src_enc) {
+                    return false;
+                }
+                if self.occupied_locs.contains(&dst_enc) && !dst_is_rect_mover {
                     return false;
                 }
             }
@@ -119,7 +142,9 @@ impl BusGridContext {
 
     /// Build AOD-compatible rectangular grids from scored entry lanes.
     ///
-    /// `entries` maps `encoded_src → encoded_lane` for the scored/selected triples.
+    /// `entries` maps `encoded_src → encoded_lane` for the scored/selected
+    /// moving atoms. Returned grids may also include empty filler lanes so each
+    /// lane set remains a complete AOD rectangle.
     ///
     /// Returns a list of lane sets, each forming a valid AOD rectangle.
     pub(crate) fn build_aod_grids(&self, entries: &HashMap<u64, u64>) -> Vec<Vec<u64>> {
@@ -260,6 +285,31 @@ mod tests {
         lanes: &[(u64, u64)],            // (src_encoded, lane_encoded)
         collisions: &[u64],              // src_encoded values with occupied destinations
     ) -> BusGridContext {
+        make_context_with_occupied(positions, lanes, collisions, &[])
+    }
+
+    fn make_context_with_occupied(
+        positions: &[((u64, u64), u64)], // ((x, y), src_encoded)
+        lanes: &[(u64, u64)],            // (src_encoded, lane_encoded)
+        collisions: &[u64],              // src_encoded values with stationary occupied destinations
+        occupied: &[u64],                // encoded locations occupied by stationary atoms
+    ) -> BusGridContext {
+        const TEST_DST_OFFSET: u64 = 1_000_000;
+
+        let lanes_with_dst: Vec<(u64, u64, u64)> = lanes
+            .iter()
+            .map(|&(src_enc, lane_enc)| (src_enc, lane_enc, src_enc + TEST_DST_OFFSET))
+            .collect();
+        let mut occupied_locs: Vec<u64> = occupied.to_vec();
+        occupied_locs.extend(collisions.iter().map(|src_enc| src_enc + TEST_DST_OFFSET));
+        make_context_with_endpoints(positions, &lanes_with_dst, &occupied_locs)
+    }
+
+    fn make_context_with_endpoints(
+        positions: &[((u64, u64), u64)], // ((x, y), src_encoded)
+        lanes: &[(u64, u64, u64)],       // (src_encoded, lane_encoded, dst_encoded)
+        occupied_locs_input: &[u64],     // all encoded occupied locations
+    ) -> BusGridContext {
         let mut pos_to_src = HashMap::new();
         let mut src_to_pos = HashMap::new();
         for &(pos, src_enc) in positions {
@@ -268,17 +318,20 @@ mod tests {
         }
 
         let mut src_to_lane = HashMap::new();
-        for &(src_enc, lane_enc) in lanes {
+        let mut src_to_dst = HashMap::new();
+        for &(src_enc, lane_enc, dst_enc) in lanes {
             src_to_lane.insert(src_enc, lane_enc);
+            src_to_dst.insert(src_enc, dst_enc);
         }
 
-        let collision_srcs: HashSet<u64> = collisions.iter().copied().collect();
+        let occupied_locs: HashSet<u64> = occupied_locs_input.iter().copied().collect();
 
         BusGridContext {
             pos_to_src,
             src_to_lane,
+            src_to_dst,
             src_to_pos,
-            collision_srcs,
+            occupied_locs,
         }
     }
 
@@ -309,7 +362,104 @@ mod tests {
         let xs: BTreeSet<u64> = [0, 1].into_iter().collect();
         let ys: BTreeSet<u64> = [0, 1].into_iter().collect();
 
-        assert!(!ctx.is_valid_rect(&xs, &ys, &movers));
+        assert!(ctx.is_valid_rect(&xs, &ys, &movers));
+    }
+
+    #[test]
+    fn build_aod_grids_keeps_empty_filler_lane() {
+        // 2×2 rectangle where (1,1) is empty. The AOD shot should still
+        // contain all four lanes so lane-group geometry remains complete.
+        let ctx = make_context(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100), (11, 101), (12, 102), (13, 103)],
+            &[],
+        );
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        assert_eq!(grids.len(), 1);
+
+        let mut sorted = grids[0].clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn build_aod_grids_rejects_empty_source_with_filled_destination() {
+        // The missing mover at source 13 is empty, but its destination is
+        // occupied by a stationary atom. It must not be used as a filler lane.
+        let ctx = make_context(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100), (11, 101), (12, 102), (13, 103)],
+            &[13],
+        );
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        assert!(!grids.iter().any(|grid| grid.len() == 4));
+    }
+
+    #[test]
+    fn build_aod_grids_allows_empty_filler_destination_with_rect_mover() {
+        // The missing mover at source 13 is empty. Its destination is occupied,
+        // but by source 12, which is selected to move in the same rectangle.
+        // This is a valid AOD filler lane because it does not interact with a
+        // stationary atom.
+        let ctx = make_context_with_endpoints(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100, 20), (11, 101, 21), (12, 102, 22), (13, 103, 12)],
+            &[10, 11, 12],
+        );
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+
+        assert_eq!(grids.len(), 1);
+        let mut sorted = grids[0].clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn build_aod_grids_rejects_occupied_non_mover_source() {
+        // Source 13 has a spectator atom, so it cannot be used as a filler lane.
+        let ctx = make_context_with_occupied(
+            &[((0, 0), 10), ((1, 0), 11), ((0, 1), 12), ((1, 1), 13)],
+            &[(10, 100), (11, 101), (12, 102), (13, 103)],
+            &[],
+            &[13],
+        );
+        let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
+
+        let grids = ctx.build_aod_grids(&entries);
+        assert!(!grids.iter().any(|grid| grid.len() == 4));
+    }
+
+    #[test]
+    fn build_aod_grids_color_code_sparse_rectangle() {
+        let mut positions = Vec::new();
+        let mut lanes = Vec::new();
+        let mut entries = HashMap::new();
+        let mut src = 100u64;
+        let mut lane = 1000u64;
+
+        for x in 0..4 {
+            for y in 0..5 {
+                positions.push(((x, y), src));
+                lanes.push((src, lane));
+                if x < 3 || y < 2 {
+                    entries.insert(src, lane);
+                }
+                src += 1;
+                lane += 1;
+            }
+        }
+
+        let ctx = make_context(&positions, &lanes, &[]);
+
+        let grids = ctx.build_aod_grids(&entries);
+        assert_eq!(grids.len(), 1);
+        assert_eq!(grids[0].len(), 20);
     }
 
     #[test]
@@ -348,9 +498,9 @@ mod tests {
 
     #[test]
     fn greedy_init_splits_incompatible() {
-        // 3 positions: (0,0), (1,0), (0,1) are movers. (1,1) is NOT a mover.
-        // A 2×2 rectangle would fail, so should split into smaller clusters.
-        let ctx = make_context(
+        // 3 positions are movers, while the fourth source is occupied by a
+        // spectator. A 2×2 rectangle would move that spectator, so it splits.
+        let ctx = make_context_with_occupied(
             &[
                 ((0, 0), 10),
                 ((1, 0), 11),
@@ -359,6 +509,7 @@ mod tests {
             ],
             &[(10, 100), (11, 101), (12, 102), (13, 103)],
             &[],
+            &[13],
         );
         let entries: HashMap<u64, u64> = [(10, 100), (11, 101), (12, 102)].into_iter().collect();
         let movers: HashSet<u64> = entries.keys().copied().collect();
