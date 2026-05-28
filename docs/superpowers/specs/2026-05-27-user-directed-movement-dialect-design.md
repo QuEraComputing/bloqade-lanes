@@ -45,10 +45,9 @@ Mirrors the explicit-qubit-allocation spec ([2026-04-27](./2026-04-27-explicit-q
 - **`bloqade.lanes`** — owns the IR statements (`movement.MoveTo` and
   `place.MoveTo`), the new placement-analysis lattice element
   (`UserMoved`), the new strategy method
-  (`PlacementStrategyABC.move_to_placements`), the
-  `PalindromePlacementStrategy.cz_placements` splice, and the
-  `ExecuteCZReturn` shape extension. The placement analysis must
-  recognize `place.MoveTo` directly, so both statements live next to
+  (`PlacementStrategyABC.move_to_placements`), and the
+  `PalindromePlacementStrategy.cz_placements` splice. The placement analysis
+  must recognize `place.MoveTo` directly, so both statements live next to
   `place` and `move` to avoid a `lanes → gemini` import cycle.
 - **`bloqade.gemini`** — owns the eager validation pass
   (`MoveToValidation`), and extends the existing `gemini.logical.kernel`
@@ -76,16 +75,20 @@ user kernel:        @gemini.logical.kernel
        ↓
 circuit→place rewrites + new RewritePlaceOperations.rewrite_MoveTo:
   movement.MoveTo (IList SSA operands) → place.MoveTo (QuantumStmt;
-  qubits=int indices, locations=const-folded LocationAddress tuple)
+  qubits=int indices, locations=const-folded LocationAddress tuple,
+  multi_move_warning=bool)
        ↓
 PlacementAnalysis (extended):
-   • new interp method for place.MoveTo delegates to strategy
+   • new interp method for place.MoveTo in PlacementMethods (place.py)
+     delegates to strategy.move_to_placements
    • strategy.move_to_placements returns a UserMoved lattice element
      carrying:
        - move_layers          (this MoveTo's AOD layers, for InsertMoves)
        - accumulated_move_layers (full inter-CZ history, for palindrome)
        - pre_user_layout      (home position before the segment started)
    • analysis failures (occupancy conflict, AOD infeasibility) → bottom
+   • sq_placements(UserMoved) → bottom  (move_to before SQ gate: invalid)
+   • measure_placements(UserMoved) → bottom  (move_to before measure: invalid)
        ↓
 PalindromePlacementStrategy.cz_placements (extended):
    • on UserMoved input: inner.cz_placements computes compiler pairing
@@ -97,12 +100,19 @@ PalindromePlacementStrategy.cz_placements (extended):
    • ExecuteCZReturn.__post_init__ computes
        return_move_layers = compiler_reverse + user_reverse
        ↓
-InsertMoves (place→move, unchanged):
+InsertMoves (place→move, minimal edit):
    • polymorphic on the lattice element: emits forward from
      state.get_move_layers() and reverse from state.get_reverse_moves()
    • at place.MoveTo:  UserMoved.move_layers   → forward Move IR
+                       emits UserWarning if multi_move_warning=True
+                       and len(move_layers) > 1
    • at place.CZ:      ExecuteCZ(Return).move_layers → forward,
                         ExecuteCZReturn.return_move_layers → reverse
+       ↓
+RewriteGates (place→move, new handler):
+   • place.MoveTo handler deletes the node after InsertMoves has
+     emitted its layers, leaving the enclosing StaticPlacement with
+     only a Yield (eligible for RemoveNoOpStaticPlacements)
        ↓
 existing post-compile lanes validator (unchanged) catches semantic
 illegality (bottom states → user-facing diagnostic)
@@ -128,10 +138,11 @@ class MoveTo(ir.Statement):
     locations: ir.SSAValue = info.argument(
         type=ilist.IListType[LocationAddressType, types.Any]
     )
+    multi_move_warning: bool = info.attribute(default=True)
 ```
 
-- Two single SSA operands, each holding an `IList`. Matches the user-facing
-  Python API verbatim (`move_to(qubits: IList[Qubit, N], locations: IList[LocationAddress, N])`).
+- Two SSA operands (`qubits`, `locations`) plus one compile-time boolean
+  attribute (`multi_move_warning`, default `True`).
 - No SSA result. The statement is a placement directive consumed by the
   movement→place rewrite (below) and the placement analysis (§2).
 - Length equality (`len(qubits) == len(locations)`) and const-foldability of
@@ -142,7 +153,11 @@ Python lowering stub (consumed by `lowering.FromPythonCall`):
 
 ```python
 @wraps(MoveTo)
-def move_to(qubits: IList[Qubit, N], locations: IList[LocationAddress, N]) -> None:
+def move_to(
+    qubits: IList[Qubit, N],
+    locations: IList[LocationAddress, N],
+    multi_move_warning: bool = True,
+) -> None:
     ...
 ```
 
@@ -160,17 +175,18 @@ prelude. Users opt in via the composed kernel decorator (§5).
 class MoveTo(QuantumStmt):
     qubits: tuple[int, ...] = info.attribute()
     locations: tuple[LocationAddress, ...] = info.attribute()
+    multi_move_warning: bool = info.attribute(default=True)
 ```
 
 - Inherits `QuantumStmt` (`place.py:85-99`) — threads `state_before: ir.SSAValue`
   / `state_after: ir.ResultValue` of `StateType`, matching the existing
   pattern for `place.CZ`, `place.R`, `place.Rz`.
 - `qubits` is a tuple of integer indices into the surrounding
-  `place.StaticPlacement` block's qubit SSA list — the wrapping
-  `StaticPlacement` carries the actual SSA `Qubit` values.
+  `place.StaticPlacement` block's qubit SSA list.
 - `locations` is a tuple of const `LocationAddress` attributes (one per
   qubit index), populated by the rewrite below from the const-prop hint on
   `movement.MoveTo.locations`.
+- `multi_move_warning` is copied verbatim from the source `movement.MoveTo`.
 - Invariant: `len(qubits) == len(locations)`. Established by the rewrite,
   asserted by the statement constructor.
 
@@ -182,15 +198,16 @@ alongside the existing per-gate rewrite methods. Mirrors `rewrite_CZ`
 
 ```python
 def rewrite_MoveTo(self, node: movement.MoveTo) -> abc.RewriteResult:
-    # qubits side: chase ilist.New to recover the SSA Qubit values that
-    # the StaticPlacement wrapper needs to thread.
+    # qubits side: after full unrolling and CSE (which run before this
+    # rewrite), the qubits IList is always produced by ilist.New.
+    # The guard here is defensive — in practice it cannot trigger on a
+    # well-formed kernel. Qubit correctness is validated by AddressAnalysis.
     if not isinstance(qubits_list := node.qubits.owner, ilist.New):
         return abc.RewriteResult()
 
     # locations side: read the const-prop hint. Eager validation (§4)
     # requires every LocationAddress to be const-foldable, so the hint
-    # resolves to a const.Value whose .data is an IList of LocationAddress
-    # (IList implements the Sequence interface, so tuple(...) extracts).
+    # resolves to a const.Value whose .data is an IList of LocationAddress.
     locations_hint = node.locations.hints.get("const")
     if not isinstance(locations_hint, const.Value):
         return abc.RewriteResult()
@@ -203,6 +220,7 @@ def rewrite_MoveTo(self, node: movement.MoveTo) -> abc.RewriteResult:
         entry_state,
         qubits=tuple(range(len(inputs))),
         locations=location_attrs,
+        multi_move_warning=node.multi_move_warning,
     )
     node.replace_by(
         self.construct_execute(move_stmt, qubits=inputs, body=body, block=block)
@@ -212,11 +230,10 @@ def rewrite_MoveTo(self, node: movement.MoveTo) -> abc.RewriteResult:
 
 The rewrite gives up silently (returns `RewriteResult()` with no
 modification) when:
-- The `qubits` operand isn't produced by an `ilist.New` (the user passed in
-  a runtime-computed IList rather than a literal).
-- The `locations` const-prop hint isn't a `const.Value` (the locations IList
-  wasn't const-folded — likely a validation gap or a kernel that hasn't been
-  unrolled yet).
+- The `qubits` operand isn't produced by an `ilist.New` — defensive only;
+  see note above.
+- The `locations` const-prop hint isn't a `const.Value` — a validation gap
+  or a kernel that hasn't been unrolled yet.
 
 In both cases the validation pass (§4) will surface a diagnostic; the
 rewrite stays defensive rather than raising.
@@ -224,10 +241,10 @@ rewrite stays defensive rather than raising.
 ## §2 — Placement-analysis extensions
 
 The placement analysis (`python/bloqade/lanes/analysis/placement/`) is the
-seam where user moves become first-class. Three changes, in three files:
-the new lattice element, a new method on the placement strategy ABC
-(implemented by each concrete strategy), and an interpreter method on the
-analysis that delegates to the strategy.
+seam where user moves become first-class. Three changes: the new lattice
+element, a new method on the placement strategy ABC (implemented by each
+concrete strategy), and an interpreter method on the analysis that delegates
+to the strategy.
 
 ### 2.1 — New lattice element `UserMoved`
 
@@ -238,16 +255,15 @@ In `python/bloqade/lanes/analysis/placement/lattice.py`, alongside
 @final
 @dataclass
 class UserMoved(ConcreteState):
-    """A state representing the result of one or more user-directed
-    `place.MoveTo` statements, executed in sequence since the last CZ.
+    """State produced by one or more consecutive user-directed
+    `place.MoveTo` statements, with no intervening non-MoveTo ops.
 
     Carries two layer tuples for two distinct consumers:
 
     - `move_layers` is the AOD lane layer(s) for *this* MoveTo only.
       ``InsertMoves`` reads this via ``get_move_layers()`` and emits
       the forward Move IR immediately before the corresponding
-      ``place.MoveTo`` statement. Each MoveTo is responsible for its
-      own forward emission.
+      ``place.MoveTo`` statement.
 
     - `accumulated_move_layers` is every user-move layer in the
       inter-CZ segment so far (i.e. ``prev.accumulated_move_layers +
@@ -259,6 +275,13 @@ class UserMoved(ConcreteState):
     `pre_user_layout` records the atom layout *before* the first user
     move in this segment — the home position
     ``PalindromePlacementStrategy`` returns to after the CZ pulse.
+
+    Outside of ``cz_placements``, ``UserMoved`` must be treated as a
+    plain ``ConcreteState``. ``sq_placements`` and
+    ``measure_placements`` receiving a ``UserMoved`` state signals that
+    the user inserted a move before a non-CZ operation, which is
+    invalid — both methods return ``AtomState.bottom()`` in that case
+    (see §2.3).
     """
 
     move_layers: tuple[tuple[LaneAddress, ...], ...] = field(kw_only=True)
@@ -306,15 +329,20 @@ class UserMoved(ConcreteState):
 - `get_move_layers()` returns `move_layers` (just this MoveTo's portion)
   so `InsertMoves` emits at the MoveTo site without double-emitting on
   subsequent statements.
+- `get_reverse_moves()` returns `()` — inherited from `AtomState`. Reverse
+  moves at a MoveTo site are never emitted; the palindrome return is handled
+  entirely at the subsequent `place.CZ` site via `ExecuteCZReturn`.
 - `is_subseteq` matches the precision used by `ExecuteCZ` / `ExecuteCZReturn`.
 - `from_concrete_state` mirrors the lifting helpers on `ExecuteCZ` and
   `ExecuteMeasure` so the analysis can promote a `ConcreteState` into
-  `UserMoved` when it sees the first `place.MoveTo` in a segment.
+  `UserMoved` when it sees the first `place.MoveTo` in a segment. Works
+  correctly whether `state` is a bare `ConcreteState` or a `UserMoved`
+  (both expose `occupied`, `layout`, `move_count`).
 - **Join semantics**: divergent `move_layers`, `accumulated_move_layers`,
   or `pre_user_layout` across control-flow paths join to `AnyState` (top)
-  via the inherited `SimpleJoinMixin`. v1 is straight-line-only, so this
-  is theoretical — branching support is a future extension (see Risk
-  register).
+  via the inherited `SimpleJoinMixin`. v1 only supports straight-line
+  kernels (matching today's Squin), so this is theoretical — branching
+  support is a future extension (see Risk register).
 
 ### 2.2 — New strategy method `move_to_placements`
 
@@ -355,8 +383,6 @@ Concrete implementation that synthesizes the user move:
    `requested_destinations`, check whether `state.layout` currently maps
    any qubit *outside* `moved_qubits` to that location. If yes — a user
    move would displace an unmoved qubit — return `AtomState.bottom()`.
-   This is how the "swap into an unmoved qubit's slot" case becomes an
-   analysis failure (see §4).
 3. For each `(qubit_index, destination)` pair, compute the source
    `LocationAddress` from `state.layout[qubit_index]`.
 4. Build a target layout: copy `state.layout`, overwrite the moved
@@ -380,8 +406,7 @@ Diagnostic surfacing follows the existing convention: the strategy does
 **not** emit Kirin diagnostics directly. A `bottom` state at any
 `place.QuantumStmt`'s `state_after` is the contract for "this program
 point is infeasible," and the existing post-compile lanes validator
-(referenced in CLAUDE.md and `validation/address.py`) catches it and
-emits the user-facing error.
+catches it and emits the user-facing error.
 
 #### `PalindromePlacementStrategy.move_to_placements`
 
@@ -390,37 +415,25 @@ def move_to_placements(self, state, qubits, locations):
     return self.inner.move_to_placements(self._unwrap(state), qubits, locations)
 ```
 
-`_unwrap` already converts `ExecuteCZReturn` → home `ConcreteState` (so a
-MoveTo immediately after a palindrome CZ starts from the home position).
-`_unwrap` leaves `UserMoved` and other states alone, so a MoveTo after
-another MoveTo sees the previous `UserMoved` state directly — that's what
-lets `SingleZonePlacementStrategyABC.move_to_placements` (step 5) extend
-the accumulator. Pure delegation otherwise; the palindrome twist happens
-at the next `place.CZ` (see §3.2).
+`_unwrap` converts `ExecuteCZReturn` → home `ConcreteState` (so a MoveTo
+immediately after a palindrome CZ starts from the home position). `_unwrap`
+leaves `UserMoved` and other states alone, so a MoveTo after another MoveTo
+sees the previous `UserMoved` state directly — allowing
+`SingleZonePlacementStrategyABC.move_to_placements` (step 6) to extend the
+accumulator across consecutive MoveTo calls.
 
-### 2.3 — `sq_placements` / `measure_placements` propagate `UserMoved`
+### 2.3 — `sq_placements` and `measure_placements` with `UserMoved` input
 
-The existing `SingleZonePlacementStrategyABC.sq_placements` (and
-`measure_placements`) strips any `ConcreteState` subclass down to a bare
-`ConcreteState` (`strategy.py:122-130`) — the intent is "don't let
-CZ-specific metadata leak into downstream rewrites for non-CZ ops". For
-`UserMoved`, that strip is wrong: it discards `accumulated_move_layers`
-and `pre_user_layout`, which the palindrome strategy still needs at the
-next CZ.
-
-Both methods grow a UserMoved-aware branch:
+`movement.move_to` is only valid immediately before a CZ gate (or another
+`move_to`). If the placement analysis reaches a `sq_placements` or
+`measure_placements` call with a `UserMoved` input state, it means a user
+move was followed by a non-CZ operation — an invalid program. Both methods
+must signal this via `AtomState.bottom()`:
 
 ```python
 def sq_placements(self, state, qubits):
     if isinstance(state, UserMoved):
-        return UserMoved(
-            occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            move_layers=(),  # already emitted at the corresponding MoveTo
-            accumulated_move_layers=state.accumulated_move_layers,
-            pre_user_layout=state.pre_user_layout,
-        )
+        return AtomState.bottom()     # move_to before SQ gate — invalid
     if isinstance(state, ConcreteState):
         return ConcreteState(
             occupied=state.occupied,
@@ -430,44 +443,46 @@ def sq_placements(self, state, qubits):
     return state
 ```
 
-Empty `move_layers=()` on the propagated `UserMoved` ensures
-`InsertMoves` emits nothing extra for the SQ/measure op; the accumulator
-fields stay intact so the next `cz_placements` can splice them.
+The same pattern applies to `measure_placements` — return
+`AtomState.bottom()` when `isinstance(state, UserMoved)`.
 
-The same shape applies to `measure_placements`. `ExecuteMeasure`
-(`lattice.py:147-180`) extends `ConcreteState` similarly to `UserMoved`,
-so when the input is `UserMoved` the propagation either returns a
-plain `UserMoved` with `move_layers=()` (preserving the accumulator for
-any post-measure CZ) or a hybrid that carries both `ExecuteMeasure`
-fields and `UserMoved` fields. v1 picks the former — a `UserMoved`
-output for `place.MoveTo`-then-measure sequences — which keeps the
-combinatorial complexity of the lattice classes flat. Measurement
-followed by user moves and then a CZ is rare in practice; if it turns
-out to be common, the hybrid is a localized follow-up.
+**isinstance ordering**: the `UserMoved` branch MUST appear before the
+`ConcreteState` branch. Since `UserMoved IS ConcreteState`, checking
+`ConcreteState` first would silently accept an invalid state rather than
+returning `bottom`. See Risk register.
+
+The `bottom` state propagates to the `state_after` of the subsequent
+`place.QuantumStmt`, where the existing post-compile lanes validator catches
+it and surfaces a kernel-level diagnostic. The structural constraint
+("move_to must precede a CZ") cannot be checked eagerly on the current IR —
+pipeline-level enforcement via `bottom` is the correct mechanism.
+
+**Terminal `UserMoved`**: if `move_to` is the last statement in a kernel
+(no subsequent gate or measurement), the analysis leaves the state as
+`UserMoved` without triggering the bottom path. `InsertMoves` emits the
+forward moves at the `place.MoveTo` site; atoms remain at the user-moved
+positions. This is valid and intentional.
 
 ### 2.4 — Interpreter method for `place.MoveTo`
 
-In `python/bloqade/lanes/analysis/placement/impl.py`, register an
-abstract-interpretation method for `place.MoveTo`:
+In `python/bloqade/lanes/dialects/place.py`, add to the existing
+`PlacementMethods` class (key `"runtime.placement"`, registered at line 247):
 
 ```python
-@dialect.register(key=PlacementAnalysis.keys)
-class PlaceMoveToImpl(interp.MethodTable):
-
-    @interp.impl(place.MoveTo)
-    def move_to(
-        self,
-        interp_: PlacementAnalysis,
-        frame: ForwardFrame[AtomState],
-        stmt: place.MoveTo,
-    ) -> tuple[AtomState, ...]:
-        state = frame.get(stmt.state_before)
-        if not isinstance(state, ConcreteState):
-            return (state,)  # NotState / AnyState propagate
-        new_state = interp_.strategy.move_to_placements(
-            state, stmt.qubits, stmt.locations,
-        )
-        return (new_state,)
+@interp.impl(place.MoveTo)
+def move_to(
+    self,
+    interp_: PlacementAnalysis,
+    frame: ForwardFrame[AtomState],
+    stmt: place.MoveTo,
+) -> tuple[AtomState, ...]:
+    state = frame.get(stmt.state_before)
+    if not isinstance(state, ConcreteState):
+        return (state,)  # NotState / AnyState propagate
+    new_state = interp_.strategy.move_to_placements(
+        state, stmt.qubits, stmt.locations,
+    )
+    return (new_state,)
 ```
 
 The method reads `stmt.qubits` (indices) and `stmt.locations`
@@ -480,11 +495,10 @@ analysis does no const-folding of its own here.
 When the analysis reaches a `place.CZ` statement and the input state is
 `UserMoved`:
 
-- The strategy's existing `cz_placements` (`strategy.py:92-120` for the
-  single-zone abstract base) is invoked as today, using `UserMoved.layout`
-  (the post-user-move position) as the starting layout. The inner
-  strategy does not need to know about `UserMoved` — it sees it as a
-  `ConcreteState` and produces `ExecuteCZ.move_layers` = just the
+- The strategy's existing `cz_placements` is invoked as today, using
+  `UserMoved.layout` (the post-user-move position) as the starting layout.
+  The inner strategy does not need to know about `UserMoved` — it sees it
+  as a `ConcreteState` and produces `ExecuteCZ.move_layers` = just the
   compiler-pairing moves needed from the post-user-move layout.
 - If the post-user-move layout already satisfies the CZ pairing
   (`ExecuteCZ.verify(...)` returns True with no further moves), the
@@ -613,18 +627,20 @@ class ExecuteCZReturn(ExecuteCZ):
 
 - `user_move_layers` defaults to `()` — pre-existing call sites that
   construct `ExecuteCZReturn` without user moves keep their current
-  behavior bit-for-bit.
+  behavior bit-for-bit. When `user_move_layers = ()`, `user_reverse = ()`,
+  so `return_move_layers = compiler_reverse` — identical to the original
+  formula.
 - `is_subseteq` extends to compare `user_move_layers` (matches the
   precision of the other fields).
-- `InsertMoves` (`place2move.py:14-61`) is unchanged: it consumes
+- `InsertMoves` (`place2move.py`) is unchanged in its consumption of
   `get_move_layers()` (forward — compiler pairing only) and
-  `get_reverse_moves()` (full-segment palindrome) uniformly.
+  `get_reverse_moves()` (full-segment palindrome) — both polymorphic.
 
 ## §4 — Validation
 
 Failure modes split into two tiers: **eager** (gemini-side method-table
 impl on `movement.MoveTo`, before lowering to place) and **analysis**
-(placement strategy returns `AtomState.bottom()` at the `place.MoveTo`'s
+(placement strategy returns `AtomState.bottom()` at the relevant
 `state_after`; downstream post-compile validator catches the bottom and
 emits a diagnostic — no new diagnostic plumbing in the strategy).
 
@@ -634,14 +650,19 @@ existing post-compile lanes validator with kernel-level context.
 
 | # | Failure | Tier | Mechanism |
 |---|---|---|---|
-| 1 | `len(qubits) != len(locations)` | eager | gemini per-stmt method-table impl (registered against the lanes validator key, matching `bloqade.gemini.common.validation.new_at`) |
+| 1 | `len(qubits) != len(locations)` | eager | gemini per-stmt method-table impl |
 | 2 | `locations` IList isn't const-foldable to a tuple of `LocationAddress` | eager | gemini per-stmt method-table impl |
-| 3 | Any `LocationAddress` out of ArchSpec range | eager | gemini per-stmt method-table impl |
+| 3 | Any `LocationAddress` out of ArchSpec range | eager | gemini per-stmt method-table impl (uses `arch_spec` injected via `run_pass`, see §5) |
 | 4 | Duplicate destinations within one `move_to` call | eager | gemini per-stmt method-table impl |
 | 5 | Duplicate qubit references within one `move_to` call (same `Qubit` SSA appears more than once in the `qubits` IList) | eager | gemini per-stmt method-table impl |
-| 6 | Destination is currently held by a qubit *not* in this `move_to` call ("swap into unmoved slot") | analysis | `move_to_placements` returns `bottom` (§2.2 step 2); post-compile validator surfaces |
-| 7 | AOD lane assignment infeasible (synthesizer failure) | analysis | `move_to_placements` returns `bottom` (§2.2 step 5); post-compile validator surfaces |
-| 8 | Qubit already at requested location | n/a | silent no-op — empty layer emitted; user-visible behavior identical to omitting that `(qubit, location)` pair |
+| 6 | `move_to` followed by a non-CZ, non-MoveTo operation (SQ gate or measurement) | analysis | `sq_placements(UserMoved)` / `measure_placements(UserMoved)` return `bottom` (§2.3); post-compile validator surfaces |
+| 7 | Destination is currently held by a qubit *not* in this `move_to` call ("swap into unmoved slot") | analysis | `move_to_placements` returns `bottom` (§2.2 step 2); post-compile validator surfaces |
+| 8 | AOD lane assignment infeasible (synthesizer failure) | analysis | `move_to_placements` returns `bottom` (§2.2 step 5); post-compile validator surfaces |
+| 9 | Qubit already at requested location | n/a | silent no-op — empty layer emitted; user-visible behavior identical to omitting that `(qubit, location)` pair |
+
+Note on failure #6: the structural constraint "move_to must precede a CZ"
+cannot be checked eagerly on the current IR. Pipeline-level enforcement via
+`bottom` is the correct mechanism for v1.
 
 ### 4.1 — Eager per-statement validation (failures 1-5)
 
@@ -656,18 +677,18 @@ qubits respectively). For qubits the check is on SSA-value identity
 rather than const data: two slots in the `qubits` IList referencing the
 same `Qubit` SSA value is a duplicate.
 
-### 4.2 — Analysis failures (failures 6-7)
+### 4.2 — Analysis failures (failures 6-8)
 
-The placement analysis interpreter method for `place.MoveTo` (§2.4)
-delegates to `strategy.move_to_placements`. When that returns
-`AtomState.bottom()`, the analysis frame records `bottom` for the
-statement's `state_after`. The existing post-compile lanes validator
-notices the `bottom` and emits a kernel-level diagnostic naming the
-infeasible MoveTo. No new diagnostic-emission code in the strategy
-itself; the contract is "`bottom` ⇒ infeasible point ⇒ validator
-complains."
+The placement analysis returns `AtomState.bottom()` for each failure:
+- **#6**: `sq_placements(UserMoved)` or `measure_placements(UserMoved)` (§2.3)
+- **#7**: `move_to_placements` occupancy check (§2.2 step 2)
+- **#8**: `move_to_placements` synthesizer failure (§2.2 step 5)
 
-### 4.3 — Already-at-destination (failure 8)
+In all cases the existing post-compile lanes validator notices the `bottom`
+at the statement's `state_after` and emits a kernel-level diagnostic. No
+new diagnostic-emission code in the strategy itself.
+
+### 4.3 — Already-at-destination (failure 9)
 
 If a qubit's current location equals its requested destination, the
 synthesizer simply emits no AOD lane for that pair. The resulting
@@ -708,26 +729,43 @@ is purely additive, and kernels that never call `movement.move_to`
 produce IR with no `movement.MoveTo` statements (the movement-side
 rewrites and analysis paths are simply no-ops).
 
-### 5.2 — Validation registration
+### 5.2 — `arch_spec` parameter and validation registration
 
-The existing `ValidationSuite` constructed inside `run_pass`
-(`group.py:102-109`) gains the new movement validator:
+`run_pass` gains an `arch_spec` parameter so `MoveToValidation` can
+range-check `LocationAddress` values against the architecture:
+
+```python
+from bloqade.lanes.arch.gemini.logical import get_arch_spec
+
+def run_pass(
+    self,
+    ...,
+    arch_spec: ArchSpec | None = None,
+    ...
+) -> ...:
+    if arch_spec is None:
+        arch_spec = get_arch_spec()
+    ...
+```
+
+The existing `ValidationSuite` gains `MoveToValidation` as an
+**instance** (not a class — it requires the `arch_spec` at construction):
 
 ```python
 validator = ValidationSuite([
-    GeminiLogicalValidation,
-    GeminiTerminalMeasurementValidation,
-    FlatKernelNoCloningValidation,
-    DuplicateAddressValidation,
-    MoveToValidation,          # ← new — implements failures 1-5 from §4
+    GeminiLogicalValidation(),
+    GeminiTerminalMeasurementValidation(),
+    FlatKernelNoCloningValidation(),
+    DuplicateAddressValidation(),
+    MoveToValidation(arch_spec=arch_spec),   # ← new — instance with arch_spec
 ])
 ```
 
 `MoveToValidation` lives in `python/bloqade/gemini/common/validation/move_to.py`
-and registers the per-statement method-table impl described in §4.1. It
-follows the structural shape of `bloqade.gemini.common.validation.new_at`
-— a `ValidationPass` subclass whose interpreter recognizes the
-movement-dialect statement.
+and follows the structural shape of `bloqade.lanes.validation.Validation`
+— a `ValidationPass` subclass with `arch_spec: ArchSpec = field(kw_only=True)`
+whose internal `_ValidationAnalysis` receives the `arch_spec` at run time.
+It registers the per-statement method-table impl described in §4.1.
 
 ### 5.3 — User-facing example
 
@@ -745,36 +783,36 @@ def k():
 `movement` lives in `bloqade.lanes.dialects` (per §1) but is unioned into
 the gemini logical kernel group; users import the statement from lanes
 and use the kernel decorator from gemini. The base
-`bloqade.lanes._prelude` / `bloqade.lanes.prelude` dialect groups
-(`_prelude.py:10`, `prelude.py:10`) are **not** extended — lanes-only
-kernels still don't see `movement.MoveTo`. The dialect is a
-gemini-logical-level surface.
+`bloqade.lanes._prelude` / `bloqade.lanes.prelude` dialect groups are
+**not** extended — lanes-only kernels still don't see `movement.MoveTo`.
 
 ### 5.4 — Backward compatibility
 
 Existing kernels that never reference `movement.move_to` produce
 byte-identical IR before vs after this change:
 
-- The dialect being in the group's union but unused costs only a small
-  amount of dialect-registration overhead at kernel construction;
+- The dialect being in the group's union but unused costs only dialect-
+  registration overhead at kernel construction;
 - `MoveToValidation` is a per-statement impl that runs only against
   `movement.MoveTo` instances — kernels without those statements emit
   no diagnostics and no extra work;
 - The placement-analysis interpreter for `place.MoveTo` likewise only
   runs against that statement type; the post-rewrite IR for a non-
-  movement kernel contains zero `place.MoveTo` statements, so the
-  analysis is unaffected.
+  movement kernel contains zero `place.MoveTo` statements.
 
 The regression test in §7.9 (existing demo corpus → byte-identical move
 IR) is the canary for this property.
 
 ## §6 — Place→Move emission
 
-`InsertMoves` (`python/bloqade/lanes/rewrite/place2move.py:14-61`) is
-**not changed**. It iterates over `place.QuantumStmt` nodes and emits
-forward + return Move IR via `state_after.get_move_layers()` and
-`state_after.get_reverse_moves()` — both polymorphic on the lattice
-element. With the §2/§3 lattice changes:
+### 6.1 — `InsertMoves` (minimal edit)
+
+`InsertMoves` (`python/bloqade/lanes/rewrite/place2move.py`) requires a
+small addition to support the `multi_move_warning` attribute. Its core
+polymorphic dispatch — emitting forward moves via
+`state_after.get_move_layers()` and reverse moves via
+`state_after.get_reverse_moves()` — is unchanged. With the §2/§3 lattice
+changes:
 
 - `UserMoved.get_move_layers()` returns `move_layers` (just this
   MoveTo's portion), so each `place.MoveTo` emits exactly its own
@@ -786,86 +824,40 @@ element. With the §2/§3 lattice changes:
   the forward emit, and `return_move_layers = compiler_reverse +
   user_reverse` for the return emit (computed in `__post_init__`).
 
-No changes to `InsertMoves` itself — the polymorphic dispatch already
-covers the new state class.
-
-### 6.1 — Multi-shot warning channel
-
-The placement strategy synthesizes user-move layers via `compute_moves`
-(§2.2 step 5). When `compute_moves` returns more than one layer for a
-single `move_to` call, the requested transport cannot be performed in a
-single AOD shot. v1 still accepts the call (best-effort packing — see
-Non-goals on `require_parallel`), but the strategy records a non-fatal
-warning so the user knows.
-
-#### Warning storage
-
-`SingleZonePlacementStrategyABC` (and any future strategy) gains a
-mutable warning accumulator:
+The one new code path in `InsertMoves.rewrite_Statement`: after emitting
+move IR at a `place.MoveTo` site, check whether the transport required
+more than one AOD shot and warn if the statement requests it:
 
 ```python
-@dataclass
-class MultiShotWarning:
-    qubits: tuple[int, ...]
-    locations: tuple[LocationAddress, ...]
-    layer_count: int
-
-
-@dataclass
-class SingleZonePlacementStrategyABC(PlacementStrategyABC):
-    # … existing fields …
-    multi_shot_warnings: list[MultiShotWarning] = field(
-        default_factory=list, repr=False, compare=False
-    )
-
-    def move_to_placements(self, state, qubits, locations):
-        ...
-        new_layers = self.compute_moves(state, target_state)
-        if len(new_layers) > 1:
-            self.multi_shot_warnings.append(
-                MultiShotWarning(qubits=qubits, locations=locations,
-                                 layer_count=len(new_layers))
-            )
-        ...
+if isinstance(stmt, place.MoveTo) and stmt.multi_move_warning:
+    layers = state_after.get_move_layers()
+    if len(layers) > 1:
+        warnings.warn(
+            f"movement.move_to(qubits={stmt.qubits}, "
+            f"locations={stmt.locations}) could not be packed into a "
+            f"single AOD shot (split across {len(layers)} layers)",
+            UserWarning,
+        )
 ```
 
-`repr=False` / `compare=False` keep the accumulator out of the dataclass
-identity — two strategy instances are still equal iff their constructor
-fields match, so existing equality-based tests are unaffected.
+### 6.2 — `RewriteGates` (new handler for `place.MoveTo`)
 
-For `PalindromePlacementStrategy`, no extra accumulator is needed — its
-`move_to_placements` (§2.2) delegates to `self.inner`, so warnings land
-on the inner strategy and are reachable as
-`palindrome_strategy.inner.multi_shot_warnings`.
-
-#### Surfacing warnings
-
-The `run_pass` in `bloqade/gemini/logical/group.py` reads
-`strategy.multi_shot_warnings` after the placement analysis completes
-and emits one `UserWarning` per entry via Python's `warnings.warn`:
+After `InsertMoves` emits the forward moves at a `place.MoveTo` site,
+the `place.MoveTo` node remains in the IR inside its `StaticPlacement`
+region. `RewriteGates` gains a handler that deletes it:
 
 ```python
-import warnings
-...
-for w in strategy.multi_shot_warnings:
-    warnings.warn(
-        f"movement.move_to(qubits={w.qubits}, locations={w.locations}) "
-        f"could not be packed into a single AOD shot "
-        f"(split across {w.layer_count} layers)",
-        UserWarning,
-    )
+@stmts_to_insert.register(place.MoveTo)
+def _(node: place.MoveTo) -> list[ir.Statement]:
+    node.erase()   # or equivalent removal API
+    return []
 ```
 
-Reasons for `warnings.warn` over an analysis-frame channel:
-- Python idiom — composes cleanly with `pytest.warns` and `-W error`.
-- No new diagnostic infrastructure inside `ValidationSuite`, which is
-  error-tier today.
-- v2's `require_parallel=True` flag (Non-goals) would short-circuit
-  *before* the accumulator: return `bottom()` from
-  `move_to_placements` on `len(new_layers) > 1`, surfacing via the
-  existing post-compile validator.
+After deletion, the `StaticPlacement` contains only its `Yield` statement
+and is eligible for removal by the existing `RemoveNoOpStaticPlacements`
+pass — no additional cleanup needed.
 
-### 6.2 — Inter-call coalescing
+### 6.3 — Inter-call coalescing
 
 Two adjacent `place.MoveTo` statements with no intervening non-movement
 op are **not** coalesced into one AOD shot in v1, even if their
@@ -882,151 +874,104 @@ For each failure mode in §4 rows 1-5, write a kernel that exhibits it
 and assert the Kirin diagnostic surfaces at the right source line:
 
 - Mismatched `qubits` / `locations` IList lengths → length error.
-- `locations` IList contains a non-const `LocationAddress` element
-  (e.g., one produced by a runtime call) → const-foldability error
-  pointing at the offending element.
+- `locations` IList contains a non-const `LocationAddress` element → error.
 - Out-of-range `(zone_id, word_id, site_id)` → range error.
 - Two identical `LocationAddress` values in one `locations` IList →
-  duplicate-destination error, points at the duplicate and references
-  the first.
+  duplicate-destination error.
 - Same `Qubit` SSA value appearing twice in one `qubits` IList →
-  duplicate-qubit error (failure #5).
+  duplicate-qubit error.
 - Negative cases: valid single-qubit move, valid multi-qubit move,
-  already-at-destination no-op, permutation among the moved qubits
-  (qubit_a → loc_of_b, qubit_b → loc_of_a) → eager validation passes.
+  already-at-destination no-op, permutation among moved qubits → eager
+  validation passes.
 
 ### 7.2 — `movement.MoveTo` → `place.MoveTo` rewrite (§1)
 
-- Literal-IList kernel
-  (`movement.move_to([q[0], q[1]], [loc_a, loc_b])`) post-ConstantFold →
-  rewrite produces a `place.MoveTo` with `qubits=(0, 1)` (or whatever
-  range maps onto the enclosing `StaticPlacement` qubits) and
-  `locations=(loc_a, loc_b)` as a static attribute tuple.
-- Const hint absent on `locations` (e.g., ConstantFold hasn't run) →
-  rewrite returns `RewriteResult()` with no modification (defers,
-  doesn't raise).
-- `qubits` operand not produced by `ilist.New` → rewrite returns
-  `RewriteResult()`.
+- Literal-IList kernel post-ConstantFold → rewrite produces a
+  `place.MoveTo` with correct `qubits`, `locations`, and
+  `multi_move_warning` attribute copied from the source.
+- Const hint absent on `locations` → rewrite returns `RewriteResult()`
+  (defers, doesn't raise).
 
 ### 7.3 — Placement-analysis interpreter and strategy (§2)
 
 - Single `move_to` from a fresh `ConcreteState` → strategy returns
-  `UserMoved` with `move_layers` containing this call's layers,
-  `accumulated_move_layers == move_layers`, `pre_user_layout ==
-  input_state.layout`, and `layout` reflecting the moved positions.
-- Sequence of two `move_to` calls (no intervening CZ) → second
-  `UserMoved` has `accumulated_move_layers ==
-  (first.move_layers + second.move_layers)`,
-  `pre_user_layout == first.pre_user_layout` (unchanged), and `layout`
-  reflecting both moves. The per-call `move_layers` field on the second
-  state contains only the second call's layers.
+  `UserMoved` with correct `move_layers`, `accumulated_move_layers ==
+  move_layers`, `pre_user_layout == input_state.layout`.
+- Sequence of two `move_to` calls (no intervening op) → second
+  `UserMoved` has `accumulated_move_layers == first.move_layers +
+  second.move_layers`, `pre_user_layout == first.pre_user_layout`
+  (unchanged), per-call `move_layers` contains only second call's layers.
 - `move_to` followed by a non-CZ op (`place.R` / `place.Rz`) →
-  `sq_placements` returns a `UserMoved` with `move_layers=()` but
-  `accumulated_move_layers` and `pre_user_layout` preserved. Confirms
-  the §2.3 propagation rule.
-- Same setup followed by `place.EndMeasure` → equivalent assertion
-  on `measure_placements`.
-- "Swap into unmoved slot" — `move_to([q0], [loc_currently_held_by_q1])`
-  while q1 stays put → strategy returns `AtomState.bottom()`
+  `sq_placements(UserMoved)` returns `AtomState.bottom()`. Confirms
+  the §2.3 invalid-program path.
+- `move_to` followed by `place.EndMeasure` → `measure_placements(UserMoved)`
+  returns `AtomState.bottom()`.
+- "Swap into unmoved slot" → strategy returns `AtomState.bottom()`
   (occupancy precondition, §2.2 step 2).
-- "Permutation among moved qubits" — `move_to([q0, q1], [loc_of_q1,
-  loc_of_q0])` → strategy returns `UserMoved` (the precondition
-  excludes locations held by qubits *in* the call, so a clean
-  permutation is allowed).
-- Synthesizer infeasibility — set up a layout where the requested
-  transport has no legal AOD assignment → strategy returns
-  `AtomState.bottom()` (§2.2 step 5).
-- Interpreter method (§2.4): non-`ConcreteState` input (top or bottom
-  state) propagates unchanged without calling the strategy.
+- "Permutation among moved qubits" → strategy returns `UserMoved`
+  (destinations held by qubits *in* the call are allowed).
+- Synthesizer infeasibility → strategy returns `AtomState.bottom()`.
+- Non-`ConcreteState` input (top or bottom) propagates unchanged.
 
 ### 7.4 — Palindrome interaction (§3)
 
 - `move_to` + CZ under the default (non-palindrome) placement strategy →
-  `ExecuteCZ` whose `move_layers` is **only** the compiler-pairing
-  moves (or empty when user moves already land on CZ-compatible
-  positions). User moves were already accounted for in the `UserMoved`
-  state that fed `cz_placements`.
+  `ExecuteCZ` whose `move_layers` is only the compiler-pairing moves.
 - `move_to` + CZ under `PalindromePlacementStrategy` →
-  `ExecuteCZReturn` whose:
-  - `move_layers` is the compiler-pairing portion only,
-  - `user_move_layers` is exactly `UserMoved.accumulated_move_layers`,
-  - `initial_layout == UserMoved.pre_user_layout`,
-  - `return_move_layers == compiler_reverse + user_reverse` (verified
-    by reconstructing the expected palindrome).
+  `ExecuteCZReturn` with `user_move_layers ==
+  UserMoved.accumulated_move_layers`, `initial_layout ==
+  UserMoved.pre_user_layout`, `return_move_layers == compiler_reverse +
+  user_reverse`.
 - `move_to` placing qubits into CZ-compatible positions → compiler
-  synthesizes **zero** additional pairing moves
-  (`ExecuteCZ.move_layers == ()`); under palindrome the return
-  reverses only the user moves (`return_move_layers ==
-  reversed(user_move_layers_palindromed)`, `move_layers == ()`).
+  synthesizes zero additional pairing moves; palindrome return reverses
+  only the user moves.
 - Sequence: `move_to` + CZ + `move_to` + CZ — verifies the lattice
-  resets between CZs. After the first CZ (palindrome), the next
-  `move_to` runs against the `_unwrap`'d home `ConcreteState`, and its
-  `UserMoved.pre_user_layout` is the home position — not the previous
-  segment's `pre_user_layout`.
+  resets between CZs (second segment's `pre_user_layout` is the home
+  position after the first palindrome, not the first segment's
+  `pre_user_layout`).
 
 ### 7.5 — Place→Move emission (§6)
 
 - Each scenario from §7.4 lowered through `InsertMoves` → resulting
-  `move.Move` statements in the expected order:
-  - At each `place.MoveTo`: one `Load` / one or more `Move` / one
-    `Store` triple emitting `UserMoved.move_layers`.
-  - At each `place.CZ` (default strategy): forward triple emitting
-    `ExecuteCZ.move_layers` (empty when user moves already paired the
-    qubits → no triple emitted).
-  - At each `place.CZ` (palindrome): forward triple for
-    `ExecuteCZReturn.move_layers` (compiler pairing only) before the
-    CZ; return triple for `return_move_layers` (compiler reverse +
-    user reverse) after the CZ.
-- Single-call multi-layer split → multiple consecutive `move.Move`
-  statements emit for one `place.MoveTo` source statement.
+  `move.Move` statements in the expected order.
+- At each `place.MoveTo`: forward triple for `UserMoved.move_layers`.
+- At each `place.CZ` (default): forward triple for `ExecuteCZ.move_layers`.
+- At each `place.CZ` (palindrome): forward triple for
+  `ExecuteCZReturn.move_layers` before; return triple for
+  `return_move_layers` after.
+- `place.MoveTo` node is absent from the IR after `RewriteGates` runs
+  (verify the enclosing `StaticPlacement` is removed by
+  `RemoveNoOpStaticPlacements`).
 
-### 7.6 — `MultiShotWarning` channel (§6.1)
+### 7.6 — `multi_move_warning` attribute (§6.1)
 
-- A `move_to` call whose transport packs into one AOD shot →
-  `strategy.multi_shot_warnings` is empty after compilation; no
-  `UserWarning` emitted.
-- A `move_to` call whose transport requires N > 1 AOD shots →
-  `strategy.multi_shot_warnings` contains one `MultiShotWarning(...)`
-  with the right `qubits`, `locations`, and `layer_count == N`.
-- Compile the same kernel via `gemini.logical.kernel` and use
-  `pytest.warns(UserWarning)` to confirm the warning surfaces to the
-  user. Run with `-W error::UserWarning` to confirm the warning can be
-  upgraded to a failure (the v2 `require_parallel=True` short-circuit
-  would behave similarly).
-- Palindrome wrapper: warnings raised by `inner.move_to_placements`
-  remain accessible as `palindrome.inner.multi_shot_warnings`. No
-  duplicate accumulator on the wrapper.
+- A `move_to` call that packs into one AOD shot → no `UserWarning` emitted.
+- A `move_to` call requiring N > 1 AOD shots with `multi_move_warning=True`
+  (default) → one `UserWarning` emitted via `pytest.warns(UserWarning)`.
+- Same call with `multi_move_warning=False` → no `UserWarning` emitted.
+- Confirm the warning can be upgraded to failure with `-W error::UserWarning`.
 
 ### 7.7 — `gemini.logical.kernel` extension (§5)
 
 - Compile a kernel that uses both `squin.*` and `movement.move_to`
-  under the existing `gemini.logical.kernel` decorator → succeeds;
-  resulting move IR contains both circuit-derived and user-directed
-  transport.
+  under the existing `gemini.logical.kernel` decorator → succeeds.
 - Compile a kernel that uses `movement.move_to` under a bare
-  `bloqade.lanes.prelude` / `_prelude` group → fails at dialect-group
-  validation (the movement dialect is not in the lanes prelude unions
-  — see `prelude.py:10`, `_prelude.py:10`). Confirms the dialect
-  remains gemini-logical-scoped.
-- Sanity test that `MoveToValidation` is in the `ValidationSuite` list
-  constructed by `gemini.logical.kernel.run_pass` — a small kernel with
-  a length-mismatched `move_to` call must trip the validator.
+  `bloqade.lanes.prelude` group → fails at dialect-group validation.
+- A kernel with a length-mismatched `move_to` call trips `MoveToValidation`.
 
-### 7.8 — Composition with `new_at` (Open Question)
+### 7.8 — Composition with `new_at`
 
-- `move_to` a qubit that was placed via explicit `new_at(z, w, s)` on
-  the same kernel → succeeds; the qubit moves from its pinned position
-  to the requested destination. Confirms the explicit-allocation and
-  movement-intent paths compose cleanly (Open Question item in this
-  spec).
+- `move_to` a qubit placed via explicit `new_at(z, w, s)` → succeeds;
+  qubit moves from its pinned position to the requested destination.
+  Confirms explicit-allocation and movement-intent paths compose cleanly.
 
 ### 7.9 — Regression
 
 - Existing demo kernels under `demo/` (zero `movement.move_to` usage)
   compile to byte-identical move IR before vs after this change. This
   is the primary canary that:
-  - the new `movement` dialect being in the gemini logical kernel
-    group's union does not perturb output for non-movement kernels,
+  - the new `movement` dialect in the kernel group's union does not
+    perturb output for non-movement kernels,
   - `ExecuteCZReturn`'s new `user_move_layers` field defaults to `()`
     and leaves the existing palindrome computation byte-identical,
   - `sq_placements` / `measure_placements` continue to strip plain
@@ -1039,34 +984,45 @@ and assert the Kirin diagnostic surfaces at the right source line:
 python/bloqade/lanes/
 ├── dialects/
 │   ├── movement.py                       # NEW — movement dialect + MoveTo
-│   │                                     #        statement (user-facing,
-│   │                                     #        IList SSA operands)
-│   └── place.py                          # EDIT — add place.MoveTo
+│   │                                     #        statement (user-facing;
+│   │                                     #        qubits/locations IList SSA
+│   │                                     #        operands + multi_move_warning
+│   │                                     #        bool attribute)
+│   └── place.py                          # EDIT — (1) add place.MoveTo
 │                                         #        (QuantumStmt; attribute
-│                                         #        qubits/locations)
+│                                         #        qubits/locations/
+│                                         #        multi_move_warning)
+│                                         #        (2) add @interp.impl(place.MoveTo)
+│                                         #        to PlacementMethods class
 ├── analysis/placement/
 │   ├── lattice.py                        # EDIT — add UserMoved lattice
 │   │                                     #        element; extend
 │   │                                     #        ExecuteCZReturn with
 │   │                                     #        user_move_layers field
-│   ├── strategy.py                       # EDIT — add move_to_placements
-│   │                                     #        to PlacementStrategyABC;
-│   │                                     #        sq/measure preserve
-│   │                                     #        UserMoved; palindrome
-│   │                                     #        cz_placements splice
-│   └── impl.py                           # EDIT — interp method for
-│                                         #        place.MoveTo
+│   └── strategy.py                       # EDIT — add move_to_placements
+│                                         #        to PlacementStrategyABC;
+│                                         #        sq/measure return bottom
+│                                         #        for UserMoved input;
+│                                         #        palindrome cz_placements
+│                                         #        splice
 ├── rewrite/circuit2place.py              # EDIT — RewritePlaceOperations
 │                                         #        gains rewrite_MoveTo
-└── rewrite/place2move.py                 # (no edits — InsertMoves
-                                          #  already uniform)
+└── rewrite/place2move.py                 # EDIT — InsertMoves gains
+                                          #        multi_move_warning check;
+                                          #        RewriteGates gains
+                                          #        place.MoveTo delete handler
 
 python/bloqade/gemini/
-├── logical/group.py                      # EDIT — union movement dialect
-│                                         #        into kernel; register
-│                                         #        MoveToValidation
+├── logical/group.py                      # EDIT — (1) union movement dialect
+│                                         #        into kernel
+│                                         #        (2) add arch_spec param
+│                                         #        to run_pass (default
+│                                         #        get_arch_spec())
+│                                         #        (3) register
+│                                         #        MoveToValidation instance
 └── common/validation/move_to.py          # NEW — eager validation impl
-                                          #        (failures 1-5 from §4)
+                                          #        (failures 1-5 from §4;
+                                          #        arch_spec: ArchSpec field)
 ```
 
 ## Open questions
@@ -1077,46 +1033,43 @@ python/bloqade/gemini/
   defers coalescing; the open question is whether the lattice element
   should pre-emptively flatten to a single tuple or preserve per-call
   grouping (e.g. for diagnostics that map back to the source call).
-- **`MultiShotWarning` granularity (§6.1).** The current spec records
-  the full `(qubits, locations, layer_count)` for each warning. If the
-  synthesizer can identify *which subset* of pairs forced the split,
-  that information would be more actionable — but it requires the
-  Rust-backed `compute_move_layers` to surface per-layer membership,
-  which it does not today. Tracked here so the synthesizer side knows
-  there's a consumer for richer information if it ever wants to expose
-  it.
+- **`MultiShotWarning` granularity (§6.1).** If the Rust-backed
+  `compute_move_layers` could identify *which subset* of pairs forced
+  the split, the `UserWarning` message would be more actionable — but
+  this requires the synthesizer to surface per-layer membership. Tracked
+  here so the synthesizer side knows there's a consumer if it ever
+  exposes it.
 - **`movement.MoveTo` interaction with `place.NewLogicalQubit`.** Can a
-  user `move_to` a qubit that was placed via explicit `new_at(z, w, s)`
-  on the same kernel? The semantics are well-defined (the qubit moves
-  from its pinned position to the new destination), but worth a regression
-  test ensuring the explicit-allocation and movement-intent paths compose
-  cleanly.
+  user `move_to` a qubit placed via explicit `new_at(z, w, s)`? The
+  semantics are well-defined (qubit moves from its pinned position to the
+  new destination); §7.8 is the regression that confirms the paths
+  compose cleanly.
 
 ## Risk register
 
-- **Highest risk:** the new `UserMoved` lattice element joining
-  semantics. If two control-flow paths produce different `move_layers`,
+- **Highest risk:** the new `UserMoved` lattice element join semantics.
+  If two control-flow paths produce different `move_layers`,
   `accumulated_move_layers`, or `pre_user_layout`, the join goes to
   `AnyState` (top), halting analysis. v1 only supports straight-line
-  kernels (matching today's Squin), so this is theoretical — but the
-  spec calls it out so future branching support knows it has work to
-  do here.
+  kernels (matching today's Squin), so this is theoretical — but future
+  branching support has work to do here.
+- **High risk:** `sq_placements` / `measure_placements` isinstance
+  ordering. The `UserMoved` branch MUST appear before the `ConcreteState`
+  branch. A misordering silently strips `UserMoved` to `ConcreteState`
+  instead of returning `bottom`, letting invalid programs through. The
+  §7.3 "move_to followed by R/EndMeasure" tests catch this directly.
 - **Medium risk:** `PalindromePlacementStrategy.cz_placements`
   regression. The change is narrow (handle a `UserMoved` input branch
-  + populate the new `user_move_layers` field on `ExecuteCZReturn`)
-  but the strategy is load-bearing for every palindrome-using kernel
-  today. Byte-identical regression on the existing demo corpus
-  (§7.9) is the gate.
-- **Medium risk:** `ExecuteCZReturn.__post_init__` change. The
-  `return_move_layers` formula moves from `reverse(move_layers)` to
-  `compiler_reverse + user_reverse`. When `user_move_layers` defaults
-  to `()` the result is bit-for-bit identical — but any direct
-  construction of `ExecuteCZReturn` from outside
-  `PalindromePlacementStrategy` (e.g. in tests) must not break. The
-  field default and §7.9 regression gate this.
-- **Low risk:** `sq_placements` / `measure_placements` strip-vs-preserve
-  branching. The new code path adds an `isinstance(state, UserMoved)`
-  check before the existing strip. A misordering (e.g. checking
-  `ConcreteState` first) would silently drop the accumulator. Test:
-  §7.3's "move_to followed by R" / "followed by EndMeasure" cases
-  catch this directly.
+  + populate `user_move_layers` on `ExecuteCZReturn`) but the strategy
+  is load-bearing for every palindrome-using kernel today. The §7.9
+  byte-identical regression is the gate.
+- **Medium risk:** `ExecuteCZReturn.__post_init__` change. When
+  `user_move_layers` defaults to `()` the result is bit-for-bit
+  identical to the original — but any direct construction of
+  `ExecuteCZReturn` outside `PalindromePlacementStrategy` (e.g. in
+  tests) must not break. The field default and §7.9 regression gate this.
+- **Low risk:** `RewriteGates` handler for `place.MoveTo`. The handler
+  simply deletes the node; if accidentally omitted, `place.MoveTo`
+  nodes remain in the IR and later passes will encounter unexpected
+  statement types. The §7.5 test (verify `place.MoveTo` absent after
+  `RewriteGates`) catches this.
