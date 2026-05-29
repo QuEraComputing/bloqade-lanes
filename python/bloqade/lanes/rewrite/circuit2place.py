@@ -11,7 +11,7 @@ from bloqade import qubit
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects import place
+from bloqade.lanes.dialects import movement as movement_dialect, place
 from bloqade.lanes.types import StateType
 
 
@@ -192,6 +192,7 @@ class RewritePlaceOperations(abc.RewriteRule):
                 gate.CZ,
                 gate.R,
                 gate.Rz,
+                movement_dialect.MoveTo,
             ),
         ):
             return abc.RewriteResult()
@@ -347,6 +348,31 @@ class RewritePlaceOperations(abc.RewriteRule):
             )
         )
 
+        return abc.RewriteResult(has_done_something=True)
+
+    def rewrite_MoveTo(self, node: movement_dialect.MoveTo) -> abc.RewriteResult:
+        # qubits: after unrolling, always an ilist.New
+        if not isinstance(qubits_list := node.qubits.owner, ilist.New):
+            return abc.RewriteResult()
+
+        # locations: must be const-foldable
+        locations_hint = node.locations.hints.get("const")
+        if not isinstance(locations_hint, const.Value):
+            return abc.RewriteResult()
+
+        inputs = qubits_list.values
+        location_attrs = tuple(locations_hint.data)
+
+        body, block, entry_state = self.prep_region()
+        move_stmt = place.MoveTo(
+            entry_state,
+            qubits=tuple(range(len(inputs))),
+            locations=location_attrs,
+            multi_move_warning=node.multi_move_warning,
+        )
+        node.replace_by(
+            self.construct_execute(move_stmt, qubits=inputs, body=body, block=block)
+        )
         return abc.RewriteResult(has_done_something=True)
 
 
