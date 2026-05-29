@@ -31,6 +31,29 @@ from bloqade.lanes.rewrite import circuit2place
 from .base import _NativeToPlaceBase, _PlaceToMove
 
 
+def transversal_rewrites(mt: Method, rewrite_logical_initialize: bool = True) -> Method:
+    """Apply transversal rewrite rules to a squin method.
+
+    Expands logical operations into their transversal (physical qubit) equivalents
+    using the Steane [[7,1,3]] transversal map. The method is rewritten in place.
+
+    Args:
+        mt (Method): The squin method to rewrite.
+        rewrite_logical_initialize (bool): Whether to rewrite the logical initialize statements.
+
+    Returns:
+        Method: The rewritten method (same object, mutated in place).
+
+    """
+    TransversalRewritePass(
+        mt.dialects,
+        transversal_location_map=steane7_transversal_map,
+        rewrite_logical_initialize=rewrite_logical_initialize,
+    )(mt)
+
+    return mt
+
+
 @dataclass
 class _LogicalNativeToPlace(_NativeToPlaceBase):
     transversal_rewrite: bool = False
@@ -119,10 +142,6 @@ class LogicalPipeline:
         if self.transversal_rewrite:
             # If running this compilation for simulation pruposes we
             # need to rewrite the logical initialize statement
-            TransversalRewritePass(
-                mt.dialects,
-                transversal_location_map=steane7_transversal_map,
-                rewrite_logical_initialize=self.simulation,
-            )(out)
+            transversal_rewrites(out, rewrite_logical_initialize=self.simulation)
 
         return out
