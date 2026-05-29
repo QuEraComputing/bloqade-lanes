@@ -1,0 +1,631 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Instruction Set - Bloqade Lanes</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../docs/theme/version-switcher.css">
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Architecture</li><li class="chapter-item expanded "><a href="../arch/archspec.html"><strong aria-hidden="true">1.</strong> Architecture Specification</a></li><li class="chapter-item expanded "><a href="../arch/zone-centric-concepts.html"><strong aria-hidden="true">2.</strong> Zone-Centric Concepts (Visual Guide)</a></li><li class="chapter-item expanded affix "><li class="part-title">Bytecode</li><li class="chapter-item expanded "><a href="../bytecode/inst-quick-ref.html"><strong aria-hidden="true">3.</strong> Instruction Quick Reference</a></li><li class="chapter-item expanded "><a href="../bytecode/inst-spec.html" class="active"><strong aria-hidden="true">4.</strong> Instruction Set</a></li><li class="chapter-item expanded "><a href="../bytecode/cli.html"><strong aria-hidden="true">5.</strong> CLI Reference</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Bloqade Lanes</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/QuEraComputing/bloqade-lanes" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/QuEraComputing/bloqade-lanes/edit/main/docs/src/bytecode/inst-spec.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="bloqade-lanes-bytecode-instruction-specification"><a class="header" href="#bloqade-lanes-bytecode-instruction-specification">Bloqade Lanes Bytecode Instruction Specification</a></h1>
+<p>This document specifies the bytecode instruction set used by Bloqade Lanes to describe atom shuttling programs for neutral atom quantum processors. A bytecode program is a sequence of fixed-width instructions that drive the full lifecycle of a computation: loading atoms into an optical lattice, shuttling them between sites using AOD (Acousto-Optic Deflector) transport, applying quantum gates, and reading out measurement results.</p>
+<p>The instruction set is organized around the physical structure of the hardware. Atoms occupy <strong>sites</strong> within <strong>words</strong> (rows of trapping positions in the lattice). <strong>Buses</strong> define the AOD transport channels that move atoms between sites (site buses) or between words (word buses). A <strong>lane</strong> is a single atom trajectory along a bus — one source site to one destination site. A <strong>zone</strong> groups words that share a global entangling interaction (e.g. a Rydberg pulse) or define locations where atoms are measured. These concepts map directly to the address types used in the bytecode: <code>LocationAddr</code> (word, site), <code>LaneAddr</code> (word, site, bus, direction), and <code>ZoneAddr</code> (zone).</p>
+<p>Programs execute on a stack machine. Address constants and numeric parameters are pushed onto the stack, then consumed by operation instructions (fills, moves, gates, measurements). The bytecode is designed to be validated offline against an architecture specification (<code>ArchSpec</code>) that captures the geometry, bus topology, and zone layout of a specific device.</p>
+<h2 id="instruction-format"><a class="header" href="#instruction-format">Instruction Format</a></h2>
+<p>Every instruction is a fixed <strong>16 bytes</strong>: a 32-bit opcode word followed by three 32-bit data words, all little-endian.</p>
+<pre><code>┌──────────────┬──────────────┬──────────────┬──────────────┐
+│ opcode (u32) │ data0 (u32)  │ data1 (u32)  │ data2 (u32)  │
+├──────────────┼──────────────┼──────────────┼──────────────┤
+│  bytes 0–3   │  bytes 4–7   │  bytes 8–11  │ bytes 12–15  │
+└──────────────┴──────────────┴──────────────┴──────────────┘
+</code></pre>
+<p>Instructions that take no operands ignore the data words (should be zero). Instructions with operands encode them in the data words as described per-instruction below.</p>
+<h2 id="opcode-packing"><a class="header" href="#opcode-packing">Opcode Packing</a></h2>
+<p>The opcode word is packed as a 1-byte <strong>instruction code</strong> and a 1-byte <strong>device code</strong> in the low 16 bits of the u32. The upper 16 bits are unused (must be zero). The device code occupies the least significant byte.</p>
+<pre><code>┌──────────────┬──────────────────┬──────────────────┐
+│   unused     │ instruction code │   device code    │
+│  (16 bits)   │    (8 bits)      │    (8 bits)      │
+└──────────────┴──────────────────┴──────────────────┘
+  bits 31–16       bits 15–8          bits 7–0
+</code></pre>
+<p>Full opcode = <code>(instruction_code &lt;&lt; 8) | device_code</code>.</p>
+<p>In little-endian memory layout:</p>
+<pre><code>byte[0] = device_code        (bits 7–0)
+byte[1] = instruction_code   (bits 15–8)
+byte[2] = 0x00               (unused)
+byte[3] = 0x00               (unused)
+</code></pre>
+<p>Instruction codes <strong>can overlap</strong> across different devices — the device code byte disambiguates.</p>
+<h2 id="device-codes"><a class="header" href="#device-codes">Device Codes</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Device Code</th><th>Name</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>0x00</code></td><td><code>Cpu</code></td><td>Stack manipulation, constants, control flow (FLAIR-aligned)</td></tr>
+<tr><td><code>0x0F</code></td><td><code>LaneConstants</code></td><td>Lane-specific constant instructions</td></tr>
+<tr><td><code>0x10</code></td><td><code>AtomArrangement</code></td><td>Atom filling and movement</td></tr>
+<tr><td><code>0x11</code></td><td><code>QuantumGate</code></td><td>Single- and multi-qubit gate operations</td></tr>
+<tr><td><code>0x12</code></td><td><code>Measurement</code></td><td>Qubit measurement</td></tr>
+<tr><td><code>0x13</code></td><td><code>Array</code></td><td>Array construction and indexing</td></tr>
+<tr><td><code>0x14</code></td><td><code>DetectorObservable</code></td><td>Detector and observable setup</td></tr>
+</tbody></table>
+</div>
+<p>Device codes <code>0x01</code>–<code>0x0E</code> are reserved for future FLAIR device types.</p>
+<h2 id="address-encoding"><a class="header" href="#address-encoding">Address Encoding</a></h2>
+<p>All address field components are 16-bit, packed into the data words.</p>
+<h3 id="locationaddr"><a class="header" href="#locationaddr"><code>LocationAddr</code></a></h3>
+<p>Packed in a single data word (data0):</p>
+<pre><code>data0: [word_id:16][site_id:16]
+        bits 31–16   bits 15–0
+</code></pre>
+<p>Total: 32 bits (u32).</p>
+<h3 id="laneaddr"><a class="header" href="#laneaddr"><code>LaneAddr</code></a></h3>
+<p>Packed across two data words (data0 + data1):</p>
+<pre><code>data0: [word_id:16][site_id:16]
+        bits 31–16   bits 15–0
+
+data1: [dir:1][mt:1][pad:14][bus_id:16]
+       bit 31  bit 30  29–16  bits 15–0
+</code></pre>
+<ul>
+<li><code>dir</code> — direction: 0 = Forward, 1 = Backward</li>
+<li><code>mt</code> — move type: 0 = SiteBus, 1 = WordBus</li>
+</ul>
+<p>Total: 64 bits across two u32 words. Note that data0 shares the same layout as <code>LocationAddr</code>.</p>
+<h4 id="lane-address-convention"><a class="header" href="#lane-address-convention">Lane address convention</a></h4>
+<p>The <code>word_id</code> and <code>site_id</code> fields in a <code>LaneAddr</code> always encode the <strong>forward-direction source</strong> — the position where the atom starts in a forward move. The <code>direction</code> field does <strong>not</strong> change which position is encoded; it only controls which endpoint is treated as source vs destination when the lane is resolved.</p>
+<p><strong>Endpoint resolution</strong> always starts by resolving the forward direction:</p>
+<ol>
+<li>Look up the bus (site bus or word bus, selected by <code>move_type</code> and <code>bus_id</code>)</li>
+<li>Find the index <code>i</code> where <code>bus.src[i]</code> matches the encoded <code>site_id</code> (for site buses) or <code>word_id</code> (for word buses)</li>
+<li>The forward source is <code>(word_id, site_id)</code> as encoded; the forward destination is <code>(word_id, bus.dst[i])</code> for site buses or <code>(bus.dst[i], site_id)</code> for word buses</li>
+<li>If <code>direction = Forward</code>: return <code>(fwd_source, fwd_destination)</code></li>
+<li>If <code>direction = Backward</code>: return <code>(fwd_destination, fwd_source)</code> — the endpoints are swapped</li>
+</ol>
+<p><strong>Example:</strong> Given a site bus with <code>src=[0,1,2,3,4] dst=[5,6,7,8,9]</code>:</p>
+<div class="table-wrapper"><table><thead><tr><th>Lane</th><th>Encoded</th><th>Resolved src → dst</th></tr></thead><tbody>
+<tr><td><code>site_id=0, dir=Forward</code></td><td>Forward source is site 0</td><td>Site 0 → Site 5</td></tr>
+<tr><td><code>site_id=0, dir=Backward</code></td><td>Forward source is still site 0</td><td>Site 5 → Site 0</td></tr>
+<tr><td><code>site_id=2, dir=Backward</code></td><td>Forward source is site 2</td><td>Site 7 → Site 2</td></tr>
+</tbody></table>
+</div>
+<p>Note that a backward lane with <code>site_id=0</code> means the atom moves <strong>from</strong> site 5 <strong>to</strong> site 0 — not that site 0 is the destination of a forward move.</p>
+<h4 id="lane-validation-rules"><a class="header" href="#lane-validation-rules">Lane validation rules</a></h4>
+<p>The validator (<code>check_lane</code>) checks the following for each <code>LaneAddr</code>:</p>
+<div class="table-wrapper"><table><thead><tr><th>Rule</th><th>Error condition</th></tr></thead><tbody>
+<tr><td>Bus must exist</td><td><code>bus_id</code> out of range for the given <code>move_type</code></td></tr>
+<tr><td><code>word_id</code> in range</td><td><code>word_id &gt;= num_words</code></td></tr>
+<tr><td><code>site_id</code> in range</td><td><code>site_id &gt;= sites_per_word</code></td></tr>
+<tr><td>Bus membership</td><td>For site buses: <code>word_id</code> must be in <code>words_with_site_buses</code>. For word buses: <code>site_id</code> must be in <code>sites_with_word_buses</code>.</td></tr>
+<tr><td>Valid forward source</td><td>For site buses: <code>bus.resolve_forward(site_id)</code> must succeed (i.e. <code>site_id</code> is in <code>bus.src</code>). For word buses: <code>bus.resolve_forward(word_id)</code> must succeed (i.e. <code>word_id</code> is in <code>bus.src</code>).</td></tr>
+</tbody></table>
+</div>
+<p>Validation is always performed against the forward-direction source, regardless of the <code>direction</code> field.</p>
+<h3 id="zoneaddr"><a class="header" href="#zoneaddr"><code>ZoneAddr</code></a></h3>
+<p>Packed in a single data word (data0):</p>
+<pre><code>data0: [pad:16][zone_id:16]
+       bits 31–16  bits 15–0
+</code></pre>
+<p>Total: 32 bits (u32).</p>
+<h2 id="instructions"><a class="header" href="#instructions">Instructions</a></h2>
+<h3 id="cpu-0x00--flair-aligned-shared-opcodes"><a class="header" href="#cpu-0x00--flair-aligned-shared-opcodes">Cpu (<code>0x00</code>) — FLAIR-aligned shared opcodes</a></h3>
+<p>These instruction codes are shared with the FLAIR VM/IR spec and use identical values.</p>
+<h4 id="const_int--push-integer-constant"><a class="header" href="#const_int--push-integer-constant"><code>const_int</code> — Push integer constant</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0200</code></td></tr>
+<tr><td>data0</td><td><code>i64</code> LE low 32 bits</td></tr>
+<tr><td>data1</td><td><code>i64</code> LE high 32 bits</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- int)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pushes a signed 64-bit integer onto the stack. The value is stored as a little-endian i64 across data0 (low) and data1 (high).</p>
+<h4 id="const_float--push-float-constant"><a class="header" href="#const_float--push-float-constant"><code>const_float</code> — Push float constant</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x03</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0300</code></td></tr>
+<tr><td>data0</td><td><code>f64</code> LE low 32 bits</td></tr>
+<tr><td>data1</td><td><code>f64</code> LE high 32 bits</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- float)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pushes a 64-bit float onto the stack. The value is stored as a little-endian f64 across data0 (low) and data1 (high).</p>
+<h4 id="dup--duplicate-top-of-stack"><a class="header" href="#dup--duplicate-top-of-stack"><code>dup</code> — Duplicate top of stack</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x04</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0400</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(a -- a a)</code></td></tr>
+</tbody></table>
+</div>
+<h4 id="pop--discard-top-of-stack"><a class="header" href="#pop--discard-top-of-stack"><code>pop</code> — Discard top of stack</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x05</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0500</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(a -- )</code></td></tr>
+</tbody></table>
+</div>
+<h4 id="swap--swap-top-two-stack-elements"><a class="header" href="#swap--swap-top-two-stack-elements"><code>swap</code> — Swap top two stack elements</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x06</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0600</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(a b -- b a)</code></td></tr>
+</tbody></table>
+</div>
+<h4 id="return--return-from-program"><a class="header" href="#return--return-from-program"><code>return</code> — Return from program</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x64</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x6400</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- )</code></td></tr>
+</tbody></table>
+</div>
+<h4 id="halt--halt-execution"><a class="header" href="#halt--halt-execution"><code>halt</code> — Halt execution</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x00</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0xFF</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0xFF00</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- )</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="laneconstants-0x0f"><a class="header" href="#laneconstants-0x0f">LaneConstants (<code>0x0F</code>)</a></h3>
+<h4 id="const_loc--push-location-address"><a class="header" href="#const_loc--push-location-address"><code>const_loc</code> — Push location address</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x000F</code></td></tr>
+<tr><td>data0</td><td><code>LocationAddr</code> — <code>[word_id:16][site_id:16]</code></td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- loc)</code></td></tr>
+</tbody></table>
+</div>
+<h4 id="const_lane--push-lane-address"><a class="header" href="#const_lane--push-lane-address"><code>const_lane</code> — Push lane address</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x010F</code></td></tr>
+<tr><td>data0</td><td><code>[word_id:16][site_id:16]</code></td></tr>
+<tr><td>data1</td><td><code>[dir:1][mt:1][pad:14][bus_id:16]</code></td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- lane)</code></td></tr>
+</tbody></table>
+</div>
+<h4 id="const_zone--push-zone-address"><a class="header" href="#const_zone--push-zone-address"><code>const_zone</code> — Push zone address</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x0F</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x020F</code></td></tr>
+<tr><td>data0</td><td><code>ZoneAddr</code> — <code>[pad:16][zone_id:16]</code></td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>( -- zone)</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="atomarrangement-0x10"><a class="header" href="#atomarrangement-0x10">AtomArrangement (<code>0x10</code>)</a></h3>
+<h4 id="initial_fill--initial-atom-loading"><a class="header" href="#initial_fill--initial-atom-loading"><code>initial_fill</code> — Initial atom loading</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x10</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0010</code></td></tr>
+<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops <code>n</code> location addresses and performs the initial atom fill at those sites.</p>
+<h4 id="fill--atom-refill"><a class="header" href="#fill--atom-refill"><code>fill</code> — Atom refill</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x10</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0110</code></td></tr>
+<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops <code>n</code> location addresses and refills atoms at those sites.</p>
+<h4 id="move--atom-transport"><a class="header" href="#move--atom-transport"><code>move</code> — Atom transport</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x10</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0210</code></td></tr>
+<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(lane₁ lane₂ … laneₙ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops <code>n</code> lane addresses and performs atom moves along those lanes. All lanes in a single <code>move</code> instruction are executed simultaneously as one AOD transport operation.</p>
+<h5 id="lane-group-validation"><a class="header" href="#lane-group-validation">Lane group validation</a></h5>
+<p>When an <code>ArchSpec</code> is provided, the validator checks the group of lanes as a whole — not just each lane individually. These constraints reflect the physical limitations of a single AOD (Acousto-Optic Deflector). Each <code>move</code> instruction corresponds to one AOD operation:</p>
+<p><strong>Consistency</strong> — all lanes in the group must share the same <code>move_type</code>, <code>bus_id</code>, and <code>direction</code>. A single AOD operation cannot mix site-bus and word-bus moves, use different buses, or move atoms in different directions simultaneously.</p>
+<p><strong>Bus membership</strong> — for site-bus moves, every lane's <code>word_id</code> must be in <code>words_with_site_buses</code>. For word-bus moves, every lane's <code>site_id</code> must be in <code>sites_with_word_buses</code>.</p>
+<p><strong>Grid constraint</strong> — the physical positions of the lane sources must form a complete grid (Cartesian product of unique X and Y coordinates). An AOD addresses rows and columns independently, so it cannot select an arbitrary subset of positions — it must address every intersection of the selected rows and columns.</p>
+<p>For example, if a move group contains lanes at positions <code>(0,0)</code>, <code>(0,1)</code>, <code>(1,0)</code>, and <code>(1,1)</code>, this is a valid 2x2 grid. But <code>(0,0)</code>, <code>(0,1)</code>, <code>(1,0)</code> alone is invalid — the AOD would also address <code>(1,1)</code>, so the group must include it.</p>
+<div class="table-wrapper"><table><thead><tr><th>Check</th><th>Error</th></tr></thead><tbody>
+<tr><td>All lanes share <code>move_type</code>, <code>bus_id</code>, <code>direction</code></td><td><code>Inconsistent</code></td></tr>
+<tr><td>Site-bus lane <code>word_id</code> in <code>words_with_site_buses</code></td><td><code>WordNotInSiteBusList</code></td></tr>
+<tr><td>Word-bus lane <code>site_id</code> in <code>sites_with_word_buses</code></td><td><code>SiteNotInWordBusList</code></td></tr>
+<tr><td>Lane positions form a complete grid</td><td><code>AODConstraintViolation</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="quantumgate-0x11"><a class="header" href="#quantumgate-0x11">QuantumGate (<code>0x11</code>)</a></h3>
+<h4 id="local_r--local-r-rotation"><a class="header" href="#local_r--local-r-rotation"><code>local_r</code> — Local R rotation</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x11</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0011</code></td></tr>
+<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ φ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops 2 float parameters (φ = axis angle, θ = rotation angle) then <code>n</code> location addresses, and applies a local R rotation. The call convention matches the SSA IR: <code>local_r(%φ, %θ, %loc₁, …)</code> — first argument (φ) is pushed last and popped first.</p>
+<h4 id="local_rz--local-rz-rotation"><a class="header" href="#local_rz--local-rz-rotation"><code>local_rz</code> — Local Rz rotation</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x11</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0111</code></td></tr>
+<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(loc₁ loc₂ … locₙ θ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops 1 float parameter (θ = rotation angle) then <code>n</code> location addresses, and applies a local Rz rotation. The call convention matches the SSA IR: <code>local_rz(%θ, %loc₁, …)</code>.</p>
+<h4 id="global_r--global-r-rotation"><a class="header" href="#global_r--global-r-rotation"><code>global_r</code> — Global R rotation</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x11</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x02</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0211</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(θ φ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops 2 float parameters (φ = axis angle, θ = rotation angle), applies a global R rotation. The call convention matches the SSA IR: <code>global_r(%φ, %θ)</code>.</p>
+<h4 id="global_rz--global-rz-rotation"><a class="header" href="#global_rz--global-rz-rotation"><code>global_rz</code> — Global Rz rotation</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x11</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x03</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0311</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(θ -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops 1 float parameter (θ = rotation angle), applies a global Rz rotation. Since there is only one parameter, it is both pushed last and popped first.</p>
+<h4 id="cz--controlled-z-gate"><a class="header" href="#cz--controlled-z-gate"><code>cz</code> — Controlled-Z gate</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x11</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x04</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0411</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(zone -- )</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops a zone address and applies a CZ gate across the zone.</p>
+<h3 id="measurement-0x12"><a class="header" href="#measurement-0x12">Measurement (<code>0x12</code>)</a></h3>
+<h4 id="measure--initiate-measurement"><a class="header" href="#measure--initiate-measurement"><code>measure</code> — Initiate measurement</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x12</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0012</code></td></tr>
+<tr><td>data0</td><td><code>u32</code> LE arity</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(zone₁ zone₂ … zoneₙ -- future₁ future₂ … futureₙ)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops <code>n</code> zone addresses and pushes <code>n</code> measure futures.</p>
+<h4 id="await_measure--wait-for-measurement-result"><a class="header" href="#await_measure--wait-for-measurement-result"><code>await_measure</code> — Wait for measurement result</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x12</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0112</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(future -- array_ref)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops a measure future and pushes an array reference containing the measurement results.</p>
+<h3 id="array-0x13"><a class="header" href="#array-0x13">Array (<code>0x13</code>)</a></h3>
+<h4 id="new_array--construct-array-from-stack"><a class="header" href="#new_array--construct-array-from-stack"><code>new_array</code> — Construct array from stack</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x13</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0013</code></td></tr>
+<tr><td>data0</td><td><code>[type_tag:8][pad:8][dim0:16]</code></td></tr>
+<tr><td>data1</td><td><code>[pad:16][dim1:16]</code></td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(elem₁ elem₂ … elemₙ -- array_ref)</code></td></tr>
+</tbody></table>
+</div>
+<p>Constructs an array of <code>dim0 × dim1</code> elements with element type <code>type_tag</code>. If <code>dim1</code> is 0, the array is 1-dimensional with <code>dim0</code> elements.</p>
+<h4 id="get_item--index-into-array"><a class="header" href="#get_item--index-into-array"><code>get_item</code> — Index into array</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x13</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0113</code></td></tr>
+<tr><td>data0</td><td><code>u16</code> LE ndims (upper 16 bits unused)</td></tr>
+<tr><td>data1</td><td>unused</td></tr>
+<tr><td>data2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(array_ref idx₁ … idxₙ -- value)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops <code>ndims</code> index values then the array reference, and pushes the indexed element.</p>
+<h3 id="detectorobservable-0x14"><a class="header" href="#detectorobservable-0x14">DetectorObservable (<code>0x14</code>)</a></h3>
+<h4 id="set_detector--set-detector"><a class="header" href="#set_detector--set-detector"><code>set_detector</code> — Set detector</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x14</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x00</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0014</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(array_ref -- detector_ref)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops an array reference and pushes a detector reference.</p>
+<h4 id="set_observable--set-observable"><a class="header" href="#set_observable--set-observable"><code>set_observable</code> — Set observable</a></h4>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Device Code</td><td><code>0x14</code></td></tr>
+<tr><td>Instruction Code</td><td><code>0x01</code></td></tr>
+<tr><td>Full Opcode</td><td><code>0x0114</code></td></tr>
+<tr><td>data0–2</td><td>unused</td></tr>
+<tr><td>Stack</td><td><code>(array_ref -- observable_ref)</code></td></tr>
+</tbody></table>
+</div>
+<p>Pops an array reference and pushes an observable reference.</p>
+<h2 id="reserved-opcode-ranges"><a class="header" href="#reserved-opcode-ranges">Reserved Opcode Ranges</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Range</th><th>Owner</th></tr></thead><tbody>
+<tr><td>Device <code>0x00</code>, inst codes <code>0x00</code>–<code>0x8F</code></td><td>Reserved for FLAIR. This project uses only <code>0x02</code>–<code>0x06</code>, <code>0x64</code>, <code>0xFF</code>.</td></tr>
+<tr><td>Device codes <code>0x01</code>–<code>0x0E</code></td><td>Reserved for future FLAIR device types</td></tr>
+<tr><td>Device codes <code>0x0F</code>–<code>0xFF</code></td><td>Project-specific (currently <code>0x0F</code>–<code>0x14</code> allocated)</td></tr>
+</tbody></table>
+</div>
+<h3 id="known-flair-allocations-device-0x00"><a class="header" href="#known-flair-allocations-device-0x00">Known FLAIR allocations (device <code>0x00</code>)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Instruction Code</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>0x01</code></td><td><code>const.bool</code></td></tr>
+<tr><td><code>0x10</code>–<code>0x17</code></td><td>Arithmetic (<code>arith.add_int</code>, <code>arith.add_float</code>, etc.)</td></tr>
+<tr><td><code>0x20</code>–<code>0x23</code></td><td>Comparison (<code>cmp.gt_int</code>, <code>cmp.eq_float</code>, etc.)</td></tr>
+<tr><td><code>0x28</code>–<code>0x2A</code></td><td>Boolean (<code>bool.not</code>, <code>bool.and</code>, <code>bool.or</code>)</td></tr>
+<tr><td><code>0x30</code>–<code>0x33</code></td><td>Waveform (<code>waveform.poly4</code>, <code>waveform.delay</code>, etc.)</td></tr>
+<tr><td><code>0x40</code>–<code>0x43</code></td><td>Channel (<code>channel.emit</code>, <code>channel.play</code>, etc.)</td></tr>
+<tr><td><code>0x50</code>–<code>0x52</code></td><td>Peer messaging</td></tr>
+<tr><td><code>0x60</code>–<code>0x63</code></td><td>Control flow (<code>cf.jump</code>, <code>cf.branch</code>, <code>cf.call</code>)</td></tr>
+<tr><td><code>0x80</code></td><td><code>debug.trace</code></td></tr>
+</tbody></table>
+</div>
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../bytecode/inst-quick-ref.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../bytecode/cli.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../bytecode/inst-quick-ref.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../bytecode/cli.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../docs/theme/version-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>
