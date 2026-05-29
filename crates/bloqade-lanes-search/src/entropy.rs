@@ -117,7 +117,7 @@ impl Default for EntropyParams {
 struct EntropyState {
     entropy: u32,
     candidates_tried: usize,
-    candidate_cache: Vec<(MoveSet, Config, f64)>,
+    candidate_cache: Vec<CandidateEntry>,
     /// Encoded lane vecs of movesets already attempted from this node.
     tried_moves: HashSet<Vec<u64>>,
     /// Encoded lane vecs of movesets that failed (collision/transposition).
@@ -127,12 +127,15 @@ struct EntropyState {
     n_children: usize,
 }
 
+#[derive(Clone, Copy)]
 struct ScoredEntry {
     qubit_id: u32,
     score: f64,
     lane_encoded: u64,
     dst_encoded: u64,
 }
+
+type CandidateEntry = (MoveSet, Config, f64, bool);
 
 fn cmp_scored_entries(a: &(TripletKey, ScoredEntry), b: &(TripletKey, ScoredEntry)) -> Ordering {
     b.1.score.total_cmp(&a.1.score).then_with(|| {
@@ -160,6 +163,120 @@ fn cmp_group_entries(a: &ScoredEntry, b: &ScoredEntry) -> Ordering {
             b.dst_encoded,
         )
     })
+}
+
+fn decode_triplet_key(mt_u8: u8, dir_u8: u8) -> (MoveType, Direction) {
+    let mt = match mt_u8 {
+        x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
+        x if x == MoveType::WordBus as u8 => MoveType::WordBus,
+        x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
+        _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
+    };
+    let dir = match dir_u8 {
+        x if x == Direction::Forward as u8 => Direction::Forward,
+        x if x == Direction::Backward as u8 => Direction::Backward,
+        _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
+    };
+    (mt, dir)
+}
+
+fn build_deadlock_breaker_candidate(
+    config: &Config,
+    occupied: &HashSet<u64>,
+    all_scores: &[(TripletKey, ScoredEntry)],
+    ctx: &SearchContext,
+) -> Option<(f64, MoveSet, Config)> {
+    let unresolved: HashSet<u32> = ctx
+        .targets
+        .iter()
+        .filter_map(|(qid, target)| {
+            let current = config.location_of(*qid)?;
+            (current.encode() != *target).then_some(*qid)
+        })
+        .collect();
+    if unresolved.is_empty() {
+        return None;
+    }
+    let target_movers = unresolved.len().div_ceil(2).max(1);
+
+    let mut groups: BTreeMap<TripletKey, Vec<ScoredEntry>> = BTreeMap::new();
+    for &(key, entry) in all_scores {
+        groups.entry(key).or_default().push(entry);
+    }
+
+    let mut best: Option<(usize, f64, MoveSet, Config)> = None;
+    for ((mt_u8, bus_id, dir_u8), mut qubits) in groups {
+        qubits.sort_by(cmp_group_entries);
+        let (mt, dir) = decode_triplet_key(mt_u8, dir_u8);
+        let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, occupied);
+
+        let mut entries: HashMap<u64, u64> = HashMap::new();
+        let mut entry_by_lane: HashMap<u64, ScoredEntry> = HashMap::new();
+        let mut seen_qubits: HashSet<u32> = HashSet::new();
+        let mut selected_unresolved = 0usize;
+        for t in &qubits {
+            if !seen_qubits.insert(t.qubit_id) {
+                continue;
+            }
+            if unresolved.contains(&t.qubit_id) && selected_unresolved >= target_movers {
+                continue;
+            }
+            let lane = LaneAddr::decode_u64(t.lane_encoded);
+            if let Some((src, _)) = ctx.index.endpoints(&lane) {
+                let src_enc = src.encode();
+                if entries.contains_key(&src_enc) {
+                    continue;
+                }
+                entries.insert(src_enc, t.lane_encoded);
+                entry_by_lane.insert(t.lane_encoded, *t);
+                if unresolved.contains(&t.qubit_id) {
+                    selected_unresolved += 1;
+                }
+            }
+        }
+
+        if entries.is_empty() {
+            continue;
+        }
+
+        for grid_lanes in grid_ctx.build_aod_grids(&entries) {
+            let mut total_score = 0.0;
+            let mut moves: Vec<(u32, LocationAddr)> = Vec::new();
+            let mut moved_unresolved = 0usize;
+
+            for lane_enc in &grid_lanes {
+                if let Some(t) = entry_by_lane.get(lane_enc) {
+                    total_score += t.score;
+                    moves.push((t.qubit_id, LocationAddr::decode(t.dst_encoded)));
+                    if unresolved.contains(&t.qubit_id) {
+                        moved_unresolved += 1;
+                    }
+                }
+            }
+
+            if moves.is_empty() {
+                continue;
+            }
+
+            let move_set = MoveSet::from_encoded(grid_lanes);
+            let new_config = config.with_moves(&moves);
+            match &best {
+                None => best = Some((moved_unresolved, total_score, move_set, new_config)),
+                Some((best_moved, best_score, best_moveset, _)) => {
+                    let better = moved_unresolved > *best_moved
+                        || (moved_unresolved == *best_moved
+                            && (total_score > *best_score
+                                || (total_score == *best_score
+                                    && move_set.encoded_lanes() < best_moveset.encoded_lanes())));
+                    if better {
+                        best = Some((moved_unresolved, total_score, move_set, new_config));
+                    }
+                }
+            }
+        }
+    }
+
+    best.map(|(_, score, move_set, new_config)| (score, move_set, new_config))
 }
 
 fn cmp_scored_candidates(a: &(f64, MoveSet, Config), b: &(f64, MoveSet, Config)) -> Ordering {
@@ -325,7 +442,7 @@ fn best_untried_moveset_score(
 ) -> Option<f64> {
     es.candidate_cache
         .iter()
-        .filter_map(|(moveset, candidate_cfg, _)| {
+        .filter_map(|(moveset, candidate_cfg, _, _)| {
             let move_key = moveset.encoded_lanes().to_vec();
             if es.tried_moves.contains(&move_key) || es.failed_candidates.contains(&move_key) {
                 return None;
@@ -436,7 +553,7 @@ pub(crate) fn generate_candidates(
     params: &EntropyParams,
     ctx: &SearchContext,
     seed: u64,
-) -> Vec<(MoveSet, Config, f64)> {
+) -> Vec<CandidateEntry> {
     assert!(
         params.max_movesets_per_group > 0,
         "max_movesets_per_group must be > 0"
@@ -500,7 +617,7 @@ pub(crate) fn generate_candidates(
                     continue;
                 };
                 let dst_e = dst.encode();
-                if occupied.contains(&dst_e) {
+                if blocked.contains(&dst_e) {
                     continue;
                 }
                 let d = dist_table
@@ -521,7 +638,7 @@ pub(crate) fn generate_candidates(
                 continue;
             };
             let dst_enc = dst.encode();
-            if occupied.contains(&dst_enc) {
+            if blocked.contains(&dst_enc) {
                 continue;
             }
             let d_after = dist_table
@@ -538,7 +655,7 @@ pub(crate) fn generate_candidates(
                     continue;
                 };
                 let enc = next_dst.encode();
-                if occupied.contains(&enc) {
+                if blocked.contains(&enc) {
                     continue;
                 }
                 // Distance-weighted mobility: closer destinations count more.
@@ -609,10 +726,15 @@ pub(crate) fn generate_candidates(
     // If none are positive, keep only the single best entry as fallback.
     let has_positive = all_scores.iter().any(|e| e.1.score > 0.0);
     let selected: Vec<(TripletKey, ScoredEntry)> = if has_positive {
-        all_scores.into_iter().filter(|e| e.1.score > 0.0).collect()
+        all_scores
+            .iter()
+            .copied()
+            .filter(|e| e.1.score > 0.0)
+            .collect()
     } else {
         all_scores
-            .into_iter()
+            .iter()
+            .copied()
             .min_by(cmp_scored_entries)
             .into_iter()
             .collect()
@@ -629,17 +751,7 @@ pub(crate) fn generate_candidates(
 
     for ((mt_u8, bus_id, dir_u8), mut qubits) in groups {
         qubits.sort_by(cmp_group_entries);
-        let mt = match mt_u8 {
-            x if x == MoveType::SiteBus as u8 => MoveType::SiteBus,
-            x if x == MoveType::WordBus as u8 => MoveType::WordBus,
-            x if x == MoveType::ZoneBus as u8 => MoveType::ZoneBus,
-            _ => unreachable!("invalid MoveType discriminant: {mt_u8}"),
-        };
-        let dir = match dir_u8 {
-            x if x == Direction::Forward as u8 => Direction::Forward,
-            x if x == Direction::Backward as u8 => Direction::Backward,
-            _ => unreachable!("invalid Direction discriminant: {dir_u8}"),
-        };
+        let (mt, dir) = decode_triplet_key(mt_u8, dir_u8);
 
         let grid_ctx = BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
 
@@ -698,6 +810,15 @@ pub(crate) fn generate_candidates(
         }
     }
 
+    let mut used_deadlock_breaker = false;
+    if candidates.is_empty()
+        && let Some(deadlock_breaker) =
+            build_deadlock_breaker_candidate(config, &occupied, &all_scores, ctx)
+    {
+        candidates.push(deadlock_breaker);
+        used_deadlock_breaker = true;
+    }
+
     // Step 6: score each moveset with alpha/beta/gamma + perturbation, sort descending.
     let mut scored: Vec<(f64, MoveSet, Config)> = candidates
         .into_iter()
@@ -711,7 +832,7 @@ pub(crate) fn generate_candidates(
 
     scored
         .into_iter()
-        .map(|(_, ms, cfg)| (ms, cfg, 1.0))
+        .map(|(_, ms, cfg)| (ms, cfg, 1.0, used_deadlock_breaker))
         .collect()
 }
 
@@ -1216,7 +1337,7 @@ pub fn entropy_search(
                     .map(|s| {
                         s.candidate_cache
                             .iter()
-                            .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
+                            .map(|(ms, _, _, _)| moveset_to_trace_tuple(ms))
                             .collect()
                     })
                     .unwrap_or_default();
@@ -1247,7 +1368,7 @@ pub fn entropy_search(
         // CANDIDATE SELECTION.
         let candidate = get_next_candidate(&mut entropy_map, current, params, ctx, &graph, seed);
 
-        let Some((candidate_idx, move_set, new_config, cost)) = candidate else {
+        let Some((candidate_idx, move_set, new_config, cost, candidate_origin)) = candidate else {
             // No candidates available — bump entropy.
             let current_es = entropy_map.entry(current).or_default();
             current_es.entropy += 1;
@@ -1261,7 +1382,7 @@ pub fn entropy_search(
                 let candidate_movesets = current_es
                     .candidate_cache
                     .iter()
-                    .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
+                    .map(|(ms, _, _, _)| moveset_to_trace_tuple(ms))
                     .collect();
                 t.steps.push(EntropyTraceStep {
                     event: "entropy_bump".to_string(),
@@ -1323,7 +1444,7 @@ pub fn entropy_search(
                             .map(|s| {
                                 s.candidate_cache
                                     .iter()
-                                    .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
+                                    .map(|(ms, _, _, _)| moveset_to_trace_tuple(ms))
                                     .collect()
                             })
                             .unwrap_or_default(),
@@ -1359,7 +1480,7 @@ pub fn entropy_search(
                 let candidate_movesets = es
                     .candidate_cache
                     .iter()
-                    .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
+                    .map(|(ms, _, _, _)| moveset_to_trace_tuple(ms))
                     .collect();
                 t.steps.push(EntropyTraceStep {
                     event: "entropy_bump".to_string(),
@@ -1419,10 +1540,11 @@ pub fn entropy_search(
                 .map(|s| {
                     s.candidate_cache
                         .iter()
-                        .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
+                        .map(|(ms, _, _, _)| moveset_to_trace_tuple(ms))
                         .collect()
                 })
                 .unwrap_or_default();
+            let descend_reason = candidate_origin.then_some("deadlock-breaker".to_string());
             t.steps.push(EntropyTraceStep {
                 event: "descend".to_string(),
                 node_id: child_id.0,
@@ -1433,7 +1555,7 @@ pub fn entropy_search(
                 moveset: Some(moveset_to_trace_tuple(&trace_move_set)),
                 candidate_movesets,
                 candidate_index: Some(candidate_idx as u32),
-                reason: None,
+                reason: descend_reason,
                 state_seen_node_id: None,
                 no_valid_moves_qubit: None,
                 trigger_node_id: None,
@@ -1523,7 +1645,7 @@ fn get_next_candidate(
     ctx: &SearchContext,
     graph: &SearchGraph,
     seed: u64,
-) -> Option<(usize, MoveSet, Config, f64)> {
+) -> Option<(usize, MoveSet, Config, f64, bool)> {
     let config = graph.config(node_id);
     let es = entropy_map.entry(node_id).or_default();
 
@@ -1535,10 +1657,10 @@ fn get_next_candidate(
 
     // Find first untried, non-failed candidate.
     while es.candidates_tried < es.candidate_cache.len() {
-        let (ref ms, ref cfg, cost) = es.candidate_cache[es.candidates_tried];
+        let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
         let move_key = ms.encoded_lanes().to_vec();
         if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
-            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost);
+            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
             return Some(result);
         }
         es.candidates_tried += 1;
@@ -1549,10 +1671,10 @@ fn get_next_candidate(
     es.candidates_tried = 0;
 
     while es.candidates_tried < es.candidate_cache.len() {
-        let (ref ms, ref cfg, cost) = es.candidate_cache[es.candidates_tried];
+        let (ref ms, ref cfg, cost, origin) = es.candidate_cache[es.candidates_tried];
         let move_key = ms.encoded_lanes().to_vec();
         if !es.tried_moves.contains(&move_key) && !es.failed_candidates.contains(&move_key) {
-            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost);
+            let result = (es.candidates_tried, ms.clone(), cfg.clone(), cost, origin);
             return Some(result);
         }
         es.candidates_tried += 1;
@@ -1572,6 +1694,65 @@ mod tests {
     fn make_index() -> LaneIndex {
         let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
             serde_json::from_str(example_arch_json()).unwrap();
+        LaneIndex::new(spec)
+    }
+
+    fn make_chain_index() -> LaneIndex {
+        let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec = serde_json::from_str(
+            r#"{
+                "version": "2.0",
+                "words": [
+                    { "sites": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0]] }
+                ],
+                "zones": [
+                    {
+                        "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "y_spacing": [] },
+                        "site_buses": [
+                            { "src": [0, 2, 4], "dst": [2, 4, 6] }
+                        ],
+                        "word_buses": [],
+                        "words_with_site_buses": [0],
+                        "sites_with_word_buses": [],
+                        "entangling_pairs": []
+                    }
+                ],
+                "zone_buses": [],
+                "modes": [
+                    { "name": "default", "zones": [0], "bitstring_order": [] }
+                ]
+            }"#,
+        )
+        .unwrap();
+        LaneIndex::new(spec)
+    }
+
+    fn make_deadlock_breaker_index() -> LaneIndex {
+        let spec: bloqade_lanes_bytecode_core::arch::types::ArchSpec = serde_json::from_str(
+            r#"{
+                "version": "2.0",
+                "words": [
+                    { "sites": [[0, 0], [1, 0], [2, 0], [3, 0]] }
+                ],
+                "zones": [
+                    {
+                        "grid": { "x_start": 0.0, "y_start": 0.0, "x_spacing": [1.0, 1.0, 1.0], "y_spacing": [] },
+                        "site_buses": [
+                            { "src": [0, 1], "dst": [1, 2] },
+                            { "src": [1], "dst": [3] }
+                        ],
+                        "word_buses": [],
+                        "words_with_site_buses": [0],
+                        "sites_with_word_buses": [],
+                        "entangling_pairs": []
+                    }
+                ],
+                "zone_buses": [],
+                "modes": [
+                    { "name": "default", "zones": [0], "bitstring_order": [] }
+                ]
+            }"#,
+        )
+        .unwrap();
         LaneIndex::new(spec)
     }
 
@@ -2098,7 +2279,7 @@ mod tests {
 
         assert!(!out1.is_empty());
         assert_eq!(out1.len(), out2.len());
-        for ((ms_a, cfg_a, _), (ms_b, cfg_b, _)) in out1.iter().zip(out2.iter()) {
+        for ((ms_a, cfg_a, _, _), (ms_b, cfg_b, _, _)) in out1.iter().zip(out2.iter()) {
             assert_eq!(ms_a, ms_b);
             assert_eq!(cfg_a.as_entries(), cfg_b.as_entries());
         }
@@ -2156,7 +2337,7 @@ mod tests {
             occupied.insert(loc.encode());
         }
 
-        for (moveset, _, _) in out {
+        for (moveset, _, _, _) in out {
             let lanes = moveset.decode();
             if lanes.is_empty() {
                 continue;
@@ -2190,5 +2371,157 @@ mod tests {
                 "moveset must be directly reproducible via AOD grid builder"
             );
         }
+    }
+
+    #[test]
+    fn generate_candidates_allows_follow_moves_into_moving_occupants() {
+        let index = make_chain_index();
+        let config = Config::new([(0, loc(0, 0)), (2, loc(0, 2)), (4, loc(0, 4))]).unwrap();
+        let target_encoded = vec![
+            (0u32, loc(0, 2).encode()),
+            (2u32, loc(0, 4).encode()),
+            (4u32, loc(0, 6).encode()),
+        ];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams {
+            max_movesets_per_group: 8,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+
+        assert!(
+            out.iter().any(|(_, candidate_config, _, _)| {
+                candidate_config.location_of(0) == Some(loc(0, 2))
+                    && candidate_config.location_of(2) == Some(loc(0, 4))
+                    && candidate_config.location_of(4) == Some(loc(0, 6))
+            }),
+            "expected a candidate that moves 0->2, 2->4, and 4->6 in one AOD layer; got {out:?}"
+        );
+    }
+
+    #[test]
+    fn generate_candidates_deadlock_breaker_caps_moves_to_half_unresolved() {
+        let index = make_deadlock_breaker_index();
+
+        // q0 and q1 are unresolved, q2 is a stationary blocker at loc(0,2).
+        // Positive moves are q0:0->1 and q1:1->2 (blocked by q2), while q1:1->3
+        // is a lower-priority escape lane. Normal rectangle generation can empty
+        // out here; deadlock breaker should still return a fallback candidate.
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
+        let target_encoded = vec![
+            (0u32, loc(0, 1).encode()),
+            (1u32, loc(0, 2).encode()),
+            (2u32, loc(0, 2).encode()),
+        ];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let params = EntropyParams {
+            w_m: 0.0,
+            max_movesets_per_group: 8,
+            ..EntropyParams::default()
+        };
+
+        let out = generate_candidates(&config, 1, &params, &ctx, 0);
+        assert!(
+            !out.is_empty(),
+            "deadlock breaker should emit at least one fallback candidate"
+        );
+        assert!(
+            out.iter().any(|(_, _, _, origin)| *origin),
+            "expected deadlock-breaker candidate origin in fallback output"
+        );
+
+        let unresolved_ids: HashSet<u32> = target_encoded
+            .iter()
+            .filter_map(|(qid, target_enc)| {
+                let current = config.location_of(*qid)?;
+                (current.encode() != *target_enc).then_some(*qid)
+            })
+            .collect();
+        let target_movers = unresolved_ids.len().div_ceil(2);
+
+        let best_moved_unresolved = out
+            .iter()
+            .map(|(_, candidate_config, _, _)| {
+                unresolved_ids
+                    .iter()
+                    .filter(|qid| candidate_config.location_of(**qid) != config.location_of(**qid))
+                    .count()
+            })
+            .max()
+            .unwrap_or(0);
+
+        assert!(
+            best_moved_unresolved > 0,
+            "fallback should move at least one unresolved qubit"
+        );
+        assert!(
+            best_moved_unresolved <= target_movers,
+            "expected fallback to move at most half unresolved qubits ({target_movers}), got {best_moved_unresolved}"
+        );
+    }
+
+    #[test]
+    fn entropy_trace_marks_deadlock_breaker_descend() {
+        let index = make_deadlock_breaker_index();
+        let root = Config::new([(0, loc(0, 0)), (1, loc(0, 1)), (2, loc(0, 2))]).unwrap();
+        let target_encoded = vec![
+            (0u32, loc(0, 1).encode()),
+            (1u32, loc(0, 2).encode()),
+            (2u32, loc(0, 2).encode()),
+        ];
+        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, enc)| enc).collect();
+        let dist_table = DistanceTable::new(&target_locs, &index);
+        let blocked = HashSet::new();
+        let ctx = SearchContext {
+            index: &index,
+            dist_table: &dist_table,
+            blocked: &blocked,
+            targets: &target_encoded,
+            cz_pairs: None,
+        };
+        let goal = crate::goals::AllAtTarget::new(&target_encoded);
+        let params = EntropyParams {
+            w_m: 0.0,
+            max_movesets_per_group: 8,
+            max_goal_candidates: 3,
+            ..EntropyParams::default()
+        };
+        let mut trace = EntropyTrace::default();
+
+        let _ = entropy_search(
+            root,
+            &goal,
+            &params,
+            &ctx,
+            Some(8),
+            None,
+            0,
+            Some(&mut trace),
+        );
+
+        assert!(
+            trace.steps.iter().any(|step| step.event == "descend"
+                && step.reason.as_deref() == Some("deadlock-breaker")),
+            "expected descend step marked with deadlock-breaker reason in trace"
+        );
     }
 }
