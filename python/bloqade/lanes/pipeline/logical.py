@@ -31,23 +31,6 @@ from bloqade.lanes.rewrite import circuit2place
 from .base import _NativeToPlaceBase, _PlaceToMove
 
 
-def transversal_rewrites(mt: Method) -> Method:
-    """Apply transversal rewrite rules to a squin method.
-
-    Expands logical operations into their transversal (physical qubit) equivalents
-    using the Steane [[7,1,3]] transversal map. The method is rewritten in place.
-
-    Args:
-        mt (Method): The squin method to rewrite.
-
-    Returns:
-        Method: The rewritten method (same object, mutated in place).
-
-    """
-
-    return mt
-
-
 @dataclass
 class _LogicalNativeToPlace(_NativeToPlaceBase):
     transversal_rewrite: bool = False
