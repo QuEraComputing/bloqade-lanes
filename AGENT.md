@@ -150,7 +150,10 @@ bloqade-lanes/
 ├── docs/
 │   ├── src/                 # mdBook source (SUMMARY.md, arch/, bytecode/)
 │   ├── theme/               # Custom mdBook theme assets (version-switcher.js)
-│   └── scripts/             # Documentation deploy scripts (deploy_docs.py)
+│   ├── scripts/             # Documentation deploy scripts (deploy_docs.py)
+│   └── superpowers/         # Design artifacts (gitignored)
+│       ├── specs/           # Spec / design documents (e.g. *-design.md)
+│       └── plans/           # Implementation plans
 ├── examples/                # Architecture specs and sample bytecode programs
 ├── scripts/                 # Build/test utility scripts (non-docs)
 ├── demo/                    # Python demo scripts
