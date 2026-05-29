@@ -22,11 +22,10 @@ from bloqade.lanes import visualize
 from bloqade.lanes.analysis import atom, placement
 from bloqade.lanes.analysis.layout import LayoutHeuristicABC
 from bloqade.lanes.arch.gemini import logical, physical
-from bloqade.lanes.arch.gemini.logical.upstream import steane7_transversal_map
 from bloqade.lanes.cudaq_integration import cudaq_to_squin, is_cudaq_kernel
 from bloqade.lanes.noise_model import generate_logical_noise_model
-from bloqade.lanes.passes import TransversalRewritePass
 from bloqade.lanes.pipeline import LogicalPipeline
+from bloqade.lanes.pipeline.logical import transversal_rewrites
 from bloqade.lanes.rewrite.move2squin.noise import LogicalNoiseModelABC
 from bloqade.lanes.rewrite.squin2stim import RemoveReturn
 from bloqade.lanes.steane_defaults import steane7_m2dets, steane7_m2obs
@@ -68,27 +67,6 @@ def run_squin_kernel_validation(mt: ir.Method):
     return validator.validate(mt)
 
 
-def transversal_rewrites(mt: ir.Method):
-    """Apply transversal rewrite rules to a squin method.
-
-    Expands logical operations into their transversal (physical qubit) equivalents
-    using the Steane [[7,1,3]] transversal map. The method is rewritten in place.
-
-    Args:
-        mt (ir.Method): The squin method to rewrite.
-
-    Returns:
-        ir.Method: The rewritten method (same object, mutated in place).
-
-    """
-
-    TransversalRewritePass(
-        mt.dialects, transversal_location_map=steane7_transversal_map
-    )(mt)
-
-    return mt
-
-
 def compile_squin_to_move(
     mt: ir.Method,
     transversal_rewrite: bool = False,
@@ -114,14 +92,11 @@ def compile_squin_to_move(
 
     """
 
-    mt = LogicalPipeline(
+    return LogicalPipeline(
         layout_heuristic=layout_heuristic,
         placement_strategy=placement_strategy,
+        transversal_rewrite=transversal_rewrite,
     ).emit(mt, no_raise=no_raise)
-    if transversal_rewrite:
-        mt = transversal_rewrites(mt)
-
-    return mt
 
 
 def compile_squin_to_move_and_visualize(
