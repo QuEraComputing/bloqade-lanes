@@ -1,6 +1,7 @@
 """Tests for UserMoved lattice element and ExecuteCZReturn user_move_layers extension."""
 
 from bloqade.lanes.analysis.placement.lattice import (
+    AtomState,
     ConcreteState,
     ExecuteCZReturn,
     UserMoved,
@@ -27,6 +28,93 @@ def _concrete(layout):
         layout=layout,
         move_count=(0,) * len(layout),
     )
+
+
+# --- Strategy tests using the logical arch ---
+
+# The logical arch uses home positions at zone_id=0, even word_ids (0,2,4,...), site_id=0.
+# We use those as valid addresses throughout.
+
+
+def _make_strategy():
+    from bloqade.lanes.arch.gemini import logical as logical_arch
+    from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategy
+
+    return LogicalPlacementStrategy(arch_spec=logical_arch.get_arch_spec())
+
+
+def test_move_to_placements_returns_user_moved():
+    strat = _make_strategy()
+    layout = (
+        _loc(0, 0, 0),
+        _loc(0, 2, 0),
+    )
+    state = _concrete(layout)
+    dest = _loc(0, 4, 0)  # empty home slot
+    result = strat.move_to_placements(state, qubits=(0,), locations=(dest,))
+    assert isinstance(result, UserMoved)
+    assert result.layout[0] == dest
+    assert result.pre_user_layout == layout
+    assert result.accumulated_move_layers == result.move_layers
+
+
+def test_move_to_placements_occupancy_conflict_returns_bottom():
+    strat = _make_strategy()
+    layout = (
+        _loc(0, 0, 0),
+        _loc(0, 2, 0),
+    )
+    state = _concrete(layout)
+    # Try to move qubit 0 into qubit 1's current slot — conflict
+    dest = _loc(0, 2, 0)
+    result = strat.move_to_placements(state, qubits=(0,), locations=(dest,))
+    assert result == AtomState.bottom()
+
+
+def test_sq_placements_user_moved_returns_bottom():
+    strat = _make_strategy()
+    layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+    um = UserMoved.from_concrete_state(
+        _concrete(layout),
+        move_layers=((_lane(0, 0, 0),),),
+        accumulated_move_layers=((_lane(0, 0, 0),),),
+        pre_user_layout=layout,
+    )
+    result = strat.sq_placements(um, qubits=(0,))
+    assert result == AtomState.bottom()
+
+
+def test_measure_placements_user_moved_returns_bottom():
+    strat = _make_strategy()
+    layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+    um = UserMoved.from_concrete_state(
+        _concrete(layout),
+        move_layers=((_lane(0, 0, 0),),),
+        accumulated_move_layers=((_lane(0, 0, 0),),),
+        pre_user_layout=layout,
+    )
+    result = strat.measure_placements(um, qubits=(0, 1))
+    assert result == AtomState.bottom()
+
+
+def test_consecutive_move_to_accumulates():
+    strat = _make_strategy()
+    layout = (
+        _loc(0, 0, 0),
+        _loc(0, 2, 0),
+        _loc(0, 4, 0),
+    )
+    state = _concrete(layout)
+    dest1 = _loc(0, 6, 0)
+    um1 = strat.move_to_placements(state, qubits=(0,), locations=(dest1,))
+    assert isinstance(um1, UserMoved)
+    assert um1.pre_user_layout == layout
+
+    dest2 = _loc(0, 8, 0)
+    um2 = strat.move_to_placements(um1, qubits=(1,), locations=(dest2,))
+    assert isinstance(um2, UserMoved)
+    assert um2.pre_user_layout == layout  # unchanged: the original home
+    assert len(um2.accumulated_move_layers) >= len(um1.accumulated_move_layers)
 
 
 def test_user_moved_is_concrete_state():

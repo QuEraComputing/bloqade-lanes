@@ -11,6 +11,7 @@ from bloqade.lanes.analysis.placement import (
     PalindromePlacementStrategy,
     PlacementStrategyABC,
 )
+from bloqade.lanes.analysis.placement.lattice import UserMoved
 from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
@@ -326,6 +327,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         _ = qubits
+        if isinstance(state, UserMoved):
+            return AtomState.bottom()  # move_to before SQ gate is invalid
         if isinstance(state, ConcreteState):
             return ConcreteState(
                 occupied=state.occupied,
@@ -339,6 +342,8 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         state: AtomState,
         qubits: tuple[int, ...],
     ) -> AtomState:
+        if isinstance(state, UserMoved):
+            return AtomState.bottom()  # move_to before measurement is invalid
         if not isinstance(state, ConcreteState):
             return state
         if len(qubits) != len(state.layout):
