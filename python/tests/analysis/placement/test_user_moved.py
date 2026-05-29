@@ -176,3 +176,58 @@ def test_execute_cz_return_with_user_move_layers():
     assert len(ecz.return_move_layers) == 2  # compiler_reverse + user_reverse
     assert ecz.return_move_layers[0] == (compiler_lane.reverse(),)
     assert ecz.return_move_layers[1] == (user_lane.reverse(),)
+
+
+# --- PalindromePlacementStrategy.cz_placements tests ---
+
+
+def test_palindrome_cz_with_user_moved_produces_correct_execute_cz_return():
+    from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
+    from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
+
+    inner = _make_strategy()
+    strat = PalindromePlacementStrategy(inner=inner)
+
+    # Home layout: qubit0 at word 0, qubit1 at word 2 (both home positions in logical arch)
+    home_layout = (
+        _loc(0, 0, 0),
+        _loc(0, 2, 0),
+    )
+    # User moved qubit1 to word 1 — CZ entangling-pair partner of word 0
+    dest_layout = (
+        _loc(0, 0, 0),
+        _loc(0, 1, 0),
+    )
+    src_state = _concrete(home_layout)
+    target_state = _concrete(dest_layout)
+    move_layers = inner.compute_moves(src_state, target_state)
+
+    um = UserMoved.from_concrete_state(
+        target_state,
+        move_layers=move_layers,
+        accumulated_move_layers=move_layers,
+        pre_user_layout=home_layout,
+    )
+
+    result = strat.cz_placements(um, controls=(0,), targets=(1,))
+    assert isinstance(result, ExecuteCZReturn)
+    assert result.user_move_layers == um.accumulated_move_layers
+    assert result.initial_layout == um.pre_user_layout
+
+
+def test_palindrome_cz_without_user_moved_unchanged():
+    from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
+    from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
+
+    inner = _make_strategy()
+    strat = PalindromePlacementStrategy(inner=inner)
+
+    # Plain ConcreteState: qubit0 at word 0, qubit1 at word 2
+    layout = (
+        _loc(0, 0, 0),
+        _loc(0, 2, 0),
+    )
+    state = _concrete(layout)
+    result = strat.cz_placements(state, controls=(0,), targets=(1,))
+    assert isinstance(result, ExecuteCZReturn)
+    assert result.user_move_layers == ()  # no user moves involved
