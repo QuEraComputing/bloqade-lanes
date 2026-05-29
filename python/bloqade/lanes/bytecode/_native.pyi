@@ -652,6 +652,17 @@ class ArchSpec:
         """
         ...
 
+    def to_json(self) -> str:
+        """Serialize this architecture spec to a JSON string.
+
+        Returns:
+            str: JSON representation of the architecture spec.
+
+        Raises:
+            ValueError: If serialization fails.
+        """
+        ...
+
     @staticmethod
     def from_json_validated(json: str) -> ArchSpec:
         """Parse an architecture spec from JSON and validate it.
