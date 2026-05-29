@@ -112,7 +112,7 @@ class LogicalPipeline:
     placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
     transversal_rewrite: bool = False
-    simulation: bool = False
+    simulation: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
