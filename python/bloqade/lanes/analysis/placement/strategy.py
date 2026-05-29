@@ -289,6 +289,10 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
+        if isinstance(state, UserMoved):
+            return (
+                AtomState.bottom()
+            )  # palindrome requires move_to be immediately followed by CZ
         return self.inner.sq_placements(self._unwrap(state), qubits)
 
     def measure_placements(
