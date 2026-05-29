@@ -68,6 +68,22 @@ class PlacementStrategyABC(abc.ABC):
         qubits: tuple[int, ...],
     ) -> AtomState: ...
 
+    def move_to_placements(
+        self,
+        state: ConcreteState,
+        qubits: tuple[int, ...],
+        locations: tuple[LocationAddress, ...],
+    ) -> AtomState:
+        """User-directed atom movement placement.
+
+        Stub — implemented in Task 4 by concrete strategies that support
+        user-directed movement.  Raises NotImplementedError by default so
+        existing strategies fail loudly if reached before the full impl lands.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement move_to_placements"
+        )
+
 
 class SingleZonePlacementStrategyABC(PlacementStrategyABC):
 

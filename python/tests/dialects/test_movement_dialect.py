@@ -22,3 +22,17 @@ def test_move_to_from_python_call_trait():
 def test_move_to_no_result():
     # MoveTo is a directive with no SSA result
     assert not hasattr(MoveTo, "result")
+
+
+def test_place_move_to_is_quantum_stmt():
+    from bloqade.lanes.dialects.place import MoveTo as PlaceMoveTo, QuantumStmt
+
+    assert issubclass(PlaceMoveTo, QuantumStmt)
+
+
+def test_place_move_to_attributes():
+    from bloqade.lanes.dialects.place import MoveTo as PlaceMoveTo
+
+    assert hasattr(PlaceMoveTo, "qubits")
+    assert hasattr(PlaceMoveTo, "locations")
+    assert hasattr(PlaceMoveTo, "multi_move_warning")
