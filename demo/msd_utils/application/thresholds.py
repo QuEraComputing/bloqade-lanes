@@ -504,6 +504,7 @@ def _evaluate_cached_threshold_curve(
 
     accepted_fractions = []
     fidelities = []
+    point_fidelities = []
     credibility = []
 
     for threshold in thresholds:
@@ -541,22 +542,26 @@ def _evaluate_cached_threshold_curve(
             max_grid_points=max_grid_points,
         )
         accepted_fractions.append(total_kept / total_shots)
+        point_fidelities.append(summary["point"])
         fidelities.append(summary["median"])
         credibility.append((summary["low"], summary["high"]))
 
     accepted_array = np.asarray(accepted_fractions, dtype=np.float64)
     fidelity_array = np.asarray(fidelities, dtype=np.float64)
+    point_fidelity_array = np.asarray(point_fidelities, dtype=np.float64)
     credible_array = np.asarray(credibility, dtype=np.float64)
 
     if len(accepted_array) > 0:
         order = np.argsort(accepted_array)
         accepted_array = accepted_array[order]
         fidelity_array = fidelity_array[order]
+        point_fidelity_array = point_fidelity_array[order]
         credible_array = credible_array[order]
 
     return {
         "accepted_fraction": accepted_array,
         "fidelity": fidelity_array,
+        "point_fidelity": point_fidelity_array,
         "credible": credible_array,
     }
 

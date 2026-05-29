@@ -12,6 +12,8 @@ demo/star_injection_steane7_physical_squin.ipynb
 demo/scratch.ipynb
 demo/benchmark_exact_table_decoder.ipynb
 demo/*qet*
+demo/results
+demo/profile_decoder_scaling.py
 
 # for stdlib code
 demo/msd_utils/noise.py
