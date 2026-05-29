@@ -134,10 +134,10 @@ class LogicalPipeline:
         ).emit(out, no_raise=no_raise)
 
         if self.transversal_rewrite:
-            # If running this compilation for simulation pruposes we 
+            # If running this compilation for simulation pruposes we
             # need to rewrite the logical initialize statement
             TransversalRewritePass(
-                mt.dialects, 
+                mt.dialects,
                 transversal_location_map=steane7_transversal_map,
                 rewrite_logical_initialize=self.simulation,
             )(out)
