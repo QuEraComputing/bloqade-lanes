@@ -71,7 +71,8 @@ def test_move_to_placements_occupancy_conflict_returns_bottom():
     assert result == AtomState.bottom()
 
 
-def test_sq_placements_user_moved_returns_bottom():
+def test_sq_placements_user_moved_preserves_state():
+    """SQ gates must not corrupt UserMoved; the state passes through unchanged."""
     strat = _make_strategy()
     layout = (_loc(0, 0, 0), _loc(0, 2, 0))
     um = UserMoved.from_concrete_state(
@@ -81,7 +82,7 @@ def test_sq_placements_user_moved_returns_bottom():
         pre_user_layout=layout,
     )
     result = strat.sq_placements(um, qubits=(0,))
-    assert result == AtomState.bottom()
+    assert result is um  # UserMoved passes through SQ gates unchanged
 
 
 def test_measure_placements_user_moved_returns_bottom():

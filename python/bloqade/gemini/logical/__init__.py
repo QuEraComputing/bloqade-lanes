@@ -1,6 +1,7 @@
 from . import dialects as dialects, impl as impl, validation as validation
 from .dialects.operations import terminal_measure as terminal_measure
 from .group import kernel as kernel
+from .movement_group import movement_kernel as movement_kernel
 from .stdlib import (
     broadcast as broadcast,
     default_post_processing as default_post_processing,

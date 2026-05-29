@@ -329,7 +329,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         _ = qubits
         if isinstance(state, UserMoved):
-            return AtomState.bottom()  # move_to before SQ gate is invalid
+            return state  # SQ gates don't change atom positions; preserve UserMoved
         if isinstance(state, ConcreteState):
             return ConcreteState(
                 occupied=state.occupied,

@@ -138,7 +138,7 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         if isinstance(state, UserMoved):
-            return AtomState.bottom()  # move_to before SQ gate is invalid
+            return state  # SQ gates don't change atom positions; preserve UserMoved
         if isinstance(state, ConcreteState):
             # Strip CZ-specific metadata so non-CZ statements do not inherit stale move layers in downstream rewrite passes.
             return ConcreteState(
