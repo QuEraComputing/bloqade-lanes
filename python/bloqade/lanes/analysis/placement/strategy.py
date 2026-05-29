@@ -267,6 +267,18 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
         result = self.inner.cz_placements(home, controls, targets, lookahead_cz_layers)
         if not isinstance(result, ExecuteCZ) or not isinstance(home, ConcreteState):
             return result
+
+        if isinstance(home, UserMoved):
+            return ExecuteCZReturn(
+                occupied=result.occupied,
+                layout=result.layout,
+                move_count=result.move_count,
+                active_cz_zones=result.active_cz_zones,
+                move_layers=result.move_layers,
+                user_move_layers=home.accumulated_move_layers,
+                initial_layout=home.pre_user_layout,
+            )
+
         return ExecuteCZReturn(
             occupied=result.occupied,
             layout=result.layout,
