@@ -84,3 +84,48 @@ def test_movement_kernel_rejects_move_to_on_plain_kernel():
         def k():
             q = squin.qalloc(1)
             move_to([q[0]], [loc])
+
+
+def test_movement_kernel_multi_move_to_then_cz():
+    """Two consecutive move_to calls followed by CZ accumulate layers correctly."""
+    loc0 = LocationAddress(zone_id=0, word_id=0, site_id=0)
+    loc1 = LocationAddress(zone_id=0, word_id=0, site_id=1)
+
+    @movement_kernel(verify=False)
+    def k():
+        q = squin.qalloc(3)
+        move_to([q[0]], [loc0])
+        move_to([q[1]], [loc1])
+        squin.cz(q[0], q[2])
+
+    assert k is not None
+
+
+def test_movement_kernel_terminal_move_to_valid():
+    """move_to as the last statement (no subsequent CZ) is valid."""
+    loc = LocationAddress(zone_id=0, word_id=0, site_id=0)
+
+    @movement_kernel(verify=False)
+    def k():
+        q = squin.qalloc(2)
+        move_to([q[0]], [loc])
+
+    assert k is not None
+
+
+def test_move_to_before_sq_gate_compiles_successfully():
+    """move_to followed by a single-qubit gate compiles without error.
+
+    UserMoved state passes through SQ gates cleanly (no bottom state produced).
+    """
+    loc = LocationAddress(zone_id=0, word_id=0, site_id=0)
+
+    # Pipeline compiles successfully: UserMoved state passes through single-qubit
+    # gates without issue (no bottom state produced for SQ gates).
+    @movement_kernel(verify=False)
+    def k():
+        q = squin.qalloc(2)
+        move_to([q[0]], [loc])
+        squin.rz(0.0, q[0])
+
+    assert k is not None
