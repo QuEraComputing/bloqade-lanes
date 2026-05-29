@@ -65,7 +65,7 @@ def test_logical_pipeline_defaults_built_from_arch_spec(monkeypatch):
     FakePassType = cast(type[passes.Pass], _NoOpPass)
 
     class FakeNativeToPlace:
-        def __init__(self, arch_spec=None):
+        def __init__(self, arch_spec=None, transversal_rewrite=False):
             pass
 
         def emit(self, mt, no_raise=True):
