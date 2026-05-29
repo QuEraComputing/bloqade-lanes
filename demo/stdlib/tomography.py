@@ -414,6 +414,8 @@ def fidelity_from_zero_one_counts(
     ey, ey_err = expectation_with_error_bar(y_zero, y_one)
     ez, ez_err = expectation_with_error_bar(z_zero, z_one)
 
+    print(f"fidelity_from_zero_one_counts, ex: {ex}, ey: {ey}, ez: {ez}")
+
     bloch = np.array([ex, ey, ez], dtype=np.float64) * sign
     point = 0.5 + float(np.dot(bloch, target_bloch)) / 2.0
     if uncertainty_backend == "wilson":
