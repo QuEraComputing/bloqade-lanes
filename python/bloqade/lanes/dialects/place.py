@@ -149,6 +149,20 @@ class StarRz(QuantumStmt):
 
 
 @statement(dialect=dialect)
+class MoveTo(QuantumStmt):
+    """User-directed atom placement directive at the place layer.
+
+    Produced by RewritePlaceOperations.rewrite_MoveTo from movement.MoveTo.
+    Consumed by placement analysis (produces UserMoved state) and then
+    deleted by RewriteGates after InsertMoves emits the forward Move IR.
+    """
+
+    qubits: tuple[int, ...] = info.attribute()
+    locations: tuple[LocationAddress, ...] = info.attribute()
+    multi_move_warning: bool = info.attribute(default=True)
+
+
+@statement(dialect=dialect)
 class EndMeasure(QuantumStmt):
     state_before: ir.SSAValue = info.argument(StateType)
 
@@ -263,6 +277,21 @@ class PlacementMethods(interp.MethodTable):
         ):
             raise interp.InterpreterError("Invalid moves detected")
         return (state,)
+
+    @interp.impl(MoveTo)
+    def impl_move_to(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: MoveTo,
+    ):
+        state = frame.get(stmt.state_before)
+        if not isinstance(state, ConcreteState):
+            return (state,)
+        new_state = _interp.placement_strategy.move_to_placements(
+            state, stmt.qubits, stmt.locations
+        )
+        return (new_state,)
 
     @interp.impl(R)
     @interp.impl(Rz)
