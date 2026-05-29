@@ -181,6 +181,18 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("AtomReloadingNotSupportedError")?;
             cls.call1((*pc,))?
         }
+        ValidationError::EmptyProgram => {
+            let cls = module.getattr("MissingTerminatorError")?;
+            cls.call1((0usize,))?
+        }
+        ValidationError::MissingTerminator { pc } => {
+            let cls = module.getattr("MissingTerminatorError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::UnreachableInstruction { pc } => {
+            let cls = module.getattr("UnreachableInstructionError")?;
+            cls.call1((*pc,))?
+        }
     };
 
     Ok(obj.into())

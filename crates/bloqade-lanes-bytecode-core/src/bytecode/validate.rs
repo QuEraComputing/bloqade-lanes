@@ -50,6 +50,12 @@ pub enum ValidationError {
     FeedForwardNotSupported { pc: usize },
     /// Fill instruction when atom_reloading is disabled.
     AtomReloadingNotSupported { pc: usize },
+    /// Program has no instructions (no terminator present).
+    EmptyProgram,
+    /// Last instruction is not `return` or `halt`.
+    MissingTerminator { pc: usize },
+    /// Instruction follows a `return` or `halt` and is unreachable.
+    UnreachableInstruction { pc: usize },
 }
 
 impl fmt::Display for ValidationError {
@@ -100,6 +106,18 @@ impl fmt::Display for ValidationError {
                     "pc {}: fill instruction requires atom_reloading capability",
                     pc
                 )
+            }
+            ValidationError::EmptyProgram => {
+                write!(
+                    f,
+                    "program has no instructions: missing return or halt terminator"
+                )
+            }
+            ValidationError::MissingTerminator { pc } => {
+                write!(f, "pc {}: program must end with return or halt", pc)
+            }
+            ValidationError::UnreachableInstruction { pc } => {
+                write!(f, "pc {}: unreachable instruction after return or halt", pc)
             }
         }
     }
@@ -152,6 +170,37 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
             _ => {
                 seen_non_constant = true;
             }
+        }
+    }
+
+    // Every program must end with return or halt.
+    match program.instructions.last() {
+        None => {
+            errors.push(ValidationError::EmptyProgram);
+        }
+        Some(last) => {
+            if !matches!(
+                last,
+                Instruction::Cpu(CpuInstruction::Return) | Instruction::Cpu(CpuInstruction::Halt)
+            ) {
+                errors.push(ValidationError::MissingTerminator {
+                    pc: program.instructions.len() - 1,
+                });
+            }
+        }
+    }
+
+    // No instructions may appear after a return or halt.
+    let mut found_terminator = false;
+    for (pc, instr) in program.instructions.iter().enumerate() {
+        if found_terminator {
+            errors.push(ValidationError::UnreachableInstruction { pc });
+        }
+        if matches!(
+            instr,
+            Instruction::Cpu(CpuInstruction::Return) | Instruction::Cpu(CpuInstruction::Halt)
+        ) {
+            found_terminator = true;
         }
     }
 
@@ -682,17 +731,19 @@ mod tests {
         let program = Program {
             version: Version::new(1, 0),
             instructions: vec![
-                Instruction::Cpu(CpuInstruction::Halt),
+                // Move is a non-constant, non-terminator instruction
+                Instruction::AtomArrangement(AtomArrangementInstruction::Move { arity: 0 }),
                 Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
                 Instruction::AtomArrangement(AtomArrangementInstruction::InitialFill { arity: 1 }),
+                Instruction::Cpu(CpuInstruction::Halt),
             ],
         };
         let errors = validate_structure(&program);
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            ValidationError::InitialFillNotFirst { pc: 2 }
-        ));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::InitialFillNotFirst { pc: 2 }))
+        );
     }
 
     #[test]
@@ -703,6 +754,7 @@ mod tests {
                 Instruction::Cpu(CpuInstruction::ConstFloat(1.0)),
                 Instruction::LaneConst(LaneConstInstruction::ConstLoc(0)),
                 Instruction::AtomArrangement(AtomArrangementInstruction::InitialFill { arity: 1 }),
+                Instruction::Cpu(CpuInstruction::Halt),
             ],
         };
         assert!(validate_structure(&program).is_empty());
@@ -744,6 +796,100 @@ mod tests {
                 type_tag: 0xF
             }
         )));
+    }
+
+    // --- Terminator validation tests ---
+
+    #[test]
+    fn test_empty_program_rejected() {
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![],
+        };
+        let errors = validate_structure(&program);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::EmptyProgram)),
+            "expected EmptyProgram error, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_missing_terminator_rejected() {
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![Instruction::Cpu(CpuInstruction::ConstInt(0))],
+        };
+        let errors = validate_structure(&program);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingTerminator { pc: 0 })),
+            "expected MissingTerminator at pc 0, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_terminator_return_ok() {
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::Cpu(CpuInstruction::ConstInt(0)),
+                Instruction::Cpu(CpuInstruction::Return),
+            ],
+        };
+        assert!(validate_structure(&program).is_empty());
+    }
+
+    #[test]
+    fn test_terminator_halt_ok() {
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![Instruction::Cpu(CpuInstruction::Halt)],
+        };
+        assert!(validate_structure(&program).is_empty());
+    }
+
+    #[test]
+    fn test_unreachable_instruction_after_halt() {
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::Cpu(CpuInstruction::Halt),
+                Instruction::Cpu(CpuInstruction::ConstInt(0)),
+            ],
+        };
+        let errors = validate_structure(&program);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UnreachableInstruction { pc: 1 })),
+            "expected UnreachableInstruction at pc 1, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_unreachable_instruction_after_return() {
+        let program = Program {
+            version: Version::new(1, 0),
+            instructions: vec![
+                Instruction::Cpu(CpuInstruction::ConstInt(0)),
+                Instruction::Cpu(CpuInstruction::Return),
+                Instruction::Cpu(CpuInstruction::ConstFloat(1.0)),
+            ],
+        };
+        let errors = validate_structure(&program);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UnreachableInstruction { pc: 2 })),
+            "expected UnreachableInstruction at pc 2, got: {:?}",
+            errors
+        );
     }
 
     // --- Stack simulation tests ---
