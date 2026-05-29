@@ -3,7 +3,9 @@ import pytest
 from bloqade.lanes.arch.gemini import logical, physical
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode.encoding import (
+    Direction,
     LocationAddress,
+    SiteLaneAddress,
 )
 
 
@@ -25,8 +27,31 @@ def test_physical_architecture():
     zone = arch._inner.zones[0]
     assert len(zone.site_buses) == 3  # 3D hypercube on 8 sites
     assert len(zone.word_buses) == 10  # 9 merged shifts + 1 cross-gap
+    assert zone.words_with_site_buses == [1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
     assert len(zone.entangling_pairs) == 10
     assert arch.max_qubits == 80  # 20 words × 8 sites // 2
+
+
+def test_physical_site_buses_are_only_on_odd_words():
+    arch = physical.get_arch_spec()
+
+    # Odd words retain site-bus connectivity.
+    odd_lane = SiteLaneAddress(
+        word_id=1,
+        site_id=0,
+        bus_id=0,
+        direction=Direction.FORWARD,
+    )
+    assert arch._inner.lane_endpoints(odd_lane._inner) is not None
+
+    # Even words should not expose site-bus lanes.
+    even_lane = SiteLaneAddress(
+        word_id=0,
+        site_id=0,
+        bus_id=0,
+        direction=Direction.FORWARD,
+    )
+    assert arch._inner.lane_endpoints(even_lane._inner) is None
 
 
 def test_entangling_pairs():
