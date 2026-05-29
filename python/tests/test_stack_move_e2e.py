@@ -98,24 +98,18 @@ def test_realistic_cz_sandwich_runs_end_to_end():
     CZ-sandwich patterns, measure, extract results at the original
     filled word_ids, return the extracted 4-element array.
 
-    Program layout:
+    Program layout (bus IDs from the qlue 19-bus logical spec):
 
     1. Initial fill: 4 atoms at zone 0, site 0, words 0/2/4/6 (atoms
        0/1/2/3 respectively).
     2. Move atom 0 word 0 -> word 3 (two lanes in one ``move``
-       instruction: bus 0 fwd 0->1, then bus 9 fwd 1->3).
+       instruction: bus 0 fwd 0->1, then bus 18 fwd 1->3).
     3. CZ on zone 0 (atom 0 at word 3 now pairs with atom 1 at word 2
        through entangling pair (2,3)).
-    4. Move atom 0 back word 3 -> word 0 (two lanes: bus 9 bwd 3->1,
+    4. Move atom 0 back word 3 -> word 0 (two lanes: bus 18 bwd 3->1,
        bus 0 bwd 1->0).
-    5. Move atoms 2 and 3 from words 4/6 -> words 1/3 (bus 5 fwd; pairs
-       atom 2 with atom 1 at word 2 via entangling pair (1,2) fails —
-       pairs are (0,1)/(2,3), so atom 2 at word 1 partners with an
-       empty word 0; actually with atoms 2->word 1 and 3->word 3, the
-       CZ pair (2,3) now entangles atoms 1 and 3). The structural
-       assertions below don't depend on the interpretation of CZ; the
-       point is to exercise a second realistic move+CZ+move-back
-       pattern.
+    5. Move atoms 2 and 3 from words 4/6 -> words 1/3 (bus 10 fwd
+       word4->word1, bus 11 fwd word6->word3).
     6. CZ on zone 0.
     7. Move atoms 2 and 3 back from words 1/3 -> words 4/6.
     8. Measure zone 0.
@@ -133,32 +127,31 @@ def test_realistic_cz_sandwich_runs_end_to_end():
         Instruction.const_loc(0, 6, 0),
         Instruction.initial_fill(4),
         # 2. Move atom 0: word 0 -> word 1 (bus 0 fwd), word 1 -> word 3
-        #    (bus 9 fwd). Two lanes in one move instruction — the Rust
+        #    (bus 18 fwd). Two lanes in one move instruction — the Rust
         #    apply_moves runs lanes sequentially, so atom 0 hops
         #    0->1->3.
         Instruction.const_lane(MoveType.WORD, 0, 0, 0, 0, Direction.FORWARD),
-        Instruction.const_lane(MoveType.WORD, 0, 1, 0, 9, Direction.FORWARD),
+        Instruction.const_lane(MoveType.WORD, 0, 1, 0, 18, Direction.FORWARD),
         Instruction.move_(2),
         # 3. CZ on zone 0.
         Instruction.const_zone(0),
         Instruction.cz(),
-        # 4. Move atom 0 back: 3 -> 1 (bus 9 bwd with word_id=1),
+        # 4. Move atom 0 back: 3 -> 1 (bus 18 bwd with word_id=1),
         #    1 -> 0 (bus 0 bwd with word_id=0).
-        Instruction.const_lane(MoveType.WORD, 0, 1, 0, 9, Direction.BACKWARD),
+        Instruction.const_lane(MoveType.WORD, 0, 1, 0, 18, Direction.BACKWARD),
         Instruction.const_lane(MoveType.WORD, 0, 0, 0, 0, Direction.BACKWARD),
         Instruction.move_(2),
-        # 5. Move atoms 2 and 3: word 4 -> word 1 (bus 5 fwd),
-        #    word 6 -> word 3 (bus 5 fwd). One move instruction,
-        #    two lanes.
-        Instruction.const_lane(MoveType.WORD, 0, 4, 0, 5, Direction.FORWARD),
-        Instruction.const_lane(MoveType.WORD, 0, 6, 0, 5, Direction.FORWARD),
+        # 5. Move atoms 2 and 3: word 4 -> word 1 (bus 10 fwd),
+        #    word 6 -> word 3 (bus 11 fwd). One move instruction, two lanes.
+        Instruction.const_lane(MoveType.WORD, 0, 4, 0, 10, Direction.FORWARD),
+        Instruction.const_lane(MoveType.WORD, 0, 6, 0, 11, Direction.FORWARD),
         Instruction.move_(2),
         # 6. CZ on zone 0.
         Instruction.const_zone(0),
         Instruction.cz(),
-        # 7. Move atoms 2 and 3 back: 1 -> 4, 3 -> 6 (bus 5 backward).
-        Instruction.const_lane(MoveType.WORD, 0, 4, 0, 5, Direction.BACKWARD),
-        Instruction.const_lane(MoveType.WORD, 0, 6, 0, 5, Direction.BACKWARD),
+        # 7. Move atoms 2 and 3 back: 1 -> 4 (bus 10 bwd), 3 -> 6 (bus 11 bwd).
+        Instruction.const_lane(MoveType.WORD, 0, 4, 0, 10, Direction.BACKWARD),
+        Instruction.const_lane(MoveType.WORD, 0, 6, 0, 11, Direction.BACKWARD),
         Instruction.move_(2),
         # 8. Measure zone 0.
         Instruction.const_zone(0),
@@ -218,19 +211,19 @@ def test_realistic_cz_sandwich_runs_end_to_end():
 
     atom_0_forward = (
         lane(word_id=0, bus_id=0, direction=Direction.FORWARD),
-        lane(word_id=1, bus_id=9, direction=Direction.FORWARD),
+        lane(word_id=1, bus_id=18, direction=Direction.FORWARD),
     )
     atom_0_backward = (
-        lane(word_id=1, bus_id=9, direction=Direction.BACKWARD),
+        lane(word_id=1, bus_id=18, direction=Direction.BACKWARD),
         lane(word_id=0, bus_id=0, direction=Direction.BACKWARD),
     )
     atoms_23_forward = (
-        lane(word_id=4, bus_id=5, direction=Direction.FORWARD),
-        lane(word_id=6, bus_id=5, direction=Direction.FORWARD),
+        lane(word_id=4, bus_id=10, direction=Direction.FORWARD),
+        lane(word_id=6, bus_id=11, direction=Direction.FORWARD),
     )
     atoms_23_backward = (
-        lane(word_id=4, bus_id=5, direction=Direction.BACKWARD),
-        lane(word_id=6, bus_id=5, direction=Direction.BACKWARD),
+        lane(word_id=4, bus_id=10, direction=Direction.BACKWARD),
+        lane(word_id=6, bus_id=11, direction=Direction.BACKWARD),
     )
 
     # State threading: each stateful op consumes the previous state and
