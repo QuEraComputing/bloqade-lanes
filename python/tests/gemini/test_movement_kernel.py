@@ -129,3 +129,18 @@ def test_move_to_before_sq_gate_compiles_successfully():
         squin.rz(0.0, q[0])
 
     assert k is not None
+
+
+def test_movement_kernel_move_to_then_sq_then_cz():
+    """move_to -> SQ gate -> CZ compiles correctly (UserMoved passes through SQ gates)."""
+    loc_a = LocationAddress(zone_id=0, word_id=0, site_id=0)
+    loc_b = LocationAddress(zone_id=0, word_id=1, site_id=0)
+
+    @movement_kernel(verify=False)
+    def k():
+        q = squin.qalloc(2)
+        move_to([q[0], q[1]], [loc_a, loc_b])
+        squin.rz(0.0, q[0])  # SQ gate -- must not corrupt UserMoved state
+        squin.cz(q[0], q[1])
+
+    assert k is not None
