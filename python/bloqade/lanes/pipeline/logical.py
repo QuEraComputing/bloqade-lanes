@@ -45,10 +45,6 @@ def transversal_rewrites(mt: Method) -> Method:
 
     """
 
-    TransversalRewritePass(
-        mt.dialects, transversal_location_map=steane7_transversal_map
-    )(mt)
-
     return mt
 
 
@@ -110,6 +106,7 @@ class LogicalPipeline:
     placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
     transversal_rewrite: bool = False
+    simulation: bool = False
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
@@ -137,6 +134,12 @@ class LogicalPipeline:
         ).emit(out, no_raise=no_raise)
 
         if self.transversal_rewrite:
-            out = transversal_rewrites(out)
+            # If running this compilation for simulation pruposes we 
+            # need to rewrite the logical initialize statement
+            TransversalRewritePass(
+                mt.dialects, 
+                transversal_location_map=steane7_transversal_map,
+                rewrite_logical_initialize=self.simulation,
+            )(out)
 
         return out
