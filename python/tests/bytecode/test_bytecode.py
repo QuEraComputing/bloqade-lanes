@@ -547,7 +547,6 @@ const_zone 0x00000000
 measure 1
 await_measure
 return
-halt
 """)
         program.validate(arch=arch)  # should not raise
 
@@ -565,7 +564,6 @@ const_zone 0x00000000
 measure 1
 await_measure
 return
-halt
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
@@ -591,7 +589,6 @@ const_zone 0x00000000
 measure 1
 await_measure
 return
-halt
 """)
         program.validate(arch=arch)  # should not raise
 
