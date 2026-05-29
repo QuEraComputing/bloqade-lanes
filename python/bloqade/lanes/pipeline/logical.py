@@ -31,7 +31,7 @@ from bloqade.lanes.rewrite import circuit2place
 from .base import _NativeToPlaceBase, _PlaceToMove
 
 
-def transversal_rewrites(mt: Method) -> Method:
+def transversal_rewrites(mt: Method, rewrite_logical_initialize: bool = True) -> Method:
     """Apply transversal rewrite rules to a squin method.
 
     Expands logical operations into their transversal (physical qubit) equivalents
@@ -39,14 +39,16 @@ def transversal_rewrites(mt: Method) -> Method:
 
     Args:
         mt (Method): The squin method to rewrite.
+        rewrite_logical_initialize (bool): Whether to rewrite the logical initialize statements.
 
     Returns:
         Method: The rewritten method (same object, mutated in place).
 
     """
-
     TransversalRewritePass(
-        mt.dialects, transversal_location_map=steane7_transversal_map
+        mt.dialects,
+        transversal_location_map=steane7_transversal_map,
+        rewrite_logical_initialize=rewrite_logical_initialize,
     )(mt)
 
     return mt
@@ -110,6 +112,7 @@ class LogicalPipeline:
     placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
     transversal_rewrite: bool = False
+    simulation: bool = True
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
@@ -137,6 +140,8 @@ class LogicalPipeline:
         ).emit(out, no_raise=no_raise)
 
         if self.transversal_rewrite:
-            out = transversal_rewrites(out)
+            # If running this compilation for simulation pruposes we
+            # need to rewrite the logical initialize statement
+            transversal_rewrites(out, rewrite_logical_initialize=self.simulation)
 
         return out
