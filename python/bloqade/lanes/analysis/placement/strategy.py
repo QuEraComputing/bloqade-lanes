@@ -10,6 +10,7 @@ from .lattice import (
     ExecuteCZ,
     ExecuteCZReturn,
     ExecuteMeasure,
+    UserMoved,
 )
 
 
@@ -70,15 +71,15 @@ class PlacementStrategyABC(abc.ABC):
 
     def move_to_placements(
         self,
-        state: ConcreteState,
+        state: AtomState,
         qubits: tuple[int, ...],
         locations: tuple[LocationAddress, ...],
     ) -> AtomState:
         """User-directed atom movement placement.
 
-        Stub — implemented in Task 4 by concrete strategies that support
-        user-directed movement.  Raises NotImplementedError by default so
-        existing strategies fail loudly if reached before the full impl lands.
+        Stub — implemented by concrete strategies that support user-directed
+        movement.  Raises NotImplementedError by default so existing strategies
+        fail loudly if reached before the full impl lands.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement move_to_placements"
@@ -136,6 +137,8 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
+        if isinstance(state, UserMoved):
+            return AtomState.bottom()  # move_to before SQ gate is invalid
         if isinstance(state, ConcreteState):
             # Strip CZ-specific metadata so non-CZ statements do not inherit stale move layers in downstream rewrite passes.
             return ConcreteState(
@@ -148,6 +151,8 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
     def measure_placements(
         self, state: AtomState, qubits: tuple[int, ...]
     ) -> AtomState:
+        if isinstance(state, UserMoved):
+            return AtomState.bottom()  # move_to before measurement is invalid
         if not isinstance(state, ConcreteState):
             return state
 
@@ -160,6 +165,57 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
             layout=state.layout,
             move_count=state.move_count,
             zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
+        )
+
+    def move_to_placements(
+        self,
+        state: AtomState,
+        qubits: tuple[int, ...],
+        locations: tuple[LocationAddress, ...],
+    ) -> AtomState:
+        if state == AtomState.bottom():
+            return AtomState.bottom()
+        if not isinstance(state, ConcreteState):
+            return AtomState.top()
+
+        # Occupancy check: destinations must not be held by unmoved qubits
+        moved_set = set(qubits)
+        for dest in locations:
+            for idx, current_loc in enumerate(state.layout):
+                if current_loc == dest and idx not in moved_set:
+                    return AtomState.bottom()  # unmoved qubit at destination
+
+        # Build target layout
+        new_layout = list(state.layout)
+        for qubit_idx, dest in zip(qubits, locations):
+            new_layout[qubit_idx] = dest
+        target_layout = tuple(new_layout)
+
+        # Synthetic target ConcreteState for move synthesis
+        target_state = ConcreteState(
+            occupied=state.occupied,
+            layout=target_layout,
+            move_count=state.move_count,
+        )
+
+        try:
+            new_layers = self.compute_moves(state, target_state)
+        except Exception:
+            return AtomState.bottom()  # synthesizer failure
+
+        # Accumulate layers across consecutive MoveTo calls
+        if isinstance(state, UserMoved):
+            accumulated = state.accumulated_move_layers + new_layers
+            pre_user = state.pre_user_layout
+        else:
+            accumulated = new_layers
+            pre_user = state.layout
+
+        return UserMoved.from_concrete_state(
+            target_state,
+            move_layers=new_layers,
+            accumulated_move_layers=accumulated,
+            pre_user_layout=pre_user,
         )
 
 
@@ -227,3 +283,11 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
         self, state: AtomState, qubits: tuple[int, ...]
     ) -> AtomState:
         return self.inner.measure_placements(self._unwrap(state), qubits)
+
+    def move_to_placements(
+        self,
+        state: AtomState,
+        qubits: tuple[int, ...],
+        locations: tuple[LocationAddress, ...],
+    ) -> AtomState:
+        return self.inner.move_to_placements(self._unwrap(state), qubits, locations)
