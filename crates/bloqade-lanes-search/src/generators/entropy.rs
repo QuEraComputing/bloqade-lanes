@@ -37,7 +37,7 @@ impl MoveGenerator for EntropyGenerator {
         let raw =
             crate::entropy::generate_candidates(config, entropy, &self.params, ctx, self.seed);
 
-        for (move_set, new_config, _cost) in raw {
+        for (move_set, new_config, _cost, _origin) in raw {
             out.push(MoveCandidate {
                 move_set,
                 new_config,
