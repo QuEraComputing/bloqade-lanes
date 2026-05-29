@@ -232,3 +232,20 @@ def test_palindrome_cz_without_user_moved_unchanged():
     result = strat.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(result, ExecuteCZReturn)
     assert result.user_move_layers == ()  # no user moves involved
+
+
+def test_palindrome_sq_placements_user_moved_returns_bottom():
+    """PalindromePlacementStrategy rejects UserMoved before SQ gate."""
+    from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
+
+    inner = _make_strategy()
+    strat = PalindromePlacementStrategy(inner=inner)
+    layout = (_loc(0, 0, 0), _loc(0, 2, 0))
+    um = UserMoved.from_concrete_state(
+        _concrete(layout),
+        move_layers=((_lane(0, 0, 0),),),
+        accumulated_move_layers=((_lane(0, 0, 0),),),
+        pre_user_layout=layout,
+    )
+    result = strat.sq_placements(um, qubits=(0,))
+    assert result == AtomState.bottom()
