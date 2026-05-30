@@ -11,9 +11,9 @@ def test_logical_architecture():
     arch = logical.get_arch_spec()
     assert len(arch.words) == 20
     assert len(arch.words[0].site_indices) == 1
-    # Single zone with no site buses and 10 word buses
+    # Single zone with no site buses and 19 word buses
     assert len(arch.site_buses) == 0
-    assert len(arch.word_buses) == 10
+    assert len(arch.word_buses) == 19
     assert arch.max_qubits == 10
     assert sorted(arch._home_words) == [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
 
@@ -24,7 +24,7 @@ def test_physical_architecture():
     assert len(arch.words[0].site_indices) == 8
     zone = arch._inner.zones[0]
     assert len(zone.site_buses) == 3  # 3D hypercube on 8 sites
-    assert len(zone.word_buses) == 10  # 9 merged shifts + 1 cross-gap
+    assert len(zone.word_buses) == 19  # 19 individual word buses
     assert len(zone.entangling_pairs) == 10
     assert arch.max_qubits == 80  # 20 words × 8 sites // 2
 
