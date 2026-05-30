@@ -37,7 +37,7 @@ def star_rz(
     """Apply a STAR/TMR logical-Z rotation injection primitive.
 
     Args:
-        theta: Target logical rotation angle.
+        theta: Target logical rotation angle in SQuIn IR turn units.
         qubits: List of logical qubits.
         qubit_indices: Steane weight-3 logical-Z support. Defaults to ``(4, 5, 6)``.
     """
