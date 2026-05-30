@@ -259,6 +259,10 @@ class ArchSpec(RustWrapper[_RustArchSpec]):
         )
         return cls(inner)
 
+    def to_json(self) -> str:
+        """Serialize this architecture spec to a JSON string."""
+        return self._inner.to_json()
+
     @property
     def sites_per_word(self) -> int:
         """Get the number of sites per word."""
