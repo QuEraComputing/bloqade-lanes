@@ -2,7 +2,7 @@ import math
 
 import bloqade.squin as squin
 import pytest
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, py
 from kirin.ir.exception import ValidationError
 
 import bloqade.gemini as gemini
@@ -20,10 +20,12 @@ from bloqade.lanes.rewrite.transversal import steane_star_theta
 
 
 def test_star_rz_public_api_single_qubit_lowers_to_statement():
+    theta = math.pi / 16
+
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.star_rz(math.pi / 16, reg[0])
+        gemini.logical.star_rz(theta, reg[0])
         gemini.logical.terminal_measure(reg)
 
     star_nodes = [
@@ -31,13 +33,18 @@ def test_star_rz_public_api_single_qubit_lowers_to_statement():
     ]
     assert len(star_nodes) == 1
     assert star_nodes[0].qubit_indices == (4, 5, 6)
+    angle_owner = star_nodes[0].rotation_angle.owner
+    assert isinstance(angle_owner, py.Constant)
+    assert angle_owner.value.unwrap() == pytest.approx(theta / math.tau)
 
 
 def test_star_rz_broadcast_lowers_to_statement():
+    theta = math.pi / 16
+
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():
         reg = squin.qalloc(1)
-        gemini.logical.broadcast.star_rz(math.pi / 16, reg)
+        gemini.logical.broadcast.star_rz(theta, reg)
         gemini.logical.terminal_measure(reg)
 
     star_nodes = [
@@ -45,14 +52,19 @@ def test_star_rz_broadcast_lowers_to_statement():
     ]
     assert len(star_nodes) == 1
     assert star_nodes[0].qubit_indices == (4, 5, 6)
+    angle_owner = star_nodes[0].rotation_angle.owner
+    assert isinstance(angle_owner, py.Constant)
+    assert angle_owner.value.unwrap() == pytest.approx(theta / math.tau)
 
 
 @pytest.mark.parametrize("support", sorted(VALID_STEANE_STAR_SUPPORTS))
 def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
+    theta_turns = (math.pi / 16) / math.tau
+
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        operations.star_rz(math.pi / 16, reg, qubit_indices=support)
+        operations.star_rz(theta_turns, reg, qubit_indices=support)
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -62,10 +74,12 @@ def test_star_rz_accepts_all_steane_weight_three_z_lines(support):
 
 
 def test_star_rz_accepts_keyword_support():
+    theta_turns = (math.pi / 16) / math.tau
+
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
-        operations.star_rz(math.pi / 16, reg, qubit_indices=(1, 2, 6))
+        operations.star_rz(theta_turns, reg, qubit_indices=(1, 2, 6))
         gemini.logical.terminal_measure(reg)
 
     star_node = next(
@@ -90,7 +104,7 @@ def test_star_rz_statement_check_rejects_invalid_support():
         def kernel():
             reg = squin.qalloc(1)
             operations.star_rz(
-                math.pi / 16,
+                (math.pi / 16) / math.tau,
                 ilist.IList([reg[0]]),
                 qubit_indices=(0, 1, 2),
             )
@@ -136,6 +150,9 @@ def test_star_rz_pipeline_produces_physical_local_rz_after_transversal_rewrite()
     assert isinstance(angle_owner, func.Invoke)
     assert angle_owner.callee is steane_star_theta
     assert len(angle_owner.inputs) == 1
+    input_owner = angle_owner.inputs[0].owner
+    assert isinstance(input_owner, py.Constant)
+    assert input_owner.value.unwrap() == pytest.approx(theta / math.tau)
 
 
 def test_star_rz_pipeline_accepts_parameterized_theta():
@@ -165,12 +182,13 @@ def test_star_rz_pipeline_accepts_parameterized_theta():
 
 def test_star_rz_pipeline_preserves_support_after_prior_single_qubit_gate():
     theta = math.pi / 16
+    theta_turns = theta / math.tau
 
     @gemini.logical.kernel(aggressive_unroll=True, verify=False)
     def kernel():
         reg = squin.qalloc(1)
         squin.h(reg[0])
-        operations.star_rz(theta, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
+        operations.star_rz(theta_turns, ilist.IList([reg[0]]), qubit_indices=(0, 2, 4))
         gemini.logical.terminal_measure(reg)
 
     physical_move = compile_squin_to_move(

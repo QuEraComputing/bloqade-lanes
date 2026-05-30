@@ -13,11 +13,13 @@ from bloqade.lanes.utils import no_none_elements
 
 
 @kernel(verify=False)
-def steane_star_theta(theta: float) -> float:
-    return -kmath.copysign(
+def steane_star_theta(theta_turns: float) -> float:
+    theta = theta_turns * kmath.tau
+    theta_star = -kmath.copysign(
         2 * kmath.atan(kmath.fabs(kmath.tan(theta / 2)) ** (1 / 3)),
         theta,
     )
+    return theta_star / kmath.tau
 
 
 @dataclass
@@ -95,9 +97,9 @@ class RewriteMoves(rewrite_abc.RewriteRule):
 class RewriteStarRz(rewrite_abc.RewriteRule):
     """Lower logical STAR rotations to physical local Rz rotations.
 
-    v1 supports the k=3 Steane STAR protocol. The logical target angle is
-    converted to the physical STAR angle with Kirin math IR, so the angle may
-    be either a literal or an SSA value.
+    v1 supports the k=3 Steane STAR protocol. The logical target angle is stored
+    in SQuIn IR turn units; the STAR formula converts through radians internally
+    and returns the physical STAR angle in turns.
     """
 
     transform_location: Callable[[LocationAddress], Iterable[LocationAddress] | None]
