@@ -11,7 +11,7 @@ from bloqade.lanes.analysis.placement import (
     ExecuteCZ,
     SingleZonePlacementStrategyABC,
 )
-from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure
+from bloqade.lanes.analysis.placement.lattice import ExecuteMeasure, UserMoved
 from bloqade.lanes.analysis.placement.strategy import (
     PlacementStrategyABC,
     assert_single_cz_zone,
@@ -707,6 +707,8 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
+        if isinstance(state, UserMoved):
+            return state  # SQ gates don't change atom positions; preserve UserMoved
         if isinstance(state, ConcreteState):
             return ConcreteState(
                 occupied=state.occupied,
@@ -718,6 +720,8 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
     def measure_placements(
         self, state: AtomState, qubits: tuple[int, ...]
     ) -> AtomState:
+        if isinstance(state, UserMoved):
+            return AtomState.bottom()  # move_to before measurement is invalid
         if not isinstance(state, ConcreteState):
             return state
 
