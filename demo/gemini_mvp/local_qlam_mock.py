@@ -171,6 +171,16 @@ class MockTask:
         result_subtasks = []
         status = self.current_status()
 
+        # shot_index must be globally unique within the task, not local to a
+        # subtask, because the SDK's storage de-dupes by
+        # UNIQUE(task_id, shot_index, frame_type). Compute a per-subtask
+        # offset based on cumulative num_shots so subtasks don't collide.
+        shot_offsets: list[int] = []
+        running = 0
+        for st in subtasks:
+            shot_offsets.append(running)
+            running += int(st.get("num_shots", 0)) if isinstance(st, dict) else 0
+
         for subtask_index, subtask in enumerate(subtasks):
             num_shots = int(subtask.get("num_shots", 0))
             start = shots_page * shots_size
@@ -181,7 +191,7 @@ class MockTask:
                 for shot in range(start, end):
                     shot_results.append(
                         {
-                            "shot_index": shot,
+                            "shot_index": shot_offsets[subtask_index] + shot,
                             "subtask_shot_index": shot,
                             "subtask_index": subtask_index,
                             "frame_type": "DETECTED",
