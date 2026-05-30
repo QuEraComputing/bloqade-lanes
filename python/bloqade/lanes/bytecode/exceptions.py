@@ -146,6 +146,22 @@ class AtomReloadingNotSupportedError(ValidationError):
         )
 
 
+class MissingTerminatorError(ValidationError):
+    """Program does not end with a return or halt instruction."""
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: program must end with return or halt")
+
+
+class UnreachableInstructionError(ValidationError):
+    """Instruction follows a return or halt and is unreachable."""
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: unreachable instruction after return or halt")
+
+
 # ── Location group errors (from ArchSpec.check_locations) ──
 
 
