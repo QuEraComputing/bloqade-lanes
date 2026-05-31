@@ -13,11 +13,11 @@ use std::collections::{HashMap, HashSet};
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
-use crate::drivers::entropy::find_path_occupied;
 use crate::ops::entangling;
 use crate::primitives::config::Config;
 use crate::primitives::distance::DistanceTable;
 use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::path::find_path_occupied;
 
 /// Lane-signature triple: identifies a parallelisable bus group.
 type LaneSig = (MoveType, u32, Direction);

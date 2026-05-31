@@ -12,7 +12,7 @@
 //! bindings.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::drivers::astar::SearchResult;
@@ -27,6 +27,7 @@ use crate::primitives::ordering::{
     TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
     cmp_triplet_entry_tiebreak,
 };
+use crate::primitives::path::find_path_occupied;
 use crate::traits::Goal;
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 use rand::rngs::SmallRng;
@@ -1155,59 +1156,6 @@ pub(crate) fn score_moveset(
         + params.gamma * (mobility_after - mobility_before)
 }
 
-// ── BFS path-finding with occupancy ────────────────────────────────
-
-/// Find shortest lane path from `from` to `to`, avoiding `occupied` locations.
-pub(crate) fn find_path_occupied(
-    from: LocationAddr,
-    to: LocationAddr,
-    occupied: &HashSet<u64>,
-    index: &LaneIndex,
-) -> Option<Vec<LaneAddr>> {
-    let from_enc = from.encode();
-    let to_enc = to.encode();
-    if from_enc == to_enc {
-        return Some(Vec::new());
-    }
-
-    let mut visited: HashSet<u64> = HashSet::new();
-    visited.insert(from_enc);
-
-    // BFS with parent-pointer map: O(V) memory instead of O(V×L).
-    let mut parent: HashMap<u64, (u64, LaneAddr)> = HashMap::new();
-    let mut queue: VecDeque<u64> = VecDeque::new();
-    queue.push_back(from_enc);
-
-    while let Some(current_enc) = queue.pop_front() {
-        let current = LocationAddr::decode(current_enc);
-        for &lane in index.outgoing_lanes(current) {
-            let Some((_, dst)) = index.endpoints(&lane) else {
-                continue;
-            };
-            let dst_enc = dst.encode();
-            if occupied.contains(&dst_enc) || visited.contains(&dst_enc) {
-                continue;
-            }
-            visited.insert(dst_enc);
-            parent.insert(dst_enc, (current_enc, lane));
-            if dst_enc == to_enc {
-                // Reconstruct path by walking parent pointers backwards.
-                let mut path = Vec::new();
-                let mut cur = to_enc;
-                while let Some(&(prev, lane)) = parent.get(&cur) {
-                    path.push(lane);
-                    cur = prev;
-                }
-                path.reverse();
-                return Some(path);
-            }
-            queue.push_back(dst_enc);
-        }
-    }
-
-    None // no path found
-}
-
 // ── Sequential fallback ────────────────────────────────────────────
 
 fn fire_fallback_start_event(
@@ -2060,22 +2008,6 @@ mod tests {
                 .iter()
                 .all(|step| step.event != "fallback_start")
         );
-    }
-
-    #[test]
-    fn find_path_occupied_basic() {
-        let index = make_index();
-        let path = find_path_occupied(loc(0, 0), loc(0, 5), &HashSet::new(), &index);
-        assert!(path.is_some());
-        assert!(!path.unwrap().is_empty());
-    }
-
-    #[test]
-    fn find_path_occupied_respects_blocked() {
-        let index = make_index();
-        let blocked: HashSet<u64> = [loc(0, 5).encode()].into_iter().collect();
-        let path = find_path_occupied(loc(0, 0), loc(0, 5), &blocked, &index);
-        assert!(path.is_none());
     }
 
     #[test]

@@ -11,11 +11,11 @@ use std::collections::HashSet;
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 
-use crate::drivers::entropy::find_path_occupied;
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::path::find_path_occupied;
 use crate::traits::MoveGenerator;
 
 /// Greedy shortest-path move generator.
