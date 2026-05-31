@@ -354,20 +354,28 @@ where
                     ..crate::entropy::EntropyParams::default()
                 };
                 let mut entropy_trace = if collect_entropy_trace {
-                    Some(EntropyTrace::default())
+                    Some(EntropyTrace::for_params(&entropy_params))
                 } else {
                     None
                 };
-                let result = crate::entropy::entropy_search(
-                    root.clone(),
-                    goal,
-                    &entropy_params,
-                    ctx,
-                    budget,
-                    None,
-                    seed,
-                    entropy_trace.as_mut(),
-                );
+                let result = {
+                    let mut noop = crate::observer::NoOpObserver;
+                    let observer: &mut dyn crate::observer::SearchObserver =
+                        match entropy_trace.as_mut() {
+                            Some(trace) => trace,
+                            None => &mut noop,
+                        };
+                    crate::entropy::entropy_search(
+                        root.clone(),
+                        goal,
+                        &entropy_params,
+                        ctx,
+                        budget,
+                        None,
+                        seed,
+                        observer,
+                    )
+                };
                 let mut solve = extract(result, 0, budget);
                 solve.entropy_trace = entropy_trace;
                 solve

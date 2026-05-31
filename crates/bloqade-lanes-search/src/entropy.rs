@@ -22,6 +22,7 @@ use crate::context::SearchContext;
 use crate::graph::{MoveSet, NodeId, SearchGraph};
 use crate::heuristic::DistanceTable;
 use crate::lane_index::LaneIndex;
+use crate::observer::{SearchEvent, SearchObserver};
 use crate::ordering::{
     TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
     cmp_triplet_entry_tiebreak,
@@ -41,6 +42,22 @@ pub struct EntropyTrace {
     pub root_node_id: u32,
     pub best_buffer_size: u32,
     pub steps: Vec<EntropyTraceStep>,
+}
+
+impl EntropyTrace {
+    /// Construct an empty trace sized for the given entropy params.
+    ///
+    /// `best_buffer_size` is derived from `params.max_goal_candidates`
+    /// (the resume buffer holds up to `max_goal_candidates - 1` entries).
+    /// `root_node_id` is `0` — the convention for the root of a fresh
+    /// [`SearchGraph`].
+    pub fn for_params(params: &EntropyParams) -> Self {
+        Self {
+            root_node_id: 0,
+            best_buffer_size: params.max_goal_candidates.saturating_sub(1) as u32,
+            steps: Vec::new(),
+        }
+    }
 }
 
 /// One entropy-search step snapshot.
@@ -64,6 +81,192 @@ pub struct EntropyTraceStep {
     pub parent_configuration: Option<Vec<(u32, u32, u32, u32)>>,
     pub moveset_score: Option<f64>,
     pub best_buffer_node_ids: Vec<u32>,
+}
+
+/// `EntropyTrace` collects entropy-driver events into a `Vec<EntropyTraceStep>`,
+/// preserving the legacy step-record shape consumed by the Python
+/// visualization layer. Frontier-driver events (`GoalFound`,
+/// `NodeExpanded`) are ignored — `EntropyTrace` is specifically the
+/// entropy driver's trace sink.
+impl SearchObserver for EntropyTrace {
+    fn on_event(&mut self, event: SearchEvent<'_>) {
+        let to_candidate_tuples = |movesets: &[MoveSet]| {
+            movesets
+                .iter()
+                .map(moveset_to_trace_tuple)
+                .collect::<Vec<_>>()
+        };
+        match event {
+            SearchEvent::EntropyDescend {
+                node_id,
+                parent_node_id,
+                depth,
+                entropy,
+                unresolved_count,
+                moveset,
+                candidate_movesets,
+                candidate_index,
+                configuration,
+                parent_configuration,
+                moveset_score,
+                best_buffer_node_ids,
+            } => {
+                self.steps.push(EntropyTraceStep {
+                    event: "descend".to_string(),
+                    node_id: node_id.0,
+                    parent_node_id: Some(parent_node_id.0),
+                    depth,
+                    entropy,
+                    unresolved_count,
+                    moveset: Some(moveset_to_trace_tuple(moveset)),
+                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    candidate_index: Some(candidate_index),
+                    reason: None,
+                    state_seen_node_id: None,
+                    no_valid_moves_qubit: None,
+                    trigger_node_id: None,
+                    configuration: config_as_trace_tuples(configuration),
+                    parent_configuration: Some(config_as_trace_tuples(parent_configuration)),
+                    moveset_score: Some(moveset_score),
+                    best_buffer_node_ids: best_buffer_node_ids.to_vec(),
+                });
+            }
+            SearchEvent::EntropyGoal {
+                node_id,
+                parent_node_id,
+                depth,
+                entropy,
+                moveset,
+                candidate_movesets,
+                candidate_index,
+                reason,
+                state_seen_node_id,
+                trigger_node_id,
+                configuration,
+                parent_configuration,
+                best_buffer_node_ids,
+            } => {
+                self.steps.push(EntropyTraceStep {
+                    event: "goal".to_string(),
+                    node_id: node_id.0,
+                    parent_node_id: parent_node_id.map(|id| id.0),
+                    depth,
+                    entropy,
+                    unresolved_count: 0,
+                    moveset: moveset.map(moveset_to_trace_tuple),
+                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    candidate_index,
+                    reason: reason.map(str::to_string),
+                    state_seen_node_id: state_seen_node_id.map(|id| id.0),
+                    no_valid_moves_qubit: None,
+                    trigger_node_id: trigger_node_id.map(|id| id.0),
+                    configuration: config_as_trace_tuples(configuration),
+                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    moveset_score: None,
+                    best_buffer_node_ids: best_buffer_node_ids.to_vec(),
+                });
+            }
+            SearchEvent::EntropyBump {
+                node_id,
+                parent_node_id,
+                depth,
+                entropy,
+                unresolved_count,
+                moveset,
+                candidate_movesets,
+                candidate_index,
+                reason,
+                state_seen_node_id,
+                no_valid_moves_qubit,
+                configuration,
+                parent_configuration,
+                best_buffer_node_ids,
+            } => {
+                self.steps.push(EntropyTraceStep {
+                    event: "entropy_bump".to_string(),
+                    node_id: node_id.0,
+                    parent_node_id: parent_node_id.map(|id| id.0),
+                    depth,
+                    entropy,
+                    unresolved_count,
+                    moveset: moveset.map(moveset_to_trace_tuple),
+                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    candidate_index,
+                    reason: Some(reason.to_string()),
+                    state_seen_node_id: state_seen_node_id.map(|id| id.0),
+                    no_valid_moves_qubit,
+                    trigger_node_id: None,
+                    configuration: config_as_trace_tuples(configuration),
+                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    moveset_score: None,
+                    best_buffer_node_ids: best_buffer_node_ids.to_vec(),
+                });
+            }
+            SearchEvent::EntropyRevert {
+                node_id,
+                parent_node_id,
+                depth,
+                entropy,
+                unresolved_count,
+                candidate_movesets,
+                trigger_node_id,
+                trigger_entropy,
+                configuration,
+                parent_configuration,
+                best_buffer_node_ids,
+            } => {
+                self.steps.push(EntropyTraceStep {
+                    event: "revert".to_string(),
+                    node_id: node_id.0,
+                    parent_node_id: parent_node_id.map(|id| id.0),
+                    depth,
+                    entropy,
+                    unresolved_count,
+                    moveset: None,
+                    candidate_movesets: to_candidate_tuples(candidate_movesets),
+                    candidate_index: None,
+                    reason: Some("entropy".to_string()),
+                    state_seen_node_id: None,
+                    no_valid_moves_qubit: None,
+                    trigger_node_id: Some(trigger_node_id.0),
+                    configuration: config_as_trace_tuples(configuration),
+                    parent_configuration: parent_configuration.map(config_as_trace_tuples),
+                    moveset_score: Some(trigger_entropy as f64),
+                    best_buffer_node_ids: best_buffer_node_ids.to_vec(),
+                });
+            }
+            SearchEvent::EntropyFallbackStart {
+                node_id,
+                parent_node_id,
+                depth,
+                unresolved_count,
+                configuration,
+                best_buffer_node_ids,
+            } => {
+                self.steps.push(EntropyTraceStep {
+                    event: "fallback_start".to_string(),
+                    node_id: node_id.0,
+                    parent_node_id: parent_node_id.map(|id| id.0),
+                    depth,
+                    entropy: 0,
+                    unresolved_count,
+                    moveset: None,
+                    candidate_movesets: Vec::new(),
+                    candidate_index: None,
+                    reason: None,
+                    state_seen_node_id: None,
+                    no_valid_moves_qubit: None,
+                    trigger_node_id: None,
+                    configuration: config_as_trace_tuples(configuration),
+                    parent_configuration: None,
+                    moveset_score: None,
+                    best_buffer_node_ids: best_buffer_node_ids.to_vec(),
+                });
+            }
+            // Frontier-driver events — EntropyTrace records only entropy-driver events.
+            SearchEvent::GoalFound { .. } | SearchEvent::NodeExpanded { .. } => {}
+        }
+    }
 }
 
 // ── Parameters ─────────────────────────────────────────────────────
@@ -1007,35 +1210,23 @@ pub(crate) fn find_path_occupied(
 
 // ── Sequential fallback ────────────────────────────────────────────
 
-fn push_fallback_start_trace(
-    trace: &mut Option<&mut EntropyTrace>,
+fn fire_fallback_start_event(
+    observer: &mut dyn SearchObserver,
     graph: &SearchGraph,
     root_id: NodeId,
     ctx: &SearchContext,
     resume_buffer: &[ScoredResumeState],
 ) {
-    if let Some(t) = trace.as_deref_mut() {
-        let cfg = graph.config(root_id);
-        t.steps.push(EntropyTraceStep {
-            event: "fallback_start".to_string(),
-            node_id: root_id.0,
-            parent_node_id: graph.parent(root_id).map(|id| id.0),
-            depth: graph.depth(root_id),
-            entropy: 0,
-            unresolved_count: unresolved_count(cfg, ctx.targets),
-            moveset: None,
-            candidate_movesets: Vec::new(),
-            candidate_index: None,
-            reason: None,
-            state_seen_node_id: None,
-            no_valid_moves_qubit: None,
-            trigger_node_id: None,
-            configuration: config_as_trace_tuples(cfg),
-            parent_configuration: None,
-            moveset_score: None,
-            best_buffer_node_ids: trace_buffer_node_ids(resume_buffer),
-        });
-    }
+    let cfg = graph.config(root_id);
+    let buffer_ids = trace_buffer_node_ids(resume_buffer);
+    observer.on_event(SearchEvent::EntropyFallbackStart {
+        node_id: root_id,
+        parent_node_id: graph.parent(root_id),
+        depth: graph.depth(root_id),
+        unresolved_count: unresolved_count(cfg, ctx.targets),
+        configuration: cfg,
+        best_buffer_node_ids: &buffer_ids,
+    });
 }
 
 /// Greedy sequential fallback: move each unresolved qubit along its shortest path.
@@ -1130,7 +1321,7 @@ pub fn entropy_search(
     max_expansions: Option<u32>,
     max_depth: Option<u32>,
     seed: u64,
-    mut trace: Option<&mut EntropyTrace>,
+    observer: &mut dyn SearchObserver,
 ) -> SearchResult {
     // Early check.
     if goal.is_goal(&root) {
@@ -1144,11 +1335,6 @@ pub fn entropy_search(
     }
 
     let mut graph = SearchGraph::new(root);
-    if let Some(t) = trace.as_mut() {
-        t.root_node_id = graph.root().0;
-        t.best_buffer_size = params.max_goal_candidates.saturating_sub(1) as u32;
-        t.steps.clear();
-    }
     let root_id = graph.root();
     let mut entropy_map: HashMap<NodeId, EntropyState> = HashMap::new();
     let mut current = root_id;
@@ -1208,40 +1394,32 @@ pub fn entropy_search(
                 ancestor_es.entropy += 1;
                 ancestor_es.entropy
             };
-            if let Some(t) = trace.as_mut() {
-                let ancestor_cfg = graph.config(ancestor);
-                let parent_cfg = graph
-                    .parent(ancestor)
-                    .map(|pid| config_as_trace_tuples(graph.config(pid)));
-                let candidate_movesets = entropy_map
-                    .get(&trigger_node)
-                    .map(|s| {
-                        s.candidate_cache
-                            .iter()
-                            .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                t.steps.push(EntropyTraceStep {
-                    event: "revert".to_string(),
-                    node_id: ancestor.0,
-                    parent_node_id: graph.parent(ancestor).map(|id| id.0),
-                    depth: graph.depth(ancestor),
-                    entropy: new_ancestor_entropy,
-                    unresolved_count: unresolved_count(ancestor_cfg, ctx.targets),
-                    moveset: None,
-                    candidate_movesets,
-                    candidate_index: None,
-                    reason: Some("entropy".to_string()),
-                    state_seen_node_id: None,
-                    no_valid_moves_qubit: None,
-                    trigger_node_id: Some(trigger_node.0),
-                    configuration: config_as_trace_tuples(ancestor_cfg),
-                    parent_configuration: parent_cfg,
-                    moveset_score: Some(trigger_entropy as f64),
-                    best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-                });
-            }
+            let ancestor_cfg = graph.config(ancestor);
+            let parent_id = graph.parent(ancestor);
+            let parent_cfg = parent_id.map(|pid| graph.config(pid));
+            let candidate_movesets: Vec<MoveSet> = entropy_map
+                .get(&trigger_node)
+                .map(|s| {
+                    s.candidate_cache
+                        .iter()
+                        .map(|(ms, _, _)| ms.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+            observer.on_event(SearchEvent::EntropyRevert {
+                node_id: ancestor,
+                parent_node_id: parent_id,
+                depth: graph.depth(ancestor),
+                entropy: new_ancestor_entropy,
+                unresolved_count: unresolved_count(ancestor_cfg, ctx.targets),
+                candidate_movesets: &candidate_movesets,
+                trigger_node_id: trigger_node,
+                trigger_entropy,
+                configuration: ancestor_cfg,
+                parent_configuration: parent_cfg,
+                best_buffer_node_ids: &buffer_ids,
+            });
             current = ancestor;
             continue;
         }
@@ -1251,40 +1429,42 @@ pub fn entropy_search(
 
         let Some((candidate_idx, move_set, new_config, cost)) = candidate else {
             // No candidates available — bump entropy.
-            let current_es = entropy_map.entry(current).or_default();
-            current_es.entropy += 1;
             let no_valid_qid =
                 first_unresolved_qubit_without_valid_move(graph.config(current), ctx);
-            if let Some(t) = trace.as_mut() {
-                let cfg = graph.config(current);
-                let parent_cfg = graph
-                    .parent(current)
-                    .map(|pid| config_as_trace_tuples(graph.config(pid)));
-                let candidate_movesets = current_es
-                    .candidate_cache
-                    .iter()
-                    .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
-                    .collect();
-                t.steps.push(EntropyTraceStep {
-                    event: "entropy_bump".to_string(),
-                    node_id: current.0,
-                    parent_node_id: graph.parent(current).map(|id| id.0),
-                    depth: graph.depth(current),
-                    entropy: current_es.entropy,
-                    unresolved_count: unresolved_count(cfg, ctx.targets),
-                    moveset: None,
-                    candidate_movesets,
-                    candidate_index: None,
-                    reason: Some("no-valid-moves".to_string()),
-                    state_seen_node_id: None,
-                    no_valid_moves_qubit: no_valid_qid,
-                    trigger_node_id: None,
-                    configuration: config_as_trace_tuples(cfg),
-                    parent_configuration: parent_cfg,
-                    moveset_score: None,
-                    best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-                });
-            }
+            let new_entropy = {
+                let current_es = entropy_map.entry(current).or_default();
+                current_es.entropy += 1;
+                current_es.entropy
+            };
+            let candidate_movesets: Vec<MoveSet> = entropy_map
+                .get(&current)
+                .map(|s| {
+                    s.candidate_cache
+                        .iter()
+                        .map(|(ms, _, _)| ms.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let cfg = graph.config(current);
+            let parent_id = graph.parent(current);
+            let parent_cfg = parent_id.map(|pid| graph.config(pid));
+            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+            observer.on_event(SearchEvent::EntropyBump {
+                node_id: current,
+                parent_node_id: parent_id,
+                depth: graph.depth(current),
+                entropy: new_entropy,
+                unresolved_count: unresolved_count(cfg, ctx.targets),
+                moveset: None,
+                candidate_movesets: &candidate_movesets,
+                candidate_index: None,
+                reason: "no-valid-moves",
+                state_seen_node_id: None,
+                no_valid_moves_qubit: no_valid_qid,
+                configuration: cfg,
+                parent_configuration: parent_cfg,
+                best_buffer_node_ids: &buffer_ids,
+            });
             continue;
         };
 
@@ -1307,41 +1487,38 @@ pub fn entropy_search(
                     best_goal_depth = Some(goal_depth);
                 }
                 resume_buffer_discard(&mut resume_buffer, child_id);
-                if let Some(t) = trace.as_mut() {
-                    let cfg = graph.config(child_id);
-                    t.steps.push(EntropyTraceStep {
-                        event: "goal".to_string(),
-                        node_id: child_id.0,
-                        // Keep canonical parent for existing nodes; using the
-                        // current trigger node would visually re-parent the
-                        // node in the reducer and cause tree jitter/overlap.
-                        parent_node_id: graph.parent(child_id).map(|id| id.0),
-                        depth: graph.depth(child_id),
-                        entropy: entropy_map.get(&current).map_or(1, |s| s.entropy),
-                        unresolved_count: 0,
-                        moveset: Some(moveset_to_trace_tuple(&trace_move_set)),
-                        candidate_movesets: entropy_map
-                            .get(&current)
-                            .map(|s| {
-                                s.candidate_cache
-                                    .iter()
-                                    .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        candidate_index: Some(candidate_idx as u32),
-                        reason: Some("state-seen-goal".to_string()),
-                        state_seen_node_id: Some(child_id.0),
-                        no_valid_moves_qubit: None,
-                        trigger_node_id: Some(current.0),
-                        configuration: config_as_trace_tuples(cfg),
-                        parent_configuration: graph
-                            .parent(child_id)
-                            .map(|pid| config_as_trace_tuples(graph.config(pid))),
-                        moveset_score: None,
-                        best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-                    });
-                }
+                let goal_cfg = graph.config(child_id);
+                let goal_parent_id = graph.parent(child_id);
+                let goal_parent_cfg = goal_parent_id.map(|pid| graph.config(pid));
+                let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
+                let candidate_movesets: Vec<MoveSet> = entropy_map
+                    .get(&current)
+                    .map(|s| {
+                        s.candidate_cache
+                            .iter()
+                            .map(|(ms, _, _)| ms.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+                observer.on_event(SearchEvent::EntropyGoal {
+                    node_id: child_id,
+                    // Keep canonical parent for existing nodes; using the
+                    // current trigger node would visually re-parent the
+                    // node in the reducer and cause tree jitter/overlap.
+                    parent_node_id: goal_parent_id,
+                    depth: graph.depth(child_id),
+                    entropy: entropy_now,
+                    moveset: Some(&trace_move_set),
+                    candidate_movesets: &candidate_movesets,
+                    candidate_index: Some(candidate_idx as u32),
+                    reason: Some("state-seen-goal"),
+                    state_seen_node_id: Some(child_id),
+                    trigger_node_id: Some(current),
+                    configuration: goal_cfg,
+                    parent_configuration: goal_parent_cfg,
+                    best_buffer_node_ids: &buffer_ids,
+                });
                 if found_goals.len() >= params.max_goal_candidates {
                     break;
                 }
@@ -1350,39 +1527,41 @@ pub fn entropy_search(
                 continue;
             }
             // Transposition: config seen at equal or better cost.
-            let es = entropy_map.entry(current).or_default();
-            es.failed_candidates.insert(move_key.clone());
-            es.entropy += 1;
-            if let Some(t) = trace.as_mut() {
-                let cfg = graph.config(current);
-                let parent_cfg = graph
-                    .parent(current)
-                    .map(|pid| config_as_trace_tuples(graph.config(pid)));
-                let candidate_movesets = es
-                    .candidate_cache
-                    .iter()
-                    .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
-                    .collect();
-                t.steps.push(EntropyTraceStep {
-                    event: "entropy_bump".to_string(),
-                    node_id: current.0,
-                    parent_node_id: graph.parent(current).map(|id| id.0),
-                    depth: graph.depth(current),
-                    entropy: es.entropy,
-                    unresolved_count: unresolved_count(cfg, ctx.targets),
-                    moveset: Some(moveset_to_trace_tuple(&trace_move_set)),
-                    candidate_movesets,
-                    candidate_index: Some(candidate_idx as u32),
-                    reason: Some("state-seen".to_string()),
-                    state_seen_node_id: Some(child_id.0),
-                    no_valid_moves_qubit: None,
-                    trigger_node_id: None,
-                    configuration: config_as_trace_tuples(cfg),
-                    parent_configuration: parent_cfg,
-                    moveset_score: None,
-                    best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-                });
-            }
+            let new_entropy = {
+                let es = entropy_map.entry(current).or_default();
+                es.failed_candidates.insert(move_key.clone());
+                es.entropy += 1;
+                es.entropy
+            };
+            let candidate_movesets: Vec<MoveSet> = entropy_map
+                .get(&current)
+                .map(|s| {
+                    s.candidate_cache
+                        .iter()
+                        .map(|(ms, _, _)| ms.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let cfg = graph.config(current);
+            let parent_id = graph.parent(current);
+            let parent_cfg = parent_id.map(|pid| graph.config(pid));
+            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+            observer.on_event(SearchEvent::EntropyBump {
+                node_id: current,
+                parent_node_id: parent_id,
+                depth: graph.depth(current),
+                entropy: new_entropy,
+                unresolved_count: unresolved_count(cfg, ctx.targets),
+                moveset: Some(&trace_move_set),
+                candidate_movesets: &candidate_movesets,
+                candidate_index: Some(candidate_idx as u32),
+                reason: "state-seen",
+                state_seen_node_id: Some(child_id),
+                no_valid_moves_qubit: None,
+                configuration: cfg,
+                parent_configuration: parent_cfg,
+                best_buffer_node_ids: &buffer_ids,
+            });
             continue;
         }
 
@@ -1414,37 +1593,32 @@ pub fn entropy_search(
             );
         }
 
-        if let Some(t) = trace.as_mut() {
-            let parent_cfg = Some(config_as_trace_tuples(graph.config(current)));
-            let current_es = entropy_map.get(&current);
-            let candidate_movesets = current_es
-                .map(|s| {
-                    s.candidate_cache
-                        .iter()
-                        .map(|(ms, _, _)| moveset_to_trace_tuple(ms))
-                        .collect()
-                })
-                .unwrap_or_default();
-            t.steps.push(EntropyTraceStep {
-                event: "descend".to_string(),
-                node_id: child_id.0,
-                parent_node_id: Some(current.0),
-                depth: graph.depth(child_id),
-                entropy: entropy_map.get(&current).map_or(1, |s| s.entropy),
-                unresolved_count: unresolved_count(child_cfg, ctx.targets),
-                moveset: Some(moveset_to_trace_tuple(&trace_move_set)),
-                candidate_movesets,
-                candidate_index: Some(candidate_idx as u32),
-                reason: None,
-                state_seen_node_id: None,
-                no_valid_moves_qubit: None,
-                trigger_node_id: None,
-                configuration: config_as_trace_tuples(child_cfg),
-                parent_configuration: parent_cfg,
-                moveset_score: Some(moveset_score),
-                best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-            });
-        }
+        let entropy_now = entropy_map.get(&current).map_or(1, |s| s.entropy);
+        let candidate_movesets: Vec<MoveSet> = entropy_map
+            .get(&current)
+            .map(|s| {
+                s.candidate_cache
+                    .iter()
+                    .map(|(ms, _, _)| ms.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let current_cfg_owned = graph.config(current);
+        let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+        observer.on_event(SearchEvent::EntropyDescend {
+            node_id: child_id,
+            parent_node_id: current,
+            depth: graph.depth(child_id),
+            entropy: entropy_now,
+            unresolved_count: unresolved_count(child_cfg, ctx.targets),
+            moveset: &trace_move_set,
+            candidate_movesets: &candidate_movesets,
+            candidate_index: candidate_idx as u32,
+            configuration: child_cfg,
+            parent_configuration: current_cfg_owned,
+            moveset_score,
+            best_buffer_node_ids: &buffer_ids,
+        });
 
         if goal.is_goal(graph.config(child_id)) {
             let goal_depth = graph.depth(child_id);
@@ -1453,30 +1627,26 @@ pub fn entropy_search(
                 best_goal_depth = Some(goal_depth);
             }
             resume_buffer_discard(&mut resume_buffer, child_id);
-            if let Some(t) = trace.as_mut() {
-                let cfg = graph.config(child_id);
-                t.steps.push(EntropyTraceStep {
-                    event: "goal".to_string(),
-                    node_id: child_id.0,
-                    parent_node_id: graph.parent(child_id).map(|id| id.0),
-                    depth: graph.depth(child_id),
-                    entropy: entropy_map.get(&current).map_or(1, |s| s.entropy),
-                    unresolved_count: 0,
-                    moveset: None,
-                    candidate_movesets: Vec::new(),
-                    candidate_index: None,
-                    reason: None,
-                    state_seen_node_id: None,
-                    no_valid_moves_qubit: None,
-                    trigger_node_id: None,
-                    configuration: config_as_trace_tuples(cfg),
-                    parent_configuration: graph
-                        .parent(child_id)
-                        .map(|pid| config_as_trace_tuples(graph.config(pid))),
-                    moveset_score: None,
-                    best_buffer_node_ids: trace_buffer_node_ids(&resume_buffer),
-                });
-            }
+            let goal_cfg = graph.config(child_id);
+            let goal_parent_id = graph.parent(child_id);
+            let goal_parent_cfg = goal_parent_id.map(|pid| graph.config(pid));
+            let entropy_at_goal = entropy_map.get(&current).map_or(1, |s| s.entropy);
+            let buffer_ids = trace_buffer_node_ids(&resume_buffer);
+            observer.on_event(SearchEvent::EntropyGoal {
+                node_id: child_id,
+                parent_node_id: goal_parent_id,
+                depth: graph.depth(child_id),
+                entropy: entropy_at_goal,
+                moveset: None,
+                candidate_movesets: &[],
+                candidate_index: None,
+                reason: None,
+                state_seen_node_id: None,
+                trigger_node_id: None,
+                configuration: goal_cfg,
+                parent_configuration: goal_parent_cfg,
+                best_buffer_node_ids: &buffer_ids,
+            });
             if found_goals.len() >= params.max_goal_candidates {
                 break;
             }
@@ -1497,7 +1667,7 @@ pub fn entropy_search(
     }
 
     if found_goals.is_empty() && budget_exhausted {
-        push_fallback_start_trace(&mut trace, &graph, root_id, ctx, &resume_buffer);
+        fire_fallback_start_event(observer, &graph, root_id, ctx, &resume_buffer);
         let (goal_id, fb_expanded) = sequential_fallback(&mut graph, root_id, ctx, goal);
         nodes_expanded += fb_expanded;
         if let Some(gid) = goal_id {
@@ -1622,7 +1792,7 @@ mod tests {
             max_expansions,
             None,
             0,
-            None,
+            &mut crate::observer::NoOpObserver,
         )
     }
 
@@ -1657,7 +1827,7 @@ mod tests {
             max_expansions,
             max_depth,
             0,
-            Some(trace),
+            trace,
         )
     }
 

@@ -670,12 +670,11 @@ where
 
         // Goal check on pop (A* optimality).
         if frontier.check_goal_on_pop() && goal.is_goal(graph.config(node_id)) {
-            observer.on_event(
-                SearchEvent::GoalFound {
-                    depth: graph.depth(node_id),
-                },
-                graph.config(node_id),
-            );
+            observer.on_event(SearchEvent::GoalFound {
+                depth: graph.depth(node_id),
+                node_id,
+                config: graph.config(node_id),
+            });
             return SearchResult {
                 goal: Some(node_id),
                 nodes_expanded,
@@ -701,13 +700,12 @@ where
         generator.generate(graph.config(node_id), node_id, ctx, state, &mut candidates);
         debug_assert_candidates_valid(&candidates, ctx);
 
-        observer.on_event(
-            SearchEvent::NodeExpanded {
-                depth,
-                num_candidates: candidates.len(),
-            },
-            graph.config(node_id),
-        );
+        observer.on_event(SearchEvent::NodeExpanded {
+            depth,
+            num_candidates: candidates.len(),
+            node_id,
+            config: graph.config(node_id),
+        });
 
         // Sort by scorer (higher = better, so sort descending).
         candidates.sort_by(|a, b| {
@@ -736,12 +734,11 @@ where
             if is_new && !child_closed {
                 // Goal check on generate (BFS/DFS).
                 if frontier.check_goal_on_generate() && goal.is_goal(graph.config(child_id)) {
-                    observer.on_event(
-                        SearchEvent::GoalFound {
-                            depth: graph.depth(child_id),
-                        },
-                        graph.config(child_id),
-                    );
+                    observer.on_event(SearchEvent::GoalFound {
+                        depth: graph.depth(child_id),
+                        node_id: child_id,
+                        config: graph.config(child_id),
+                    });
                     return SearchResult {
                         goal: Some(child_id),
                         nodes_expanded,
