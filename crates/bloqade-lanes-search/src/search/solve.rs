@@ -9,19 +9,14 @@
 //! [`super::options`], and [`super::restarts`]; the next slices will
 //! extract `MoveSearch` / `TargetSolver` and the `CzPlacement` peers.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
-use rayon::prelude::*;
 
-use crate::placement::nohome::{self, NoHomeOptions};
+use crate::placement::nohome::NoHomeOptions;
 use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
-use crate::primitives::config::{Config, ConfigError};
+use crate::primitives::config::ConfigError;
 use crate::primitives::lane_index::LaneIndex;
-use crate::search::engine::{EntanglingCache, NoHomeCache, SearchEngine};
-use crate::search::restarts::pick_best;
+use crate::search::engine::SearchEngine;
 use crate::search::target_solver::solve_with_engine;
 
 // Re-export the moved types under the original `solve::*` path so existing
@@ -102,11 +97,6 @@ impl MoveSolver {
     /// Access the underlying lane index.
     pub fn index(&self) -> &LaneIndex {
         self.engine.index()
-    }
-
-    /// Get or build the cached entangling precomputation.
-    fn entangling_cache(&self) -> &EntanglingCache {
-        self.engine.entangling_cache()
     }
 
     /// Solve a move synthesis problem.
@@ -232,108 +222,17 @@ impl MoveSolver {
         rh_opts: &crate::placement::receding_horizon::RecedingHorizonOptions,
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
-        use crate::goals::EntanglingConstraintGoal;
-        use crate::primitives::distance::PairDistanceHeuristic;
-
-        let root = Config::new(initial)?;
-        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-        let arch = self.index().arch_spec();
-
-        let cache = self.entangling_cache();
-        let dist_table = cache.dist_table.clone();
-
-        let heuristic = PairDistanceHeuristic::new(cz_pairs, &cache.wpd);
-        let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
-        let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
-
-        let clipped_future = ent_opts.clipped_future_layers(future_cz_layers);
-        let future_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
-
-        let upgraded_opts = opts.upgraded_for_entangling();
-        let opts = &upgraded_opts;
-
-        let arch_arc = Arc::new(arch.clone());
-        let index_arc: Arc<LaneIndex> = Arc::new(self.index().clone());
-
-        let restarts = opts.restarts.max(1);
-        let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
-
-        // Fallback closure: when receding-horizon gives up (all branches
-        // drop at horizon=1, or candidate generation returns empty), fall
-        // back to a standard `solve_entangling` from the current state. Use
-        // `restarts = 1` for the inner call to avoid nested rayon
-        // parallelism that could oversubscribe threads. Captures `&self` to
-        // call back into the solver.
-        let single_opts = SolveOptions {
-            restarts: 1,
-            ..opts.clone()
-        };
-        let make_fallback = |state: &Config| -> SolveResult {
-            let initial: Vec<(u32, LocationAddr)> = state.iter().collect();
-            self.solve_entangling(
-                initial,
-                cz_pairs,
-                blocked_locs.iter().copied(),
-                max_expansions,
-                &single_opts,
-                ent_opts,
-                future_cz_layers,
-            )
-            .unwrap_or_else(|_| SolveResult::unsolvable(state.clone()))
-        };
-
-        // Run restarts in parallel.
-        let results: Vec<SolveResult> = if restarts <= 1 {
-            vec![
-                crate::placement::receding_horizon::solve_entangling_rh_single(
-                    root.clone(),
-                    &cz_pairs_owned,
-                    blocked_encoded.clone(),
-                    arch_arc.clone(),
-                    index_arc.clone(),
-                    dist_table.clone(),
-                    &goal,
-                    &heuristic,
-                    opts,
-                    ent_opts,
-                    rh_opts,
-                    &future_owned,
-                    max_expansions,
-                    /*restart_seed*/ 0,
-                    make_fallback,
-                ),
-            ]
-        } else {
-            (0..restarts)
-                .into_par_iter()
-                .map(|i| {
-                    crate::placement::receding_horizon::solve_entangling_rh_single(
-                        root.clone(),
-                        &cz_pairs_owned,
-                        blocked_encoded.clone(),
-                        arch_arc.clone(),
-                        index_arc.clone(),
-                        dist_table.clone(),
-                        &goal,
-                        &heuristic,
-                        opts,
-                        ent_opts,
-                        rh_opts,
-                        &future_owned,
-                        max_expansions,
-                        /*restart_seed*/ (i + 1) as u64,
-                        make_fallback,
-                    )
-                })
-                .collect()
-        };
-
-        Ok(pick_best(results))
-    }
-
-    /// Get or build the cached no-home precomputation.
-    fn nohome_cache(&self) -> &NoHomeCache {
-        self.engine.nohome_cache()
+        crate::placement::receding_horizon::solve_receding_horizon(
+            &self.engine,
+            opts,
+            ent_opts,
+            rh_opts,
+            initial,
+            cz_pairs,
+            blocked,
+            max_expansions,
+            future_cz_layers,
+        )
     }
 
     /// Two-phase no-home placement: return assignment + entangling routing.
@@ -374,175 +273,16 @@ impl MoveSolver {
         nohome_opts: &NoHomeOptions,
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
-        // Both phases route under entangling-style contention.
-        let upgraded_opts = opts.upgraded_for_entangling();
-        let opts = &upgraded_opts;
-
-        let root = Config::new(initial)?;
-        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-        let nh_cache = self.nohome_cache();
-        let arch = self.index().arch_spec();
-
-        let has_returners = root
-            .iter()
-            .any(|(_, loc)| !nh_cache.home_set.contains(&loc.encode()));
-
-        let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
-
-        // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
-        // Mirrors Python LogicalPlacementMethods._pick_move (minus the
-        // move_count comparison, which isn't tracked at the solver level):
-        // for each CZ pair, pick which qubit moves to the CZ partner of the
-        // *other* qubit's position. Cross-word pairs prefer moving the home
-        // qubit; same-word pairs default to moving the control. (The
-        // Python's `_pick_move_by_conflict` tiebreak collapses to a no-op
-        // for same-word pairs because both candidate destinations land in
-        // the same partner word — porting it would need real lane-conflict
-        // analysis, which is out of scope here.)
-        let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
-            let mut chosen: Vec<(u32, LocationAddr)> = Vec::with_capacity(cz_pairs.len());
-            for &(c, t) in cz_pairs {
-                let Some(c_addr) = from.location_of(c) else {
-                    continue;
-                };
-                let Some(t_addr) = from.location_of(t) else {
-                    continue;
-                };
-                let Some(c_dst) = arch.get_cz_partner(&t_addr) else {
-                    continue;
-                };
-                let Some(t_dst) = arch.get_cz_partner(&c_addr) else {
-                    continue;
-                };
-
-                let move_c = (c, c_dst);
-                let move_t = (t, t_dst);
-
-                let pick = if c_addr.word_id == t_addr.word_id {
-                    // Same word — pick the control deterministically.
-                    move_c
-                } else if arch.is_home_position(&t_addr) {
-                    // Cross-word — prefer moving the qubit currently at home.
-                    move_t
-                } else {
-                    move_c
-                };
-                chosen.push(pick);
-            }
-            let chosen_map: HashMap<u32, LocationAddr> = chosen.iter().copied().collect();
-            from.iter()
-                .map(|(qid, loc)| (qid, chosen_map.get(&qid).copied().unwrap_or(loc)))
-                .collect()
-        };
-
-        if !has_returners {
-            // Skip the return phase — go directly to fixed-target entangling.
-            let cz_targets = resolve_cz_targets(&root);
-            return self.solve(
-                root.iter(),
-                cz_targets,
-                blocked_locs.iter().copied(),
-                max_expansions,
-                opts,
-                None,
-            );
-        }
-
-        let occupied_set: HashSet<u64> = root.iter().map(|(_, loc)| loc.encode()).collect();
-        let holes: Vec<u64> = nh_cache
-            .home_locs
-            .iter()
-            .filter(|l| !occupied_set.contains(l) && !blocked_set.contains(l))
-            .copied()
-            .collect();
-
-        let pw = nohome::partner_weights(future_cz_layers, nohome_opts.gamma);
-
-        let candidates = nohome::candidate_return_layouts(
-            &root,
-            &nh_cache.home_set,
-            &holes,
-            &nh_cache.dist_table,
-            self.index(),
-            &pw,
-            nohome_opts,
-        );
-
-        // Phase 1: route every candidate's return layout, pick the candidate
-        // whose Phase-1 routing produces the fewest move layers (the
-        // hop-count substitute for Python's _estimate_layers_time).
-        let mut total_expanded: u32 = 0;
-        let mut best_p1: Option<SolveResult> = None;
-        let mut p1_saw_budget_exceeded = false;
-        for candidate in &candidates {
-            let return_target: Vec<(u32, LocationAddr)> = candidate.clone();
-            let return_result = self.solve(
-                root.iter(),
-                return_target,
-                blocked_locs.iter().copied(),
-                max_expansions,
-                opts,
-                None,
-            )?;
-
-            total_expanded += return_result.nodes_expanded;
-
-            match return_result.status {
-                SolveStatus::Solved => {
-                    if best_p1
-                        .as_ref()
-                        .is_none_or(|b| return_result.move_layers.len() < b.move_layers.len())
-                    {
-                        best_p1 = Some(return_result);
-                    }
-                }
-                SolveStatus::BudgetExceeded => p1_saw_budget_exceeded = true,
-                SolveStatus::Unsolvable => {}
-            }
-        }
-
-        let Some(return_result) = best_p1 else {
-            // No candidate routed successfully.
-            let status = if p1_saw_budget_exceeded {
-                SolveStatus::BudgetExceeded
-            } else {
-                SolveStatus::Unsolvable
-            };
-            return Ok(SolveResult::unsolved(status, root, total_expanded, 0));
-        };
-
-        // Phase 2: simple per-pair target picker, then route once.
-        let cz_targets = resolve_cz_targets(&return_result.goal_config);
-        let entangling_result = self.solve(
-            return_result.goal_config.iter(),
-            cz_targets,
-            blocked_locs.iter().copied(),
-            max_expansions,
+        crate::placement::nohome::solve_nohome(
+            &self.engine,
             opts,
-            None,
-        )?;
-
-        total_expanded += entangling_result.nodes_expanded;
-
-        if entangling_result.status == SolveStatus::Solved {
-            let total_cost = return_result.cost + entangling_result.cost;
-            let mut combined_layers = return_result.move_layers;
-            combined_layers.extend(entangling_result.move_layers);
-            return Ok(SolveResult::solved(
-                entangling_result.goal_config,
-                combined_layers,
-                total_cost,
-                total_expanded,
-                return_result.deadlocks + entangling_result.deadlocks,
-            ));
-        }
-
-        Ok(SolveResult::unsolved(
-            entangling_result.status,
-            root,
-            total_expanded,
-            return_result.deadlocks + entangling_result.deadlocks,
-        ))
+            nohome_opts,
+            initial,
+            cz_pairs,
+            blocked,
+            max_expansions,
+            future_cz_layers,
+        )
     }
 }
 

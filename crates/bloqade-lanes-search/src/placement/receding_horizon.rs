@@ -21,6 +21,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
@@ -1103,6 +1104,230 @@ fn merge_fallback(
     }
 }
 
+// ── CzPlacement composition ─────────────────────────────────────────────
+
+use crate::placement::cz_placement::CzPlacement;
+use crate::placement::loose_goal::solve_loose_goal;
+use crate::primitives::config::ConfigError;
+use crate::search::engine::SearchEngine;
+use crate::search::move_search::MoveSearch;
+
+/// MPC-style loose-goal CZ placement.
+///
+/// Composes `Arc<SearchEngine> + MoveSearch + EntanglingOptions +
+/// RecedingHorizonOptions`. Drives [`solve_entangling_rh_single`]
+/// across restarts in parallel via Rayon; falls back to
+/// [`LooseGoalCzPlacement`](crate::placement::loose_goal::LooseGoalCzPlacement)'s
+/// shared impl when the receding-horizon branches all drop at
+/// horizon = 1.
+pub struct RecedingHorizonCzPlacement {
+    engine: Arc<SearchEngine>,
+    search: MoveSearch,
+    entangling_options: EntanglingOptions,
+    rh_options: RecedingHorizonOptions,
+}
+
+impl RecedingHorizonCzPlacement {
+    /// Build a `RecedingHorizonCzPlacement` from its four composing pieces.
+    pub fn new(
+        engine: Arc<SearchEngine>,
+        search: MoveSearch,
+        entangling_options: EntanglingOptions,
+        rh_options: RecedingHorizonOptions,
+    ) -> Self {
+        Self {
+            engine,
+            search,
+            entangling_options,
+            rh_options,
+        }
+    }
+
+    /// Borrow the underlying engine.
+    pub fn engine(&self) -> &Arc<SearchEngine> {
+        &self.engine
+    }
+
+    /// Borrow the search configuration.
+    pub fn search(&self) -> &MoveSearch {
+        &self.search
+    }
+
+    /// Borrow the entangling-options bundle.
+    pub fn entangling_options(&self) -> &EntanglingOptions {
+        &self.entangling_options
+    }
+
+    /// Borrow the receding-horizon-options bundle.
+    pub fn rh_options(&self) -> &RecedingHorizonOptions {
+        &self.rh_options
+    }
+
+    /// Solve using the receding-horizon MPC loop.
+    ///
+    /// Equivalent to the trait-level
+    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
+    /// but accepts `cz_pairs` and an explicit `future_cz_layers`
+    /// lookahead window directly.
+    pub fn solve_pairs(
+        &self,
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        cz_pairs: &[(u32, u32)],
+        blocked: impl IntoIterator<Item = LocationAddr>,
+        max_expansions: Option<u32>,
+        future_cz_layers: &[Vec<(u32, u32)>],
+    ) -> Result<SolveResult, ConfigError> {
+        solve_receding_horizon(
+            &self.engine,
+            &self.search.options,
+            &self.entangling_options,
+            &self.rh_options,
+            initial,
+            cz_pairs,
+            blocked,
+            max_expansions,
+            future_cz_layers,
+        )
+    }
+}
+
+impl CzPlacement for RecedingHorizonCzPlacement {
+    fn solve(
+        &self,
+        initial: &[(u32, LocationAddr)],
+        controls: &[u32],
+        targets: &[u32],
+        blocked: &[LocationAddr],
+        max_expansions: Option<u32>,
+    ) -> Result<SolveResult, ConfigError> {
+        assert_eq!(
+            controls.len(),
+            targets.len(),
+            "controls and targets must have equal length",
+        );
+        let cz_pairs: Vec<(u32, u32)> = controls
+            .iter()
+            .copied()
+            .zip(targets.iter().copied())
+            .collect();
+        self.solve_pairs(
+            initial.iter().copied(),
+            &cz_pairs,
+            blocked.iter().copied(),
+            max_expansions,
+            &[],
+        )
+    }
+}
+
+/// Shared implementation backing both [`RecedingHorizonCzPlacement::solve_pairs`]
+/// and the legacy
+/// [`MoveSolver::solve_entangling_rh`](crate::search::solve::MoveSolver::solve_entangling_rh).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solve_receding_horizon(
+    engine: &SearchEngine,
+    opts: &SolveOptions,
+    ent_opts: &EntanglingOptions,
+    rh_opts: &RecedingHorizonOptions,
+    initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+    cz_pairs: &[(u32, u32)],
+    blocked: impl IntoIterator<Item = LocationAddr>,
+    max_expansions: Option<u32>,
+    future_cz_layers: &[Vec<(u32, u32)>],
+) -> Result<SolveResult, ConfigError> {
+    use rayon::prelude::*;
+
+    let root = Config::new(initial)?;
+    let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+    let arch = engine.index().arch_spec();
+
+    let cache = engine.entangling_cache();
+    let dist_table = cache.dist_table.clone();
+
+    let heuristic = PairDistanceHeuristic::new(cz_pairs, &cache.wpd);
+    let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
+    let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+
+    let clipped_future = ent_opts.clipped_future_layers(future_cz_layers);
+    let future_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
+
+    let upgraded_opts = opts.upgraded_for_entangling();
+    let opts = &upgraded_opts;
+
+    let arch_arc = Arc::new(arch.clone());
+    let index_arc: Arc<LaneIndex> = Arc::new(engine.index().clone());
+
+    let restarts = opts.restarts.max(1);
+    let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
+
+    // Fallback when receding-horizon drops at horizon=1: run a single-shot
+    // loose-goal solve from the current state. Use restarts=1 to avoid
+    // nested rayon parallelism.
+    let single_opts = SolveOptions {
+        restarts: 1,
+        ..opts.clone()
+    };
+    let make_fallback = |state: &Config| -> SolveResult {
+        let initial: Vec<(u32, LocationAddr)> = state.iter().collect();
+        solve_loose_goal(
+            engine,
+            &single_opts,
+            ent_opts,
+            initial,
+            cz_pairs,
+            blocked_locs.iter().copied(),
+            max_expansions,
+            future_cz_layers,
+        )
+        .unwrap_or_else(|_| SolveResult::unsolvable(state.clone()))
+    };
+
+    let results: Vec<SolveResult> = if restarts <= 1 {
+        vec![solve_entangling_rh_single(
+            root.clone(),
+            &cz_pairs_owned,
+            blocked_encoded.clone(),
+            arch_arc.clone(),
+            index_arc.clone(),
+            dist_table.clone(),
+            &goal,
+            &heuristic,
+            opts,
+            ent_opts,
+            rh_opts,
+            &future_owned,
+            max_expansions,
+            /*restart_seed*/ 0,
+            make_fallback,
+        )]
+    } else {
+        (0..restarts)
+            .into_par_iter()
+            .map(|i| {
+                solve_entangling_rh_single(
+                    root.clone(),
+                    &cz_pairs_owned,
+                    blocked_encoded.clone(),
+                    arch_arc.clone(),
+                    index_arc.clone(),
+                    dist_table.clone(),
+                    &goal,
+                    &heuristic,
+                    opts,
+                    ent_opts,
+                    rh_opts,
+                    &future_owned,
+                    max_expansions,
+                    /*restart_seed*/ (i + 1) as u64,
+                    make_fallback,
+                )
+            })
+            .collect()
+    };
+
+    Ok(crate::search::restarts::pick_best(results))
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1452,5 +1677,74 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result.status, SolveStatus::Solved);
+    }
+
+    /// Parity: `RecedingHorizonCzPlacement::solve_pairs` must produce a
+    /// byte-identical `SolveResult` to `MoveSolver::solve_entangling_rh`
+    /// for the same problem and config.
+    #[test]
+    fn rh_placement_matches_solve_entangling_rh() {
+        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
+        let opts = SolveOptions {
+            strategy: Strategy::Ids,
+            ..SolveOptions::default()
+        };
+        let ent_opts = EntanglingOptions::default();
+        let rh_opts = RecedingHorizonOptions {
+            k_candidates: 2,
+            rollout_horizon: 4,
+            commit_depth: 1,
+            branch_parallel: false,
+            ..RecedingHorizonOptions::default()
+        };
+        let search = MoveSearch::new(opts.clone(), Default::default());
+        let placement = RecedingHorizonCzPlacement::new(
+            engine.clone(),
+            search,
+            ent_opts.clone(),
+            rh_opts.clone(),
+        );
+        let legacy = MoveSolver::from_index(engine.index().clone());
+
+        let initial = [(0u32, loc(0, 0)), (1u32, loc(1, 5))];
+        let cz_pairs = [(0u32, 1u32)];
+        let blocked: [LocationAddr; 0] = [];
+
+        let new_result = placement
+            .solve_pairs(
+                initial.iter().copied(),
+                &cz_pairs,
+                blocked.iter().copied(),
+                Some(5000),
+                &[],
+            )
+            .unwrap();
+        let legacy_result = legacy
+            .solve_entangling_rh(
+                initial.iter().copied(),
+                &cz_pairs,
+                blocked.iter().copied(),
+                Some(5000),
+                &opts,
+                &ent_opts,
+                &rh_opts,
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(new_result.status, legacy_result.status);
+        assert_eq!(new_result.cost.to_bits(), legacy_result.cost.to_bits());
+        assert_eq!(new_result.nodes_expanded, legacy_result.nodes_expanded);
+        let new_layers: Vec<Vec<u64>> = new_result
+            .move_layers
+            .iter()
+            .map(|ms| ms.encoded_lanes().to_vec())
+            .collect();
+        let legacy_layers: Vec<Vec<u64>> = legacy_result
+            .move_layers
+            .iter()
+            .map(|ms| ms.encoded_lanes().to_vec())
+            .collect();
+        assert_eq!(new_layers, legacy_layers);
     }
 }

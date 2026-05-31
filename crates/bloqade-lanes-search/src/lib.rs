@@ -47,7 +47,10 @@ pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
 pub use placement::cz_placement::CzPlacement;
 pub use placement::loose_goal::LooseGoalCzPlacement;
-pub use placement::receding_horizon::{RecedingHorizonOptions, default_weight_grid};
+pub use placement::nohome::NoHomeCzPlacement;
+pub use placement::receding_horizon::{
+    RecedingHorizonCzPlacement, RecedingHorizonOptions, default_weight_grid,
+};
 pub use placement::single_heuristic::SingleHeuristicCzPlacement;
 pub use placement::target_generator::{
     CandidateError, DefaultTargetGenerator, TargetContext, TargetGenerator,

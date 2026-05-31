@@ -366,11 +366,297 @@ fn build_full_layout(
         .collect()
 }
 
+// ── CzPlacement composition ─────────────────────────────────────────────
+
+use crate::placement::cz_placement::CzPlacement;
+use crate::primitives::config::ConfigError;
+use crate::search::engine::SearchEngine;
+use crate::search::move_search::MoveSearch;
+use crate::search::options::SolveOptions;
+use crate::search::result::{SolveResult, SolveStatus};
+use crate::search::target_solver::solve_with_engine;
+use std::sync::Arc;
+
+/// Two-phase no-home CZ placement.
+///
+/// Composes `Arc<SearchEngine> + MoveSearch + NoHomeOptions`. Phase 1
+/// generates `1 + nohome_opts.top_bus_signatures` candidate home
+/// layouts (Hungarian with lane-signature reward variants), routes
+/// each via [`solve_with_engine`], and keeps the candidate whose
+/// return-routing produces the fewest move layers. Phase 2 picks one
+/// CZ-staging target per pair via a deterministic per-pair rule, then
+/// routes once.
+pub struct NoHomeCzPlacement {
+    engine: Arc<SearchEngine>,
+    search: MoveSearch,
+    nohome_options: NoHomeOptions,
+}
+
+impl NoHomeCzPlacement {
+    /// Build a `NoHomeCzPlacement` from its three composing pieces.
+    pub fn new(
+        engine: Arc<SearchEngine>,
+        search: MoveSearch,
+        nohome_options: NoHomeOptions,
+    ) -> Self {
+        Self {
+            engine,
+            search,
+            nohome_options,
+        }
+    }
+
+    /// Borrow the underlying engine.
+    pub fn engine(&self) -> &Arc<SearchEngine> {
+        &self.engine
+    }
+
+    /// Borrow the search configuration.
+    pub fn search(&self) -> &MoveSearch {
+        &self.search
+    }
+
+    /// Borrow the nohome-options bundle.
+    pub fn nohome_options(&self) -> &NoHomeOptions {
+        &self.nohome_options
+    }
+
+    /// Solve a two-phase no-home placement.
+    ///
+    /// Equivalent to the trait-level
+    /// [`CzPlacement::solve`](super::cz_placement::CzPlacement::solve)
+    /// but accepts `cz_pairs` and an explicit `future_cz_layers`
+    /// lookahead window directly.
+    pub fn solve_pairs(
+        &self,
+        initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+        cz_pairs: &[(u32, u32)],
+        blocked: impl IntoIterator<Item = LocationAddr>,
+        max_expansions: Option<u32>,
+        future_cz_layers: &[Vec<(u32, u32)>],
+    ) -> Result<SolveResult, ConfigError> {
+        solve_nohome(
+            &self.engine,
+            &self.search.options,
+            &self.nohome_options,
+            initial,
+            cz_pairs,
+            blocked,
+            max_expansions,
+            future_cz_layers,
+        )
+    }
+}
+
+impl CzPlacement for NoHomeCzPlacement {
+    fn solve(
+        &self,
+        initial: &[(u32, LocationAddr)],
+        controls: &[u32],
+        targets: &[u32],
+        blocked: &[LocationAddr],
+        max_expansions: Option<u32>,
+    ) -> Result<SolveResult, ConfigError> {
+        assert_eq!(
+            controls.len(),
+            targets.len(),
+            "controls and targets must have equal length",
+        );
+        let cz_pairs: Vec<(u32, u32)> = controls
+            .iter()
+            .copied()
+            .zip(targets.iter().copied())
+            .collect();
+        self.solve_pairs(
+            initial.iter().copied(),
+            &cz_pairs,
+            blocked.iter().copied(),
+            max_expansions,
+            &[],
+        )
+    }
+}
+
+/// Shared implementation backing both [`NoHomeCzPlacement::solve_pairs`]
+/// and the legacy
+/// [`MoveSolver::solve_nohome`](crate::search::solve::MoveSolver::solve_nohome).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solve_nohome(
+    engine: &SearchEngine,
+    opts: &SolveOptions,
+    nohome_opts: &NoHomeOptions,
+    initial: impl IntoIterator<Item = (u32, LocationAddr)>,
+    cz_pairs: &[(u32, u32)],
+    blocked: impl IntoIterator<Item = LocationAddr>,
+    max_expansions: Option<u32>,
+    future_cz_layers: &[Vec<(u32, u32)>],
+) -> Result<SolveResult, ConfigError> {
+    // Both phases route under entangling-style contention.
+    let upgraded_opts = opts.upgraded_for_entangling();
+    let opts = &upgraded_opts;
+
+    let root = Config::new(initial)?;
+    let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
+    let nh_cache = engine.nohome_cache();
+    let arch = engine.index().arch_spec();
+
+    let has_returners = root
+        .iter()
+        .any(|(_, loc)| !nh_cache.home_set.contains(&loc.encode()));
+
+    let blocked_set: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
+
+    // Helper: resolve fixed CZ-staging targets for Phase 2 from a config.
+    let resolve_cz_targets = |from: &Config| -> Vec<(u32, LocationAddr)> {
+        let mut chosen: Vec<(u32, LocationAddr)> = Vec::with_capacity(cz_pairs.len());
+        for &(c, t) in cz_pairs {
+            let Some(c_addr) = from.location_of(c) else {
+                continue;
+            };
+            let Some(t_addr) = from.location_of(t) else {
+                continue;
+            };
+            let Some(c_dst) = arch.get_cz_partner(&t_addr) else {
+                continue;
+            };
+            let Some(t_dst) = arch.get_cz_partner(&c_addr) else {
+                continue;
+            };
+
+            let move_c = (c, c_dst);
+            let move_t = (t, t_dst);
+
+            let pick = if c_addr.word_id == t_addr.word_id {
+                move_c
+            } else if arch.is_home_position(&t_addr) {
+                move_t
+            } else {
+                move_c
+            };
+            chosen.push(pick);
+        }
+        let chosen_map: HashMap<u32, LocationAddr> = chosen.iter().copied().collect();
+        from.iter()
+            .map(|(qid, loc)| (qid, chosen_map.get(&qid).copied().unwrap_or(loc)))
+            .collect()
+    };
+
+    if !has_returners {
+        // Skip the return phase — go directly to fixed-target entangling.
+        let cz_targets = resolve_cz_targets(&root);
+        return solve_with_engine(
+            engine,
+            opts,
+            None,
+            root.iter(),
+            cz_targets,
+            blocked_locs.iter().copied(),
+            max_expansions,
+        );
+    }
+
+    let occupied_set: HashSet<u64> = root.iter().map(|(_, loc)| loc.encode()).collect();
+    let holes: Vec<u64> = nh_cache
+        .home_locs
+        .iter()
+        .filter(|l| !occupied_set.contains(l) && !blocked_set.contains(l))
+        .copied()
+        .collect();
+
+    let pw = partner_weights(future_cz_layers, nohome_opts.gamma);
+
+    let candidates = candidate_return_layouts(
+        &root,
+        &nh_cache.home_set,
+        &holes,
+        &nh_cache.dist_table,
+        engine.index(),
+        &pw,
+        nohome_opts,
+    );
+
+    // Phase 1: route every candidate's return layout.
+    let mut total_expanded: u32 = 0;
+    let mut best_p1: Option<SolveResult> = None;
+    let mut p1_saw_budget_exceeded = false;
+    for candidate in &candidates {
+        let return_target: Vec<(u32, LocationAddr)> = candidate.clone();
+        let return_result = solve_with_engine(
+            engine,
+            opts,
+            None,
+            root.iter(),
+            return_target,
+            blocked_locs.iter().copied(),
+            max_expansions,
+        )?;
+
+        total_expanded += return_result.nodes_expanded;
+
+        match return_result.status {
+            SolveStatus::Solved => {
+                if best_p1
+                    .as_ref()
+                    .is_none_or(|b| return_result.move_layers.len() < b.move_layers.len())
+                {
+                    best_p1 = Some(return_result);
+                }
+            }
+            SolveStatus::BudgetExceeded => p1_saw_budget_exceeded = true,
+            SolveStatus::Unsolvable => {}
+        }
+    }
+
+    let Some(return_result) = best_p1 else {
+        let status = if p1_saw_budget_exceeded {
+            SolveStatus::BudgetExceeded
+        } else {
+            SolveStatus::Unsolvable
+        };
+        return Ok(SolveResult::unsolved(status, root, total_expanded, 0));
+    };
+
+    // Phase 2: simple per-pair target picker, then route once.
+    let cz_targets = resolve_cz_targets(&return_result.goal_config);
+    let entangling_result = solve_with_engine(
+        engine,
+        opts,
+        None,
+        return_result.goal_config.iter(),
+        cz_targets,
+        blocked_locs.iter().copied(),
+        max_expansions,
+    )?;
+
+    total_expanded += entangling_result.nodes_expanded;
+
+    if entangling_result.status == SolveStatus::Solved {
+        let total_cost = return_result.cost + entangling_result.cost;
+        let mut combined_layers = return_result.move_layers;
+        combined_layers.extend(entangling_result.move_layers);
+        return Ok(SolveResult::solved(
+            entangling_result.goal_config,
+            combined_layers,
+            total_cost,
+            total_expanded,
+            return_result.deadlocks + entangling_result.deadlocks,
+        ));
+    }
+
+    Ok(SolveResult::unsolved(
+        entangling_result.status,
+        root,
+        total_expanded,
+        return_result.deadlocks + entangling_result.deadlocks,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::primitives::lane_index::LaneIndex;
-    use crate::test_utils::example_arch_json;
+    use crate::search::solve::MoveSolver;
+    use crate::test_utils::{example_arch_json, loc};
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
         let json = example_arch_json();
@@ -482,5 +768,60 @@ mod tests {
         for &(qid, loc) in &candidates[0] {
             assert_eq!(loc, config.location_of(qid).unwrap());
         }
+    }
+
+    /// Parity: `NoHomeCzPlacement::solve_pairs` must produce a
+    /// byte-identical `SolveResult` to `MoveSolver::solve_nohome` for
+    /// the same problem and config.
+    #[test]
+    fn nohome_placement_matches_solve_nohome() {
+        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
+        let opts = SolveOptions::default();
+        let nh_opts = NoHomeOptions::default();
+        let search = MoveSearch::new(opts.clone(), Default::default());
+        let placement = NoHomeCzPlacement::new(engine.clone(), search, nh_opts.clone());
+        let legacy = MoveSolver::from_index(engine.index().clone());
+
+        // Initial: qubit 0 at a non-home position (forces the return phase),
+        // qubit 1 already at home.
+        let initial = [(0u32, loc(0, 5)), (1u32, loc(0, 1))];
+        let cz_pairs = [(0u32, 1u32)];
+        let blocked: [LocationAddr; 0] = [];
+
+        let new_result = placement
+            .solve_pairs(
+                initial.iter().copied(),
+                &cz_pairs,
+                blocked.iter().copied(),
+                Some(5000),
+                &[],
+            )
+            .unwrap();
+        let legacy_result = legacy
+            .solve_nohome(
+                initial.iter().copied(),
+                &cz_pairs,
+                blocked.iter().copied(),
+                Some(5000),
+                &opts,
+                &nh_opts,
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(new_result.status, legacy_result.status);
+        assert_eq!(new_result.cost.to_bits(), legacy_result.cost.to_bits());
+        assert_eq!(new_result.nodes_expanded, legacy_result.nodes_expanded);
+        let new_layers: Vec<Vec<u64>> = new_result
+            .move_layers
+            .iter()
+            .map(|ms| ms.encoded_lanes().to_vec())
+            .collect();
+        let legacy_layers: Vec<Vec<u64>> = legacy_result
+            .move_layers
+            .iter()
+            .map(|ms| ms.encoded_lanes().to_vec())
+            .collect();
+        assert_eq!(new_layers, legacy_layers);
     }
 }
