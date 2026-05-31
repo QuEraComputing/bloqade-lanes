@@ -18,7 +18,9 @@
 //! (`MoveSearch` composition) and `target_solver.rs` (`TargetSolver`).
 
 pub mod engine;
+pub mod move_search;
 pub mod options;
 pub mod restarts;
 pub mod result;
 pub mod solve;
+pub mod target_solver;

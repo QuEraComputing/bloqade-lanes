@@ -18,17 +18,16 @@ use rayon::prelude::*;
 
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
-use crate::goals::AllAtTarget;
 use crate::ops::entangling;
 use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
 use crate::placement::nohome::{self, NoHomeOptions};
 use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::primitives::config::{Config, ConfigError};
 use crate::primitives::context::SearchContext;
-use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
 use crate::primitives::lane_index::LaneIndex;
 use crate::search::engine::{EntanglingCache, NoHomeCache, SearchEngine};
 use crate::search::restarts::{pick_best, run_with_components};
+use crate::search::target_solver::solve_with_engine;
 
 // Re-export the moved types under the original `solve::*` path so existing
 // `use crate::search::solve::SolveStatus` imports keep resolving until the
@@ -147,54 +146,15 @@ impl MoveSolver {
         opts: &SolveOptions,
         entropy_opts: Option<&EntropyOptions>,
     ) -> Result<SolveResult, ConfigError> {
-        let root = Config::new(initial)?;
-        let target_pairs: Vec<(u32, LocationAddr)> = target.into_iter().collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-
-        // Build goal predicate.
-        let target_encoded: Vec<(u32, u64)> =
-            target_pairs.iter().map(|&(q, l)| (q, l.encode())).collect();
-
-        // Build distance table and heuristic (shared across restarts).
-        let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
-        let w_t = entropy_opts.map_or(EntropyOptions::default().w_t, |e| e.w_t);
-        let dist_table = if w_t > 0.0 {
-            DistanceTable::new(&target_locs, self.index()).with_time_distances(self.index())
-        } else {
-            DistanceTable::new(&target_locs, self.index())
-        };
-        let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
-        let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
-        let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
-
-        let goal_obj = AllAtTarget::new(&target_encoded);
-        let blocked_encoded: std::collections::HashSet<u64> =
-            blocked_locs.iter().map(|l| l.encode()).collect();
-        let ctx = SearchContext {
-            index: self.index(),
-            dist_table: &dist_table,
-            blocked: &blocked_encoded,
-            targets: &target_encoded,
-            cz_pairs: None,
-        };
-
-        let lookahead = opts.lookahead;
-        let top_c = opts.top_c;
-        let make_generator = |seed: u64, policy: DeadlockPolicy| {
-            HeuristicGenerator::configured(seed, policy, lookahead, top_c)
-        };
-
-        Ok(run_with_components(
-            root,
-            &goal_obj,
-            make_generator,
-            h_max,
-            h_sum,
-            &ctx,
-            max_expansions,
+        solve_with_engine(
+            &self.engine,
             opts,
             entropy_opts,
-        ))
+            initial,
+            target,
+            blocked,
+            max_expansions,
+        )
     }
 
     /// Solve a loose-goal entangling placement + routing problem.

@@ -55,7 +55,10 @@ pub use primitives::distance::PairDistanceHeuristic;
 pub use primitives::graph::{MoveSet, NodeId, SearchGraph};
 pub use primitives::lane_index::LaneIndex;
 pub use scorers::{DistanceScorer, EntropyScorer};
+pub use search::engine::SearchEngine;
+pub use search::move_search::MoveSearch;
 pub use search::solve::{
     CandidateAttempt, InnerStrategy, MultiSolveResult, SolveOptions, Strategy,
 };
+pub use search::target_solver::TargetSolver;
 pub use traits::{CandidateScorer, CostFn, Goal, Heuristic, MoveGenerator};
