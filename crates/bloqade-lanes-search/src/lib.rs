@@ -45,7 +45,9 @@ pub use generators::{
 pub use goals::{AllAtTarget, EntanglingConstraintGoal, PartialPlacementGoal};
 pub use heuristics::{MaxHopHeuristic, SumHopHeuristic};
 pub use observer::{NoOpObserver, SearchEvent, SearchObserver};
+pub use placement::cz_placement::CzPlacement;
 pub use placement::receding_horizon::{RecedingHorizonOptions, default_weight_grid};
+pub use placement::single_heuristic::SingleHeuristicCzPlacement;
 pub use placement::target_generator::{
     CandidateError, DefaultTargetGenerator, TargetContext, TargetGenerator,
 };

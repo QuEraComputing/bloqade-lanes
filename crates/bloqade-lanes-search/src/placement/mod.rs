@@ -19,6 +19,8 @@
 //! `NoHomeCzPlacement`) sharing a `solve(initial, controls, targets, …)`
 //! interface.
 
+pub mod cz_placement;
 pub mod nohome;
 pub mod receding_horizon;
+pub mod single_heuristic;
 pub mod target_generator;

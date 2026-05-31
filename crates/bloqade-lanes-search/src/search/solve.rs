@@ -766,94 +766,17 @@ impl MoveSolver {
         opts: &SolveOptions,
         entropy_opts: Option<&EntropyOptions>,
     ) -> Result<MultiSolveResult, ConfigError> {
-        let initial_pairs: Vec<(u32, LocationAddr)> = initial.into_iter().collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-
-        let ctx = TargetContext {
-            placement: &initial_pairs,
+        crate::placement::single_heuristic::solve_single_heuristic(
+            &self.engine,
+            opts,
+            entropy_opts,
+            generator,
+            initial,
             controls,
             targets,
-            index: self.index(),
-        };
-
-        let candidates = generator.generate(&ctx);
-
-        if candidates.is_empty() {
-            let root = Config::new(initial_pairs.iter().copied())?;
-            return Ok(MultiSolveResult {
-                result: SolveResult::unsolvable(root),
-                candidate_index: None,
-                total_expansions: 0,
-                candidates_tried: 0,
-                attempts: Vec::new(),
-            });
-        }
-
-        let mut total_expansions: u32 = 0;
-        let mut remaining_budget = max_expansions;
-        let mut last_result = None;
-        let mut attempts = Vec::new();
-
-        for (i, candidate) in candidates.iter().enumerate() {
-            if validate_candidate(candidate, controls, targets, self.index()).is_err() {
-                continue;
-            }
-
-            let result = self.solve(
-                initial_pairs.iter().copied(),
-                candidate.iter().copied(),
-                blocked_locs.iter().copied(),
-                remaining_budget,
-                opts,
-                entropy_opts,
-            )?;
-
-            total_expansions += result.nodes_expanded;
-            attempts.push(CandidateAttempt {
-                candidate_index: i,
-                status: result.status,
-                nodes_expanded: result.nodes_expanded,
-            });
-
-            if result.status == SolveStatus::Solved {
-                return Ok(MultiSolveResult {
-                    result,
-                    candidate_index: Some(i),
-                    total_expansions,
-                    candidates_tried: attempts.len(),
-                    attempts,
-                });
-            }
-
-            if let Some(budget) = remaining_budget.as_mut() {
-                *budget = budget.saturating_sub(result.nodes_expanded);
-                if *budget == 0 {
-                    return Ok(MultiSolveResult {
-                        result,
-                        candidate_index: None,
-                        total_expansions,
-                        candidates_tried: attempts.len(),
-                        attempts,
-                    });
-                }
-            }
-
-            last_result = Some(result);
-        }
-
-        let result = last_result.unwrap_or_else(|| {
-            let root =
-                Config::new(initial_pairs.iter().copied()).expect("initial was valid on entry");
-            SolveResult::unsolvable(root)
-        });
-
-        Ok(MultiSolveResult {
-            result,
-            candidate_index: None,
-            total_expansions,
-            candidates_tried: attempts.len(),
-            attempts,
-        })
+            blocked,
+            max_expansions,
+        )
     }
 
     /// Generate and validate candidate target configurations without solving.
