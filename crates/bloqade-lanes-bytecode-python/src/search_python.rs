@@ -22,7 +22,7 @@ use bloqade_lanes_search::nohome::NoHomeOptions;
 use bloqade_lanes_search::receding_horizon::{RecedingHorizonOptions, default_weight_grid};
 use bloqade_lanes_search::solve::{
     EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
-    SolveResult, SolveStatus, Strategy,
+    SolveResult, Strategy,
 };
 use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGenerator};
 
@@ -190,11 +190,7 @@ impl PySolveResult {
     /// Status of the solve: "solved", "unsolvable", or "budget_exceeded".
     #[getter]
     fn status(&self) -> &'static str {
-        match self.inner.status {
-            SolveStatus::Solved => "solved",
-            SolveStatus::Unsolvable => "unsolvable",
-            SolveStatus::BudgetExceeded => "budget_exceeded",
-        }
+        self.inner.status.as_label()
     }
 
     /// Move layers: list of move steps, each a list of lane address tuples.
@@ -255,14 +251,9 @@ impl PySolveResult {
     }
 
     fn __repr__(&self) -> String {
-        let status = match self.inner.status {
-            SolveStatus::Solved => "solved",
-            SolveStatus::Unsolvable => "unsolvable",
-            SolveStatus::BudgetExceeded => "budget_exceeded",
-        };
         format!(
             "SolveResult(status='{}', steps={}, cost={}, expanded={}, deadlocks={})",
-            status,
+            self.inner.status.as_label(),
             self.inner.move_layers.len(),
             self.inner.cost,
             self.inner.nodes_expanded,
@@ -570,11 +561,7 @@ impl PyEntropyScorer {
         gamma: f64,
         w_t: f64,
     ) -> PyResult<Self> {
-        let json = serde_json::to_string(&arch_spec.inner)
-            .map_err(|e| PyValueError::new_err(format!("failed to serialize arch spec: {e}")))?;
-        let parsed = serde_json::from_str(&json)
-            .map_err(|e| PyValueError::new_err(format!("invalid arch spec: {e}")))?;
-        let index = LaneIndex::new(parsed);
+        let index = LaneIndex::from_arch_spec(&arch_spec.inner);
 
         let targets: Vec<(u32, u64)> = target
             .iter()
@@ -699,11 +686,9 @@ impl PyMoveSolver {
     /// Create a solver from a native ArchSpec object.
     #[staticmethod]
     fn from_arch_spec(arch: &PyArchSpec) -> PyResult<Self> {
-        let json = serde_json::to_string(&arch.inner)
-            .map_err(|e| PyValueError::new_err(format!("failed to serialize arch spec: {e}")))?;
-        let inner = MoveSolver::from_json(&json)
-            .map_err(|e| PyValueError::new_err(format!("invalid arch spec: {e}")))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner: MoveSolver::from_arch_spec(&arch.inner),
+        })
     }
 
     /// Solve a move synthesis problem.
@@ -1538,20 +1523,12 @@ pub struct PyMultiSolveResult {
     inner: MultiSolveResult,
 }
 
-fn status_str(s: SolveStatus) -> &'static str {
-    match s {
-        SolveStatus::Solved => "solved",
-        SolveStatus::Unsolvable => "unsolvable",
-        SolveStatus::BudgetExceeded => "budget_exceeded",
-    }
-}
-
 #[pymethods]
 impl PyMultiSolveResult {
     /// Status of the winning solve: "solved", "unsolvable", or "budget_exceeded".
     #[getter]
     fn status(&self) -> &'static str {
-        status_str(self.inner.result.status)
+        self.inner.result.status.as_label()
     }
 
     /// Index of the candidate that succeeded, or None if all failed.
@@ -1583,7 +1560,7 @@ impl PyMultiSolveResult {
                 .map(|a| {
                     let dict = pyo3::types::PyDict::new(py);
                     dict.set_item("candidate_index", a.candidate_index)?;
-                    dict.set_item("status", status_str(a.status))?;
+                    dict.set_item("status", a.status.as_label())?;
                     dict.set_item("nodes_expanded", a.nodes_expanded)?;
                     Ok(dict.into_any().unbind())
                 })
@@ -1633,7 +1610,7 @@ impl PyMultiSolveResult {
     fn __repr__(&self) -> String {
         format!(
             "MultiSolveResult(status='{}', candidate={:?}, tried={}, expansions={})",
-            status_str(self.inner.result.status),
+            self.inner.result.status.as_label(),
             self.inner.candidate_index,
             self.inner.candidates_tried,
             self.inner.total_expansions,

@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
+use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
 use crate::astar::SearchResult;
@@ -74,6 +75,17 @@ pub enum SolveStatus {
     BudgetExceeded,
 }
 
+impl SolveStatus {
+    /// Stable string label for status reporting (PyO3 wrappers, logs).
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::Solved => "solved",
+            Self::Unsolvable => "unsolvable",
+            Self::BudgetExceeded => "budget_exceeded",
+        }
+    }
+}
+
 /// Result of a solve attempt.
 ///
 /// Always returned (never `None`). Check [`status`](SolveResult::status) to
@@ -96,6 +108,57 @@ pub struct SolveResult {
     pub deadlocks: u32,
     /// Optional entropy-search trace payload for visualization/debugging.
     pub entropy_trace: Option<EntropyTrace>,
+}
+
+impl SolveResult {
+    /// Construct a [`SolveStatus::Solved`] result with the given path and counters.
+    pub fn solved(
+        goal_config: Config,
+        move_layers: Vec<MoveSet>,
+        cost: f64,
+        nodes_expanded: u32,
+        deadlocks: u32,
+    ) -> Self {
+        Self {
+            status: SolveStatus::Solved,
+            move_layers,
+            goal_config,
+            nodes_expanded,
+            cost,
+            deadlocks,
+            entropy_trace: None,
+        }
+    }
+
+    /// Construct a non-Solved result anchored at `root_config`.
+    /// Use [`SolveStatus::Unsolvable`] or [`SolveStatus::BudgetExceeded`].
+    /// `move_layers` is empty and `cost` is `0.0` by definition.
+    pub fn unsolved(
+        status: SolveStatus,
+        root_config: Config,
+        nodes_expanded: u32,
+        deadlocks: u32,
+    ) -> Self {
+        debug_assert!(
+            !matches!(status, SolveStatus::Solved),
+            "SolveResult::unsolved cannot carry SolveStatus::Solved; use SolveResult::solved"
+        );
+        Self {
+            status,
+            move_layers: Vec::new(),
+            goal_config: root_config,
+            nodes_expanded,
+            cost: 0.0,
+            deadlocks,
+            entropy_trace: None,
+        }
+    }
+
+    /// Convenience for [`SolveStatus::Unsolvable`] with zero counters
+    /// (no expansions happened, no deadlocks encountered).
+    pub fn unsolvable(root_config: Config) -> Self {
+        Self::unsolved(SolveStatus::Unsolvable, root_config, 0, 0)
+    }
 }
 
 /// Core search-tuning parameters shared by every [`MoveSolver`] entry point.
@@ -218,6 +281,42 @@ impl Default for EntanglingOptions {
     }
 }
 
+impl EntanglingOptions {
+    /// Apply this options bundle's Hungarian future-layer horizon to a
+    /// list of upcoming CZ layers.
+    ///
+    /// `hungarian_horizon == None` is unbounded; `Some(0)` disables
+    /// multi-layer lookahead entirely; `Some(n > 0)` keeps the first
+    /// `n` layers.
+    pub fn clipped_future_layers<'a>(
+        &self,
+        future_cz_layers: &'a [Vec<(u32, u32)>],
+    ) -> &'a [Vec<(u32, u32)>] {
+        match self.hungarian_horizon {
+            Some(0) => &[],
+            Some(n) => &future_cz_layers[..future_cz_layers.len().min(n)],
+            None => future_cz_layers,
+        }
+    }
+}
+
+impl SolveOptions {
+    /// Upgrade [`DeadlockPolicy::Skip`] to [`DeadlockPolicy::MoveBlockers`]
+    /// for entangling-style routing — the loose-goal solver needs at
+    /// least `MoveBlockers` to handle qubits competing for entangling
+    /// positions. `MoveBlockers` and `AllMoves` pass through unchanged.
+    pub fn upgraded_for_entangling(&self) -> SolveOptions {
+        if matches!(self.deadlock_policy, DeadlockPolicy::Skip) {
+            SolveOptions {
+                deadlock_policy: DeadlockPolicy::MoveBlockers,
+                ..self.clone()
+            }
+        } else {
+            self.clone()
+        }
+    }
+}
+
 // ── Shared helpers ────────────────────────────────────────────────
 
 /// Extract a [`SolveResult`] from a [`SearchResult`].
@@ -227,15 +326,13 @@ fn extract(result: SearchResult, deadlocks: u32, max_exp: Option<u32>) -> SolveR
             let move_layers = result.solution_path().unwrap_or_default();
             let goal_config = result.graph.config(goal_id).clone();
             let cost = result.graph.g_score(goal_id);
-            SolveResult {
-                status: SolveStatus::Solved,
-                move_layers,
+            SolveResult::solved(
                 goal_config,
-                nodes_expanded: result.nodes_expanded,
+                move_layers,
                 cost,
+                result.nodes_expanded,
                 deadlocks,
-                entropy_trace: None,
-            }
+            )
         }
         None => {
             let root_config = result.graph.config(result.graph.root()).clone();
@@ -244,15 +341,7 @@ fn extract(result: SearchResult, deadlocks: u32, max_exp: Option<u32>) -> SolveR
             } else {
                 SolveStatus::Unsolvable
             };
-            SolveResult {
-                status,
-                move_layers: Vec::new(),
-                goal_config: root_config,
-                nodes_expanded: result.nodes_expanded,
-                cost: 0.0,
-                deadlocks,
-                entropy_trace: None,
-            }
+            SolveResult::unsolved(status, root_config, result.nodes_expanded, deadlocks)
         }
     }
 }
@@ -610,6 +699,13 @@ impl MoveSolver {
         }
     }
 
+    /// Construct from a borrowed [`ArchSpec`]. Avoids the JSON round-trip
+    /// that callers holding a wrapper around an `ArchSpec` would otherwise
+    /// pay to materialize an owned spec.
+    pub fn from_arch_spec(arch_spec: &ArchSpec) -> Self {
+        Self::from_index(LaneIndex::from_arch_spec(arch_spec))
+    }
+
     /// Access the underlying lane index.
     pub fn index(&self) -> &LaneIndex {
         &self.index
@@ -703,11 +799,9 @@ impl MoveSolver {
         };
 
         let lookahead = opts.lookahead;
+        let top_c = opts.top_c;
         let make_generator = |seed: u64, policy: DeadlockPolicy| {
-            HeuristicGenerator::new()
-                .with_deadlock_policy(policy)
-                .with_lookahead(lookahead)
-                .with_seed(seed)
+            HeuristicGenerator::configured(seed, policy, lookahead, top_c)
         };
 
         Ok(run_with_components(
@@ -781,14 +875,7 @@ impl MoveSolver {
         // share the same view of immobile atoms.
         let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
-        // Apply the Hungarian future-layer horizon: `Some(0)` disables
-        // multi-layer lookahead; `None` is unbounded; `Some(n>0)` keeps the
-        // first `n` future layers.
-        let clipped_future: &[Vec<(u32, u32)>] = match ent_opts.hungarian_horizon {
-            Some(0) => &[],
-            Some(n) => &future_cz_layers[..future_cz_layers.len().min(n)],
-            None => future_cz_layers,
-        };
+        let clipped_future = ent_opts.clipped_future_layers(future_cz_layers);
 
         // Use lookahead assignment if (clipped) future layers are available.
         // Both branches go through `assign_pairs_with_blockers` (directly
@@ -838,19 +925,8 @@ impl MoveSolver {
 
         let lookahead = opts.lookahead;
         let top_c = opts.top_c.unwrap_or(3);
-        // Loose-goal entangling search needs at least MoveBlockers to handle
-        // qubits competing for entangling positions; preserve AllMoves if
-        // explicitly requested.
-        let upgraded_opts;
-        let opts = if matches!(opts.deadlock_policy, DeadlockPolicy::Skip) {
-            upgraded_opts = SolveOptions {
-                deadlock_policy: DeadlockPolicy::MoveBlockers,
-                ..opts.clone()
-            };
-            &upgraded_opts
-        } else {
-            opts
-        };
+        let upgraded_opts = opts.upgraded_for_entangling();
+        let opts = &upgraded_opts;
 
         let mut result = {
             use crate::generators::LooseTargetGenerator;
@@ -866,11 +942,7 @@ impl MoveSolver {
             // generator closure can re-use them as its lookahead inputs.
             let future_layers_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
             let make_generator = move |seed: u64, policy: DeadlockPolicy| {
-                let inner = HeuristicGenerator::new()
-                    .with_deadlock_policy(policy)
-                    .with_lookahead(lookahead)
-                    .with_top_c(top_c)
-                    .with_seed(seed);
+                let inner = HeuristicGenerator::configured(seed, policy, lookahead, Some(top_c));
                 let mut generator = LooseTargetGenerator::new(
                     inner,
                     cz_pairs_owned.clone(),
@@ -1008,26 +1080,11 @@ impl MoveSolver {
         let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
         let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
 
-        // Apply the Hungarian future-layer horizon (same convention as
-        // solve_entangling).
-        let clipped_future: &[Vec<(u32, u32)>] = match ent_opts.hungarian_horizon {
-            Some(0) => &[],
-            Some(n) => &future_cz_layers[..future_cz_layers.len().min(n)],
-            None => future_cz_layers,
-        };
+        let clipped_future = ent_opts.clipped_future_layers(future_cz_layers);
         let future_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
 
-        // Upgrade Skip -> MoveBlockers (same as solve_entangling).
-        let upgraded_opts;
-        let opts = if matches!(opts.deadlock_policy, DeadlockPolicy::Skip) {
-            upgraded_opts = SolveOptions {
-                deadlock_policy: DeadlockPolicy::MoveBlockers,
-                ..opts.clone()
-            };
-            &upgraded_opts
-        } else {
-            opts
-        };
+        let upgraded_opts = opts.upgraded_for_entangling();
+        let opts = &upgraded_opts;
 
         let arch_arc = Arc::new(arch.clone());
         let index_arc: Arc<LaneIndex> = Arc::new(self.index.clone());
@@ -1056,15 +1113,7 @@ impl MoveSolver {
                 ent_opts,
                 future_cz_layers,
             )
-            .unwrap_or_else(|_| SolveResult {
-                status: SolveStatus::Unsolvable,
-                move_layers: Vec::new(),
-                goal_config: state.clone(),
-                nodes_expanded: 0,
-                cost: 0.0,
-                deadlocks: 0,
-                entropy_trace: None,
-            })
+            .unwrap_or_else(|_| SolveResult::unsolvable(state.clone()))
         };
 
         // Run restarts in parallel.
@@ -1169,18 +1218,9 @@ impl MoveSolver {
         nohome_opts: &NoHomeOptions,
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
-        // Both phases route under entangling-style contention; upgrade Skip
-        // to MoveBlockers (preserve AllMoves if explicitly requested).
-        let upgraded_opts;
-        let opts = if matches!(opts.deadlock_policy, DeadlockPolicy::Skip) {
-            upgraded_opts = SolveOptions {
-                deadlock_policy: DeadlockPolicy::MoveBlockers,
-                ..opts.clone()
-            };
-            &upgraded_opts
-        } else {
-            opts
-        };
+        // Both phases route under entangling-style contention.
+        let upgraded_opts = opts.upgraded_for_entangling();
+        let opts = &upgraded_opts;
 
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -1312,15 +1352,7 @@ impl MoveSolver {
             } else {
                 SolveStatus::Unsolvable
             };
-            return Ok(SolveResult {
-                status,
-                move_layers: Vec::new(),
-                goal_config: root,
-                nodes_expanded: total_expanded,
-                cost: 0.0,
-                deadlocks: 0,
-                entropy_trace: None,
-            });
+            return Ok(SolveResult::unsolved(status, root, total_expanded, 0));
         };
 
         // Phase 2: simple per-pair target picker, then route once.
@@ -1340,26 +1372,21 @@ impl MoveSolver {
             let total_cost = return_result.cost + entangling_result.cost;
             let mut combined_layers = return_result.move_layers;
             combined_layers.extend(entangling_result.move_layers);
-            return Ok(SolveResult {
-                status: SolveStatus::Solved,
-                move_layers: combined_layers,
-                goal_config: entangling_result.goal_config,
-                nodes_expanded: total_expanded,
-                cost: total_cost,
-                deadlocks: return_result.deadlocks + entangling_result.deadlocks,
-                entropy_trace: None,
-            });
+            return Ok(SolveResult::solved(
+                entangling_result.goal_config,
+                combined_layers,
+                total_cost,
+                total_expanded,
+                return_result.deadlocks + entangling_result.deadlocks,
+            ));
         }
 
-        Ok(SolveResult {
-            status: entangling_result.status,
-            move_layers: Vec::new(),
-            goal_config: root,
-            nodes_expanded: total_expanded,
-            cost: 0.0,
-            deadlocks: return_result.deadlocks + entangling_result.deadlocks,
-            entropy_trace: None,
-        })
+        Ok(SolveResult::unsolved(
+            entangling_result.status,
+            root,
+            total_expanded,
+            return_result.deadlocks + entangling_result.deadlocks,
+        ))
     }
 }
 
@@ -1424,15 +1451,7 @@ impl MoveSolver {
         if candidates.is_empty() {
             let root = Config::new(initial_pairs.iter().copied())?;
             return Ok(MultiSolveResult {
-                result: SolveResult {
-                    status: SolveStatus::Unsolvable,
-                    move_layers: Vec::new(),
-                    goal_config: root,
-                    nodes_expanded: 0,
-                    cost: 0.0,
-                    deadlocks: 0,
-                    entropy_trace: None,
-                },
+                result: SolveResult::unsolvable(root),
                 candidate_index: None,
                 total_expansions: 0,
                 candidates_tried: 0,
@@ -1495,15 +1514,7 @@ impl MoveSolver {
         let result = last_result.unwrap_or_else(|| {
             let root =
                 Config::new(initial_pairs.iter().copied()).expect("initial was valid on entry");
-            SolveResult {
-                status: SolveStatus::Unsolvable,
-                move_layers: Vec::new(),
-                goal_config: root,
-                nodes_expanded: 0,
-                cost: 0.0,
-                deadlocks: 0,
-                entropy_trace: None,
-            }
+            SolveResult::unsolvable(root)
         });
 
         Ok(MultiSolveResult {

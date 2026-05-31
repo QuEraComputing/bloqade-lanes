@@ -32,7 +32,7 @@ impl PyTargetPolicyRunner {
         let inner = TargetPolicyRunner::from_path(policy_path, &cfg).map_err(map_err)?;
         Ok(Self {
             inner,
-            index: Arc::new(LaneIndex::new(arch_spec.inner.clone())),
+            index: Arc::new(LaneIndex::from_arch_spec(&arch_spec.inner)),
         })
     }
 

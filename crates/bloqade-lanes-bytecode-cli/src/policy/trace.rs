@@ -5,7 +5,6 @@ use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
 use bloqade_lanes_search::dsl::fixture::{self, Problem};
 use bloqade_lanes_search::dsl::move_policy_dsl::{
@@ -57,14 +56,6 @@ pub fn run_trace_policy(
     }
 }
 
-fn loc_from_triple(t: &[i32; 3]) -> LocationAddr {
-    LocationAddr {
-        zone_id: t[0] as u32,
-        word_id: t[1] as u32,
-        site_id: t[2] as u32,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn trace_move(
     policy: &Path,
@@ -77,17 +68,9 @@ fn trace_move(
     writer: Box<dyn Write>,
 ) -> Result<(), String> {
     let index = Arc::new(LaneIndex::new(arch));
-    let initial: Vec<_> = mp
-        .initial
-        .iter()
-        .map(|(q, t)| (*q, loc_from_triple(t)))
-        .collect();
-    let target: Vec<_> = mp
-        .target
-        .iter()
-        .map(|(q, t)| (*q, loc_from_triple(t)))
-        .collect();
-    let blocked: Vec<_> = mp.blocked.iter().map(loc_from_triple).collect();
+    let initial = mp.initial_locations();
+    let target = mp.target_locations();
+    let blocked = mp.blocked_locations();
 
     let opts = PolicyOptions {
         policy_path: policy.display().to_string(),
@@ -124,11 +107,7 @@ fn trace_target(
     writer: Box<dyn Write>,
 ) -> Result<(), String> {
     let index = Arc::new(LaneIndex::new(arch));
-    let placement: Vec<_> = tp
-        .current_placement
-        .iter()
-        .map(|(q, t)| (*q, loc_from_triple(t)))
-        .collect();
+    let placement = tp.current_placement_locations();
     let cfg = SandboxConfig::default();
     let params_value = super::eval::load_params(params, &tp.policy_params)?;
     let controls = tp.controls.clone();

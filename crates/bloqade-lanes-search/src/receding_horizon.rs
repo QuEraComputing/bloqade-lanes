@@ -504,11 +504,8 @@ pub(crate) fn run_inner_rollout<G: Goal + Sync, Hsum: Heuristic + Copy + Sync>(
     greedy_first: bool,
     inner_beam_width: u32,
 ) -> RolloutOutcome {
-    let inner = HeuristicGenerator::new()
-        .with_deadlock_policy(deadlock_policy)
-        .with_lookahead(inner_lookahead)
-        .with_top_c(top_c)
-        .with_seed(restart_seed);
+    let inner =
+        HeuristicGenerator::configured(restart_seed, deadlock_policy, inner_lookahead, Some(top_c));
 
     // The DistanceScorer in `run_search` reads `ctx.targets` to score
     // candidate moves; we need ctx.targets populated with the actual

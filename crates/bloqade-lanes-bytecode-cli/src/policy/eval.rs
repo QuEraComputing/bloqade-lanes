@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
 use bloqade_lanes_search::dsl::fixture::{self, Problem};
 use bloqade_lanes_search::dsl::move_policy_dsl::{
@@ -65,31 +64,9 @@ fn run_move(
     json: bool,
 ) -> Result<i32, String> {
     let index = Arc::new(LaneIndex::new(arch));
-    let initial = mp.initial.iter().map(|(q, [l, r, c])| {
-        (
-            *q,
-            LocationAddr {
-                zone_id: *l as u32,
-                word_id: *r as u32,
-                site_id: *c as u32,
-            },
-        )
-    });
-    let target = mp.target.iter().map(|(q, [l, r, c])| {
-        (
-            *q,
-            LocationAddr {
-                zone_id: *l as u32,
-                word_id: *r as u32,
-                site_id: *c as u32,
-            },
-        )
-    });
-    let blocked = mp.blocked.iter().map(|[l, r, c]| LocationAddr {
-        zone_id: *l as u32,
-        word_id: *r as u32,
-        site_id: *c as u32,
-    });
+    let initial = mp.initial_locations();
+    let target = mp.target_locations();
+    let blocked = mp.blocked_locations();
 
     let opts = PolicyOptions {
         policy_path: policy.display().to_string(),
@@ -110,7 +87,7 @@ fn run_move(
         .map_err(|e| format!("error: {e}"))?;
     let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    let status_str = status_label(&res.status);
+    let status_str = res.status.as_label();
     let halt_reason = halt_reason(&res.status);
     let env = EvalEnvelope {
         v: SCHEMA_VERSION,
@@ -140,20 +117,7 @@ fn run_target(
     json: bool,
 ) -> Result<i32, String> {
     let index = Arc::new(LaneIndex::new(arch));
-    let placement: Vec<(u32, LocationAddr)> = tp
-        .current_placement
-        .iter()
-        .map(|(q, [l, r, c])| {
-            (
-                *q,
-                LocationAddr {
-                    zone_id: *l as u32,
-                    word_id: *r as u32,
-                    site_id: *c as u32,
-                },
-            )
-        })
-        .collect();
+    let placement = tp.current_placement_locations();
     let cfg = SandboxConfig::default();
     let mut obs = NoOpTargetObserver;
     let t0 = Instant::now();
@@ -205,22 +169,6 @@ pub(crate) fn load_params(
                 .map_err(|e| format!("error: parsing {}: {e}", p.display()))
         }
         None => Ok(fallback.clone()),
-    }
-}
-
-fn status_label(s: &PolicyStatus) -> &'static str {
-    match s {
-        PolicyStatus::Solved => "Solved",
-        PolicyStatus::Unsolvable => "Unsolvable",
-        PolicyStatus::BudgetExhausted => "BudgetExhausted",
-        PolicyStatus::Timeout => "Timeout",
-        PolicyStatus::Fallback(_) => "Fallback",
-        PolicyStatus::SyntaxError(_) => "SyntaxError",
-        PolicyStatus::RuntimeError(_) => "RuntimeError",
-        PolicyStatus::SchemaError(_) => "SchemaError",
-        PolicyStatus::BadPolicy(_) => "BadPolicy",
-        PolicyStatus::StarlarkBudget => "StarlarkBudget",
-        PolicyStatus::StarlarkOOM => "StarlarkOOM",
     }
 }
 

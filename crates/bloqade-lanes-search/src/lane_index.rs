@@ -37,6 +37,15 @@ pub struct LaneIndex {
 }
 
 impl LaneIndex {
+    /// Build a lane index from a borrowed architecture specification.
+    ///
+    /// Clones the spec once internally — useful when the caller already
+    /// holds a borrowed [`ArchSpec`] (e.g. through a wrapper) and would
+    /// otherwise pay a JSON round-trip to materialize an owned copy.
+    pub fn from_arch_spec(arch_spec: &ArchSpec) -> Self {
+        Self::new(arch_spec.clone())
+    }
+
     /// Build a lane index from an architecture specification.
     ///
     /// Iterates all zones and their buses, computes lane addresses,

@@ -138,6 +138,30 @@ impl HeuristicGenerator {
         self
     }
 
+    /// Build a fully-configured generator from the four knobs every
+    /// solver call site sets together. `top_c == None` keeps all
+    /// scored triples; `Some(n)` keeps the top `n` per qubit.
+    ///
+    /// Consolidates the repeated builder chain in
+    /// [`MoveSolver::solve`](crate::solve::MoveSolver::solve),
+    /// [`MoveSolver::solve_entangling`](crate::solve::MoveSolver::solve_entangling),
+    /// and the receding-horizon inner-rollout factory.
+    pub fn configured(
+        seed: u64,
+        deadlock_policy: DeadlockPolicy,
+        lookahead: bool,
+        top_c: Option<usize>,
+    ) -> Self {
+        let mut g = HeuristicGenerator::new()
+            .with_deadlock_policy(deadlock_policy)
+            .with_lookahead(lookahead)
+            .with_seed(seed);
+        if let Some(c) = top_c {
+            g = g.with_top_c(c);
+        }
+        g
+    }
+
     /// Compute the best 2-step score for a qubit moving to `dst_enc`.
     ///
     /// Looks at all outgoing lanes from `dst` and picks the best

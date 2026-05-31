@@ -142,6 +142,29 @@ pub enum PolicyStatus {
     StarlarkOOM,
 }
 
+impl PolicyStatus {
+    /// Stable string label for status reporting (PyO3 wrappers, CLI
+    /// output). Variants that carry detail (`Fallback`, `SyntaxError`,
+    /// `RuntimeError`, `SchemaError`, `BadPolicy`) collapse to the
+    /// variant name; callers needing the detail string should match
+    /// on the variant directly.
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::Solved => "Solved",
+            Self::Unsolvable => "Unsolvable",
+            Self::BudgetExhausted => "BudgetExhausted",
+            Self::Timeout => "Timeout",
+            Self::Fallback(_) => "Fallback",
+            Self::SyntaxError(_) => "SyntaxError",
+            Self::RuntimeError(_) => "RuntimeError",
+            Self::SchemaError(_) => "SchemaError",
+            Self::BadPolicy(_) => "BadPolicy",
+            Self::StarlarkBudget => "StarlarkBudget",
+            Self::StarlarkOOM => "StarlarkOOM",
+        }
+    }
+}
+
 // ── public entry point ───────────────────────────────────────────────────
 
 /// Run a Move Policy DSL solve.
