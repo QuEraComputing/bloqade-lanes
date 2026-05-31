@@ -102,6 +102,18 @@ impl<'v> StarlarkValue<'v> for StarlarkLane {
             // call fail with `aod_invalid: lane 0 has no qubit at src`,
             // silently corrupting every DSL search policy that reads
             // `lane.encoded` to forward to `insert_child`.
+            //
+            // The `as i64` cast itself is bit-preserving but NOT range-preserving:
+            // bit 63 of `LaneAddr::encode_u64` is `direction` (see `LaneAddr::encode`
+            // in bytecode-core: `data1 = ((direction as u32) << 31) | …`, shifted
+            // into the upper word). Every `Direction::Backward` lane therefore
+            // produces a *negative* `i64` here — by design. The round-trip
+            // contract that lets policies pass the value back into Rust is:
+            // `Starlark i64 → Rust i64 → as u64 → LaneAddr::decode_u64`. Adding
+            // a `debug_assert!(encode_u64() <= i64::MAX as u64)` would fire on
+            // every Backward lane and is *not* the right safety net. The
+            // `lane_encoded_attr_preserves_u64_bit_pattern_through_i64` test
+            // pins this contract for Backward lanes specifically.
             "encoded" => Some(heap.alloc(self.0.encode_u64() as i64)),
             // direction and move_type are #[repr(u8)] enums; cast to i32.
             "direction" => Some(heap.alloc(self.0.direction as i32)),
@@ -378,6 +390,77 @@ out = [
             msg.contains("direction") && msg.contains("42"),
             "expected error to mention 'direction' and the bad value, got: {msg}"
         );
+    }
+
+    /// Pin the bit-preservation contract for `lane.encoded` when the lane
+    /// has `Direction::Backward`. Bit 63 of `LaneAddr::encode_u64` is the
+    /// direction bit, so Backward lanes have an encoded value above
+    /// `i64::MAX`. The `as i64` cast in the `get_attr` impl produces a
+    /// negative integer — and policies that pass that integer back through
+    /// Rust must recover the original `u64` via `as u64` (bit-preserving)
+    /// followed by `LaneAddr::decode_u64`. If anyone adds a defensive
+    /// `debug_assert!(encode_u64() <= i64::MAX as u64)` near the cast,
+    /// this test will fail.
+    #[test]
+    fn lane_encoded_attr_preserves_u64_bit_pattern_through_i64() {
+        use starlark::environment::{GlobalsBuilder, Module};
+        use starlark::eval::Evaluator;
+        use starlark::syntax::{AstModule, Dialect};
+
+        let lane = LaneAddr {
+            direction: Direction::Backward,
+            move_type: MoveType::SiteBus,
+            zone_id: 2,
+            word_id: 3,
+            site_id: 5,
+            bus_id: 7,
+        };
+        let original_u64 = lane.encode_u64();
+        assert!(
+            original_u64 > i64::MAX as u64,
+            "test setup: Backward lane should set bit 63 of encode_u64; got {original_u64:#x}"
+        );
+        let expected_i64 = original_u64 as i64;
+        assert!(
+            expected_i64 < 0,
+            "Backward lane encoded should be negative after `as i64` cast"
+        );
+
+        let globals = GlobalsBuilder::standard()
+            .with(register_address_constructors)
+            .build();
+        let module = Module::new();
+        let ast = AstModule::parse(
+            "test",
+            r#"
+lane = Lane(
+    direction=DIR_BACKWARD,
+    move_type=MT_SITE_BUS,
+    zone_id=2,
+    word_id=3,
+    site_id=5,
+    bus_id=7,
+)
+out = lane.encoded
+"#
+            .to_owned(),
+            &Dialect::Standard,
+        )
+        .unwrap();
+        let mut eval = Evaluator::new(&module);
+        eval.eval_module(ast, &globals).unwrap();
+        let out = module.get("out").unwrap();
+        assert_eq!(
+            format!("{out}"),
+            expected_i64.to_string(),
+            "Starlark `lane.encoded` must surface the negative i64 cast of encode_u64()"
+        );
+
+        // The round-trip contract: `as u64` recovers the bits, and
+        // `LaneAddr::decode_u64` rebuilds the original lane exactly.
+        let recovered_u64 = expected_i64 as u64;
+        assert_eq!(recovered_u64, original_u64);
+        assert_eq!(LaneAddr::decode_u64(recovered_u64), lane);
     }
 
     #[test]
