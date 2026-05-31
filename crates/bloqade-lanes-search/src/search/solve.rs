@@ -11,24 +11,24 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
-use crate::astar::SearchResult;
-use crate::config::{Config, ConfigError};
-use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
-use crate::entangling::{self, WordPairDistances};
-use crate::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY, OCCUPANCY_PENALTY_DEFAULT};
-use crate::entropy::EntropyTrace;
-use crate::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
+use crate::drivers::astar::SearchResult;
+use crate::drivers::entropy::EntropyTrace;
+use crate::drivers::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::goals::AllAtTarget;
-use crate::graph::MoveSet;
-use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-use crate::lane_index::LaneIndex;
-use crate::nohome::{self, NoHomeOptions};
 use crate::observer::NoOpObserver;
+use crate::ops::entangling::{self, WordPairDistances};
+use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY, OCCUPANCY_PENALTY_DEFAULT};
+use crate::placement::nohome::{self, NoHomeOptions};
+use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
+use crate::primitives::config::{Config, ConfigError};
+use crate::primitives::context::{SearchContext, SearchState};
+use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
+use crate::primitives::graph::MoveSet;
+use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::traits::{Goal, Heuristic, MoveGenerator};
 
 /// Inner strategy for the cascade's Phase 1 (fast feasibility search).
@@ -435,12 +435,12 @@ where
                 extract(result, move_gen.deadlock_count(), budget)
             }
             InnerStrategy::Entropy => {
-                let entropy_params = crate::entropy::EntropyParams {
+                let entropy_params = crate::drivers::entropy::EntropyParams {
                     max_movesets_per_group,
                     max_goal_candidates,
                     lookahead: opts.lookahead,
                     w_t,
-                    ..crate::entropy::EntropyParams::default()
+                    ..crate::drivers::entropy::EntropyParams::default()
                 };
                 let mut entropy_trace = if collect_entropy_trace {
                     Some(EntropyTrace::for_params(&entropy_params))
@@ -454,7 +454,7 @@ where
                             Some(trace) => trace,
                             None => &mut noop,
                         };
-                    crate::entropy::entropy_search(
+                    crate::drivers::entropy::entropy_search(
                         root.clone(),
                         goal,
                         &entropy_params,
@@ -854,7 +854,7 @@ impl MoveSolver {
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
         use crate::goals::EntanglingConstraintGoal;
-        use crate::heuristic::PairDistanceHeuristic;
+        use crate::primitives::distance::PairDistanceHeuristic;
 
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -1063,11 +1063,11 @@ impl MoveSolver {
         max_expansions: Option<u32>,
         opts: &SolveOptions,
         ent_opts: &EntanglingOptions,
-        rh_opts: &crate::receding_horizon::RecedingHorizonOptions,
+        rh_opts: &crate::placement::receding_horizon::RecedingHorizonOptions,
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
         use crate::goals::EntanglingConstraintGoal;
-        use crate::heuristic::PairDistanceHeuristic;
+        use crate::primitives::distance::PairDistanceHeuristic;
 
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
@@ -1118,28 +1118,30 @@ impl MoveSolver {
 
         // Run restarts in parallel.
         let results: Vec<SolveResult> = if restarts <= 1 {
-            vec![crate::receding_horizon::solve_entangling_rh_single(
-                root.clone(),
-                &cz_pairs_owned,
-                blocked_encoded.clone(),
-                arch_arc.clone(),
-                index_arc.clone(),
-                dist_table.clone(),
-                &goal,
-                &heuristic,
-                opts,
-                ent_opts,
-                rh_opts,
-                &future_owned,
-                max_expansions,
-                /*restart_seed*/ 0,
-                make_fallback,
-            )]
+            vec![
+                crate::placement::receding_horizon::solve_entangling_rh_single(
+                    root.clone(),
+                    &cz_pairs_owned,
+                    blocked_encoded.clone(),
+                    arch_arc.clone(),
+                    index_arc.clone(),
+                    dist_table.clone(),
+                    &goal,
+                    &heuristic,
+                    opts,
+                    ent_opts,
+                    rh_opts,
+                    &future_owned,
+                    max_expansions,
+                    /*restart_seed*/ 0,
+                    make_fallback,
+                ),
+            ]
         } else {
             (0..restarts)
                 .into_par_iter()
                 .map(|i| {
-                    crate::receding_horizon::solve_entangling_rh_single(
+                    crate::placement::receding_horizon::solve_entangling_rh_single(
                         root.clone(),
                         &cz_pairs_owned,
                         blocked_encoded.clone(),
@@ -1779,7 +1781,7 @@ mod tests {
 
     #[test]
     fn solve_with_generator_default_solves_cz() {
-        use crate::target_generator::DefaultTargetGenerator;
+        use crate::placement::target_generator::DefaultTargetGenerator;
 
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Qubit 0 at word 0 site 0, qubit 1 at word 1 site 0.
@@ -1806,7 +1808,7 @@ mod tests {
 
     #[test]
     fn solve_with_generator_empty_candidates() {
-        use crate::target_generator::DefaultTargetGenerator;
+        use crate::placement::target_generator::DefaultTargetGenerator;
 
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         // Qubit 1 missing from placement — DefaultTargetGenerator returns empty.
@@ -1831,7 +1833,7 @@ mod tests {
 
     #[test]
     fn generate_candidates_returns_valid_only() {
-        use crate::target_generator::DefaultTargetGenerator;
+        use crate::placement::target_generator::DefaultTargetGenerator;
 
         let solver = MoveSolver::from_json(example_arch_json()).unwrap();
         let initial = vec![(0, loc(0, 0)), (1, loc(1, 0))];
@@ -1891,7 +1893,7 @@ mod tests {
         // Verify goal config satisfies the entangling constraint.
         let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
             serde_json::from_str(example_arch_json()).unwrap();
-        let eset = crate::entangling::build_entangling_set(&arch);
+        let eset = crate::ops::entangling::build_entangling_set(&arch);
         let loc_a = result.goal_config.location_of(0).unwrap().encode();
         let loc_b = result.goal_config.location_of(1).unwrap().encode();
         assert!(
@@ -1945,7 +1947,7 @@ mod tests {
         // Verify both pairs satisfy the constraint.
         let arch: bloqade_lanes_bytecode_core::arch::types::ArchSpec =
             serde_json::from_str(example_arch_json()).unwrap();
-        let eset = crate::entangling::build_entangling_set(&arch);
+        let eset = crate::ops::entangling::build_entangling_set(&arch);
         for &(qa, qb) in &[(0u32, 1u32), (2, 3)] {
             let la = result.goal_config.location_of(qa).unwrap().encode();
             let lb = result.goal_config.location_of(qb).unwrap().encode();

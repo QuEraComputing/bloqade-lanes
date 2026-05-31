@@ -1,7 +1,7 @@
 //! Entangling placement enumeration, distance precomputation, and optimal
 //! pair-to-position assignment for loose-goal search.
 //!
-//! This module supports [`crate::solve::MoveSolver::solve_entangling`] by
+//! This module supports [`crate::search::solve::MoveSolver::solve_entangling`] by
 //! providing the architectural queries needed to work with entangling
 //! constraints rather than fixed target locations.
 
@@ -10,14 +10,14 @@ use std::collections::{HashMap, HashSet};
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
-use crate::config::Config;
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::lane_index::LaneIndex;
 
 // ── Shared cost-matrix constants ────────────────────────────────────
 
 /// Default spectator-occupancy penalty (in lane-hop units). See
-/// [`crate::solve::EntanglingOptions::occupancy_penalty`] for full semantics.
+/// [`crate::search::solve::EntanglingOptions::occupancy_penalty`] for full semantics.
 pub(crate) const OCCUPANCY_PENALTY_DEFAULT: f64 = 1.0;
 
 /// Per-atom-moved penalty (in lane-hop units) applied by the iterative
@@ -151,7 +151,7 @@ struct WordPairEntry {
 /// - `min_dist_a[loc]` = min over all sites on `word_a`: distance(loc → site)
 /// - `min_dist_b[loc]` = min over all sites on `word_b`: distance(loc → site)
 ///
-/// This allows the [`PairDistanceHeuristic`](crate::heuristic::PairDistanceHeuristic)
+/// This allows the [`PairDistanceHeuristic`](crate::primitives::distance::PairDistanceHeuristic)
 /// to evaluate pair costs in O(word_pairs) per pair instead of O(placements).
 #[derive(Debug)]
 pub struct WordPairDistances {
@@ -275,7 +275,7 @@ struct PositionSlot {
 /// non-negative.
 ///
 /// Returns `(qubit_id, encoded_target_location)` entries suitable for
-/// [`SearchContext::targets`](crate::context::SearchContext).
+/// [`SearchContext::targets`](crate::primitives::context::SearchContext).
 #[allow(clippy::too_many_arguments)]
 pub fn greedy_assign_pairs(
     cz_pairs: &[(u32, u32)],
@@ -1620,7 +1620,7 @@ pub fn build_partner_map(entangling_set: &HashSet<(u64, u64)>) -> HashMap<u64, u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_arch() -> ArchSpec {

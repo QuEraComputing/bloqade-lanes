@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::{
     DeadlockPolicy,
-    solve::{EntropyOptions, InnerStrategy, MoveSolver, SolveOptions, SolveStatus, Strategy},
+    search::solve::{
+        EntropyOptions, InnerStrategy, MoveSolver, SolveOptions, SolveStatus, Strategy,
+    },
 };
 use serde::Deserialize;
 

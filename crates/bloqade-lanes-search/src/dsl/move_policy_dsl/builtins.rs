@@ -7,9 +7,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
-use crate::config::Config;
-use crate::graph::MoveSet;
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::graph::MoveSet;
+use crate::primitives::lane_index::LaneIndex;
 
 /// Greedy per-qubit BFS routing.
 ///

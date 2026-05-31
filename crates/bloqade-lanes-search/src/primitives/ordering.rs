@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
-use crate::config::Config;
-use crate::graph::MoveSet;
+use crate::primitives::config::Config;
+use crate::primitives::graph::MoveSet;
 
 pub(crate) type TripletKey = (u8, u32, u8);
 

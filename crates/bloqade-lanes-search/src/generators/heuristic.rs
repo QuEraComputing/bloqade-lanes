@@ -15,12 +15,14 @@ use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr,
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext, SearchState};
-use crate::graph::{MoveSet, NodeId};
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
-use crate::ordering::{TripletKey, cmp_moveset_config_tiebreak, cmp_triplet_entry_tiebreak};
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::ordering::{
+    TripletKey, cmp_moveset_config_tiebreak, cmp_triplet_entry_tiebreak,
+};
 use crate::traits::MoveGenerator;
 
 /// Policy for handling deadlocks (no improving moves available).
@@ -143,8 +145,8 @@ impl HeuristicGenerator {
     /// scored triples; `Some(n)` keeps the top `n` per qubit.
     ///
     /// Consolidates the repeated builder chain in
-    /// [`MoveSolver::solve`](crate::solve::MoveSolver::solve),
-    /// [`MoveSolver::solve_entangling`](crate::solve::MoveSolver::solve_entangling),
+    /// [`MoveSolver::solve`](crate::search::solve::MoveSolver::solve),
+    /// [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling),
     /// and the receding-horizon inner-rollout factory.
     pub fn configured(
         seed: u64,
@@ -575,8 +577,9 @@ impl MoveGenerator for HeuristicGenerator {
             };
 
             // Build grid context from ALL lanes on this bus group (cross-zone).
-            let grid_ctx =
-                crate::aod_grid::BusGridContext::new(ctx.index, mt, bus_id, None, dir, &occupied);
+            let grid_ctx = crate::ops::aod_grid::BusGridContext::new(
+                ctx.index, mt, bus_id, None, dir, &occupied,
+            );
 
             // Build entries (src_encoded -> lane_encoded) and a lane -> triple lookup.
             // Each source location has at most one atom, so no overwrites occur.
@@ -672,8 +675,8 @@ mod tests {
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     use super::*;
-    use crate::heuristic::DistanceTable;
     use crate::observer::NoOpObserver;
+    use crate::primitives::distance::DistanceTable;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_index() -> LaneIndex {
@@ -866,9 +869,9 @@ mod tests {
     #[test]
     fn integration_search_finds_solution() {
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::goals::AllAtTarget;
-        use crate::heuristic::HopDistanceHeuristic;
+        use crate::primitives::distance::HopDistanceHeuristic;
         use crate::scorers::DistanceScorer;
 
         let index = make_index();
@@ -910,9 +913,9 @@ mod tests {
     #[test]
     fn integration_multi_step() {
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::goals::AllAtTarget;
-        use crate::heuristic::HopDistanceHeuristic;
+        use crate::primitives::distance::HopDistanceHeuristic;
         use crate::scorers::DistanceScorer;
 
         let index = make_index();
@@ -976,9 +979,9 @@ mod tests {
     #[test]
     fn deadlock_escape_solves_blocking() {
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::goals::AllAtTarget;
-        use crate::heuristic::HopDistanceHeuristic;
+        use crate::primitives::distance::HopDistanceHeuristic;
         use crate::scorers::DistanceScorer;
 
         let index = make_index();
@@ -1122,9 +1125,9 @@ mod tests {
     #[test]
     fn lookahead_improves_multi_step_ordering() {
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::goals::AllAtTarget;
-        use crate::heuristic::HopDistanceHeuristic;
+        use crate::primitives::distance::HopDistanceHeuristic;
         use crate::scorers::DistanceScorer;
 
         let index = make_index();

@@ -9,7 +9,7 @@ use std::fmt;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-use crate::lane_index::LaneIndex;
+use crate::primitives::lane_index::LaneIndex;
 
 /// Read-only context for target generation, analogous to Python's `TargetContext`.
 pub struct TargetContext<'a> {
@@ -29,7 +29,7 @@ pub struct TargetContext<'a> {
 /// Candidates are tried in order by [`MoveSolver::solve_with_generator`];
 /// the first successful solve wins.
 ///
-/// [`MoveSolver::solve_with_generator`]: crate::solve::MoveSolver::solve_with_generator
+/// [`MoveSolver::solve_with_generator`]: crate::search::solve::MoveSolver::solve_with_generator
 pub trait TargetGenerator: Send + Sync {
     /// Generate an ordered list of candidate target configurations.
     ///

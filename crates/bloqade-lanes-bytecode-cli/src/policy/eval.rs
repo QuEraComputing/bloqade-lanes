@@ -10,7 +10,7 @@ use bloqade_lanes_search::dsl::move_policy_dsl::{
     NoOpMoveObserver, PolicyOptions, PolicyStatus, solve_with_policy,
 };
 use bloqade_lanes_search::dsl::target_generator_dsl::{NoOpTargetObserver, run_target_policy};
-use bloqade_lanes_search::lane_index::LaneIndex;
+use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 
 use super::output::{EvalEnvelope, TargetEvalEnvelope, print_human_move, print_human_target};
 

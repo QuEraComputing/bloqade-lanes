@@ -1,16 +1,16 @@
 //! A* search algorithm and shared search types.
 //!
 //! Provides the [`Expander`] trait, [`SearchResult`] type, and an [`astar`]
-//! convenience function. The actual search loop is in [`crate::frontier`].
+//! convenience function. The actual search loop is in [`crate::drivers::frontier`].
 
-use crate::config::Config;
-use crate::frontier::{self, PriorityFrontier};
-use crate::graph::{MoveSet, NodeId, SearchGraph};
+use crate::drivers::frontier::{self, PriorityFrontier};
+use crate::primitives::config::Config;
+use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 
 /// Legacy trait for generating successor configurations.
 ///
 /// Retained for internal tests only. Use [`crate::traits::MoveGenerator`]
-/// with [`crate::frontier::run_search`] for new code.
+/// with [`crate::drivers::frontier::run_search`] for new code.
 #[allow(dead_code)]
 pub(crate) trait Expander {
     /// Generate all valid successors of the given configuration.

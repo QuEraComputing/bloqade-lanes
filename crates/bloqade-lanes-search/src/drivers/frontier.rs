@@ -10,11 +10,11 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
-use crate::astar::{Expander, SearchResult};
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext, SearchState};
-use crate::graph::{MoveSet, NodeId, SearchGraph};
+use crate::drivers::astar::{Expander, SearchResult};
 use crate::observer::{SearchEvent, SearchObserver};
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator};
 
 /// Number of parent-chain steps to inspect when computing the
@@ -1105,13 +1105,13 @@ mod tests {
 
     #[test]
     fn v2_astar_finds_solution() {
-        use crate::context::{SearchContext, SearchState};
         use crate::cost::UniformCost;
         use crate::generators::HeuristicGenerator;
         use crate::goals::AllAtTarget;
-        use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-        use crate::lane_index::LaneIndex;
         use crate::observer::NoOpObserver;
+        use crate::primitives::context::{SearchContext, SearchState};
+        use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
+        use crate::primitives::lane_index::LaneIndex;
         use crate::scorers::DistanceScorer;
         use crate::test_utils::example_arch_json;
         use bloqade_lanes_bytecode_core::arch::types::ArchSpec;

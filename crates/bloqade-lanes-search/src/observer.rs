@@ -2,20 +2,20 @@
 //!
 //! The [`SearchObserver`] trait is the single hook for monitoring search
 //! progress. Each driver — the frontier-based loop
-//! [`run_search`](crate::frontier::run_search) and the entropy-guided
-//! [`entropy_search`](crate::entropy::entropy_search) — fires
+//! [`run_search`](crate::drivers::frontier::run_search) and the entropy-guided
+//! [`entropy_search`](crate::drivers::entropy::entropy_search) — fires
 //! [`SearchEvent`]s at the points where a trace consumer needs a
 //! snapshot. Use [`NoOpObserver`] when no observability is needed:
 //! `on_event` is `#[inline(always)]` over an empty body so the dispatch
 //! disappears under release-mode inlining.
 //!
 //! Implementations in this crate: [`NoOpObserver`] discards everything;
-//! [`EntropyTrace`](crate::entropy::EntropyTrace) collects events into
+//! [`EntropyTrace`](crate::drivers::entropy::EntropyTrace) collects events into
 //! a `Vec<EntropyTraceStep>` consumed by the Python visualization layer
 //! (preserves the legacy step-record shape verbatim).
 
-use crate::config::Config;
-use crate::graph::{MoveSet, NodeId};
+use crate::primitives::config::Config;
+use crate::primitives::graph::{MoveSet, NodeId};
 
 /// Event emitted during search.
 ///
@@ -153,7 +153,7 @@ impl SearchObserver for NoOpObserver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::primitives::config::Config;
     use crate::test_utils::loc;
 
     /// Test-only observer that records the variant name of each event.

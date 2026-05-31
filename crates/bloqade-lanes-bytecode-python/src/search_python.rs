@@ -11,20 +11,22 @@ use pyo3::prelude::*;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_search::DeadlockPolicy;
-use bloqade_lanes_search::config::Config;
-use bloqade_lanes_search::context::SearchContext;
-use bloqade_lanes_search::entropy::{
+use bloqade_lanes_search::drivers::entropy::{
     EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
 };
-use bloqade_lanes_search::heuristic::DistanceTable;
-use bloqade_lanes_search::lane_index::LaneIndex;
-use bloqade_lanes_search::nohome::NoHomeOptions;
-use bloqade_lanes_search::receding_horizon::{RecedingHorizonOptions, default_weight_grid};
-use bloqade_lanes_search::solve::{
+use bloqade_lanes_search::placement::nohome::NoHomeOptions;
+use bloqade_lanes_search::placement::receding_horizon::{
+    RecedingHorizonOptions, default_weight_grid,
+};
+use bloqade_lanes_search::placement::target_generator::{DefaultTargetGenerator, TargetGenerator};
+use bloqade_lanes_search::primitives::config::Config;
+use bloqade_lanes_search::primitives::context::SearchContext;
+use bloqade_lanes_search::primitives::distance::DistanceTable;
+use bloqade_lanes_search::primitives::lane_index::LaneIndex;
+use bloqade_lanes_search::search::solve::{
     EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
     SolveResult, Strategy,
 };
-use bloqade_lanes_search::target_generator::{DefaultTargetGenerator, TargetGenerator};
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
 

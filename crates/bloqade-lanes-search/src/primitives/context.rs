@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::config::Config;
-use crate::graph::{MoveSet, NodeId};
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::lane_index::LaneIndex;
 
 /// A candidate move produced by a generator, before scoring or cost computation.
 #[derive(Clone)]

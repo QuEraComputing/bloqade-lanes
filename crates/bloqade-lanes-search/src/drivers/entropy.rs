@@ -15,15 +15,15 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
-use crate::aod_grid::BusGridContext;
-use crate::astar::SearchResult;
-use crate::config::Config;
-use crate::context::SearchContext;
-use crate::graph::{MoveSet, NodeId, SearchGraph};
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::drivers::astar::SearchResult;
 use crate::observer::{SearchEvent, SearchObserver};
-use crate::ordering::{
+use crate::ops::aod_grid::BusGridContext;
+use crate::primitives::config::Config;
+use crate::primitives::context::SearchContext;
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
+use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::ordering::{
     TripletKey, cmp_moveset_config_tiebreak, cmp_qubit_lane_dst_tiebreak,
     cmp_triplet_entry_tiebreak,
 };

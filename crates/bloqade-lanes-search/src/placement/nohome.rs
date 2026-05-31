@@ -6,18 +6,18 @@
 //! blend of immediate routing cost and future CZ-partner proximity.
 //!
 //! The assignment is solved with the Hungarian algorithm (reused from
-//! [`crate::entangling`]), making it polynomial and architecture-general.
+//! [`crate::ops::entangling`]), making it polynomial and architecture-general.
 
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
-use crate::config::Config;
-use crate::entangling;
-use crate::entropy::find_path_occupied;
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::drivers::entropy::find_path_occupied;
+use crate::ops::entangling;
+use crate::primitives::config::Config;
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::lane_index::LaneIndex;
 
 /// Lane-signature triple: identifies a parallelisable bus group.
 type LaneSig = (MoveType, u32, Direction);
@@ -369,7 +369,7 @@ fn build_full_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::example_arch_json;
 
     fn make_parts() -> (ArchSpec, LaneIndex) {

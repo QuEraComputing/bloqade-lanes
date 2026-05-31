@@ -15,7 +15,7 @@
 //!      tier-1 winner; advance the state and re-plan.
 //!
 //! `MoveSolver::solve_entangling_rh` (the public entry, defined in
-//! [`crate::solve`]) wraps a parallel restart loop around
+//! [`crate::search::solve`]) wraps a parallel restart loop around
 //! [`solve_entangling_rh_single`].
 
 use std::collections::HashSet;
@@ -24,23 +24,23 @@ use std::sync::Arc;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
-use crate::config::Config;
-use crate::context::{SearchContext, SearchState};
 use crate::cost::UniformCost;
-use crate::entangling;
-use crate::frontier::{self, IdsFrontier};
+use crate::drivers::frontier::{self, IdsFrontier};
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::generators::{HeuristicGenerator, LooseTargetGenerator};
 use crate::goals::EntanglingConstraintGoal;
-use crate::graph::{MoveSet, NodeId, SearchGraph};
-use crate::heuristic::{DistanceTable, PairDistanceHeuristic};
-use crate::lane_index::LaneIndex;
 use crate::observer::NoOpObserver;
+use crate::ops::entangling;
+use crate::primitives::config::Config;
+use crate::primitives::context::{SearchContext, SearchState};
+use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
+use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
+use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::solve::{EntanglingOptions, SolveOptions, SolveResult, SolveStatus};
+use crate::search::solve::{EntanglingOptions, SolveOptions, SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
-use crate::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
+use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
 /// Cap on how many extra noise-perturbed candidates we try when the
 /// weight-grid alone returns fewer than `K` unique assignments.
 const MAX_NOISE_TOP_UP_RETRIES: u64 = 50;
@@ -388,7 +388,7 @@ fn beam_rollout<G: Goal>(
     let mut graph = SearchGraph::new(root);
     let scorer = DistanceScorer;
     let mut search_state = SearchState::default();
-    let mut candidates: Vec<crate::context::MoveCandidate> = Vec::new();
+    let mut candidates: Vec<crate::primitives::context::MoveCandidate> = Vec::new();
     let mut nodes_expanded: u32 = 0;
 
     let ctx = SearchContext {
@@ -415,7 +415,7 @@ fn beam_rollout<G: Goal>(
     for _ in 0..max_depth {
         // Collect (parent, candidate, score) for every candidate from every
         // beam member. The pool is the union of all next-step options.
-        let mut pool: Vec<(NodeId, crate::context::MoveCandidate, f64)> = Vec::new();
+        let mut pool: Vec<(NodeId, crate::primitives::context::MoveCandidate, f64)> = Vec::new();
         for &node in &beam {
             candidates.clear();
             generator.generate(
@@ -1108,8 +1108,8 @@ fn merge_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::SearchGraph;
-    use crate::solve::{MoveSolver, Strategy};
+    use crate::primitives::graph::SearchGraph;
+    use crate::search::solve::{MoveSolver, Strategy};
     use crate::test_utils::{example_arch_json, loc};
 
     // ── Trivial / structural ──
@@ -1162,7 +1162,7 @@ mod tests {
 
         // Build a tree with two children at depth 1, two grandchildren at
         // depth 2, with distinct configs and known h-values.
-        use crate::graph::MoveSet;
+        use crate::primitives::graph::MoveSet;
         let ms = MoveSet::from_encoded(vec![]);
 
         let cfg_d1_a = Config::new([(0, loc(0, 1))]).unwrap();
@@ -1195,7 +1195,7 @@ mod tests {
         let root_cfg = Config::new([(0, loc(0, 0))]).unwrap();
         let mut graph = SearchGraph::new(root_cfg);
         let root = graph.root();
-        use crate::graph::MoveSet;
+        use crate::primitives::graph::MoveSet;
         let ms = MoveSet::from_encoded(vec![]);
 
         // Only depth-1 nodes; no depth-3.

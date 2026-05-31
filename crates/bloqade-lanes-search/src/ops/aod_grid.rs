@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, MoveType};
 
-use crate::lane_index::LaneIndex;
+use crate::primitives::lane_index::LaneIndex;
 
 /// A cluster represented by its X and Y coordinate sets.
 /// The rectangle covers the Cartesian product X × Y.

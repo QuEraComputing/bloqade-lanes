@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::config::Config;
+use crate::primitives::config::Config;
 
 /// Opaque handle to a node in the search graph.
 ///
@@ -19,7 +19,7 @@ pub struct NodeId(pub(crate) u32);
 // `MoveSet` was moved to `bloqade_lanes_dsl_core::primitives::move_set` so
 // the dsl-core `ArchSpec` methods can return a validated `StarlarkMoveSet`
 // without dsl-core needing to depend on this crate. Re-exported here so
-// existing `crate::graph::MoveSet` imports across this crate keep working.
+// existing `crate::primitives::graph::MoveSet` imports across this crate keep working.
 pub use bloqade_lanes_dsl_core::primitives::move_set::MoveSet;
 
 /// Internal node storage.

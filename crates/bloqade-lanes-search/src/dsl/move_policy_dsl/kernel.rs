@@ -42,16 +42,16 @@ use bloqade_lanes_dsl_core::errors::DslError;
 use bloqade_lanes_dsl_core::primitives::arch_spec::StarlarkArchSpec;
 use bloqade_lanes_dsl_core::sandbox::{SandboxConfig, make_evaluator};
 
-use crate::config::Config;
 use crate::dsl::move_policy_dsl::actions::{MoveAction, register_actions};
 use crate::dsl::move_policy_dsl::builtins::sequential_fallback;
 use crate::dsl::move_policy_dsl::graph_handle::{
     BuiltinOutcome, InsertOutcome, NodeStateMap, PolicyGraph, PolicyGraphInner,
 };
 use crate::dsl::move_policy_dsl::lib_move::{Ctx, LibMove};
-use crate::graph::{MoveSet, NodeId, SearchGraph};
-use crate::heuristic::DistanceTable;
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::distance::DistanceTable;
+use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
+use crate::primitives::lane_index::LaneIndex;
 
 // ── public types ─────────────────────────────────────────────────────────
 

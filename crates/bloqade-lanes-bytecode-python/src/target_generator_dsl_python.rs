@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use bloqade_lanes_dsl_core::sandbox::SandboxConfig;
 use bloqade_lanes_search::dsl::target_generator_dsl::{TargetPolicyError, TargetPolicyRunner};
-use bloqade_lanes_search::lane_index::LaneIndex;
+use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};

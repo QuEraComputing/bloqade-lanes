@@ -15,7 +15,7 @@ use bloqade_lanes_search::dsl::target_generator_dsl::{
     CandidateSummary, JsonTargetTraceObserver, TargetContextSnapshot, TargetKernelObserver,
     run_target_policy,
 };
-use bloqade_lanes_search::lane_index::LaneIndex;
+use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_trace_policy(

@@ -11,8 +11,8 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-use crate::config::Config;
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::lane_index::LaneIndex;
 
 // ── DistanceTable ───────────────────────────────────────────────────
 
@@ -394,14 +394,14 @@ impl<'a> HopDistanceHeuristic<'a> {
 /// Per-node cost is O(pairs × word_pairs), with word_pairs typically 1-4.
 pub struct PairDistanceHeuristic<'a> {
     pairs: Vec<(u32, u32)>,
-    word_pair_dists: &'a crate::entangling::WordPairDistances,
+    word_pair_dists: &'a crate::ops::entangling::WordPairDistances,
 }
 
 impl<'a> PairDistanceHeuristic<'a> {
     /// Create from CZ pairs and precomputed word-pair distances.
     pub fn new(
         pairs: &[(u32, u32)],
-        word_pair_dists: &'a crate::entangling::WordPairDistances,
+        word_pair_dists: &'a crate::ops::entangling::WordPairDistances,
     ) -> Self {
         Self {
             pairs: pairs.to_vec(),
@@ -613,11 +613,11 @@ mod tests {
     fn hop_admissible_vs_actual() {
         use std::collections::HashSet;
 
-        use crate::context::{SearchContext, SearchState};
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::generators::exhaustive::ExhaustiveGenerator;
         use crate::goals::AllAtTarget;
+        use crate::primitives::context::{SearchContext, SearchState};
         use crate::scorers::DistanceScorer;
 
         let index = make_index();
@@ -673,13 +673,16 @@ mod tests {
 
     fn make_pair_heuristic(
         index: &LaneIndex,
-    ) -> (DistanceTable, crate::entangling::WordPairDistances) {
+    ) -> (DistanceTable, crate::ops::entangling::WordPairDistances) {
         let arch = index.arch_spec();
-        let locs = crate::entangling::all_entangling_locations(arch);
+        let locs = crate::ops::entangling::all_entangling_locations(arch);
         let dist_table = DistanceTable::new(&locs, index);
-        let word_pairs = crate::entangling::enumerate_word_pairs(arch);
-        let wpd =
-            crate::entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+        let word_pairs = crate::ops::entangling::enumerate_word_pairs(arch);
+        let wpd = crate::ops::entangling::WordPairDistances::from_dist_table(
+            &word_pairs,
+            arch,
+            &dist_table,
+        );
         (dist_table, wpd)
     }
 
@@ -735,22 +738,25 @@ mod tests {
     #[test]
     fn pair_heuristic_admissible() {
         // Verify h <= actual cost by solving with A*.
-        use crate::context::{SearchContext, SearchState};
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::generators::exhaustive::ExhaustiveGenerator;
         use crate::goals::EntanglingConstraintGoal;
+        use crate::primitives::context::{SearchContext, SearchState};
         use crate::scorers::DistanceScorer;
         use std::collections::HashSet;
 
         let index = make_index();
         let arch = index.arch_spec();
-        let eset = crate::entangling::build_entangling_set(arch);
-        let locs = crate::entangling::all_entangling_locations(arch);
+        let eset = crate::ops::entangling::build_entangling_set(arch);
+        let locs = crate::ops::entangling::all_entangling_locations(arch);
         let dist_table = DistanceTable::new(&locs, &index);
-        let word_pairs = crate::entangling::enumerate_word_pairs(arch);
-        let wpd =
-            crate::entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
+        let word_pairs = crate::ops::entangling::enumerate_word_pairs(arch);
+        let wpd = crate::ops::entangling::WordPairDistances::from_dist_table(
+            &word_pairs,
+            arch,
+            &dist_table,
+        );
 
         let cz_pairs = [(0u32, 1u32)];
         let h = PairDistanceHeuristic::new(&cz_pairs, &wpd);
@@ -759,7 +765,7 @@ mod tests {
 
         // Solve with A* to get actual cost.
         let goal = EntanglingConstraintGoal::new(&cz_pairs, eset);
-        let target_encoded = crate::entangling::greedy_assign_pairs(
+        let target_encoded = crate::ops::entangling::greedy_assign_pairs(
             &cz_pairs,
             &config,
             arch,
