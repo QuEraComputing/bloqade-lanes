@@ -16,17 +16,12 @@ use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 use rayon::prelude::*;
 
-use crate::generators::HeuristicGenerator;
-use crate::generators::heuristic::DeadlockPolicy;
-use crate::ops::entangling;
-use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
 use crate::placement::nohome::{self, NoHomeOptions};
 use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
 use crate::primitives::config::{Config, ConfigError};
-use crate::primitives::context::SearchContext;
 use crate::primitives::lane_index::LaneIndex;
 use crate::search::engine::{EntanglingCache, NoHomeCache, SearchEngine};
-use crate::search::restarts::{pick_best, run_with_components};
+use crate::search::restarts::pick_best;
 use crate::search::target_solver::solve_with_engine;
 
 // Re-export the moved types under the original `solve::*` path so existing
@@ -193,185 +188,16 @@ impl MoveSolver {
         ent_opts: &EntanglingOptions,
         future_cz_layers: &[Vec<(u32, u32)>],
     ) -> Result<SolveResult, ConfigError> {
-        use crate::goals::EntanglingConstraintGoal;
-        use crate::primitives::distance::PairDistanceHeuristic;
-
-        let root = Config::new(initial)?;
-        let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-        let arch = self.index().arch_spec();
-
-        // Reuse cached architecture-dependent data (built on first call).
-        let cache = self.entangling_cache();
-        let dist_table = cache.dist_table.clone(); // Arc clone (cheap)
-
-        // Per-call: heuristic, goal, greedy assignment.
-        let heuristic = PairDistanceHeuristic::new(cz_pairs, &cache.wpd);
-        let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
-        let h_sum = |config: &Config| -> f64 { heuristic.estimate_sum(config) };
-
-        let goal = EntanglingConstraintGoal::new(cz_pairs, cache.ent_set.clone());
-
-        // Build the blocked set up-front so the Hungarian and the search
-        // share the same view of immobile atoms.
-        let blocked_encoded: HashSet<u64> = blocked_locs.iter().map(|l| l.encode()).collect();
-
-        let clipped_future = ent_opts.clipped_future_layers(future_cz_layers);
-
-        // Use lookahead assignment if (clipped) future layers are available.
-        // Both branches go through `assign_pairs_with_blockers` (directly
-        // or via `lookahead_assign_pairs`), so the produced target list
-        // includes any spectator displacements needed to break Case-A,
-        // Case-B, or accidental-CZ deadlocks.
-        let greedy_targets = if !clipped_future.is_empty() {
-            entangling::lookahead_assign_pairs(
-                cz_pairs,
-                &root,
-                arch,
-                self.index(),
-                &dist_table,
-                &blocked_encoded,
-                0,
-                clipped_future,
-                LOOKAHEAD_BETA,
-                ent_opts.congestion_weight,
-                ent_opts.occupancy_penalty,
-                MOVE_PENALTY,
-            )
-        } else {
-            entangling::assign_pairs_with_blockers(
-                cz_pairs,
-                &root,
-                arch,
-                self.index(),
-                &dist_table,
-                &blocked_encoded,
-                0,
-                None,
-                0.0,
-                ent_opts.congestion_weight,
-                ent_opts.occupancy_penalty,
-                MOVE_PENALTY,
-                true,
-            )
-        };
-
-        let ctx = SearchContext {
-            index: self.index(),
-            dist_table: &dist_table,
-            blocked: &blocked_encoded,
-            targets: &greedy_targets,
-            cz_pairs: Some(cz_pairs),
-        };
-
-        let lookahead = opts.lookahead;
-        let top_c = opts.top_c.unwrap_or(3);
-        let upgraded_opts = opts.upgraded_for_entangling();
-        let opts = &upgraded_opts;
-
-        let mut result = {
-            use crate::generators::LooseTargetGenerator;
-
-            let arch_arc = Arc::new(arch.clone());
-            let index_arc: Arc<LaneIndex> = Arc::new(self.index().clone());
-            let dt_arc = dist_table.clone(); // Arc clone (cheap)
-            let congestion_weight = ent_opts.congestion_weight;
-            let occupancy_penalty = ent_opts.occupancy_penalty;
-
-            let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
-            // Clone the (clipped) future layers once so the per-restart
-            // generator closure can re-use them as its lookahead inputs.
-            let future_layers_owned: Vec<Vec<(u32, u32)>> = clipped_future.to_vec();
-            let make_generator = move |seed: u64, policy: DeadlockPolicy| {
-                let inner = HeuristicGenerator::configured(seed, policy, lookahead, Some(top_c));
-                let mut generator = LooseTargetGenerator::new(
-                    inner,
-                    cz_pairs_owned.clone(),
-                    arch_arc.clone(),
-                    index_arc.clone(),
-                    dt_arc.clone(),
-                    seed,
-                    congestion_weight,
-                    occupancy_penalty,
-                    MOVE_PENALTY,
-                );
-                if !future_layers_owned.is_empty() {
-                    generator =
-                        generator.with_lookahead(future_layers_owned.clone(), LOOKAHEAD_BETA);
-                }
-                generator
-            };
-
-            run_with_components(
-                root,
-                &goal,
-                make_generator,
-                h_max,
-                h_sum,
-                &ctx,
-                max_expansions,
-                opts,
-                None,
-            )
-        };
-
-        // Post-solve cleanup: move spectator qubits out of accidental CZ positions.
-        if result.status == SolveStatus::Solved {
-            let cz_qubit_set: HashSet<u32> = cz_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
-            let accidental = entangling::find_accidental_cz(
-                &result.goal_config,
-                &cz_qubit_set,
-                &cache.partner_map,
-            );
-
-            if !accidental.is_empty() {
-                let mut cleanup_targets: Vec<(u32, LocationAddr)> =
-                    result.goal_config.iter().collect();
-
-                for &(qid, move_loc) in &accidental {
-                    for &lane in self.index().outgoing_lanes(move_loc) {
-                        if let Some((_, dst)) = self.index().endpoints(&lane) {
-                            if result.goal_config.is_occupied(dst) {
-                                continue;
-                            }
-                            let safe = arch.get_cz_partner(&dst).is_none_or(|p| {
-                                !result.goal_config.is_occupied(p)
-                                    || cz_qubit_set.contains(
-                                        &result.goal_config.qubit_at(p).unwrap_or(u32::MAX),
-                                    )
-                            });
-                            if safe {
-                                if let Some(entry) =
-                                    cleanup_targets.iter_mut().find(|(q, _)| *q == qid)
-                                {
-                                    entry.1 = dst;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let cleanup_result = self.solve(
-                    result.goal_config.iter(),
-                    cleanup_targets,
-                    blocked_locs.iter().copied(),
-                    max_expansions,
-                    opts,
-                    None,
-                );
-
-                if let Ok(cleanup) = cleanup_result
-                    && cleanup.status == SolveStatus::Solved
-                {
-                    result.move_layers.extend(cleanup.move_layers);
-                    result.goal_config = cleanup.goal_config;
-                    result.cost += cleanup.cost;
-                    result.nodes_expanded += cleanup.nodes_expanded;
-                }
-            }
-        }
-
-        Ok(result)
+        crate::placement::loose_goal::solve_loose_goal(
+            &self.engine,
+            opts,
+            ent_opts,
+            initial,
+            cz_pairs,
+            blocked,
+            max_expansions,
+            future_cz_layers,
+        )
     }
 
     /// Receding-horizon (MPC-style) loose-goal entangling solve.

@@ -20,6 +20,7 @@
 //! interface.
 
 pub mod cz_placement;
+pub mod loose_goal;
 pub mod nohome;
 pub mod receding_horizon;
 pub mod single_heuristic;
