@@ -108,6 +108,39 @@ def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
     assert out == AtomState.bottom()
 
 
+def test_is_acceptable_solve_accepts_dsl_fallback_with_path():
+    """Regression: DSL policies that halt via invoke_builtin("sequential_fallback")
+    populate move_layers with the fallback path AND set
+    policy_status="fallback: <reason>". The DSL bridge MUST accept these as
+    valid solves; without this every DSL policy that uses the fallback
+    escape hatch silently produces AtomState.bottom().
+    """
+    from bloqade.lanes.heuristics.physical.policy_movement import (
+        _is_acceptable_solve,
+    )
+
+    class _DslSolvedResult:
+        policy_status = "solved"
+        move_layers = [["lane1"]]
+
+    class _DslFallbackResult:
+        policy_status = "fallback: policy-requested"
+        move_layers = [["lane1", "lane2"]]  # non-empty path
+
+    class _DslFallbackNoPath:
+        policy_status = "fallback: policy-requested"
+        move_layers = []  # no path found
+
+    class _DslUnsolvable:
+        policy_status = "unsolvable"
+        move_layers = []
+
+    assert _is_acceptable_solve(_DslSolvedResult())
+    assert _is_acceptable_solve(_DslFallbackResult())
+    assert not _is_acceptable_solve(_DslFallbackNoPath())
+    assert not _is_acceptable_solve(_DslUnsolvable())
+
+
 def test_cz_placements_rust_with_blocked_locations():
     strategy = PhysicalPlacementStrategy(
         arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()

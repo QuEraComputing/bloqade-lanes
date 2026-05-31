@@ -30,6 +30,11 @@ pub mod target_generator;
 pub(crate) mod test_utils;
 pub mod traits;
 
+// Starlark DSL sidecar — Move Policy and Target Generator DSLs live under
+// `dsl::*`. Declared outside the alphabetical block so DSL additions never
+// collide with new module declarations added by other branches.
+pub mod dsl;
+
 pub use astar::SearchResult;
 pub use config::{Config, ConfigError};
 pub use context::{MoveCandidate, SearchContext, SearchState};

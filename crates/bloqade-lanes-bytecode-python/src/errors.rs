@@ -63,7 +63,7 @@ pub fn arch_spec_errors_to_py(py: Python<'_>, errors: Vec<ArchSpecError>) -> PyE
     };
 
     match cls.call1((&msg, py_errors_list)) {
-        Ok(instance) => PyErr::from_value(instance.into()),
+        Ok(instance) => PyErr::from_value(instance),
         Err(e) => e,
     }
 }
@@ -219,7 +219,7 @@ pub fn validation_errors_to_py(py: Python<'_>, errors: Vec<ValidationError>) -> 
     };
 
     match cls.call1((&msg, py_errors_list)) {
-        Ok(instance) => PyErr::from_value(instance.into()),
+        Ok(instance) => PyErr::from_value(instance),
         Err(e) => e,
     }
 }
