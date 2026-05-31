@@ -655,6 +655,8 @@ pub(crate) fn generate_candidates(
             }
         }
 
+        // Grids may include empty filler lanes so the emitted MoveSet remains
+        // a complete AOD rectangle. Only selected entries add qubit moves.
         let grids = grid_ctx.build_aod_grids(&entries);
         let mut group_candidates: Vec<(f64, MoveSet, Config)> = Vec::new();
         for grid_lanes in grids {

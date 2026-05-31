@@ -1,0 +1,45 @@
+{
+  "current_context": "local-mock",
+  "contexts": [
+    {
+      "name": "local-mock",
+      "qpu": "local-mock",
+      "defaults": {
+        "api_base_url": "http://127.0.0.1:8000",
+        "auth_provider": "local-basic",
+        "qpu_mode": "mock-gemini",
+        "visibility": "public",
+        "http_client": {
+          "verify_ssl": false
+        }
+      },
+      "auth_providers": [
+        {
+          "name": "local-basic",
+          "provider": "basic",
+          "username": "demo",
+          "password": "demo",
+          "chain_end": true
+        }
+      ],
+      "plugins": {
+        "tasks": {
+          "auth_provider": "local-basic",
+          "qpu_mode": "mock-gemini"
+        },
+        "results": {
+          "auth_provider": "local-basic",
+          "qpu_mode": "mock-gemini"
+        },
+        "definitions": {
+          "auth_provider": "local-basic",
+          "qpu_mode": "mock-gemini"
+        },
+        "compilations": {
+          "auth_provider": "local-basic",
+          "qpu_mode": "mock-gemini"
+        }
+      }
+    }
+  ]
+}

@@ -62,8 +62,8 @@ class TerminalLogicalMeasurement(ir.Statement):
 class StarRz(ir.Statement):
     """STAR/TMR logical-Z rotation injection primitive.
 
-    ``rotation_angle`` is the target logical angle. ``qubits`` is an ``IList``
-    of logical qubits.
+    ``rotation_angle`` is the target logical angle in SQuIn IR turn units.
+    ``qubits`` is an ``IList`` of logical qubits.
     The final logical-to-physical lowering computes the physical STAR angle for
     k=3 and emits physical Rz rotations on ``qubit_indices``.
     """

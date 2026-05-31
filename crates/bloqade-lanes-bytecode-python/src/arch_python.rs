@@ -938,6 +938,11 @@ impl PyArchSpec {
         Ok(Self { inner })
     }
 
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
     #[staticmethod]
     fn from_json_validated(json: &str, py: Python<'_>) -> PyResult<Self> {
         let inner = rs::ArchSpec::from_json_validated(json)
