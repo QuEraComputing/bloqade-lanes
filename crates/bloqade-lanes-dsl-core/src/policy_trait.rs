@@ -1,11 +1,19 @@
-//! Generic `Policy` trait — the seam between the kernel and a Starlark-hosted
-//! algorithm. The Move DSL kernel and (later) the Target DSL adapter each
-//! supply an implementation backed by a `LoadedPolicy`.
+//! Generic `Policy` trait — in-crate documentation of the seam between a
+//! kernel and a Starlark-hosted algorithm.
+//!
+//! The Move DSL kernel and the Target DSL adapter each supply their own
+//! private struct that satisfies this shape *without* the trait bound; the
+//! trait is therefore presently unused. It is kept `pub(crate)` so the
+//! shape stays documented and future kernels have a reference to conform
+//! to. Promote back to `pub` (and wire `MovePolicy` / `TargetPolicy` to
+//! implement it) once there are external consumers or a second in-crate
+//! kernel that benefits from generic dispatch.
+#![allow(dead_code)]
 
 use crate::errors::DslError;
 
 /// Outcome of a single `step()` invocation.
-pub enum StepResult<A> {
+pub(crate) enum StepResult<A> {
     /// Apply these actions, in order, then call `step()` again.
     Continue(Vec<A>),
     /// Halt with this status. Kernel finalises the result.
@@ -14,7 +22,7 @@ pub enum StepResult<A> {
 
 /// Halt reasons surfaced by `step()`.
 #[derive(Debug, Clone)]
-pub enum HaltStatus {
+pub(crate) enum HaltStatus {
     Solved,
     Unsolvable,
     BudgetExhausted,
@@ -24,7 +32,7 @@ pub enum HaltStatus {
 
 /// A hosted algorithm. Type parameters keep this generic enough to host
 /// future placement DSLs (§11 of the spec) without modification.
-pub trait Policy {
+pub(crate) trait Policy {
     type Handle;
     type Action;
     type InitArg;

@@ -7,9 +7,8 @@
 
 pub mod adapter;
 pub mod errors;
-pub mod policy_trait;
+pub(crate) mod policy_trait;
 pub mod primitives;
 pub mod sandbox;
 
 pub use errors::DslError;
-pub use policy_trait::{Policy, StepResult};
