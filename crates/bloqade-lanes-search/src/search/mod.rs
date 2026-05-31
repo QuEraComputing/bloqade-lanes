@@ -17,6 +17,7 @@
 //! Forthcoming siblings (per §6 sequencing): `move_search.rs`
 //! (`MoveSearch` composition) and `target_solver.rs` (`TargetSolver`).
 
+pub mod engine;
 pub mod options;
 pub mod restarts;
 pub mod result;

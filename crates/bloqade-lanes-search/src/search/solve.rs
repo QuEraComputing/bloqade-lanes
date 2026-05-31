@@ -10,7 +10,7 @@
 //! extract `MoveSearch` / `TargetSolver` and the `CzPlacement` peers.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use crate::generators::HeuristicGenerator;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::goals::AllAtTarget;
-use crate::ops::entangling::{self, WordPairDistances};
+use crate::ops::entangling;
 use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
 use crate::placement::nohome::{self, NoHomeOptions};
 use crate::placement::target_generator::{TargetContext, TargetGenerator, validate_candidate};
@@ -27,6 +27,7 @@ use crate::primitives::config::{Config, ConfigError};
 use crate::primitives::context::SearchContext;
 use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
 use crate::primitives::lane_index::LaneIndex;
+use crate::search::engine::{EntanglingCache, NoHomeCache, SearchEngine};
 use crate::search::restarts::{pick_best, run_with_components};
 
 // Re-export the moved types under the original `solve::*` path so existing
@@ -37,28 +38,6 @@ pub use crate::search::options::{
 };
 pub use crate::search::result::{SolveResult, SolveStatus};
 
-/// Cached architecture-dependent data for [`MoveSolver::solve_entangling`].
-///
-/// All fields depend only on the architecture (lane index), not on per-call
-/// data (initial positions, CZ pairs). Built once on first
-/// `solve_entangling` call and reused for all subsequent calls.
-pub(crate) struct EntanglingCache {
-    pub ent_set: HashSet<(u64, u64)>,
-    pub partner_map: HashMap<u64, u64>,
-    pub dist_table: Arc<DistanceTable>,
-    pub wpd: WordPairDistances,
-}
-
-/// Cached architecture-dependent data for [`MoveSolver::solve_nohome`].
-///
-/// All fields depend only on the architecture (lane index). Built once on
-/// first `solve_nohome` call and reused for all subsequent calls.
-pub(crate) struct NoHomeCache {
-    pub home_locs: Vec<u64>,
-    pub home_set: HashSet<u64>,
-    pub dist_table: Arc<DistanceTable>,
-}
-
 /// Reusable move synthesis solver.
 ///
 /// Constructed once per architecture — parses the arch spec JSON and builds
@@ -67,16 +46,19 @@ pub(crate) struct NoHomeCache {
 ///
 /// Works for both physical and logical architectures (same interface,
 /// different arch spec JSON).
+///
+/// **Internally a thin wrapper around [`SearchEngine`].** The new
+/// `MoveSearch` / `TargetSolver` / `CzPlacement` composition layer (in
+/// progress) consumes `Arc<SearchEngine>` directly; `MoveSolver`
+/// remains as the legacy facade until the migration completes.
 pub struct MoveSolver {
-    index: LaneIndex,
-    entangling_cache: OnceLock<EntanglingCache>,
-    nohome_cache: OnceLock<NoHomeCache>,
+    engine: SearchEngine,
 }
 
 impl std::fmt::Debug for MoveSolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MoveSolver")
-            .field("index", &self.index)
+            .field("engine", &self.engine)
             .finish_non_exhaustive()
     }
 }
@@ -87,20 +69,15 @@ impl MoveSolver {
     /// Parses the JSON, builds the lane index (precomputes all lane lookups,
     /// endpoints, and positions).
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        let arch_spec = serde_json::from_str(json)?;
         Ok(Self {
-            index: LaneIndex::new(arch_spec),
-            entangling_cache: OnceLock::new(),
-            nohome_cache: OnceLock::new(),
+            engine: SearchEngine::from_json(json)?,
         })
     }
 
     /// Construct from an existing [`LaneIndex`].
     pub fn from_index(index: LaneIndex) -> Self {
         Self {
-            index,
-            entangling_cache: OnceLock::new(),
-            nohome_cache: OnceLock::new(),
+            engine: SearchEngine::from_index(index),
         }
     }
 
@@ -111,33 +88,31 @@ impl MoveSolver {
         Self::from_index(LaneIndex::from_arch_spec(arch_spec))
     }
 
+    /// Construct from an existing [`SearchEngine`]. Used by the new
+    /// `MoveSearch` / `TargetSolver` composition layer to share an
+    /// engine instance across the legacy facade.
+    pub fn from_engine(engine: SearchEngine) -> Self {
+        Self { engine }
+    }
+
+    /// Borrow the underlying [`SearchEngine`].
+    pub fn engine(&self) -> &SearchEngine {
+        &self.engine
+    }
+
+    /// Consume the solver and return the underlying [`SearchEngine`].
+    pub fn into_engine(self) -> SearchEngine {
+        self.engine
+    }
+
     /// Access the underlying lane index.
     pub fn index(&self) -> &LaneIndex {
-        &self.index
+        self.engine.index()
     }
 
     /// Get or build the cached entangling precomputation.
     fn entangling_cache(&self) -> &EntanglingCache {
-        self.entangling_cache.get_or_init(|| {
-            let arch = self.index.arch_spec();
-            let word_pairs = entangling::enumerate_word_pairs(arch);
-            let ent_locs = entangling::all_entangling_locations(arch);
-            let ent_set = entangling::build_entangling_set(arch);
-            let partner_map = entangling::build_partner_map(&ent_set);
-            // Always include time distances — callers with w_t=0.0 just
-            // ignore them (hop-count fields are separate).
-            let dist_table = Arc::new(
-                DistanceTable::new(&ent_locs, &self.index).with_time_distances(&self.index),
-            );
-            let wpd =
-                entangling::WordPairDistances::from_dist_table(&word_pairs, arch, &dist_table);
-            EntanglingCache {
-                ent_set,
-                partner_map,
-                dist_table,
-                wpd,
-            }
-        })
+        self.engine.entangling_cache()
     }
 
     /// Solve a move synthesis problem.
@@ -184,9 +159,9 @@ impl MoveSolver {
         let target_locs: Vec<u64> = target_encoded.iter().map(|&(_, l)| l).collect();
         let w_t = entropy_opts.map_or(EntropyOptions::default().w_t, |e| e.w_t);
         let dist_table = if w_t > 0.0 {
-            DistanceTable::new(&target_locs, &self.index).with_time_distances(&self.index)
+            DistanceTable::new(&target_locs, self.index()).with_time_distances(self.index())
         } else {
-            DistanceTable::new(&target_locs, &self.index)
+            DistanceTable::new(&target_locs, self.index())
         };
         let heuristic = HopDistanceHeuristic::new(target_pairs.iter().copied(), &dist_table);
         let h_max = |config: &Config| -> f64 { heuristic.estimate_max(config) };
@@ -196,7 +171,7 @@ impl MoveSolver {
         let blocked_encoded: std::collections::HashSet<u64> =
             blocked_locs.iter().map(|l| l.encode()).collect();
         let ctx = SearchContext {
-            index: &self.index,
+            index: self.index(),
             dist_table: &dist_table,
             blocked: &blocked_encoded,
             targets: &target_encoded,
@@ -263,7 +238,7 @@ impl MoveSolver {
 
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-        let arch = self.index.arch_spec();
+        let arch = self.index().arch_spec();
 
         // Reuse cached architecture-dependent data (built on first call).
         let cache = self.entangling_cache();
@@ -292,7 +267,7 @@ impl MoveSolver {
                 cz_pairs,
                 &root,
                 arch,
-                &self.index,
+                self.index(),
                 &dist_table,
                 &blocked_encoded,
                 0,
@@ -307,7 +282,7 @@ impl MoveSolver {
                 cz_pairs,
                 &root,
                 arch,
-                &self.index,
+                self.index(),
                 &dist_table,
                 &blocked_encoded,
                 0,
@@ -321,7 +296,7 @@ impl MoveSolver {
         };
 
         let ctx = SearchContext {
-            index: &self.index,
+            index: self.index(),
             dist_table: &dist_table,
             blocked: &blocked_encoded,
             targets: &greedy_targets,
@@ -337,7 +312,7 @@ impl MoveSolver {
             use crate::generators::LooseTargetGenerator;
 
             let arch_arc = Arc::new(arch.clone());
-            let index_arc: Arc<LaneIndex> = Arc::new(self.index.clone());
+            let index_arc: Arc<LaneIndex> = Arc::new(self.index().clone());
             let dt_arc = dist_table.clone(); // Arc clone (cheap)
             let congestion_weight = ent_opts.congestion_weight;
             let occupancy_penalty = ent_opts.occupancy_penalty;
@@ -393,8 +368,8 @@ impl MoveSolver {
                     result.goal_config.iter().collect();
 
                 for &(qid, move_loc) in &accidental {
-                    for &lane in self.index.outgoing_lanes(move_loc) {
-                        if let Some((_, dst)) = self.index.endpoints(&lane) {
+                    for &lane in self.index().outgoing_lanes(move_loc) {
+                        if let Some((_, dst)) = self.index().endpoints(&lane) {
                             if result.goal_config.is_occupied(dst) {
                                 continue;
                             }
@@ -476,7 +451,7 @@ impl MoveSolver {
 
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
-        let arch = self.index.arch_spec();
+        let arch = self.index().arch_spec();
 
         let cache = self.entangling_cache();
         let dist_table = cache.dist_table.clone();
@@ -492,7 +467,7 @@ impl MoveSolver {
         let opts = &upgraded_opts;
 
         let arch_arc = Arc::new(arch.clone());
-        let index_arc: Arc<LaneIndex> = Arc::new(self.index.clone());
+        let index_arc: Arc<LaneIndex> = Arc::new(self.index().clone());
 
         let restarts = opts.restarts.max(1);
         let cz_pairs_owned: Vec<(u32, u32)> = cz_pairs.to_vec();
@@ -572,19 +547,7 @@ impl MoveSolver {
 
     /// Get or build the cached no-home precomputation.
     fn nohome_cache(&self) -> &NoHomeCache {
-        self.nohome_cache.get_or_init(|| {
-            let arch = self.index.arch_spec();
-            let home_locs = nohome::home_sites(arch);
-            let home_set: HashSet<u64> = home_locs.iter().copied().collect();
-            let dist_table = Arc::new(
-                DistanceTable::new(&home_locs, &self.index).with_time_distances(&self.index),
-            );
-            NoHomeCache {
-                home_locs,
-                home_set,
-                dist_table,
-            }
-        })
+        self.engine.nohome_cache()
     }
 
     /// Two-phase no-home placement: return assignment + entangling routing.
@@ -632,7 +595,7 @@ impl MoveSolver {
         let root = Config::new(initial)?;
         let blocked_locs: Vec<LocationAddr> = blocked.into_iter().collect();
         let nh_cache = self.nohome_cache();
-        let arch = self.index.arch_spec();
+        let arch = self.index().arch_spec();
 
         let has_returners = root
             .iter()
@@ -714,7 +677,7 @@ impl MoveSolver {
             &nh_cache.home_set,
             &holes,
             &nh_cache.dist_table,
-            &self.index,
+            self.index(),
             &pw,
             nohome_opts,
         );
@@ -850,7 +813,7 @@ impl MoveSolver {
             placement: &initial_pairs,
             controls,
             targets,
-            index: &self.index,
+            index: self.index(),
         };
 
         let candidates = generator.generate(&ctx);
@@ -872,7 +835,7 @@ impl MoveSolver {
         let mut attempts = Vec::new();
 
         for (i, candidate) in candidates.iter().enumerate() {
-            if validate_candidate(candidate, controls, targets, &self.index).is_err() {
+            if validate_candidate(candidate, controls, targets, self.index()).is_err() {
                 continue;
             }
 
@@ -948,13 +911,13 @@ impl MoveSolver {
             placement: initial,
             controls,
             targets,
-            index: &self.index,
+            index: self.index(),
         };
 
         generator
             .generate(&ctx)
             .into_iter()
-            .filter(|c| validate_candidate(c, controls, targets, &self.index).is_ok())
+            .filter(|c| validate_candidate(c, controls, targets, self.index()).is_ok())
             .collect()
     }
 }
