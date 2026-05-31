@@ -1,17 +1,23 @@
 //! High-level search facade.
 //!
-//! The pre-split `solve.rs` god module currently lives here under its
-//! original filename; it will dissolve into focused siblings during the
-//! §6 type split:
+//! Slice-1 split of the pre-split `solve.rs` god module:
 //!
-//! - `move_search.rs` — the `MoveSearch` strategy + options + observer
-//!   composition.
-//! - `target_solver.rs` — `TargetSolver`: `solve(initial, target,
-//!   blocked) -> moves`.
-//! - `result.rs` — `SolveResult` / `SolveStatus` and their constructors.
-//! - `options.rs` — `SolveOptions` / `EntropyOptions` /
-//!   `EntanglingOptions` and the consolidated helpers
+//! - [`result`] — `SolveResult` / `SolveStatus` and their constructors.
+//! - [`options`] — `Strategy` / `InnerStrategy`, `SolveOptions` /
+//!   `EntropyOptions` / `EntanglingOptions`, with helpers
 //!   (`upgraded_for_entangling`, `clipped_future_layers`).
-//! - `restarts.rs` — `run_with_components`, `pick_best`, `extract`.
+//! - [`restarts`] — `run_with_components`, `pick_best`, `extract`
+//!   (strategy dispatch + restart orchestration).
+//! - [`solve`] — `MoveSolver` (the legacy facade) plus
+//!   `CandidateAttempt` / `MultiSolveResult` until the §6 type split
+//!   lifts `solve_with_generator` / `solve_entangling` /
+//!   `solve_entangling_rh` / `solve_nohome` into their own
+//!   `placement::*Cz*Placement` peers.
+//!
+//! Forthcoming siblings (per §6 sequencing): `move_search.rs`
+//! (`MoveSearch` composition) and `target_solver.rs` (`TargetSolver`).
 
+pub mod options;
+pub mod restarts;
+pub mod result;
 pub mod solve;
