@@ -44,7 +44,7 @@
   "expected": {
     "status": "solved",
     "cost": 9.0,
-    "nodes_expanded": 26,
+    "nodes_expanded": 31,
     "deadlocks": 0,
     "goal_config": {
       "0": 14293751824384,

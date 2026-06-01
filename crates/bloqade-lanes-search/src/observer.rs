@@ -52,6 +52,7 @@ pub enum SearchEvent<'a> {
         moveset: &'a MoveSet,
         candidate_movesets: &'a [MoveSet],
         candidate_index: u32,
+        reason: Option<&'static str>,
         configuration: &'a Config,
         parent_configuration: &'a Config,
         moveset_score: f64,
