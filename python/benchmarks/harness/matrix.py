@@ -14,6 +14,9 @@ from benchmarks.harness.models import (
 from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
 from bloqade.lanes.arch import ArchSpec
 from bloqade.lanes.arch.gemini import physical
+from bloqade.lanes.heuristics.physical.multi_candidate_lookahead import (
+    MultiCandidateLookaheadPlacementStrategy,
+)
 from bloqade.lanes.heuristics.physical.placement import (
     PhysicalPlacementStrategy,
     RustPlacementTraversal,
@@ -167,6 +170,20 @@ def default_strategy_configs(
             notes=(
                 "first-solution Rust solve (non-optimal); "
                 "Rust solver nodes_explored captured from solver output"
+            ),
+        ),
+        StrategyConfig(
+            strategy_id="multi_candidate_lookahead",
+            backend="python",
+            generator_id="multi_candidate_lookahead",
+            build_placement_strategy=lambda: MultiCandidateLookaheadPlacementStrategy(
+                arch_spec=factory(),
+            ),
+            arch_spec_id=arch_spec_id,
+            notes=(
+                "beam search over lookahead window; W=8 candidate "
+                "trajectories with K=20 Hungarian-perturbed candidates "
+                "plus NoReturn result per trajectory per stage"
             ),
         ),
     )
