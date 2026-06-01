@@ -6,11 +6,10 @@ the input of the next. The Rust solver decides the per-layer target layout
 itself (via Hungarian, K-candidate rollouts, or two-phase assignment) rather
 than receiving an externally computed target dict.
 
-Subclasses implement :meth:`NoReturnStrategyBase._invoke_solver` to call
-their specific Rust entry point (``solve_entangling`` / ``solve_nohome`` /
-``solve_entangling_rh``). The base owns:
+Subclasses implement :meth:`NoReturnStrategyBase._invoke_placement` to call
+their specific CzPlacement entry point. The base owns:
 
-* solver caching (`_get_solver`)
+* engine caching (`_get_engine`)
 * the shared :class:`SolveOptions` construction (`_build_solve_options`)
 * the :meth:`cz_placements` request/response plumbing
 * the standard single-zone `sq_placements` / `measure_placements` paths
