@@ -1,10 +1,11 @@
 //! PyO3 bindings for the move synthesis solver.
 //!
-//! Exposes [`PyMoveSolver`] and [`PySolveResult`] to Python. Uses a JSON
-//! bridge for `ArchSpec` — the solver is fully decoupled from the bytecode
-//! Python bindings.
+//! Exposes [`PyMoveSolver`] and [`PySolveResult`] to Python, plus the new
+//! typed surface: [`PySearchEngine`], [`PyMoveSearch`], [`PyTargetSolver`],
+//! and the four [`CzPlacement`] peers.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -14,19 +15,25 @@ use bloqade_lanes_search::DeadlockPolicy;
 use bloqade_lanes_search::drivers::entropy::{
     EntropyParams, EntropyTrace, EntropyTraceStep, MovesetMetrics, compute_moveset_metrics,
 };
-use bloqade_lanes_search::placement::nohome::NoHomeOptions;
+use bloqade_lanes_search::placement::cz_placement::CzPlacement;
+use bloqade_lanes_search::placement::loose_goal::LooseGoalCzPlacement;
+use bloqade_lanes_search::placement::nohome::{NoHomeCzPlacement, NoHomeOptions};
 use bloqade_lanes_search::placement::receding_horizon::{
-    RecedingHorizonOptions, default_weight_grid,
+    RecedingHorizonCzPlacement, RecedingHorizonOptions, default_weight_grid,
 };
+use bloqade_lanes_search::placement::single_heuristic::SingleHeuristicCzPlacement;
 use bloqade_lanes_search::placement::target_generator::{DefaultTargetGenerator, TargetGenerator};
 use bloqade_lanes_search::primitives::config::Config;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
+use bloqade_lanes_search::search::engine::SearchEngine;
+use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::solve::{
     EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
     SolveResult, Strategy,
 };
+use bloqade_lanes_search::search::target_solver::TargetSolver;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
 
@@ -1617,5 +1624,594 @@ impl PyMultiSolveResult {
             self.inner.candidates_tried,
             self.inner.total_expansions,
         )
+    }
+}
+
+// ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
+
+/// Precomputed search engine bound to an architecture.
+///
+/// Holds the lane index and (lazily) any cached data that is reused across
+/// solves. Construct once per architecture; share across multiple solvers.
+#[pyclass(
+    name = "SearchEngine",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PySearchEngine {
+    pub(crate) inner: Arc<SearchEngine>,
+}
+
+#[pymethods]
+impl PySearchEngine {
+    /// Create a ``SearchEngine`` from a native ``ArchSpec`` object.
+    #[staticmethod]
+    fn from_arch_spec(arch: &PyArchSpec) -> Self {
+        Self {
+            inner: Arc::new(SearchEngine::from_arch_spec(&arch.inner)),
+        }
+    }
+
+    /// Create a ``SearchEngine`` from an ArchSpec JSON string.
+    #[staticmethod]
+    fn from_json(arch_spec_json: &str) -> PyResult<Self> {
+        let engine = SearchEngine::from_json(arch_spec_json)
+            .map_err(|e| PyValueError::new_err(format!("invalid arch spec JSON: {e}")))?;
+        Ok(Self {
+            inner: Arc::new(engine),
+        })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "SearchEngine(...)"
+    }
+}
+
+/// Search algorithm configuration bundle.
+///
+/// Combine a strategy (entropy, A*, IDS, …) with its tuning options.
+/// Build via the factory class methods, then pass to ``TargetSolver`` or
+/// the ``CzPlacement`` constructors.
+#[pyclass(name = "MoveSearch", frozen, module = "bloqade.lanes.bytecode._native")]
+#[derive(Clone)]
+pub struct PyMoveSearch {
+    pub(crate) inner: MoveSearch,
+}
+
+#[pymethods]
+impl PyMoveSearch {
+    /// Entropy-guided search with default options.
+    #[staticmethod]
+    fn entropy() -> Self {
+        Self {
+            inner: MoveSearch::entropy(),
+        }
+    }
+
+    /// Weighted A* search.
+    #[staticmethod]
+    #[pyo3(signature = (weight = 1.0))]
+    fn astar(weight: f64) -> PyResult<Self> {
+        if !weight.is_finite() || weight <= 0.0 {
+            return Err(PyValueError::new_err(
+                "weight must be a finite float greater than 0.0",
+            ));
+        }
+        Ok(Self {
+            inner: MoveSearch::astar(weight),
+        })
+    }
+
+    /// Iterative-deepening search.
+    #[staticmethod]
+    fn ids() -> Self {
+        Self {
+            inner: MoveSearch::ids(),
+        }
+    }
+
+    /// Cascade: IDS followed by entropy refinement.
+    #[staticmethod]
+    fn cascade_ids() -> Self {
+        Self {
+            inner: MoveSearch::cascade(InnerStrategy::Ids),
+        }
+    }
+
+    /// Cascade: DFS followed by entropy refinement.
+    #[staticmethod]
+    fn cascade_dfs() -> Self {
+        Self {
+            inner: MoveSearch::cascade(InnerStrategy::Dfs),
+        }
+    }
+
+    /// Cascade: entropy followed by a second entropy pass.
+    #[staticmethod]
+    fn cascade_entropy() -> Self {
+        Self {
+            inner: MoveSearch::cascade(InnerStrategy::Entropy),
+        }
+    }
+
+    /// Return a copy with replaced ``SolveOptions``.
+    fn with_options(&self, options: &PySolveOptions) -> Self {
+        Self {
+            inner: self.inner.clone().with_options(options.inner.clone()),
+        }
+    }
+
+    /// Return a copy with replaced ``EntropyOptions``.
+    fn with_entropy_options(&self, entropy_options: &PyEntropyOptions) -> Self {
+        Self {
+            inner: self
+                .inner
+                .clone()
+                .with_entropy_options(entropy_options.inner.clone()),
+        }
+    }
+
+    #[getter]
+    fn strategy(&self) -> PySearchStrategy {
+        PySearchStrategy::from_rs(&self.inner.options.strategy)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MoveSearch(strategy={})",
+            PySearchStrategy::from_rs(&self.inner.options.strategy).name()
+        )
+    }
+}
+
+/// Single-target fixed-placement solver.
+///
+/// Takes a ``SearchEngine`` (holds the lane index) and a ``MoveSearch``
+/// (holds the strategy + options). Call ``solve()`` to route atoms from
+/// an initial to a target configuration.
+#[pyclass(
+    name = "TargetSolver",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyTargetSolver {
+    inner: TargetSolver,
+}
+
+#[pymethods]
+impl PyTargetSolver {
+    #[new]
+    fn new(engine: &PySearchEngine, search: &PyMoveSearch) -> Self {
+        Self {
+            inner: TargetSolver::new(engine.inner.clone(), search.inner.clone()),
+        }
+    }
+
+    /// Solve a fixed-target routing problem.
+    ///
+    /// Args:
+    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
+    ///     target: Mapping of qubit_id to LocationAddress for desired positions.
+    ///     blocked: List of immovable obstacle locations.
+    ///     max_expansions: Optional node expansion budget.
+    ///
+    /// Returns:
+    ///     ``SolveResult`` with status, move layers, and search statistics.
+    #[pyo3(signature = (initial, target, blocked, max_expansions=None))]
+    fn solve(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        target: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let target_pairs: Vec<(u32, LocationAddr)> =
+            target.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner
+                    .solve(initial_pairs, target_pairs, blocked_locs, max_expansions)
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "TargetSolver(...)"
+    }
+}
+
+/// CZ placement via a target generator + single-heuristic routing.
+///
+/// Generates candidate target configurations with ``DefaultTargetGenerator``,
+/// validates each, then routes from ``initial`` to the first valid candidate
+/// within the shared expansion budget.
+#[pyclass(
+    name = "SingleHeuristicCzPlacement",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PySingleHeuristicCzPlacement {
+    inner: SingleHeuristicCzPlacement,
+}
+
+#[pymethods]
+impl PySingleHeuristicCzPlacement {
+    /// Build from an existing ``TargetSolver`` (uses ``DefaultTargetGenerator``).
+    #[new]
+    fn new(solver: &PyTargetSolver) -> Self {
+        Self {
+            inner: SingleHeuristicCzPlacement::new(
+                TargetSolver::new(solver.inner.engine().clone(), solver.inner.search().clone()),
+                Box::new(DefaultTargetGenerator),
+            ),
+        }
+    }
+
+    /// Solve and return the best result across all candidates.
+    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
+    fn solve(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve(
+                    &initial_pairs,
+                    &controls,
+                    &targets,
+                    &blocked_locs,
+                    max_expansions,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    /// Solve and return per-candidate attempt details.
+    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
+    fn solve_with_attempts(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+    ) -> PyResult<PyMultiSolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_with_attempts(
+                    initial_pairs,
+                    &controls,
+                    &targets,
+                    blocked_locs,
+                    max_expansions,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PyMultiSolveResult { inner: result })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "SingleHeuristicCzPlacement(...)"
+    }
+}
+
+/// CZ placement via loose-goal routing.
+///
+/// Simultaneously discovers the entangling placement and the routing path
+/// using ``EntanglingConstraintGoal``. Faster than the two-phase heuristic
+/// approach for small atom counts; may need ``solve_pairs`` when future-layer
+/// lookahead is required.
+#[pyclass(
+    name = "LooseGoalCzPlacement",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyLooseGoalCzPlacement {
+    inner: LooseGoalCzPlacement,
+}
+
+#[pymethods]
+impl PyLooseGoalCzPlacement {
+    #[new]
+    #[pyo3(signature = (engine, search, entangling_options=None))]
+    fn new(
+        engine: &PySearchEngine,
+        search: &PyMoveSearch,
+        entangling_options: Option<&PyEntanglingOptions>,
+    ) -> Self {
+        let ent_opts = entangling_options
+            .map(|o| o.inner.clone())
+            .unwrap_or_default();
+        Self {
+            inner: LooseGoalCzPlacement::new(engine.inner.clone(), search.inner.clone(), ent_opts),
+        }
+    }
+
+    /// Solve using CZ pair constraints (with optional future-layer lookahead).
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
+    fn solve_pairs(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_pairs(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
+    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
+    fn solve(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve(
+                    &initial_pairs,
+                    &controls,
+                    &targets,
+                    &blocked_locs,
+                    max_expansions,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "LooseGoalCzPlacement(...)"
+    }
+}
+
+/// CZ placement via receding-horizon (MPC-style) loose-goal routing.
+///
+/// Generates K diverse Hungarian assignments per stage, rolls each out for
+/// ``rollout_horizon`` layers, commits the winning branch, and re-plans.
+/// Suited for high-occupancy regimes where baseline loose-goal
+/// under-exploits parallelism.
+#[pyclass(
+    name = "RecedingHorizonCzPlacement",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyRecedingHorizonCzPlacement {
+    inner: RecedingHorizonCzPlacement,
+}
+
+#[pymethods]
+impl PyRecedingHorizonCzPlacement {
+    #[new]
+    #[pyo3(signature = (engine, search, entangling_options=None, rh_options=None))]
+    fn new(
+        engine: &PySearchEngine,
+        search: &PyMoveSearch,
+        entangling_options: Option<&PyEntanglingOptions>,
+        rh_options: Option<&PyRecedingHorizonOptions>,
+    ) -> Self {
+        let ent_opts = entangling_options
+            .map(|o| o.inner.clone())
+            .unwrap_or_default();
+        let rh_opts = rh_options.map(|o| o.inner.clone()).unwrap_or_default();
+        Self {
+            inner: RecedingHorizonCzPlacement::new(
+                engine.inner.clone(),
+                search.inner.clone(),
+                ent_opts,
+                rh_opts,
+            ),
+        }
+    }
+
+    /// Solve via receding-horizon MPC (with optional future-layer lookahead).
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
+    fn solve_pairs(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_pairs(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
+    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
+    fn solve(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve(
+                    &initial_pairs,
+                    &controls,
+                    &targets,
+                    &blocked_locs,
+                    max_expansions,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "RecedingHorizonCzPlacement(...)"
+    }
+}
+
+/// Two-phase no-home CZ placement.
+///
+/// Phase 1 assigns displaced qubits to optimal home sites.
+/// Phase 2 routes from home to CZ-staging using loose-goal search.
+#[pyclass(
+    name = "NoHomeCzPlacement",
+    frozen,
+    module = "bloqade.lanes.bytecode._native"
+)]
+pub struct PyNoHomeCzPlacement {
+    inner: NoHomeCzPlacement,
+}
+
+#[pymethods]
+impl PyNoHomeCzPlacement {
+    #[new]
+    #[pyo3(signature = (engine, search, nohome_options=None))]
+    fn new(
+        engine: &PySearchEngine,
+        search: &PyMoveSearch,
+        nohome_options: Option<&PyNoHomeOptions>,
+    ) -> Self {
+        let nh_opts = nohome_options.map(|o| o.inner.clone()).unwrap_or_default();
+        Self {
+            inner: NoHomeCzPlacement::new(engine.inner.clone(), search.inner.clone(), nh_opts),
+        }
+    }
+
+    /// Solve via two-phase no-home placement (with optional future-layer lookahead).
+    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, future_cz_layers=None))]
+    fn solve_pairs(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        cz_pairs: Vec<(u32, u32)>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+        let future = future_cz_layers.unwrap_or_default();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve_pairs(
+                    initial_pairs,
+                    &cz_pairs,
+                    blocked_locs,
+                    max_expansions,
+                    &future,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    /// Solve using explicit control/target qubit lists (calls ``CzPlacement::solve``).
+    #[pyo3(signature = (initial, controls, targets, blocked, max_expansions=None))]
+    fn solve(
+        &self,
+        py: Python<'_>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
+        controls: Vec<u32>,
+        targets: Vec<u32>,
+        blocked: Vec<PyRef<'_, PyLocationAddr>>,
+        max_expansions: Option<u32>,
+    ) -> PyResult<PySolveResult> {
+        let initial_pairs: Vec<(u32, LocationAddr)> =
+            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
+        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
+
+        let result = py
+            .allow_threads(|| {
+                self.inner.solve(
+                    &initial_pairs,
+                    &controls,
+                    &targets,
+                    &blocked_locs,
+                    max_expansions,
+                )
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PySolveResult { inner: result })
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "NoHomeCzPlacement(...)"
     }
 }
