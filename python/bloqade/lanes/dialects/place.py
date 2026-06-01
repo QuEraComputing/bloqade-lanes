@@ -1,10 +1,9 @@
 from bloqade.analysis import address
-from kirin import exception, interp, ir, lowering, types
+from kirin import exception, interp, ir, types
 from kirin.analysis.forward import ForwardFrame
 from kirin.decl import info, statement
 from kirin.dialects import ilist
 from kirin.lattice.empty import EmptyLattice
-from kirin.lowering.python.binding import wraps
 
 from bloqade import types as bloqade_types
 from bloqade.gemini.star import validate_steane_star_support
@@ -81,43 +80,6 @@ class NewLogicalQubit(_NewQubitBase):
     theta: ir.SSAValue = info.argument(types.Float)
     phi: ir.SSAValue = info.argument(types.Float)
     lam: ir.SSAValue = info.argument(types.Float)
-
-
-LocationAddressType = types.PyClass(LocationAddress)
-_Len = types.TypeVar("_Len")
-
-
-@statement(dialect=dialect)
-class UserMoveTo(ir.Statement):
-    """User-facing move_to directive: move qubits to specified LocationAddress destinations.
-
-    Lowered from a Python call by FromPythonCall. RewritePlaceOperations rewrites this
-    to a StaticPlacement(place.MoveTo) after const-folding the locations ilist.
-    """
-
-    name = "user_move_to"
-    traits = frozenset({lowering.FromPythonCall()})
-    qubits: ir.SSAValue = info.argument(
-        type=ilist.IListType[bloqade_types.QubitType, _Len]
-    )
-    locations: ir.SSAValue = info.argument(
-        type=ilist.IListType[LocationAddressType, _Len]
-    )
-    multi_move_warning: bool = info.attribute(default=True)
-
-
-@wraps(UserMoveTo)
-def move_to(
-    qubits: list,
-    locations: list,
-    multi_move_warning: bool = True,
-) -> None:
-    """Move the given qubits to the specified LocationAddress destinations.
-
-    Must immediately precede a CZ gate (or another move_to call).
-    Compilation fails if the move is physically infeasible.
-    """
-    ...
 
 
 @statement(init=False)

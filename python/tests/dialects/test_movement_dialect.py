@@ -1,25 +1,25 @@
 from kirin import lowering
 
-from bloqade.lanes.dialects import place
-from bloqade.lanes.dialects.place import UserMoveTo
+from bloqade.gemini.common.dialects import movement
+from bloqade.gemini.common.dialects.movement.stmts import MoveTo
 
 
-def test_user_move_to_in_place_dialect():
-    assert UserMoveTo in place.dialect.stmts
+def test_move_to_in_movement_dialect():
+    assert MoveTo in movement.dialect.stmts
 
 
-def test_user_move_to_attributes():
-    assert hasattr(UserMoveTo, "qubits")
-    assert hasattr(UserMoveTo, "locations")
-    assert hasattr(UserMoveTo, "multi_move_warning")
+def test_move_to_attributes():
+    assert hasattr(MoveTo, "qubits")
+    assert hasattr(MoveTo, "locations")
+    assert hasattr(MoveTo, "multi_move_warning")
 
 
-def test_user_move_to_from_python_call_trait():
-    assert any(isinstance(t, lowering.FromPythonCall) for t in UserMoveTo.traits)
+def test_move_to_from_python_call_trait():
+    assert any(isinstance(t, lowering.FromPythonCall) for t in MoveTo.traits)
 
 
-def test_user_move_to_no_result():
-    assert not hasattr(UserMoveTo, "result")
+def test_move_to_no_result():
+    assert not hasattr(MoveTo, "result")
 
 
 def test_place_move_to_is_quantum_stmt():

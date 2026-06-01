@@ -8,6 +8,7 @@ from kirin.dialects import ilist, py
 from kirin.rewrite import abc
 
 from bloqade import qubit
+from bloqade.gemini.common.dialects import movement as movement_dialect
 from bloqade.gemini.common.dialects.qubit import stmts as gemini_common_stmts
 from bloqade.gemini.logical.dialects.operations import stmts as gemini_stmts
 from bloqade.lanes.bytecode.encoding import LocationAddress
@@ -192,7 +193,7 @@ class RewritePlaceOperations(abc.RewriteRule):
                 gate.CZ,
                 gate.R,
                 gate.Rz,
-                place.UserMoveTo,
+                movement_dialect.stmts.MoveTo,
             ),
         ):
             return abc.RewriteResult()
@@ -350,7 +351,7 @@ class RewritePlaceOperations(abc.RewriteRule):
 
         return abc.RewriteResult(has_done_something=True)
 
-    def rewrite_UserMoveTo(self, node: place.UserMoveTo) -> abc.RewriteResult:
+    def rewrite_MoveTo(self, node: movement_dialect.stmts.MoveTo) -> abc.RewriteResult:
         # qubits: after unrolling, always an ilist.New
         if not isinstance(qubits_list := node.qubits.owner, ilist.New):
             return abc.RewriteResult()

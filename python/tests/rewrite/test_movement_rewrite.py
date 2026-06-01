@@ -6,6 +6,7 @@ from kirin import ir, rewrite
 from kirin.analysis import const
 from kirin.dialects import ilist, py
 
+from bloqade.gemini.common.dialects import movement
 from bloqade.lanes.analysis.placement.lattice import (
     AtomState,
     ConcreteState,
@@ -37,7 +38,7 @@ def _make_rule():
 
 
 def test_rewrite_move_to_produces_static_placement():
-    """place.UserMoveTo with const-foldable locations rewrites to place.StaticPlacement(place.MoveTo)."""
+    """movement.MoveTo with const-foldable locations rewrites to place.StaticPlacement(place.MoveTo)."""
     q0 = ir.TestValue()
     q1 = ir.TestValue()
     qubits_new = ilist.New(values=(q0, q1))
@@ -50,7 +51,7 @@ def test_rewrite_move_to_produces_static_placement():
     # Stamp const hint on the locations SSA value
     locs_new.result.hints["const"] = const.Value((loc_a, loc_b))
 
-    stmt = place.UserMoveTo(
+    stmt = movement.stmts.MoveTo(
         qubits_new.result, locs_new.result, multi_move_warning=False
     )
 
@@ -71,21 +72,21 @@ def test_rewrite_move_to_produces_static_placement():
 
 
 def test_rewrite_move_to_gives_up_without_const_hint():
-    """place.UserMoveTo without a const hint on locations gives up silently."""
+    """movement.MoveTo without a const hint on locations gives up silently."""
     q0 = ir.TestValue()
     qubits_new = ilist.New(values=(q0,))
     loc_val = ir.TestValue()
     locs_new = ilist.New(values=(loc_val,))
     # No const hint on locs_new.result
 
-    stmt = place.UserMoveTo(qubits_new.result, locs_new.result)
+    stmt = movement.stmts.MoveTo(qubits_new.result, locs_new.result)
     test_block = ir.Block([qubits_new, locs_new, stmt])
 
     _make_rule().rewrite(test_block)
 
     remaining = list(test_block.stmts)
-    user_move_stmts = [s for s in remaining if isinstance(s, place.UserMoveTo)]
-    assert len(user_move_stmts) == 1  # unchanged
+    move_stmts = [s for s in remaining if isinstance(s, movement.stmts.MoveTo)]
+    assert len(move_stmts) == 1  # unchanged
 
 
 # ---------------------------------------------------------------------------
