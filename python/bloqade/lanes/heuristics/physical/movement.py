@@ -77,33 +77,6 @@ class RustPlacementTraversal:
     collect_entropy_trace: bool = False
 
 
-def solve_options_from_traversal(
-    traversal: RustPlacementTraversal,
-    *,
-    collect_entropy_trace: bool | None = None,
-) -> tuple[_native.SolveOptions, _native.EntropyOptions]:
-    """Build ``(SolveOptions, EntropyOptions)`` from a ``RustPlacementTraversal``.
-
-    Used by ``move_synthesis`` (``MoveSolver``-based path). ``collect_entropy_trace``
-    overrides the traversal's flag when set.
-    """
-    opts = _native.SolveOptions(
-        strategy=_STRATEGY_MAP[traversal.strategy],
-        restarts=traversal.restarts,
-        lookahead=traversal.lookahead,
-    )
-    entropy_opts = _native.EntropyOptions(
-        max_movesets_per_group=traversal.max_movesets_per_group,
-        max_goal_candidates=traversal.max_goal_candidates,
-        collect_entropy_trace=(
-            traversal.collect_entropy_trace
-            if collect_entropy_trace is None
-            else collect_entropy_trace
-        ),
-    )
-    return opts, entropy_opts
-
-
 def _move_search_from_traversal(
     traversal: RustPlacementTraversal,
     *,
@@ -111,7 +84,6 @@ def _move_search_from_traversal(
 ) -> _native.MoveSearch:
     """Build a ``MoveSearch`` bundle from a ``RustPlacementTraversal``.
 
-    Used by ``PhysicalPlacementStrategy`` (``TargetSolver``-based path).
     Strategy, restarts, lookahead, and entropy knobs are baked into a single
     immutable value; ``collect_entropy_trace`` overrides the traversal flag.
     """

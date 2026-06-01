@@ -1,17 +1,17 @@
 """Move synthesis: layout transition to move layers.
 
 Given an architecture spec and two concrete states (before/after layouts),
-computes the sequence of move layers using the Rust MoveSolver.
+computes the sequence of move layers using the Rust TargetSolver.
 """
 
 from bloqade.lanes.analysis.placement.lattice import ConcreteState
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.bytecode._native import MoveSolver
+from bloqade.lanes.bytecode._native import SearchEngine, TargetSolver
 from bloqade.lanes.bytecode.encoding import LaneAddress
 from bloqade.lanes.heuristics.physical.movement import (
     RustPlacementTraversal,
+    _move_search_from_traversal,
     convert_move_layers,
-    solve_options_from_traversal,
 )
 
 _DEFAULT_TRAVERSAL = RustPlacementTraversal()
@@ -21,14 +21,14 @@ def compute_move_layers(
     arch_spec: ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
-    solver: MoveSolver | None = None,
+    engine: SearchEngine | None = None,
     traversal: RustPlacementTraversal = _DEFAULT_TRAVERSAL,
 ) -> tuple[tuple[LaneAddress, ...], ...]:
-    """Compute move layers from state_before to state_after via the Rust MoveSolver.
+    """Compute move layers from state_before to state_after via the Rust TargetSolver.
 
-    If ``solver`` is provided, it is reused instead of constructing a fresh
-    ``MoveSolver`` — callers that invoke this repeatedly with the same
-    ``arch_spec`` should cache a solver and pass it in. ``traversal`` selects
+    If ``engine`` is provided, it is reused instead of constructing a fresh
+    ``SearchEngine`` — callers that invoke this repeatedly with the same
+    ``arch_spec`` should cache an engine and pass it in. ``traversal`` selects
     the search strategy and bounds; it shares ``RustPlacementTraversal``'s
     defaults with ``PhysicalPlacementStrategy`` so the two callsites cannot
     drift.
@@ -37,17 +37,11 @@ def compute_move_layers(
     target_native = {qid: loc._inner for qid, loc in enumerate(state_after.layout)}
     blocked_native = [loc._inner for loc in state_before.occupied]
 
-    if solver is None:
-        solver = MoveSolver.from_arch_spec(arch_spec._inner)
-    opts, entropy_opts = solve_options_from_traversal(traversal)
-    result = solver.solve(
-        initial_native,
-        target_native,
-        blocked_native,
-        max_expansions=None,
-        options=opts,
-        entropy_options=entropy_opts,
-    )
+    if engine is None:
+        engine = SearchEngine.from_arch_spec(arch_spec._inner)
+    move_search = _move_search_from_traversal(traversal)
+    solver = TargetSolver(engine, move_search)
+    result = solver.solve(initial_native, target_native, blocked_native, None)
     if result.status != "solved":
         raise RuntimeError(f"move synthesis failed with status={result.status!r}")
     return convert_move_layers(result.move_layers)
@@ -57,11 +51,11 @@ def move_to_entangle(
     arch_spec: ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
-    solver: MoveSolver | None = None,
+    engine: SearchEngine | None = None,
 ) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...]]:
     """Synthesize move layers from current layout to CZ entangling layout."""
     return state_after, compute_move_layers(
-        arch_spec, state_before, state_after, solver=solver
+        arch_spec, state_before, state_after, engine=engine
     )
 
 
@@ -69,11 +63,11 @@ def move_to_left(
     arch_spec: ArchSpec,
     state_before: ConcreteState,
     state_after: ConcreteState,
-    solver: MoveSolver | None = None,
+    engine: SearchEngine | None = None,
 ) -> tuple[ConcreteState, tuple[tuple[LaneAddress, ...], ...]]:
     """Synthesize move layers from CZ layout to post-CZ return layout."""
     forward_layers = compute_move_layers(
-        arch_spec, state_after, state_before, solver=solver
+        arch_spec, state_after, state_before, engine=engine
     )
     reverse_layers = tuple(
         tuple(lane.reverse() for lane in move_lanes[::-1])

@@ -42,12 +42,11 @@ def test_no_return_default_construction():
 
 
 def test_no_return_cz_placements_smoke():
-    """End-to-end: solve_entangling dispatches and returns an ExecuteCZ result.
+    """End-to-end: LooseGoalCzPlacement dispatches and returns an ExecuteCZ result.
 
     Initial state already places the two qubits in a valid entangling
     configuration, so ``move_layers`` is empty — this still exercises the
-    full dispatch path (build_candidates → solve_entangling → result
-    decoding) and catches import / default-Options regressions.
+    full dispatch path and catches import / default-Options regressions.
     """
     strategy = NoReturnPlacementStrategy(
         arch_spec=logical.get_arch_spec(),

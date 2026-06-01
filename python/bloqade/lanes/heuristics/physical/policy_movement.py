@@ -5,9 +5,8 @@ Sidecar to :mod:`bloqade.lanes.heuristics.physical.movement` —
 :class:`~bloqade.lanes.heuristics.physical.movement.PhysicalPlacementStrategy`
 but routes each per-stage move synthesis call through the Starlark Move
 Policy DSL (`bloqade.lanes.bytecode._native.PolicyRunner`) instead of the
-strategy-based :class:`MoveSolver`. Keeping the DSL path out of the
-strategy file means main can keep evolving ``movement.py`` without
-colliding with DSL work.
+``TargetSolver``-based path. Keeping the DSL path out of the strategy file
+means main can keep evolving ``movement.py`` without colliding with DSL work.
 """
 
 from __future__ import annotations
@@ -275,7 +274,7 @@ def compute_move_layers_dsl(
 
     Sidecar to
     :func:`bloqade.lanes.heuristics.move_synthesis.compute_move_layers`,
-    routed through :class:`PolicyRunner` rather than :class:`MoveSolver`.
+    routed through :class:`PolicyRunner` rather than :class:`TargetSolver`.
     """
     initial_native = {qid: loc._inner for qid, loc in initial.items()}
     target_native = {qid: loc._inner for qid, loc in target.items()}

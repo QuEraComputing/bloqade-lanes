@@ -12,7 +12,7 @@ lookahead-aware blend), then route home → staging via fixed-target ``solve``.
 This mirrors how :class:`PhysicalPlacementStrategy` routes to pre-computed
 CZ targets.
 
-Both phases run in Rust via ``MoveSolver.solve_nohome``.
+Both phases run in Rust via ``NoHomeCzPlacement``.
 """
 
 from __future__ import annotations

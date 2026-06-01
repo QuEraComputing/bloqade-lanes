@@ -34,7 +34,7 @@ def test_rejects_non_rust_traversal():
 
 
 # ---------------------------------------------------------------------------
-# Rust MoveSolver integration tests
+# Rust TargetSolver integration tests
 # ---------------------------------------------------------------------------
 
 

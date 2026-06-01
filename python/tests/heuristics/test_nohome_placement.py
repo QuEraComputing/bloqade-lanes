@@ -43,11 +43,11 @@ def test_nohome_default_construction():
 
 
 def test_nohome_cz_placements_smoke():
-    """End-to-end: solve_nohome dispatches and returns an ExecuteCZ result.
+    """End-to-end: NoHomeCzPlacement dispatches and returns an ExecuteCZ result.
 
-    Exercises the two-phase return + entangling dispatch path through
-    ``MoveSolver.solve_nohome``. Move-count is not asserted because the
-    initial state may already be in a valid entangling configuration.
+    Exercises the two-phase return + entangling dispatch path. Move-count
+    is not asserted because the initial state may already be in a valid
+    entangling configuration.
     """
     strategy = NoHomePlacementStrategy(
         arch_spec=logical.get_arch_spec(),

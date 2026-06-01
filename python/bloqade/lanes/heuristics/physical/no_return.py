@@ -1,7 +1,7 @@
 """No-return placement strategy using the loose-goal entangling solver.
 
 Instead of fixed target positions, this strategy passes CZ pair constraints
-to the Rust ``solve_entangling`` solver, which simultaneously discovers
+to the Rust ``LooseGoalCzPlacement`` solver, which simultaneously discovers
 both the entangling placement and the routing. Layers are chained: the
 output configuration of one CZ layer becomes the input for the next, so
 atoms do not return to their home positions between CZ gates.
