@@ -1680,58 +1680,114 @@ pub struct PyMoveSearch {
 
 #[pymethods]
 impl PyMoveSearch {
-    /// Entropy-guided search with default options.
+    /// Entropy-guided search. Pass ``options`` to set restarts, lookahead,
+    /// etc.; the strategy is always forced to entropy regardless of
+    /// ``options.strategy``.
     #[staticmethod]
-    fn entropy() -> Self {
-        Self {
-            inner: MoveSearch::entropy(),
+    #[pyo3(signature = (options = None, entropy_options = None))]
+    fn entropy(
+        options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
+    ) -> Self {
+        let mut ms = MoveSearch::entropy();
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::Entropy;
+            ms = ms.with_options(solve_opts);
         }
+        if let Some(eopts) = entropy_options {
+            ms = ms.with_entropy_options(eopts.inner.clone());
+        }
+        Self { inner: ms }
     }
 
-    /// Weighted A* search.
+    /// Weighted A* search. Pass ``options`` to set restarts, lookahead, etc.;
+    /// the strategy is always AStar and ``weight`` always overrides
+    /// ``options.weight``.
     #[staticmethod]
-    #[pyo3(signature = (weight = 1.0))]
-    fn astar(weight: f64) -> PyResult<Self> {
+    #[pyo3(signature = (weight = 1.0, options = None))]
+    fn astar(weight: f64, options: Option<&PySolveOptions>) -> PyResult<Self> {
         if !weight.is_finite() || weight <= 0.0 {
             return Err(PyValueError::new_err(
                 "weight must be a finite float greater than 0.0",
             ));
         }
-        Ok(Self {
-            inner: MoveSearch::astar(weight),
-        })
+        let mut ms = MoveSearch::astar(weight);
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::AStar;
+            solve_opts.weight = weight;
+            ms = ms.with_options(solve_opts);
+        }
+        Ok(Self { inner: ms })
     }
 
-    /// Iterative-deepening search.
+    /// Iterative-deepening search. Pass ``options`` to set restarts,
+    /// lookahead, etc.; the strategy is always IDS.
     #[staticmethod]
-    fn ids() -> Self {
-        Self {
-            inner: MoveSearch::ids(),
+    #[pyo3(signature = (options = None))]
+    fn ids(options: Option<&PySolveOptions>) -> Self {
+        let mut ms = MoveSearch::ids();
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::Ids;
+            ms = ms.with_options(solve_opts);
         }
+        Self { inner: ms }
     }
 
-    /// Cascade: IDS followed by entropy refinement.
+    /// Cascade: IDS followed by entropy refinement. Pass ``options`` to set
+    /// restarts, lookahead, etc.
     #[staticmethod]
-    fn cascade_ids() -> Self {
-        Self {
-            inner: MoveSearch::cascade(InnerStrategy::Ids),
+    #[pyo3(signature = (options = None))]
+    fn cascade_ids(options: Option<&PySolveOptions>) -> Self {
+        let mut ms = MoveSearch::cascade(InnerStrategy::Ids);
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::Cascade {
+                inner: InnerStrategy::Ids,
+            };
+            ms = ms.with_options(solve_opts);
         }
+        Self { inner: ms }
     }
 
-    /// Cascade: DFS followed by entropy refinement.
+    /// Cascade: DFS followed by entropy refinement. Pass ``options`` to set
+    /// restarts, lookahead, etc.
     #[staticmethod]
-    fn cascade_dfs() -> Self {
-        Self {
-            inner: MoveSearch::cascade(InnerStrategy::Dfs),
+    #[pyo3(signature = (options = None))]
+    fn cascade_dfs(options: Option<&PySolveOptions>) -> Self {
+        let mut ms = MoveSearch::cascade(InnerStrategy::Dfs);
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::Cascade {
+                inner: InnerStrategy::Dfs,
+            };
+            ms = ms.with_options(solve_opts);
         }
+        Self { inner: ms }
     }
 
-    /// Cascade: entropy followed by a second entropy pass.
+    /// Cascade: entropy followed by a second entropy pass. Pass ``options``
+    /// to set restarts, lookahead, etc.
     #[staticmethod]
-    fn cascade_entropy() -> Self {
-        Self {
-            inner: MoveSearch::cascade(InnerStrategy::Entropy),
+    #[pyo3(signature = (options = None, entropy_options = None))]
+    fn cascade_entropy(
+        options: Option<&PySolveOptions>,
+        entropy_options: Option<&PyEntropyOptions>,
+    ) -> Self {
+        let mut ms = MoveSearch::cascade(InnerStrategy::Entropy);
+        if let Some(opts) = options {
+            let mut solve_opts = opts.inner.clone();
+            solve_opts.strategy = Strategy::Cascade {
+                inner: InnerStrategy::Entropy,
+            };
+            ms = ms.with_options(solve_opts);
         }
+        if let Some(eopts) = entropy_options {
+            ms = ms.with_entropy_options(eopts.inner.clone());
+        }
+        Self { inner: ms }
     }
 
     /// Return a copy with replaced ``SolveOptions``.

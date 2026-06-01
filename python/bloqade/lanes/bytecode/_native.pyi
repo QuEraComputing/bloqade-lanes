@@ -1547,32 +1547,41 @@ class MoveSearch:
     """
 
     @staticmethod
-    def entropy() -> MoveSearch:
-        """Entropy-guided search with default options."""
+    def entropy(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+    ) -> MoveSearch:
+        """Entropy-guided search. Strategy is always forced to entropy."""
         ...
 
     @staticmethod
-    def astar(weight: float = 1.0) -> MoveSearch:
-        """Weighted A* search."""
+    def astar(
+        weight: float = 1.0,
+        options: Optional[SolveOptions] = None,
+    ) -> MoveSearch:
+        """Weighted A* search. ``weight`` always overrides ``options.weight``."""
         ...
 
     @staticmethod
-    def ids() -> MoveSearch:
-        """Iterative-deepening search."""
+    def ids(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Iterative-deepening search. Strategy is always forced to IDS."""
         ...
 
     @staticmethod
-    def cascade_ids() -> MoveSearch:
+    def cascade_ids(options: Optional[SolveOptions] = None) -> MoveSearch:
         """Cascade: IDS followed by entropy refinement."""
         ...
 
     @staticmethod
-    def cascade_dfs() -> MoveSearch:
+    def cascade_dfs(options: Optional[SolveOptions] = None) -> MoveSearch:
         """Cascade: DFS followed by entropy refinement."""
         ...
 
     @staticmethod
-    def cascade_entropy() -> MoveSearch:
+    def cascade_entropy(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+    ) -> MoveSearch:
         """Cascade: entropy followed by a second entropy pass."""
         ...
 
