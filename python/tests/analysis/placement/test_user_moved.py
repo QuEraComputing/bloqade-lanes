@@ -71,8 +71,8 @@ def test_move_to_placements_occupancy_conflict_returns_bottom():
     assert result == AtomState.bottom()
 
 
-def test_sq_placements_user_moved_preserves_state():
-    """SQ gates must not corrupt UserMoved; the state passes through unchanged."""
+def test_sq_placements_user_moved_strips_to_concrete_state():
+    """Non-palindrome SQ gates strip UserMoved to plain ConcreteState."""
     strat = _make_strategy()
     layout = (_loc(0, 0, 0), _loc(0, 2, 0))
     um = UserMoved.from_concrete_state(
@@ -82,7 +82,8 @@ def test_sq_placements_user_moved_preserves_state():
         pre_user_layout=layout,
     )
     result = strat.sq_placements(um, qubits=(0,))
-    assert result is um  # UserMoved passes through SQ gates unchanged
+    assert isinstance(result, ConcreteState)
+    assert not isinstance(result, UserMoved)  # stripped to plain ConcreteState
 
 
 def test_measure_placements_user_moved_returns_bottom():
@@ -234,8 +235,8 @@ def test_palindrome_cz_without_user_moved_unchanged():
     assert result.user_move_layers == ()  # no user moves involved
 
 
-def test_palindrome_sq_placements_user_moved_returns_bottom():
-    """PalindromePlacementStrategy rejects UserMoved before SQ gate."""
+def test_palindrome_sq_placements_user_moved_preserves_state():
+    """PalindromePlacementStrategy preserves UserMoved through SQ gates."""
     from bloqade.lanes.analysis.placement.strategy import PalindromePlacementStrategy
 
     inner = _make_strategy()
@@ -248,4 +249,4 @@ def test_palindrome_sq_placements_user_moved_returns_bottom():
         pre_user_layout=layout,
     )
     result = strat.sq_placements(um, qubits=(0,))
-    assert result == AtomState.bottom()
+    assert result is um  # UserMoved preserved so CZ can see accumulated move layers

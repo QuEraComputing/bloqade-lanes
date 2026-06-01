@@ -1,4 +1,4 @@
-"""Tests for movement.MoveTo → place.StaticPlacement(place.MoveTo) rewrite."""
+"""Tests for place.UserMoveTo → place.StaticPlacement(place.MoveTo) rewrite."""
 
 import warnings
 
@@ -12,7 +12,7 @@ from bloqade.lanes.analysis.placement.lattice import (
     UserMoved,
 )
 from bloqade.lanes.bytecode.encoding import Direction, LocationAddress, SiteLaneAddress
-from bloqade.lanes.dialects import movement, place
+from bloqade.lanes.dialects import place
 from bloqade.lanes.rewrite.circuit2place import RewritePlaceOperations
 
 _loc = lambda z, w, s: LocationAddress(zone_id=z, word_id=w, site_id=s)  # noqa: E731
@@ -37,7 +37,7 @@ def _make_rule():
 
 
 def test_rewrite_move_to_produces_static_placement():
-    """movement.MoveTo with const-foldable locations rewrites to place.StaticPlacement(place.MoveTo)."""
+    """place.UserMoveTo with const-foldable locations rewrites to place.StaticPlacement(place.MoveTo)."""
     q0 = ir.TestValue()
     q1 = ir.TestValue()
     qubits_new = ilist.New(values=(q0, q1))
@@ -50,7 +50,9 @@ def test_rewrite_move_to_produces_static_placement():
     # Stamp const hint on the locations SSA value
     locs_new.result.hints["const"] = const.Value((loc_a, loc_b))
 
-    stmt = movement.MoveTo(qubits_new.result, locs_new.result, multi_move_warning=False)
+    stmt = place.UserMoveTo(
+        qubits_new.result, locs_new.result, multi_move_warning=False
+    )
 
     test_block = ir.Block([qubits_new, loc_a_val, loc_b_val, locs_new, stmt])
 
@@ -69,21 +71,21 @@ def test_rewrite_move_to_produces_static_placement():
 
 
 def test_rewrite_move_to_gives_up_without_const_hint():
-    """movement.MoveTo without a const hint on locations gives up silently."""
+    """place.UserMoveTo without a const hint on locations gives up silently."""
     q0 = ir.TestValue()
     qubits_new = ilist.New(values=(q0,))
     loc_val = ir.TestValue()
     locs_new = ilist.New(values=(loc_val,))
     # No const hint on locs_new.result
 
-    stmt = movement.MoveTo(qubits_new.result, locs_new.result)
+    stmt = place.UserMoveTo(qubits_new.result, locs_new.result)
     test_block = ir.Block([qubits_new, locs_new, stmt])
 
     _make_rule().rewrite(test_block)
 
     remaining = list(test_block.stmts)
-    movement_stmts = [s for s in remaining if isinstance(s, movement.MoveTo)]
-    assert len(movement_stmts) == 1  # unchanged
+    user_move_stmts = [s for s in remaining if isinstance(s, place.UserMoveTo)]
+    assert len(user_move_stmts) == 1  # unchanged
 
 
 # ---------------------------------------------------------------------------

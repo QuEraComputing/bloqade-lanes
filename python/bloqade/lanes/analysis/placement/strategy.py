@@ -137,16 +137,15 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        if isinstance(state, UserMoved):
-            return state  # SQ gates don't change atom positions; preserve UserMoved
         if isinstance(state, ConcreteState):
-            # Strip CZ-specific metadata so non-CZ statements do not inherit stale move layers in downstream rewrite passes.
+            # UserMoved IS-A ConcreteState, so this strips it to plain ConcreteState.
+            # Strip CZ-specific metadata so non-CZ statements do not inherit stale move layers.
             return ConcreteState(
                 occupied=state.occupied,
                 layout=state.layout,
                 move_count=state.move_count,
             )
-        return state  # No movement needed for single zone
+        return state
 
     def measure_placements(
         self, state: AtomState, qubits: tuple[int, ...]
@@ -291,8 +290,8 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         if isinstance(state, UserMoved):
             return (
-                AtomState.bottom()
-            )  # palindrome requires move_to be immediately followed by CZ
+                state  # preserve accumulated move layers so downstream CZ can see them
+            )
         return self.inner.sq_placements(self._unwrap(state), qubits)
 
     def measure_placements(

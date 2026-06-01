@@ -707,9 +707,8 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        if isinstance(state, UserMoved):
-            return state  # SQ gates don't change atom positions; preserve UserMoved
         if isinstance(state, ConcreteState):
+            # UserMoved IS-A ConcreteState; this strips it to plain ConcreteState.
             return ConcreteState(
                 occupied=state.occupied,
                 layout=state.layout,

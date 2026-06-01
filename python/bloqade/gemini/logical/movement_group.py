@@ -12,12 +12,12 @@ from typing_extensions import Doc
 
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects import movement as movement_dialect
+from bloqade.lanes.dialects import place as place_dialect
 
 from .group import kernel
 
 
-@ir.dialect_group(kernel.union([movement_dialect]))
+@ir.dialect_group(kernel.union([place_dialect]))
 def movement_kernel(self):
     """Gemini logical kernel with user-directed atom movement.
 

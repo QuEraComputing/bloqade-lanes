@@ -22,20 +22,20 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
 from bloqade.lanes.arch.spec import ArchSpec
-from bloqade.lanes.dialects.movement import MoveTo, dialect as movement_dialect
+from bloqade.lanes.dialects.place import UserMoveTo, dialect as place_dialect
 
 if TYPE_CHECKING:
     from bloqade.lanes.validation.address import _ValidationAnalysis
 
 
-@movement_dialect.register(key="move.address.validation")
+@place_dialect.register(key="move.address.validation")
 class _MoveToValidationMethods(interp.MethodTable):
-    @interp.impl(MoveTo)
+    @interp.impl(UserMoveTo)
     def check_move_to(
         self,
         _interp: _ValidationAnalysis,
         frame: ForwardFrame[EmptyLattice],
-        node: MoveTo,
+        node: UserMoveTo,
     ):
         # Lazy import to avoid circular initialisation
         from kirin.analysis import const

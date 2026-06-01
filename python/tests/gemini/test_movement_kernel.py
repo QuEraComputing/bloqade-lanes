@@ -5,7 +5,7 @@ import pytest
 
 from bloqade.gemini.logical.movement_group import movement_kernel
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects.movement import move_to
+from bloqade.lanes.dialects.place import move_to
 
 
 def test_movement_kernel_exists():

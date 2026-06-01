@@ -9,13 +9,13 @@ from bloqade import types as bloqade_types
 from bloqade.gemini.common.validation.move_to import MoveToValidation
 from bloqade.lanes.arch.gemini.logical import get_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
-from bloqade.lanes.dialects.movement import MoveTo, dialect as movement_dialect
+from bloqade.lanes.dialects.place import UserMoveTo as MoveTo, dialect as place_dialect
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DIALECTS = structural_no_opt.union([movement_dialect])
+_DIALECTS = structural_no_opt.union([place_dialect])
 
 _LOC_A = LocationAddress(zone_id=0, word_id=0, site_id=0)
 _LOC_B = LocationAddress(zone_id=0, word_id=1, site_id=0)
