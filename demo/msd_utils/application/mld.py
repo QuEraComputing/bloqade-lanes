@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
+from typing import ContextManager, Protocol
 
 import numpy as np
 from bloqade.decoders import BaseDecoder
@@ -29,6 +31,36 @@ from ..standard.dem import _make_layout_only_dem, _select_output_observables
 from ..standard.sampling import BasisDataset, _iter_task_datasets
 from ..standard.tomography import DEFAULT_TARGET_BLOCH, fidelity_from_zero_one_counts
 from ..standard.types import SimulatorTask
+
+
+class _ProgressBar(Protocol):
+    """Minimal progress-bar protocol used by streamed MLD helpers."""
+
+    def update(self, n: int | float = 1) -> object:
+        """Advance the progress bar."""
+
+
+def _tqdm_progress(
+    *,
+    label: str | None,
+    total: int,
+) -> ContextManager[_ProgressBar | None]:
+    """Return a tqdm progress bar when requested and available."""
+
+    if label is None:
+        return nullcontext(None)
+
+    try:
+        from tqdm.auto import tqdm
+    except ImportError:
+        return nullcontext(None)
+
+    return tqdm(
+        total=int(total),
+        desc=label,
+        unit="shots",
+        dynamic_ncols=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -145,6 +177,7 @@ def train_mld_decoder_pair_from_task(
     chunk_size: int | None = None,
     with_noise: bool = True,
     sim_type: str = "tsim",
+    progress_label: str | None = None,
 ) -> tuple[BaseDecoder, BaseDecoder]:
     """Train full and factory MLD table decoders by sampling a task in chunks.
 
@@ -157,6 +190,8 @@ def train_mld_decoder_pair_from_task(
             samples all requested shots in one call.
         with_noise: Whether to sample the noisy circuit path.
         sim_type: Simulator backend for ``DemoTask`` instances.
+        progress_label: Optional tqdm label used to show streamed training
+            progress.
 
     Returns:
         Pair ``(full_decoder, factory_decoder)``.
@@ -165,42 +200,47 @@ def train_mld_decoder_pair_from_task(
         ValueError: If ``shots`` yields no training data.
     """
 
-    chunk_iter = _iter_task_datasets(
-        task,
-        shots,
-        with_noise=with_noise,
-        chunk_size=chunk_size,
-        sim_type=sim_type,
-    )
+    with _tqdm_progress(label=progress_label, total=shots) as progress:
+        chunk_iter = _iter_task_datasets(
+            task,
+            shots,
+            with_noise=with_noise,
+            chunk_size=chunk_size,
+            sim_type=sim_type,
+        )
 
-    try:
-        first_chunk = next(chunk_iter)
-    except StopIteration as exc:
-        raise ValueError(
-            "Need at least one shot to train an MLD decoder pair."
-        ) from exc
+        try:
+            first_chunk = next(chunk_iter)
+        except StopIteration as exc:
+            raise ValueError(
+                "Need at least one shot to train an MLD decoder pair."
+            ) from exc
 
-    training_arrays = _mld_training_arrays(first_chunk, layout=layout)
+        training_arrays = _mld_training_arrays(first_chunk, layout=layout)
 
-    full_decoder = table_decoder_cls.from_det_obs_shots(
-        _make_layout_only_dem(
-            training_arrays.full_detector_count,
-            training_arrays.full_observable_count,
-        ),
-        training_arrays.full_det_obs,
-    )
-    factory_decoder = table_decoder_cls.from_det_obs_shots(
-        _make_layout_only_dem(
-            training_arrays.factory_detector_count,
-            training_arrays.factory_observable_count,
-        ),
-        training_arrays.factory_det_obs,
-    )
+        full_decoder = table_decoder_cls.from_det_obs_shots(
+            _make_layout_only_dem(
+                training_arrays.full_detector_count,
+                training_arrays.full_observable_count,
+            ),
+            training_arrays.full_det_obs,
+        )
+        factory_decoder = table_decoder_cls.from_det_obs_shots(
+            _make_layout_only_dem(
+                training_arrays.factory_detector_count,
+                training_arrays.factory_observable_count,
+            ),
+            training_arrays.factory_det_obs,
+        )
+        if progress is not None:
+            progress.update(len(first_chunk.detectors))
 
-    for chunk in chunk_iter:
-        chunk_arrays = _mld_training_arrays(chunk, layout=layout)
-        full_decoder.update_det_obs_counts(chunk_arrays.full_det_obs)
-        factory_decoder.update_det_obs_counts(chunk_arrays.factory_det_obs)
+        for chunk in chunk_iter:
+            chunk_arrays = _mld_training_arrays(chunk, layout=layout)
+            full_decoder.update_det_obs_counts(chunk_arrays.full_det_obs)
+            factory_decoder.update_det_obs_counts(chunk_arrays.factory_det_obs)
+            if progress is not None:
+                progress.update(len(chunk.detectors))
 
     return full_decoder, factory_decoder
 
@@ -470,6 +510,7 @@ def estimate_mld_ancilla_scores_from_tasks(
     chunk_size: int | None = None,
     with_noise: bool = True,
     sim_type: str = "tsim",
+    progress_label: str | None = None,
 ) -> np.ndarray:
     """Estimate MLD ancilla scores by sampling ranking tasks in chunks.
 
@@ -489,6 +530,8 @@ def estimate_mld_ancilla_scores_from_tasks(
             samples all requested shots in one call.
         with_noise: Whether to sample the noisy circuit path.
         sim_type: Simulator backend for ``DemoTask`` instances.
+        progress_label: Optional tqdm label prefix used to show streamed
+            ranking progress for each basis.
 
     Returns:
         Array indexed by packed ancilla detector pattern containing estimated
@@ -514,32 +557,38 @@ def estimate_mld_ancilla_scores_from_tasks(
 
     for basis in basis_labels:
         full_decoder, factory_decoder = decoder_by_basis[basis]
-        for dataset in _iter_task_datasets(
-            ranking_tasks_by_basis[basis],
-            shots,
-            with_noise=with_noise,
-            chunk_size=chunk_size,
-            sim_type=sim_type,
-        ):
-            anc_det, _ = split_factory_bits(
-                dataset.detectors,
-                dataset.observables,
-                layout=layout,
-            )
-            if ancilla_detectors is None:
-                ancilla_detectors = anc_det.shape[1]
-            elif ancilla_detectors != anc_det.shape[1]:
-                raise ValueError(
-                    "Inconsistent ancilla detector counts across MLD ranking tasks."
+        basis_progress_label = (
+            f"{progress_label} {basis}" if progress_label is not None else None
+        )
+        with _tqdm_progress(label=basis_progress_label, total=shots) as progress:
+            for dataset in _iter_task_datasets(
+                ranking_tasks_by_basis[basis],
+                shots,
+                with_noise=with_noise,
+                chunk_size=chunk_size,
+                sim_type=sim_type,
+            ):
+                anc_det, _ = split_factory_bits(
+                    dataset.detectors,
+                    dataset.observables,
+                    layout=layout,
                 )
-            _accumulate_mld_pattern_counts(
-                corrected_by_pattern[basis],
-                dataset,
-                full_decoder=full_decoder,
-                factory_decoder=factory_decoder,
-                packed_targets=packed_targets,
-                layout=layout,
-            )
+                if ancilla_detectors is None:
+                    ancilla_detectors = anc_det.shape[1]
+                elif ancilla_detectors != anc_det.shape[1]:
+                    raise ValueError(
+                        "Inconsistent ancilla detector counts across MLD ranking tasks."
+                    )
+                _accumulate_mld_pattern_counts(
+                    corrected_by_pattern[basis],
+                    dataset,
+                    full_decoder=full_decoder,
+                    factory_decoder=factory_decoder,
+                    packed_targets=packed_targets,
+                    layout=layout,
+                )
+                if progress is not None:
+                    progress.update(len(dataset.detectors))
 
     return _mld_scores_from_pattern_counts(
         corrected_by_pattern,
