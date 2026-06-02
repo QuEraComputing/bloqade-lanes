@@ -12,6 +12,9 @@ from bloqade.decoders import ConfidenceDecoder
 
 from bloqade.lanes import GeminiLogicalSimulator
 
+# pyright: reportAttributeAccessIssue=false
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from demo.msd_extras.qet import build_qet_kernel_maps, build_qet_primitives
@@ -65,9 +68,10 @@ from demo.msd_utils import (
     train_mld_decoder_suite,
     unpack_packed_bits,
 )
-from demo.msd_utils.domain import special_tasks as circuits
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 from demo.msd_utils.domain.tasks import _ObservableFrame
+
+import bloqade.gemini.decoding.special_tasks as circuits
 
 
 def test_fidelity_from_counts_returns_ordered_interval():
@@ -496,7 +500,7 @@ def test_workflow_mld_suite_trains_from_tomography_tasks():
 
 def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
     monkeypatch.setattr(
-        "demo.msd_utils.standard.dem.detector_error_model_to_check_matrices",
+        "bloqade.decoders.dem.detector_error_model_to_check_matrices",
         lambda *args, **kwargs: _FakeDemMatrix(
             check_matrix=np.array([[1, 0], [0, 1], [1, 1], [0, 1]], dtype=int),
             observables_matrix=np.array([[1, 0], [0, 1]], dtype=int),
@@ -559,7 +563,7 @@ def test_workflow_evaluate_decoder_curves_supports_multiple_suites():
 def test_workflow_evaluate_decoder_curves_applies_shared_options_and_overrides(
     monkeypatch,
 ):
-    from demo.msd_utils.application import workflows
+    import bloqade.gemini.decoding.workflow as workflows
 
     config = _workflow_config()
     calls: dict[str, tuple[int, int, str]] = {}
@@ -766,7 +770,7 @@ def test_table_decoder_with_confidence_returns_syndrome_score():
 
 def test_build_mle_decoders_uses_confidence_decoder_api(monkeypatch):
     monkeypatch.setattr(
-        "demo.msd_utils.standard.dem.detector_error_model_to_check_matrices",
+        "bloqade.decoders.dem.detector_error_model_to_check_matrices",
         lambda *args, **kwargs: _FakeDemMatrix(
             check_matrix=np.array([[1, 0], [0, 1], [1, 1], [0, 1]], dtype=int),
             observables_matrix=np.array([[1, 0], [0, 1]], dtype=int),
@@ -1329,10 +1333,15 @@ def test_train_mld_decoder_pair_uses_only_output_observables_for_full_decoder():
 
 
 def test_notebooks_import_shared_msd_utils():
-    for notebook in [
-        Path("demo/magic_state_distillation_reprod.ipynb"),
-        Path("demo/msd_reprod_bloqade_decoders.ipynb"),
+    for artifact in [
+        Path("demo/msd_reprod_bloqade_decoders_workflow.py"),
+        Path("demo/qet_reprod_bloqade_decoders_workflow.py"),
+        Path("demo/msd_reprod_bloqade_decoders_workflow.ipynb"),
+        Path("demo/qet_reprod_bloqade_decoders_workflow.ipynb"),
     ]:
-        nb = json.loads(notebook.read_text())
-        joined = "\n".join("".join(cell.get("source", [])) for cell in nb["cells"])
+        if artifact.suffix == ".ipynb":
+            nb = json.loads(artifact.read_text())
+            joined = "\n".join("".join(cell.get("source", [])) for cell in nb["cells"])
+        else:
+            joined = artifact.read_text()
         assert "demo.msd_utils" in joined
