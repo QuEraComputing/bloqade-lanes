@@ -9,6 +9,17 @@ from .layout import (
     split_factory_bits as split_factory_bits,
 )
 from .measurement_maps import build_measurement_maps as build_measurement_maps
+from .sampling import (
+    BasisDataset as BasisDataset,
+    DetectorObservableResult as DetectorObservableResult,
+    SimulatorTask as SimulatorTask,
+    run_task as run_task,
+)
+from .tasks import (
+    DemoTask as DemoTask,
+    GeminiDecoderTask as GeminiDecoderTask,
+    ObservableFrame as ObservableFrame,
+)
 from .types import (
     DetectorErrorModelTask as DetectorErrorModelTask,
     KirinKernel as KirinKernel,
@@ -19,17 +30,24 @@ from .types import (
 )
 
 __all__ = [
+    "BasisDataset",
     "DEFAULT_BASIS_LABELS",
     "DEFAULT_IDEAL_FACTORY_ACCEPTANCE",
     "DEFAULT_SYNDROME_LAYOUT",
     "DEFAULT_TARGET_BLOCH",
+    "DemoTask",
     "DetectorErrorModelTask",
+    "DetectorObservableResult",
+    "GeminiDecoderTask",
     "KirinKernel",
     "MeasurementMap",
+    "ObservableFrame",
+    "SimulatorTask",
     "SquinKernel",
     "SyndromeLayout",
     "TableDecoderClass",
     "TsimCircuit",
     "build_measurement_maps",
+    "run_task",
     "split_factory_bits",
 ]
