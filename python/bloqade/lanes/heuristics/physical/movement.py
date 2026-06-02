@@ -359,27 +359,31 @@ def make_physical_placement_strategy(
     strategy: SearchStrategyName = "entropy",
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
-    target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
-    ``move_solutions_per_layer`` maps to the Rust solver's
-    ``max_goal_candidates``. ``search_budget`` maps to the per-CZ-stage
-    ``max_expansions`` budget shared across target candidates.
+    Uses :class:`~bloqade.lanes.heuristics.physical.nohome.NoHomePlacementStrategy`
+    backed by the Rust ``NoHomeCzPlacement`` solver.
+
+    ``move_solutions_per_layer`` maps to ``k_candidates`` (candidate home
+    sites per qubit in the Hungarian assignment).  ``search_budget`` maps to
+    ``max_expansions``.  ``lambda_lookahead`` is fixed at ``0`` because
+    palindrome return always moves atoms back to their original home position,
+    so future-layer proximity penalties carry no signal.
     """
+    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
+
     if move_solutions_per_layer < 1:
         raise ValueError("move_solutions_per_layer must be >= 1")
     if search_budget is not None and search_budget < 1:
         raise ValueError("search_budget must be None or >= 1")
 
-    inner = PhysicalPlacementStrategy(
+    inner = NoHomePlacementStrategy(
         arch_spec=get_physical_arch_spec() if arch_spec is None else arch_spec,
-        traversal=RustPlacementTraversal(
-            strategy=strategy,
-            max_goal_candidates=move_solutions_per_layer,
-            max_expansions=search_budget,
-        ),
-        target_generator=target_generator,
+        strategy=_STRATEGY_MAP[strategy],
+        max_expansions=search_budget,
+        k_candidates=move_solutions_per_layer,
+        lambda_lookahead=0.0,
     )
 
     return PalindromePlacementStrategy(inner=inner) if return_moves else inner
