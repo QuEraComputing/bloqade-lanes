@@ -13,6 +13,13 @@ from .layout import (
     split_factory_bits as split_factory_bits,
 )
 from .measurement_maps import build_measurement_maps as build_measurement_maps
+from .mld import (
+    build_mld_decoders_from_pair as build_mld_decoders_from_pair,
+    estimate_mld_ancilla_scores as estimate_mld_ancilla_scores,
+    estimate_mld_ancilla_scores_from_tasks as estimate_mld_ancilla_scores_from_tasks,
+    train_mld_decoder_pair as train_mld_decoder_pair,
+    train_mld_decoder_pair_from_task as train_mld_decoder_pair_from_task,
+)
 from .msd import (
     TomographyKernels as TomographyKernels,
     build_decoder_kernel_bundle as build_decoder_kernel_bundle,
@@ -75,11 +82,16 @@ __all__ = [
     "build_injected_decoder_kernel_map",
     "build_injected_kernel_bundle",
     "build_measurement_maps",
+    "build_mld_decoders_from_pair",
     "build_msd_primitives",
     "build_task_map",
+    "estimate_mld_ancilla_scores",
+    "estimate_mld_ancilla_scores_from_tasks",
     "evaluate_curve",
     "evaluate_mld_curve",
     "produce_tomography_kernels",
     "run_task",
     "split_factory_bits",
+    "train_mld_decoder_pair",
+    "train_mld_decoder_pair_from_task",
 ]
