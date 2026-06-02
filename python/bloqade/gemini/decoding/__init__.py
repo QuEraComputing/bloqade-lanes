@@ -1,3 +1,10 @@
+from .baselines import (
+    infer_distilled_sign_vector as infer_distilled_sign_vector,
+    infer_factory_target as infer_factory_target,
+    injected_baseline as injected_baseline,
+    naive_distilled_summary as naive_distilled_summary,
+    naive_injected_summary as naive_injected_summary,
+)
 from .constants import (
     DEFAULT_BASIS_LABELS as DEFAULT_BASIS_LABELS,
     DEFAULT_IDEAL_FACTORY_ACCEPTANCE as DEFAULT_IDEAL_FACTORY_ACCEPTANCE,
@@ -20,6 +27,7 @@ from .mld import (
     train_mld_decoder_pair as train_mld_decoder_pair,
     train_mld_decoder_pair_from_task as train_mld_decoder_pair_from_task,
 )
+from .mle import build_mle_decoders as build_mle_decoders
 from .msd import (
     TomographyKernels as TomographyKernels,
     build_decoder_kernel_bundle as build_decoder_kernel_bundle,
@@ -83,12 +91,18 @@ __all__ = [
     "build_injected_kernel_bundle",
     "build_measurement_maps",
     "build_mld_decoders_from_pair",
+    "build_mle_decoders",
     "build_msd_primitives",
     "build_task_map",
     "estimate_mld_ancilla_scores",
     "estimate_mld_ancilla_scores_from_tasks",
     "evaluate_curve",
     "evaluate_mld_curve",
+    "infer_distilled_sign_vector",
+    "infer_factory_target",
+    "injected_baseline",
+    "naive_distilled_summary",
+    "naive_injected_summary",
     "produce_tomography_kernels",
     "run_task",
     "split_factory_bits",
