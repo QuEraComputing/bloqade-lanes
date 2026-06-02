@@ -20,6 +20,11 @@ from .msd import (
     build_injected_kernel_bundle as build_injected_kernel_bundle,
     build_msd_primitives as build_msd_primitives,
 )
+from .postselection import (
+    DecoderAdapter as DecoderAdapter,
+    evaluate_curve as evaluate_curve,
+    evaluate_mld_curve as evaluate_mld_curve,
+)
 from .sampling import (
     BasisDataset as BasisDataset,
     DetectorObservableResult as DetectorObservableResult,
@@ -50,6 +55,7 @@ __all__ = [
     "DEFAULT_IDEAL_FACTORY_ACCEPTANCE",
     "DEFAULT_SYNDROME_LAYOUT",
     "DEFAULT_TARGET_BLOCH",
+    "DecoderAdapter",
     "DecoderPrimitiveSet",
     "DemoTask",
     "DetectorErrorModelTask",
@@ -71,6 +77,8 @@ __all__ = [
     "build_measurement_maps",
     "build_msd_primitives",
     "build_task_map",
+    "evaluate_curve",
+    "evaluate_mld_curve",
     "produce_tomography_kernels",
     "run_task",
     "split_factory_bits",
