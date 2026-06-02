@@ -12,6 +12,7 @@ authors = [
 ]
 dependencies = [
     "bloqade-circuit[cirq, qasm2, tsim]~=0.14.1",
+    "bloqade-decoders~=0.6.0",
     "bloqade-tsim~=0.1.3",
     "bloqade-core~=0.6.3",
     "deprecated>=1.3.1",
