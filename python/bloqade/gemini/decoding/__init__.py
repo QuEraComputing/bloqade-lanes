@@ -15,6 +15,10 @@ from .sampling import (
     SimulatorTask as SimulatorTask,
     run_task as run_task,
 )
+from .special_tasks import (
+    apply_special_tsim_circuit_strategy as apply_special_tsim_circuit_strategy,
+    build_task_map as build_task_map,
+)
 from .tasks import (
     DemoTask as DemoTask,
     GeminiDecoderTask as GeminiDecoderTask,
@@ -47,7 +51,9 @@ __all__ = [
     "SyndromeLayout",
     "TableDecoderClass",
     "TsimCircuit",
+    "apply_special_tsim_circuit_strategy",
     "build_measurement_maps",
+    "build_task_map",
     "run_task",
     "split_factory_bits",
 ]
