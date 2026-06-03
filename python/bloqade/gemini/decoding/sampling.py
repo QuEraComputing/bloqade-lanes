@@ -243,17 +243,24 @@ def _iter_task_datasets(
 
     while remaining > 0:
         batch = min(int(chunk_size), remaining)
-        result = _run_simulator_task(
-            task,
-            batch,
-            with_noise=with_noise,
-            run_detectors=True,
-            sim_type=sim_type,
-        )
-        dataset = BasisDataset(
-            detectors=np.asarray(result.detectors, dtype=np.uint8),
-            observables=np.asarray(result.observables, dtype=np.uint8),
-        )
+        if isinstance(task, DemoTask) and sim_type == "clifft":
+            detectors, observables = task.sample_clifft_det_obs(
+                batch,
+                with_noise=with_noise,
+            )
+            dataset = BasisDataset(detectors=detectors, observables=observables)
+        else:
+            result = _run_simulator_task(
+                task,
+                batch,
+                with_noise=with_noise,
+                run_detectors=True,
+                sim_type=sim_type,
+            )
+            dataset = BasisDataset(
+                detectors=np.asarray(result.detectors, dtype=np.uint8),
+                observables=np.asarray(result.observables, dtype=np.uint8),
+            )
         yield _normalize_observable_frame(task, dataset, sim_type=sim_type)
         remaining -= batch
 
