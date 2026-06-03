@@ -2012,7 +2012,7 @@ impl PyLooseGoalCzPlacement {
     fn solve_pairs(
         &self,
         py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         cz_pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
@@ -2117,7 +2117,7 @@ impl PyRecedingHorizonCzPlacement {
     fn solve_pairs(
         &self,
         py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         cz_pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,
@@ -2211,7 +2211,7 @@ impl PyNoHomeCzPlacement {
     fn solve_pairs(
         &self,
         py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
+        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
         cz_pairs: Vec<(u32, u32)>,
         blocked: Vec<PyRef<'_, PyLocationAddr>>,
         max_expansions: Option<u32>,

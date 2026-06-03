@@ -10,10 +10,9 @@
 //! composes a [`TargetSolver`](crate::search::target_solver::TargetSolver)
 //! with a [`TargetGenerator`](crate::placement::target_generator::TargetGenerator);
 //! `LooseGoal` drives a [`MoveSearch`](crate::search::move_search::MoveSearch)
-//! directly against an `EntanglingConstraintGoal`; the upcoming
-//! receding-horizon and no-home variants compose with their own
-//! options bundles. The trait is the user-facing seam that hides
-//! the composition differences behind one call site.
+//! directly against an `EntanglingConstraintGoal`; `RecedingHorizon` and
+//! `NoHome` compose with their own options bundles. The trait is the
+//! user-facing seam that hides the composition differences behind one call site.
 //!
 //! Implementors with richer outcome data (e.g. `SingleHeuristic`'s
 //! per-candidate attempt list) expose those on the concrete type via
@@ -42,6 +41,12 @@ pub trait CzPlacement {
     /// * `blocked` — Locations occupied by external atoms (immovable
     ///   obstacles).
     /// * `max_expansions` — Optional limit on node expansions.
+    ///
+    /// # Preconditions
+    ///
+    /// * `controls.len() == targets.len()` — callers must pair controls and
+    ///   targets before calling. Implementors may `debug_assert!` this but
+    ///   are not required to check it in release builds.
     ///
     /// # Errors
     ///

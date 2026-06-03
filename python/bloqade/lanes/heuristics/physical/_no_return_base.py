@@ -125,7 +125,7 @@ class NoReturnStrategyBase(PlacementStrategyABC):
 
     def _build_move_search(self) -> MoveSearch:
         """Build a :class:`MoveSearch` from the base solve-option fields."""
-        return MoveSearch.entropy().with_options(self._build_solve_options())
+        return MoveSearch.ids().with_options(self._build_solve_options())
 
     @abc.abstractmethod
     def _invoke_placement(

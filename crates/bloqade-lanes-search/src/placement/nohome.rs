@@ -457,7 +457,7 @@ impl CzPlacement for NoHomeCzPlacement {
         blocked: &[LocationAddr],
         max_expansions: Option<u32>,
     ) -> Result<SolveResult, ConfigError> {
-        assert_eq!(
+        debug_assert_eq!(
             controls.len(),
             targets.len(),
             "controls and targets must have equal length",

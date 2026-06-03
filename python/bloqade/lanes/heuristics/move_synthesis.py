@@ -39,7 +39,9 @@ def compute_move_layers(
 
     if engine is None:
         engine = SearchEngine.from_arch_spec(arch_spec._inner)
-    move_search = _move_search_from_traversal(traversal)
+    move_search = _move_search_from_traversal(
+        traversal, collect_entropy_trace=traversal.collect_entropy_trace
+    )
     solver = TargetSolver(engine, move_search)
     result = solver.solve(initial_native, target_native, blocked_native, None)
     if result.status != "solved":
