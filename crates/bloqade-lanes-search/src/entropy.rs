@@ -45,6 +45,7 @@ pub struct EntropyTrace {
 
 /// One entropy-search step snapshot.
 #[derive(Debug, Clone)]
+#[allow(clippy::type_complexity)]
 pub struct EntropyTraceStep {
     pub event: String,
     pub node_id: u32,
@@ -1120,6 +1121,7 @@ fn sequential_fallback(
 ///
 /// This is a single-path DFS with entropy-based backtracking, NOT a
 /// standard frontier-based search. See module docs for algorithm details.
+#[allow(clippy::too_many_arguments)]
 pub fn entropy_search(
     root: Config,
     goal: &impl Goal,
@@ -1908,7 +1910,7 @@ mod tests {
 
     #[test]
     fn scored_entry_tie_break_is_deterministic() {
-        let mut entries = vec![
+        let mut entries = [
             (
                 (1, 2, 1),
                 ScoredEntry {
