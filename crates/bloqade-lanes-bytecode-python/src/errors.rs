@@ -182,8 +182,8 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             cls.call1((*pc,))?
         }
         ValidationError::EmptyProgram => {
-            let cls = module.getattr("MissingTerminatorError")?;
-            cls.call1((0usize,))?
+            let cls = module.getattr("EmptyProgramError")?;
+            cls.call0()?
         }
         ValidationError::MissingTerminator { pc } => {
             let cls = module.getattr("MissingTerminatorError")?;

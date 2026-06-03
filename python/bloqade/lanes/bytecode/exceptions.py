@@ -146,6 +146,15 @@ class AtomReloadingNotSupportedError(ValidationError):
         )
 
 
+class EmptyProgramError(ValidationError):
+    """Program has no instructions."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "program is empty: must contain at least one instruction ending with return or halt"
+        )
+
+
 class MissingTerminatorError(ValidationError):
     """Program does not end with a return or halt instruction."""
 

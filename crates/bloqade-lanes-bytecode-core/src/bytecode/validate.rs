@@ -173,28 +173,14 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
         }
     }
 
-    // Every program must end with return or halt.
-    match program.instructions.last() {
-        None => {
-            errors.push(ValidationError::EmptyProgram);
-        }
-        Some(last) => {
-            if !matches!(
-                last,
-                Instruction::Cpu(CpuInstruction::Return) | Instruction::Cpu(CpuInstruction::Halt)
-            ) {
-                errors.push(ValidationError::MissingTerminator {
-                    pc: program.instructions.len() - 1,
-                });
-            }
-        }
-    }
-
-    // No instructions may appear after a return or halt.
+    // Scan forward for unreachable instructions (any instruction after a return/halt).
+    // If unreachable instructions exist, they explain why the last instruction isn't a
+    // terminator, so MissingTerminator would be a redundant and misleading second error.
     let mut found_terminator = false;
+    let mut unreachable_errors: Vec<ValidationError> = Vec::new();
     for (pc, instr) in program.instructions.iter().enumerate() {
         if found_terminator {
-            errors.push(ValidationError::UnreachableInstruction { pc });
+            unreachable_errors.push(ValidationError::UnreachableInstruction { pc });
         }
         if matches!(
             instr,
@@ -202,6 +188,28 @@ pub fn validate_structure(program: &Program) -> Vec<ValidationError> {
         ) {
             found_terminator = true;
         }
+    }
+
+    if unreachable_errors.is_empty() {
+        // No internal terminator found: check that the program ends with one.
+        match program.instructions.last() {
+            None => {
+                errors.push(ValidationError::EmptyProgram);
+            }
+            Some(last) => {
+                if !matches!(
+                    last,
+                    Instruction::Cpu(CpuInstruction::Return)
+                        | Instruction::Cpu(CpuInstruction::Halt)
+                ) {
+                    errors.push(ValidationError::MissingTerminator {
+                        pc: program.instructions.len() - 1,
+                    });
+                }
+            }
+        }
+    } else {
+        errors.extend(unreachable_errors);
     }
 
     errors
@@ -764,11 +772,14 @@ mod tests {
     fn test_new_array_zero_dim0() {
         let program = Program {
             version: Version::new(1, 0),
-            instructions: vec![Instruction::Array(ArrayInstruction::NewArray {
-                type_tag: 0,
-                dim0: 0,
-                dim1: 0,
-            })],
+            instructions: vec![
+                Instruction::Array(ArrayInstruction::NewArray {
+                    type_tag: 0,
+                    dim0: 0,
+                    dim1: 0,
+                }),
+                Instruction::Cpu(CpuInstruction::Halt),
+            ],
         };
         let errors = validate_structure(&program);
         assert!(
@@ -782,11 +793,14 @@ mod tests {
     fn test_new_array_invalid_type_tag() {
         let program = Program {
             version: Version::new(1, 0),
-            instructions: vec![Instruction::Array(ArrayInstruction::NewArray {
-                type_tag: 0xF,
-                dim0: 1,
-                dim1: 0,
-            })],
+            instructions: vec![
+                Instruction::Array(ArrayInstruction::NewArray {
+                    type_tag: 0xF,
+                    dim0: 1,
+                    dim1: 0,
+                }),
+                Instruction::Cpu(CpuInstruction::Halt),
+            ],
         };
         let errors = validate_structure(&program);
         assert!(errors.iter().any(|e| matches!(
