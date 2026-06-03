@@ -14,11 +14,14 @@ from bloqade.lanes.bytecode import (
 from bloqade.lanes.bytecode.exceptions import (
     AtomReloadingNotSupportedError,
     BadMagicError,
+    EmptyProgramError,
     FeedForwardNotSupportedError,
     InitialFillNotFirstError,
+    MissingTerminatorError,
     MissingVersionError,
     StackUnderflowError,
     TypeMismatchError,
+    UnreachableInstructionError,
 )
 
 # ── Address Types ──
@@ -510,6 +513,54 @@ initial_fill 1
             program.validate(stack=True)
         assert any(isinstance(e, TypeMismatchError) for e in exc_info.value.errors)
 
+    def test_empty_program_raises_empty_program_error(self):
+        program = Program.from_text(".version 1.0\n")
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        assert any(isinstance(e, EmptyProgramError) for e in exc_info.value.errors)
+        assert not any(
+            isinstance(e, MissingTerminatorError) for e in exc_info.value.errors
+        )
+
+    def test_missing_terminator_raises_missing_terminator_error(self):
+        program = Program.from_text("""\
+.version 1.0
+const_int 0
+""")
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        assert any(isinstance(e, MissingTerminatorError) for e in exc_info.value.errors)
+
+    def test_unreachable_instruction_raises_unreachable_error(self):
+        program = Program.from_text("""\
+.version 1.0
+halt
+const_int 0
+""")
+        with pytest.raises(ValidationError) as exc_info:
+            program.validate()
+        assert any(
+            isinstance(e, UnreachableInstructionError) for e in exc_info.value.errors
+        )
+        assert not any(
+            isinstance(e, MissingTerminatorError) for e in exc_info.value.errors
+        )
+
+    def test_valid_program_with_return_no_errors(self):
+        program = Program.from_text("""\
+.version 1.0
+const_int 0
+return
+""")
+        program.validate()  # should not raise
+
+    def test_valid_program_with_halt_no_errors(self):
+        program = Program.from_text("""\
+.version 1.0
+halt
+""")
+        program.validate()  # should not raise
+
 
 MINIMAL_ARCH_JSON = """{
     "version": "2.0",
@@ -547,7 +598,6 @@ const_zone 0x00000000
 measure 1
 await_measure
 return
-halt
 """)
         program.validate(arch=arch)  # should not raise
 
@@ -565,7 +615,6 @@ const_zone 0x00000000
 measure 1
 await_measure
 return
-halt
 """)
         with pytest.raises(ValidationError) as exc_info:
             program.validate(arch=arch)
@@ -591,7 +640,6 @@ const_zone 0x00000000
 measure 1
 await_measure
 return
-halt
 """)
         program.validate(arch=arch)  # should not raise
 
