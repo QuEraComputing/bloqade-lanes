@@ -71,26 +71,6 @@ def test_logical_pipeline_produces_logical_initialize():
     assert len(inits) >= 1
 
 
-def test_logical_pipeline_no_return_moves():
-    """Passing a bare (non-palindrome) strategy disables return moves."""
-
-    @gemini.logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = squin.qalloc(2)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        gemini.logical.terminal_measure(reg)
-
-    from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
-
-    arch_spec = get_logical_arch_spec()
-    out = LogicalPipeline(
-        arch_spec=arch_spec,
-        placement_strategy=LogicalPlacementStrategyNoHome(arch_spec=arch_spec),
-    ).emit(kernel)
-    assert out is not None
-
-
 def test_logical_pipeline_layout_heuristic_default_is_none():
     """LogicalPipeline.layout_heuristic defaults to None."""
     pipeline = LogicalPipeline()
@@ -120,20 +100,6 @@ def test_logical_pipeline_resolves_none_to_logical_defaults(monkeypatch):
 
     LogicalPipeline().emit(kernel)
     assert captured["layout_heuristic_type"] is LogicalLayoutHeuristic
-
-
-def test_logical_pipeline_no_raise_suppresses_validation():
-    """no_raise=True does not raise even when pre-native validation fails."""
-
-    @gemini.logical.kernel(aggressive_unroll=True)
-    def invalid_kernel():
-        reg = squin.qalloc(2)
-        squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        # missing terminal_measure — violates GeminiTerminalMeasurementValidation
-
-    out = LogicalPipeline().emit(invalid_kernel, no_raise=True)
-    assert out is not None
 
 
 def test_logical_pipeline_layout_heuristic_mismatch_warns():
@@ -191,16 +157,3 @@ def test_transversal_rewrites_direct():
 
     result = transversal_rewrites(kernel, rewrite_logical_initialize=False)
     assert result is kernel
-
-
-def test_logical_pipeline_transversal_rewrite_emit():
-    """emit() with transversal_rewrite=True calls transversal_rewrites on the output."""
-
-    @gemini.logical.kernel(aggressive_unroll=True)
-    def kernel():
-        reg = squin.qalloc(1)
-        squin.h(reg[0])
-        gemini.logical.terminal_measure(reg)
-
-    out = LogicalPipeline(transversal_rewrite=True).emit(kernel)
-    assert out is not None

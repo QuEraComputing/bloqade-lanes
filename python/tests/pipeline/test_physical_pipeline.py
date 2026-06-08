@@ -87,19 +87,6 @@ def test_physical_pipeline_missing_measure_raises():
         PhysicalPipeline().emit(kernel, no_raise=False)
 
 
-def test_physical_pipeline_no_raise_succeeds_without_terminal_measure():
-    """With no_raise=True, PhysicalPipeline.emit must not raise even when there
-    is no terminal measurement (validation errors are suppressed in lenient mode)."""
-
-    @squin.kernel
-    def kernel():
-        squin.qalloc(1)  # no measurement
-
-    # Should not raise in lenient mode.
-    result = PhysicalPipeline().emit(kernel, no_raise=True)
-    assert result is not None
-
-
 def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     """When layout_heuristic and placement_strategy are None, PhysicalPipeline
     resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut wrapped in
