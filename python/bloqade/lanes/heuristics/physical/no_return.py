@@ -1,7 +1,7 @@
 """No-return placement strategy using the loose-goal entangling solver.
 
 Instead of fixed target positions, this strategy passes CZ pair constraints
-to the Rust ``solve_entangling`` solver, which simultaneously discovers
+to the Rust ``LooseGoalCzPlacement`` solver, which simultaneously discovers
 both the entangling placement and the routing. Layers are chained: the
 output configuration of one CZ layer becomes the input for the next, so
 atoms do not return to their home positions between CZ gates.
@@ -12,7 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import MoveSolver, SolveResult
+from bloqade.lanes.bytecode._native import (
+    LooseGoalCzPlacement,
+    MoveSearch,
+    SearchEngine,
+    SolveResult,
+)
 from bloqade.lanes.heuristics.physical._no_return_base import NoReturnStrategyBase
 
 
@@ -20,10 +25,10 @@ from bloqade.lanes.heuristics.physical._no_return_base import NoReturnStrategyBa
 class NoReturnPlacementStrategy(NoReturnStrategyBase):
     """No-return placement via the loose-goal entangling constraint solver.
 
-    Calls :pymethod:`MoveSolver.solve_entangling` once per CZ layer to find
-    both the entangling placement and the routing simultaneously. Each
-    layer's output layout is passed as the next layer's input, saving the
-    cost of palindrome return moves.
+    Calls :class:`LooseGoalCzPlacement` once per CZ layer to find both the
+    entangling placement and the routing simultaneously. Each layer's output
+    layout is passed as the next layer's input, saving the cost of palindrome
+    return moves.
 
     Parameters
     ----------
@@ -81,20 +86,22 @@ class NoReturnPlacementStrategy(NoReturnStrategyBase):
             hungarian_horizon=self.hungarian_horizon,
         )
 
-    def _invoke_solver(
+    def _invoke_placement(
         self,
-        solver: MoveSolver,
+        engine: SearchEngine,
+        move_search: MoveSearch,
         initial: dict[int, "_native.LocationAddress"],
         cz_pairs: list[tuple[int, int]],
         blocked: list["_native.LocationAddress"],
         future_cz_layers: list[list[tuple[int, int]]] | None,
     ) -> SolveResult:
-        return solver.solve_entangling(
+        placement = LooseGoalCzPlacement(
+            engine, move_search, self._build_entangling_options()
+        )
+        return placement.solve_pairs(
             initial,
             cz_pairs,
             blocked,
             max_expansions=self.max_expansions,
-            options=self._build_solve_options(),
-            entangling_options=self._build_entangling_options(),
             future_cz_layers=future_cz_layers,
         )

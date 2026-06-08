@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "kind": "target",
+  "arch": "arch.json",
+  "current_placement": [[0, [0, 0, 0]], [1, [0, 0, 1]]],
+  "controls": [0],
+  "targets": [1],
+  "lookahead_cz_layers": [],
+  "cz_stage_index": 0,
+  "policy_params": {}
+}

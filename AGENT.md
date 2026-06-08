@@ -73,6 +73,55 @@ just develop           # Dev install with bundled CLI + C lib
 
 Direct test run: `uv run coverage run -m pytest python/tests`
 
+## Move Policy DSL
+
+The Move Policy DSL lets you author search policies in Starlark (a deterministic Python-syntax subset) instead of Rust. Policies are invoked through a sidecar `PolicyRunner` (sibling to `MoveSolver`) so the strategy-based solver surface stays untouched:
+
+```python
+from bloqade.lanes.bytecode import PolicyRunner
+import json
+
+runner = PolicyRunner(arch_json)
+result = runner.solve(
+    initial={0: loc_a, 1: loc_b},
+    target={0: loc_c, 1: loc_d},
+    blocked=[],
+    policy_path="policies/autotune/candidate.star",
+    policy_params={},              # optional PARAMS_OVERRIDE values
+    max_expansions=10_000,
+    timeout_s=30.0,
+)
+print(result.policy_status)        # "solved" / "fallback: ..." / etc.
+print(json.loads(result.policy_params))  # echoes the override dict
+```
+
+The strategy-style entry point is `PolicyPlacementStrategy(traversal=PolicyTraversal(policy_path=...))` in `bloqade.lanes.heuristics.physical.policy_movement` — wire that into `PhysicalPipeline` or the autotune harness in place of `PhysicalPlacementStrategy`.
+
+A policy is a single `.star` file exporting `init(root, ctx) -> GlobalState` and `step(graph, gs, ctx, lib) -> Action | list[Action]`.
+
+### Sandbox constraints
+
+Policies are evaluated in a deterministic sandbox:
+
+- No I/O, no network, no `load()` of external `.star` files.
+- No randomness — all tie-breaking is via `lib.stable_sort` / `lib.argmax`.
+- Per-tick step budget and per-solve heap cap (defaults configurable via `SandboxConfig`).
+- `load("...", ...)` is rejected outright — each policy is a single self-contained file.
+
+### Available primitives
+
+Bound as Starlark globals into every policy environment:
+
+- **Verbs** (returned by `step()` to drive the kernel): `insert_child`, `update_node_state`, `update_global_state`, `emit_solution`, `halt`, `invoke_builtin`.
+- **Utilities**: `stable_sort(items, key_fn, desc=False)`, `argmax(items, key_fn)`, `normalize(values)`.
+- **Per-solve handles**: `graph` (read-only `SearchGraph` view), `lib` (distance/mobility/candidate-pipeline helpers), `ctx` (architecture, targets, blocked).
+
+Use `policies/primer.md` as the API reference before authoring new policies.
+
+### Implementation status
+
+This is Plan A: the `bloqade-lanes-dsl-core` crate (shared substrate) plus the Move Policy DSL inside `bloqade-lanes-search`. Plan B (a parallel Target Generator DSL) and Plan C (DFS/BFS/IDS reference policies, CLI harness, auto-generated primer) are documented as follow-ups in `docs/superpowers/plans/2026-04-29-move-policy-dsl.md`.
+
 ## Linting & Formatting
 
 Pre-commit hooks enforce all checks. When hooks must be bypassed (e.g. committing on orphan branches like `gh-pages` that lack `.pre-commit-config.yaml`), use `git commit -n`.

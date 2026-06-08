@@ -34,7 +34,7 @@ def test_rejects_non_rust_traversal():
 
 
 # ---------------------------------------------------------------------------
-# Rust MoveSolver integration tests
+# Rust TargetSolver integration tests
 # ---------------------------------------------------------------------------
 
 
@@ -66,13 +66,13 @@ def test_rust_traversal_dispatches_to_rust_path(monkeypatch):
     assert calls == ["rust"]
 
 
-def test_rust_solver_is_cached():
+def test_engine_is_cached():
     strategy = PhysicalPlacementStrategy(
         arch_spec=logical.get_arch_spec(), traversal=RustPlacementTraversal()
     )
-    solver_a = strategy._get_rust_solver()
-    solver_b = strategy._get_rust_solver()
-    assert solver_a is solver_b
+    engine_a = strategy._get_engine()
+    engine_b = strategy._get_engine()
+    assert engine_a is engine_b
 
 
 def test_cz_placements_rust_returns_execute_cz():
@@ -96,16 +96,49 @@ def test_cz_placements_rust_returns_bottom_on_failure(monkeypatch):
         nodes_expanded = 0
 
     class _FakeSolver:
-        def solve(self, *_args, **_kwargs):
+        def solve(self, *_args):
             return _FakeResult()
 
     monkeypatch.setattr(
         PhysicalPlacementStrategy,
-        "_get_rust_solver",
-        lambda _self: _FakeSolver(),
+        "_make_target_solver",
+        lambda _self, _ms: _FakeSolver(),
     )
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert out == AtomState.bottom()
+
+
+def test_is_acceptable_solve_accepts_dsl_fallback_with_path():
+    """Regression: DSL policies that halt via invoke_builtin("sequential_fallback")
+    populate move_layers with the fallback path AND set
+    policy_status="fallback: <reason>". The DSL bridge MUST accept these as
+    valid solves; without this every DSL policy that uses the fallback
+    escape hatch silently produces AtomState.bottom().
+    """
+    from bloqade.lanes.heuristics.physical.policy_movement import (
+        _is_acceptable_solve,
+    )
+
+    class _DslSolvedResult:
+        policy_status = "solved"
+        move_layers = [["lane1"]]
+
+    class _DslFallbackResult:
+        policy_status = "fallback: policy-requested"
+        move_layers = [["lane1", "lane2"]]  # non-empty path
+
+    class _DslFallbackNoPath:
+        policy_status = "fallback: policy-requested"
+        move_layers = []  # no path found
+
+    class _DslUnsolvable:
+        policy_status = "unsolvable"
+        move_layers = []
+
+    assert _is_acceptable_solve(_DslSolvedResult())
+    assert _is_acceptable_solve(_DslFallbackResult())
+    assert not _is_acceptable_solve(_DslFallbackNoPath())
+    assert not _is_acceptable_solve(_DslUnsolvable())
 
 
 def test_cz_placements_rust_with_blocked_locations():
@@ -149,13 +182,13 @@ def test_cz_placements_rust_handles_zone_move_type(monkeypatch):
         goal_config = {0: NativeLoc(0, 0, 0), 1: NativeLoc(0, 1, 0)}
 
     class _FakeSolver:
-        def solve(self, *_args, **_kwargs):
+        def solve(self, *_args):
             return _FakeResult()
 
     monkeypatch.setattr(
         PhysicalPlacementStrategy,
-        "_get_rust_solver",
-        lambda _self: _FakeSolver(),
+        "_make_target_solver",
+        lambda _self, _ms: _FakeSolver(),
     )
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
     assert isinstance(out, ExecuteCZ)
@@ -189,13 +222,13 @@ def test_cz_placements_counts_entropy_fallback_trace(monkeypatch):
         entropy_trace = _FakeTrace()
 
     class _FakeSolver:
-        def solve(self, *_args, **_kwargs):
+        def solve(self, *_args):
             return _FakeResult()
 
     monkeypatch.setattr(
         PhysicalPlacementStrategy,
-        "_get_rust_solver",
-        lambda _self: _FakeSolver(),
+        "_make_target_solver",
+        lambda _self, _ms: _FakeSolver(),
     )
     out = strategy.cz_placements(state, controls=(0,), targets=(1,))
 
@@ -238,15 +271,14 @@ def test_rust_path_target_generator_shared_budget(monkeypatch):
             self.nodes_expanded = consumed
 
     class _FakeSolver:
-        def solve(self, *args, **kwargs):
-            _ = args
-            budgets_seen.append(kwargs.get("max_expansions"))
+        def solve(self, _initial, _target, _blocked, max_expansions):
+            budgets_seen.append(max_expansions)
             return _FakeResult()
 
     monkeypatch.setattr(
         PhysicalPlacementStrategy,
-        "_get_rust_solver",
-        lambda _self: _FakeSolver(),
+        "_make_target_solver",
+        lambda _self, _ms: _FakeSolver(),
     )
     strategy.cz_placements(state, controls=(0,), targets=(1,))
     # alt candidate first with full 10; default candidate second with 6.

@@ -62,6 +62,7 @@ impl PyDirection {
     module = "bloqade.lanes.bytecode._native"
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
+#[allow(clippy::enum_variant_names)] // `Bus` suffix mirrors the core enum
 pub enum PyMoveType {
     #[pyo3(name = "SITE")]
     SiteBus = 0,

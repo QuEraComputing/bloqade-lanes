@@ -88,12 +88,12 @@ pub fn validate_vec<T: ValidateFromI64>(
 }
 
 /// Validate a HashMap with i64 keys, converting each key to `T`.
-pub fn validate_i64_key_map<T: ValidateFromI64, V>(
+pub fn validate_i64_key_map<T, V>(
     name: &str,
     map: std::collections::HashMap<i64, V>,
 ) -> Result<std::collections::HashMap<T, V>, FieldRangeError>
 where
-    T: Eq + std::hash::Hash,
+    T: ValidateFromI64 + Eq + std::hash::Hash,
 {
     map.into_iter()
         .map(|(k, v)| {
@@ -117,13 +117,13 @@ pub fn validate_i64_value_map<K: Eq + std::hash::Hash, T: ValidateFromI64>(
 }
 
 /// Validate a HashMap with i64 keys and i64 values, converting both to `T`.
-pub fn validate_i64_kv_map<T: ValidateFromI64>(
+pub fn validate_i64_kv_map<T>(
     key_name: &str,
     value_name: &str,
     map: std::collections::HashMap<i64, i64>,
 ) -> Result<std::collections::HashMap<T, T>, FieldRangeError>
 where
-    T: Eq + std::hash::Hash,
+    T: ValidateFromI64 + Eq + std::hash::Hash,
 {
     map.into_iter()
         .map(|(k, v)| {

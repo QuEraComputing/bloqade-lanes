@@ -15,7 +15,7 @@ const_lane 0x0000000100030002
 halt
 ";
 
-/// All 24 instructions exercised in a single program.
+/// All 23 instructions exercised in a single program.
 /// Ordered so that initial_fill comes right after constants (structurally valid).
 const ALL_INSTRUCTIONS_PROGRAM: &str = "\
 .version 1.0
@@ -41,7 +41,6 @@ new_array 2 10 20
 get_item 2
 set_detector
 set_observable
-return
 halt
 ";
 
@@ -69,7 +68,7 @@ fn test_assemble_creates_binary() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("assembled 24 instructions"));
+        .stderr(predicate::str::contains("assembled 23 instructions"));
 
     let bytes = fs::read(&output).unwrap();
     // Should start with BLQD magic bytes
@@ -135,7 +134,7 @@ fn test_disassemble_to_file() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("disassembled 24 instructions"));
+        .stderr(predicate::str::contains("disassembled 23 instructions"));
 
     let text = fs::read_to_string(&output_txt).unwrap();
     // Spot-check all instruction categories are present
@@ -161,7 +160,6 @@ fn test_disassemble_to_file() {
     assert!(text.contains("get_item 2"));
     assert!(text.contains("set_detector"));
     assert!(text.contains("set_observable"));
-    assert!(text.contains("return"));
     assert!(text.contains("halt"));
 }
 
@@ -223,7 +221,7 @@ fn test_validate_text_file() {
         .args(["validate", input.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("valid (24 instructions)"));
+        .stderr(predicate::str::contains("valid (23 instructions)"));
 }
 
 #[test]
@@ -247,7 +245,7 @@ fn test_validate_binary_file() {
         .args(["validate", binary.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains("valid (24 instructions)"));
+        .stderr(predicate::str::contains("valid (23 instructions)"));
 }
 
 #[test]

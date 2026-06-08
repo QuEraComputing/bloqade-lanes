@@ -1515,6 +1515,252 @@ class MultiSolveResult:
 
     def __repr__(self) -> str: ...
 
+# ── New typed surface: SearchEngine / MoveSearch / TargetSolver / CzPlacement peers ──
+
+@final
+class SearchEngine:
+    """Precomputed search engine bound to an architecture.
+
+    Holds the lane index and any cached data reused across solves.
+    Construct once per architecture; share across multiple solvers.
+    """
+
+    @staticmethod
+    def from_arch_spec(arch: ArchSpec) -> SearchEngine:
+        """Create a ``SearchEngine`` from a native ``ArchSpec`` object."""
+        ...
+
+    @staticmethod
+    def from_json(arch_spec_json: str) -> SearchEngine:
+        """Create a ``SearchEngine`` from an ArchSpec JSON string."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class MoveSearch:
+    """Search algorithm configuration bundle.
+
+    Combine a strategy (entropy, A*, IDS, …) with its tuning options.
+    Build via the factory class methods, then pass to ``TargetSolver`` or
+    the ``CzPlacement`` constructors.
+    """
+
+    @staticmethod
+    def entropy(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+    ) -> MoveSearch:
+        """Entropy-guided search. Strategy is always forced to entropy."""
+        ...
+
+    @staticmethod
+    def astar(
+        weight: float = 1.0,
+        options: Optional[SolveOptions] = None,
+    ) -> MoveSearch:
+        """Weighted A* search. ``weight`` always overrides ``options.weight``."""
+        ...
+
+    @staticmethod
+    def ids(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Iterative-deepening search. Strategy is always forced to IDS."""
+        ...
+
+    @staticmethod
+    def cascade_ids(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Cascade: IDS followed by entropy refinement."""
+        ...
+
+    @staticmethod
+    def cascade_dfs(options: Optional[SolveOptions] = None) -> MoveSearch:
+        """Cascade: DFS followed by entropy refinement."""
+        ...
+
+    @staticmethod
+    def cascade_entropy(
+        options: Optional[SolveOptions] = None,
+        entropy_options: Optional[EntropyOptions] = None,
+    ) -> MoveSearch:
+        """Cascade: entropy followed by a second entropy pass."""
+        ...
+
+    def with_options(self, options: SolveOptions) -> MoveSearch:
+        """Return a copy with replaced ``SolveOptions``."""
+        ...
+
+    def with_entropy_options(self, entropy_options: EntropyOptions) -> MoveSearch:
+        """Return a copy with replaced ``EntropyOptions``."""
+        ...
+
+    @property
+    def strategy(self) -> SearchStrategy:
+        """The search strategy enum value."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class TargetSolver:
+    """Single-target fixed-placement solver.
+
+    Takes a ``SearchEngine`` and a ``MoveSearch``. Call ``solve()`` to
+    route atoms from an initial to a target configuration.
+    """
+
+    def __init__(self, engine: SearchEngine, search: MoveSearch) -> None: ...
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        target: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve a fixed-target routing problem."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class SingleHeuristicCzPlacement:
+    """CZ placement via a target generator + single-heuristic routing.
+
+    Generates candidate target configurations with ``DefaultTargetGenerator``,
+    validates each, then routes from ``initial`` to the first valid candidate
+    within the shared expansion budget.
+    """
+
+    def __init__(self, solver: TargetSolver) -> None: ...
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve and return the best result across all candidates."""
+        ...
+
+    def solve_with_attempts(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> MultiSolveResult:
+        """Solve and return per-candidate attempt details."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class LooseGoalCzPlacement:
+    """CZ placement via loose-goal routing.
+
+    Simultaneously discovers the entangling placement and the routing path.
+    """
+
+    def __init__(
+        self,
+        engine: SearchEngine,
+        search: MoveSearch,
+        entangling_options: EntanglingOptions | None = None,
+    ) -> None: ...
+    def solve_pairs(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve using CZ pair constraints (with optional future-layer lookahead)."""
+        ...
+
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve using explicit control/target qubit lists."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class RecedingHorizonCzPlacement:
+    """CZ placement via receding-horizon (MPC-style) loose-goal routing."""
+
+    def __init__(
+        self,
+        engine: SearchEngine,
+        search: MoveSearch,
+        entangling_options: EntanglingOptions | None = None,
+        rh_options: RecedingHorizonOptions | None = None,
+    ) -> None: ...
+    def solve_pairs(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve via receding-horizon MPC (with optional future-layer lookahead)."""
+        ...
+
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve using explicit control/target qubit lists."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class NoHomeCzPlacement:
+    """Two-phase no-home CZ placement."""
+
+    def __init__(
+        self,
+        engine: SearchEngine,
+        search: MoveSearch,
+        nohome_options: NoHomeOptions | None = None,
+    ) -> None: ...
+    def solve_pairs(
+        self,
+        initial: dict[int, LocationAddress],
+        cz_pairs: list[tuple[int, int]],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+        future_cz_layers: list[list[tuple[int, int]]] | None = None,
+    ) -> SolveResult:
+        """Solve via two-phase no-home placement (with optional future-layer lookahead)."""
+        ...
+
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        blocked: list[LocationAddress],
+        max_expansions: int | None = None,
+    ) -> SolveResult:
+        """Solve using explicit control/target qubit lists."""
+        ...
+
+    def __repr__(self) -> str: ...
+
 # ── AtomStateData ──
 
 @final
@@ -2253,3 +2499,172 @@ class Program:
     def __repr__(self) -> str: ...
     def __len__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
+
+# ── Starlark DSL sidecar ──
+#
+# Move Policy DSL and Target Generator DSL surfaces. Sidecars to MoveSolver
+# and the target generator infrastructure — keeps DSL-specific kwargs and
+# fields off the strategy/result types, so the existing surface stays
+# stable. See the project's `policies/primer.md` for the Starlark API.
+
+@final
+class PolicySolveResult:
+    """Result of a Move Policy DSL solve.
+
+    Sidecar to ``SolveResult`` — DSL solves never populate strategy-only
+    fields like ``cost``, ``deadlocks``, or ``entropy_trace``.
+    """
+
+    @property
+    def status(self) -> str:
+        """Native status mirror: ``"solved"``, ``"unsolvable"``, or ``"budget_exceeded"``.
+
+        Provided for compatibility with strategy-based call sites; prefer
+        ``policy_status`` to inspect the full DSL terminal state.
+        """
+        ...
+
+    @property
+    def policy_file(self) -> str:
+        """Echo of the ``.star`` policy file path."""
+        ...
+
+    @property
+    def policy_params(self) -> str:
+        """JSON-encoded echo of the ``policy_params`` dict.
+
+        Use ``json.loads(result.policy_params)`` to recover the dict.
+        """
+        ...
+
+    @property
+    def policy_status(self) -> str:
+        """Full DSL terminal status string.
+
+        Possible values: ``"solved"``, ``"unsolvable"``, ``"budget_exhausted"``,
+        ``"timeout"``, ``"fallback: <detail>"``, ``"syntax_error: <detail>"``,
+        ``"runtime_error: <detail>"``, ``"schema_error: <field>"``,
+        ``"bad_policy: <detail>"``, ``"starlark_budget"``, ``"starlark_oom"``.
+        """
+        ...
+
+    @property
+    def move_layers(self) -> list[list[tuple[int, int, int, int, int, int]]]:
+        """Move layers as ``(direction, move_type, zone_id, word_id, site_id, bus_id)`` tuples."""
+        ...
+
+    @property
+    def goal_config(self) -> dict[int, LocationAddress]:
+        """Final qubit configuration after applying ``move_layers``."""
+        ...
+
+    @property
+    def nodes_expanded(self) -> int:
+        """Number of nodes expanded by the DSL kernel."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class PolicyRunner:
+    """Reusable Move Policy DSL runner.
+
+    Sidecar to ``MoveSolver``. Construct once from an architecture spec
+    (JSON string or ``ArchSpec``); then call ``solve(...)`` for each move
+    synthesis problem with a ``.star`` policy.
+
+    Args:
+        arch_spec_json: ArchSpec serialized to a JSON string. Use
+            ``PolicyRunner.from_arch_spec(arch)`` to construct from a native
+            ``ArchSpec`` instead.
+
+    Raises:
+        ValueError: If the arch spec is invalid.
+    """
+
+    def __init__(self, arch_spec_json: str) -> None: ...
+    @staticmethod
+    def from_arch_spec(arch: ArchSpec) -> PolicyRunner: ...
+    def solve(
+        self,
+        initial: dict[int, LocationAddress],
+        target: dict[int, LocationAddress],
+        blocked: list[LocationAddress],
+        policy_path: str,
+        *,
+        policy_params: dict[str, object] | None = None,
+        max_expansions: int | None = None,
+        timeout_s: float | None = None,
+    ) -> PolicySolveResult:
+        """Solve a move synthesis problem using a ``.star`` policy.
+
+        Args:
+            initial: Mapping of qubit_id to LocationAddress for starting positions.
+            target: Mapping of qubit_id to LocationAddress for desired positions.
+            blocked: List of LocationAddress for immovable obstacle locations.
+            policy_path: Path to a ``.star`` Move Policy DSL file.
+            policy_params: Optional free-form dict echoed into the result's
+                ``policy_params`` field (JSON-encoded string).
+            max_expansions: Optional limit on kernel node expansions
+                (defaults to 100_000).
+            timeout_s: Optional wall-clock time limit (seconds) for the kernel.
+
+        Returns:
+            PolicySolveResult with the policy terminal state, move layers,
+            goal configuration, and expansion count.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class TargetPolicyRunner:
+    """Reusable runner that wraps a parsed ``.star`` target-generator policy.
+
+    Constructed once per (policy file, ArchSpec) pair. Each ``generate(...)``
+    call invokes the policy's ``generate(ctx, lib)`` function, validates each
+    candidate against architecture invariants (qubit coverage, location
+    validity, CZ-blockade pair invariant), and returns the validated
+    candidates as a list of qubit-id → location dicts.
+
+    Args:
+        policy_path: Path to a ``.star`` Target Generator DSL file.
+        arch_spec: Native ``ArchSpec`` (e.g. from ``Python ArchSpec._inner``).
+            The runner builds an internal ``LaneIndex`` from it.
+
+    Raises:
+        ValueError: If the policy file is missing or fails to parse.
+    """
+
+    def __init__(self, policy_path: str, arch_spec: ArchSpec) -> None: ...
+    def generate(
+        self,
+        placement: dict[int, LocationAddress],
+        controls: list[int],
+        targets: list[int],
+        lookahead_cz_layers: list[tuple[list[int], list[int]]],
+        cz_stage_index: int,
+        policy_params: dict[str, object] | None = None,
+    ) -> list[dict[int, LocationAddress]]:
+        """Run the policy's ``generate(ctx, lib)`` and validate each candidate.
+
+        Args:
+            placement: Current qubit positions (qid → LocationAddress).
+            controls: Control qubit IDs for this CZ stage.
+            targets: Target qubit IDs for this CZ stage.
+            lookahead_cz_layers: Future CZ layers as ``(controls, targets)``
+                pairs. Empty list if no lookahead is wired.
+            cz_stage_index: 0-based index of the current CZ stage (for tracing).
+            policy_params: Optional free-form params dict made available to
+                the policy. Echoed only; the kernel does not interpret it.
+
+        Returns:
+            List of candidate target placements in policy-defined order. Each
+            candidate is a dict mapping every qid in ``placement`` to its
+            target location. An empty list signals "defer to fallback".
+
+        Raises:
+            ValueError: If the policy returns a malformed shape, references an
+                unknown CZ partner, or any candidate fails validation.
+        """
+        ...

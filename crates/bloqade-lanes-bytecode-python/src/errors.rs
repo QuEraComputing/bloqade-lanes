@@ -63,7 +63,7 @@ pub fn arch_spec_errors_to_py(py: Python<'_>, errors: Vec<ArchSpecError>) -> PyE
     };
 
     match cls.call1((&msg, py_errors_list)) {
-        Ok(instance) => PyErr::from_value(instance.into()),
+        Ok(instance) => PyErr::from_value(instance),
         Err(e) => e,
     }
 }
@@ -181,6 +181,18 @@ fn validation_error_to_py(py: Python<'_>, error: &ValidationError) -> PyResult<P
             let cls = module.getattr("AtomReloadingNotSupportedError")?;
             cls.call1((*pc,))?
         }
+        ValidationError::EmptyProgram => {
+            let cls = module.getattr("EmptyProgramError")?;
+            cls.call0()?
+        }
+        ValidationError::MissingTerminator { pc } => {
+            let cls = module.getattr("MissingTerminatorError")?;
+            cls.call1((*pc,))?
+        }
+        ValidationError::UnreachableInstruction { pc } => {
+            let cls = module.getattr("UnreachableInstructionError")?;
+            cls.call1((*pc,))?
+        }
     };
 
     Ok(obj.into())
@@ -219,7 +231,7 @@ pub fn validation_errors_to_py(py: Python<'_>, errors: Vec<ValidationError>) -> 
     };
 
     match cls.call1((&msg, py_errors_list)) {
-        Ok(instance) => PyErr::from_value(instance.into()),
+        Ok(instance) => PyErr::from_value(instance),
         Err(e) => e,
     }
 }

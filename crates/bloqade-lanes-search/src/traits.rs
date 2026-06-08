@@ -1,8 +1,8 @@
 //! Core search traits defining the composable search API.
 
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext, SearchState};
-use crate::graph::{MoveSet, NodeId};
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+use crate::primitives::graph::{MoveSet, NodeId};
 
 /// Produces candidate move sets from a configuration.
 pub trait MoveGenerator {

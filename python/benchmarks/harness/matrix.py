@@ -19,6 +19,14 @@ from bloqade.lanes.heuristics.physical.placement import (
     RustPlacementTraversal,
 )
 
+# Note: the Move Policy DSL strategy (PolicyPlacementStrategy /
+# PolicyTraversal) is intentionally NOT in `default_strategy_configs`.
+# It is exercised only by the autotune harness via
+# `scripts/autotune/measure_dsl_policy.py`, which constructs the
+# strategy directly. Keeping it out of the default benchmark matrix
+# means `latest_{physical,logical}.csv` baselines are not contaminated
+# by whatever transient candidate.star autotune happens to be iterating.
+
 
 def default_strategy_configs(
     arch_spec: tuple[str, Callable[[], ArchSpec]] | None = None,
