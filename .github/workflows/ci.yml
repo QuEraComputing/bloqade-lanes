@@ -31,7 +31,7 @@ jobs:
         run: just coverage-rust
 
       - name: Upload Rust coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: rust-coverage.xml
           flags: rust
@@ -100,7 +100,7 @@ jobs:
       - name: Run all tests with coverage
         run: uv run just coverage
       - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.xml
           flags: python
