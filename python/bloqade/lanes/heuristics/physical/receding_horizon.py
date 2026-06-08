@@ -16,7 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import MoveSolver, SolveResult
+from bloqade.lanes.bytecode._native import (
+    MoveSearch,
+    RecedingHorizonCzPlacement,
+    SearchEngine,
+    SolveResult,
+)
 from bloqade.lanes.heuristics.physical._no_return_base import NoReturnStrategyBase
 
 
@@ -169,21 +174,25 @@ class RecedingHorizonNoReturnPlacementStrategy(NoReturnStrategyBase):
             inner_beam_width=self.inner_beam_width,
         )
 
-    def _invoke_solver(
+    def _invoke_placement(
         self,
-        solver: MoveSolver,
+        engine: SearchEngine,
+        move_search: MoveSearch,
         initial: dict[int, "_native.LocationAddress"],
         cz_pairs: list[tuple[int, int]],
         blocked: list["_native.LocationAddress"],
         future_cz_layers: list[list[tuple[int, int]]] | None,
     ) -> SolveResult:
-        return solver.solve_entangling_rh(
+        placement = RecedingHorizonCzPlacement(
+            engine,
+            move_search,
+            self._build_entangling_options(),
+            self._build_rh_options(),
+        )
+        return placement.solve_pairs(
             initial,
             cz_pairs,
             blocked,
             max_expansions=self.max_expansions,
-            options=self._build_solve_options(),
-            entangling_options=self._build_entangling_options(),
-            rh_options=self._build_rh_options(),
             future_cz_layers=future_cz_layers,
         )

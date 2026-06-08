@@ -1,0 +1,55 @@
+{
+  "name": "case_0024",
+  "strategy": "greedy",
+  "initial": {
+    "0": 4398130397184,
+    "1": 3298585214976
+  },
+  "target": {
+    "0": 2199073587200,
+    "1": 3298585214976
+  },
+  "blocked": [],
+  "options": {
+    "strategy": "greedy",
+    "weight": 1.0,
+    "restarts": 1,
+    "deadlock_policy": "skip",
+    "lookahead": false,
+    "top_c": null
+  },
+  "entropy_options": {
+    "max_movesets_per_group": 3,
+    "max_goal_candidates": 3,
+    "w_t": 0.05,
+    "collect_entropy_trace": false
+  },
+  "max_expansions": 2000,
+  "expected": {
+    "status": "solved",
+    "cost": 5.0,
+    "nodes_expanded": 5,
+    "deadlocks": 0,
+    "goal_config": {
+      "0": 2199073587200,
+      "1": 3298585214976
+    },
+    "move_layers": [
+      [
+        4295229445
+      ],
+      [
+        2305843009213956103
+      ],
+      [
+        2305843047868727303
+      ],
+      [
+        9223372045445169155
+      ],
+      [
+        11529215050363568131
+      ]
+    ]
+  }
+}

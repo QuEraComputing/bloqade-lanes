@@ -1,7 +1,7 @@
 //! Edge cost implementations.
 
-use crate::config::Config;
-use crate::graph::MoveSet;
+use crate::primitives::config::Config;
+use crate::primitives::graph::MoveSet;
 use crate::traits::CostFn;
 
 /// Uniform edge cost: every move step costs 1.0.

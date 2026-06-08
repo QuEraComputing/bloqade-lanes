@@ -8,10 +8,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{LaneAddr, LocationAddr};
 
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext, SearchState};
-use crate::graph::{MoveSet, NodeId};
-use crate::lane_index::LaneIndex;
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::lane_index::LaneIndex;
 use crate::traits::MoveGenerator;
 
 /// Exhaustive AOD-rectangle move generator.
@@ -245,8 +245,8 @@ mod tests {
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     use super::*;
-    use crate::heuristic::DistanceTable;
     use crate::observer::NoOpObserver;
+    use crate::primitives::distance::DistanceTable;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_index() -> LaneIndex {
@@ -421,9 +421,9 @@ mod tests {
     #[test]
     fn generate_with_search_finds_solution() {
         use crate::cost::UniformCost;
-        use crate::frontier::{self, PriorityFrontier};
+        use crate::drivers::frontier::{self, PriorityFrontier};
         use crate::goals::AllAtTarget;
-        use crate::heuristic::HopDistanceHeuristic;
+        use crate::primitives::distance::HopDistanceHeuristic;
         use crate::scorers::DistanceScorer;
 
         let index = make_index();

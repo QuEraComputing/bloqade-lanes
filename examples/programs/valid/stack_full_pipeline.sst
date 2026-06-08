@@ -84,6 +84,7 @@ await_measure                    ; pushes array_ref
 set_observable                   ; pops array_ref, pushes observable_ref
 
 ; --- Return one value ---
-return                           ; pops observable_ref
-pop                              ; discard detector_ref
-halt
+; Stack: [detector_ref, observable_ref]. Discard detector_ref first, then return.
+swap                             ; [observable_ref, detector_ref]
+pop                              ; discard detector_ref → [observable_ref]
+return                           ; return observable_ref

@@ -146,6 +146,31 @@ class AtomReloadingNotSupportedError(ValidationError):
         )
 
 
+class EmptyProgramError(ValidationError):
+    """Program has no instructions."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "program is empty: must contain at least one instruction ending with return or halt"
+        )
+
+
+class MissingTerminatorError(ValidationError):
+    """Program does not end with a return or halt instruction."""
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: program must end with return or halt")
+
+
+class UnreachableInstructionError(ValidationError):
+    """Instruction follows a return or halt and is unreachable."""
+
+    def __init__(self, pc: int):
+        self.pc = pc
+        super().__init__(f"pc {pc}: unreachable instruction after return or halt")
+
+
 # ── Location group errors (from ArchSpec.check_locations) ──
 
 
