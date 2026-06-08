@@ -726,8 +726,7 @@ def test_from_task_id_fetches_definition_and_stores_it(
         programs=[Program(content="kernel")],
         subtasks=[Subtask(program_index=0, num_shots=5)],
     )
-    # `task.definition` field is delivered via Task's extra="allow".
-    task = make_task(TaskStatus.COMPLETED, definition="def-id-1")
+    task = make_task(TaskStatus.COMPLETED, definition_id="def-id-1")
     tasks_client.get.return_value = task
     definitions_client.get.return_value = task_def
 

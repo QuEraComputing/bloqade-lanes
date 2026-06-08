@@ -32,9 +32,9 @@ MOCK_MODE_ONES = "ones"
 MOCK_MODE_RANDOM = "random"
 
 
-def collect_squin_gate_classes(value: object) -> set[str]:
-    """Return serialized Squin gate statement class names found in a program."""
-    gate_classes: set[str] = set()
+def collect_squin_gate_class_counts(value: object) -> dict[str, int]:
+    """Return serialized Squin gate statement class counts found in a program."""
+    gate_counts: dict[str, int] = {}
     if isinstance(value, dict):
         module_name = value.get("module_name")
         class_name = value.get("class_name")
@@ -43,15 +43,22 @@ def collect_squin_gate_classes(value: object) -> set[str]:
             and module_name.startswith("bloqade.squin.gate")
             and isinstance(class_name, str)
         ):
-            gate_classes.add(class_name)
+            gate_counts[class_name] = gate_counts.get(class_name, 0) + 1
 
         for child in value.values():
-            gate_classes.update(collect_squin_gate_classes(child))
+            for gate_class, count in collect_squin_gate_class_counts(child).items():
+                gate_counts[gate_class] = gate_counts.get(gate_class, 0) + count
     elif isinstance(value, list):
         for child in value:
-            gate_classes.update(collect_squin_gate_classes(child))
+            for gate_class, count in collect_squin_gate_class_counts(child).items():
+                gate_counts[gate_class] = gate_counts.get(gate_class, 0) + count
 
-    return gate_classes
+    return gate_counts
+
+
+def collect_squin_gate_classes(value: object) -> set[str]:
+    """Return serialized Squin gate statement class names found in a program."""
+    return set(collect_squin_gate_class_counts(value))
 
 
 def infer_mock_measurement_mode(program_content: object) -> str:
@@ -66,11 +73,12 @@ def infer_mock_measurement_mode(program_content: object) -> str:
         except json.JSONDecodeError:
             return MOCK_MODE_RANDOM
 
-    gate_classes = collect_squin_gate_classes(program_content)
+    gate_counts = collect_squin_gate_class_counts(program_content)
+    gate_classes = set(gate_counts)
     if not gate_classes:
         return MOCK_MODE_ZEROS
     if gate_classes == {"X"}:
-        return MOCK_MODE_ONES
+        return MOCK_MODE_ONES if gate_counts["X"] % 2 else MOCK_MODE_ZEROS
     if gate_classes == {"SqrtX"}:
         return MOCK_MODE_RANDOM
 
