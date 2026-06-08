@@ -90,13 +90,13 @@ def test_physical_pipeline_missing_measure_raises():
 def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     """When layout_heuristic and placement_strategy are None, PhysicalPipeline
     resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut wrapped in
-    PalindromePlacementStrategy(NoHomePlacementStrategy) before passing them
+    PalindromePlacementStrategy(PhysicalPlacementStrategy) before passing them
     to the place→move stage."""
     from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
     from bloqade.lanes.heuristics.physical.layout import (
         PhysicalLayoutHeuristicGraphPartitionCenterOut,
     )
-    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
+    from bloqade.lanes.heuristics.physical.movement import PhysicalPlacementStrategy
     from bloqade.lanes.pipeline.base import _PlaceToMove
 
     captured: dict = {}
@@ -122,7 +122,7 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     )
     strategy = captured["placement_strategy"]
     assert isinstance(strategy, PalindromePlacementStrategy)
-    assert isinstance(strategy.inner, NoHomePlacementStrategy)
+    assert isinstance(strategy.inner, PhysicalPlacementStrategy)
 
 
 def test_physical_pipeline_layout_heuristic_mismatch_warns():
