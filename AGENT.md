@@ -222,4 +222,4 @@ Breaking changes map to SemVer MAJOR.
 ### Pull Request Labels
 
 - Tag PRs with the `breaking` label when they contain breaking changes
-- Tag non-breaking PRs with `backport v0.9` label for cherry-picking into the current release branch (`release-0-9`)
+- Tag non-breaking PRs with `backport v0.10` label for cherry-picking into the current release branch (`release-0-10`)

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 @dataclass
 class LayoutHeuristicABC(abc.ABC):
 
+    arch_spec: "ArchSpec"
+
     def _validate_pinned_in_arch(
         self,
         pinned: dict[int, LocationAddress],
