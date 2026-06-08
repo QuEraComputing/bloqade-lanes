@@ -89,6 +89,37 @@ def test_logical_pipeline_no_return_moves():
     assert out is not None
 
 
+def test_logical_pipeline_layout_heuristic_default_is_none():
+    """LogicalPipeline.layout_heuristic defaults to None."""
+    pipeline = LogicalPipeline()
+    assert pipeline.layout_heuristic is None
+
+
+def test_logical_pipeline_resolves_none_to_logical_defaults(monkeypatch):
+    """When layout_heuristic is None, LogicalPipeline passes LogicalLayoutHeuristic
+    to the place→move stage."""
+    from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
+    from bloqade.lanes.pipeline.base import _PlaceToMove
+
+    captured: dict = {}
+    _orig_emit = _PlaceToMove.emit
+
+    def spy_emit(self_inner, mt, no_raise=True):
+        captured["layout_heuristic_type"] = type(self_inner.layout_heuristic)
+        return _orig_emit(self_inner, mt, no_raise=no_raise)
+
+    monkeypatch.setattr(_PlaceToMove, "emit", spy_emit)
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(1)
+        squin.h(reg[0])
+        gemini.logical.terminal_measure(reg)
+
+    LogicalPipeline().emit(kernel)
+    assert captured["layout_heuristic_type"] is LogicalLayoutHeuristic
+
+
 def test_logical_pipeline_no_raise_suppresses_validation():
     """no_raise=True does not raise even when pre-native validation fails."""
 

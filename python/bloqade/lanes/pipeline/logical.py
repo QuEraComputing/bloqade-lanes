@@ -116,6 +116,25 @@ class LogicalPipeline:
     simulation: bool = True
 
     @property
+    def resolved_layout_heuristic(self) -> layout.LayoutHeuristicABC:
+        """Return the active layout heuristic, constructing it from ``arch_spec`` if unset.
+
+        Emits a warning if an explicit heuristic is set whose ``arch_spec``
+        differs from the pipeline's ``arch_spec``.
+        """
+        if self.layout_heuristic is None:
+            return LogicalLayoutHeuristic(arch_spec=self.arch_spec)
+        if self.layout_heuristic.arch_spec is not self.arch_spec:
+            warnings.warn(
+                "LogicalPipeline.layout_heuristic was constructed with a different "
+                "arch_spec than the pipeline. Initial qubit layout may not match the "
+                "pipeline architecture. Leave layout_heuristic=None to have it built "
+                "automatically from arch_spec.",
+                stacklevel=2,
+            )
+        return self.layout_heuristic
+
+    @property
     def resolved_placement_strategy(self) -> placement.PlacementStrategyABC:
         """Return the active placement strategy, constructing it from ``arch_spec`` if unset.
 
@@ -137,19 +156,13 @@ class LogicalPipeline:
         return self.placement_strategy
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
-        heuristic = (
-            LogicalLayoutHeuristic(arch_spec=self.arch_spec)
-            if self.layout_heuristic is None
-            else self.layout_heuristic
-        )
-
         out = _LogicalNativeToPlace(
             arch_spec=self.arch_spec, transversal_rewrite=self.transversal_rewrite
         ).emit(mt, no_raise=no_raise)
         self.place_opt_type(out.dialects, no_raise=no_raise)(out)
 
         out = _PlaceToMove(
-            layout_heuristic=heuristic,
+            layout_heuristic=self.resolved_layout_heuristic,
             placement_strategy=self.resolved_placement_strategy,
             insert_initialize=True,
         ).emit(out, no_raise=no_raise)
