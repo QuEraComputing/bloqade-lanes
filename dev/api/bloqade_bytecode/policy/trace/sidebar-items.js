@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["loc_from_triple","run_trace_policy","trace_move","trace_target"],"struct":["HumanMoveTraceObserver","HumanTargetTraceObserver"]};
+window.SIDEBAR_ITEMS = {"fn":["run_trace_policy","trace_move","trace_target"],"struct":["HumanMoveTraceObserver","HumanTargetTraceObserver"]};
