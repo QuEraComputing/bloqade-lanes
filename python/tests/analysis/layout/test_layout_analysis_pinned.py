@@ -12,8 +12,11 @@ from kirin.dialects import func, ssacfg
 
 from bloqade.lanes.analysis.layout import LayoutAnalysis
 from bloqade.lanes.analysis.layout.analysis import LayoutHeuristicABC
+from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import place
+
+_STUB_ARCH = get_physical_arch_spec()
 
 # ---------------------------------------------------------------------------
 # Minimal stub heuristic (never called by these unit tests)
@@ -67,7 +70,7 @@ def _make_analysis(
     dialects = ir.DialectGroup([ssacfg.dialect, func.dialect, place.dialect])
     return LayoutAnalysis(
         dialects=dialects,
-        heuristic=_StubHeuristic(),
+        heuristic=_StubHeuristic(arch_spec=_STUB_ARCH),
         address_entries=address_entries,
         all_qubits=(),
     )
