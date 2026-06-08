@@ -181,23 +181,20 @@ where
     };
 
     // Helper: run inner strategy with parallel restarts, return best.
-    // When base_seed == 0 (default): single restart uses seed=0 (no perturbation);
-    // multiple restarts use seeds 1, 2, ... (same as the pre-seed behaviour).
-    // When base_seed != 0: single restart uses base_seed; multiple restarts use
-    // base_seed, base_seed+1, ... for reproducible but distinct runs.
+    // Seed semantics:
+    //   base_seed == 0, restarts == 1 → seed 0 (no perturbation, deterministic)
+    //   base_seed == 0, restarts > 1  → seeds 1, 2, … (preserves pre-existing diversity)
+    //   base_seed != 0, restarts == 1 → seed base_seed
+    //   base_seed != 0, restarts > 1  → seeds base_seed, base_seed+1, …
+    // base_seed.max(1) unifies the two multi-restart cases without an explicit branch.
     let run_inner_with_restarts = |inner: InnerStrategy| -> SolveResult {
         if restarts <= 1 {
             run_inner(inner, base_seed, max_expansions)
         } else {
+            let start = base_seed.max(1);
             let results: Vec<SolveResult> = (0..restarts)
                 .into_par_iter()
-                .map(|i| {
-                    run_inner(
-                        inner,
-                        base_seed.saturating_add(i as u64 + 1),
-                        max_expansions,
-                    )
-                })
+                .map(|i| run_inner(inner, start.saturating_add(i as u64), max_expansions))
                 .collect();
             pick_best(results)
         }
@@ -268,9 +265,10 @@ where
     if restarts <= 1 {
         run_once(base_seed, max_expansions)
     } else {
+        let start = base_seed.max(1);
         let results: Vec<SolveResult> = (0..restarts)
             .into_par_iter()
-            .map(|i| run_once(base_seed.saturating_add(i as u64 + 1), max_expansions))
+            .map(|i| run_once(start.saturating_add(i as u64), max_expansions))
             .collect();
         pick_best(results)
     }

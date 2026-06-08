@@ -116,10 +116,14 @@ pub struct EntropyOptions {
     pub w_t: f64,
     /// Collect entropy-step trace payload for visualization/debugging.
     pub collect_entropy_trace: bool,
-    /// Base RNG seed for score perturbations. `0` (default) disables
-    /// perturbations for fully deterministic results. Non-zero values enable
-    /// reproducible perturbations; parallel restarts add their restart index
-    /// to this seed so each restart is distinct but still reproducible.
+    /// Base RNG seed for score perturbations.
+    ///
+    /// With a single restart (`SolveOptions::restarts == 1`), `0` (default)
+    /// disables perturbations entirely for fully deterministic results.
+    /// With multiple restarts, a zero base seed still assigns non-zero seeds
+    /// per restart (1, 2, …) to preserve pre-existing restart diversity.
+    /// A non-zero base seed starts the per-restart sequence at that value
+    /// so every run is reproducible.
     pub seed: u64,
 }
 
