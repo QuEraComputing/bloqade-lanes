@@ -1,6 +1,7 @@
 """Tests for the physical pipeline and NewPinnedQubit."""
 
 import bloqade.squin as squin
+import pytest
 from kirin import ir, rewrite
 from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
@@ -135,3 +136,47 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     strategy = captured["placement_strategy"]
     assert isinstance(strategy, PalindromePlacementStrategy)
     assert isinstance(strategy.inner, NoHomePlacementStrategy)
+
+
+def test_physical_pipeline_layout_heuristic_mismatch_warns():
+    """resolved_layout_heuristic warns when the explicit heuristic carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
+    from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
+
+    physical_arch = PhysicalPipeline().arch_spec
+    logical_arch = get_logical_arch_spec()
+    assert physical_arch != logical_arch
+
+    mismatched_heuristic = LogicalLayoutHeuristic(arch_spec=logical_arch)
+    pipeline = PhysicalPipeline(layout_heuristic=mismatched_heuristic)
+
+    with pytest.warns(
+        UserWarning, match="layout_heuristic was constructed with a different"
+    ):
+        result = pipeline.resolved_layout_heuristic
+
+    assert result is mismatched_heuristic
+
+
+def test_physical_pipeline_placement_strategy_mismatch_warns():
+    """resolved_placement_strategy warns when the explicit strategy carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
+    from bloqade.lanes.heuristics.logical.placement import (
+        LogicalPlacementStrategyNoHome,
+    )
+
+    physical_arch = PhysicalPipeline().arch_spec
+    logical_arch = get_logical_arch_spec()
+    assert physical_arch != logical_arch
+
+    mismatched_strategy = LogicalPlacementStrategyNoHome(arch_spec=logical_arch)
+    pipeline = PhysicalPipeline(placement_strategy=mismatched_strategy)
+
+    with pytest.warns(
+        UserWarning, match="placement_strategy was constructed with a different"
+    ):
+        result = pipeline.resolved_placement_strategy
+
+    assert result is mismatched_strategy

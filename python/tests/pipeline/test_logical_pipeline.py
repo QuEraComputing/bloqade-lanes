@@ -1,13 +1,15 @@
 """Tests for LogicalPipeline."""
 
 import bloqade.squin as squin
+import pytest
 from bloqade.squin.gate.stmts import S, SqrtX
 
 import bloqade.gemini as gemini
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.pipeline import LogicalPipeline
-from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace
+from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace, transversal_rewrites
 
 
 def test_logical_pipeline_smoke():
@@ -131,4 +133,74 @@ def test_logical_pipeline_no_raise_suppresses_validation():
         # missing terminal_measure — violates GeminiTerminalMeasurementValidation
 
     out = LogicalPipeline().emit(invalid_kernel, no_raise=True)
+    assert out is not None
+
+
+def test_logical_pipeline_layout_heuristic_mismatch_warns():
+    """resolved_layout_heuristic warns when the explicit heuristic carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.physical import (
+        get_arch_spec as get_physical_arch_spec,
+    )
+
+    logical_arch = LogicalPipeline().arch_spec
+    physical_arch = get_physical_arch_spec()
+    assert logical_arch != physical_arch
+
+    mismatched_heuristic = LogicalLayoutHeuristic(arch_spec=physical_arch)
+    pipeline = LogicalPipeline(layout_heuristic=mismatched_heuristic)
+
+    with pytest.warns(
+        UserWarning, match="layout_heuristic was constructed with a different"
+    ):
+        result = pipeline.resolved_layout_heuristic
+
+    assert result is mismatched_heuristic
+
+
+def test_logical_pipeline_placement_strategy_mismatch_warns():
+    """resolved_placement_strategy warns when the explicit strategy carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.physical import (
+        get_arch_spec as get_physical_arch_spec,
+    )
+
+    logical_arch = LogicalPipeline().arch_spec
+    physical_arch = get_physical_arch_spec()
+    assert logical_arch != physical_arch
+
+    mismatched_strategy = LogicalPlacementStrategyNoHome(arch_spec=physical_arch)
+    pipeline = LogicalPipeline(placement_strategy=mismatched_strategy)
+
+    with pytest.warns(
+        UserWarning, match="placement_strategy was constructed with a different"
+    ):
+        result = pipeline.resolved_placement_strategy
+
+    assert result is mismatched_strategy
+
+
+def test_transversal_rewrites_direct():
+    """transversal_rewrites() rewrites the method in place and returns it."""
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(1)
+        squin.h(reg[0])
+        gemini.logical.terminal_measure(reg)
+
+    result = transversal_rewrites(kernel, rewrite_logical_initialize=False)
+    assert result is kernel
+
+
+def test_logical_pipeline_transversal_rewrite_emit():
+    """emit() with transversal_rewrite=True calls transversal_rewrites on the output."""
+
+    @gemini.logical.kernel(aggressive_unroll=True)
+    def kernel():
+        reg = squin.qalloc(1)
+        squin.h(reg[0])
+        gemini.logical.terminal_measure(reg)
+
+    out = LogicalPipeline(transversal_rewrite=True).emit(kernel)
     assert out is not None
