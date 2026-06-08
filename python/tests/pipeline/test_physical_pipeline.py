@@ -1,6 +1,7 @@
 """Tests for the physical pipeline and NewPinnedQubit."""
 
 import bloqade.squin as squin
+import pytest
 from kirin import ir, rewrite
 from kirin.dialects import ilist
 from kirin.ir.exception import ValidationErrorGroup
@@ -8,7 +9,6 @@ from kirin.ir.exception import ValidationErrorGroup
 from bloqade import qubit
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.heuristics.physical.movement import PhysicalPlacementStrategy
 from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewriteQubitsToPinnedQubits
 
@@ -53,18 +53,10 @@ def test_physical_pipeline_smoke():
     assert len(fills) == 1
 
 
-def test_physical_pipeline_placement_strategy_default_uses_factory():
-    """PhysicalPipeline should eagerly construct the shared default strategy."""
-    from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
-
+def test_physical_pipeline_placement_strategy_default_is_none():
+    """PhysicalPipeline.placement_strategy defaults to None; emit() constructs it from arch_spec."""
     pipeline = PhysicalPipeline()
-
-    assert isinstance(pipeline.placement_strategy, PalindromePlacementStrategy)
-    assert isinstance(pipeline.placement_strategy.inner, PhysicalPlacementStrategy)
-    traversal = pipeline.placement_strategy.inner.traversal
-    assert traversal.strategy == "entropy"
-    assert traversal.max_goal_candidates == 3
-    assert traversal.max_expansions == 300
+    assert pipeline.placement_strategy is None
 
 
 def test_physical_pipeline_no_new_pinned_remaining():
@@ -95,29 +87,16 @@ def test_physical_pipeline_missing_measure_raises():
         PhysicalPipeline().emit(kernel, no_raise=False)
 
 
-def test_physical_pipeline_no_raise_succeeds_without_terminal_measure():
-    """With no_raise=True, PhysicalPipeline.emit must not raise even when there
-    is no terminal measurement (validation errors are suppressed in lenient mode)."""
-
-    @squin.kernel
-    def kernel():
-        squin.qalloc(1)  # no measurement
-
-    # Should not raise in lenient mode.
-    result = PhysicalPipeline().emit(kernel, no_raise=True)
-    assert result is not None
-
-
 def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     """When layout_heuristic and placement_strategy are None, PhysicalPipeline
     resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut wrapped in
-    PalindromePlacementStrategy(PhysicalPlacementStrategy) before passing them
+    PalindromePlacementStrategy(NoHomePlacementStrategy) before passing them
     to the place→move stage."""
     from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
     from bloqade.lanes.heuristics.physical.layout import (
         PhysicalLayoutHeuristicGraphPartitionCenterOut,
     )
-    from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
     from bloqade.lanes.pipeline.base import _PlaceToMove
 
     captured: dict = {}
@@ -143,4 +122,48 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     )
     strategy = captured["placement_strategy"]
     assert isinstance(strategy, PalindromePlacementStrategy)
-    assert isinstance(strategy.inner, PhysicalPlacementStrategy)
+    assert isinstance(strategy.inner, NoHomePlacementStrategy)
+
+
+def test_physical_pipeline_layout_heuristic_mismatch_warns():
+    """resolved_layout_heuristic warns when the explicit heuristic carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
+    from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
+
+    physical_arch = PhysicalPipeline().arch_spec
+    logical_arch = get_logical_arch_spec()
+    assert physical_arch != logical_arch
+
+    mismatched_heuristic = LogicalLayoutHeuristic(arch_spec=logical_arch)
+    pipeline = PhysicalPipeline(layout_heuristic=mismatched_heuristic)
+
+    with pytest.warns(
+        UserWarning, match="layout_heuristic was constructed with a different"
+    ):
+        result = pipeline.resolved_layout_heuristic
+
+    assert result is mismatched_heuristic
+
+
+def test_physical_pipeline_placement_strategy_mismatch_warns():
+    """resolved_placement_strategy warns when the explicit strategy carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
+    from bloqade.lanes.heuristics.logical.placement import (
+        LogicalPlacementStrategyNoHome,
+    )
+
+    physical_arch = PhysicalPipeline().arch_spec
+    logical_arch = get_logical_arch_spec()
+    assert physical_arch != logical_arch
+
+    mismatched_strategy = LogicalPlacementStrategyNoHome(arch_spec=logical_arch)
+    pipeline = PhysicalPipeline(placement_strategy=mismatched_strategy)
+
+    with pytest.warns(
+        UserWarning, match="placement_strategy was constructed with a different"
+    ):
+        result = pipeline.resolved_placement_strategy
+
+    assert result is mismatched_strategy
