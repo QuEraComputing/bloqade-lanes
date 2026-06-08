@@ -122,6 +122,7 @@ class PostSelectionExperiment:
     ):
         self.noncliff_prefix = noncliff_prefix
         self.main_cliff_circ = main_cliff_circ
+        # NOTE: tomo_circs are currently not used; can supply these to build_decoder_kernel_bundle
         self.tomo_circs = tomo_circs
         self.postselection_condition = postselection_condition
         self.decoder_postselection = decoder_postselection
@@ -129,7 +130,7 @@ class PostSelectionExperiment:
         self.decoder_init_args = decoder_init_args
         self.target_bloch = target_bloch
 
-        self.postselection_exp_cache = PostSelectionExperimentCache
+        self.postselection_exp_cache = PostSelectionExperimentCache()
         # NOTE: hardcoding this for now (I guess) to support having some interface for adding noise to the circuit and compiling it down?
         # ^ maybe in the future, a user could specify their own simulator to use; specifically, what specific compilation pass to apply?
         # NOTE: there are two uses of a simulator object. One is the case where we actually need a simulator object to sample shots to do the decoding
@@ -225,6 +226,8 @@ class PostSelectionExperiment:
                 dem_data["O"][layout.output_observable_count :, :],
                 dem_data["priors"],
             )
+            # NOTE: this is important. We are sampling 2x to build the 2 decoders (not once); I think it is OK (so long as they approximate
+            # the same table? but it IS more expensive)
             full_decoder = self.decoder_final(full_dem, **self.decoder_init_args)
             factory_decoder = self.decoder_final(factory_dem, **self.decoder_init_args)
             decoders_bases[basis_label] = (full_decoder, factory_decoder)
@@ -242,58 +245,21 @@ class PostSelectionExperiment:
             # m2obs=MSD_MEASUREMENT_MAPS[1],
             append_measurements=False,
         )
-        actual_circuits = {
-            basis_label: act_task.tsim_circuit
-            for basis_label, act_task in actual_tasks.items()
-        }
+        # actual_circuits = {
+        #     basis_label: act_task.tsim_circuit
+        #     for basis_label, act_task in actual_tasks.items()
+        # }
 
         # TODO: deal with None possible type for 'decoders_bases'
         conf_decoders = self.decoder_postselection(
-            actual_circuits,
+            actual_tasks,
             decoders_bases,
             valid_factory_targets=self.postselection_condition,
             target_bloch=self.target_bloch,
+            **self.decoder_init_args,
         )
 
         return conf_decoders
-
-        # def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
-        #     correction, confidence = factory_decoder.decode_with_confidence(
-        #         syndrome.astype(bool)
-        #     )
-        #     return np.asarray(correction, dtype=np.uint8), float(np.float64(confidence))
-
-        # num_logical_qubits = self.postselection_exp_cache.num_logical_qubits
-        # num_ancilla_qubits = num_logical_qubits - 1
-        # NUM_DETECTORS = 3
-
-        # decoder_adapters_list = []
-
-        # for decoders_basis, factory_decoder_basis in zip(decoders_bases, conf_decoders):
-        #     full_decoder_basis = decoders_basis[0]
-
-        #     def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
-        #         correction, confidence = factory_decoder_basis.decode_with_confidence(
-        #             syndrome.astype(bool)
-        #         )
-        #         return np.asarray(correction, dtype=np.uint8), float(
-        #             np.float64(confidence)
-        #         )
-
-        #     decoder_adapter = tuple(
-        #         _make_decoder_adapter(
-        #             full_decoder=full_decoder_basis,
-        #             factory_decoder=factory_decoder_basis,
-        #             full_syndrome_length=num_logical_qubits * 3,
-        #             factory_syndrome_length=num_ancilla_qubits * 3,
-        #             factory_decode_impl=factory_decode_impl,
-        #             score_mode=self.decoder_init_args["score_mode"],
-        #         )
-        #     )
-
-        #     decoder_adapters_list.append(decoder_adapter)
-
-        # return tuple(decoder_adapters_list)
 
 
 # Rough plan for initializing decoders:
