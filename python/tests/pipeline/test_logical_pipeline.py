@@ -79,9 +79,13 @@ def test_logical_pipeline_no_return_moves():
         squin.cx(reg[0], reg[1])
         gemini.logical.terminal_measure(reg)
 
-    out = LogicalPipeline(placement_strategy=LogicalPlacementStrategyNoHome()).emit(
-        kernel
-    )
+    from bloqade.lanes.arch.gemini.logical import get_arch_spec as get_logical_arch_spec
+
+    arch_spec = get_logical_arch_spec()
+    out = LogicalPipeline(
+        arch_spec=arch_spec,
+        placement_strategy=LogicalPlacementStrategyNoHome(arch_spec=arch_spec),
+    ).emit(kernel)
     assert out is not None
 
 

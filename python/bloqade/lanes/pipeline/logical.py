@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 from bloqade.analysis.validation.simple_nocloning import FlatKernelNoCloningValidation
@@ -114,18 +115,32 @@ class LogicalPipeline:
     transversal_rewrite: bool = False
     simulation: bool = True
 
+    @property
+    def resolved_placement_strategy(self) -> placement.PlacementStrategyABC:
+        """Return the active placement strategy, constructing it from ``arch_spec`` if unset.
+
+        Emits a warning if an explicit strategy is set whose ``arch_spec``
+        differs from the pipeline's ``arch_spec``.
+        """
+        if self.placement_strategy is None:
+            return PalindromePlacementStrategy(
+                inner=LogicalPlacementStrategyNoHome(arch_spec=self.arch_spec)
+            )
+        if self.placement_strategy.arch_spec is not self.arch_spec:
+            warnings.warn(
+                "LogicalPipeline.placement_strategy was constructed with a different "
+                "arch_spec than the pipeline. Compiled moves may not match the pipeline "
+                "architecture. Leave placement_strategy=None to have it built automatically "
+                "from arch_spec, or construct the strategy with the same arch_spec instance.",
+                stacklevel=2,
+            )
+        return self.placement_strategy
+
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
             LogicalLayoutHeuristic(arch_spec=self.arch_spec)
             if self.layout_heuristic is None
             else self.layout_heuristic
-        )
-        strategy = (
-            PalindromePlacementStrategy(
-                inner=LogicalPlacementStrategyNoHome(arch_spec=self.arch_spec)
-            )
-            if self.placement_strategy is None
-            else self.placement_strategy
         )
 
         out = _LogicalNativeToPlace(
@@ -135,7 +150,7 @@ class LogicalPipeline:
 
         out = _PlaceToMove(
             layout_heuristic=heuristic,
-            placement_strategy=strategy,
+            placement_strategy=self.resolved_placement_strategy,
             insert_initialize=True,
         ).emit(out, no_raise=no_raise)
 

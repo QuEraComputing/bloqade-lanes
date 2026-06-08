@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 from kirin import passes, rewrite
@@ -44,6 +45,12 @@ class PhysicalPipeline:
     Qubits are lowered to place.NewPinnedQubit; no logical initialization
     sequence is inserted.  Validates that the kernel has exactly one terminal
     measure covering all allocated qubits (post-unroll).
+
+    ``arch_spec`` is the single source of truth: when ``layout_heuristic`` or
+    ``placement_strategy`` are ``None`` (the default), they are constructed in
+    ``emit`` using ``self.arch_spec``, guaranteeing consistency.  Pass explicit
+    instances only when you need a fully custom heuristic or strategy; in that
+    case the caller is responsible for arch-spec consistency.
     """
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
@@ -51,16 +58,31 @@ class PhysicalPipeline:
     placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
+    @property
+    def resolved_placement_strategy(self) -> placement.PlacementStrategyABC:
+        """Return the active placement strategy, constructing it from ``arch_spec`` if unset.
+
+        Emits a warning if an explicit strategy is set whose ``arch_spec``
+        differs from the pipeline's ``arch_spec``.
+        """
+        if self.placement_strategy is None:
+            return make_physical_placement_strategy(arch_spec=self.arch_spec)
+        if self.placement_strategy.arch_spec is not self.arch_spec:
+            warnings.warn(
+                "PhysicalPipeline.placement_strategy was constructed with a different "
+                "arch_spec than the pipeline. Compiled moves may not match the pipeline "
+                "architecture. Leave placement_strategy=None to have it built automatically "
+                "from arch_spec, or pass arch_spec= explicitly to "
+                "make_physical_placement_strategy().",
+                stacklevel=2,
+            )
+        return self.placement_strategy
+
     def emit(self, mt: Method, no_raise: bool = True) -> Method:
         heuristic = (
             PhysicalLayoutHeuristicGraphPartitionCenterOut(arch_spec=self.arch_spec)
             if self.layout_heuristic is None
             else self.layout_heuristic
-        )
-        strategy = (
-            make_physical_placement_strategy(arch_spec=self.arch_spec)
-            if self.placement_strategy is None
-            else self.placement_strategy
         )
 
         out = _PhysicalNativeToPlace(arch_spec=self.arch_spec).emit(
@@ -70,7 +92,7 @@ class PhysicalPipeline:
 
         out = _PlaceToMove(
             layout_heuristic=heuristic,
-            placement_strategy=strategy,
+            placement_strategy=self.resolved_placement_strategy,
             insert_initialize=False,
         ).emit(out, no_raise=no_raise)
 
