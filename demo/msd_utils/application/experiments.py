@@ -115,6 +115,11 @@ class PostSelectionExperiment:
         self.postselection_exp_cache = PostSelectionExperimentCache
         # NOTE: hardcoding this for now (I guess) to support having some interface for adding noise to the circuit and compiling it down?
         # ^ maybe in the future, a user could specify their own simulator to use; specifically, what specific compilation pass to apply?
+        # NOTE: there are two uses of a simulator object. One is the case where we actually need a simulator object to sample shots to do the decoding
+        # (TableDecoder). The other is, we need to define some kind of compilation pipeline for our kernels down to tasks. This definition of the
+        # simulator object is for the latter.
+        # ^ Actually, for the former, the simulation is kind of hard-coded to be tsim in the current pipeline, which generates tsim circuits. However,
+        # it might be nice to allow the user to specify the simulator backend (to use a different backend than tsim, for example), in decoder_init_args.
         self.simulator = GeminiLogicalSimulator()
 
     # TODO: implement a pass to infer the number of qubits and the output qubit from a kernel?
@@ -179,4 +184,19 @@ class PostSelectionExperiment:
         self.postselection_exp_cache.dems = dems
         return dems
 
-    # def initialize_decoders(self) ->:
+    # def initialize_decoders(self) -> DecoderAdapter:
+
+
+# Rough plan for initializing decoders:
+# 1. Define a "from_dem()" method on TableDecoder
+# 2. User defines a closure for a method that takes in a DEM and outputs the trained TableDecoder. This closure is basically used to mirror the "constructor interface"
+# to construct a Decoder object. meth(dem) -> Decoder will be our rough interface
+# 3. Within that closure, for the TableDecoder, we can call our "from_dem()" method which will use the TableDecoder's __init__ constructor.
+
+# Rough plan for initialize_decoders():
+# 1. Construct decoders for each basis using DEM from each basis
+# ^ have to be slightly careful because we have to create factory and full.
+# can't figure out how to "subset the full table" for shots cleanly, so for now, do
+# construct full with subset DEM (assumes sim cost isn't the primary bottleneck) -- NOTE: this is why decoupling sampling data from decoder construction is helpful; so we can
+# sample once and take views of the shot data (instead of views of the whole table)
+# construct factory with subset DEM --> WITHIN factory for MLD, sample the ranking
