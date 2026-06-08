@@ -69,7 +69,7 @@ class PhysicalPipeline:
             return PhysicalLayoutHeuristicGraphPartitionCenterOut(
                 arch_spec=self.arch_spec
             )
-        if self.layout_heuristic.arch_spec is not self.arch_spec:
+        if self.layout_heuristic.arch_spec != self.arch_spec:
             warnings.warn(
                 "PhysicalPipeline.layout_heuristic was constructed with a different "
                 "arch_spec than the pipeline. Initial qubit layout may not match the "
@@ -88,7 +88,7 @@ class PhysicalPipeline:
         """
         if self.placement_strategy is None:
             return make_physical_placement_strategy(arch_spec=self.arch_spec)
-        if self.placement_strategy.arch_spec is not self.arch_spec:
+        if self.placement_strategy.arch_spec != self.arch_spec:
             warnings.warn(
                 "PhysicalPipeline.placement_strategy was constructed with a different "
                 "arch_spec than the pipeline. Compiled moves may not match the pipeline "
