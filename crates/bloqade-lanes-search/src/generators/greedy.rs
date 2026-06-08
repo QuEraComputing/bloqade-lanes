@@ -11,11 +11,11 @@ use std::collections::HashSet;
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 
-use crate::aod_grid::BusGridContext;
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext, SearchState};
-use crate::entropy::find_path_occupied;
-use crate::graph::{MoveSet, NodeId};
+use crate::ops::aod_grid::BusGridContext;
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+use crate::primitives::graph::{MoveSet, NodeId};
+use crate::primitives::path::find_path_occupied;
 use crate::traits::MoveGenerator;
 
 /// Greedy shortest-path move generator.
@@ -128,9 +128,9 @@ impl MoveGenerator for GreedyGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::SearchState;
-    use crate::heuristic::DistanceTable;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::context::SearchState;
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 

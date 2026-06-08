@@ -74,7 +74,7 @@ def test_cz_placements_returns_bottom_when_inner_solver_fails(monkeypatch):
     )
     monkeypatch.setattr(
         strategy,
-        "_invoke_solver",
+        "_invoke_placement",
         lambda *args, **kwargs: fake_result,
     )
     before = strategy.rust_nodes_expanded_total

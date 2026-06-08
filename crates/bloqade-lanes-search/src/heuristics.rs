@@ -3,8 +3,8 @@
 //! [`MaxHopHeuristic`] is admissible (max over qubits).
 //! [`SumHopHeuristic`] is not admissible but gives better ordering for IDS/DFS.
 
-use crate::config::Config;
-use crate::heuristic::HopDistanceHeuristic;
+use crate::primitives::config::Config;
+use crate::primitives::distance::HopDistanceHeuristic;
 use crate::traits::Heuristic;
 
 // ── MaxHopHeuristic ────────────────────────────────────────────────
@@ -52,9 +52,9 @@ impl Heuristic for SumHopHeuristic<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::heuristic::{DistanceTable, HopDistanceHeuristic};
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::config::Config;
+    use crate::primitives::distance::{DistanceTable, HopDistanceHeuristic};
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 

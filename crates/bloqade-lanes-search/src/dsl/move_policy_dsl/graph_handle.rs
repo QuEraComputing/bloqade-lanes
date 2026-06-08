@@ -17,9 +17,9 @@ use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::{Heap, NoSerialize, ProvidesStaticType, StarlarkValue, Value};
 
-use crate::config::Config;
 use crate::dsl::move_policy_dsl::lib_move::StarlarkConfig;
-use crate::graph::{MoveSet, NodeId, SearchGraph};
+use crate::primitives::config::Config;
+use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 
 /// Outcome of the most recent `actions.insert_child(...)`. Mirrors the
 /// spec §5.6 contract.

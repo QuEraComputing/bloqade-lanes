@@ -21,7 +21,7 @@ use bloqade_lanes_search::dsl::move_policy_dsl::{
     NoOpMoveObserver, PolicyOptions, solve_with_policy,
 };
 use bloqade_lanes_search::dsl::target_generator_dsl::{NoOpTargetObserver, run_target_policy};
-use bloqade_lanes_search::lane_index::LaneIndex;
+use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../policies/fixtures")

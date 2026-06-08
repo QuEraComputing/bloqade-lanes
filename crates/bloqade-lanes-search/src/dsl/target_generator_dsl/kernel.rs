@@ -3,7 +3,7 @@
 //! Loads a `.star` policy via `dsl-core`, invokes its top-level
 //! `generate(ctx, lib)` function once per CZ stage, parses the returned
 //! `list[dict[int, Location]]`, and validates each candidate against
-//! [`crate::target_generator::validate_candidate`].
+//! [`crate::placement::target_generator::validate_candidate`].
 //!
 //! Unlike the Move Policy DSL kernel, there is no search graph, no step
 //! loop, and no transposition table — target generation is a single pure
@@ -28,8 +28,8 @@ use thiserror::Error;
 
 use crate::dsl::target_generator_dsl::ctx_handle::StarlarkTargetContext;
 use crate::dsl::target_generator_dsl::lib_target::StarlarkLibTarget;
-use crate::lane_index::LaneIndex;
-use crate::target_generator::{CandidateError, validate_candidate};
+use crate::placement::target_generator::{CandidateError, validate_candidate};
+use crate::primitives::lane_index::LaneIndex;
 
 #[derive(Debug, Error)]
 pub enum TargetPolicyError {

@@ -1,0 +1,67 @@
+{
+  "name": "case_0031",
+  "strategy": "entropy",
+  "initial": {
+    "0": 16492791857152,
+    "1": 19791226077184,
+    "2": 10995233718272,
+    "3": 5497608470528
+  },
+  "target": {
+    "0": 16492791857152,
+    "1": 19791226077184,
+    "2": 20890737704960,
+    "3": 15393280229376
+  },
+  "blocked": [
+    6597086543872,
+    18691781558272
+  ],
+  "options": {
+    "strategy": "entropy",
+    "weight": 1.0,
+    "restarts": 1,
+    "deadlock_policy": "skip",
+    "lookahead": false,
+    "top_c": null
+  },
+  "entropy_options": {
+    "max_movesets_per_group": 3,
+    "max_goal_candidates": 3,
+    "w_t": 0.05,
+    "collect_entropy_trace": false
+  },
+  "max_expansions": 2000,
+  "expected": {
+    "status": "solved",
+    "cost": 6.0,
+    "nodes_expanded": 15,
+    "deadlocks": 0,
+    "goal_config": {
+      "0": 16492791857152,
+      "1": 19791226077184,
+      "2": 20890737704960,
+      "3": 15393280229376
+    },
+    "move_layers": [
+      [
+        2305843017804283911
+      ],
+      [
+        9223372045445955587
+      ],
+      [
+        9223372041150988289
+      ],
+      [
+        2305843047868727299
+      ],
+      [
+        8590393347
+      ],
+      [
+        11529215071839191047
+      ]
+    ]
+  }
+}

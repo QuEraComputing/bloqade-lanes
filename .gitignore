@@ -17,6 +17,7 @@ demo/scratch.ipynb
 debug/
 Thumbs.db
 .claude/worktrees
+.claire/worktrees
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
