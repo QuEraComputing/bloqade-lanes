@@ -138,6 +138,7 @@ fn run_fixture(solver: &MoveSolver, fx: &Fixture) -> Result<(), String> {
         max_goal_candidates: fx.entropy_options.max_goal_candidates,
         w_t: fx.entropy_options.w_t,
         collect_entropy_trace: fx.entropy_options.collect_entropy_trace,
+        seed: 0,
     };
 
     let result = solver

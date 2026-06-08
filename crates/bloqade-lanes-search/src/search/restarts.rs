@@ -98,6 +98,7 @@ where
     let max_goal_candidates = entropy.max_goal_candidates;
     let collect_entropy_trace = entropy.collect_entropy_trace;
     let w_t = entropy.w_t;
+    let base_seed = entropy.seed;
 
     let scorer = DistanceScorer;
     let cost_fn = UniformCost;
@@ -180,13 +181,23 @@ where
     };
 
     // Helper: run inner strategy with parallel restarts, return best.
+    // When base_seed == 0 (default): single restart uses seed=0 (no perturbation);
+    // multiple restarts use seeds 1, 2, ... (same as the pre-seed behaviour).
+    // When base_seed != 0: single restart uses base_seed; multiple restarts use
+    // base_seed, base_seed+1, ... for reproducible but distinct runs.
     let run_inner_with_restarts = |inner: InnerStrategy| -> SolveResult {
         if restarts <= 1 {
-            run_inner(inner, 0, max_expansions)
+            run_inner(inner, base_seed, max_expansions)
         } else {
             let results: Vec<SolveResult> = (0..restarts)
                 .into_par_iter()
-                .map(|i| run_inner(inner, i as u64 + 1, max_expansions))
+                .map(|i| {
+                    run_inner(
+                        inner,
+                        base_seed.saturating_add(i as u64 + 1),
+                        max_expansions,
+                    )
+                })
                 .collect();
             pick_best(results)
         }
@@ -255,11 +266,11 @@ where
     };
 
     if restarts <= 1 {
-        run_once(0, max_expansions)
+        run_once(base_seed, max_expansions)
     } else {
         let results: Vec<SolveResult> = (0..restarts)
             .into_par_iter()
-            .map(|i| run_once(i as u64 + 1, max_expansions))
+            .map(|i| run_once(base_seed.saturating_add(i as u64 + 1), max_expansions))
             .collect();
         pick_best(results)
     }

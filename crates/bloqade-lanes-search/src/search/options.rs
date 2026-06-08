@@ -116,6 +116,11 @@ pub struct EntropyOptions {
     pub w_t: f64,
     /// Collect entropy-step trace payload for visualization/debugging.
     pub collect_entropy_trace: bool,
+    /// Base RNG seed for score perturbations. `0` (default) disables
+    /// perturbations for fully deterministic results. Non-zero values enable
+    /// reproducible perturbations; parallel restarts add their restart index
+    /// to this seed so each restart is distinct but still reproducible.
+    pub seed: u64,
 }
 
 impl Default for EntropyOptions {
@@ -125,6 +130,7 @@ impl Default for EntropyOptions {
             max_goal_candidates: 3,
             w_t: 0.05,
             collect_entropy_trace: false,
+            seed: 0,
         }
     }
 }
