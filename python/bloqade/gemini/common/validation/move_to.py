@@ -22,7 +22,7 @@ from kirin.lattice.empty import EmptyLattice
 from kirin.validation import ValidationPass
 
 from bloqade.gemini.common.dialects.movement import dialect as movement_dialect
-from bloqade.gemini.common.dialects.movement.stmts import MoveTo
+from bloqade.gemini.common.dialects.movement.stmts import Loc, MoveTo
 from bloqade.lanes.arch.spec import ArchSpec
 
 if TYPE_CHECKING:
@@ -119,6 +119,28 @@ class _MoveToValidationMethods(interp.MethodTable):
                 break
             seen_ids.add(id(qv))
 
+        return (EmptyLattice.bottom(),)
+
+    @interp.impl(Loc)
+    def check_loc(
+        self,
+        _interp: _ValidationAnalysis,
+        frame: ForwardFrame[EmptyLattice],
+        node: Loc,
+    ):
+        from bloqade.gemini.common.validation.new_at import _expect_const_int
+        from bloqade.lanes.bytecode.encoding import LocationAddress
+
+        z = _expect_const_int(node.zone_id, "zone_id", node, _interp)
+        w = _expect_const_int(node.word_id, "word_id", node, _interp)
+        s = _expect_const_int(node.site_id, "site_id", node, _interp)
+
+        if z is None or w is None or s is None:
+            return (EmptyLattice.bottom(),)
+
+        _interp.report_location_errors(
+            node, (LocationAddress(zone_id=z, word_id=w, site_id=s),)
+        )
         return (EmptyLattice.bottom(),)
 
 

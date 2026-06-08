@@ -293,6 +293,15 @@ class PlacementMethods(interp.MethodTable):
         )
         return (new_state,)
 
+    @interp.impl(Initialize)
+    def impl_initialize(
+        self,
+        _interp: PlacementAnalysis,
+        frame: ForwardFrame[AtomState],
+        stmt: Initialize,
+    ):
+        return (frame.get(stmt.state_before),)
+
     @interp.impl(R)
     @interp.impl(Rz)
     @interp.impl(StarRz)

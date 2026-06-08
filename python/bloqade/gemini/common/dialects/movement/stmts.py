@@ -12,6 +12,18 @@ Len = types.TypeVar("Len")
 
 
 @statement(dialect=dialect)
+class Loc(ir.Statement):
+    """Construct a LocationAddress from three integer SSA values."""
+
+    name = "loc"
+    traits = frozenset({ir.Pure(), lowering.FromPythonCall()})
+    zone_id: ir.SSAValue = info.argument(types.Int)
+    word_id: ir.SSAValue = info.argument(types.Int)
+    site_id: ir.SSAValue = info.argument(types.Int)
+    location: ir.ResultValue = info.result(LocationAddressType)
+
+
+@statement(dialect=dialect)
 class MoveTo(ir.Statement):
     """User-facing move_to directive: move qubits to specified LocationAddress destinations.
 

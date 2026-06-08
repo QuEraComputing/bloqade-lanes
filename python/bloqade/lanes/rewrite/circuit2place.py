@@ -547,6 +547,7 @@ class MergePlacementRegions(abc.RewriteRule):
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
+                    place.MoveTo,
                 ),
             ):
                 attributes: dict[str, ir.Attribute] = {
@@ -554,6 +555,11 @@ class MergePlacementRegions(abc.RewriteRule):
                 }
                 if isinstance(stmt, place.StarRz):
                     attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
+                if isinstance(stmt, place.MoveTo):
+                    attributes["locations"] = ir.PyAttr(stmt.locations)
+                    attributes["multi_move_warning"] = ir.PyAttr(
+                        stmt.multi_move_warning
+                    )
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),
@@ -594,7 +600,14 @@ class MergePlacementRegions(abc.RewriteRule):
         return abc.RewriteResult(has_done_something=True)
 
 
-_GATE_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.CZ, place.Yield)
+_GATE_STMT_TYPES = (
+    place.R,
+    place.Rz,
+    place.StarRz,
+    place.CZ,
+    place.Yield,
+    place.MoveTo,
+)
 _SQ_STMT_TYPES = (place.R, place.Rz, place.StarRz, place.Yield)
 
 
@@ -614,6 +627,24 @@ def gate_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> b
 def sq_only_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
     """Merge placements whose bodies contain only R and Rz (no CZ)."""
     return _is_sq_only_block(sp1) and _is_sq_only_block(sp2)
+
+
+def _is_move_to_only_block(sp: place.StaticPlacement) -> bool:
+    return all(
+        isinstance(stmt, (place.MoveTo, place.Yield))
+        for stmt in sp.body.blocks[0].stmts
+    )
+
+
+def move_to_gate_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
+    """Merge a MoveTo-only block with the immediately following gate block.
+
+    Required so that ``UserMoved`` state produced by ``move_to_placements``
+    flows into ``cz_placements`` (or any other gate placement) within the
+    same ``StaticPlacement`` analysis context, enabling the pre-staging
+    optimisation.
+    """
+    return _is_move_to_only_block(sp1) and _is_pure_gate_block(sp2)
 
 
 def always_merge(sp1: place.StaticPlacement, sp2: place.StaticPlacement) -> bool:
@@ -671,6 +702,7 @@ class MergeStaticPlacement(abc.RewriteRule):
                     place.CZ,
                     place.EndMeasure,
                     place.Initialize,
+                    place.MoveTo,
                 ),
             ):
                 attributes: dict[str, ir.Attribute] = {
@@ -678,6 +710,11 @@ class MergeStaticPlacement(abc.RewriteRule):
                 }
                 if isinstance(stmt, place.StarRz):
                     attributes["qubit_indices"] = ir.PyAttr(stmt.qubit_indices)
+                if isinstance(stmt, place.MoveTo):
+                    attributes["locations"] = ir.PyAttr(stmt.locations)
+                    attributes["multi_move_warning"] = ir.PyAttr(
+                        stmt.multi_move_warning
+                    )
                 remapped_stmt = stmt.from_stmt(
                     stmt,
                     args=(curr_state, *stmt.args[1:]),

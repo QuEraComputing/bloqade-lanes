@@ -69,6 +69,41 @@ class PlacementStrategyABC(abc.ABC):
         qubits: tuple[int, ...],
     ) -> AtomState: ...
 
+    def _strip_user_moved(self, state: AtomState) -> AtomState:
+        """Strip UserMoved back to plain ConcreteState.
+
+        Non-palindrome strategies call this in sq_placements so that
+        accumulated_move_layers and pre_user_layout (only needed for the
+        palindrome return at the next CZ) don't leak past SQ gates.
+        PalindromePlacementStrategy.sq_placements bypasses this so that
+        UserMoved survives SQ gates and cz_placements can still read
+        accumulated_move_layers.
+        """
+        if isinstance(state, ConcreteState):
+            return ConcreteState(
+                occupied=state.occupied,
+                layout=state.layout,
+                move_count=state.move_count,
+            )
+        return state
+
+    def _unwrap_cz_input(self, state: AtomState) -> AtomState:
+        """Normalize state before calling the CZ solver.
+
+        ``ExecuteCZReturn`` encodes a palindrome home position in
+        ``initial_layout``; the next CZ must start from there, not from the
+        staging positions stored in ``layout``.  Plain ``ExecuteCZ`` and
+        ``ConcreteState`` are used as-is (atoms are already at the desired
+        starting position).
+        """
+        if isinstance(state, ExecuteCZReturn):
+            return ConcreteState(
+                occupied=state.occupied,
+                layout=state.initial_layout,
+                move_count=state.move_count,
+            )
+        return state
+
     def move_to_placements(
         self,
         state: AtomState,
@@ -116,7 +151,7 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         _ = lookahead_cz_layers
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
-
+        state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
 
@@ -137,15 +172,7 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        if isinstance(state, ConcreteState):
-            # UserMoved IS-A ConcreteState, so this strips it to plain ConcreteState.
-            # Strip CZ-specific metadata so non-CZ statements do not inherit stale move layers.
-            return ConcreteState(
-                occupied=state.occupied,
-                layout=state.layout,
-                move_count=state.move_count,
-            )
-        return state
+        return self._strip_user_moved(state)
 
     def measure_placements(
         self, state: AtomState, qubits: tuple[int, ...]
@@ -199,7 +226,7 @@ class SingleZonePlacementStrategyABC(PlacementStrategyABC):
 
         try:
             new_layers = self.compute_moves(state, target_state)
-        except Exception:
+        except RuntimeError:
             return AtomState.bottom()  # synthesizer failure
 
         # Accumulate layers across consecutive MoveTo calls
@@ -289,9 +316,10 @@ class PalindromePlacementStrategy(PlacementStrategyABC):
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
         if isinstance(state, UserMoved):
-            return (
-                state  # preserve accumulated move layers so downstream CZ can see them
-            )
+            # Do NOT call _strip_user_moved here: UserMoved must survive SQ gates
+            # so cz_placements can read accumulated_move_layers and include the
+            # user-move history in the palindrome return.
+            return state
         return self.inner.sq_placements(self._unwrap(state), qubits)
 
     def measure_placements(

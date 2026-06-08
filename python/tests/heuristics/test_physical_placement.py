@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from bloqade.lanes.analysis.placement import AtomState, ConcreteState, ExecuteCZ
+from bloqade.lanes.analysis.placement.lattice import ExecuteCZReturn
 from bloqade.lanes.arch.gemini import logical
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.heuristics.physical.placement import (
@@ -371,3 +372,69 @@ def test_congestion_aware_applies_to_rust_traversal():
     assert isinstance(
         result, ExecuteCZ
     ), "RustPlacementTraversal did not produce ExecuteCZ"
+
+
+# ---------------------------------------------------------------------------
+# Regression: cz_placements accepts non-home starting configurations
+# ---------------------------------------------------------------------------
+
+
+def test_cz_placements_accepts_execute_cz_as_input():
+    """ExecuteCZ from a prior CZ is a valid ConcreteState at staging positions.
+
+    With always_merge, a second CZ in the same StaticPlacement body receives
+    the first CZ's ExecuteCZ output directly as state_before.  The strategy
+    must solve from those staging positions rather than erroring or returning
+    bottom.
+    """
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(),
+    )
+    cz1 = strategy.cz_placements(_make_state(), controls=(0,), targets=(1,))
+    assert isinstance(cz1, ExecuteCZ)
+
+    # Atoms are now at staging positions (CZ-partner sites). Pass ExecuteCZ
+    # directly as state_before for the second CZ on the same pair.
+    cz2 = strategy.cz_placements(cz1, controls=(0,), targets=(1,))
+    assert isinstance(
+        cz2, ExecuteCZ
+    ), "cz_placements must accept ExecuteCZ (staging positions) and return ExecuteCZ"
+
+
+def test_cz_placements_unwraps_execute_cz_return_to_home(monkeypatch):
+    """ExecuteCZReturn carries home positions in initial_layout; the strategy
+    must start the next CZ solve from there, not from the staging layout.
+    """
+    strategy = PhysicalPlacementStrategy(
+        arch_spec=logical.get_arch_spec(),
+        traversal=RustPlacementTraversal(),
+    )
+    home_state = _make_state()
+
+    cz1 = strategy.cz_placements(home_state, controls=(0,), targets=(1,))
+    assert isinstance(cz1, ExecuteCZ)
+
+    cz_return = ExecuteCZReturn(
+        occupied=cz1.occupied,
+        layout=cz1.layout,
+        move_count=cz1.move_count,
+        active_cz_zones=cz1.active_cz_zones,
+        move_layers=cz1.move_layers,
+        initial_layout=home_state.layout,
+    )
+
+    received: list[ConcreteState] = []
+    original = PhysicalPlacementStrategy._cz_placements_rust
+
+    def capture(self, state, controls, targets, lookahead=()):
+        received.append(state)
+        return original(self, state, controls, targets, lookahead)
+
+    monkeypatch.setattr(PhysicalPlacementStrategy, "_cz_placements_rust", capture)
+    strategy.cz_placements(cz_return, controls=(0,), targets=(1,))
+
+    assert len(received) == 1
+    assert (
+        received[0].layout == home_state.layout
+    ), "ExecuteCZReturn must be unwrapped to initial_layout (home), not staging layout"

@@ -198,6 +198,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
     ) -> AtomState:
         if len(controls) != len(targets) or state == AtomState.bottom():
             return AtomState.bottom()
+        state = self._unwrap_cz_input(state)
         if not isinstance(state, ConcreteState):
             return AtomState.top()
         return self._cz_placements_rust(state, controls, targets, lookahead_cz_layers)
@@ -313,7 +314,9 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             qid: LocationAddress(loc.word_id, loc.site_id, loc.zone_id)
             for qid, loc in winning_result.goal_config.items()
         }
-        goal_layout = tuple(goal_map[qid] for qid in range(len(state.layout)))
+        goal_layout = tuple(
+            goal_map.get(qid, state.layout[qid]) for qid in range(len(state.layout))
+        )
         move_count = tuple(
             mc + int(src != dst)
             for mc, src, dst in zip(state.move_count, state.layout, goal_layout)
@@ -327,15 +330,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
         )
 
     def sq_placements(self, state: AtomState, qubits: tuple[int, ...]) -> AtomState:
-        _ = qubits
-        if isinstance(state, ConcreteState):
-            # UserMoved IS-A ConcreteState; this strips it to plain ConcreteState.
-            return ConcreteState(
-                occupied=state.occupied,
-                layout=state.layout,
-                move_count=state.move_count,
-            )
-        return state
+        return self._strip_user_moved(state)
 
     def measure_placements(
         self,
@@ -353,6 +348,18 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             layout=state.layout,
             move_count=state.move_count,
             zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
+        )
+
+    def move_to_placements(
+        self,
+        state: AtomState,
+        qubits: tuple[int, ...],
+        locations: tuple[LocationAddress, ...],
+    ) -> AtomState:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support move_to / movement_kernel. "
+            "User-directed atom movement is only available with logical compilation "
+            "(LogicalPlacementStrategy or LogicalPlacementStrategyNoHome)."
         )
 
 
