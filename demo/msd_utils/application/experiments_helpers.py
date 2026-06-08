@@ -1,4 +1,4 @@
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 from bloqade.decoders import BaseDecoder
@@ -14,23 +14,19 @@ from demo.msd_utils import (
 
 # NOTE: the weird thing for this function is that it basically needs like EVERYTHING that you would to run the whole experiment to get the estimated fidelity
 def construct_confidence_decoders_mld(
-    circuits_per_basis: tuple[DemoTask, DemoTask, DemoTask],
-    full_factory_decoders_per_basis: tuple[
-        tuple[BaseDecoder, BaseDecoder],
-        tuple[BaseDecoder, BaseDecoder],
-        tuple[BaseDecoder, BaseDecoder],
-    ],
+    circuits_per_basis: Mapping[str, DemoTask],
+    full_factory_decoders_per_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     target_bloch: np.ndarray,
     **kwargs: Any,
-) -> tuple[DecoderAdapter, DecoderAdapter, DecoderAdapter]:
+) -> Mapping[str, DecoderAdapter]:
 
-    basis_labels = ["X", "Y", "Z"]
+    # basis_labels = ["X", "Y", "Z"]
     mld_ranking_train_shots = kwargs.get(
         "mld_rank_train_shots", kwargs["mld_train_shots"]
     )
     mld_ranking_data = {}
-    for basis, task in zip(basis_labels, circuits_per_basis):
+    for basis, task in circuits_per_basis.items():
         print(
             f"Sampling MLD ranking data for {basis} with {mld_ranking_train_shots:,} shots..."
         )
@@ -42,7 +38,7 @@ def construct_confidence_decoders_mld(
 
     mld_decoder_pairs = {
         basis: decoder_pair
-        for basis, decoder_pair in zip(basis_labels, full_factory_decoders_per_basis)
+        for basis, decoder_pair in full_factory_decoders_per_basis.items()
     }
 
     # TODO: if merged main into my bloqade-lanes branch, this can be changed to (1.0, 1.0, 1.0) or probably just omitted because lanes has the fix now to the
@@ -53,14 +49,14 @@ def construct_confidence_decoders_mld(
         mld_decoder_pairs,
         mld_ranking_data,
         valid_factory_targets=valid_factory_targets,
-        basis_labels=basis_labels,
+        basis_labels=list(circuits_per_basis.keys()),
         sign_vector=MLD_SIGN_VECTOR,
         target_bloch=target_bloch,
         # AND you have a BUNCH of fidelity arguments you can supply as well.
     )
 
-    # TODO: continue working here, June 8
-    mld_training_data = None
+    # TODO: continue working here, June 8 (hacks here due to type checks; get rid of it and change it.)
+    mld_training_data = {}
     mld_training = {
         basis: build_mld_decoders_from_pair(
             full_decoder=mld_decoder_pairs[basis][0],
@@ -73,4 +69,4 @@ def construct_confidence_decoders_mld(
         )
         for basis, dataset in mld_training_data.items()
     }
-    return tuple(mld_training)
+    return mld_training
