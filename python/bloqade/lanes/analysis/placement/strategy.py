@@ -120,6 +120,21 @@ class PlacementStrategyABC(abc.ABC):
             f"{type(self).__name__} does not implement move_to_placements"
         )
 
+    def compute_rearrangement(
+        self,
+        state_before: "ConcreteState",
+        state_after: "ConcreteState",
+    ) -> "tuple[tuple[LaneAddress, ...], ...]":
+        """Compute move layers to route atoms from state_before to state_after.
+
+        Used by UserMoved rewrite path to synthesize move layers for
+        user-directed movement.  Raises NotImplementedError by default;
+        physical strategies override this with solver-backed implementations.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement compute_rearrangement"
+        )
+
 
 class SingleZonePlacementStrategyABC(PlacementStrategyABC):
 

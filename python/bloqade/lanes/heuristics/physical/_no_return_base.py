@@ -37,7 +37,7 @@ from bloqade.lanes.bytecode._native import (
     SearchEngine,
     SearchStrategy,
 )
-from bloqade.lanes.bytecode.encoding import LocationAddress, ZoneAddress
+from bloqade.lanes.bytecode.encoding import LaneAddress, LocationAddress, ZoneAddress
 from bloqade.lanes.heuristics.physical.movement import convert_move_layers
 
 
@@ -127,6 +127,31 @@ class NoReturnStrategyBase(PlacementStrategyABC):
     def _build_move_search(self) -> MoveSearch:
         """Build a :class:`MoveSearch` from the base solve-option fields."""
         return MoveSearch.ids().with_options(self._build_solve_options())
+
+    def compute_rearrangement(
+        self,
+        state_before: ConcreteState,
+        state_after: ConcreteState,
+    ) -> tuple[tuple[LaneAddress, ...], ...]:
+        """Compute move layers to route atoms from state_before to state_after.
+
+        Calls the Rust TargetSolver directly (no CZ-placement logic) and
+        returns the move layers.  Raises RuntimeError if the solver cannot
+        find a valid routing.
+        """
+        engine = self._get_engine()
+        move_search = self._build_move_search()
+        initial = {qid: loc._inner for qid, loc in enumerate(state_before.layout)}
+        target = {qid: loc._inner for qid, loc in enumerate(state_after.layout)}
+        blocked = [loc._inner for loc in state_before.occupied]
+        result = _native.TargetSolver(engine, move_search).solve(
+            initial, target, blocked, None
+        )
+        if result.status != "solved":
+            raise RuntimeError(
+                f"compute_rearrangement failed: status={result.status!r}"
+            )
+        return convert_move_layers(result.move_layers)
 
     @abc.abstractmethod
     def _invoke_placement(
