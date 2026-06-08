@@ -48,9 +48,7 @@ class PhysicalPipeline:
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
     layout_heuristic: layout.LayoutHeuristicABC | None = None
-    placement_strategy: placement.PlacementStrategyABC | None = field(
-        default_factory=make_physical_placement_strategy
-    )
+    placement_strategy: placement.PlacementStrategyABC | None = None
     place_opt_type: type[passes.Pass] = field(default=SequentialPlacePass)
 
     def emit(self, mt: Method, no_raise: bool = True) -> Method:

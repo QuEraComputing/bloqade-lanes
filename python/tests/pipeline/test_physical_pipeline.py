@@ -52,21 +52,10 @@ def test_physical_pipeline_smoke():
     assert len(fills) == 1
 
 
-def test_physical_pipeline_placement_strategy_default_uses_factory():
-    """PhysicalPipeline should eagerly construct the shared default strategy."""
-    from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
-    from bloqade.lanes.bytecode._native import SearchStrategy
-    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
-
+def test_physical_pipeline_placement_strategy_default_is_none():
+    """PhysicalPipeline.placement_strategy defaults to None; emit() constructs it from arch_spec."""
     pipeline = PhysicalPipeline()
-
-    assert isinstance(pipeline.placement_strategy, PalindromePlacementStrategy)
-    inner = pipeline.placement_strategy.inner
-    assert isinstance(inner, NoHomePlacementStrategy)
-    assert inner.strategy == SearchStrategy.ENTROPY
-    assert inner.k_candidates == 3
-    assert inner.max_expansions == 300
-    assert inner.lambda_lookahead == 0.0
+    assert pipeline.placement_strategy is None
 
 
 def test_physical_pipeline_no_new_pinned_remaining():
