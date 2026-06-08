@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
-use crate::config::Config;
+use crate::primitives::config::Config;
 use crate::traits::Goal;
 
 /// Goal: all qubits are at their encoded target locations.
@@ -87,10 +87,10 @@ pub struct EntanglingConstraintGoal {
 impl EntanglingConstraintGoal {
     /// Create from CZ pairs and a precomputed entangling set.
     ///
-    /// Use [`crate::entangling::build_entangling_set`] to construct the set.
+    /// Use [`crate::ops::entangling::build_entangling_set`] to construct the set.
     pub fn new(pairs: &[(u32, u32)], valid_placements: HashSet<(u64, u64)>) -> Self {
         let cz_qubits: HashSet<u32> = pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
-        let partner_map = crate::entangling::build_partner_map(&valid_placements);
+        let partner_map = crate::ops::entangling::build_partner_map(&valid_placements);
         Self {
             pairs: pairs.to_vec(),
             valid_placements,
@@ -199,7 +199,7 @@ mod tests {
     // ── EntanglingConstraintGoal tests ──
 
     fn example_entangling_set() -> HashSet<(u64, u64)> {
-        crate::entangling::build_entangling_set(
+        crate::ops::entangling::build_entangling_set(
             &serde_json::from_str(crate::test_utils::example_arch_json()).unwrap(),
         )
     }

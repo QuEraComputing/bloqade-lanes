@@ -8,7 +8,6 @@ from kirin.ir.exception import ValidationErrorGroup
 from bloqade import qubit
 from bloqade.lanes.bytecode.encoding import LocationAddress
 from bloqade.lanes.dialects import move, place
-from bloqade.lanes.heuristics.physical.movement import PhysicalPlacementStrategy
 from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.rewrite.circuit2place import RewriteQubitsToPinnedQubits
 
@@ -56,15 +55,18 @@ def test_physical_pipeline_smoke():
 def test_physical_pipeline_placement_strategy_default_uses_factory():
     """PhysicalPipeline should eagerly construct the shared default strategy."""
     from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
+    from bloqade.lanes.bytecode._native import SearchStrategy
+    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
 
     pipeline = PhysicalPipeline()
 
     assert isinstance(pipeline.placement_strategy, PalindromePlacementStrategy)
-    assert isinstance(pipeline.placement_strategy.inner, PhysicalPlacementStrategy)
-    traversal = pipeline.placement_strategy.inner.traversal
-    assert traversal.strategy == "entropy"
-    assert traversal.max_goal_candidates == 3
-    assert traversal.max_expansions == 300
+    inner = pipeline.placement_strategy.inner
+    assert isinstance(inner, NoHomePlacementStrategy)
+    assert inner.strategy == SearchStrategy.ENTROPY
+    assert inner.k_candidates == 3
+    assert inner.max_expansions == 300
+    assert inner.lambda_lookahead == 0.0
 
 
 def test_physical_pipeline_no_new_pinned_remaining():
@@ -111,13 +113,13 @@ def test_physical_pipeline_no_raise_succeeds_without_terminal_measure():
 def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     """When layout_heuristic and placement_strategy are None, PhysicalPipeline
     resolves them to PhysicalLayoutHeuristicGraphPartitionCenterOut wrapped in
-    PalindromePlacementStrategy(PhysicalPlacementStrategy) before passing them
+    PalindromePlacementStrategy(NoHomePlacementStrategy) before passing them
     to the place→move stage."""
     from bloqade.lanes.analysis.placement import PalindromePlacementStrategy
     from bloqade.lanes.heuristics.physical.layout import (
         PhysicalLayoutHeuristicGraphPartitionCenterOut,
     )
-    from bloqade.lanes.heuristics.physical.placement import PhysicalPlacementStrategy
+    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
     from bloqade.lanes.pipeline.base import _PlaceToMove
 
     captured: dict = {}
@@ -143,4 +145,4 @@ def test_physical_pipeline_resolves_none_to_physical_defaults(monkeypatch):
     )
     strategy = captured["placement_strategy"]
     assert isinstance(strategy, PalindromePlacementStrategy)
-    assert isinstance(strategy.inner, PhysicalPlacementStrategy)
+    assert isinstance(strategy.inner, NoHomePlacementStrategy)

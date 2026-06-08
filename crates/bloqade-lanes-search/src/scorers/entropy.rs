@@ -5,9 +5,9 @@
 
 use std::collections::HashSet;
 
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext};
-use crate::entropy::EntropyParams;
+use crate::drivers::entropy::EntropyParams;
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext};
 use crate::traits::CandidateScorer;
 
 /// Scores candidates using the entropy moveset formula:
@@ -35,15 +35,21 @@ impl CandidateScorer for EntropyScorer {
             occupied.insert(loc.encode());
         }
 
-        crate::entropy::score_moveset(config, &candidate.new_config, &occupied, ctx, &self.params)
+        crate::drivers::entropy::score_moveset(
+            config,
+            &candidate.new_config,
+            &occupied,
+            ctx,
+            &self.params,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heuristic::DistanceTable;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
@@ -67,7 +73,7 @@ mod tests {
         let from = Config::new([(0, loc(0, 0))]).unwrap();
         let to = Config::new([(0, loc(0, 1))]).unwrap();
         let candidate = MoveCandidate {
-            move_set: crate::graph::MoveSet::from_encoded(vec![]),
+            move_set: crate::primitives::graph::MoveSet::from_encoded(vec![]),
             new_config: to,
         };
 
@@ -98,7 +104,7 @@ mod tests {
 
         let config = Config::new([(0, loc(0, 0))]).unwrap();
         let candidate = MoveCandidate {
-            move_set: crate::graph::MoveSet::from_encoded(vec![]),
+            move_set: crate::primitives::graph::MoveSet::from_encoded(vec![]),
             new_config: config.clone(),
         };
 

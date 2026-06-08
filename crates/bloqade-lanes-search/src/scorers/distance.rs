@@ -3,8 +3,8 @@
 //! Scores a [`MoveCandidate`] by how much closer it moves qubits to their targets,
 //! measured in lane-hop distance.
 
-use crate::config::Config;
-use crate::context::{MoveCandidate, SearchContext};
+use crate::primitives::config::Config;
+use crate::primitives::context::{MoveCandidate, SearchContext};
 use crate::traits::CandidateScorer;
 
 /// Scores a candidate by the total reduction in hop distance across all target qubits.
@@ -46,11 +46,11 @@ impl CandidateScorer for DistanceScorer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::context::{MoveCandidate, SearchContext};
-    use crate::graph::MoveSet;
-    use crate::heuristic::DistanceTable;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::config::Config;
+    use crate::primitives::context::{MoveCandidate, SearchContext};
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::graph::MoveSet;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
     use std::collections::HashSet;

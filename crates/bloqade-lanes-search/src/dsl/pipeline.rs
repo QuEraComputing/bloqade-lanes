@@ -16,7 +16,7 @@
 //! * `group_by_triplet`: groups by `(move_type, bus_id, direction)`, sorted
 //!   ascending on the triplet key.
 //! * `pack_aod_rectangles`: AOD rectangles built per group via
-//!   [`crate::aod_grid::BusGridContext`], lifted to candidates and sorted
+//!   [`crate::ops::aod_grid::BusGridContext`], lifted to candidates and sorted
 //!   by `score_sum desc` (ties broken by encoded lane vector then config
 //!   entries, mirroring `cmp_moveset_config_tiebreak`).
 
@@ -25,11 +25,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr, MoveType};
 
-use crate::aod_grid::BusGridContext;
-use crate::config::Config;
-use crate::graph::MoveSet;
-use crate::lane_index::LaneIndex;
-use crate::ordering::cmp_moveset_config_tiebreak;
+use crate::ops::aod_grid::BusGridContext;
+use crate::primitives::config::Config;
+use crate::primitives::graph::MoveSet;
+use crate::primitives::lane_index::LaneIndex;
+use crate::primitives::ordering::cmp_moveset_config_tiebreak;
 
 /// One scored `(qubit, lane)` pair produced by Stage 1 of the pipeline.
 #[derive(Debug, Clone)]
@@ -201,7 +201,7 @@ mod tests {
     use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     use super::*;
-    use crate::lane_index::LaneIndex;
+    use crate::primitives::lane_index::LaneIndex;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_index() -> LaneIndex {

@@ -15,7 +15,7 @@ from bloqade.lanes.analysis.placement.strategy import assert_single_cz_zone
 from bloqade.lanes.arch.gemini.physical import get_arch_spec as get_physical_arch_spec
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.bytecode import _native
-from bloqade.lanes.bytecode._native import EntropyTrace, MoveSolver
+from bloqade.lanes.bytecode._native import EntropyTrace, SearchEngine
 from bloqade.lanes.bytecode.encoding import (
     LaneAddress,
     LocationAddress,
@@ -56,12 +56,12 @@ def convert_move_layers(
 
 @dataclass(frozen=True)
 class RustPlacementTraversal:
-    """Config for the Rust MoveSolver.
+    """Config for the Rust search engine (``TargetSolver``).
 
     ``restarts`` and ``lookahead`` are now exposed and threaded into
     ``SolveOptions``; per-strategy entropy knobs (``max_movesets_per_group``,
     ``max_goal_candidates``, ``collect_entropy_trace``) feed ``EntropyOptions``
-    via :func:`solve_options_from_traversal`.
+    via :func:`_move_search_from_traversal`.
 
     Not yet exposed (Rust defaults used): ``weight``, ``deadlock_policy``,
     ``w_t``. These will be threaded through once validated via Rust-only
@@ -77,19 +77,17 @@ class RustPlacementTraversal:
     collect_entropy_trace: bool = False
 
 
-def solve_options_from_traversal(
+def _move_search_from_traversal(
     traversal: RustPlacementTraversal,
     *,
-    collect_entropy_trace: bool | None = None,
-) -> tuple[_native.SolveOptions, _native.EntropyOptions]:
-    """Build ``(SolveOptions, EntropyOptions)`` from a ``RustPlacementTraversal``.
+    collect_entropy_trace: bool = False,
+) -> _native.MoveSearch:
+    """Build a ``MoveSearch`` bundle from a ``RustPlacementTraversal``.
 
-    Shared by ``PhysicalPlacementStrategy`` and ``move_synthesis`` so the
-    two callsites cannot drift on default knob values. ``collect_entropy_trace``
-    overrides the traversal's flag when set; this is used by
-    ``_cz_placements_rust`` to gate trace capture by stage.
+    Strategy, restarts, lookahead, and entropy knobs are baked into a single
+    immutable value; ``collect_entropy_trace`` overrides the traversal flag.
     """
-    opts = _native.SolveOptions(
+    solve_opts = _native.SolveOptions(
         strategy=_STRATEGY_MAP[traversal.strategy],
         restarts=traversal.restarts,
         lookahead=traversal.lookahead,
@@ -97,18 +95,18 @@ def solve_options_from_traversal(
     entropy_opts = _native.EntropyOptions(
         max_movesets_per_group=traversal.max_movesets_per_group,
         max_goal_candidates=traversal.max_goal_candidates,
-        collect_entropy_trace=(
-            traversal.collect_entropy_trace
-            if collect_entropy_trace is None
-            else collect_entropy_trace
-        ),
+        collect_entropy_trace=collect_entropy_trace,
     )
-    return opts, entropy_opts
+    return (
+        _native.MoveSearch.entropy()
+        .with_options(solve_opts)
+        .with_entropy_options(entropy_opts)
+    )
 
 
 @dataclass
 class PhysicalPlacementStrategy(PlacementStrategyABC):
-    """Physical placement strategy backed by the Rust MoveSolver."""
+    """Physical placement strategy backed by the Rust ``TargetSolver``."""
 
     arch_spec: ArchSpec = field(default_factory=get_physical_arch_spec)
     traversal: RustPlacementTraversal = field(
@@ -118,7 +116,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
 
     _cz_counter: int = field(default=0, init=False, repr=False)
     _trace_cz_index: int | None = field(default=None, init=False, repr=False)
-    _rust_solver: MoveSolver | None = field(default=None, init=False, repr=False)
+    _engine: SearchEngine | None = field(default=None, init=False, repr=False)
     _rust_nodes_expanded_total: int = field(default=0, init=False, repr=False)
     _rust_entropy_fallback_count: int = field(default=0, init=False, repr=False)
     _traced_rust_entropy_trace: EntropyTrace | None = field(
@@ -203,10 +201,15 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
             return AtomState.top()
         return self._cz_placements_rust(state, controls, targets, lookahead_cz_layers)
 
-    def _get_rust_solver(self) -> MoveSolver:
-        if self._rust_solver is None:
-            self._rust_solver = MoveSolver.from_arch_spec(self.arch_spec._inner)
-        return self._rust_solver
+    def _get_engine(self) -> SearchEngine:
+        if self._engine is None:
+            self._engine = SearchEngine.from_arch_spec(self.arch_spec._inner)
+        return self._engine
+
+    def _make_target_solver(
+        self, move_search: _native.MoveSearch
+    ) -> _native.TargetSolver:
+        return _native.TargetSolver(self._get_engine(), move_search)
 
     @property
     def rust_nodes_expanded_total(self) -> int:
@@ -259,15 +262,15 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 loc for loc in state.occupied if loc not in active_locations
             )
 
-        solver = self._get_rust_solver()
         initial_native = {qid: loc._inner for qid, loc in ctx.placement.items()}
         blocked_native = [loc._inner for loc in state.occupied]
-        opts, entropy_opts = solve_options_from_traversal(
+        move_search = _move_search_from_traversal(
             self.traversal,
             collect_entropy_trace=(
                 should_trace and self.traversal.collect_entropy_trace
             ),
         )
+        solver = self._make_target_solver(move_search)
 
         remaining = self.traversal.max_expansions
         winning_result = None
@@ -279,9 +282,7 @@ class PhysicalPlacementStrategy(PlacementStrategyABC):
                 initial_native,
                 target_native,
                 blocked_native,
-                max_expansions=remaining,
-                options=opts,
-                entropy_options=entropy_opts,
+                remaining,
             )
             self._rust_nodes_expanded_total += int(result.nodes_expanded)
             if remaining is not None:
@@ -358,27 +359,31 @@ def make_physical_placement_strategy(
     strategy: SearchStrategyName = "entropy",
     arch_spec: ArchSpec | None = None,
     return_moves: bool = True,
-    target_generator: TargetGeneratorABC | TargetGeneratorCallable | None = None,
 ) -> PlacementStrategyABC:
     """Build a physical placement strategy from user-facing search knobs.
 
-    ``move_solutions_per_layer`` maps to the Rust solver's
-    ``max_goal_candidates``. ``search_budget`` maps to the per-CZ-stage
-    ``max_expansions`` budget shared across target candidates.
+    Uses :class:`~bloqade.lanes.heuristics.physical.nohome.NoHomePlacementStrategy`
+    backed by the Rust ``NoHomeCzPlacement`` solver.
+
+    ``move_solutions_per_layer`` maps to ``k_candidates`` (candidate home
+    sites per qubit in the Hungarian assignment).  ``search_budget`` maps to
+    ``max_expansions``.  ``lambda_lookahead`` is fixed at ``0`` because
+    palindrome return always moves atoms back to their original home position,
+    so future-layer proximity penalties carry no signal.
     """
+    from bloqade.lanes.heuristics.physical.nohome import NoHomePlacementStrategy
+
     if move_solutions_per_layer < 1:
         raise ValueError("move_solutions_per_layer must be >= 1")
     if search_budget is not None and search_budget < 1:
         raise ValueError("search_budget must be None or >= 1")
 
-    inner = PhysicalPlacementStrategy(
+    inner = NoHomePlacementStrategy(
         arch_spec=get_physical_arch_spec() if arch_spec is None else arch_spec,
-        traversal=RustPlacementTraversal(
-            strategy=strategy,
-            max_goal_candidates=move_solutions_per_layer,
-            max_expansions=search_budget,
-        ),
-        target_generator=target_generator,
+        strategy=_STRATEGY_MAP[strategy],
+        max_expansions=search_budget,
+        k_candidates=move_solutions_per_layer,
+        lambda_lookahead=0.0,
     )
 
     return PalindromePlacementStrategy(inner=inner) if return_moves else inner
