@@ -1,3 +1,4 @@
+import math
 from typing import Any, Literal, TypeVar
 
 import numpy as np
@@ -93,6 +94,16 @@ def cx(controls: ilist.IList[LogicalQubit, N], targets: ilist.IList[LogicalQubit
     squin.broadcast.cx(flat(controls), flat(targets))
 
 
+# NOTE: I don't really get the point of this. If you always broadcast across your logical qubits then what's the point.
+# this is really for the use case where you don't want to broadcast across your logical qubits.. which, I can't think of anything at the moment
+# for this use case.
+# ^ it seems like the point of programming at the physical level is that we can test and play with our physical compiler
+@kernel
+def cz(controls: ilist.IList[LogicalQubit, N], targets: ilist.IList[LogicalQubit, N]):
+    """Efficient broadcasted cz gate over steane logical qubits"""
+    squin.broadcast.cz(flat(controls), flat(targets))
+
+
 @kernel
 def measure_logical_reg(logical_reg: ilist.IList[LogicalQubit, Any]):
     """Helper function to get around single measurement restriction of kernel.
@@ -111,12 +122,20 @@ def measure_logical_reg(logical_reg: ilist.IList[LogicalQubit, Any]):
 
 @kernel(typeinfer=True)
 def main():
-    reg = qalloc([0, 1, 2, 3], 0.0, 0.0, 0.0)
+    reg = qalloc([0, 1, 2, 3, 4], 0.3041 * math.pi, 0.25 * math.pi, 0.0)
 
-    squin.broadcast.h(reg[0])
-    cx(reg[:1], reg[1:2])
-    cx(reg[:2], reg[2:])
-
+    # squin.broadcast.h(reg[0])
+    # cx(reg[:1], reg[1:2])
+    # cx(reg[:2], reg[2:])
+    # from the MSD paper
+    # NOTE: if programming on the physical level, you ALWAYS
+    squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
+    cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
+    squin.broadcast.sqrt_y(ilist.IList([reg[1], reg[3]]))
+    cz(ilist.IList([reg[1], reg[3]]), ilist.IList([reg[2], reg[4]]))
+    squin.broadcast.sqrt_x_adj(ilist.IList([reg[1]]))
+    cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[1], reg[4]]))
+    squin.broadcast.sqrt_x_adj(reg)
     return measure_logical_reg(reg)
 
 
