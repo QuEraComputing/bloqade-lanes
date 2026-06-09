@@ -1,35 +1,42 @@
 import math
-from typing import Any, Literal, Mapping, Protocol, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal, Mapping, Protocol, Sequence, cast
 
 import numpy as np
 import stim
 import tsim
+from bloqade.analysis.tomography import (
+    DEFAULT_TARGET_BLOCH,
+    FidelitySummary,
+    expectation_with_error_bar,
+    posterior_fidelity_summary,
+)
 from bloqade.decoders import BaseDecoder
 from bloqade.decoders.dem import detector_error_model_matrices, matrix_to_dem
-from demo.msd_utils import (
-    DEFAULT_BASIS_LABELS,
-    DEFAULT_SYNDROME_LAYOUT,
-    DEFAULT_TARGET_BLOCH,
-    BasisDataset,
-    DecoderAdapter,
-    DecoderPrimitiveSet,
-    DemoTask,
-    SquinKernel,
-    TomographyKernels,
-    apply_special_tsim_circuit_strategy,
-    build_decoder_kernel_bundle,
-    build_msd_primitives,
-    build_task_map,
-    plot_decoder_curves,
-    run_task,
-)
 from demo.msd_utils.domain.kernels import _build_tomography_primitives
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 
+from bloqade.gemini.decoding.constants import DEFAULT_BASIS_LABELS
+from bloqade.gemini.decoding.kernels import DecoderPrimitiveSet
+from bloqade.gemini.decoding.layout import DEFAULT_SYNDROME_LAYOUT
+from bloqade.gemini.decoding.msd import (
+    TomographyKernels,
+    build_decoder_kernel_bundle,
+    build_msd_primitives,
+)
 from bloqade.gemini.decoding.postselection import (
+    DecoderAdapter,
     _build_generic_threshold_tables,
     _evaluate_cached_threshold_curve,
 )
+from bloqade.gemini.decoding.sampling import BasisDataset, run_task
+from bloqade.gemini.decoding.special_tasks import (
+    apply_special_tsim_circuit_strategy,
+    build_task_map,
+)
+from bloqade.gemini.decoding.tasks import DemoTask
+from bloqade.gemini.decoding.types import SquinKernel
+from bloqade.gemini.decoding.workflow import plot_decoder_curves
 from bloqade.gemini.device import GeminiLogicalSimulator
 
 
@@ -48,6 +55,191 @@ class DecoderAdaptersFactory(Protocol):
         target_bloch: np.ndarray,
         **kwargs: Any,
     ) -> dict[str, DecoderAdapter]: ...
+
+
+@dataclass(frozen=True)
+class TomographyResult:
+    """Single-qubit tomography counts and reconstruction settings.
+
+    The result intentionally stores tomography information rather than a
+    target-specific fidelity. ``fidelity_bloch`` projects the reconstructed
+    Bloch estimate onto a requested target Bloch vector.
+    """
+
+    basis_labels: tuple[str, ...]
+    zero_counts: np.ndarray
+    one_counts: np.ndarray
+    method: Literal["wilson", "bayesian_bloch_ball"]
+    sign_vector: np.ndarray
+    binary_precision: int | None = None
+    max_grid_points: int = 1_500_000
+
+    @property
+    def total_counts(self) -> np.ndarray:
+        """Total accepted zero/one counts for each tomography basis."""
+
+        return self.zero_counts + self.one_counts
+
+    @property
+    def bloch(self) -> np.ndarray:
+        """Point-estimate Bloch vector in this result's sign convention."""
+
+        totals = np.maximum(self.total_counts, 1)
+        expectations = (self.zero_counts - self.one_counts) / totals
+        return expectations.astype(np.float64) * self.sign_vector
+
+    def fidelity_bloch(
+        self,
+        target_bloch_or_theta: Sequence[float] | np.ndarray | float,
+        phi: float | None = None,
+        z: float | None = None,
+    ) -> FidelitySummary:
+        """Project this tomography result onto a target Bloch vector.
+
+        Args:
+            target_bloch_or_theta: Either a length-3 target Bloch vector, the
+                target ``x`` coordinate when ``phi`` and ``z`` are also given,
+                or the Bloch-sphere polar angle ``theta`` when ``phi`` is given
+                and ``z`` is omitted.
+            phi: Either the target ``y`` coordinate, or the Bloch-sphere
+                azimuthal angle paired with ``theta``.
+            z: Optional target ``z`` coordinate.
+
+        Returns:
+            Fidelity summary for the requested target Bloch vector.
+        """
+
+        target = _resolve_target_bloch(target_bloch_or_theta, phi, z)
+        bloch = self.bloch
+        point = float(0.5 + 0.5 * np.dot(bloch, target))
+
+        if self.method == "wilson":
+            errors = []
+            for zero, one in zip(
+                self.zero_counts.tolist(),
+                self.one_counts.tolist(),
+                strict=True,
+            ):
+                _, err = expectation_with_error_bar(int(zero), int(one))
+                errors.append(err)
+            fidelity_err = 0.5 * float(
+                np.sqrt(np.sum((target * np.asarray(errors, dtype=np.float64)) ** 2))
+            )
+            low = point - fidelity_err
+            high = point + fidelity_err
+            median = point
+        elif self.method == "bayesian_bloch_ball":
+            posterior = posterior_fidelity_summary(
+                self.total_counts.astype(np.int64),
+                self.zero_counts.astype(np.int64),
+                target,
+                sign=self.sign_vector,
+                binary_precision=self.binary_precision,
+                max_grid_points=self.max_grid_points,
+            )
+            low = float(posterior["low"])
+            high = float(posterior["high"])
+            fidelity_err = float(posterior["error"])
+            median = float(posterior["median"])
+            point = float(posterior["point"])
+        else:
+            raise ValueError("method must be 'wilson' or 'bayesian_bloch_ball'.")
+
+        return {
+            "point": float(point),
+            "median": float(median),
+            "low": float(low),
+            "high": float(high),
+            "error": float(fidelity_err),
+            "bloch": (float(bloch[0]), float(bloch[1]), float(bloch[2])),
+        }
+
+
+def _resolve_target_bloch(
+    target_bloch_or_theta: Sequence[float] | np.ndarray | float,
+    phi: float | None,
+    z: float | None,
+) -> np.ndarray:
+    """Normalize target Bloch-vector inputs accepted by ``fidelity_bloch``."""
+
+    if phi is None and z is None:
+        target = np.asarray(target_bloch_or_theta, dtype=np.float64)
+        if target.shape != (3,):
+            raise ValueError("target_bloch must be a length-3 vector.")
+        return target
+
+    if phi is not None and z is not None:
+        x = np.asarray(target_bloch_or_theta, dtype=np.float64)
+        if x.shape != ():
+            raise ValueError("x coordinate must be scalar when y and z are given.")
+        return np.array(
+            [float(x), float(phi), float(z)],
+            dtype=np.float64,
+        )
+
+    if phi is None:
+        raise ValueError("phi must be provided when using Bloch-sphere angles.")
+    theta_array = np.asarray(target_bloch_or_theta, dtype=np.float64)
+    if theta_array.shape != ():
+        raise ValueError("theta must be scalar when using Bloch-sphere angles.")
+    theta = float(theta_array)
+    azimuth = float(phi)
+    return np.array(
+        [
+            math.sin(theta) * math.cos(azimuth),
+            math.sin(theta) * math.sin(azimuth),
+            math.cos(theta),
+        ],
+        dtype=np.float64,
+    )
+
+
+def _counts_at_accepted_fraction(
+    per_basis_tables: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+    global_weights: np.ndarray,
+    accepted_fraction: float,
+    *,
+    basis_labels: Sequence[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Accumulate score-sorted counts until the requested fraction is reached."""
+
+    if not 0.0 <= accepted_fraction <= 1.0:
+        raise ValueError("accepted_fraction must be between 0 and 1.")
+
+    zero_counts = np.zeros(len(basis_labels), dtype=np.int64)
+    one_counts = np.zeros(len(basis_labels), dtype=np.int64)
+    total_accepted = int(np.sum(global_weights))
+    if total_accepted <= 0 or accepted_fraction == 0.0:
+        return zero_counts, one_counts
+
+    target_count = max(1, int(math.ceil(float(accepted_fraction) * total_accepted)))
+    table_state = []
+    for basis in basis_labels:
+        scores, zeros, ones = per_basis_tables[basis]
+        idx = len(scores) - 1
+        table_state.append([idx, scores, zeros, ones])
+
+    kept = 0
+    while kept < target_count:
+        best_basis = -1
+        best_score = -np.inf
+        for basis_index, (idx, scores, _zeros, _ones) in enumerate(table_state):
+            if idx >= 0 and float(scores[idx]) > best_score:
+                best_basis = basis_index
+                best_score = float(scores[idx])
+
+        if best_basis < 0:
+            break
+
+        idx, _scores, zeros, ones = table_state[best_basis]
+        zero = int(zeros[idx])
+        one = int(ones[idx])
+        zero_counts[best_basis] += zero
+        one_counts[best_basis] += one
+        kept += zero + one
+        table_state[best_basis][0] = idx - 1
+
+    return zero_counts, one_counts
 
 
 # TODO: fix the type-checks on this file; the type-checks aren't working for some reason
@@ -94,7 +286,7 @@ class PostSelectionExperimentCache:
     # initialized_decoders_postselection: Mapping[str, ConfidenceDecoder] | None
     # initialized_decoders_final: Mapping[str, BaseDecoder] | None
     # Can think more carefully about the datatype and the shape of the following arrays.
-    raw_results: Mapping[str, np.ndarray] | None
+    raw_results: Mapping[str, BasisDataset] | None
     # In this workflow, decoding is kind of coupled to postselection. The workflow is decoding ancilla -> check ancillae match postselection condition
     # -> decode output qubit. In other words, we don't always decode the output qubit (this is for speed). I guess we can return the decoded observables on the
     # ancillae qubits only..? OR, we can separate out the ancilla qubits decoded results and the observable qubit observable results. Might opt
@@ -111,12 +303,19 @@ class PostSelectionExperimentCache:
         | None
     )
 
-    thresholded_data: Mapping[str, np.ndarray]
+    thresholded_data: Mapping[str, np.ndarray] | None
 
     hardware_tasks: Mapping[str, DemoTask] | None
 
     def __init__(self):
-        return
+        self.dem_circuits = None
+        self.dems = None
+        self.decoders = None
+        self.decoders_with_confidence = None
+        self.raw_results = None
+        self.decoded_results = None
+        self.thresholded_data = None
+        self.hardware_tasks = None
 
 
 # TODO: should inherit from some "abstract" experiment workflow class?
@@ -197,17 +396,18 @@ class PostSelectionExperiment:
         special_tasks = build_task_map(
             self.simulator,
             tomography_kernels._special,
-            # m2dets=MSD_MEASUREMENT_MAPS[0],
-            # m2obs=MSD_MEASUREMENT_MAPS[1],
+            m2dets=None,
+            m2obs=None,
             append_measurements=False,
         )
         special_tasks = apply_special_tsim_circuit_strategy(
             special_tasks,
             special_kernel_strategy,
         )
-        special_tsim_circuits = {
-            basis: task.tsim_circuit for basis, task in special_tasks.items()
-        }
+        special_tsim_circuits = cast(
+            dict[str, tsim.Circuit],
+            {basis: task.tsim_circuit for basis, task in special_tasks.items()},
+        )
         self.postselection_exp_cache.dem_circuits = special_tsim_circuits
         # again, check that values are returned in-order
         return special_tsim_circuits
@@ -217,6 +417,8 @@ class PostSelectionExperiment:
     ) -> dict[str, stim.DetectorErrorModel]:
         # Note that this depends on the state and so arguably it's unclear to the user the exact inputs to this function.
         dem_circuits = self.postselection_exp_cache.dem_circuits
+        if dem_circuits is None:
+            raise RuntimeError("dem_circuits must be called before dems.")
         dems = {
             basis: circ.detector_error_model(approximate_disjoint_errors=True)
             for basis, circ in dem_circuits.items()
@@ -231,6 +433,8 @@ class PostSelectionExperiment:
         self,
     ) -> dict[str, tuple[BaseDecoder, BaseDecoder]]:
         dems_bases = self.postselection_exp_cache.dems
+        if dems_bases is None:
+            raise RuntimeError("dems must be called before initialize_decoders.")
         decoders_bases = {}
         # NOTE: there is a question of if we want to support multi-qubit tomography in this experiment. For now, probably not; if we did, we
         # would have to specify the number of output qubits and their locations and use that information to construct a custom SyndromeLayout.
@@ -259,13 +463,17 @@ class PostSelectionExperiment:
 
     def prep_decoders(self) -> dict[str, DecoderAdapter]:
         decoders_bases = self.postselection_exp_cache.decoders
+        if decoders_bases is None:
+            raise RuntimeError(
+                "initialize_decoders must be called before prep_decoders."
+            )
         # NOTE: have to construct the MSD circuit due to the way that MSD experiment calculates confidence, here
         tomography_kernels = self.postselection_exp_cache.dem_kernels
         actual_tasks = build_task_map(
             self.simulator,
             tomography_kernels.actual,
-            # m2dets=MSD_MEASUREMENT_MAPS[0],
-            # m2obs=MSD_MEASUREMENT_MAPS[1],
+            m2dets=None,
+            m2obs=None,
             append_measurements=False,
         )
         # self.postselection_exp_cache.compiled_noncliff_tasks = actual_tasks
@@ -292,8 +500,8 @@ class PostSelectionExperiment:
         actual_tasks = build_task_map(
             device,
             tomography_kernels.actual,
-            # m2dets=MSD_MEASUREMENT_MAPS[0],
-            # m2obs=MSD_MEASUREMENT_MAPS[1],
+            m2dets=None,
+            m2obs=None,
             append_measurements=False,
         )
         self.postselection_exp_cache.hardware_tasks = actual_tasks
@@ -303,6 +511,8 @@ class PostSelectionExperiment:
     def get_samples(self, num_shots: int) -> dict[str, BasisDataset]:
         # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
         actual_tasks = self.postselection_exp_cache.hardware_tasks
+        if actual_tasks is None:
+            raise RuntimeError("make_tasks must be called before get_samples.")
         actual_data = {
             basis: run_task(task, num_shots, with_noise=True)
             for basis, task in actual_tasks.items()
@@ -318,6 +528,10 @@ class PostSelectionExperiment:
     ]:
         actual_data = self.postselection_exp_cache.raw_results
         decoder_map = self.postselection_exp_cache.decoders_with_confidence
+        if actual_data is None:
+            raise RuntimeError("get_samples must be called before decoding.")
+        if decoder_map is None:
+            raise RuntimeError("prep_decoders must be called before decoding.")
         targets = _normalize_valid_factory_targets(self.postselection_condition)
         basis_labels = list(decoder_map.keys())
         # NOTE: hardcoded for now
@@ -349,6 +563,8 @@ class PostSelectionExperiment:
         min_accepted_per_basis: int = 50,
         threshold_policy: str = "quantile",
     ) -> dict[str, np.ndarray]:
+        if self.postselection_exp_cache.decoded_results is None:
+            raise RuntimeError("decode_and_postselect must be called before analysis.")
         (
             per_basis_tables,
             score_array,
@@ -373,11 +589,60 @@ class PostSelectionExperiment:
         self.postselection_exp_cache.thresholded_data = threshold_curve
         return threshold_curve
 
+    def tomography_result(
+        self,
+        accepted_fraction: float,
+        method: Literal["wilson", "bayesian_bloch_ball"],
+        *,
+        sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
+        basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+        binary_precision: int | None = None,
+        max_grid_points: int = 1_500_000,
+    ) -> TomographyResult:
+        """Return tomography counts after confidence-ranked postselection.
+
+        ``accepted_fraction`` is interpreted relative to shots that have already
+        passed the factory/ancilla postselection stage. Because counts are
+        grouped by confidence score, the returned result may keep slightly more
+        than the requested fraction.
+        """
+
+        if self.postselection_exp_cache.decoded_results is None:
+            decoded_results = self.decode_and_postselect()
+        else:
+            decoded_results = self.postselection_exp_cache.decoded_results
+
+        (
+            per_basis_tables,
+            _score_array,
+            score_weights,
+            _total_shots,
+        ) = decoded_results
+        zero_counts, one_counts = _counts_at_accepted_fraction(
+            per_basis_tables,
+            score_weights,
+            accepted_fraction,
+            basis_labels=basis_labels,
+        )
+        return TomographyResult(
+            basis_labels=tuple(basis_labels),
+            zero_counts=zero_counts,
+            one_counts=one_counts,
+            method=method,
+            sign_vector=np.asarray(sign_vector, dtype=np.float64),
+            binary_precision=binary_precision,
+            max_grid_points=max_grid_points,
+        )
+
     def analysis_visualization(
         self, min_accepted_fraction: float = 0.04, title: str | None = None
     ):
+        if self.postselection_exp_cache.thresholded_data is None:
+            raise RuntimeError(
+                "analysis_f_vs_fraction must be called before visualization."
+            )
         return plot_decoder_curves(
-            self.postselection_exp_cache.thresholded_data,
+            {"decoder": self.postselection_exp_cache.thresholded_data},
             min_accepted_fraction=min_accepted_fraction,
             title=title,
         )

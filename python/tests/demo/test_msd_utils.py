@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import numpy as np
@@ -27,9 +28,11 @@ from demo.msd_utils import (
     DecoderPrimitiveSet,
     DemoTask,
     MSDDecoderWorkflowConfig,
+    PostSelectionExperiment,
     SparseTableDecoder,
     SyndromeLayout,
     TableDecoderWithConfidence,
+    TomographyResult,
     TomographyTasks,
     apply_special_tsim_circuit_strategy,
     build_decoder_kernel_bundle,
@@ -1395,6 +1398,43 @@ def test_train_mld_decoder_pair_uses_only_output_observables_for_full_decoder():
 
     assert factory_decoder.num_detectors == 24
     assert factory_decoder.num_observables == 8
+
+
+def test_postselection_experiment_tomography_result_uses_ranked_counts():
+    per_basis_tables = {
+        "X": (
+            np.array([0.5, 0.9], dtype=np.float64),
+            np.array([1, 5], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+        ),
+        "Y": (
+            np.array([0.4, 0.8], dtype=np.float64),
+            np.array([2, 7], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+        ),
+        "Z": (
+            np.array([0.3, 0.7], dtype=np.float64),
+            np.array([3, 11], dtype=np.int64),
+            np.array([0, 0], dtype=np.int64),
+        ),
+    }
+    score_weights = np.array([3, 2, 1, 11, 7, 5], dtype=np.int64)
+    exp = object.__new__(PostSelectionExperiment)
+    exp.postselection_exp_cache = SimpleNamespace(
+        decoded_results=(
+            per_basis_tables,
+            np.array([0.3, 0.4, 0.5, 0.7, 0.8, 0.9], dtype=np.float64),
+            score_weights,
+            int(np.sum(score_weights)),
+        )
+    )
+
+    result = exp.tomography_result(0.69, "wilson")
+
+    assert isinstance(result, TomographyResult)
+    assert np.array_equal(result.zero_counts, np.array([5, 7, 11]))
+    assert np.array_equal(result.one_counts, np.array([0, 0, 0]))
+    assert result.fidelity_bloch(np.array([1.0, 0.0, 0.0]))["point"] == 1.0
 
 
 def test_notebooks_import_shared_msd_utils():

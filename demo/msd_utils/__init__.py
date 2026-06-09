@@ -16,6 +16,10 @@ from bloqade.decoders.bit_packing import (
     packed_bits_to_int,
     unpack_packed_bits,
 )
+from demo.msd_utils.application.experiments import (
+    PostSelectionExperiment,
+    TomographyResult,
+)
 
 from bloqade.gemini.decoding import (
     DEFAULT_BASIS_LABELS,
@@ -93,6 +97,7 @@ __all__ = [
     "MSDDecoderWorkflowConfig",
     "MeasurementMap",
     "PosteriorFidelitySummary",
+    "PostSelectionExperiment",
     "SimulatorTask",
     "SparseTableDecoder",
     "SquinKernel",
@@ -100,6 +105,7 @@ __all__ = [
     "TableDecoderClass",
     "TableDecoderWithConfidence",
     "TomographyKernels",
+    "TomographyResult",
     "TomographyTasks",
     "TsimCircuit",
     "apply_special_tsim_circuit_strategy",
