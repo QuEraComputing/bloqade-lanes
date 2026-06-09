@@ -45,6 +45,7 @@ class BaseDecoderFactory(Protocol):
 
 
 # TODO: should this be ConfidenceDecoderFactory or DecoderAdaptersFactory?
+# TODO: simplify this abstraction to just take in the DEM. -- from stefan meeting.
 class DecoderAdaptersFactory(Protocol):
     # TODO: specify the EXACT **kwargs to have?
     def __call__(
@@ -375,6 +376,7 @@ class PostSelectionExperiment:
         self.simulator = GeminiLogicalSimulator()
 
     # TODO: implement a pass to infer the number of qubits and the output qubit from a kernel?
+    # for the device.
     def kernels(
         self,
         num_logical_qubits: int = 5,
@@ -383,6 +385,7 @@ class PostSelectionExperiment:
             "prefix_prepare", "compiled_inverse_prefix"
         ] = "prefix_prepare",
     ) -> TomographyKernels:
+        # TODO: change the name of DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = DecoderPrimitiveSet(
             state_injection_circuit=self.noncliff_prefix,
             logical_circuit=self.main_cliff_circ,
@@ -397,7 +400,10 @@ class PostSelectionExperiment:
         # Assumes that there is some way of getting the num_logical_qubits.
         return tomography_kernels
 
+    # TODO: split up the kernels and DEM kernels functions
     # NOTE: both to construct the kernels, AND to actually get the tasks, we need to call SPECIAL_KERNEL_STRATEGY.
+    # TODO: make this function larger to support the compilation of the kernels down with the special_kernel_strategy.
+    # ^ split up dem_circuits functions to expose the kernels or the circuits or both?-- play with it?
     def dem_circuits(
         self,
         special_kernel_strategy: Literal[
@@ -538,6 +544,7 @@ class PostSelectionExperiment:
         actual_tasks = self.postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
+        # TODO: make CliffTTask unexportable by the * export; not exported by default.
         actual_data = {
             basis: run_task(
                 task,
