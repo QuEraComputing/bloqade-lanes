@@ -8,7 +8,8 @@ from typing import cast
 import numpy as np
 import pytest
 import stim
-from bloqade.decoders import ConfidenceDecoder
+from bloqade.decoders import ConfidenceDecoder, TableDecoder
+from bloqade.decoders.dem import make_layout_only_dem
 
 from bloqade.lanes import GeminiLogicalSimulator
 
@@ -36,6 +37,7 @@ from demo.msd_utils import (
     build_injected_kernel_bundle,
     build_injected_tomography_kernels,
     build_measurement_maps,
+    build_mld_decoders_from_pair,
     build_mle_decoder_suite,
     build_mle_decoders,
     build_msd_primitives,
@@ -175,6 +177,69 @@ def test_bit_packing_round_trip_helpers():
 def test_normalize_valid_factory_targets_wraps_single_target():
     targets = _normalize_valid_factory_targets([0, 1, 0])
     assert targets.tolist() == [[0, 1, 0]]
+
+
+def test_empty_valid_factory_target_is_accept_all_degenerate_pattern():
+    targets = _normalize_valid_factory_targets(np.zeros((1, 0), dtype=np.uint8))
+
+    assert targets.shape == (1, 0)
+    assert targets.dtype == np.uint8
+
+
+def test_mld_confidence_supports_empty_factory_stage():
+    basis_labels = ("X", "Y", "Z")
+    layout = SyndromeLayout(output_detector_count=1, output_observable_count=1)
+    dataset = BasisDataset(
+        detectors=np.array([[0], [1], [0], [1]], dtype=np.uint8),
+        observables=np.array([[0], [0], [0], [0]], dtype=np.uint8),
+    )
+    full_decoder = TableDecoder.from_det_obs_shots(
+        make_layout_only_dem(1, 1),
+        np.concatenate([dataset.detectors, dataset.observables], axis=1).astype(bool),
+    )
+    factory_decoder = TableDecoder.from_det_obs_shots(
+        stim.DetectorErrorModel(""),
+        np.zeros((len(dataset.detectors), 0), dtype=bool),
+    )
+    decoder_pairs = {basis: (full_decoder, factory_decoder) for basis in basis_labels}
+
+    scores = estimate_mld_ancilla_scores(
+        decoder_pairs,
+        {basis: dataset for basis in basis_labels},
+        valid_factory_targets=np.zeros((1, 0), dtype=np.uint8),
+        basis_labels=basis_labels,
+        sign_vector=(1.0, 1.0, 1.0),
+        target_bloch=np.array([1.0, 1.0, 1.0], dtype=np.float64) / np.sqrt(3.0),
+        layout=layout,
+    )
+    assert scores.shape == (1,)
+    assert np.isfinite(scores[0])
+
+    adapter = build_mld_decoders_from_pair(
+        full_decoder=full_decoder,
+        factory_decoder=factory_decoder,
+        full_syndrome_length=1,
+        factory_syndrome_length=0,
+        ancilla_scores=scores,
+    )
+    factory_flip, score = adapter.decode_factory(0)
+    assert factory_flip == ()
+    assert score == pytest.approx(scores[0])
+
+    curves = evaluate_curve(
+        {basis: dataset for basis in basis_labels},
+        {basis: adapter for basis in basis_labels},
+        binary_precision=4,
+        threshold_points=2,
+        metric="empty-factory",
+        valid_factory_targets=np.zeros((1, 0), dtype=np.uint8),
+        sign_vector=(1.0, 1.0, 1.0),
+        target_bloch=np.array([1.0, 1.0, 1.0], dtype=np.float64) / np.sqrt(3.0),
+        basis_labels=basis_labels,
+        min_accepted_per_basis=1,
+        layout=layout,
+    )
+    assert curves["accepted_fraction"].tolist() == [1.0]
 
 
 def test_kernel_builders_return_expected_basis_maps():

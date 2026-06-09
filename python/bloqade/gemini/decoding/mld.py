@@ -357,7 +357,7 @@ def _mld_scores_from_pattern_counts(
     """Convert per-pattern tomography counts into fidelity scores."""
 
     if ancilla_detectors is None:
-        raise ValueError("Need at least one ancilla detector to score MLD patterns.")
+        raise ValueError("Need ranking data to score MLD patterns.")
 
     scores = np.full(1 << ancilla_detectors, np.nan, dtype=np.float64)
     all_patterns = set()
@@ -463,9 +463,6 @@ def _accumulate_mld_pattern_counts(
     """Accumulate corrected output counts keyed by ancilla detector pattern."""
 
     packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
-    if packed_dataset.anc_det.shape[1] == 0:
-        return 0
-
     grouped = np.column_stack(
         [
             packed_dataset.packed_anc_det,

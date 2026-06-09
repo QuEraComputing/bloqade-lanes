@@ -4,11 +4,13 @@ from typing import Any, Literal, Mapping, Protocol, Sequence
 import numpy as np
 import stim
 import tsim
-from bloqade.decoders import BaseDecoder, ConfidenceDecoder
+from bloqade.decoders import BaseDecoder
 from bloqade.decoders.dem import detector_error_model_matrices, matrix_to_dem
 from demo.msd_utils import (
+    DEFAULT_BASIS_LABELS,
     DEFAULT_SYNDROME_LAYOUT,
     DEFAULT_TARGET_BLOCH,
+    BasisDataset,
     DecoderAdapter,
     DecoderPrimitiveSet,
     DemoTask,
@@ -18,9 +20,16 @@ from demo.msd_utils import (
     build_decoder_kernel_bundle,
     build_msd_primitives,
     build_task_map,
+    plot_decoder_curves,
+    run_task,
 )
 from demo.msd_utils.domain.kernels import _build_tomography_primitives
+from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 
+from bloqade.gemini.decoding.postselection import (
+    _build_generic_threshold_tables,
+    _evaluate_cached_threshold_curve,
+)
 from bloqade.gemini.device import GeminiLogicalSimulator
 
 
@@ -80,17 +89,31 @@ class PostSelectionExperimentCache:
     # decoders --> did we want this field? I think it is covered by the two fields below
     decoders: Mapping[str, tuple[BaseDecoder, BaseDecoder]] | None
     decoders_with_confidence: Mapping[str, DecoderAdapter] | None
-    # NOTE: not using fields initialized_decoders_postselection directly for this implementation
+    # NOTE: not using fields initialized_decoders_postselection and initialized_decoders_final directly for this implementation
     # Q: should the decoders enforce the shape of the input?
-    initialized_decoders_postselection: Mapping[str, ConfidenceDecoder] | None
-    initialized_decoders_final: Mapping[str, BaseDecoder] | None
+    # initialized_decoders_postselection: Mapping[str, ConfidenceDecoder] | None
+    # initialized_decoders_final: Mapping[str, BaseDecoder] | None
     # Can think more carefully about the datatype and the shape of the following arrays.
     raw_results: Mapping[str, np.ndarray] | None
     # In this workflow, decoding is kind of coupled to postselection. The workflow is decoding ancilla -> check ancillae match postselection condition
     # -> decode output qubit. In other words, we don't always decode the output qubit (this is for speed). I guess we can return the decoded observables on the
     # ancillae qubits only..? OR, we can separate out the ancilla qubits decoded results and the observable qubit observable results. Might opt
     # for the latter, for now -- BUT, decoding is NOT coupled to confidence score I don't think
-    decoded_results: Mapping[str, tuple[np.ndarray, np.ndarray]] | None
+    # decoded_results: Mapping[str, tuple[np.ndarray, np.ndarray]] | None
+    # the specific type of decoded_results is specified by the return type of _build_generic_threshold_tables.
+    decoded_results: (
+        tuple[
+            Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+            np.ndarray,
+            np.ndarray,
+            int,
+        ]
+        | None
+    )
+
+    thresholded_data: Mapping[str, np.ndarray]
+
+    compiled_noncliff_tasks: Mapping[str, DemoTask] | None
 
     def __init__(self):
         return
@@ -245,6 +268,7 @@ class PostSelectionExperiment:
             # m2obs=MSD_MEASUREMENT_MAPS[1],
             append_measurements=False,
         )
+        self.postselection_exp_cache.compiled_noncliff_tasks = actual_tasks
         # actual_circuits = {
         #     basis_label: act_task.tsim_circuit
         #     for basis_label, act_task in actual_tasks.items()
@@ -259,7 +283,105 @@ class PostSelectionExperiment:
             **self.decoder_init_args,
         )
 
+        self.postselection_exp_cache.decoders_with_confidence = conf_decoders
+
         return conf_decoders
+
+    # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
+    def get_samples(
+        self, device: GeminiLogicalSimulator, num_shots: int
+    ) -> dict[str, BasisDataset]:
+        # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
+        actual_tasks = self.postselection_exp_cache.compiled_noncliff_tasks
+        actual_data = {
+            basis: run_task(task, num_shots, with_noise=True)
+            for basis, task in actual_tasks.items()
+        }
+        self.postselection_exp_cache.raw_results = actual_data
+        return actual_data
+
+    def decode_and_postselect(self, decoder_name="decoder") -> tuple[
+        Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+        np.ndarray,
+        np.ndarray,
+        int,
+    ]:
+        actual_data = self.postselection_exp_cache.raw_results
+        decoder_map = self.postselection_exp_cache.decoders_with_confidence
+        targets = _normalize_valid_factory_targets(self.postselection_condition)
+        basis_labels = list(decoder_map.keys())
+        # NOTE: hardcoded for now
+        layout = DEFAULT_SYNDROME_LAYOUT
+        progress_label = decoder_name
+        decoded_results_tuple = _build_generic_threshold_tables(
+            actual_data,
+            decoder_map,
+            targets=targets,
+            basis_labels=basis_labels,
+            layout=layout,
+            progress_label=progress_label,
+        )
+        self.postselection_exp_cache.decoded_results = decoded_results_tuple
+        return decoded_results_tuple
+
+    def analysis_f_vs_fraction(
+        self,
+        binary_precision: int | None = None,
+        *,
+        # tomography args
+        sign_vector: Sequence[float],
+        target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+        basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
+        max_grid_points: int = 1_500_000,
+        uncertainty_backend: str = "wilson",
+        # curve args
+        threshold_points: int,
+        min_accepted_per_basis: int = 50,
+        threshold_policy: str = "quantile",
+    ) -> dict[str, np.ndarray]:
+        (
+            per_basis_tables,
+            score_array,
+            score_weights,
+            total_shots,
+        ) = self.postselection_exp_cache.decoded_results
+        threshold_curve = _evaluate_cached_threshold_curve(
+            per_basis_tables,
+            score_array,
+            score_weights=score_weights,
+            binary_precision=binary_precision,
+            threshold_points=threshold_points,
+            sign_vector=sign_vector,
+            target_bloch=target_bloch,
+            basis_labels=basis_labels,
+            min_accepted_per_basis=min_accepted_per_basis,
+            threshold_policy=threshold_policy,
+            total_shots=total_shots,
+            uncertainty_backend=uncertainty_backend,
+            max_grid_points=max_grid_points,
+        )
+        self.postselection_exp_cache.thresholded_data = threshold_curve
+        return threshold_curve
+
+    def analysis_visualization(
+        self, min_accepted_fraction: float = 0.04, title: str | None = None
+    ):
+        return plot_decoder_curves(
+            self.postselection_exp_cache.thresholded_data,
+            min_accepted_fraction=min_accepted_fraction,
+            title=title,
+        )
+
+
+# def plot_decoder_curves(
+#     curves: Mapping[str, Mapping[str, np.ndarray]],
+#     *,
+#     injected_summary: FidelitySummary | None = None,
+#     min_accepted_fraction: float = 0.04,
+#     ax: "Axes | None" = None,
+#     title: str | None = None,
+#     log: bool = True,
+# ) -> tuple["Figure", "Axes"]:
 
 
 # Rough plan for initializing decoders:
@@ -276,3 +398,5 @@ class PostSelectionExperiment:
 # sample once and take views of the shot data (instead of views of the whole table)
 # 2. Use those decoders and feed into "decoders_postselection" argument to construct the ConfidenceDecoders for each basis
 # 3. Once you have that, then we can just wrap things into DecoderAdapter's for each basis.
+
+# TODO: implement the workflow for the "injected_baseline" workflow too, and think about all the details.

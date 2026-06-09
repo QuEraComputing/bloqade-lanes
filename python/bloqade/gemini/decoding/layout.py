@@ -63,8 +63,8 @@ def _normalize_valid_factory_targets(
             "valid_factory_targets must be a 1D factory syndrome or a 2D array "
             "of valid factory syndromes."
         )
-    if targets.shape[0] == 0 or targets.shape[1] == 0:
-        raise ValueError("Need at least one non-empty valid factory syndrome.")
+    if targets.shape[0] == 0:
+        raise ValueError("Need at least one valid factory syndrome.")
     return np.unique(targets, axis=0)
 
 

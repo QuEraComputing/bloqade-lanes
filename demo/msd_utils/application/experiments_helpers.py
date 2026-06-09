@@ -77,6 +77,8 @@ def construct_confidence_decoders_mld(
 
 
 # TODO: make sure we are "principled" with the kwargs? The kwargs should strictly be initialization args for the decoders?
+# NOTE: if we wanted to implement the "enumerate only errors of a certain weight", we'd just supply a different factory function and implement a "from_dem_low_weight"
+# function.
 def construct_full_factory_decoders_mld(
     dem: stim.DetectorErrorModel, **kwargs: Any
 ) -> BaseDecoder:
@@ -93,6 +95,7 @@ def construct_confidence_decoders_mle(
     **kwargs: Any,
 ) -> dict[str, DecoderAdapter]:
     # NOTE: this is kind of hacky, but gets the job done (can more 'principledly' construct the DecoderAdapter later)
+    # this is a long way of basically getting the decoders and "casting" them into DecoderAdapter's
 
     mle_decoder_adapters = {}
 
