@@ -113,7 +113,7 @@ class PostSelectionExperimentCache:
 
     thresholded_data: Mapping[str, np.ndarray]
 
-    compiled_noncliff_tasks: Mapping[str, DemoTask] | None
+    hardware_tasks: Mapping[str, DemoTask] | None
 
     def __init__(self):
         return
@@ -259,7 +259,7 @@ class PostSelectionExperiment:
 
     def prep_decoders(self) -> dict[str, DecoderAdapter]:
         decoders_bases = self.postselection_exp_cache.decoders
-        # have to construct the MSD circuit due to the way that MSD experiment calculates confidence, here
+        # NOTE: have to construct the MSD circuit due to the way that MSD experiment calculates confidence, here
         tomography_kernels = self.postselection_exp_cache.dem_kernels
         actual_tasks = build_task_map(
             self.simulator,
@@ -268,7 +268,7 @@ class PostSelectionExperiment:
             # m2obs=MSD_MEASUREMENT_MAPS[1],
             append_measurements=False,
         )
-        self.postselection_exp_cache.compiled_noncliff_tasks = actual_tasks
+        # self.postselection_exp_cache.compiled_noncliff_tasks = actual_tasks
         # actual_circuits = {
         #     basis_label: act_task.tsim_circuit
         #     for basis_label, act_task in actual_tasks.items()
@@ -287,11 +287,7 @@ class PostSelectionExperiment:
 
         return conf_decoders
 
-    # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
-    def get_samples(
-        self, device: GeminiLogicalSimulator, num_shots: int
-    ) -> dict[str, BasisDataset]:
-        # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
+    def make_tasks(self, device: GeminiLogicalSimulator) -> dict[str, DemoTask]:
         tomography_kernels = self.postselection_exp_cache.dem_kernels
         actual_tasks = build_task_map(
             device,
@@ -300,6 +296,13 @@ class PostSelectionExperiment:
             # m2obs=MSD_MEASUREMENT_MAPS[1],
             append_measurements=False,
         )
+        self.postselection_exp_cache.hardware_tasks = actual_tasks
+        return actual_tasks
+
+    # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
+    def get_samples(self, num_shots: int) -> dict[str, BasisDataset]:
+        # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
+        actual_tasks = self.postselection_exp_cache.hardware_tasks
         actual_data = {
             basis: run_task(task, num_shots, with_noise=True)
             for basis, task in actual_tasks.items()
