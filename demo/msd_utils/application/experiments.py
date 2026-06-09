@@ -292,7 +292,14 @@ class PostSelectionExperiment:
         self, device: GeminiLogicalSimulator, num_shots: int
     ) -> dict[str, BasisDataset]:
         # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
-        actual_tasks = self.postselection_exp_cache.compiled_noncliff_tasks
+        tomography_kernels = self.postselection_exp_cache.dem_kernels
+        actual_tasks = build_task_map(
+            device,
+            tomography_kernels.actual,
+            # m2dets=MSD_MEASUREMENT_MAPS[0],
+            # m2obs=MSD_MEASUREMENT_MAPS[1],
+            append_measurements=False,
+        )
         actual_data = {
             basis: run_task(task, num_shots, with_noise=True)
             for basis, task in actual_tasks.items()
