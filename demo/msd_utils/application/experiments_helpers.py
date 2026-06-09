@@ -3,18 +3,34 @@ from typing import Any, Callable, Mapping, Sequence, cast
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder, ConfidenceDecoder, GurobiDecoder
-from demo.msd_utils import (
-    DecoderAdapter,
-    DemoTask,
-    build_mld_decoders_from_pair,
-    estimate_mld_ancilla_scores,
-    pack_boolean_array,
-    run_task,
-    split_factory_bits,
-)
+from bloqade.decoders.bit_packing import pack_boolean_array
 from demo.msd_utils.application.table_decoders import TableDecoder
 
-from bloqade.gemini.decoding.postselection import _make_decoder_adapter
+from bloqade.gemini.decoding.layout import (
+    DEFAULT_SYNDROME_LAYOUT,
+    SyndromeLayout,
+    split_factory_bits,
+)
+from bloqade.gemini.decoding.mld import (
+    build_mld_decoders_from_pair,
+    estimate_mld_ancilla_scores,
+)
+from bloqade.gemini.decoding.postselection import (
+    DecoderAdapter,
+    _make_decoder_adapter,
+)
+from bloqade.gemini.decoding.sampling import run_task
+from bloqade.gemini.decoding.tasks import DemoTask
+
+
+def _mld_batch_size(kwargs: Mapping[str, Any]) -> int:
+    batch_size = kwargs.get("batch_size", 65536)
+    if batch_size is None:
+        batch_size = 65536
+    resolved_batch_size = int(batch_size)
+    if resolved_batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    return resolved_batch_size
 
 
 # NOTE: the weird thing for this function is that it basically needs like EVERYTHING that you would to run the whole experiment to get the estimated fidelity
@@ -26,6 +42,7 @@ def construct_confidence_decoders_mld(
     **kwargs: Any,
 ) -> dict[str, DecoderAdapter]:
 
+    layout = cast(SyndromeLayout, kwargs.get("layout", DEFAULT_SYNDROME_LAYOUT))
     # basis_labels = ["X", "Y", "Z"]
     mld_ranking_train_shots = kwargs.get(
         "mld_rank_train_shots", kwargs["mld_train_shots"]
@@ -36,7 +53,10 @@ def construct_confidence_decoders_mld(
             f"Sampling MLD ranking data for {basis} with {mld_ranking_train_shots:,} shots..."
         )
         dataset = run_task(
-            task, mld_ranking_train_shots, with_noise=True, sim_type=kwargs["sim_type"]
+            task,
+            mld_ranking_train_shots,
+            with_noise=True,
+            sim_type=str(kwargs.get("sim_type", "tsim")),
         )
         mld_ranking_data[basis] = dataset
         print("cached MLD ranking data")
@@ -55,6 +75,7 @@ def construct_confidence_decoders_mld(
         mld_ranking_data,
         valid_factory_targets=valid_factory_targets,
         basis_labels=list(circuits_per_basis.keys()),
+        layout=layout,
         sign_vector=MLD_SIGN_VECTOR,
         target_bloch=target_bloch,
         # AND you have a BUNCH of fidelity arguments you can supply as well.
@@ -67,7 +88,9 @@ def construct_confidence_decoders_mld(
             factory_decoder=mld_decoder_pairs[basis][1],
             full_syndrome_length=dataset.detectors.shape[1],
             factory_syndrome_length=split_factory_bits(
-                dataset.detectors, dataset.observables
+                dataset.detectors,
+                dataset.observables,
+                layout=layout,
             )[0].shape[1],
             ancilla_scores=mld_ancilla_scores,
         )
@@ -83,7 +106,9 @@ def construct_full_factory_decoders_mld(
     dem: stim.DetectorErrorModel, **kwargs: Any
 ) -> BaseDecoder:
     return TableDecoder.from_dem(
-        dem, num_shots=kwargs["mld_train_shots"], step_size=kwargs["batch_size"]
+        dem,
+        num_shots=kwargs["mld_train_shots"],
+        step_size=_mld_batch_size(kwargs),
     )
 
 
@@ -130,12 +155,15 @@ def construct_confidence_decoders_mle(
             full_decoder=full_decoder,
             factory_decoder=casted_factory,
             # TODO: think about how else to compute this information?
-            full_syndrome_length=full_decoder.num_detectors,
-            factory_syndrome_length=factory_decoder.num_detectors,
+            full_syndrome_length=int(getattr(full_decoder, "num_detectors")),
+            factory_syndrome_length=int(getattr(factory_decoder, "num_detectors")),
             factory_decode_impl=factory_decode_impl,
             factory_score_mode=score_mode,
         )
-        sample_syndrome = np.zeros(factory_decoder.num_detectors, dtype=np.uint8)
+        sample_syndrome = np.zeros(
+            int(getattr(factory_decoder, "num_detectors")),
+            dtype=np.uint8,
+        )
         adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
 
         mle_decoder_adapters[basis] = adapter

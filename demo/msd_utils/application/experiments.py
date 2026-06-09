@@ -266,6 +266,18 @@ def single_qubit_state_tomography() -> dict[str, SquinKernel]:
     return _build_tomography_primitives(output_qubit=0)
 
 
+def empty_logical_circuit() -> SquinKernel:
+    """Return a no-op logical Squin kernel for injected-state tomography."""
+
+    from bloqade import squin
+
+    @squin.kernel
+    def empty_logical(reg):
+        return
+
+    return empty_logical
+
+
 # TODO: make this "cache" class abstract as well?
 class PostSelectionExperimentCache:
     # Going to add the kernels here for consistency.
@@ -448,10 +460,16 @@ class PostSelectionExperiment:
                 dem_data["O"][: layout.output_observable_count, :],
                 dem_data["priors"],
             )
-            factory_dem = matrix_to_dem(
-                dem_data["H"][layout.output_detector_count :, :],
-                dem_data["O"][layout.output_observable_count :, :],
-                dem_data["priors"],
+            factory_h = dem_data["H"][layout.output_detector_count :, :]
+            factory_o = dem_data["O"][layout.output_observable_count :, :]
+            factory_dem = (
+                stim.DetectorErrorModel("")
+                if factory_h.shape[0] == 0 and factory_o.shape[0] == 0
+                else matrix_to_dem(
+                    factory_h,
+                    factory_o,
+                    dem_data["priors"],
+                )
             )
             # NOTE: this is important. We are sampling 2x to build the 2 decoders (not once); I think it is OK (so long as they approximate
             # the same table? but it IS more expensive)
@@ -489,6 +507,7 @@ class PostSelectionExperiment:
             valid_factory_targets=self.postselection_condition,
             target_bloch=self.target_bloch,
             **self.decoder_init_args,
+            layout=DEFAULT_SYNDROME_LAYOUT,
         )
 
         self.postselection_exp_cache.decoders_with_confidence = conf_decoders
@@ -508,13 +527,25 @@ class PostSelectionExperiment:
         return actual_tasks
 
     # NOTE: this is NOT idempotent. calling it multiple times WILL give you DIFFERENT sample data
-    def get_samples(self, num_shots: int) -> dict[str, BasisDataset]:
+    def get_samples(
+        self,
+        num_shots: int,
+        *,
+        chunk_size: int | None = None,
+        sim_type: str = "tsim",
+    ) -> dict[str, BasisDataset]:
         # NOTE: repeated code below; can get rid of it by making a field in PostSelectionExperimentCache?
         actual_tasks = self.postselection_exp_cache.hardware_tasks
         if actual_tasks is None:
             raise RuntimeError("make_tasks must be called before get_samples.")
         actual_data = {
-            basis: run_task(task, num_shots, with_noise=True)
+            basis: run_task(
+                task,
+                num_shots,
+                with_noise=True,
+                chunk_size=chunk_size,
+                sim_type=sim_type,
+            )
             for basis, task in actual_tasks.items()
         }
         self.postselection_exp_cache.raw_results = actual_data
