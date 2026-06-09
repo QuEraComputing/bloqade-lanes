@@ -29,7 +29,7 @@ def steane_slot_allocator():
 
     """
     # canonical slot order
-    slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10, 14, 20])
+    slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10, 14, 18])
 
     slots = IList(
         [
@@ -110,7 +110,7 @@ def measure_logical_reg(logical_reg: ilist.IList[LogicalQubit, Any]):
 
 @kernel(typeinfer=True)
 def main():
-    reg = qalloc([0, 1, 2, 3], 0.0, 0.0, 0.0)
+    reg = qalloc([9], 0.0, 0.0, 0.0)
 
     squin.broadcast.h(reg[0])
     cx(reg[:1], reg[1:2])
