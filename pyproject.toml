@@ -11,8 +11,7 @@ authors = [
     { name = "Phillip Weinberg", email = "pweinberg@quera.com" }
 ]
 dependencies = [
-    "bloqade-circuit[cirq, qasm2, tsim]~=0.14.1",
-    "bloqade-tsim~=0.1.3",
+    "bloqade-circuit[cirq, qasm2]~=0.14.1",
     "bloqade-core~=0.6.4",
     "deprecated>=1.3.1",
     "kirin-toolchain~=0.22.6",
@@ -28,6 +27,10 @@ requires-python = ">= 3.10"
 cudaq = [
     "cudaq>=0.13.0",
     "qbraid-qir[squin]>=0.5.1",
+]
+tsim = [
+    "bloqade-circuit[tsim]~=0.14.1",
+    "bloqade-tsim~=0.1.3",
 ]
 visualization = [
     "matplotlib>=3.9.4",
