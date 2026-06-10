@@ -140,6 +140,35 @@ def test_compare_ignores_wall_time_improvements():
     assert report.has_differences is False
 
 
+def test_compare_ignores_nodes_explored_within_10_percent():
+    baseline_rows = [_row(nodes_explored=100)]
+    current_rows = [_row(nodes_explored=109)]
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    assert report.has_differences is False
+
+
+def test_compare_ignores_nodes_explored_at_exactly_10_percent():
+    baseline_rows = [_row(nodes_explored=100)]
+    current_rows = [_row(nodes_explored=110)]
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    assert report.has_differences is False
+
+
+def test_compare_flags_nodes_explored_beyond_10_percent():
+    baseline_rows = [_row(nodes_explored=100)]
+    current_rows = [_row(nodes_explored=111)]
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    assert report.has_differences is True
+    assert report.diffs[0].field == "nodes_explored"
+    assert report.diffs[0].kind == "degraded"
+
+
 def test_compare_distinguishes_rows_by_arch_spec_id():
     baseline_rows = [
         replace(_row(), arch_spec_id="builtin"),
