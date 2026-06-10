@@ -1,4 +1,3 @@
-import math
 from typing import Any, Literal, TypeVar
 
 import numpy as np
@@ -22,6 +21,30 @@ kernel.run_pass = squin.kernel.run_pass
 
 
 LogicalQubit = ilist.IList[Qubit, Literal[7]]
+
+# # how did we not implement this??? -- because it's not free -- state prep circ doesn't really align well with hypercube
+# # you could change the layout but why not change the kernel
+# @squin.kernel
+# def steane7_initialize_custom(
+#     theta: float, phi: float, lam: float, qubits: ilist.IList[Qubit, Literal[7]]
+# ):
+#     # debug.info("Begin Steane7 Initialize")
+#     squin.u3(theta, phi, lam, qubits[6])
+#     squin.broadcast.sqrt_y_adj(qubits[:6])
+#     evens = qubits[::2]  # [0, 2, 4, 6]
+#     odds = qubits[1::2]  # [1, 3, 5]
+
+#     # Fixed: CZ pairs should be (1,2), (3,4), (5,6) not (1,0), (3,2), (5,4)
+#     squin.broadcast.cz(ilist.IList([qubits[1], qubits[2], qubits[5]]), ilist.IList([qubits[3], qubits[4], qubits[6]]))
+#     squin.sqrt_y(qubits[6])
+#     squin.broadcast.cz(ilist.IList([qubits[0], qubits[3], qubits[4]]), ilist.IList([qubits[2], qubits[5], qubits[6]]))
+#     squin.broadcast.sqrt_y(qubits[2:])
+#     squin.broadcast.cz(evens[:-1], odds)
+#     squin.broadcast.sqrt_y(ilist.IList([qubits[1], qubits[3], qubits[4]]))
+#     # NOTE: observable frame changes slightly AND you have to keep track of this change in the detectors/observables computation (!!)
+#     squin.x(qubits[2])
+#     squin.broadcast.z(ilist.IList([qubits[1], qubits[5]]))
+#     # debug.info("End Steane7 Initialize")
 
 
 def steane_slot_allocator():
@@ -122,20 +145,21 @@ def measure_logical_reg(logical_reg: ilist.IList[LogicalQubit, Any]):
 
 @kernel(typeinfer=True)
 def main():
-    reg = qalloc([0, 1, 2, 3, 4], 0.3041 * math.pi, 0.25 * math.pi, 0.0)
+    reg = qalloc([0, 1, 2, 3, 4], 0.0, 0.0, 0.0)
 
     # squin.broadcast.h(reg[0])
     # cx(reg[:1], reg[1:2])
     # cx(reg[:2], reg[2:])
     # from the MSD paper
-    # NOTE: if programming on the physical level, you ALWAYS
-    squin.broadcast.sqrt_x(ilist.IList([reg[0], reg[1], reg[4]]))
+    # NOTE: if programming on the physical level, you ALWAYS have to broadcast your single qubit gates, WITH flattening.
+
+    squin.broadcast.sqrt_x(flat(ilist.IList([reg[0], reg[1], reg[4]])))
     cz(ilist.IList([reg[0], reg[2]]), ilist.IList([reg[1], reg[3]]))
-    squin.broadcast.sqrt_y(ilist.IList([reg[1], reg[3]]))
+    squin.broadcast.sqrt_y(flat(ilist.IList([reg[1], reg[3]])))
     cz(ilist.IList([reg[1], reg[3]]), ilist.IList([reg[2], reg[4]]))
-    squin.broadcast.sqrt_x_adj(ilist.IList([reg[1]]))
+    squin.broadcast.sqrt_x_adj(flat(ilist.IList([reg[1]])))
     cz(ilist.IList([reg[0], reg[3]]), ilist.IList([reg[1], reg[4]]))
-    squin.broadcast.sqrt_x_adj(reg)
+    squin.broadcast.sqrt_x_adj(flat(reg))
     return measure_logical_reg(reg)
 
 
