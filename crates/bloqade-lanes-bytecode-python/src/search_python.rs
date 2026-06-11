@@ -1223,12 +1223,13 @@ pub struct PyEntropyOptions {
 #[pymethods]
 impl PyEntropyOptions {
     #[new]
-    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false))]
+    #[pyo3(signature = (max_movesets_per_group=3, max_goal_candidates=3, w_t=0.05, collect_entropy_trace=false, seed=0))]
     fn new(
         max_movesets_per_group: usize,
         max_goal_candidates: usize,
         w_t: f64,
         collect_entropy_trace: bool,
+        seed: u64,
     ) -> PyResult<Self> {
         if max_movesets_per_group == 0 {
             return Err(PyValueError::new_err(
@@ -1251,6 +1252,7 @@ impl PyEntropyOptions {
                 max_goal_candidates,
                 w_t,
                 collect_entropy_trace,
+                seed,
             },
         })
     }
@@ -1275,13 +1277,19 @@ impl PyEntropyOptions {
         self.inner.collect_entropy_trace
     }
 
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.inner.seed
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "EntropyOptions(max_movesets_per_group={}, max_goal_candidates={}, w_t={}, collect_entropy_trace={})",
+            "EntropyOptions(max_movesets_per_group={}, max_goal_candidates={}, w_t={}, collect_entropy_trace={}, seed={})",
             self.inner.max_movesets_per_group,
             self.inner.max_goal_candidates,
             self.inner.w_t,
             self.inner.collect_entropy_trace,
+            self.inner.seed,
         )
     }
 }
