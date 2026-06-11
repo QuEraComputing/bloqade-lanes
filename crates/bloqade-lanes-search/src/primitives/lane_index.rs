@@ -167,6 +167,12 @@ impl LaneIndex {
             }
         }
 
+        // Sort each outgoing-lane Vec by encoded lane address for deterministic
+        // iteration order in score_moveset / mobility computation.
+        for v in outgoing_by_src.values_mut() {
+            v.sort_unstable_by_key(|lane| lane.encode_u64());
+        }
+
         Self {
             arch_spec,
             lanes_by_triplet,
