@@ -212,3 +212,32 @@ def test_load_baseline_csv_rejects_invalid_bool(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Invalid boolean"):
         load_baseline_csv(path)
+
+
+def test_compare_ignores_nodes_explored_within_10_percent():
+    baseline_rows = [_row(nodes_explored=100)]
+    current_rows = [_row(nodes_explored=109)]
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    assert report.has_differences is False
+
+
+def test_compare_ignores_nodes_explored_at_exactly_10_percent():
+    baseline_rows = [_row(nodes_explored=100)]
+    current_rows = [_row(nodes_explored=110)]
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    assert report.has_differences is False
+
+
+def test_compare_flags_nodes_explored_beyond_10_percent():
+    baseline_rows = [_row(nodes_explored=100)]
+    current_rows = [_row(nodes_explored=111)]
+    report = compare_against_baseline(
+        current_rows=current_rows, baseline_rows=baseline_rows
+    )
+    assert report.has_differences is True
+    assert report.diffs[0].field == "nodes_explored"
+    assert report.diffs[0].kind == "degraded"
