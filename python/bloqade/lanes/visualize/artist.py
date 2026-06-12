@@ -568,9 +568,21 @@ class StateArtist:
 
     def show_cz(self, stmt: move.CZ):
         zone_id = stmt.zone_address.zone_id
-        y_min, y_max = self._visualizer.zone_y_bounds.get(
-            zone_id, self._visualizer.y_bounds
-        )
+
+        y_min = float("inf")
+        y_max = float("-inf")
+
+        for word_id in range(len(self.arch_spec.words)):
+            word = self.arch_spec.words[word_id]
+            for site_id in range(len(word.site_indices)):
+                from bloqade.lanes.bytecode.encoding import LocationAddress
+
+                pos = self.arch_spec.get_position(
+                    LocationAddress(word_id, site_id, zone_id)
+                )
+                y_min = min(y_min, pos[1])
+                y_max = max(y_max, pos[1])
+
         x_min, x_max = self._visualizer.x_bounds
         y_width = y_max - y_min
         y_min -= 0.1 * y_width

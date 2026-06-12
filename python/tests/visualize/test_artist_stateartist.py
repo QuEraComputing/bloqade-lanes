@@ -35,7 +35,6 @@ def make_mock_visualizer():
     viz.path_bounds.return_value = (0.0, 1.0, 0.0, 1.0)
     viz.x_bounds = (0.0, 1.0)
     viz.y_bounds = (0.0, 1.0)
-    viz.zone_y_bounds = {0: (0.0, 1.0)}
     viz.plot.return_value = None
     return viz
 

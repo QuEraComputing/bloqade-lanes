@@ -96,43 +96,19 @@ class ArchVisualizer:
         ``(-1.0, 1.0)`` when no sites are discoverable."""
         y_min = float("inf")
         y_max = float("-inf")
-        for _, (zmin, zmax) in self.zone_y_bounds.items():
-            y_min = min(y_min, zmin)
-            y_max = max(y_max, zmax)
-        if y_min == float("inf"):
-            y_min = -1.0
-        if y_max == float("-inf"):
-            y_max = 1.0
-        return y_min, y_max
-
-    @cached_property
-    def zone_y_bounds(self) -> dict[int, tuple[float, float]]:
-        """``{zone_id: (y_min, y_max)}`` per zone, cached after first call.
-
-        Only iterates words that belong to each zone (via ``word_zone_map``),
-        so the work is proportional to the number of actual site positions
-        rather than all (zone × word × site) combinations.
-        """
         arch = self.arch_spec
-        zone_words: dict[int, list[int]] = {}
-        for word_id, zone_id in arch.word_zone_map.items():
-            zone_words.setdefault(zone_id, []).append(word_id)
-
-        result: dict[int, tuple[float, float]] = {}
-        for zone_id, word_ids in zone_words.items():
-            y_min = float("inf")
-            y_max = float("-inf")
-            for word_id in word_ids:
+        for zone_id in range(len(arch.zones)):
+            for word_id in range(len(arch.words)):
                 for site_id in range(len(arch.words[word_id].site_indices)):
                     pos = _location_position(arch, word_id, site_id, zone_id)
                     if pos is not None:
                         y_min = min(y_min, pos[1])
                         y_max = max(y_max, pos[1])
-            result[zone_id] = (
-                -1.0 if y_min == float("inf") else y_min,
-                1.0 if y_max == float("-inf") else y_max,
-            )
-        return result
+        if y_min == float("inf"):
+            y_min = -1.0
+        if y_max == float("-inf"):
+            y_max = 1.0
+        return y_min, y_max
 
     def path_bounds(self) -> tuple[float, float, float, float]:
         """``(x_min, x_max, y_min, y_max)`` covering every site **and**
