@@ -290,9 +290,8 @@ name = "bloqade-lanes"
 version = "0.11.0.dev0"
 source = { editable = "." }
 dependencies = [
-    { name = "bloqade-circuit", extra = ["cirq", "qasm2", "tsim"] },
+    { name = "bloqade-circuit", extra = ["qasm2"] },
     { name = "bloqade-core" },
-    { name = "bloqade-tsim" },
     { name = "deprecated" },
     { name = "kahip" },
     { name = "kirin-toolchain" },
@@ -307,6 +306,10 @@ cudaq = [
     { name = "cudaq", version = "0.14.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "cudaq", version = "0.14.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "qbraid-qir", extra = ["squin"] },
+]
+sim = [
+    { name = "bloqade-circuit", extra = ["cirq", "tsim"] },
+    { name = "bloqade-tsim" },
 ]
 visualization = [
     { name = "matplotlib" },
@@ -353,9 +356,10 @@ doc = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bloqade-circuit", extras = ["cirq", "qasm2", "tsim"], specifier = "~=0.14.1" },
+    { name = "bloqade-circuit", extras = ["cirq", "tsim"], marker = "extra == 'sim'", specifier = "~=0.14.1" },
+    { name = "bloqade-circuit", extras = ["qasm2"], specifier = "~=0.14.1" },
     { name = "bloqade-core", specifier = "~=0.6.4" },
-    { name = "bloqade-tsim", specifier = "~=0.1.3" },
+    { name = "bloqade-tsim", marker = "extra == 'sim'", specifier = "~=0.1.3" },
     { name = "cudaq", marker = "extra == 'cudaq'", specifier = ">=0.13.0" },
     { name = "deprecated", specifier = ">=1.3.1" },
     { name = "kahip", specifier = ">=3.25" },
@@ -369,7 +373,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "scipy", marker = "extra == 'visualization'", specifier = ">=1.15.3" },
 ]
-provides-extras = ["cudaq", "visualization"]
+provides-extras = ["cudaq", "sim", "visualization"]
 
 [package.metadata.requires-dev]
 dev = [

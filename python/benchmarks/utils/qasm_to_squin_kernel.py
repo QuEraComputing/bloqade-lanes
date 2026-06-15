@@ -10,13 +10,12 @@ import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, cast
+from typing import TYPE_CHECKING, Callable, cast
 
-import cirq
 import numpy as np
-from bloqade.cirq_utils.parallelize import parallelize
-from cirq.contrib.qasm_import import circuit_from_qasm
-from cirq.linalg.decompositions import deconstruct_single_qubit_matrix_into_angles
+
+if TYPE_CHECKING:
+    import cirq  # type: ignore[reportMissingImports]
 
 U3_RE = re.compile(
     r"^\s*squin\.u3\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*q\[(\d+)\]\s*\)\s*$"
@@ -43,10 +42,23 @@ def _format_float(value: float) -> str:
     return f"{value:.12g}"
 
 
+def _load_cirq():
+    try:
+        import cirq  # type: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise ImportError(
+            "QASM-to-SQUIN conversion requires the optional `sim` extra. "
+            "Install it with `bloqade-lanes[sim]` or `uv sync --extra sim`."
+        ) from exc
+
+    return cirq
+
+
 def _qubit_sort_key(qubit: cirq.Qid) -> tuple[int, int, int, str]:
-    if isinstance(qubit, cirq.LineQubit):
+    cirq_mod = _load_cirq()
+    if isinstance(qubit, cirq_mod.LineQubit):
         return (0, qubit.x, 0, "")
-    if isinstance(qubit, cirq.GridQubit):
+    if isinstance(qubit, cirq_mod.GridQubit):
         return (1, qubit.row, qubit.col, "")
     return (2, 0, 0, str(qubit))
 
@@ -62,12 +74,13 @@ def _normalize_kernel_name(name: str) -> str:
 
 def _strip_terminal_measurements(circuit: cirq.Circuit) -> tuple[cirq.Circuit, int]:
     """Drop measurements that are terminal on each measured qubit."""
+    cirq_mod = _load_cirq()
     moments = list(circuit)
     last_non_measure_moment: dict[cirq.Qid, int] = {}
 
     for idx, moment in enumerate(moments):
         for op in moment.operations:
-            if cirq.is_measurement(op):
+            if cirq_mod.is_measurement(op):
                 continue
             for qubit in op.qubits:
                 last_non_measure_moment[qubit] = idx
@@ -78,7 +91,7 @@ def _strip_terminal_measurements(circuit: cirq.Circuit) -> tuple[cirq.Circuit, i
     for idx, moment in enumerate(moments):
         kept_ops: list[cirq.Operation] = []
         for op in moment.operations:
-            if not cirq.is_measurement(op):
+            if not cirq_mod.is_measurement(op):
                 kept_ops.append(op)
                 continue
 
@@ -91,14 +104,17 @@ def _strip_terminal_measurements(circuit: cirq.Circuit) -> tuple[cirq.Circuit, i
             measurement_count += 1
 
         if kept_ops:
-            kept_moments.append(cirq.Moment(kept_ops))
+            kept_moments.append(cirq_mod.Moment(kept_ops))
 
-    return cirq.Circuit(kept_moments), measurement_count
+    return cirq_mod.Circuit(kept_moments), measurement_count
 
 
 def _to_cz_native_cirq(circuit: cirq.Circuit) -> cirq.Circuit:
     """Rewrite a circuit into CZ + single-qubit native operations."""
-    return cirq.optimize_for_target_gateset(circuit, gateset=cirq.CZTargetGateset())
+    cirq_mod = _load_cirq()
+    return cirq_mod.optimize_for_target_gateset(
+        circuit, gateset=cirq_mod.CZTargetGateset()
+    )
 
 
 def _strip_qasm_barriers(qasm_text: str) -> tuple[str, int]:
@@ -116,7 +132,8 @@ def _strip_qasm_barriers(qasm_text: str) -> tuple[str, int]:
 
 def _load_qasm_circuit(qasm_text: str) -> tuple[cirq.Circuit, int]:
     """Load OpenQASM with Cirq's native parser and compatibility fallback."""
-    from_qasm = getattr(cirq.Circuit, "from_qasm", None)
+    cirq_mod = _load_cirq()
+    from_qasm = getattr(cirq_mod.Circuit, "from_qasm", None)
     if callable(from_qasm):
         try:
             parser = cast(Callable[[str], cirq.Circuit], from_qasm)
@@ -126,6 +143,10 @@ def _load_qasm_circuit(qasm_text: str) -> tuple[cirq.Circuit, int]:
 
     qasm_without_barriers, dropped = _strip_qasm_barriers(qasm_text)
     try:
+        from cirq.contrib.qasm_import import (  # type: ignore[reportMissingImports]
+            circuit_from_qasm,
+        )
+
         return circuit_from_qasm(qasm_without_barriers), dropped
     except Exception as fallback_error:
         raise ValueError(
@@ -136,6 +157,7 @@ def _load_qasm_circuit(qasm_text: str) -> tuple[cirq.Circuit, int]:
 
 def circuit_to_squin_decorator_source(circuit: cirq.Circuit, kernel_name: str) -> str:
     """Render a Cirq circuit as decorator-style SQUIN Python source."""
+    cirq_mod = _load_cirq()
     qubits = sorted(circuit.all_qubits(), key=_qubit_sort_key)
     index_by_qubit = {qb: idx for idx, qb in enumerate(qubits)}
 
@@ -160,15 +182,19 @@ def circuit_to_squin_decorator_source(circuit: cirq.Circuit, kernel_name: str) -
             if gate is None:
                 raise ValueError(f"Unsupported gate-less operation: {op!r}")
 
-            if cirq.is_measurement(op):
+            if cirq_mod.is_measurement(op):
                 raise ValueError(
                     "Measurement operations are not supported in SQUIN kernels."
                 )
 
             if len(op.qubits) == 1:
-                mat = cirq.unitary(op, default=None)
+                mat = cirq_mod.unitary(op, default=None)
                 if mat is None:
                     raise ValueError(f"Unsupported single-qubit operation: {op!r}")
+
+                from cirq.linalg.decompositions import (  # type: ignore[reportMissingImports]
+                    deconstruct_single_qubit_matrix_into_angles,
+                )
 
                 z0, y, z1 = deconstruct_single_qubit_matrix_into_angles(mat)
                 # Cirq returns ZYZ angles in order (z0, y, z1) such that
@@ -187,7 +213,7 @@ def circuit_to_squin_decorator_source(circuit: cirq.Circuit, kernel_name: str) -
                 )
                 continue
 
-            if isinstance(gate, cirq.CZPowGate):
+            if isinstance(gate, cirq_mod.CZPowGate):
                 if len(op.qubits) != 2:
                     raise ValueError(f"Unexpected CZ arity: {op!r}")
                 if gate.exponent != 1 or gate.global_shift != 0:
@@ -351,13 +377,26 @@ def parallelize_squin_blocks(source: str) -> str:
 
 
 def _simulate_cirq_statevector(circuit: cirq.Circuit) -> np.ndarray:
+    cirq_mod = _load_cirq()
     qubits = sorted(circuit.all_qubits(), key=_qubit_sort_key)
     # pyqrack/bloqade treats q[0] as least-significant in basis ordering.
     # Reverse Cirq's qubit order to align statevector indexing conventions.
     qubits = list(reversed(qubits))
-    sim = cirq.Simulator(dtype=np.complex128)
+    sim = cirq_mod.Simulator(dtype=np.complex128)
     result = sim.simulate(circuit, qubit_order=qubits)
     return np.asarray(result.final_state_vector, dtype=np.complex128)
+
+
+def _parallelize(circuit: cirq.Circuit) -> cirq.Circuit:
+    try:
+        from bloqade.cirq_utils.parallelize import parallelize
+    except ImportError as exc:
+        raise ImportError(
+            "QASM-to-SQUIN conversion requires the optional `sim` extra. "
+            "Install it with `bloqade-lanes[sim]` or `uv sync --extra sim`."
+        ) from exc
+
+    return parallelize(circuit)
 
 
 def _simulate_squin_statevector(kernel_path: Path, kernel_name: str) -> np.ndarray:
@@ -476,7 +515,7 @@ def main() -> int:
     qasm_text = qasm_path.read_text(encoding="utf-8")
     circuit, dropped_barriers = _load_qasm_circuit(qasm_text)
     unitary_circuit, dropped_measurements = _strip_terminal_measurements(circuit)
-    parallelized = parallelize(unitary_circuit)
+    parallelized = _parallelize(unitary_circuit)
     squin_source = circuit_to_squin_decorator_source(parallelized, kernel_name)
     transformed_source = parallelize_squin_blocks(squin_source)
 
