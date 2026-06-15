@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Bloqade Lanes is a component of QuEra's Neutral Atom SDK. It compiles quantum circuits down to physical atom movement instructions for neutral atom quantum processors (targeting the Atom Computing Gemini architecture). The compilation pipeline is: Circuit → Place (logical placement) → Move (physical moves) → Squin/Stim IR.
+Bloqade Lanes is a component of QuEra's Neutral Atom SDK. It compiles quantum circuits down to physical atom movement instructions for neutral atom quantum processors (targeting the QuEra Gemini architecture). The compilation pipeline is: Circuit → Place (logical placement) → Move (physical moves) → Squin/Stim IR.
 
 This is a hybrid Rust + Python package. The Rust crates provide a bytecode format, architecture specification, CLI tool, and C FFI library. The Python layer provides the quantum circuit compilation pipeline built on the Kirin IR framework.
 
