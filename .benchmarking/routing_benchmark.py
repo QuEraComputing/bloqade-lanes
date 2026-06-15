@@ -35,7 +35,14 @@ from bloqade.lanes.arch.topology import (
     HypercubeWordTopology,
 )
 from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
-from bloqade.lanes.bytecode._native import MoveSolver, SearchStrategy, SolveOptions
+from bloqade.lanes.bytecode._native import (
+    EntropyOptions,
+    MoveSearch,
+    SearchEngine,
+    SearchStrategy,
+    SolveOptions,
+    TargetSolver,
+)
 from bloqade.lanes.layout import LocationAddress
 from bloqade.lanes.layout.arch import ArchSpec
 
@@ -181,17 +188,27 @@ _BENCH_STRATEGY_MAP: dict[str, SearchStrategy] = {
 
 def solve_rust(
     problem: RoutingProblem,
-    solver: MoveSolver,
+    engine: SearchEngine,
     strat: StrategyConfig,
 ) -> SolveResult:
-    """Run the Rust MoveSolver with the given strategy config."""
-    opts = SolveOptions(
+    """Run the Rust TargetSolver with the given strategy config."""
+    solve_opts = SolveOptions(
         strategy=_BENCH_STRATEGY_MAP[strat.strategy],
-        max_movesets_per_group=strat.max_movesets_per_group,
         weight=strat.weight,
         restarts=strat.restarts,
         lookahead=strat.lookahead,
     )
+    # Strategy is carried by ``solve_opts``; ``with_options`` replaces the whole
+    # options struct. ``max_movesets_per_group`` is only consumed by entropy
+    # strategies, so attaching it unconditionally is harmless elsewhere.
+    move_search = (
+        MoveSearch.entropy()
+        .with_options(solve_opts)
+        .with_entropy_options(
+            EntropyOptions(max_movesets_per_group=strat.max_movesets_per_group)
+        )
+    )
+    solver = TargetSolver(engine, move_search)
 
     t0 = time.perf_counter()
     result = solver.solve(
@@ -199,7 +216,6 @@ def solve_rust(
         problem.target,
         list(problem.blocked),
         strat.max_expansions,
-        options=opts,
     )
     dt = time.perf_counter() - t0
 
@@ -437,7 +453,7 @@ def run_benchmarks(
         fractions = arch_fractions[arch_name]
         qubit_counts = sorted(set(max(4, int(max_q * f)) for f in fractions))
 
-        rust_solver = MoveSolver.from_arch_spec(arch._inner)
+        rust_engine = SearchEngine.from_arch_spec(arch._inner)
 
         csv_path = output_path / f"results_{arch_name}.csv"
         csv_paths.append(csv_path)
@@ -485,7 +501,7 @@ def run_benchmarks(
 
                     solved_count = 0
                     for trial_idx, p in enumerate(problems):
-                        r = solve_rust(p, rust_solver, strat)
+                        r = solve_rust(p, rust_engine, strat)
 
                         writer.writerow(
                             {

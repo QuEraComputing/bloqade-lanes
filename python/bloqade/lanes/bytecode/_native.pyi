@@ -951,7 +951,7 @@ class DeadlockPolicy:
 
 @final
 class SolveOptions:
-    """Core search-tuning parameters shared by every MoveSolver entry point."""
+    """Core search-tuning parameters shared by every solver entry point."""
 
     def __init__(
         self,
@@ -981,8 +981,7 @@ class EntropyOptions:
     """Entropy-strategy-specific parameters.
 
     Only consumed when the strategy is entropy (or a Cascade variant whose
-    inner is entropy). Pass via the optional ``entropy_options`` argument to
-    ``MoveSolver.solve``.
+    inner is entropy). Pass via ``MoveSearch.with_entropy_options``.
     """
 
     def __init__(
@@ -1008,7 +1007,7 @@ class EntropyOptions:
 @final
 class EntanglingOptions:
     """Loose-goal entangling-search parameters consumed by
-    ``MoveSolver.solve_entangling``.
+    ``LooseGoalCzPlacement``.
     """
 
     def __init__(
@@ -1051,7 +1050,7 @@ class NoHomeOptions:
 
 @final
 class RecedingHorizonOptions:
-    """Orchestration parameters for ``MoveSolver.solve_entangling_rh``.
+    """Orchestration parameters for ``RecedingHorizonCzPlacement``.
 
     Controls how many candidate Hungarian assignments are tried per stage,
     how far each rollout searches forward, how many layers of the winning
@@ -1097,7 +1096,7 @@ class RecedingHorizonOptions:
 class SolveResult:
     """Result of a move synthesis solve.
 
-    Always returned by ``MoveSolver.solve()``. Check ``status`` to determine
+    Always returned by ``TargetSolver.solve()``. Check ``status`` to determine
     whether a solution was found.
     """
 
@@ -1274,193 +1273,6 @@ class EntropyScorer:
     def w_t(self) -> float: ...
 
 @final
-class MoveSolver:
-    """Reusable move synthesis solver.
-
-    Constructed once from an architecture specification. The constructor
-    parses the spec and precomputes lane indexes. Then ``solve()`` can be
-    called multiple times with different placements.
-    """
-
-    def __init__(self, arch_spec_json: str) -> None: ...
-    @staticmethod
-    def from_arch_spec(arch: ArchSpec) -> MoveSolver:
-        """Create a solver from a native ArchSpec object."""
-        ...
-
-    def solve(
-        self,
-        initial: dict[int, LocationAddress],
-        target: dict[int, LocationAddress],
-        blocked: list[LocationAddress],
-        max_expansions: Optional[int] = None,
-        options: SolveOptions | None = None,
-        entropy_options: EntropyOptions | None = None,
-    ) -> SolveResult:
-        """Solve a move synthesis problem.
-
-        Args:
-            initial: Mapping of qubit_id to LocationAddress for starting positions.
-            target: Mapping of qubit_id to LocationAddress for desired positions.
-            blocked: List of LocationAddress for immovable obstacle locations.
-            max_expansions: Optional limit on node expansions.
-            options: Search-tuning parameters. Defaults to SolveOptions().
-            entropy_options: Entropy-strategy parameters. Only consumed when
-                the strategy is entropy.
-
-        Returns:
-            SolveResult with status indicating outcome.
-        """
-        ...
-
-    def solve_with_generator(
-        self,
-        initial: dict[int, LocationAddress],
-        blocked: list[LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        generator: DefaultTargetGenerator | None = None,
-        max_expansions: Optional[int] = None,
-        options: SolveOptions | None = None,
-        entropy_options: EntropyOptions | None = None,
-    ) -> MultiSolveResult:
-        """Solve using a target generator with shared expansion budget.
-
-        Args:
-            initial: Mapping of qubit_id to LocationAddress for starting positions.
-            blocked: List of LocationAddress for immovable obstacle locations.
-            controls: Control qubit IDs for the CZ gate layer.
-            targets: Target qubit IDs for the CZ gate layer.
-            generator: Rust-side target generator (currently must be None).
-            max_expansions: Total expansion budget across all candidates.
-            options: Search-tuning parameters. Defaults to SolveOptions().
-            entropy_options: Entropy-strategy parameters. Only consumed when
-                the strategy is entropy.
-
-        Returns:
-            MultiSolveResult with per-candidate debug info.
-        """
-        ...
-
-    def solve_entangling(
-        self,
-        initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
-        blocked: list[LocationAddress],
-        max_expansions: Optional[int] = None,
-        options: SolveOptions | None = None,
-        entangling_options: EntanglingOptions | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Solve a loose-goal entangling placement + routing problem.
-
-        Instead of fixed target locations, receives CZ pair constraints and
-        simultaneously discovers both the entangling placement and routing.
-
-        Args:
-            initial: Mapping of qubit_id to LocationAddress for starting positions.
-            cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
-                entangling positions.
-            blocked: List of LocationAddress for immovable obstacle locations.
-            max_expansions: Optional limit on node expansions.
-            options: Search-tuning parameters. Defaults to SolveOptions().
-            entangling_options: Hungarian / loose-goal tuning. Defaults to
-                EntanglingOptions() (hungarian_horizon=4).
-            future_cz_layers: Optional list of future CZ pair layers for
-                lookahead-aware Hungarian assignment. Each layer is a list
-                of (qubit_a, qubit_b) tuples. Clipped Rust-side to
-                ``entangling_options.hungarian_horizon`` layers.
-
-        Returns:
-            SolveResult with the discovered entangling placement.
-        """
-        ...
-
-    def solve_entangling_rh(
-        self,
-        initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
-        blocked: list[LocationAddress],
-        max_expansions: Optional[int] = None,
-        options: SolveOptions | None = None,
-        entangling_options: EntanglingOptions | None = None,
-        rh_options: RecedingHorizonOptions | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Receding-horizon (MPC-style) loose-goal entangling solve.
-
-        At each stage, generates K diverse Hungarian candidate assignments,
-        runs short forward rollouts of each, commits the best branch's
-        path, and re-plans. Targeted at high-occupancy regimes where the
-        baseline ``solve_entangling`` under-uses parallelism.
-
-        Args:
-            initial: Mapping of qubit_id to LocationAddress for starting positions.
-            cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
-                entangling positions.
-            blocked: List of LocationAddress for immovable obstacle locations.
-            max_expansions: Optional limit on total node expansions across all
-                stages of the trajectory.
-            options: Search-tuning parameters. Defaults to SolveOptions().
-            entangling_options: Hungarian cost parameters.
-            rh_options: Receding-horizon orchestration parameters. Defaults
-                to RecedingHorizonOptions() (K=10, x=5, m=1, alpha=0.5).
-            future_cz_layers: Future CZ layers for lookahead-aware Hungarian
-                candidate generation.
-
-        Returns:
-            SolveResult with the committed move-layer trajectory and the
-            final entangling-feasible configuration.
-        """
-        ...
-
-    def solve_nohome(
-        self,
-        initial: dict[int, LocationAddress],
-        cz_pairs: list[tuple[int, int]],
-        blocked: list[LocationAddress],
-        max_expansions: Optional[int] = None,
-        options: SolveOptions | None = None,
-        nohome_options: NoHomeOptions | None = None,
-        future_cz_layers: list[list[tuple[int, int]]] | None = None,
-    ) -> SolveResult:
-        """Two-phase no-home placement: return assignment + entangling routing.
-
-        Phase 1 assigns displaced qubits to optimal home sites using the
-        Hungarian algorithm with gamma-decayed future CZ partner proximity.
-        Phase 2 routes from the chosen home layout to CZ-staging positions
-        using ``solve_entangling``.
-
-        Args:
-            initial: Mapping of qubit_id to current location.
-            cz_pairs: List of (control, target) qubit pairs for the CZ layer.
-            blocked: List of immovable obstacle locations.
-            max_expansions: Optional node expansion budget.
-            options: Search-tuning parameters for routing phases.
-            nohome_options: Tuning parameters for the return assignment.
-            future_cz_layers: Future CZ layers for lookahead.
-
-        Returns:
-            SolveResult with the combined return + entangling placement.
-        """
-        ...
-
-    def generate_candidates(
-        self,
-        initial: dict[int, LocationAddress],
-        controls: list[int],
-        targets: list[int],
-        generator: DefaultTargetGenerator | None = None,
-    ) -> list[dict[int, LocationAddress]]:
-        """Generate and validate candidate targets without solving.
-
-        Returns only validated candidates as qubit_id -> LocationAddress mappings.
-        """
-        ...
-
-    def __repr__(self) -> str: ...
-
-@final
 class DefaultTargetGenerator:
     """Default target generator: moves control qubits to CZ blockade partners."""
 
@@ -1469,7 +1281,7 @@ class DefaultTargetGenerator:
 
 @final
 class MultiSolveResult:
-    """Result of a multi-candidate solve via ``MoveSolver.solve_with_generator()``."""
+    """Result of a multi-candidate solve via ``SingleHeuristicCzPlacement.solve_with_attempts()``."""
 
     @property
     def status(self) -> str:
@@ -2505,8 +2317,8 @@ class Program:
 
 # ── Starlark DSL sidecar ──
 #
-# Move Policy DSL and Target Generator DSL surfaces. Sidecars to MoveSolver
-# and the target generator infrastructure — keeps DSL-specific kwargs and
+# Move Policy DSL and Target Generator DSL surfaces. Sidecars to the typed
+# solver surface and the target generator infrastructure — keeps DSL-specific kwargs and
 # fields off the strategy/result types, so the existing surface stays
 # stable. See the project's `policies/primer.md` for the Starlark API.
 
@@ -2572,7 +2384,7 @@ class PolicySolveResult:
 class PolicyRunner:
     """Reusable Move Policy DSL runner.
 
-    Sidecar to ``MoveSolver``. Construct once from an architecture spec
+    Sidecar to ``TargetSolver``. Construct once from an architecture spec
     (JSON string or ``ArchSpec``); then call ``solve(...)`` for each move
     synthesis problem with a ``.star`` policy.
 

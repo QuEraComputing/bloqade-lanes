@@ -1,8 +1,7 @@
 //! PyO3 bindings for the move synthesis solver.
 //!
-//! Exposes [`PyMoveSolver`] and [`PySolveResult`] to Python, plus the new
-//! typed surface: [`PySearchEngine`], [`PyMoveSearch`], [`PyTargetSolver`],
-//! and the four [`CzPlacement`] peers.
+//! Exposes the typed surface to Python: [`PySearchEngine`], [`PyMoveSearch`],
+//! [`PyTargetSolver`], [`PySolveResult`], and the four [`CzPlacement`] peers.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -22,7 +21,7 @@ use bloqade_lanes_search::placement::receding_horizon::{
     RecedingHorizonCzPlacement, RecedingHorizonOptions, default_weight_grid,
 };
 use bloqade_lanes_search::placement::single_heuristic::SingleHeuristicCzPlacement;
-use bloqade_lanes_search::placement::target_generator::{DefaultTargetGenerator, TargetGenerator};
+use bloqade_lanes_search::placement::target_generator::DefaultTargetGenerator;
 use bloqade_lanes_search::primitives::config::Config;
 use bloqade_lanes_search::primitives::context::SearchContext;
 use bloqade_lanes_search::primitives::distance::DistanceTable;
@@ -30,8 +29,8 @@ use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
 use bloqade_lanes_search::search::solve::{
-    EntanglingOptions, EntropyOptions, InnerStrategy, MoveSolver, MultiSolveResult, SolveOptions,
-    SolveResult, Strategy,
+    EntanglingOptions, EntropyOptions, InnerStrategy, MultiSolveResult, SolveOptions, SolveResult,
+    Strategy,
 };
 use bloqade_lanes_search::search::target_solver::TargetSolver;
 
@@ -670,361 +669,6 @@ impl PyEntropyScorer {
     }
 }
 
-/// Reusable move synthesis solver.
-///
-/// Constructed once from an architecture specification JSON string.
-/// The constructor parses the JSON and precomputes lane indexes.
-/// Then `solve()` can be called multiple times with different placements.
-///
-/// Works for both physical and logical architectures.
-#[pyclass(name = "MoveSolver", frozen, module = "bloqade.lanes.bytecode._native")]
-pub struct PyMoveSolver {
-    inner: MoveSolver,
-}
-
-#[pymethods]
-impl PyMoveSolver {
-    /// Create a solver from an ArchSpec JSON string.
-    #[new]
-    fn new(arch_spec_json: &str) -> PyResult<Self> {
-        let inner = MoveSolver::from_json(arch_spec_json)
-            .map_err(|e| PyValueError::new_err(format!("invalid arch spec JSON: {e}")))?;
-        Ok(Self { inner })
-    }
-
-    /// Create a solver from a native ArchSpec object.
-    #[staticmethod]
-    fn from_arch_spec(arch: &PyArchSpec) -> PyResult<Self> {
-        Ok(Self {
-            inner: MoveSolver::from_arch_spec(&arch.inner),
-        })
-    }
-
-    /// Solve a move synthesis problem.
-    ///
-    /// Args:
-    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
-    ///     target: Mapping of qubit_id to LocationAddress for desired positions.
-    ///     blocked: List of LocationAddress for immovable obstacle locations.
-    ///     max_expansions: Optional limit on node expansions.
-    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
-    ///     entropy_options: Entropy-strategy parameters (EntropyOptions).
-    ///         Only consumed when the strategy is entropy.
-    ///
-    /// Returns:
-    ///     SolveResult with status indicating success/failure.
-    #[pyo3(signature = (initial, target, blocked, max_expansions=None, options=None, entropy_options=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        target: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-        options: Option<&PySolveOptions>,
-        entropy_options: Option<&PyEntropyOptions>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let target_pairs: Vec<(u32, LocationAddr)> =
-            target.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
-        let entropy_opts = entropy_options.map(|o| o.inner.clone());
-
-        // Release the GIL during search (pure Rust, no Python objects needed).
-        let result = py
-            .allow_threads(|| {
-                self.inner.solve(
-                    initial_pairs,
-                    target_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &opts,
-                    entropy_opts.as_ref(),
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Solve using a target generator: generates candidates, validates each,
-    /// and tries them in order with a shared expansion budget.
-    ///
-    /// Args:
-    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
-    ///     blocked: List of LocationAddress for immovable obstacle locations.
-    ///     controls: List of control qubit IDs for the CZ gate layer.
-    ///     targets: List of target qubit IDs for the CZ gate layer.
-    ///     generator: Optional Rust-side target generator (currently must be None).
-    ///     max_expansions: Optional limit on total node expansions across all candidates.
-    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
-    ///
-    /// Returns:
-    ///     MultiSolveResult with per-candidate debug info.
-    #[pyo3(signature = (initial, blocked, controls, targets, generator=None, max_expansions=None, options=None, entropy_options=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn solve_with_generator(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        generator: Option<&PyDefaultTargetGenerator>,
-        max_expansions: Option<u32>,
-        options: Option<&PySolveOptions>,
-        entropy_options: Option<&PyEntropyOptions>,
-    ) -> PyResult<PyMultiSolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
-        let entropy_opts = entropy_options.map(|o| o.inner.clone());
-
-        // Currently only DefaultTargetGenerator is supported. Reject explicit
-        // generator arguments until multiple generator types are implemented.
-        if generator.is_some() {
-            return Err(PyValueError::new_err(
-                "custom generator parameter is not yet supported; pass None or omit",
-            ));
-        }
-        let rust_gen: Box<dyn TargetGenerator> = Box::new(DefaultTargetGenerator);
-
-        let result = py
-            .allow_threads(|| {
-                self.inner.solve_with_generator(
-                    initial_pairs,
-                    blocked_locs,
-                    &controls,
-                    &targets,
-                    rust_gen.as_ref(),
-                    max_expansions,
-                    &opts,
-                    entropy_opts.as_ref(),
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PyMultiSolveResult { inner: result })
-    }
-
-    /// Generate and validate candidate target configurations without solving.
-    ///
-    /// Returns a list of candidates, each a dict mapping qubit_id to LocationAddress.
-    /// Only validated candidates are included.
-    #[pyo3(signature = (initial, controls, targets, generator=None))]
-    fn generate_candidates(
-        &self,
-        initial: std::collections::BTreeMap<u32, PyRef<'_, PyLocationAddr>>,
-        controls: Vec<u32>,
-        targets: Vec<u32>,
-        generator: Option<&PyDefaultTargetGenerator>,
-    ) -> PyResult<Vec<std::collections::HashMap<u32, PyLocationAddr>>> {
-        if generator.is_some() {
-            return Err(PyValueError::new_err(
-                "custom generator parameter is not yet supported; pass None or omit",
-            ));
-        }
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let rust_gen = DefaultTargetGenerator;
-
-        Ok(self
-            .inner
-            .generate_candidates(&initial_pairs, &controls, &targets, &rust_gen)
-            .into_iter()
-            .map(|candidate| {
-                candidate
-                    .into_iter()
-                    .map(|(qid, loc)| (qid, PyLocationAddr { inner: loc }))
-                    .collect()
-            })
-            .collect())
-    }
-
-    /// Solve a loose-goal entangling placement + routing problem.
-    ///
-    /// Instead of fixed target locations, the solver receives CZ pair
-    /// constraints and simultaneously discovers both the entangling
-    /// placement and the routing.
-    ///
-    /// Args:
-    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
-    ///     cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
-    ///         entangling positions.
-    ///     blocked: List of LocationAddress for immovable obstacle locations.
-    ///     max_expansions: Optional limit on node expansions.
-    ///     options: Search-tuning parameters (SolveOptions). Defaults to SolveOptions().
-    ///
-    /// Returns:
-    ///     SolveResult with the discovered entangling placement.
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, entangling_options=None, future_cz_layers=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn solve_entangling(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-        options: Option<&PySolveOptions>,
-        entangling_options: Option<&PyEntanglingOptions>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
-        let ent_opts = entangling_options
-            .map(|o| o.inner.clone())
-            .unwrap_or_default();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .allow_threads(|| {
-                self.inner.solve_entangling(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &opts,
-                    &ent_opts,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Two-phase no-home placement: return assignment + entangling routing.
-    ///
-    /// Phase 1 assigns displaced qubits to optimal home sites.
-    /// Phase 2 routes from home to CZ-staging using solve_entangling.
-    ///
-    /// Args:
-    ///     initial: Mapping of qubit_id to current location.
-    ///     cz_pairs: List of (control, target) qubit pairs for the CZ layer.
-    ///     blocked: List of immovable obstacle locations.
-    ///     max_expansions: Optional node expansion budget.
-    ///     options: Search-tuning parameters for routing phases.
-    ///     nohome_options: Tuning parameters for the return assignment.
-    ///     future_cz_layers: Future CZ layers for lookahead.
-    ///
-    /// Returns:
-    ///     SolveResult with the combined return + entangling placement.
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, nohome_options=None, future_cz_layers=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn solve_nohome(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-        options: Option<&PySolveOptions>,
-        nohome_options: Option<&PyNoHomeOptions>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
-        let nh_opts = nohome_options.map(|o| o.inner.clone()).unwrap_or_default();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .allow_threads(|| {
-                self.inner.solve_nohome(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &opts,
-                    &nh_opts,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    /// Receding-horizon (MPC-style) loose-goal entangling solve.
-    ///
-    /// Like `solve_entangling`, but instead of committing to one Hungarian
-    /// assignment up front, the solver generates K diverse candidate
-    /// assignments at each stage, rolls each out for `rollout_horizon` move
-    /// layers, commits the winning branch's path, and re-plans. Targeted at
-    /// high-occupancy regimes where the baseline loose-goal under-uses
-    /// parallelism.
-    ///
-    /// Args:
-    ///     initial: Mapping of qubit_id to LocationAddress for starting positions.
-    ///     cz_pairs: List of (qubit_a, qubit_b) tuples that must end up at
-    ///         entangling positions.
-    ///     blocked: List of LocationAddress for immovable obstacle locations.
-    ///     max_expansions: Optional limit on total node expansions across all stages.
-    ///     options: Search-tuning parameters (SolveOptions).
-    ///     entangling_options: Hungarian cost parameters (EntanglingOptions).
-    ///     rh_options: Receding-horizon orchestration parameters
-    ///         (RecedingHorizonOptions).
-    ///     future_cz_layers: Future CZ layers for lookahead (clipped by
-    ///         `entangling_options.hungarian_horizon`).
-    ///
-    /// Returns:
-    ///     SolveResult with the committed move-layer trajectory and the
-    ///     final entangling-feasible configuration.
-    #[pyo3(signature = (initial, cz_pairs, blocked, max_expansions=None, options=None, entangling_options=None, rh_options=None, future_cz_layers=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn solve_entangling_rh(
-        &self,
-        py: Python<'_>,
-        initial: std::collections::HashMap<u32, PyRef<'_, PyLocationAddr>>,
-        cz_pairs: Vec<(u32, u32)>,
-        blocked: Vec<PyRef<'_, PyLocationAddr>>,
-        max_expansions: Option<u32>,
-        options: Option<&PySolveOptions>,
-        entangling_options: Option<&PyEntanglingOptions>,
-        rh_options: Option<&PyRecedingHorizonOptions>,
-        future_cz_layers: Option<Vec<Vec<(u32, u32)>>>,
-    ) -> PyResult<PySolveResult> {
-        let initial_pairs: Vec<(u32, LocationAddr)> =
-            initial.iter().map(|(&qid, loc)| (qid, loc.inner)).collect();
-        let blocked_locs: Vec<LocationAddr> = blocked.iter().map(|loc| loc.inner).collect();
-        let opts = options.map(|o| o.inner.clone()).unwrap_or_default();
-        let ent_opts = entangling_options
-            .map(|o| o.inner.clone())
-            .unwrap_or_default();
-        let rh_opts = rh_options.map(|o| o.inner.clone()).unwrap_or_default();
-        let future = future_cz_layers.unwrap_or_default();
-
-        let result = py
-            .allow_threads(|| {
-                self.inner.solve_entangling_rh(
-                    initial_pairs,
-                    &cz_pairs,
-                    blocked_locs,
-                    max_expansions,
-                    &opts,
-                    &ent_opts,
-                    &rh_opts,
-                    &future,
-                )
-            })
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        Ok(PySolveResult { inner: result })
-    }
-
-    fn __repr__(&self) -> String {
-        "MoveSolver(...)".to_string()
-    }
-}
-
 // ── No-home options ──
 
 /// Tuning parameters for the no-home return assignment.
@@ -1115,7 +759,7 @@ impl PyNoHomeOptions {
 
 // ── Solve options ──
 
-/// Core search-tuning parameters shared by every `MoveSolver` entry point.
+/// Core search-tuning parameters shared by every solver entry point.
 #[pyclass(
     name = "SolveOptions",
     frozen,
@@ -1208,8 +852,7 @@ impl PySolveOptions {
 /// Entropy-strategy-specific parameters.
 ///
 /// Only consumed when the chosen strategy is entropy (or a Cascade variant
-/// whose inner is entropy). Pass via the optional `entropy_opts` argument
-/// to `MoveSolver.solve`.
+/// whose inner is entropy). Pass via `MoveSearch.with_entropy_options`.
 #[pyclass(
     name = "EntropyOptions",
     frozen,
@@ -1297,7 +940,7 @@ impl PyEntropyOptions {
 // ── Entangling options ──
 
 /// Loose-goal entangling-search parameters consumed by
-/// `MoveSolver.solve_entangling`.
+/// `LooseGoalCzPlacement`.
 #[pyclass(
     name = "EntanglingOptions",
     frozen,
@@ -1363,7 +1006,7 @@ impl PyEntanglingOptions {
 
 // ── Receding-horizon options ──
 
-/// Orchestration parameters for `MoveSolver.solve_entangling_rh`.
+/// Orchestration parameters for `RecedingHorizonCzPlacement`.
 ///
 /// Controls how many candidate Hungarian assignments are tried per stage,
 /// how far each rollout searches forward, how many layers of the winning
@@ -1530,7 +1173,8 @@ impl PyDefaultTargetGenerator {
     }
 }
 
-/// Result of a multi-candidate solve via `MoveSolver.solve_with_generator()`.
+/// Result of a multi-candidate solve via
+/// `SingleHeuristicCzPlacement.solve_with_attempts()`.
 #[pyclass(
     name = "MultiSolveResult",
     frozen,
