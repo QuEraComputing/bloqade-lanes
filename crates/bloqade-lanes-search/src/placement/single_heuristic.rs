@@ -9,10 +9,8 @@
 //! returning the first successful route, or the last failure if all
 //! candidates fail.
 //!
-//! The legacy
-//! [`MoveSolver::solve_with_generator`](crate::search::solve::MoveSolver::solve_with_generator)
-//! delegates to the same shared implementation
-//! ([`solve_single_heuristic`]) so both paths produce identical results.
+//! Both [`SingleHeuristicCzPlacement::solve_with_attempts`] and the free
+//! [`solve_single_heuristic`] function share the same implementation.
 
 use bloqade_lanes_bytecode_core::arch::addr::LocationAddr;
 
@@ -109,9 +107,8 @@ impl CzPlacement for SingleHeuristicCzPlacement {
     }
 }
 
-/// Shared implementation backing both
-/// [`SingleHeuristicCzPlacement::solve_with_attempts`] and the legacy
-/// [`MoveSolver::solve_with_generator`](crate::search::solve::MoveSolver::solve_with_generator).
+/// Shared implementation backing
+/// [`SingleHeuristicCzPlacement::solve_with_attempts`].
 ///
 /// Generates candidates via `target_generator`, validates each, and
 /// runs them through [`solve_with_engine`] in order with a shared
@@ -225,78 +222,9 @@ mod tests {
     use crate::placement::target_generator::DefaultTargetGenerator;
     use crate::search::engine::SearchEngine;
     use crate::search::move_search::MoveSearch;
-    use crate::search::options::{EntropyOptions, SolveOptions, Strategy};
-    use crate::search::solve::MoveSolver;
     use crate::search::target_solver::TargetSolver;
     use crate::test_utils::{example_arch_json, loc};
     use std::sync::Arc;
-
-    /// Parity check: `SingleHeuristicCzPlacement::solve_with_attempts` and
-    /// the legacy `MoveSolver::solve_with_generator` funnel through the
-    /// same `solve_single_heuristic` impl and must produce identical
-    /// `MultiSolveResult`s for the same inputs.
-    #[test]
-    fn single_heuristic_matches_solve_with_generator() {
-        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
-        let opts = SolveOptions {
-            strategy: Strategy::AStar,
-            weight: 1.0,
-            ..SolveOptions::default()
-        };
-        let entropy_opts = EntropyOptions::default();
-        let search = MoveSearch::new(opts.clone(), entropy_opts.clone());
-
-        let target_solver = TargetSolver::new(engine.clone(), search);
-        let placement =
-            SingleHeuristicCzPlacement::new(target_solver, Box::new(DefaultTargetGenerator));
-        let legacy = MoveSolver::from_index(engine.index().clone());
-
-        let initial = [(0u32, loc(0, 0)), (1u32, loc(0, 1))];
-        let controls = [0u32];
-        let targets = [1u32];
-        let blocked: Vec<LocationAddr> = Vec::new();
-
-        let new_result = placement
-            .solve_with_attempts(
-                initial.iter().copied(),
-                &controls,
-                &targets,
-                blocked.iter().copied(),
-                Some(2000),
-            )
-            .unwrap();
-        let legacy_result = legacy
-            .solve_with_generator(
-                initial.iter().copied(),
-                blocked.iter().copied(),
-                &controls,
-                &targets,
-                &DefaultTargetGenerator,
-                Some(2000),
-                &opts,
-                Some(&entropy_opts),
-            )
-            .unwrap();
-
-        assert_eq!(new_result.result.status, legacy_result.result.status);
-        assert_eq!(new_result.candidate_index, legacy_result.candidate_index);
-        assert_eq!(new_result.candidates_tried, legacy_result.candidates_tried);
-        assert_eq!(new_result.total_expansions, legacy_result.total_expansions);
-        assert_eq!(new_result.attempts.len(), legacy_result.attempts.len());
-        let new_layers: Vec<Vec<u64>> = new_result
-            .result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        let legacy_layers: Vec<Vec<u64>> = legacy_result
-            .result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        assert_eq!(new_layers, legacy_layers);
-    }
 
     /// The trait-level `CzPlacement::solve` returns the same SolveResult
     /// as `solve_with_attempts(...).result`.

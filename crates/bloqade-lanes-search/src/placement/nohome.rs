@@ -477,9 +477,7 @@ impl CzPlacement for NoHomeCzPlacement {
     }
 }
 
-/// Shared implementation backing both [`NoHomeCzPlacement::solve_pairs`]
-/// and the legacy
-/// [`MoveSolver::solve_nohome`](crate::search::solve::MoveSolver::solve_nohome).
+/// Shared implementation backing [`NoHomeCzPlacement::solve_pairs`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_nohome(
     engine: &SearchEngine,
@@ -655,7 +653,7 @@ pub(crate) fn solve_nohome(
 mod tests {
     use super::*;
     use crate::primitives::lane_index::LaneIndex;
-    use crate::search::solve::MoveSolver;
+    use crate::search::result::SolveStatus;
     use crate::test_utils::{example_arch_json, loc};
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
@@ -770,17 +768,17 @@ mod tests {
         }
     }
 
-    /// Parity: `NoHomeCzPlacement::solve_pairs` must produce a
-    /// byte-identical `SolveResult` to `MoveSolver::solve_nohome` for
-    /// the same problem and config.
+    /// End-to-end smoke: `NoHomeCzPlacement::solve_pairs` runs the full
+    /// two-phase pipeline (return assignment + entangling routing) and reaches
+    /// a deterministic terminal verdict without erroring. The toy
+    /// `example_arch_json` lacks the distinct home/staging zones the no-home
+    /// strategy targets, so this scenario is `Unsolvable`; real-arch solvable
+    /// coverage lives in the Python integration tests and benchmarks.
     #[test]
-    fn nohome_placement_matches_solve_nohome() {
+    fn nohome_placement_runs_two_phase_pipeline() {
         let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
-        let opts = SolveOptions::default();
-        let nh_opts = NoHomeOptions::default();
-        let search = MoveSearch::new(opts.clone(), Default::default());
-        let placement = NoHomeCzPlacement::new(engine.clone(), search, nh_opts.clone());
-        let legacy = MoveSolver::from_index(engine.index().clone());
+        let search = MoveSearch::new(SolveOptions::default(), Default::default());
+        let placement = NoHomeCzPlacement::new(engine, search, NoHomeOptions::default());
 
         // Initial: qubit 0 at a non-home position (forces the return phase),
         // qubit 1 already at home.
@@ -788,7 +786,7 @@ mod tests {
         let cz_pairs = [(0u32, 1u32)];
         let blocked: [LocationAddr; 0] = [];
 
-        let new_result = placement
+        let result = placement
             .solve_pairs(
                 initial.iter().copied(),
                 &cz_pairs,
@@ -797,31 +795,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        let legacy_result = legacy
-            .solve_nohome(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                Some(5000),
-                &opts,
-                &nh_opts,
-                &[],
-            )
-            .unwrap();
 
-        assert_eq!(new_result.status, legacy_result.status);
-        assert_eq!(new_result.cost.to_bits(), legacy_result.cost.to_bits());
-        assert_eq!(new_result.nodes_expanded, legacy_result.nodes_expanded);
-        let new_layers: Vec<Vec<u64>> = new_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        let legacy_layers: Vec<Vec<u64>> = legacy_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        assert_eq!(new_layers, legacy_layers);
+        assert_eq!(result.status, SolveStatus::Unsolvable);
     }
 }

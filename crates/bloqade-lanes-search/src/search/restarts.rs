@@ -1,7 +1,8 @@
 //! Strategy dispatch, restart orchestration, and `SearchResult →
 //! SolveResult` extraction.
 //!
-//! Every `MoveSolver::solve*` entry point delegates to
+//! Every solver entry point (`TargetSolver::solve` and the
+//! `placement::*` drivers) delegates to
 //! [`run_with_components`] after building its goal, heuristic, and
 //! generator factory. The free helpers [`extract`] and [`pick_best`]
 //! are the only places that translate raw frontier output into a
@@ -65,8 +66,8 @@ pub(crate) fn pick_best(results: Vec<SolveResult>) -> SolveResult {
 
 /// Shared strategy dispatch + restart logic.
 ///
-/// Both [`MoveSolver::solve`](crate::search::solve::MoveSolver::solve)
-/// and [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling)
+/// Both [`solve_with_engine`](crate::search::target_solver::solve_with_engine)
+/// and [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal)
 /// delegate here after constructing their specific goal, heuristic, and
 /// generator.
 #[allow(clippy::too_many_arguments)]

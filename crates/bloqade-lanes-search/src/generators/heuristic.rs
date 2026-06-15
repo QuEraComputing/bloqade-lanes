@@ -145,8 +145,8 @@ impl HeuristicGenerator {
     /// scored triples; `Some(n)` keeps the top `n` per qubit.
     ///
     /// Consolidates the repeated builder chain in
-    /// [`MoveSolver::solve`](crate::search::solve::MoveSolver::solve),
-    /// [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling),
+    /// [`solve_with_engine`](crate::search::target_solver::solve_with_engine),
+    /// [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal),
     /// and the receding-horizon inner-rollout factory.
     pub fn configured(
         seed: u64,

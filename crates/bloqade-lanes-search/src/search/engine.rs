@@ -1,6 +1,6 @@
 //! Arch-bound state shared by every solver entry point.
 //!
-//! [`SearchEngine`] is the data layer below `MoveSolver` / `MoveSearch` /
+//! [`SearchEngine`] is the data layer below `MoveSearch` /
 //! `TargetSolver` / the `CzPlacement` peers: it owns the [`LaneIndex`]
 //! and the lazy-initialized architecture-derived caches
 //! ([`EntanglingCache`] for Hungarian word-pair distances,

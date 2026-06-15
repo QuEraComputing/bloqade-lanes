@@ -8,9 +8,8 @@
 //!   (`upgraded_for_entangling`, `clipped_future_layers`).
 //! - [`restarts`] — `run_with_components`, `pick_best`, `extract`
 //!   (strategy dispatch + restart orchestration).
-//! - [`solve`] — `MoveSolver` (the legacy facade) plus
-//!   `CandidateAttempt` / `MultiSolveResult`, kept until the Rust-side
-//!   cleanup removes them in favour of the `placement::*CzPlacement` peers.
+//! - [`solve`] — `CandidateAttempt` / `MultiSolveResult` result types plus
+//!   the option/result re-exports under the original `solve::*` path.
 //! - [`move_search`] — `MoveSearch` composition layer.
 //! - [`target_solver`] — `TargetSolver` (single-candidate solver wrapping
 //!   `SearchEngine` + `MoveSearch`).

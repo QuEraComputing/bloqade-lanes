@@ -16,10 +16,8 @@
 //! differently but both satisfy the same
 //! [`CzPlacement`](super::cz_placement::CzPlacement) trait.
 //!
-//! The legacy
-//! [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling)
-//! delegates to the same shared implementation
-//! ([`solve_loose_goal`]) so both paths produce identical results.
+//! Both [`LooseGoalCzPlacement::solve_pairs`] and the free
+//! [`solve_loose_goal`] function share the same implementation.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -143,9 +141,7 @@ impl CzPlacement for LooseGoalCzPlacement {
     }
 }
 
-/// Shared implementation backing both [`LooseGoalCzPlacement::solve_pairs`]
-/// and the legacy
-/// [`MoveSolver::solve_entangling`](crate::search::solve::MoveSolver::solve_entangling).
+/// Shared implementation backing [`LooseGoalCzPlacement::solve_pairs`].
 ///
 /// Phases:
 ///
@@ -337,165 +333,7 @@ pub(crate) fn solve_loose_goal(
 mod tests {
     use super::*;
     use crate::search::move_search::MoveSearch;
-    use crate::search::options::{InnerStrategy, SolveOptions, Strategy};
-    use crate::search::solve::MoveSolver;
     use crate::test_utils::{example_arch_json, loc};
-
-    /// Helper: assert byte-identical results between `LooseGoalCzPlacement`
-    /// and `MoveSolver::solve_entangling` for the same problem.
-    #[allow(clippy::too_many_arguments)]
-    fn assert_loose_goal_parity(
-        opts: SolveOptions,
-        ent_opts: EntanglingOptions,
-        initial: Vec<(u32, LocationAddr)>,
-        cz_pairs: Vec<(u32, u32)>,
-        blocked: Vec<LocationAddr>,
-        max_expansions: Option<u32>,
-        future_cz_layers: Vec<Vec<(u32, u32)>>,
-        label: &str,
-    ) {
-        let engine = Arc::new(SearchEngine::from_json(example_arch_json()).unwrap());
-        let search = MoveSearch::new(opts.clone(), Default::default());
-
-        let placement = LooseGoalCzPlacement::new(engine.clone(), search, ent_opts.clone());
-        let legacy = MoveSolver::from_index(engine.index().clone());
-
-        let new_result = placement
-            .solve_pairs(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                max_expansions,
-                &future_cz_layers,
-            )
-            .unwrap();
-        let legacy_result = legacy
-            .solve_entangling(
-                initial.iter().copied(),
-                &cz_pairs,
-                blocked.iter().copied(),
-                max_expansions,
-                &opts,
-                &ent_opts,
-                &future_cz_layers,
-            )
-            .unwrap();
-
-        assert_eq!(new_result.status, legacy_result.status, "{label}: status");
-        assert_eq!(
-            new_result.cost.to_bits(),
-            legacy_result.cost.to_bits(),
-            "{label}: cost"
-        );
-        assert_eq!(
-            new_result.nodes_expanded, legacy_result.nodes_expanded,
-            "{label}: nodes_expanded"
-        );
-        assert_eq!(
-            new_result.deadlocks, legacy_result.deadlocks,
-            "{label}: deadlocks"
-        );
-        let new_layers: Vec<Vec<u64>> = new_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        let legacy_layers: Vec<Vec<u64>> = legacy_result
-            .move_layers
-            .iter()
-            .map(|ms| ms.encoded_lanes().to_vec())
-            .collect();
-        assert_eq!(new_layers, legacy_layers, "{label}: move_layers");
-    }
-
-    #[test]
-    fn loose_goal_parity_simple_pair() {
-        assert_loose_goal_parity(
-            SolveOptions::default(),
-            EntanglingOptions::default(),
-            vec![(0, loc(0, 0)), (1, loc(0, 1))],
-            vec![(0, 1)],
-            Vec::new(),
-            Some(2000),
-            Vec::new(),
-            "simple_pair",
-        );
-    }
-
-    #[test]
-    fn loose_goal_parity_multiple_pairs() {
-        assert_loose_goal_parity(
-            SolveOptions::default(),
-            EntanglingOptions::default(),
-            vec![
-                (0, loc(0, 0)),
-                (1, loc(0, 1)),
-                (2, loc(0, 2)),
-                (3, loc(0, 3)),
-            ],
-            vec![(0, 1), (2, 3)],
-            Vec::new(),
-            Some(5000),
-            Vec::new(),
-            "multiple_pairs",
-        );
-    }
-
-    #[test]
-    fn loose_goal_parity_with_spectators() {
-        assert_loose_goal_parity(
-            SolveOptions::default(),
-            EntanglingOptions::default(),
-            vec![
-                (0, loc(0, 0)),
-                (1, loc(0, 1)),
-                (2, loc(0, 5)), // spectator qubit
-            ],
-            vec![(0, 1)],
-            Vec::new(),
-            Some(3000),
-            Vec::new(),
-            "spectators",
-        );
-    }
-
-    #[test]
-    fn loose_goal_parity_with_ids_strategy() {
-        let opts = SolveOptions {
-            strategy: Strategy::Ids,
-            ..SolveOptions::default()
-        };
-        assert_loose_goal_parity(
-            opts,
-            EntanglingOptions::default(),
-            vec![(0, loc(0, 0)), (1, loc(0, 1))],
-            vec![(0, 1)],
-            Vec::new(),
-            Some(2000),
-            Vec::new(),
-            "ids_strategy",
-        );
-    }
-
-    #[test]
-    fn loose_goal_parity_with_cascade_strategy() {
-        let opts = SolveOptions {
-            strategy: Strategy::Cascade {
-                inner: InnerStrategy::Ids,
-            },
-            ..SolveOptions::default()
-        };
-        assert_loose_goal_parity(
-            opts,
-            EntanglingOptions::default(),
-            vec![(0, loc(0, 0)), (1, loc(0, 1))],
-            vec![(0, 1)],
-            Vec::new(),
-            Some(2000),
-            Vec::new(),
-            "cascade_strategy",
-        );
-    }
 
     /// Trait-level CzPlacement::solve converts (controls, targets) into
     /// cz_pairs and produces the same result as solve_pairs.

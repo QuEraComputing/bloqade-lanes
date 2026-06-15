@@ -1,7 +1,8 @@
 //! Entangling placement enumeration, distance precomputation, and optimal
 //! pair-to-position assignment for loose-goal search.
 //!
-//! This module supports [`crate::search::solve::MoveSolver::solve_entangling`] by
+//! This module supports
+//! [`solve_loose_goal`](crate::placement::loose_goal::solve_loose_goal) by
 //! providing the architectural queries needed to work with entangling
 //! constraints rather than fixed target locations.
 

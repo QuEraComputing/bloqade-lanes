@@ -26,10 +26,9 @@ pub struct TargetContext<'a> {
 /// Generates candidate target configurations for move synthesis.
 ///
 /// Each candidate is a full placement: `Vec<(qubit_id, LocationAddr)>`.
-/// Candidates are tried in order by [`MoveSolver::solve_with_generator`];
+/// Candidates are tried in order by
+/// [`solve_single_heuristic`](crate::placement::single_heuristic::solve_single_heuristic);
 /// the first successful solve wins.
-///
-/// [`MoveSolver::solve_with_generator`]: crate::search::solve::MoveSolver::solve_with_generator
 pub trait TargetGenerator: Send + Sync {
     /// Generate an ordered list of candidate target configurations.
     ///
