@@ -12,7 +12,6 @@ demo/star_injection_steane7_physical_squin.ipynb
 demo/scratch.ipynb
 demo/color_code_17_1_5_qubits.py
 demo/msd_demo.ipynb
-demo/logical_dialect_demo.ipynb
 
 # misc
 .DS_Store
@@ -219,6 +218,7 @@ cython_debug/
 .claude/skills/writing-skills
 .superpowers/
 *.png
+!demo/star_demo_imgs/*.png
 scripts/visualize_arch.py
 .superpowers/
 bench/
