@@ -195,9 +195,14 @@ class ExecuteCZReturn(ExecuteCZ):
     home ``ConcreteState`` so the next placement starts from the correct
     position.
 
-    ``return_move_layers`` is the palindrome of ``move_layers``: layer order
-    reversed, each lane direction reversed.  It is computed eagerly from
-    ``move_layers`` in ``__post_init__``.
+    ``return_move_layers`` is the strict palindrome of ``move_layers``: layer
+    order reversed, and within each layer the lane order is also reversed with
+    each lane's direction flipped.  Reversing the within-layer order is required
+    for correctness when a forward layer contains dependent lanes — i.e. atom A
+    vacates position X and atom B immediately enters X in the same layer.  On
+    the return, B must be processed first (so B vacates X before A tries to
+    re-enter it); preserving the forward order would cause A to collide with B.
+    The value is computed eagerly from ``move_layers`` in ``__post_init__``.
     """
 
     initial_layout: tuple[LocationAddress, ...] = field(kw_only=True)
