@@ -113,8 +113,8 @@ def test_insert_palindrom_moves():
         SiteLaneAddress(1, 0, 0, Direction.FORWARD),
     )
     reverse_moves = (
-        SiteLaneAddress(0, 0, 0, Direction.BACKWARD),
         SiteLaneAddress(1, 0, 0, Direction.BACKWARD),
+        SiteLaneAddress(0, 0, 0, Direction.BACKWARD),
     )
 
     state_before = ir.TestValue()
