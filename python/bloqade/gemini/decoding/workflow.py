@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
-from bloqade.analysis.tomography import FidelitySummary
 from bloqade.decoders import ConfidenceDecoder
+from demo.msd_utils.standard.tomography import FidelitySummary
 
 from .baselines import injected_baseline
 from .constants import DEFAULT_BASIS_LABELS

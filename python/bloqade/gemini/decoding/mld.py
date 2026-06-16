@@ -7,16 +7,17 @@ from dataclasses import dataclass
 from typing import ContextManager, Protocol
 
 import numpy as np
-from bloqade.analysis.tomography import (
-    DEFAULT_TARGET_BLOCH,
-    fidelity_from_zero_one_counts,
-)
-from bloqade.decoders import BaseDecoder, TableDecoderWithConfidence
-from bloqade.decoders.bit_packing import (
+from bloqade.decoders import BaseDecoder
+from demo.msd_utils.domain.confidence import TableDecoderWithConfidence
+from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
     packed_pattern_targets,
 )
-from bloqade.decoders.dem import make_layout_only_dem
+from demo.msd_utils.standard.dem import make_layout_only_dem
+from demo.msd_utils.standard.tomography import (
+    DEFAULT_TARGET_BLOCH,
+    fidelity_from_zero_one_counts,
+)
 
 from .constants import DEFAULT_BASIS_LABELS
 from .layout import (

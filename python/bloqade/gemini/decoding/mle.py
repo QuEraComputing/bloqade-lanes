@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from bloqade.decoders import ConfidenceDecoder
-from bloqade.decoders.bit_packing import pack_boolean_array
+from demo.msd_utils.standard.bit_packing import pack_boolean_array
 
 from .dem import sub_detector_error_model
 from .layout import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout

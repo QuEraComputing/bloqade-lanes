@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from bloqade.analysis.tomography import DEFAULT_TARGET_BLOCH
+from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH
 
 from bloqade.gemini.decoding.workflow import plot_decoder_curves
 from bloqade.lanes import GeminiLogicalSimulator

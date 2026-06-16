@@ -7,17 +7,17 @@ from functools import lru_cache
 from typing import Callable, Protocol, TypeVar
 
 import numpy as np
-from bloqade.analysis.tomography import (
-    DEFAULT_TARGET_BLOCH,
-    fidelity_from_counts,
-    fidelity_from_zero_one_counts,
-)
 from bloqade.decoders import BaseDecoder, ConfidenceDecoder
-from bloqade.decoders.bit_packing import (
+from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
     packed_bits_to_int,
     packed_pattern_targets,
     unpack_packed_bits,
+)
+from demo.msd_utils.standard.tomography import (
+    DEFAULT_TARGET_BLOCH,
+    fidelity_from_counts,
+    fidelity_from_zero_one_counts,
 )
 
 from .constants import DEFAULT_BASIS_LABELS

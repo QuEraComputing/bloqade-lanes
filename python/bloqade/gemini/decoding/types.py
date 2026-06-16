@@ -4,7 +4,8 @@ from typing import Any, Protocol, TypeAlias
 
 import stim
 import tsim as tsim_backend
-from bloqade.decoders import SparseTableDecoder, TableDecoder
+from bloqade.decoders import TableDecoder
+from demo.msd_utils.application.table_decoders import SparseTableDecoder
 from kirin import ir
 
 KirinKernel: TypeAlias = ir.Method[..., Any]

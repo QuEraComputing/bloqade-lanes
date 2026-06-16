@@ -3,8 +3,8 @@ from typing import Any, Callable, Mapping, Sequence, cast
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder, ConfidenceDecoder, GurobiDecoder
-from bloqade.decoders.bit_packing import pack_boolean_array
 from demo.msd_utils.application.table_decoders import TableDecoder
+from demo.msd_utils.standard.bit_packing import pack_boolean_array
 
 from bloqade.gemini.decoding.layout import (
     DEFAULT_SYNDROME_LAYOUT,

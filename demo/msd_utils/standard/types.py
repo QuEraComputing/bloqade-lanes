@@ -1,6 +1,6 @@
 """Compatibility type aliases for migrated MSD utilities."""
 
-from bloqade.analysis.tomography import FidelitySummary, PosteriorFidelitySummary
+from demo.msd_utils.standard.tomography import FidelitySummary, PosteriorFidelitySummary
 
 from bloqade.gemini.decoding.sampling import DetectorObservableResult, SimulatorTask
 from bloqade.gemini.decoding.types import (

@@ -5,15 +5,15 @@ from typing import Any, Literal, Mapping, Protocol, Sequence, cast
 import numpy as np
 import stim
 import tsim
-from bloqade.analysis.tomography import (
+from bloqade.decoders import BaseDecoder
+from demo.msd_utils.domain.kernels import _build_tomography_primitives
+from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
+from demo.msd_utils.standard.tomography import (
     DEFAULT_TARGET_BLOCH,
     FidelitySummary,
     expectation_with_error_bar,
     posterior_fidelity_summary,
 )
-from bloqade.decoders import BaseDecoder
-from demo.msd_utils.domain.kernels import _build_tomography_primitives
-from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 
 from bloqade.gemini.decoding.constants import DEFAULT_BASIS_LABELS
 from bloqade.gemini.decoding.dem import sub_detector_error_model

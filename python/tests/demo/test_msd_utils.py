@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 import stim
 from bloqade.decoders import ConfidenceDecoder, TableDecoder
-from bloqade.decoders.dem import make_layout_only_dem
 
 from bloqade.lanes import GeminiLogicalSimulator
 
@@ -76,6 +75,7 @@ from demo.msd_utils import (
 )
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 from demo.msd_utils.domain.tasks import _ObservableFrame
+from demo.msd_utils.standard.dem import make_layout_only_dem
 
 import bloqade.gemini.decoding.special_tasks as circuits
 
@@ -576,7 +576,7 @@ def test_workflow_mld_suite_trains_from_tomography_tasks():
 
 def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
     monkeypatch.setattr(
-        "bloqade.decoders.dem.detector_error_model_to_check_matrices",
+        "demo.msd_utils.standard.dem.detector_error_model_to_check_matrices",
         lambda *args, **kwargs: _FakeDemMatrix(
             check_matrix=np.array([[1, 0], [0, 1], [1, 1], [0, 1]], dtype=int),
             observables_matrix=np.array([[1, 0], [0, 1]], dtype=int),

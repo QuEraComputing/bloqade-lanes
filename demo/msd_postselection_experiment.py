@@ -24,9 +24,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from bloqade.analysis.tomography import DEFAULT_TARGET_BLOCH
 
-from bloqade.gemini.decoding.workflow import plot_decoder_curves
 from bloqade.lanes import GeminiLogicalSimulator
 
 try:
@@ -49,6 +47,9 @@ from demo.msd_utils.application.experiments_helpers import (
     construct_full_factory_decoders_mld,
     construct_full_factory_decoders_mle,
 )
+from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH
+
+from bloqade.gemini.decoding.workflow import plot_decoder_curves
 
 # ## Configuration
 #

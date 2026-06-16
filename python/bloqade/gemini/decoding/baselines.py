@@ -4,13 +4,13 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from bloqade.analysis.tomography import (
+from demo.msd_utils.standard.dem import make_layout_only_dem
+from demo.msd_utils.standard.tomography import (
     DEFAULT_TARGET_BLOCH,
     FidelitySummary,
     fidelity_from_counts,
     logical_expectation,
 )
-from bloqade.decoders.dem import make_layout_only_dem
 
 from .constants import (
     DEFAULT_BASIS_LABELS,
