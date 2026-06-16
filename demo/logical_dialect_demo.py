@@ -22,9 +22,7 @@
 # ## Installation
 
 # %% [markdown]
-# To get started, you can create a virtual environment and run the following:
-# - `pip install bloqade`
-# - `pip install bloqade-decoders`
+# To get started, you can create a virtual environment and run `pip install bloqade-lanes`.
 
 # %% [markdown]
 # ## Example Single Qubit Kernel
