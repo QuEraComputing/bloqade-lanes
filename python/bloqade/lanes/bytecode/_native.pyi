@@ -1007,7 +1007,7 @@ class EntropyOptions:
 @final
 class EntanglingOptions:
     """Loose-goal entangling-search parameters consumed by
-    ``LooseGoalCzPlacement``.
+    ``LooseGoalCzPlacement`` and ``RecedingHorizonCzPlacement``.
     """
 
     def __init__(
@@ -1096,8 +1096,10 @@ class RecedingHorizonOptions:
 class SolveResult:
     """Result of a move synthesis solve.
 
-    Always returned by ``TargetSolver.solve()``. Check ``status`` to determine
-    whether a solution was found.
+    Returned by ``TargetSolver.solve()`` and the ``CzPlacement.solve*()``
+    placement methods (``LooseGoalCzPlacement``, ``NoHomeCzPlacement``,
+    ``RecedingHorizonCzPlacement``). Check ``status`` to determine whether a
+    solution was found.
     """
 
     @property

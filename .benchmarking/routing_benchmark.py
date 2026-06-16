@@ -36,6 +36,7 @@ from bloqade.lanes.arch.topology import (
 )
 from bloqade.lanes.arch.zone import ArchBlueprint, DeviceLayout, ZoneSpec
 from bloqade.lanes.bytecode._native import (
+    DeadlockPolicy,
     EntropyOptions,
     MoveSearch,
     SearchEngine,
@@ -185,6 +186,12 @@ _BENCH_STRATEGY_MAP: dict[str, SearchStrategy] = {
     "entropy": SearchStrategy.ENTROPY,
 }
 
+_BENCH_DEADLOCK_MAP: dict[str, DeadlockPolicy] = {
+    "skip": DeadlockPolicy.SKIP,
+    "move_blockers": DeadlockPolicy.MOVE_BLOCKERS,
+    "all_moves": DeadlockPolicy.ALL_MOVES,
+}
+
 
 def solve_rust(
     problem: RoutingProblem,
@@ -196,6 +203,7 @@ def solve_rust(
         strategy=_BENCH_STRATEGY_MAP[strat.strategy],
         weight=strat.weight,
         restarts=strat.restarts,
+        deadlock_policy=_BENCH_DEADLOCK_MAP[strat.deadlock_policy],
         lookahead=strat.lookahead,
     )
     # Strategy is carried by ``solve_opts``; ``with_options`` replaces the whole
