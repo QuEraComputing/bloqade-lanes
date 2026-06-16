@@ -68,7 +68,7 @@ def construct_confidence_decoders_mld(
 
     # TODO: if merged main into my bloqade-lanes branch, this can be changed to (1.0, 1.0, 1.0) or probably just omitted because lanes has the fix now to the
     # sign problem. Alternatively, we can automate the computation of the sign, but this is probably not needed.
-    MLD_SIGN_VECTOR = (1.0, -1.0, 1.0)
+    MLD_SIGN_VECTOR = (1.0, 1.0, 1.0)
 
     mld_ancilla_scores = estimate_mld_ancilla_scores(
         mld_decoder_pairs,

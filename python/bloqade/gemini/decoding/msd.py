@@ -234,7 +234,7 @@ def build_injected_decoder_kernel_map(
     h_theta = 0.5 * math.pi
     h_phi = 0.0
     hs_theta = 0.5 * math.pi
-    hs_phi = -0.5 * math.pi
+    hs_phi = 0.5 * math.pi
     lam = 0.0
     tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
 

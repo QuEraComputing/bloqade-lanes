@@ -96,7 +96,7 @@ lam = ideal_lam + lam_offset
 
 target_bloch_vector = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 decoder_primitive_set = build_msd_primitives(theta, phi, lam)
-valid_factory_targets = np.array([[0, 0, 0, 0]], dtype=np.uint8)
+valid_factory_targets = np.array([[1, 0, 1, 1]], dtype=np.uint8)
 
 config = MSDDecoderWorkflowConfig(
     mld_train_shots=mld_train_shots,

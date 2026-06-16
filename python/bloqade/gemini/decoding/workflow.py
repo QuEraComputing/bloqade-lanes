@@ -105,7 +105,7 @@ class DecoderWorkflowConfig:
     )
     append_measurements: bool = False
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS
-    sign_vector: Sequence[float] = (1.0, -1.0, 1.0)
+    sign_vector: Sequence[float] = (1.0, 1.0, 1.0)
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT
     log: bool = True
 
