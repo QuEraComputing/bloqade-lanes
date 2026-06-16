@@ -11,7 +11,6 @@
 use std::collections::{HashMap, HashSet};
 
 use bloqade_lanes_bytecode_core::arch::addr::{Direction, LocationAddr, MoveType};
-use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
 use crate::ops::entangling;
 use crate::primitives::config::Config;
@@ -61,31 +60,6 @@ impl Default for NoHomeOptions {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-/// Enumerate all home-site locations (encoded) from the architecture.
-///
-/// A home site is any `(zone_id, word_id, site_id)` where `word_id` is
-/// in [`ArchSpec::left_cz_word_ids`].
-pub fn home_sites(arch: &ArchSpec) -> Vec<u64> {
-    let home_words = arch.left_cz_word_ids();
-    let word_zone = arch.word_zone_map();
-    let sites_per_word = arch.sites_per_word() as u32;
-    let mut result = Vec::new();
-    for &word_id in &home_words {
-        let zone_id = *word_zone.get(&word_id).unwrap_or(&0);
-        for site_id in 0..sites_per_word {
-            result.push(
-                LocationAddr {
-                    zone_id,
-                    word_id,
-                    site_id,
-                }
-                .encode(),
-            );
-        }
-    }
-    result
-}
 
 /// Compute gamma-decayed partner weights from future CZ layers.
 ///
@@ -652,6 +626,7 @@ pub(crate) fn solve_nohome(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
     use crate::primitives::lane_index::LaneIndex;
     use crate::search::result::SolveStatus;
     use crate::test_utils::{example_arch_json, loc};
@@ -666,7 +641,7 @@ mod tests {
     #[test]
     fn test_home_sites_nonempty() {
         let (arch, _) = make_parts();
-        let sites = home_sites(&arch);
+        let sites = entangling::home_sites(&arch);
         assert!(!sites.is_empty(), "should have at least one home site");
         let home_words: HashSet<u32> = arch.left_cz_word_ids().into_iter().collect();
         for &enc in &sites {
@@ -693,7 +668,7 @@ mod tests {
     #[test]
     fn test_nearest_home_assigns_all_returners() {
         let (arch, index) = make_parts();
-        let home_locs = home_sites(&arch);
+        let home_locs = entangling::home_sites(&arch);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at non-home locations (CZ staging).
@@ -732,7 +707,7 @@ mod tests {
     #[test]
     fn test_candidate_layouts_all_home_is_identity() {
         let (arch, index) = make_parts();
-        let home_locs = home_sites(&arch);
+        let home_locs = entangling::home_sites(&arch);
         let home_set: HashSet<u64> = home_locs.iter().copied().collect();
 
         // Place qubits at home — should get identity layout back.
