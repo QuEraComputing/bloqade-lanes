@@ -16,11 +16,9 @@
 //! Observability flows through [`crate::observer::SearchObserver`] for
 //! both families.
 //!
-//! [`astar`] carries the legacy `Expander` trait and `astar()` shim that
-//! `frontier::run_search_legacy` still consumes from in-crate tests; it
-//! is a removal candidate once the legacy tests are ported.
+//! [`result`] holds the shared [`result::SearchResult`] type returned by
+//! both driver families.
 
-pub mod astar;
 pub mod entropy;
 pub mod frontier;
 pub mod result;

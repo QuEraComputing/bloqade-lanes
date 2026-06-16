@@ -10,12 +10,11 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
-use crate::drivers::astar::Expander;
 use crate::drivers::result::SearchResult;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
-use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
+use crate::primitives::graph::{NodeId, SearchGraph};
 use crate::traits::{CandidateScorer, CostFn, Goal, MoveGenerator};
 
 /// Number of parent-chain steps to inspect when computing the
@@ -60,122 +59,6 @@ pub trait Frontier {
     /// `true` for BFS/DFS (find earliest). Default: `true`.
     fn check_goal_on_generate(&self) -> bool {
         true
-    }
-}
-
-// ── Generic search loop ─────────────────────────────────────────────
-
-/// Legacy search loop using the old [`Expander`] trait.
-/// Retained for internal tests. Use [`run_search`] for new code.
-#[allow(dead_code)]
-pub(crate) fn run_search_legacy(
-    root: Config,
-    goal: impl Fn(&Config) -> bool,
-    expander: &impl Expander,
-    frontier: &mut impl Frontier,
-    max_expansions: Option<u32>,
-    max_depth: Option<u32>,
-) -> SearchResult {
-    // Early check: root is already a goal.
-    if goal(&root) {
-        return SearchResult {
-            goal: Some(NodeId(0)),
-            nodes_expanded: 0,
-            max_depth_reached: 0,
-            graph: SearchGraph::new(root),
-        };
-    }
-
-    let mut graph = SearchGraph::new(root);
-    let root_id = graph.root();
-
-    // Seed the frontier.
-    frontier.receive_children(&[root_id], &graph);
-
-    let mut nodes_expanded: u32 = 0;
-    let mut max_depth_seen: u32 = 0;
-    let mut closed: Vec<bool> = vec![false; 64];
-    let mut successors: Vec<(MoveSet, Config, f64)> = Vec::new();
-    let mut new_children: Vec<NodeId> = Vec::new();
-
-    while let Some(node_id) = frontier.select_next() {
-        if let Some(max) = max_expansions
-            && nodes_expanded >= max
-        {
-            break;
-        }
-
-        let idx = node_id.0 as usize;
-
-        // Closed set check.
-        if idx >= closed.len() {
-            closed.resize(idx + 1, false);
-        }
-        if closed[idx] {
-            continue;
-        }
-        closed[idx] = true;
-
-        // Goal check on pop (A* optimality).
-        if frontier.check_goal_on_pop() && goal(graph.config(node_id)) {
-            return SearchResult {
-                goal: Some(node_id),
-                nodes_expanded,
-                max_depth_reached: max_depth_seen,
-                graph,
-            };
-        }
-
-        // Depth tracking + limit.
-        let depth = graph.depth(node_id);
-        max_depth_seen = max_depth_seen.max(depth);
-        if let Some(max_d) = max_depth
-            && depth >= max_d
-        {
-            continue; // Don't expand beyond max depth.
-        }
-
-        // Expand.
-        nodes_expanded += 1;
-        let current_g = graph.g_score(node_id);
-
-        successors.clear();
-        expander.expand(graph.config(node_id), &mut successors);
-
-        new_children.clear();
-
-        for (move_set, new_config, edge_cost) in successors.drain(..) {
-            debug_assert!(edge_cost.is_finite(), "edge_cost must be finite");
-            let new_g = current_g + edge_cost;
-            let (child_id, is_new) = graph.insert(node_id, move_set, new_config, new_g);
-
-            let child_idx = child_id.0 as usize;
-            let child_closed = child_idx < closed.len() && closed[child_idx];
-
-            if is_new && !child_closed {
-                // Goal check on generate (BFS/DFS).
-                if frontier.check_goal_on_generate() && goal(graph.config(child_id)) {
-                    return SearchResult {
-                        goal: Some(child_id),
-                        nodes_expanded,
-                        max_depth_reached: max_depth_seen.max(graph.depth(child_id)),
-                        graph,
-                    };
-                }
-                new_children.push(child_id);
-            }
-        }
-
-        if !new_children.is_empty() {
-            frontier.receive_children(&new_children, &graph);
-        }
-    }
-
-    SearchResult {
-        goal: None,
-        nodes_expanded,
-        max_depth_reached: max_depth_seen,
-        graph,
     }
 }
 
@@ -769,36 +652,205 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{dummy_lane, loc};
+    use crate::cost::UniformCost;
+    use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
+    use crate::primitives::distance::DistanceTable;
+    use crate::primitives::graph::MoveSet;
+    use crate::primitives::lane_index::LaneIndex;
+    use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
+    use std::collections::HashSet;
 
-    /// 1D line expander: qubit 0 can move left or right on site axis.
-    struct LineExpander {
-        max_site: u32,
+    // ── v2 fixture ──
+    //
+    // These doubles replace the retired `Expander` test doubles. The
+    // legacy synthetic graphs (line / two-path / diamond) had no real
+    // architecture; the v2 `run_search` loop, however, validates every
+    // emitted candidate against `ArchSpec::check_lanes` under
+    // `debug_assertions`. Each generator therefore emits candidates with
+    // an *empty* `MoveSet` (`check_lanes(&[]) == []`) so the synthetic
+    // transition graph stays fully under the test's control while the
+    // debug validation passes. Edge cost lives in a separate `CostFn`
+    // (the legacy `Expander` carried it inline in the successor tuple).
+
+    /// Build a throwaway [`SearchContext`] for the synthetic generators.
+    ///
+    /// The generators ignore every field; `run_search` only needs a
+    /// well-formed context (and a real `index` for debug candidate
+    /// validation, which the empty move sets trivially pass).
+    struct Fixture {
+        index: LaneIndex,
+        table: DistanceTable,
+        blocked: HashSet<u64>,
+        targets: Vec<(u32, u64)>,
     }
 
-    impl Expander for LineExpander {
-        fn expand(&self, config: &Config, out: &mut Vec<(MoveSet, Config, f64)>) {
-            let (_, current_loc) = config.iter().next().expect("config must have qubit 0");
-            let site = current_loc.site_id;
-            if site > 0 {
-                out.push((
-                    MoveSet::new([dummy_lane(site)]),
-                    config.with_moves(&[(0, loc(0, site - 1))]),
-                    1.0,
-                ));
+    impl Fixture {
+        fn new() -> Self {
+            let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
+            let index = LaneIndex::new(spec);
+            let target_locs = [loc(0, 5).encode()];
+            let table = DistanceTable::new(&target_locs, &index);
+            Self {
+                index,
+                table,
+                blocked: HashSet::new(),
+                targets: vec![(0u32, loc(0, 5).encode())],
             }
-            if site < self.max_site {
-                out.push((
-                    MoveSet::new([dummy_lane(site)]),
-                    config.with_moves(&[(0, loc(0, site + 1))]),
-                    1.0,
-                ));
+        }
+
+        fn ctx(&self) -> SearchContext<'_> {
+            SearchContext {
+                index: &self.index,
+                dist_table: &self.table,
+                blocked: &self.blocked,
+                targets: &self.targets,
+                cz_pairs: None,
             }
         }
     }
 
-    fn site_goal(target: u32) -> impl Fn(&Config) -> bool {
-        move |c: &Config| c.location_of(0).is_some_and(|l| l.site_id == target)
+    /// Empty-move-set candidate moving qubit 0 to `site` (and back into
+    /// word 0). Empty move set ⇒ passes `check_lanes` under debug.
+    fn step_to(config: &Config, site: u32) -> MoveCandidate {
+        MoveCandidate {
+            move_set: MoveSet::new([]),
+            new_config: config.with_moves(&[(0, loc(0, site))]),
+        }
+    }
+
+    /// 1D line generator: qubit 0 moves left or right along the site axis.
+    struct LineGen {
+        max_site: u32,
+    }
+
+    impl MoveGenerator for LineGen {
+        fn generate(
+            &self,
+            config: &Config,
+            _node_id: NodeId,
+            _ctx: &SearchContext,
+            _state: &mut SearchState,
+            out: &mut Vec<MoveCandidate>,
+        ) {
+            let site = config.location_of(0).expect("qubit 0").site_id;
+            if site > 0 {
+                out.push(step_to(config, site - 1));
+            }
+            if site < self.max_site {
+                out.push(step_to(config, site + 1));
+            }
+        }
+    }
+
+    /// Two-path generator (non-uniform cost): from site 0 there is a
+    /// direct expensive hop to site 1 and a cheap two-hop detour through
+    /// site 2. Optimal cost-1 path is 0 → 2 → 1 (cost 1 + 1 = 2), beating
+    /// the direct 0 → 1 (cost 10).
+    struct TwoPathGen;
+
+    impl MoveGenerator for TwoPathGen {
+        fn generate(
+            &self,
+            config: &Config,
+            _node_id: NodeId,
+            _ctx: &SearchContext,
+            _state: &mut SearchState,
+            out: &mut Vec<MoveCandidate>,
+        ) {
+            let site = config.location_of(0).unwrap().site_id;
+            match site {
+                0 => {
+                    out.push(step_to(config, 1));
+                    out.push(step_to(config, 2));
+                }
+                2 => out.push(step_to(config, 1)),
+                _ => {}
+            }
+        }
+    }
+
+    /// Edge costs for [`TwoPathGen`]: 0→1 = 10, 0→2 = 1, 2→1 = 1.
+    struct TwoPathCost;
+
+    impl CostFn for TwoPathCost {
+        fn edge_cost(&self, _move_set: &MoveSet, from: &Config, to: &Config) -> f64 {
+            let f = from.location_of(0).unwrap().site_id;
+            let t = to.location_of(0).unwrap().site_id;
+            match (f, t) {
+                (0, 1) => 10.0,
+                (0, 2) => 1.0,
+                (2, 1) => 1.0,
+                _ => 1.0,
+            }
+        }
+    }
+
+    /// Diamond generator: 0 → {3 (cost 5), 1 (cost 1)}, 1 → 3 (cost 1),
+    /// 3 → 4 (cost 1). Reaching the goal (site 4) optimally goes
+    /// 0 → 1 → 3 → 4 (cost 3), even though 0 → 3 is one hop (cost 5).
+    /// Site 3 is reached by two paths (transposition); the cheaper one
+    /// (via 1) must win, exercising the closed-set / g-score interaction.
+    struct DiamondGen;
+
+    impl MoveGenerator for DiamondGen {
+        fn generate(
+            &self,
+            config: &Config,
+            _node_id: NodeId,
+            _ctx: &SearchContext,
+            _state: &mut SearchState,
+            out: &mut Vec<MoveCandidate>,
+        ) {
+            let site = config.location_of(0).unwrap().site_id;
+            match site {
+                0 => {
+                    out.push(step_to(config, 3));
+                    out.push(step_to(config, 1));
+                }
+                1 => out.push(step_to(config, 3)),
+                3 => out.push(step_to(config, 4)),
+                _ => {}
+            }
+        }
+    }
+
+    /// Edge costs for [`DiamondGen`]: 0→3 = 5, all other edges = 1.
+    struct DiamondCost;
+
+    impl CostFn for DiamondCost {
+        fn edge_cost(&self, _move_set: &MoveSet, from: &Config, to: &Config) -> f64 {
+            let f = from.location_of(0).unwrap().site_id;
+            let t = to.location_of(0).unwrap().site_id;
+            match (f, t) {
+                (0, 3) => 5.0,
+                _ => 1.0,
+            }
+        }
+    }
+
+    /// Goal: qubit 0 has reached `target` on the site axis.
+    struct SiteGoal {
+        target: u32,
+    }
+
+    impl Goal for SiteGoal {
+        fn is_goal(&self, config: &Config) -> bool {
+            config
+                .location_of(0)
+                .is_some_and(|l| l.site_id == self.target)
+        }
+    }
+
+    /// Scorer with no ranking preference (synthetic graphs do not depend
+    /// on generator-emission order for the invariants under test;
+    /// frontier ordering alone determines correctness).
+    struct ZeroScorer;
+
+    impl CandidateScorer for ZeroScorer {
+        fn score(&self, _candidate: &MoveCandidate, _config: &Config, _ctx: &SearchContext) -> f64 {
+            0.0
+        }
     }
 
     fn manhattan(target: u32) -> impl Fn(&Config) -> f64 {
@@ -808,33 +860,74 @@ mod tests {
         }
     }
 
+    /// Run the v2 loop over a synthetic generator + cost with `ZeroScorer`,
+    /// a [`SiteGoal`], and a `NoOpObserver`, hiding the fixture/context
+    /// boilerplate so each test reads like the old `run_search_legacy` call.
+    #[allow(clippy::too_many_arguments)]
+    fn run<G, C, F>(
+        fixture: &Fixture,
+        root: Config,
+        generator: &G,
+        cost: &C,
+        goal_site: u32,
+        frontier: &mut F,
+        max_expansions: Option<u32>,
+        max_depth: Option<u32>,
+    ) -> SearchResult
+    where
+        G: MoveGenerator,
+        C: CostFn,
+        F: Frontier,
+    {
+        let ctx = fixture.ctx();
+        let mut state = SearchState::default();
+        run_search(
+            root,
+            generator,
+            &ZeroScorer,
+            cost,
+            &SiteGoal { target: goal_site },
+            frontier,
+            &ctx,
+            &mut state,
+            &mut crate::observer::NoOpObserver,
+            max_expansions,
+            max_depth,
+        )
+    }
+
     // ── BFS ──
 
     #[test]
     fn bfs_finds_shallowest() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(3),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            3,
             &mut f,
             None,
             None,
         );
         assert!(result.goal.is_some());
-        let path = result.solution_path().unwrap();
-        assert_eq!(path.len(), 3);
+        assert_eq!(result.solution_path().unwrap().len(), 3);
     }
 
     #[test]
     fn bfs_respects_max_depth() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut f,
             None,
             Some(3),
@@ -847,75 +940,129 @@ mod tests {
 
     #[test]
     fn astar_finds_optimal() {
-        // Non-uniform cost expander.
-        struct TwoPathExpander;
-        impl Expander for TwoPathExpander {
-            fn expand(&self, config: &Config, out: &mut Vec<(MoveSet, Config, f64)>) {
-                let site = config.location_of(0).unwrap().site_id;
-                match site {
-                    0 => {
-                        out.push((
-                            MoveSet::new([dummy_lane(0)]),
-                            config.with_moves(&[(0, loc(0, 1))]),
-                            10.0,
-                        ));
-                        out.push((
-                            MoveSet::new([dummy_lane(1)]),
-                            config.with_moves(&[(0, loc(0, 2))]),
-                            1.0,
-                        ));
-                    }
-                    2 => {
-                        out.push((
-                            MoveSet::new([dummy_lane(2)]),
-                            config.with_moves(&[(0, loc(0, 1))]),
-                            1.0,
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        fn zero_heuristic(_: &Config) -> f64 {
-            0.0
-        }
-
+        // Non-uniform cost: cheapest path 0 → 2 → 1 (cost 2) beats the
+        // direct 0 → 1 (cost 10). A* on pop with a zero heuristic must
+        // settle the goal at g = 2.
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
-        let mut f = PriorityFrontier::astar(zero_heuristic, 1.0);
-        let result = run_search_legacy(root, site_goal(1), &TwoPathExpander, &mut f, None, None);
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let result = run(&fx, root, &TwoPathGen, &TwoPathCost, 1, &mut f, None, None);
         assert!(result.goal.is_some());
         assert_eq!(result.graph.g_score(result.goal.unwrap()), 2.0);
+        assert_eq!(result.solution_path().unwrap().len(), 2);
     }
 
     #[test]
     fn astar_with_heuristic() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(3),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            3,
             &mut f,
             None,
             None,
         );
         assert!(result.goal.is_some());
         assert_eq!(result.solution_path().unwrap().len(), 3);
-        // With manhattan heuristic, A* expands exactly 3 nodes on a line.
+        // With an exact manhattan heuristic, A* expands exactly 3 nodes
+        // on the line (no off-path expansions).
         assert_eq!(result.nodes_expanded, 3);
+    }
+
+    #[test]
+    fn closed_set_prevents_reexpansion() {
+        // Reaching site 3 on a bidirectional line: the closed set must
+        // prevent re-expanding already-settled nodes, so exactly 3 nodes
+        // (sites 0,1,2) are expanded before the goal pops.
+        let fx = Fixture::new();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
+        let result = run(
+            &fx,
+            root,
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            3,
+            &mut f,
+            None,
+            None,
+        );
+        assert!(result.goal.is_some());
+        assert_eq!(result.nodes_expanded, 3);
+    }
+
+    #[test]
+    fn transposition_and_closed_set_interaction() {
+        // Site 3 is reachable via 0→3 (cost 5) and 0→1→3 (cost 2). A*
+        // must settle site 3 through the cheaper path, yielding an
+        // optimal 0→1→3→4 solution at g = 3 (len 3), not the 0→3→4
+        // path at g = 6.
+        let fx = Fixture::new();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let mut f = PriorityFrontier::astar(|_: &Config| 0.0, 1.0);
+        let result = run(&fx, root, &DiamondGen, &DiamondCost, 4, &mut f, None, None);
+        assert!(result.goal.is_some());
+        assert_eq!(result.graph.g_score(result.goal.unwrap()), 3.0);
+        assert_eq!(result.solution_path().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn astar_max_expansions_respected() {
+        let fx = Fixture::new();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let mut f = PriorityFrontier::astar(manhattan(100), 1.0);
+        let result = run(
+            &fx,
+            root,
+            &LineGen { max_site: 200 },
+            &UniformCost,
+            100,
+            &mut f,
+            Some(5),
+            None,
+        );
+        assert!(result.goal.is_none());
+        assert!(result.nodes_expanded <= 5);
+    }
+
+    #[test]
+    fn no_path_disconnected() {
+        // max_site 0 ⇒ qubit 0 cannot leave site 0, so site 5 is
+        // unreachable.
+        let fx = Fixture::new();
+        let root = Config::new([(0, loc(0, 0))]).unwrap();
+        let mut f = PriorityFrontier::astar(manhattan(5), 1.0);
+        let result = run(
+            &fx,
+            root,
+            &LineGen { max_site: 0 },
+            &UniformCost,
+            5,
+            &mut f,
+            None,
+            None,
+        );
+        assert!(result.goal.is_none());
     }
 
     // ── Greedy ──
 
     #[test]
     fn greedy_finds_goal() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = PriorityFrontier::greedy(manhattan(5));
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut f,
             None,
             None,
@@ -927,29 +1074,34 @@ mod tests {
 
     #[test]
     fn dfs_finds_goal() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = DfsFrontier::new(manhattan(5));
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut f,
             None,
             None,
         );
         assert!(result.goal.is_some());
-        let path = result.solution_path().unwrap();
-        assert_eq!(path.len(), 5);
+        assert_eq!(result.solution_path().unwrap().len(), 5);
     }
 
     #[test]
     fn dfs_respects_max_expansions() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = DfsFrontier::new(manhattan(100));
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(100),
-            &LineExpander { max_site: 200 },
+            &LineGen { max_site: 200 },
+            &UniformCost,
+            100,
             &mut f,
             Some(5),
             None,
@@ -960,25 +1112,30 @@ mod tests {
 
     #[test]
     fn dfs_depth_first_ordering() {
-        // DFS with perfect heuristic should go straight to the goal
-        // without exploring siblings — fewer expansions than BFS.
+        // DFS with a perfect heuristic dives straight to the goal without
+        // exploring siblings — fewer (or equal) expansions than BFS.
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut dfs = DfsFrontier::new(manhattan(5));
-        let dfs_result = run_search_legacy(
+        let dfs_result = run(
+            &fx,
             root.clone(),
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut dfs,
             None,
             None,
         );
 
         let mut bfs = BfsFrontier::new();
-        let bfs_result = run_search_legacy(
+        let bfs_result = run(
+            &fx,
             root,
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut bfs,
             None,
             None,
@@ -986,7 +1143,6 @@ mod tests {
 
         assert!(dfs_result.goal.is_some());
         assert!(bfs_result.goal.is_some());
-        // DFS with good heuristic should expand fewer or equal nodes.
         assert!(dfs_result.nodes_expanded <= bfs_result.nodes_expanded);
     }
 
@@ -994,40 +1150,47 @@ mod tests {
 
     #[test]
     fn ids_finds_goal() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = IdsFrontier::new(manhattan(5));
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut f,
             None,
             None,
         );
         assert!(result.goal.is_some());
-        let path = result.solution_path().unwrap();
-        assert_eq!(path.len(), 5);
+        assert_eq!(result.solution_path().unwrap().len(), 5);
     }
 
     #[test]
     fn ids_dives_depth_first() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
 
         let mut ids = IdsFrontier::new(manhattan(5));
-        let ids_result = run_search_legacy(
+        let ids_result = run(
+            &fx,
             root.clone(),
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut ids,
             None,
             None,
         );
 
         let mut bfs = BfsFrontier::new();
-        let bfs_result = run_search_legacy(
+        let bfs_result = run(
+            &fx,
             root,
-            site_goal(5),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            5,
             &mut bfs,
             None,
             None,
@@ -1040,12 +1203,15 @@ mod tests {
 
     #[test]
     fn ids_respects_max_expansions() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = IdsFrontier::new(manhattan(100));
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(100),
-            &LineExpander { max_site: 200 },
+            &LineGen { max_site: 200 },
+            &UniformCost,
+            100,
             &mut f,
             Some(5),
             None,
@@ -1058,25 +1224,62 @@ mod tests {
 
     #[test]
     fn root_is_goal_all_strategies() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 3))]).unwrap();
-        let expander = LineExpander { max_site: 10 };
+        let generator = LineGen { max_site: 10 };
 
         for (name, result) in [
             ("bfs", {
                 let mut f = BfsFrontier::new();
-                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run(
+                    &fx,
+                    root.clone(),
+                    &generator,
+                    &UniformCost,
+                    3,
+                    &mut f,
+                    None,
+                    None,
+                )
             }),
             ("astar", {
                 let mut f = PriorityFrontier::astar(manhattan(3), 1.0);
-                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run(
+                    &fx,
+                    root.clone(),
+                    &generator,
+                    &UniformCost,
+                    3,
+                    &mut f,
+                    None,
+                    None,
+                )
             }),
             ("dfs", {
                 let mut f = DfsFrontier::new(manhattan(3));
-                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run(
+                    &fx,
+                    root.clone(),
+                    &generator,
+                    &UniformCost,
+                    3,
+                    &mut f,
+                    None,
+                    None,
+                )
             }),
             ("ids", {
                 let mut f = IdsFrontier::new(manhattan(3));
-                run_search_legacy(root.clone(), site_goal(3), &expander, &mut f, None, None)
+                run(
+                    &fx,
+                    root.clone(),
+                    &generator,
+                    &UniformCost,
+                    3,
+                    &mut f,
+                    None,
+                    None,
+                )
             }),
         ] {
             assert!(result.goal.is_some(), "{name} should find root-is-goal");
@@ -1088,12 +1291,15 @@ mod tests {
 
     #[test]
     fn max_depth_tracked() {
+        let fx = Fixture::new();
         let root = Config::new([(0, loc(0, 0))]).unwrap();
         let mut f = BfsFrontier::new();
-        let result = run_search_legacy(
+        let result = run(
+            &fx,
             root,
-            site_goal(3),
-            &LineExpander { max_site: 10 },
+            &LineGen { max_site: 10 },
+            &UniformCost,
+            3,
             &mut f,
             None,
             None,
