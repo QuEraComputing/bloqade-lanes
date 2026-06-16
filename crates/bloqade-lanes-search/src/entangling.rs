@@ -679,11 +679,7 @@ pub fn assign_pairs_with_blockers(
             return targets;
         }
         last_targets = targets;
-        for q in new_ab
-            .into_iter()
-            .chain(new_d.into_iter())
-            .chain(new_e.into_iter())
-        {
+        for q in new_ab.into_iter().chain(new_d).chain(new_e) {
             if !row_qubits.contains(&q) {
                 blockers.push(q);
                 row_qubits.insert(q);

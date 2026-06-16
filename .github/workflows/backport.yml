@@ -112,6 +112,12 @@ jobs:
             let skipped = [];
 
             for (const version of versions) {
+              // Ensure a clean index before each attempt in case a previous iteration
+              // left the tree dirty (e.g. cherry-pick --abort silently failed)
+              execSync('git cherry-pick --abort 2>/dev/null || true');
+              execSync('git reset --hard HEAD 2>/dev/null || true');
+              execSync('git clean -fd 2>/dev/null || true');
+
               const branch = `release-${version.replace('.', '-')}`;
               const backportBranch = `${branch}-backport-pr${prNum}`;
               try {
@@ -129,12 +135,14 @@ jobs:
                     // Empty cherry-pick: commit is already on the release branch
                     core.info(`Commit ${commit} is already present on ${branch}. Skipping.`);
                     execSync('git cherry-pick --abort || true');
+                    execSync('git reset --hard HEAD || true');
                     skipped.push({ version, branch, reason: 'already present on release branch' });
                     continue;
                   }
                   // Real conflict: abort and report
                   const conflictFiles = execSync('git diff --name-only --diff-filter=U', { encoding: 'utf8' }).trim();
                   execSync('git cherry-pick --abort || true');
+                  execSync('git reset --hard HEAD || true');
                   const reason = `cherry-pick conflict in: ${conflictFiles || 'unknown files'}`;
                   core.warning(`${branch}: ${reason}`);
                   errors.push({ version, branch, reason });
@@ -165,6 +173,8 @@ jobs:
                 successes.push({ version, branch, backportPrNum: pr.data.number });
 
               } catch (e) {
+                execSync('git cherry-pick --abort 2>/dev/null || true');
+                execSync('git reset --hard HEAD 2>/dev/null || true');
                 core.warning(`${branch}: ${e.message}`);
                 errors.push({ version, branch, reason: e.message });
                 continue;

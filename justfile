@@ -123,8 +123,17 @@ format:
 format-check:
     cargo fmt --all --check
 
+# Regenerate policies/primer.md from registration-site source.
+generate-primer:
+    cargo run -p bloqade-lanes-search --bin policies-primer
+
+# Verify policies/primer.md is up to date; exits non-zero with a diff
+# if stale. Used by CI alongside `just check-header`.
+check-primer:
+    cargo run -p bloqade-lanes-search --bin policies-primer -- --check
+
 # Run clippy lints on core + cli crates
-lint:
+lint: format-check check-header check-primer
     cargo clippy -p bloqade-lanes-bytecode-core -p bloqade-lanes-bytecode-cli --all-targets -- -D warnings
 
 # Verify the committed C header matches what cbindgen generates
@@ -174,3 +183,37 @@ clean-staged:
 clean: clean-staged
     cargo clean
     rm -rf dist/
+
+# Regenerate every policies/fixtures/<kind>/<size>/expected.*.json by
+# running its matching policy via `eval-policy --json` and stripping
+# fields that are excluded from structural comparison.
+regenerate-fixtures:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p bloqade-lanes-bytecode-cli --release
+    BIN="target/release/bloqade-bytecode"
+    for kind_dir in policies/fixtures/move policies/fixtures/target; do
+      [ -d "$kind_dir" ] || continue
+      for size_dir in "$kind_dir"/*/; do
+        problem="$size_dir/problem.json"
+        [ -f "$problem" ] || continue
+        kind=$(basename "$kind_dir")
+        for policy_path in $(ls "$size_dir"expected.*.json 2>/dev/null || true); do
+          name=$(basename "$policy_path" .json | sed 's/^expected\.//')
+          policy_file="policies/reference/${name}.star"
+          if [ ! -f "$policy_file" ]; then
+            echo "skip: no policy $policy_file" >&2
+            continue
+          fi
+          tmp=$(mktemp)
+          "$BIN" eval-policy --json --policy "$policy_file" --problem "$problem" > "$tmp" || true
+          if [ "$kind" = "move" ]; then
+            jq '{status, halt_reason, expansions, max_depth}' "$tmp" > "$policy_path"
+          else
+            jq '{ok, num_candidates, first_candidate_size}' "$tmp" > "$policy_path"
+          fi
+          rm "$tmp"
+        done
+      done
+    done
+    echo "regenerated. eyeball: git diff policies/fixtures/"

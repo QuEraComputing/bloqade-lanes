@@ -1,5 +1,6 @@
 from typing import Any
 
+from bloqade.squin.stdlib.broadcast.gate import _radian_to_turn
 from kirin.dialects import ilist
 
 from bloqade import types
@@ -14,4 +15,4 @@ def star_rz(
     theta: float,
     qubits: ilist.IList[types.Qubit, Any],
 ) -> None:
-    operations.star_rz(theta, qubits, DEFAULT_STEANE_STAR_SUPPORT)
+    operations.star_rz(_radian_to_turn(theta), qubits, DEFAULT_STEANE_STAR_SUPPORT)

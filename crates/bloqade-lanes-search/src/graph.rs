@@ -8,67 +8,19 @@
 
 use std::collections::HashMap;
 
-use bloqade_lanes_bytecode_core::arch::addr::LaneAddr;
-
 use crate::config::Config;
 
 /// Opaque handle to a node in the search graph.
 ///
 /// Internally an index into the node arena.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct NodeId(pub(crate) u32);
 
-/// A set of lanes applied simultaneously in one move step.
-///
-/// Stored as a sorted, deduplicated `Vec<u64>` of
-/// [`LaneAddr::encode_u64()`] values, making it order-independent
-/// (analogous to Python's `frozenset[LaneAddress]`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MoveSet {
-    lanes: Vec<u64>,
-}
-
-impl MoveSet {
-    /// Create from an iterator of lane addresses.
-    ///
-    /// The lanes are encoded, sorted, and deduplicated.
-    pub fn new(lanes: impl IntoIterator<Item = LaneAddr>) -> Self {
-        let mut encoded: Vec<u64> = lanes.into_iter().map(|l| l.encode_u64()).collect();
-        encoded.sort_unstable();
-        encoded.dedup();
-        Self { lanes: encoded }
-    }
-
-    /// Create from pre-encoded lane u64 values. Sorts and deduplicates.
-    pub fn from_encoded(mut encoded: Vec<u64>) -> Self {
-        encoded.sort_unstable();
-        encoded.dedup();
-        Self { lanes: encoded }
-    }
-
-    /// Decode back to `LaneAddr` values.
-    pub fn decode(&self) -> Vec<LaneAddr> {
-        self.lanes
-            .iter()
-            .map(|&bits| LaneAddr::decode_u64(bits))
-            .collect()
-    }
-
-    /// Number of lanes in this move set.
-    pub fn len(&self) -> usize {
-        self.lanes.len()
-    }
-
-    /// Returns `true` if the move set contains no lanes.
-    pub fn is_empty(&self) -> bool {
-        self.lanes.is_empty()
-    }
-
-    /// Return the encoded lane values (sorted, deduplicated).
-    pub fn encoded_lanes(&self) -> &[u64] {
-        &self.lanes
-    }
-}
+// `MoveSet` was moved to `bloqade_lanes_dsl_core::primitives::move_set` so
+// the dsl-core `ArchSpec` methods can return a validated `StarlarkMoveSet`
+// without dsl-core needing to depend on this crate. Re-exported here so
+// existing `crate::graph::MoveSet` imports across this crate keep working.
+pub use bloqade_lanes_dsl_core::primitives::move_set::MoveSet;
 
 /// Internal node storage.
 struct NodeData {

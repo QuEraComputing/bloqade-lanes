@@ -62,6 +62,7 @@ impl PyDirection {
     module = "bloqade.lanes.bytecode._native"
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
+#[allow(clippy::enum_variant_names)] // `Bus` suffix mirrors the core enum
 pub enum PyMoveType {
     #[pyo3(name = "SITE")]
     SiteBus = 0,
@@ -935,6 +936,11 @@ impl PyArchSpec {
         let inner = rs::ArchSpec::from_json(json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self { inner })
+    }
+
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
     }
 
     #[staticmethod]

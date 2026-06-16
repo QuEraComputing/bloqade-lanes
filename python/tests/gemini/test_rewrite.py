@@ -1,5 +1,5 @@
 from bloqade.decoders.dialects.annotate.stmts import SetDetector
-from bloqade.squin.gate.stmts import U3
+from bloqade.squin.gate.stmts import U3, S, SqrtX
 from bloqade.test_utils import assert_nodes
 from bloqade.types import MeasurementResultType
 from kirin import ir, rewrite, types
@@ -14,6 +14,9 @@ from bloqade.gemini.logical.dialects.operations.stmts import (
 from bloqade.gemini.logical.rewrite.initialize import _RewriteU3ToInitialize
 from bloqade.gemini.logical.rewrite.remove_postprocessing import (
     RemovePostProcessing,
+)
+from bloqade.gemini.logical.rewrite.steane_transversal import (
+    RewriteSteaneTransversalCliffordAdjoints,
 )
 
 TerminalMeasureRetType = ilist.IListType[
@@ -41,6 +44,34 @@ def test_rewrite_u3_to_initialize():
 
     rewrite.Walk(_RewriteU3ToInitialize()).rewrite(test_block)
 
+    assert_nodes(test_block, expected_block)
+
+
+def test_rewrite_steane_transversal_clifford_adjoints():
+    qubits = ir.TestValue()
+    test_block = ir.Block(
+        [
+            SqrtX(qubits),
+            SqrtX(qubits, adjoint=True),
+            S(qubits),
+            S(qubits, adjoint=True),
+        ]
+    )
+
+    expected_block = ir.Block(
+        [
+            SqrtX(qubits, adjoint=True),
+            SqrtX(qubits),
+            S(qubits, adjoint=True),
+            S(qubits),
+        ]
+    )
+
+    result = rewrite.Walk(RewriteSteaneTransversalCliffordAdjoints()).rewrite(
+        test_block
+    )
+
+    assert result.has_done_something
     assert_nodes(test_block, expected_block)
 
 

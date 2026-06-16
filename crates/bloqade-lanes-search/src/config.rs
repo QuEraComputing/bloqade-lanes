@@ -169,6 +169,15 @@ impl Config {
     pub fn as_entries(&self) -> &[(u32, u64)] {
         &self.entries
     }
+
+    /// Return the cached FNV-1a hash for this configuration.
+    ///
+    /// Stable and deterministic across runs and platforms (FNV-1a uses no
+    /// randomisation). Used by `StarlarkConfig.hash` in the Move Policy DSL
+    /// (Task 14) to expose a stable identifier to policy code.
+    pub fn cached_hash(&self) -> u64 {
+        self.cached_hash
+    }
 }
 
 impl PartialEq for Config {
