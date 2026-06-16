@@ -561,6 +561,9 @@ impl MoveGenerator for HeuristicGenerator {
 
         // Step 5: per group, build AOD-compatible rectangular grids.
         let mut candidates: Vec<(i32, MoveSet, Config)> = Vec::new();
+        // Side-index of movesets already emitted, for O(1) dedup. Order of
+        // `candidates` is irrelevant — Step 6 re-sorts by score.
+        let mut seen_movesets: HashSet<MoveSet> = HashSet::new();
 
         for ((mt_u8, bus_id, dir_u8), qubits) in groups {
             // Reconstruct typed triplet from u8 discriminants.
@@ -620,7 +623,7 @@ impl MoveGenerator for HeuristicGenerator {
                 let new_config = config.with_moves(&moves);
 
                 // Deduplicate: skip if we already have this exact moveset.
-                if candidates.iter().any(|(_, ms, _)| *ms == move_set) {
+                if !seen_movesets.insert(move_set.clone()) {
                     continue;
                 }
 
