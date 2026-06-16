@@ -38,7 +38,7 @@ pub(crate) mod test_utils;
 pub mod traits;
 
 pub use cost::UniformCost;
-pub use drivers::astar::SearchResult;
+pub use drivers::result::SearchResult;
 pub use generators::{
     DeadlockPolicy, ExhaustiveGenerator, GreedyGenerator, HeuristicGenerator, LooseTargetGenerator,
 };

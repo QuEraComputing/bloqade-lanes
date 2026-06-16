@@ -15,7 +15,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use crate::drivers::astar::SearchResult;
+use crate::drivers::result::SearchResult;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::ops::aod_grid::BusGridContext;
 use crate::primitives::config::Config;

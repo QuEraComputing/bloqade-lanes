@@ -10,7 +10,8 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
-use crate::drivers::astar::{Expander, SearchResult};
+use crate::drivers::astar::Expander;
+use crate::drivers::result::SearchResult;
 use crate::observer::{SearchEvent, SearchObserver};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};

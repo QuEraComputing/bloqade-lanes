@@ -23,3 +23,4 @@
 pub mod astar;
 pub mod entropy;
 pub mod frontier;
+pub mod result;

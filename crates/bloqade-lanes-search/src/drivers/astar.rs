@@ -5,7 +5,9 @@
 
 use crate::drivers::frontier::{self, PriorityFrontier};
 use crate::primitives::config::Config;
-use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
+use crate::primitives::graph::MoveSet;
+
+pub(crate) use crate::drivers::result::SearchResult;
 
 /// Legacy trait for generating successor configurations.
 ///
@@ -22,28 +24,6 @@ pub(crate) trait Expander {
     /// `edge_cost` is the cost of this single transition (typically 1.0
     /// for unit-cost search, but could represent lane duration, etc.).
     fn expand(&self, config: &Config, out: &mut Vec<(MoveSet, Config, f64)>);
-}
-
-/// Result of a search.
-#[derive(Debug)]
-pub struct SearchResult {
-    /// The goal node, if found.
-    pub goal: Option<NodeId>,
-    /// Number of nodes expanded (popped from frontier and not in closed set).
-    pub nodes_expanded: u32,
-    /// Maximum depth reached during search.
-    pub max_depth_reached: u32,
-    /// The search graph, for path reconstruction and inspection.
-    pub graph: SearchGraph,
-}
-
-impl SearchResult {
-    /// Reconstruct the solution path (sequence of move sets from root to goal).
-    ///
-    /// Returns `None` if no goal was found.
-    pub fn solution_path(&self) -> Option<Vec<MoveSet>> {
-        self.goal.map(|id| self.graph.reconstruct_path(id))
-    }
 }
 
 /// A* search over configurations.

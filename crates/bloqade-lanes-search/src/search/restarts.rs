@@ -13,9 +13,9 @@
 use rayon::prelude::*;
 
 use crate::cost::UniformCost;
-use crate::drivers::astar::SearchResult;
 use crate::drivers::entropy::EntropyTrace;
 use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
+use crate::drivers::result::SearchResult;
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
