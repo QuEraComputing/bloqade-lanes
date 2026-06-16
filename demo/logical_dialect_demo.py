@@ -44,24 +44,19 @@ from IPython.display import Image, display
 # For defining lists of gates in broadcast statements
 from kirin.dialects import ilist
 
-# TODO: not use qubit? use squin?
-from bloqade import qubit, squin
+from bloqade import squin
 
 # Used to compile our circuit to physical qubits and operations
 # %%
 # Language used to program circuits
 from bloqade.gemini import GeminiLogicalSimulator, logical
 
-# For visualizing the atom move program
-# TODO: get rid of this.
-from bloqade.lanes.visualize import debugger
-
 
 # %%
 # We define our kernel with one logical qubit.
 @logical.kernel(aggressive_unroll=True, verify=True)
 def simple_state_prep_singleq():
-    reg = qubit.qalloc(1)
+    reg = squin.qalloc(1)
     squin.u3(0.1, 0.2, 0.3, reg[0])
     return logical.terminal_measure(reg)
 
@@ -78,8 +73,7 @@ task_state_prep.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
 # We visualize the atom move program on physical qubits.
-# TODO: change to task.visualize()
-debugger(task_state_prep.physical_move_kernel, task_state_prep.physical_arch_spec)
+task_state_prep.visualize()
 
 
 # %% [markdown]
@@ -91,7 +85,7 @@ debugger(task_state_prep.physical_move_kernel, task_state_prep.physical_arch_spe
 # %%
 @logical.kernel(aggressive_unroll=True, verify=True)
 def simple_transversal_hadamard():
-    reg = qubit.qalloc(1)
+    reg = squin.qalloc(1)
     squin.u3(0.1, 0.2, 0.3, reg[0])
     squin.h(reg[0])
     return logical.terminal_measure(reg)
@@ -106,7 +100,7 @@ task_hadamard.physical_move_kernel.print()
 task_hadamard.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
-debugger(task_hadamard.physical_move_kernel, task_hadamard.physical_arch_spec)
+task_hadamard.visualize()
 
 
 # %% [markdown]
@@ -126,14 +120,17 @@ debugger(task_hadamard.physical_move_kernel, task_hadamard.physical_arch_spec)
 
 
 # %%
-# TODO: add sqrt(y)?
 @logical.kernel(aggressive_unroll=True, verify=True)
 def simple_bell_state_prep():
-    reg = qubit.qalloc(2)
+    reg = squin.qalloc(2)
+    # For the GHZ state we just need q0 to be in |+>, so applying sqrt(Y) suffices
     squin.u3(math.pi / 2, 0.0, 0.0, reg[0])
-    squin.u3(math.pi / 2, 0.0, 0.0, reg[1])
+    # We use the decomposition of CX_{c, t} = sqrt(Y)_t CZ_{c, t} sqrt(Y)^dag_t
+    # We apply sqrt(Y)^dag on q1 before injection
+    squin.u3(-math.pi / 2, 0.0, 0.0, reg[1])
+    # And then apply CZ followed by sqrt(y)
     squin.cz(reg[0], reg[1])
-    squin.h(reg[1])
+    squin.sqrt_y(reg[1])
     return logical.terminal_measure(reg)
 
 
@@ -146,7 +143,7 @@ task_bell.noiseless_tsim_circuit.diagram(width=500)
 task_bell.physical_move_kernel.print()
 
 # %%
-debugger(task_bell.physical_move_kernel, task_bell.physical_arch_spec)
+task_bell.visualize()
 
 
 # %% [markdown]
@@ -156,20 +153,22 @@ debugger(task_bell.physical_move_kernel, task_bell.physical_arch_spec)
 
 
 # %%
-# TODO: opt circ with native gates?
 @logical.kernel(aggressive_unroll=True, verify=True)
 def four_qubit_bell_state():
-    reg = qubit.qalloc(4)
+    reg = squin.qalloc(4)
+    # We apply sqrt_y on Q0, and sqrt_y^dag on the remaining qubits (absorbing the gate from CX)
     squin.u3(math.pi / 2, 0.0, 0.0, reg[0])
-    squin.u3(math.pi / 2, 0.0, 0.0, reg[1])
-    squin.u3(math.pi / 2, 0.0, 0.0, reg[2])
-    squin.u3(math.pi / 2, 0.0, 0.0, reg[3])
+    squin.u3(-math.pi / 2, 0.0, 0.0, reg[1])
+    squin.u3(-math.pi / 2, 0.0, 0.0, reg[2])
+    squin.u3(-math.pi / 2, 0.0, 0.0, reg[3])
+
+    # We then apply the CZ's followed by sqrt_y on the target qubits
     squin.cz(reg[0], reg[1])
-    squin.h(reg[1])
+    squin.sqrt_y(reg[1])
     squin.cz(reg[0], reg[2])
-    squin.h(reg[2])
+    squin.sqrt_y(reg[2])
     squin.cz(reg[1], reg[3])
-    squin.h(reg[3])
+    squin.sqrt_y(reg[3])
     return logical.terminal_measure(reg)
 
 
@@ -179,10 +178,7 @@ task_bell_4q = GeminiLogicalSimulator().task(four_qubit_bell_state)
 task_bell_4q.noiseless_tsim_circuit.diagram(width=700)
 
 # %%
-debugger(task_bell_4q.physical_move_kernel, task_bell_4q.physical_arch_spec)
-
-# %%
-# task_bell_4q.visualize()
+task_bell_4q.visualize()
 
 # %% [markdown]
 # You might wonder why there appear to be intermediate, potentially "unnecessary" atom movements. That is because, for the Gemini-QEC machine, our machine has a small calibrated move-set, defined below.
@@ -215,13 +211,18 @@ print(upper_fid)
 # %%
 @logical.kernel(aggressive_unroll=True, verify=True)
 def four_qubit_bell_state_parallel():
-    reg = qubit.qalloc(4)
-    squin.broadcast.u3(math.pi / 2, 0.0, 0.0, reg)
+    reg = squin.qalloc(4)
+    # We apply sqrt_y to q0
+    squin.u3(math.pi / 2, 0.0, 0.0, reg[0])
+    # We broadcast sqrt_y^dag to the remaining qubits
+    squin.broadcast.u3(-math.pi / 2, 0.0, 0.0, ilist.IList([reg[1], reg[2], reg[3]]))
 
+    # We apply the first CZ layer
     squin.cz(reg[0], reg[1])
-    squin.h(reg[1])
+    squin.sqrt_y(reg[1])
+    # We apply the second CZ layer, broadcasted across the qubits
     squin.broadcast.cz(ilist.IList([reg[0], reg[1]]), ilist.IList([reg[2], reg[3]]))
-    squin.broadcast.h(ilist.IList([reg[2], reg[3]]))
+    squin.broadcast.sqrt_y(ilist.IList([reg[2], reg[3]]))
     return logical.terminal_measure(reg)
 
 
@@ -231,9 +232,7 @@ task_bell_4q_parallel = GeminiLogicalSimulator().task(four_qubit_bell_state_para
 task_bell_4q_parallel.noiseless_tsim_circuit.diagram(width=700)
 
 # %%
-debugger(
-    task_bell_4q_parallel.physical_move_kernel, task_bell_4q_parallel.physical_arch_spec
-)
+task_bell_4q_parallel.visualize()
 
 # %%
 # We again print the probability of no errors in the circuit and observe that it is higher
@@ -339,11 +338,12 @@ show_inline(render_steane_code_qubit(figsize=(3.5, 3.5)))
 # %%
 @logical.kernel(aggressive_unroll=True, verify=True)
 def main():
-    reg = qubit.qalloc(2)
-    squin.broadcast.u3(-math.pi / 2, 0.0, 0.0, reg)
+    reg = squin.qalloc(2)
+    # We apply the same gate sequence used to prepare a two-qubit GHZ state
+    squin.u3(math.pi / 2, 0.0, 0.0, reg[0])
+    squin.u3(-math.pi / 2, 0.0, 0.0, reg[1])
     squin.cz(reg[0], reg[1])
-    squin.broadcast.x(reg)
-    squin.h(reg[1])
+    squin.sqrt_y(reg[1])
 
     return logical.default_post_processing(reg)  # Return the physical measurements
 
@@ -524,7 +524,7 @@ theta_val = math.acos(1 / math.sqrt(3))
 
 @logical.kernel(aggressive_unroll=True, verify=True)
 def msd_logical_parallel_kernel():
-    reg = qubit.qalloc(5)
+    reg = squin.qalloc(5)
 
     squin.broadcast.u3(theta_val, math.pi / 4, 0.0, reg)
 
@@ -552,10 +552,4 @@ msd_logical_parallel = GeminiLogicalSimulator().task(msd_logical_parallel_kernel
 msd_logical_parallel.noiseless_tsim_circuit.diagram(width=700)
 
 # %%
-debugger(
-    msd_logical_parallel.physical_move_kernel, msd_logical_parallel.physical_arch_spec
-)
-
-# %%
-
-# %%
+msd_logical_parallel.visualize()

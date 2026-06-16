@@ -49,8 +49,6 @@ def star_on_plus_kernel():
 
 
 # %%
-
-# %%
 task = GeminiLogicalSimulator().task(logical_kernel=star_on_plus_kernel)
 
 # %% [markdown]
@@ -63,7 +61,7 @@ task.noiseless_tsim_circuit.diagram()
 # We then perform a simple analysis to do tomography in noiseless simulation using tsim to verify the fidelity of our output state. We introduce an ancilla qubit to do X-Steane syndrome extraction.
 
 # %%
-SHOTS = 100_000
+SHOTS = 10_000
 
 
 # Define tomography kernels with Steane syndrome extraction to do postselection
@@ -73,7 +71,6 @@ def star_on_plus_kernel_x():
     squin.h(reg[0])
     gemini_logical.star_rz(THETA, reg[0])
 
-    # squin.h(reg[1])
     squin.cx(reg[1], reg[0])
     squin.h(reg[1])
 
@@ -87,7 +84,6 @@ def star_on_plus_kernel_y():
     squin.h(reg[0])
     gemini_logical.star_rz(THETA, reg[0])
 
-    # squin.h(reg[1])
     squin.cx(reg[1], reg[0])
     squin.h(reg[1])
 
@@ -102,7 +98,6 @@ def star_on_plus_kernel_z():
     squin.h(reg[0])
     gemini_logical.star_rz(THETA, reg[0])
 
-    # squin.h(reg[1])
     squin.cx(reg[1], reg[0])
     squin.h(reg[1])
 
@@ -114,9 +109,9 @@ def postselected_observable_bits(result):
     detectors = np.asarray(result.detectors, dtype=bool)
     observables = np.asarray(result.observables, dtype=bool)
 
-    print(f"detectors.shape: {detectors.shape}")
-    print(f"detectors[:, -3:].shape: {detectors[:, -3:].shape}")
-    print(f"observables.shape: {observables.shape}")
+    # print(f"detectors.shape: {detectors.shape}")
+    # print(f"detectors[:, -3:].shape: {detectors[:, -3:].shape}")
+    # print(f"observables.shape: {observables.shape}")
     accepted = ~np.any(detectors[:, -3:], axis=1)
     if not np.any(accepted):
         raise ValueError("no accepted shots after detector postselection")
@@ -142,8 +137,6 @@ print(f"accepted X shots: {len(x_shots_arr)}/{SHOTS} ({np.mean(x_accepted):.6f})
 print(f"accepted Y shots: {len(y_shots_arr)}/{SHOTS} ({np.mean(y_accepted):.6f})")
 print(f"accepted Z shots: {len(z_shots_arr)}/{SHOTS} ({np.mean(z_accepted):.6f})")
 
-
-# %%
 
 # %%
 x_task.noiseless_tsim_circuit.diagram()
