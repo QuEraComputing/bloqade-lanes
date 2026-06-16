@@ -1,6 +1,7 @@
 //! Move generator wrappers that implement [`MoveGenerator`] by delegating
 //! to the existing [`Expander`]-based implementations.
 
+pub(crate) mod cz_coordination;
 pub mod entropy;
 pub mod exhaustive;
 pub mod greedy;

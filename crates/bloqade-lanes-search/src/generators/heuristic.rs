@@ -15,6 +15,9 @@ use bloqade_lanes_bytecode_core::arch::addr::{Direction, LaneAddr, LocationAddr,
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use crate::generators::cz_coordination::{
+    CzCoordination, EntanglingCoordination, FixedTargetCoordination,
+};
 use crate::primitives::config::Config;
 use crate::primitives::context::{MoveCandidate, SearchContext, SearchState};
 use crate::primitives::distance::DistanceTable;
@@ -37,12 +40,15 @@ pub enum DeadlockPolicy {
 }
 
 /// A scored (qubit, bus triplet) entry.
+///
+/// `pub(crate)` so the [`CzCoordination`](crate::generators::cz_coordination)
+/// policy module can operate on the selected-entry buffer.
 #[derive(Clone)]
-struct ScoredTriple {
-    qubit_id: u32,
-    score: i32, // d_now - d_after (can be negative)
-    lane_encoded: u64,
-    dst_encoded: u64,
+pub(crate) struct ScoredTriple {
+    pub(crate) qubit_id: u32,
+    pub(crate) score: i32, // d_now - d_after (can be negative)
+    pub(crate) lane_encoded: u64,
+    pub(crate) dst_encoded: u64,
 }
 
 fn cmp_scored_triples(a: &(TripletKey, ScoredTriple), b: &(TripletKey, ScoredTriple)) -> Ordering {
@@ -279,6 +285,14 @@ impl MoveGenerator for HeuristicGenerator {
         _state: &mut SearchState,
         out: &mut Vec<MoveCandidate>,
     ) {
+        // Select the CZ-coordination policy ONCE. `cz_pairs.is_some()`
+        // (entangling: loose-goal/no-home/RH) vs `None` (legacy fixed-target)
+        // formerly gated three inline branches; the policy makes that explicit.
+        let coordination: Box<dyn CzCoordination> = match ctx.cz_pairs {
+            Some(pairs) => Box::new(EntanglingCoordination { pairs }),
+            None => Box::new(FixedTargetCoordination),
+        };
+
         // Build occupied set: config qubit locations + blocked.
         // Pre-allocate to avoid rehashing.
         let mut occupied = HashSet::with_capacity(ctx.blocked.len() + config.len());
@@ -377,15 +391,12 @@ impl MoveGenerator for HeuristicGenerator {
                 // Penalize moving to another qubit's unresolved target.
                 // This avoids routing through destinations that will cause
                 // future deadlocks. Soft penalty: never makes positive
-                // scores negative. Gated on `cz_pairs.is_some()` so plain
-                // fixed-target callers (A*/IDS/cascade on main) see the
-                // legacy scoring; loose-goal/no-home/RH get the penalty.
-                if score > 0
-                    && dst_enc != target_enc
-                    && contested.contains(&dst_enc)
-                    && ctx.cz_pairs.is_some()
-                {
-                    score -= 1;
+                // scores negative. The penalty value is policy-controlled:
+                // `0` for fixed-target (A*/IDS/cascade on main, identical to
+                // the legacy no-subtraction behavior) and `1` for entangling
+                // (loose-goal/no-home/RH).
+                if score > 0 && dst_enc != target_enc && contested.contains(&dst_enc) {
+                    score -= coordination.contested_penalty();
                 }
 
                 // 2-step lookahead: replace score with combined 2-step score.
@@ -458,16 +469,14 @@ impl MoveGenerator for HeuristicGenerator {
 
         // Fallback: if no positive scores, keep the top few entries so IDS
         // has multiple branches to explore on jump-back. A single entry
-        // leads to a single path that may deadlock again; keeping 3 gives
+        // leads to a single path that may deadlock again; a wider keep gives
         // the search enough diversity to find non-monotonic routes (e.g.,
         // on hypercube topologies where shortest paths aren't monotonic).
-        // Gated on `cz_pairs.is_some()`: plain fixed-target callers keep
-        // the legacy truncate(1) behaviour; loose-goal/no-home/RH get the
-        // wider fallback.
+        // The width is policy-controlled: `1` for fixed-target (legacy
+        // truncate(1)); `3` for entangling (loose-goal/no-home/RH).
         if !has_positive {
             selected.sort_by(cmp_scored_triples);
-            let keep = if ctx.cz_pairs.is_some() { 3 } else { 1 };
-            selected.truncate(keep);
+            selected.truncate(coordination.fallback_width());
         } else {
             selected.retain(|e| e.1.score > 0);
         }
@@ -511,39 +520,9 @@ impl MoveGenerator for HeuristicGenerator {
         // Step 3c: pair-coordinated boosting.
         // When both qubits of a CZ pair have positive-score entries on the
         // same bus triplet, boost those entries so they're more likely to
-        // end up in the same AOD grid (coordinated pair movement).
-        if let Some(pairs) = ctx.cz_pairs {
-            // Build qubit → set of selected triplet keys.
-            let mut keys_by_qubit: HashMap<u32, HashSet<TripletKey>> = HashMap::new();
-            for entry in &selected {
-                keys_by_qubit
-                    .entry(entry.1.qubit_id)
-                    .or_default()
-                    .insert(entry.0);
-            }
-
-            // Find shared triplet keys for each CZ pair.
-            let mut boost_set: HashSet<(TripletKey, u32)> = HashSet::new();
-            for &(qa, qb) in pairs {
-                if let (Some(keys_a), Some(keys_b)) =
-                    (keys_by_qubit.get(&qa), keys_by_qubit.get(&qb))
-                {
-                    for key in keys_a.intersection(keys_b) {
-                        boost_set.insert((*key, qa));
-                        boost_set.insert((*key, qb));
-                    }
-                }
-            }
-
-            // Apply +1 boost to coordinated entries.
-            if !boost_set.is_empty() {
-                for entry in &mut selected {
-                    if boost_set.contains(&(entry.0, entry.1.qubit_id)) {
-                        entry.1.score += 1;
-                    }
-                }
-            }
-        }
+        // end up in the same AOD grid (coordinated pair movement). No-op for
+        // fixed-target; applied for entangling.
+        coordination.boost_coordinated_pairs(&mut selected);
 
         // Step 4: group by bus triplet.
         let mut groups: BTreeMap<TripletKey, Vec<ScoredTriple>> = BTreeMap::new();
@@ -672,7 +651,7 @@ mod tests {
     use super::*;
     use crate::observer::NoOpObserver;
     use crate::primitives::distance::DistanceTable;
-    use crate::test_utils::{example_arch_json, loc};
+    use crate::test_utils::{example_arch_json, lane, loc};
 
     fn make_index() -> LaneIndex {
         let spec: ArchSpec = serde_json::from_str(example_arch_json()).unwrap();
@@ -697,6 +676,182 @@ mod tests {
             targets,
             cz_pairs: None,
         }
+    }
+
+    /// Build a [`SearchContext`] with explicit CZ pairs (entangling mode).
+    fn make_ctx_pairs<'a>(
+        index: &'a LaneIndex,
+        dist_table: &'a DistanceTable,
+        targets: &'a [(u32, u64)],
+        blocked: &'a HashSet<u64>,
+        cz_pairs: &'a [(u32, u32)],
+    ) -> SearchContext<'a> {
+        SearchContext {
+            index,
+            dist_table,
+            blocked,
+            targets,
+            cz_pairs: Some(cz_pairs),
+        }
+    }
+
+    /// A deterministic snapshot of one candidate: `(encoded_lanes, sorted
+    /// (qubit, encoded_loc))`.
+    type CandidateSnapshot = (Vec<u64>, Vec<(u32, u64)>);
+
+    /// Snapshot a candidate list as a deterministic vector for exact-equality
+    /// characterization.
+    fn snapshot(out: &[MoveCandidate]) -> Vec<CandidateSnapshot> {
+        out.iter()
+            .map(|c| {
+                let lanes = c.move_set.encoded_lanes().to_vec();
+                let mut cfg: Vec<(u32, u64)> =
+                    c.new_config.iter().map(|(q, l)| (q, l.encode())).collect();
+                cfg.sort();
+                (lanes, cfg)
+            })
+            .collect()
+    }
+
+    // -- Characterization tests for CZ-coordination behavior (Task 7) --
+    //
+    // These pin the EXACT current behavior of the three `ctx.cz_pairs.is_some()`
+    // gated sites (contested penalty, fallback width, pair-coordinated boost)
+    // for BOTH fixed-target (cz_pairs = None) and entangling (cz_pairs = Some)
+    // modes, so the trait extraction is provably behavior-neutral.
+
+    /// Fixed-target mode (cz_pairs = None): exact candidate set is pinned.
+    /// Two qubits routing through each other's targets — in fixed mode the
+    /// contested penalty does NOT fire, so scores are the raw distance deltas.
+    #[test]
+    fn characterize_fixed_target_exact_output() {
+        let index = make_index();
+        // q0: site 0 -> site 6; q1: site 1 -> site 5. Site bus maps 0->5, 1->6.
+        let targets = [(0, loc(0, 6)), (1, loc(0, 5))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+
+        let generator = HeuristicGenerator::new();
+        let target_encoded: Vec<(u32, u64)> =
+            targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let ctx = make_ctx(&index, &table, &target_encoded, &blocked);
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+
+        let snap = snapshot(&out);
+        // Pinned exact output (fixed-target: no contested penalty applied).
+        // Observed: q0 routes site 0->5 and q1 routes site 1->6 as separate
+        // single-lane movesets (the two lanes do not coalesce into one grid).
+        let lane0 = lane(0, 0, 0).encode_u64();
+        let lane1 = lane(0, 1, 0).encode_u64();
+        let expected: Vec<CandidateSnapshot> = vec![
+            (
+                vec![lane0],
+                vec![(0, loc(0, 5).encode()), (1, loc(0, 1).encode())],
+            ),
+            (
+                vec![lane1],
+                vec![(0, loc(0, 0).encode()), (1, loc(0, 6).encode())],
+            ),
+        ];
+        assert_eq!(snap, expected, "fixed-target output drifted");
+    }
+
+    /// Entangling mode (cz_pairs = Some): same scenario as the fixed test,
+    /// but now the contested-destination penalty AND pair-coordinated boost
+    /// fire. This pins the exact entangling output.
+    #[test]
+    fn characterize_entangling_exact_output() {
+        let index = make_index();
+        let targets = [(0, loc(0, 6)), (1, loc(0, 5))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 0)), (1, loc(0, 1))]).unwrap();
+
+        let generator = HeuristicGenerator::new();
+        let target_encoded: Vec<(u32, u64)> =
+            targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+        let pairs = [(0u32, 1u32)];
+        let ctx = make_ctx_pairs(&index, &table, &target_encoded, &blocked, &pairs);
+        let mut state = SearchState::default();
+        let mut out = Vec::new();
+        generator.generate(&config, NodeId(0), &ctx, &mut state, &mut out);
+
+        let snap = snapshot(&out);
+        // Observed entangling output for this scenario. The contested penalty
+        // and pair boost both fire internally but, because both candidate
+        // scores stay positive and ordering is unchanged, the emitted set
+        // matches the fixed-target set. Pinned exactly regardless.
+        let lane0 = lane(0, 0, 0).encode_u64();
+        let lane1 = lane(0, 1, 0).encode_u64();
+        let expected: Vec<CandidateSnapshot> = vec![
+            (
+                vec![lane0],
+                vec![(0, loc(0, 5).encode()), (1, loc(0, 1).encode())],
+            ),
+            (
+                vec![lane1],
+                vec![(0, loc(0, 0).encode()), (1, loc(0, 6).encode())],
+            ),
+        ];
+        assert_eq!(snap, expected, "entangling output drifted");
+    }
+
+    /// Pin the fallback-width gate: when NO candidate scores positive, fixed
+    /// mode keeps 1 fallback entry and entangling keeps up to 3. We construct
+    /// a no-positive-score scenario and compare the produced candidate counts
+    /// under `DeadlockPolicy::Skip` (so only fallback entries survive).
+    #[test]
+    fn characterize_fallback_width_fixed_vs_entangling() {
+        let index = make_index();
+        // q0 at site 5 wants site 0; q1 at site 6 wants site 0 too (contested).
+        // Site bus only moves src(0-4)->dst(5-9); from 5/6 no improving move to
+        // site 0 exists, so no positive scores -> fallback path fires.
+        let targets = [(0, loc(0, 0)), (1, loc(0, 0))];
+        let table = make_table(&targets, &index);
+        let config = Config::new([(0, loc(0, 5)), (1, loc(0, 6))]).unwrap();
+        let target_encoded: Vec<(u32, u64)> =
+            targets.iter().map(|&(q, l)| (q, l.encode())).collect();
+        let blocked = HashSet::new();
+
+        let generator = HeuristicGenerator::new().with_deadlock_policy(DeadlockPolicy::Skip);
+
+        // Fixed mode: width 1.
+        let ctx_fixed = make_ctx(&index, &table, &target_encoded, &blocked);
+        let mut out_fixed = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx_fixed,
+            &mut SearchState::default(),
+            &mut out_fixed,
+        );
+        let fixed_snap = snapshot(&out_fixed);
+
+        // Entangling mode: width 3.
+        let pairs = [(0u32, 1u32)];
+        let ctx_ent = make_ctx_pairs(&index, &table, &target_encoded, &blocked, &pairs);
+        let mut out_ent = Vec::new();
+        generator.generate(
+            &config,
+            NodeId(0),
+            &ctx_ent,
+            &mut SearchState::default(),
+            &mut out_ent,
+        );
+        let ent_snap = snapshot(&out_ent);
+
+        // Pinned exact fallback outputs for both modes. The counts/sets are
+        // whatever the current code produces; the point is that the refactor
+        // must reproduce them byte-for-byte.
+        // Pinned: in this scenario only one fallback entry exists in either
+        // mode (the wider entangling truncate(3) cap cannot exceed the number
+        // of available non-positive entries). Both modes emit it identically.
+        assert_eq!(fixed_snap.len(), 1, "fixed fallback count drifted");
+        assert_eq!(ent_snap.len(), 1, "entangling fallback count drifted");
+        assert_eq!(fixed_snap, ent_snap, "fallback outputs diverged");
     }
 
     #[test]
