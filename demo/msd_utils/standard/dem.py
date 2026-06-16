@@ -7,6 +7,7 @@ from bloqade.decoders.dem import (
     matrix_to_dem,
 )
 
+from bloqade.gemini.decoding.dem import sub_detector_error_model
 from bloqade.gemini.decoding.mld import _select_output_observables
 
 _make_layout_only_dem = make_layout_only_dem
@@ -22,4 +23,5 @@ __all__ = [
     "detector_error_model_to_check_matrices",
     "make_layout_only_dem",
     "matrix_to_dem",
+    "sub_detector_error_model",
 ]

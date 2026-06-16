@@ -68,6 +68,7 @@ from demo.msd_utils import (
     posterior_fidelity_summary,
     sample_actual_data,
     split_factory_bits,
+    sub_detector_error_model,
     train_mld_decoder_pair,
     train_mld_decoder_pair_from_task,
     train_mld_decoder_suite,
@@ -393,8 +394,11 @@ class _FakeDemMatrix:
 
 
 class _ConfidenceGurobi(ConfidenceDecoder):
+    instances = []
+
     def __init__(self, dem):
         self.dem = dem
+        self.instances.append(self)
 
     def _decode(self, detector_bits):
         return np.zeros(self.dem.num_observables, dtype=bool)
@@ -404,7 +408,11 @@ class _ConfidenceGurobi(ConfidenceDecoder):
 
 
 class _FakeTask:
-    detector_error_model = stim.DetectorErrorModel("error(0.1) D0")
+    detector_error_model = stim.DetectorErrorModel("""
+        error(0.1) D0
+        error(0.2) D0 L0
+        error(0.3) D3 L1
+        """)
 
 
 class _ChunkResult:
@@ -836,20 +844,44 @@ def test_table_decoder_with_confidence_returns_syndrome_score():
     assert score == pytest.approx(0.75)
 
 
-def test_build_mle_decoders_uses_confidence_decoder_api(monkeypatch):
-    monkeypatch.setattr(
-        "bloqade.decoders.dem.detector_error_model_to_check_matrices",
-        lambda *args, **kwargs: _FakeDemMatrix(
-            check_matrix=np.array([[1, 0], [0, 1], [1, 1], [0, 1]], dtype=int),
-            observables_matrix=np.array([[1, 0], [0, 1]], dtype=int),
-            priors=np.array([0.1, 0.2], dtype=float),
-        ),
-    )
+def test_sub_detector_error_model_preserves_observable_distinctions():
+    dem = stim.DetectorErrorModel("""
+        error(0.1) D0
+        error(0.2) D0 L0
+        """)
+
+    projected = sub_detector_error_model(dem, [0], [0])
+
+    assert projected.num_detectors == 1
+    assert projected.num_observables == 1
+    assert "error(0.1) D0" in str(projected)
+    assert "error(0.2) D0 L0" in str(projected)
+
+
+def test_sub_detector_error_model_composes_duplicate_projected_errors():
+    dem = stim.DetectorErrorModel("""
+        error(0.1) D0 D1 L0
+        error(0.2) D0 D2 L0
+        """)
+
+    projected = sub_detector_error_model(dem, [0], [0])
+
+    assert projected.num_errors == 1
+    assert "error(0.26) D0 L0" in str(projected)
+
+
+def test_build_mle_decoders_uses_confidence_decoder_api():
+    _ConfidenceGurobi.instances = []
 
     adapter = build_mle_decoders(_FakeTask(), gurobi_decoder_cls=_ConfidenceGurobi)
     _, score = adapter.decode_factory(0)
     assert adapter.factory_score_mode == "confidence"
     assert score == pytest.approx(2.5)
+    full_dem = _ConfidenceGurobi.instances[0].dem
+    factory_dem = _ConfidenceGurobi.instances[1].dem
+    assert "error(0.1) D0" in str(full_dem)
+    assert "error(0.2) D0 L0" in str(full_dem)
+    assert str(factory_dem).startswith("error(0.3) D0 L0")
 
 
 def test_streaming_sparse_mld_decoder_pair_matches_batch():

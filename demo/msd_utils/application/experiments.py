@@ -12,11 +12,11 @@ from bloqade.analysis.tomography import (
     posterior_fidelity_summary,
 )
 from bloqade.decoders import BaseDecoder
-from bloqade.decoders.dem import detector_error_model_matrices, matrix_to_dem
 from demo.msd_utils.domain.kernels import _build_tomography_primitives
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 
 from bloqade.gemini.decoding.constants import DEFAULT_BASIS_LABELS
+from bloqade.gemini.decoding.dem import sub_detector_error_model
 from bloqade.gemini.decoding.kernels import DecoderPrimitiveSet
 from bloqade.gemini.decoding.layout import DEFAULT_SYNDROME_LAYOUT
 from bloqade.gemini.decoding.msd import (
@@ -460,22 +460,20 @@ class PostSelectionExperiment:
         # anyways.
         layout = DEFAULT_SYNDROME_LAYOUT
         for basis_label, dem_base in dems_bases.items():
-            dem_data = detector_error_model_matrices(dem_base)
-            full_dem = matrix_to_dem(
-                dem_data["H"],
-                dem_data["O"][: layout.output_observable_count, :],
-                dem_data["priors"],
+            full_dem = sub_detector_error_model(
+                dem_base,
+                detector_indices=range(dem_base.num_detectors),
+                observable_indices=range(layout.output_observable_count),
             )
-            factory_h = dem_data["H"][layout.output_detector_count :, :]
-            factory_o = dem_data["O"][layout.output_observable_count :, :]
-            factory_dem = (
-                stim.DetectorErrorModel("")
-                if factory_h.shape[0] == 0 and factory_o.shape[0] == 0
-                else matrix_to_dem(
-                    factory_h,
-                    factory_o,
-                    dem_data["priors"],
-                )
+            factory_dem = sub_detector_error_model(
+                dem_base,
+                detector_indices=range(
+                    layout.output_detector_count, dem_base.num_detectors
+                ),
+                observable_indices=range(
+                    layout.output_observable_count,
+                    dem_base.num_observables,
+                ),
             )
             # NOTE: this is important. We are sampling 2x to build the 2 decoders (not once); I think it is OK (so long as they approximate
             # the same table? but it IS more expensive)

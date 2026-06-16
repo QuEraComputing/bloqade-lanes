@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 from bloqade.decoders import ConfidenceDecoder
 from bloqade.decoders.bit_packing import pack_boolean_array
-from bloqade.decoders.dem import detector_error_model_matrices, matrix_to_dem
 
+from .dem import sub_detector_error_model
 from .layout import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout
 from .postselection import DecoderAdapter, _make_decoder_adapter
 from .types import DetectorErrorModelTask
@@ -29,12 +29,16 @@ def build_mle_decoders(
         decoding.
     """
 
-    dem_data = detector_error_model_matrices(task)
-    full_dem = matrix_to_dem(dem_data["H"], dem_data["O"], dem_data["priors"])
-    factory_dem = matrix_to_dem(
-        dem_data["H"][layout.output_detector_count :, :],
-        dem_data["O"][layout.output_observable_count :, :],
-        dem_data["priors"],
+    dem = task.detector_error_model
+    full_dem = sub_detector_error_model(
+        dem,
+        detector_indices=range(dem.num_detectors),
+        observable_indices=range(layout.output_observable_count),
+    )
+    factory_dem = sub_detector_error_model(
+        dem,
+        detector_indices=range(layout.output_detector_count, dem.num_detectors),
+        observable_indices=range(layout.output_observable_count, dem.num_observables),
     )
 
     full_decoder = gurobi_decoder_cls(full_dem)
