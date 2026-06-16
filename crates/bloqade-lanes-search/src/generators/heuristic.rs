@@ -219,13 +219,7 @@ impl HeuristicGenerator {
             if !target_locs.contains(&loc.encode()) {
                 continue;
             }
-            for &lane in index.outgoing_lanes(loc) {
-                let Some((_, dst)) = index.endpoints(&lane) else {
-                    continue;
-                };
-                if occupied.contains(&dst.encode()) {
-                    continue;
-                }
+            for (lane, dst) in escape_targets(loc, occupied, index) {
                 let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
                 let new_config = config.with_moves(&[(qid, dst)]);
                 out.push(MoveCandidate {
@@ -245,13 +239,7 @@ impl HeuristicGenerator {
         out: &mut Vec<MoveCandidate>,
     ) {
         for (qid, loc) in config.iter() {
-            for &lane in index.outgoing_lanes(loc) {
-                let Some((_, dst)) = index.endpoints(&lane) else {
-                    continue;
-                };
-                if occupied.contains(&dst.encode()) {
-                    continue;
-                }
+            for (lane, dst) in escape_targets(loc, occupied, index) {
                 let ms = MoveSet::from_encoded(vec![lane.encode_u64()]);
                 let new_config = config.with_moves(&[(qid, dst)]);
                 out.push(MoveCandidate {
@@ -261,6 +249,25 @@ impl HeuristicGenerator {
             }
         }
     }
+}
+
+/// Yield `(lane, destination)` pairs for every outgoing lane from `loc`
+/// whose destination is currently unoccupied. Shared traversal for all
+/// escape-move generation paths. Order is preserved (filter_map on a slice
+/// iterator is order-preserving), which is required for behavior-neutrality.
+fn escape_targets<'a>(
+    loc: LocationAddr,
+    occupied: &'a HashSet<u64>,
+    index: &'a LaneIndex,
+) -> impl Iterator<Item = (LaneAddr, LocationAddr)> + 'a {
+    index.outgoing_lanes(loc).iter().filter_map(move |&lane| {
+        let (_, dst) = index.endpoints(&lane)?;
+        if occupied.contains(&dst.encode()) {
+            None
+        } else {
+            Some((lane, dst))
+        }
+    })
 }
 
 impl MoveGenerator for HeuristicGenerator {
@@ -413,14 +420,7 @@ impl MoveGenerator for HeuristicGenerator {
         let mut spectator_escapes: Vec<(TripletKey, ScoredTriple)> = Vec::new();
         for &(qid, loc_enc) in &accidental_cz_qubits {
             let loc = LocationAddr::decode(loc_enc);
-            for &lane in ctx.index.outgoing_lanes(loc) {
-                let Some((_, dst)) = ctx.index.endpoints(&lane) else {
-                    continue;
-                };
-                let dst_enc = dst.encode();
-                if occupied.contains(&dst_enc) {
-                    continue;
-                }
+            for (lane, dst) in escape_targets(loc, &occupied, ctx.index) {
                 let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                 spectator_escapes.push((
                     triplet_key,
@@ -428,7 +428,7 @@ impl MoveGenerator for HeuristicGenerator {
                         qubit_id: qid,
                         score: 1, // any move away is an improvement
                         lane_encoded: lane.encode_u64(),
-                        dst_encoded: dst_enc,
+                        dst_encoded: dst.encode(),
                     },
                 ));
             }
@@ -493,14 +493,7 @@ impl MoveGenerator for HeuristicGenerator {
                 // for the first accidental qubit.
                 let (qid, loc_enc) = accidental_cz_qubits[0];
                 let loc = LocationAddr::decode(loc_enc);
-                for &lane in ctx.index.outgoing_lanes(loc) {
-                    let Some((_, dst)) = ctx.index.endpoints(&lane) else {
-                        continue;
-                    };
-                    let dst_enc = dst.encode();
-                    if occupied.contains(&dst_enc) {
-                        continue;
-                    }
+                if let Some((lane, dst)) = escape_targets(loc, &occupied, ctx.index).next() {
                     let triplet_key = (lane.move_type as u8, lane.bus_id, lane.direction as u8);
                     selected.push((
                         triplet_key,
@@ -508,10 +501,9 @@ impl MoveGenerator for HeuristicGenerator {
                             qubit_id: qid,
                             score: 1,
                             lane_encoded: lane.encode_u64(),
-                            dst_encoded: dst_enc,
+                            dst_encoded: dst.encode(),
                         },
                     ));
-                    break; // one escape is enough
                 }
             }
         }
