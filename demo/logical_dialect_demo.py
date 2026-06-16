@@ -19,6 +19,12 @@
 # In this notebook, we go over the dialect used to program on the Gemini logical machine, as well as details about our compiler infrastructure.
 
 # %% [markdown]
+# ## Installation
+
+# %% [markdown]
+# To get started, you can create a virtual environment and run `pip install bloqade`.
+
+# %% [markdown]
 # ## Example Single Qubit Kernel
 
 # %% [markdown]
