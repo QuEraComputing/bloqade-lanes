@@ -14,7 +14,6 @@ from bloqade.lanes.noise_model import generate_simple_noise_model
 from bloqade.lanes.passes import ASAPPlacePass
 from bloqade.lanes.pipeline import PhysicalPipeline
 from bloqade.lanes.transform import MoveToSquinPhysical
-from bloqade.lanes.visualize import debugger
 
 kernel = squin.kernel.add(qubit)
 kernel.run_pass = squin.kernel.run_pass
@@ -30,7 +29,7 @@ def steane_slot_allocator():
 
     """
     # canonical slot order
-    slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10, 14, 18])
+    slot_words = ilist.IList([0, 4, 8, 12, 16, 2, 6, 10, 14, 20])
 
     slots = IList(
         [
@@ -121,11 +120,6 @@ def main():
 
 
 move_mt = PhysicalPipeline(place_opt_type=ASAPPlacePass).emit(main)
-
-debugger(
-    move_mt,
-    arch_spec=get_arch_spec(),
-)
 
 noise_model = MoveToSquinPhysical(
     get_arch_spec(),
