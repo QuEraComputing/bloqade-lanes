@@ -19,8 +19,7 @@ use crate::placement::target_generator::{TargetContext, TargetGenerator, validat
 use crate::primitives::config::{Config, ConfigError};
 use crate::search::engine::SearchEngine;
 use crate::search::options::{EntropyOptions, SolveOptions};
-use crate::search::result::{SolveResult, SolveStatus};
-use crate::search::solve::{CandidateAttempt, MultiSolveResult};
+use crate::search::result::{CandidateAttempt, MultiSolveResult, SolveResult, SolveStatus};
 use crate::search::target_solver::{TargetSolver, solve_with_engine};
 
 /// CZ placement that uses a [`TargetGenerator`] to propose candidate

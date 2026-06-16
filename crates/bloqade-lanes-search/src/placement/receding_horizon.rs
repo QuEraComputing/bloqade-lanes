@@ -37,7 +37,8 @@ use crate::primitives::distance::{DistanceTable, PairDistanceHeuristic};
 use crate::primitives::graph::{MoveSet, NodeId, SearchGraph};
 use crate::primitives::lane_index::LaneIndex;
 use crate::scorers::DistanceScorer;
-use crate::search::solve::{EntanglingOptions, SolveOptions, SolveResult, SolveStatus};
+use crate::search::options::{EntanglingOptions, SolveOptions};
+use crate::search::result::{SolveResult, SolveStatus};
 use crate::traits::{CandidateScorer, Goal, Heuristic, MoveGenerator};
 
 use crate::ops::entangling::{LOOKAHEAD_BETA, MOVE_PENALTY};
@@ -1322,8 +1323,9 @@ pub(crate) fn solve_receding_horizon(
             .collect()
     };
 
-    Ok(crate::search::restarts::pick_best(results)
-        .expect("results vec is either 1-element (restarts <= 1) or from (0..restarts) loop (restarts > 1)"))
+    Ok(crate::search::restarts::pick_best(results).expect(
+        "results vec is either 1-element (restarts <= 1) or from (0..restarts) loop (restarts > 1)",
+    ))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -1332,7 +1334,7 @@ pub(crate) fn solve_receding_horizon(
 mod tests {
     use super::*;
     use crate::primitives::graph::SearchGraph;
-    use crate::search::solve::Strategy;
+    use crate::search::options::Strategy;
     use crate::test_utils::{example_arch_json, loc};
 
     // ── Trivial / structural ──

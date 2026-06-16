@@ -18,7 +18,7 @@ use crate::primitives::lane_index::LaneIndex;
 // ── Shared cost-matrix constants ────────────────────────────────────
 
 /// Default spectator-occupancy penalty (in lane-hop units). See
-/// [`crate::search::solve::EntanglingOptions::occupancy_penalty`] for full semantics.
+/// [`crate::search::options::EntanglingOptions::occupancy_penalty`] for full semantics.
 pub(crate) const OCCUPANCY_PENALTY_DEFAULT: f64 = 1.0;
 
 /// Per-atom-moved penalty (in lane-hop units) applied by the iterative

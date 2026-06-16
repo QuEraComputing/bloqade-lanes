@@ -626,10 +626,10 @@ pub(crate) fn solve_nohome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
     use crate::primitives::lane_index::LaneIndex;
     use crate::search::result::SolveStatus;
     use crate::test_utils::{example_arch_json, loc};
+    use bloqade_lanes_bytecode_core::arch::types::ArchSpec;
 
     fn make_parts() -> (ArchSpec, LaneIndex) {
         let json = example_arch_json();

@@ -28,10 +28,10 @@ use bloqade_lanes_search::primitives::distance::DistanceTable;
 use bloqade_lanes_search::primitives::lane_index::LaneIndex;
 use bloqade_lanes_search::search::engine::SearchEngine;
 use bloqade_lanes_search::search::move_search::MoveSearch;
-use bloqade_lanes_search::search::solve::{
-    EntanglingOptions, EntropyOptions, InnerStrategy, MultiSolveResult, SolveOptions, SolveResult,
-    Strategy,
+use bloqade_lanes_search::search::options::{
+    EntanglingOptions, EntropyOptions, InnerStrategy, SolveOptions, Strategy,
 };
+use bloqade_lanes_search::search::result::{MultiSolveResult, SolveResult};
 use bloqade_lanes_search::search::target_solver::TargetSolver;
 
 use crate::arch_python::{PyArchSpec, PyLaneAddr, PyLocationAddr};
