@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::cost::UniformCost;
 use crate::drivers::astar::SearchResult;
 use crate::drivers::entropy::EntropyTrace;
-use crate::drivers::frontier::{self, BfsFrontier, DfsFrontier, IdsFrontier, PriorityFrontier};
+use crate::drivers::frontier::{BfsFrontier, DfsFrontier, Frontier, IdsFrontier, PriorityFrontier};
 use crate::generators::heuristic::DeadlockPolicy;
 use crate::observer::NoOpObserver;
 use crate::primitives::config::Config;
@@ -62,6 +62,39 @@ pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
     })
 }
 
+/// Run the trait-based frontier search with the scorer, cost, state, and
+/// observer fixed to the values every call site in this module uses
+/// identically. Removes those four boilerplate arguments from
+/// `frontier::run_search`.
+fn run_frontier<Gen, Go, F>(
+    root: &Config,
+    generator: &Gen,
+    goal: &Go,
+    ctx: &SearchContext,
+    frontier: &mut F,
+    max_expansions: Option<u32>,
+    max_depth: Option<u32>,
+) -> SearchResult
+where
+    Gen: MoveGenerator,
+    Go: Goal,
+    F: Frontier,
+{
+    crate::drivers::frontier::run_search(
+        root.clone(),
+        generator,
+        &DistanceScorer,
+        &UniformCost,
+        goal,
+        frontier,
+        ctx,
+        &mut SearchState::default(),
+        &mut NoOpObserver,
+        max_expansions,
+        max_depth,
+    )
+}
+
 /// Shared strategy dispatch + restart logic.
 ///
 /// Both [`solve_with_engine`](crate::search::target_solver::solve_with_engine)
@@ -99,46 +132,19 @@ where
     let w_t = entropy.w_t;
     let base_seed = entropy.seed;
 
-    let scorer = DistanceScorer;
-    let cost_fn = UniformCost;
-
     // Helper: run a single inner strategy with the given seed and budget.
     let run_inner = |inner: InnerStrategy, seed: u64, budget: Option<u32>| -> SolveResult {
         match inner {
             InnerStrategy::Ids => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = IdsFrontier::new(h_sum);
-                let result = frontier::run_search(
-                    root.clone(),
-                    &move_gen,
-                    &scorer,
-                    &cost_fn,
-                    goal,
-                    &mut f,
-                    ctx,
-                    &mut SearchState::default(),
-                    &mut NoOpObserver,
-                    budget,
-                    None,
-                );
+                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
                 extract(result, move_gen.deadlock_count(), budget)
             }
             InnerStrategy::Dfs => {
                 let move_gen = make_generator(seed, deadlock_policy);
                 let mut f = DfsFrontier::new(h_sum);
-                let result = frontier::run_search(
-                    root.clone(),
-                    &move_gen,
-                    &scorer,
-                    &cost_fn,
-                    goal,
-                    &mut f,
-                    ctx,
-                    &mut SearchState::default(),
-                    &mut NoOpObserver,
-                    budget,
-                    None,
-                );
+                let result = run_frontier(&root, &move_gen, goal, ctx, &mut f, budget, None);
                 extract(result, move_gen.deadlock_count(), budget)
             }
             InnerStrategy::Entropy => {
@@ -210,16 +216,12 @@ where
         let max_depth = Some(inner_result.cost.ceil() as u32);
         let astar_move_gen = make_generator(0, DeadlockPolicy::MoveBlockers);
         let mut astar_f = PriorityFrontier::astar(h_max, weight);
-        let astar_result = frontier::run_search(
-            root.clone(),
+        let astar_result = run_frontier(
+            &root,
             &astar_move_gen,
-            &scorer,
-            &cost_fn,
             goal,
-            &mut astar_f,
             ctx,
-            &mut SearchState::default(),
-            &mut NoOpObserver,
+            &mut astar_f,
             max_expansions,
             max_depth,
         );
@@ -249,8 +251,6 @@ where
                     strategy,
                     root.clone(),
                     &move_gen,
-                    &scorer,
-                    &cost_fn,
                     goal,
                     ctx,
                     h_max,
@@ -280,8 +280,6 @@ fn run_strategy_v2<Go, Gen, Hmax>(
     strategy: Strategy,
     root: Config,
     generator: &Gen,
-    scorer: &DistanceScorer,
-    cost_fn: &UniformCost,
     goal: &Go,
     ctx: &SearchContext<'_>,
     heuristic_fn: Hmax,
@@ -296,51 +294,15 @@ where
     match strategy {
         Strategy::AStar => {
             let mut f = PriorityFrontier::astar(heuristic_fn, weight);
-            frontier::run_search(
-                root,
-                generator,
-                scorer,
-                cost_fn,
-                goal,
-                &mut f,
-                ctx,
-                &mut SearchState::default(),
-                &mut NoOpObserver,
-                max_expansions,
-                None,
-            )
+            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
         }
         Strategy::Bfs => {
             let mut f = BfsFrontier::new();
-            frontier::run_search(
-                root,
-                generator,
-                scorer,
-                cost_fn,
-                goal,
-                &mut f,
-                ctx,
-                &mut SearchState::default(),
-                &mut NoOpObserver,
-                max_expansions,
-                None,
-            )
+            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
         }
         Strategy::GreedyBestFirst => {
             let mut f = PriorityFrontier::greedy(heuristic_fn);
-            frontier::run_search(
-                root,
-                generator,
-                scorer,
-                cost_fn,
-                goal,
-                &mut f,
-                ctx,
-                &mut SearchState::default(),
-                &mut NoOpObserver,
-                max_expansions,
-                None,
-            )
+            run_frontier(&root, generator, goal, ctx, &mut f, max_expansions, None)
         }
         _ => {
             unreachable!("IDS/DFS/Cascade/Entropy handled before run_strategy_v2")
