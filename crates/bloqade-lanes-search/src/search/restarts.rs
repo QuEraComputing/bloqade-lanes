@@ -52,16 +52,14 @@ pub(crate) fn extract(result: SearchResult, deadlocks: u32, max_exp: Option<u32>
     }
 }
 
-/// Pick the best result from multiple restarts (prefer solved, then lowest cost).
-pub(crate) fn pick_best(results: Vec<SolveResult>) -> SolveResult {
-    results
-        .into_iter()
-        .min_by(|a, b| {
-            let a_solved = a.status == SolveStatus::Solved;
-            let b_solved = b.status == SolveStatus::Solved;
-            b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
-        })
-        .expect("non-empty results")
+/// Pick the best result from multiple restarts (prefer solved, then lowest
+/// cost). Returns `None` only when `results` is empty.
+pub(crate) fn pick_best(results: Vec<SolveResult>) -> Option<SolveResult> {
+    results.into_iter().min_by(|a, b| {
+        let a_solved = a.status == SolveStatus::Solved;
+        let b_solved = b.status == SolveStatus::Solved;
+        b_solved.cmp(&a_solved).then(a.cost.total_cmp(&b.cost))
+    })
 }
 
 /// Shared strategy dispatch + restart logic.
@@ -197,7 +195,7 @@ where
                 .into_par_iter()
                 .map(|i| run_inner(inner, start.saturating_add(i as u64), max_expansions))
                 .collect();
-            pick_best(results)
+            pick_best(results).expect("restarts > 1 yields a non-empty result set")
         }
     };
 
@@ -232,7 +230,8 @@ where
         );
 
         if astar_solve.status == SolveStatus::Solved {
-            return pick_best(vec![inner_result, astar_solve]);
+            return pick_best(vec![inner_result, astar_solve])
+                .expect("two-element vec is non-empty");
         }
         return inner_result;
     }
@@ -271,7 +270,7 @@ where
             .into_par_iter()
             .map(|i| run_once(start.saturating_add(i as u64), max_expansions))
             .collect();
-        pick_best(results)
+        pick_best(results).expect("restarts > 1 yields a non-empty result set")
     }
 }
 

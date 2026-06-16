@@ -1322,7 +1322,8 @@ pub(crate) fn solve_receding_horizon(
             .collect()
     };
 
-    Ok(crate::search::restarts::pick_best(results))
+    Ok(crate::search::restarts::pick_best(results)
+        .expect("results vec is either 1-element (restarts <= 1) or from (0..restarts) loop (restarts > 1)"))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
