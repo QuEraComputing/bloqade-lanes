@@ -16,13 +16,13 @@
 # # Gemini Logical Dialect Demo
 
 # %% [markdown]
-# In this notebook, we go over the dialect used to program on the Gemini logical machine, as well as details about our compiler infrastructure.
+# In this notebook, we go over the dialect used to program on the Gemini-QEC neutral atom quantum computer, as well as details about our compiler infrastructure.
 
 # %% [markdown]
 # ## Installation
 
 # %% [markdown]
-# To get started, you can create a virtual environment and run `pip install bloqade-lanes`.
+# To get started, you can create a virtual environment and run `pip install bloqade-lanes[sim, visualization]`.
 
 # %% [markdown]
 # ## Example Single Qubit Kernel
@@ -75,6 +75,7 @@ task_state_prep = GeminiLogicalSimulator().task(simple_state_prep_singleq)
 task_state_prep.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
+# Allows us to visualize the atom program as a popup in the notebook
 # %matplotlib qt
 
 # %%
@@ -98,9 +99,6 @@ def simple_transversal_hadamard():
 
 
 task_hadamard = GeminiLogicalSimulator().task(simple_transversal_hadamard)
-
-# %%
-task_hadamard.physical_move_kernel.print()
 
 # %%
 task_hadamard.noiseless_tsim_circuit.diagram(width=500)
@@ -127,6 +125,25 @@ task_hadamard.visualize()
 
 # %%
 @logical.kernel(aggressive_unroll=True, verify=True)
+def simple_bell_state_prep_nonnative():
+    reg = squin.qalloc(2)
+    squin.h(reg[0])
+    squin.cx(reg[0], reg[1])
+    return logical.terminal_measure(reg)
+
+
+task_bell_nonnative = GeminiLogicalSimulator().task(simple_bell_state_prep_nonnative)
+
+# %%
+task_bell_nonnative.noiseless_tsim_circuit.diagram(width=500)
+
+
+# %% [markdown]
+# If we program the circuit with the native gate set in mind, we can obtain a circuit with less layers.
+
+
+# %%
+@logical.kernel(aggressive_unroll=True, verify=True)
 def simple_bell_state_prep():
     reg = squin.qalloc(2)
     # For the GHZ state we just need q0 to be in |+>, so applying sqrt(Y) suffices
@@ -146,9 +163,6 @@ task_bell = GeminiLogicalSimulator().task(simple_bell_state_prep)
 task_bell.noiseless_tsim_circuit.diagram(width=500)
 
 # %%
-task_bell.physical_move_kernel.print()
-
-# %%
 task_bell.visualize()
 
 
@@ -156,6 +170,9 @@ task_bell.visualize()
 # ## Multiple CZ Gates, Use-Case: 4-Qubit GHZ State
 #
 # We now explore a kernel with multiple CZ gates where we define a 4 qubit GHZ state.
+
+# %% [markdown]
+# <img src="./star_demo_imgs/4q_ghz_state.png" width="400">
 
 
 # %%
@@ -344,7 +361,7 @@ show_inline(render_steane_code_qubit(figsize=(3.5, 3.5)))
 # %%
 @logical.kernel(aggressive_unroll=True, verify=True)
 def main():
-    reg = squin.qalloc(2)
+    reg = squin.qalloc(3)
     # We apply the same gate sequence used to prepare a two-qubit GHZ state
     squin.u3(math.pi / 2, 0.0, 0.0, reg[0])
     squin.u3(-math.pi / 2, 0.0, 0.0, reg[1])
@@ -364,7 +381,7 @@ task = GeminiLogicalSimulator().task(main)
 # | `task.noiseless_tsim_circuit`             | The underlying physical circuit without noise        |
 # | `task.tsim_circuit`             | The underlying physical circuit including noise             |
 # | `task.detector_error_model`           | The DEM associated with the noisy circuit       |
-# | `task.visualize`     | Render an interactive atom move. Does not work in jupyter notebooks =(     |
+# | `task.visualize`     | Render an interactive atom move.   |
 #
 # ## Rendering of the noiseless circuit:
 
@@ -510,11 +527,67 @@ print(
 # %% [markdown]
 # ### Dos and do nots for kernels
 # A valid kernel for Gemini must:
-# 1. Have less than 10 qubits
+# 1. Have less than or equal to 10 qubits
 # 2. Only have a single non-Clifford gate per qubit, acting as a single-qubit gate as the first gate on each qubit
 # 3. Measurement is in Z basis only.
 #
 # <img src="./star_demo_imgs/gemini_mvp_capabilities.png" width="700">
+
+# %% [markdown]
+# Too many qubits
+
+# %%
+try:
+
+    @logical.kernel(aggressive_unroll=True, verify=True)
+    def main():
+        reg = squin.qalloc(12)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+
+        return logical.default_post_processing(reg)
+
+    task = GeminiLogicalSimulator().task(main)
+except BaseException as e:
+    print("Error during kernel definition or task creation:", e)
+
+# %% [markdown]
+# Repeated non-Clifford rotations
+
+# %%
+try:
+
+    @logical.kernel(aggressive_unroll=True, verify=True)
+    def main():
+        reg = squin.qalloc(12)
+        squin.t(reg[0])
+        squin.t(reg[0])
+        squin.cx(reg[0], reg[1])
+
+        return logical.default_post_processing(reg)
+
+    task = GeminiLogicalSimulator().task(main)
+except BaseException as e:
+    print("Error during kernel definition or task creation:", e)
+
+# %% [markdown]
+# Non-Clifford rotation not as the first gate (This is the same validation error)
+
+# %%
+try:
+
+    @logical.kernel(aggressive_unroll=True, verify=True)
+    def main():
+        reg = squin.qalloc(12)
+        squin.h(reg[0])
+        squin.cx(reg[0], reg[1])
+        squin.t(reg[0])
+
+        return logical.default_post_processing(reg)
+
+    task = GeminiLogicalSimulator().task(main)
+except BaseException as e:
+    print("Error during kernel definition or task creation:", e)
 
 # %% [markdown]
 # ## Supplementary: 5-to-1 MSD Circuit
