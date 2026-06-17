@@ -110,7 +110,9 @@ def test_estimate_fidelity_runs_for_logical_mode(monkeypatch):
     assert calls["emit_move_mt"] is fake_move_mt
     assert calls["transform_noise_model"] is fake_noise_model
     assert calls["transform_add_noise"] is True
-    assert calls["transform_aggressive_unroll"] is False
+    # Broadcasted state-prep loops must be fully unrolled so FidelityAnalysis
+    # can see the per-qubit noise channels.
+    assert calls["transform_aggressive_unroll"] is True
 
 
 def test_estimate_fidelity_runs_for_physical_mode(monkeypatch):
