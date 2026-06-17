@@ -556,7 +556,7 @@ class PostSelectionExperiment:
         self.postselection_exp_cache.raw_results = actual_data
         return actual_data
 
-    def decode_and_postselect(self, decoder_name="decoder") -> tuple[
+    def decode_and_postselect(self, decoder_name: str | None = "decoder") -> tuple[
         Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
         np.ndarray,
         np.ndarray,
