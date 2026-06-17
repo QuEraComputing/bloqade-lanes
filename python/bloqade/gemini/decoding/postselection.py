@@ -7,7 +7,8 @@ from functools import lru_cache
 from typing import Callable, Protocol, TypeVar
 
 import numpy as np
-from bloqade.decoders import BaseDecoder, ConfidenceDecoder
+from bloqade.decoders import BaseDecoder
+from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
     packed_bits_to_int,

@@ -49,7 +49,7 @@ for candidate in LOCAL_DECODER_SRC_CANDIDATES:
         sys.path.insert(0, str(candidate))
         break
 
-from bloqade.decoders import GurobiDecoder, TableDecoder  # noqa: E402
+from bloqade.decoders import TableDecoder  # noqa: E402
 
 # NOTE, mtg: use a class? -- object-oriented methods? -- depends.
 # use claude/codex?
@@ -72,6 +72,7 @@ from demo.msd_utils import (  # noqa: E402
     sample_actual_data,
     train_mld_decoder_suite,
 )
+from demo.msd_utils.domain.confidence import ConfidenceGurobiDecoder  # noqa: E402
 
 from bloqade.lanes import GeminiLogicalSimulator  # noqa: E402
 
@@ -152,7 +153,7 @@ mld_decoders = train_mld_decoder_suite(
 
 mle_decoders = build_mle_decoder_suite(
     msd_tomography_tasks,
-    gurobi_decoder_cls=GurobiDecoder,
+    gurobi_decoder_cls=ConfidenceGurobiDecoder,
 )
 
 # %% [markdown]

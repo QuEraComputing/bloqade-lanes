@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast
+
 import numpy as np
-from bloqade.decoders import ConfidenceDecoder
+import stim
+from bloqade.decoders import BaseDecoder
+from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.standard.bit_packing import pack_boolean_array
 
 from .dem import sub_detector_error_model
@@ -13,7 +18,9 @@ from .types import DetectorErrorModelTask
 def build_mle_decoders(
     task: DetectorErrorModelTask,
     *,
-    gurobi_decoder_cls: type[ConfidenceDecoder],
+    # TODO: change this to type[ConfidenceDecoder] once pyright error on bloqade-decoders
+    # for decode() signature from GurobiDecoder is fixed
+    gurobi_decoder_cls: Callable[[stim.DetectorErrorModel], object],
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
     """Build full and factory MLE decoder adapters from a task DEM.
@@ -41,8 +48,10 @@ def build_mle_decoders(
         observable_indices=range(layout.output_observable_count, dem.num_observables),
     )
 
-    full_decoder = gurobi_decoder_cls(full_dem)
-    factory_decoder = gurobi_decoder_cls(factory_dem)
+    # TODO: get rid of these casts once pyright error on bloqade-decoders
+    # for decode() signature from GurobiDecoder is fixed
+    full_decoder = cast(BaseDecoder, gurobi_decoder_cls(full_dem))
+    factory_decoder = cast(ConfidenceDecoder, gurobi_decoder_cls(factory_dem))
     # TODO: this attribute should be defined by the MLE decoder class
     score_mode = str(getattr(factory_decoder, "confidence_score_mode", "confidence"))
 

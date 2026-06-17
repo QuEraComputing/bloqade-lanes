@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TypeAlias
 
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder, TableDecoder
 from demo.msd_utils.domain.confidence import TableDecoderWithConfidence
-from demo.msd_utils.standard.bit_packing import pack_boolean_array, unpack_packed_bits
+from demo.msd_utils.standard.bit_packing import (
+    pack_boolean_array,
+    shots_to_counts,
+    unpack_packed_bits,
+)
+
+logger = logging.getLogger(__name__)
+
+_COUNT_DTYPE = np.uint32
+_COUNT_MAX = np.iinfo(_COUNT_DTYPE).max
+
+
+def _as_uint32_count_table(counts: np.ndarray) -> np.ndarray:
+    arr = np.asarray(counts)
+    if np.any(arr < 0):
+        raise ValueError("det_obs_counts cannot contain negative counts.")
+    if np.any(arr > _COUNT_MAX):
+        raise OverflowError(
+            f"det_obs_counts contains a value larger than uint32 max ({_COUNT_MAX})."
+        )
+    return arr.astype(_COUNT_DTYPE, copy=False)
 
 
 class SparseTableDecoder(BaseDecoder):
@@ -105,12 +126,134 @@ class SparseTableDecoder(BaseDecoder):
         return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
 
 
-TableDecoderClass: TypeAlias = type[TableDecoder] | type[SparseTableDecoder]
+class TableDecoderWithSimplerConfidence(TableDecoder):
+    """Dense table decoder that stores count tables as ``uint32``.
+
+    When ``det_obs_counts`` is omitted, the table is trained by sampling the
+    provided detector error model.
+    """
+
+    def __init__(
+        self,
+        dem: stim.DetectorErrorModel,
+        det_obs_counts: np.ndarray | None = None,
+        *,
+        num_shots: int = 10**8,
+        seed: int | None = None,
+        step_size: int = 65536,
+    ) -> None:
+        num_observables = dem.num_observables
+        num_detectors = dem.num_detectors
+        data_len = num_observables + num_detectors
+        if data_len > 64:
+            raise ValueError(
+                f"Total data length {data_len} (detectors + observables) "
+                "exceeds 64 bits and cannot be packed into int64."
+            )
+
+        if det_obs_counts is None:
+            counts_table = np.zeros(2**data_len, dtype=_COUNT_DTYPE)
+            should_train_from_dem = True
+        else:
+            counts_table = _as_uint32_count_table(det_obs_counts)
+            should_train_from_dem = False
+
+        super().__init__(dem=dem, det_obs_counts=counts_table)
+        self._det_obs_counts = _as_uint32_count_table(self._det_obs_counts)
+
+        if should_train_from_dem:
+            self._train_from_dem(
+                num_shots=num_shots,
+                seed=seed,
+                step_size=step_size,
+            )
+
+    def _train_from_dem(
+        self,
+        *,
+        num_shots: int,
+        seed: int | None,
+        step_size: int,
+    ) -> None:
+        if num_shots < 0:
+            raise ValueError("num_shots must be non-negative.")
+        if num_shots == 0:
+            return
+        if step_size <= 0:
+            raise ValueError("step_size must be positive.")
+
+        try:
+            from tqdm import tqdm
+        except ImportError as e:
+            raise ImportError(
+                "The tqdm package is required for "
+                "TableDecoderWithSimplerConfidence DEM training. "
+                'Install it via: pip install "tqdm"'
+            ) from e
+
+        sampler = self._dem.compile_sampler(seed=seed)
+        progress_bar_steps = ((num_shots - 1) // step_size) + 1 if num_shots else 0
+        total_sampled = 0
+
+        logger.info("Building decoder from detector error model...")
+        for _ in tqdm(range(progress_bar_steps)):
+            next_shots = min(step_size, num_shots - total_sampled)
+            total_sampled += next_shots
+            sample_result = sampler.sample(
+                shots=next_shots,
+                bit_packed=False,
+            )
+            if not isinstance(sample_result, tuple) or len(sample_result) < 2:
+                raise RuntimeError(
+                    "Expected DEM sampler.sample to return detector and observable "
+                    f"samples, got {type(sample_result)}"
+                )
+            det_samples, obs_samples = sample_result[:2]
+            if not isinstance(det_samples, np.ndarray):
+                raise RuntimeError(
+                    "Expected np.ndarray detector samples from sampler.sample, "
+                    f"got {type(det_samples)}"
+                )
+            if not isinstance(obs_samples, np.ndarray):
+                raise RuntimeError(
+                    "Expected np.ndarray observable samples from sampler.sample, "
+                    f"got {type(obs_samples)}"
+                )
+            det_obs_shots = np.concatenate([det_samples, obs_samples], axis=1)
+            self.update_det_obs_counts(det_obs_shots)
+
+    def update_det_obs_counts(self, det_obs_shots: np.ndarray) -> None:
+        shots = np.asarray(det_obs_shots, dtype=np.uint8)
+        expected_width = self.num_detectors + self.num_observables
+        if shots.ndim != 2:
+            raise ValueError("det_obs_shots must be a 2D array.")
+        if shots.shape[1] != expected_width:
+            raise ValueError(
+                f"Expected det_obs_shots with {expected_width} columns, "
+                f"got {shots.shape[1]}"
+            )
+        step_counts = shots_to_counts(shots)
+        remaining = _COUNT_MAX - self._det_obs_counts
+        if np.any(step_counts > remaining):
+            raise OverflowError(
+                f"TableDecoder count table would exceed uint32 max ({_COUNT_MAX})."
+            )
+        self._det_obs_counts += step_counts.astype(_COUNT_DTYPE, copy=False)
+        self._is_cached_df = False
+        self._is_cached_correction = False
+
+
+TableDecoderClass: TypeAlias = (
+    type[TableDecoder]
+    | type[SparseTableDecoder]
+    | type[TableDecoderWithSimplerConfidence]
+)
 
 
 __all__ = [
     "SparseTableDecoder",
     "TableDecoder",
     "TableDecoderClass",
+    "TableDecoderWithSimplerConfidence",
     "TableDecoderWithConfidence",
 ]

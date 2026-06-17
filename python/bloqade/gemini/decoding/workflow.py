@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
-from bloqade.decoders import ConfidenceDecoder
+import stim
 from demo.msd_utils.standard.tomography import FidelitySummary
 
 from .baselines import injected_baseline
@@ -499,7 +499,9 @@ def train_mld_decoder_suite(
 def build_mle_decoder_suite(
     msd_tomography_tasks: TomographyTasks,
     *,
-    gurobi_decoder_cls: type[ConfidenceDecoder],
+    # TODO: change this to type[ConfidenceDecoder] once pyright error on bloqade-decoders
+    # for decode() signature from GurobiDecoder is fixed
+    gurobi_decoder_cls: Callable[[stim.DetectorErrorModel], object],
     log: bool = True,
 ) -> dict[str, DecoderAdapter]:
     """Build MLE decoders from all private MSD reference tasks.

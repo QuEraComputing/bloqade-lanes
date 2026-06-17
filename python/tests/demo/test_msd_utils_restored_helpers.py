@@ -9,8 +9,15 @@ import stim
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from demo.msd_utils.application.table_decoders import SparseTableDecoder
-from demo.msd_utils.domain.confidence import TableDecoderWithConfidence
+from demo.msd_utils.application.table_decoders import (
+    SparseTableDecoder,
+    TableDecoderWithSimplerConfidence,
+)
+from demo.msd_utils.domain.confidence import (
+    ConfidenceDecoder,
+    ConfidenceGurobiDecoder,
+    TableDecoderWithConfidence,
+)
 from demo.msd_utils.standard.bit_packing import (
     det_obs_shots_to_counts,
     pack_boolean_array,
@@ -170,3 +177,26 @@ def test_table_decoder_with_confidence_uses_packed_syndrome_scores():
 
     np.testing.assert_array_equal(correction, np.array([True]))
     assert confidence == np.float64(0.75)
+
+
+def test_confidence_gurobi_decoder_implements_local_confidence_interface():
+    assert issubclass(ConfidenceGurobiDecoder, ConfidenceDecoder)
+    assert ConfidenceGurobiDecoder.confidence_score_mode == "logical_gap"
+
+
+def test_table_decoder_with_simpler_confidence_allocates_uint32_counts():
+    dem = stim.DetectorErrorModel("error(0.5) D0 L0\n")
+
+    decoder = TableDecoderWithSimplerConfidence(dem, num_shots=0)
+
+    assert decoder._det_obs_counts.dtype == np.uint32
+    assert decoder._det_obs_counts.shape == (4,)
+
+
+def test_table_decoder_with_simpler_confidence_rejects_count_overflow():
+    dem = stim.DetectorErrorModel("error(0.5) D0 L0\n")
+    counts = np.zeros(4, dtype=np.uint64)
+    counts[0] = np.iinfo(np.uint32).max + 1
+
+    with pytest.raises(OverflowError):
+        TableDecoderWithSimplerConfidence(dem, det_obs_counts=counts)

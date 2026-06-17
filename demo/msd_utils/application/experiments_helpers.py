@@ -2,8 +2,9 @@ from typing import Any, Callable, Mapping, Sequence, cast
 
 import numpy as np
 import stim
-from bloqade.decoders import BaseDecoder, ConfidenceDecoder, GurobiDecoder
-from demo.msd_utils.application.table_decoders import TableDecoder
+from bloqade.decoders import BaseDecoder
+from demo.msd_utils.application.table_decoders import TableDecoderWithSimplerConfidence
+from demo.msd_utils.domain.confidence import ConfidenceDecoder, ConfidenceGurobiDecoder
 from demo.msd_utils.standard.bit_packing import pack_boolean_array
 
 from bloqade.gemini.decoding.layout import (
@@ -105,7 +106,7 @@ def construct_confidence_decoders_mld(
 def construct_full_factory_decoders_mld(
     dem: stim.DetectorErrorModel, **kwargs: Any
 ) -> BaseDecoder:
-    return TableDecoder.from_dem(
+    return TableDecoderWithSimplerConfidence(
         dem,
         num_shots=kwargs["mld_train_shots"],
         step_size=_mld_batch_size(kwargs),
@@ -174,4 +175,4 @@ def construct_confidence_decoders_mle(
 def construct_full_factory_decoders_mle(
     dem: stim.DetectorErrorModel, **kwargs: Any
 ) -> BaseDecoder:
-    return GurobiDecoder(dem)
+    return ConfidenceGurobiDecoder(dem)

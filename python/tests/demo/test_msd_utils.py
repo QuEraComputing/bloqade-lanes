@@ -9,7 +9,7 @@ from typing import cast
 import numpy as np
 import pytest
 import stim
-from bloqade.decoders import ConfidenceDecoder, TableDecoder
+from bloqade.decoders import TableDecoder
 
 from bloqade.lanes import GeminiLogicalSimulator
 
@@ -73,6 +73,7 @@ from demo.msd_utils import (
     train_mld_decoder_suite,
     unpack_packed_bits,
 )
+from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 from demo.msd_utils.domain.tasks import _ObservableFrame
 from demo.msd_utils.standard.dem import make_layout_only_dem
