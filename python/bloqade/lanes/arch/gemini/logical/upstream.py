@@ -184,98 +184,103 @@ def steane7_initialize_with_noise(
         evens = [0, 2, 4, 6]
         odds = [1, 3, 5]
 
+        # Cache each column selection once; every gate layer applies a Pauli
+        # channel (and optional loss) to the same qubits it gated.
+        col6 = get_rows([6])
+        cols0_5 = get_rows([0, 1, 2, 3, 4, 5])
+        cols_odds = get_rows(odds)
+        cols_evens_tail = get_rows(evens[1:])  # [2, 4, 6]
+        cols_evens_head = get_rows(evens[:-1])  # [0, 2, 4]
+        cols_356 = get_rows([3, 5, 6])
+        cols2_6 = get_rows([2, 3, 4, 5, 6])
+        cols124 = get_rows([1, 2, 4])
+        col3 = get_rows([3])
+        cols15 = get_rows([1, 5])
+
         # U3 on column 6
         for i in range(len(theta)):
             squin.u3(theta[i], phi[i], lam[i], qubits[i][6])
-        squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([6])
-        )
+        squin.broadcast.single_qubit_pauli_channel(local_px, local_py, local_pz, col6)
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([6]))
+            squin.broadcast.qubit_loss(local_loss_prob, col6)
 
         # sqrt_y_adj on columns 0-5
-        squin.broadcast.sqrt_y_adj(get_rows([0, 1, 2, 3, 4, 5]))
+        squin.broadcast.sqrt_y_adj(cols0_5)
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([0, 1, 2, 3, 4, 5])
+            local_px, local_py, local_pz, cols0_5
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([0, 1, 2, 3, 4, 5]))
+            squin.broadcast.qubit_loss(local_loss_prob, cols0_5)
 
         # CZ layer 1: controls=odds (sitters), targets=evens[1:] (movers)
-        squin.broadcast.cz(get_rows(odds), get_rows(evens[1:]))
+        squin.broadcast.cz(cols_odds, cols_evens_tail)
         squin.broadcast.single_qubit_pauli_channel(
-            sitter_px, sitter_py, sitter_pz, get_rows(odds)
+            sitter_px, sitter_py, sitter_pz, cols_odds
         )
         squin.broadcast.single_qubit_pauli_channel(
-            mover_px, mover_py, mover_pz, get_rows(evens[1:])
+            mover_px, mover_py, mover_pz, cols_evens_tail
         )
         if loss:
-            squin.broadcast.qubit_loss(sit_loss_prob, get_rows(odds))
-            squin.broadcast.qubit_loss(move_loss_prob, get_rows(evens[1:]))
+            squin.broadcast.qubit_loss(sit_loss_prob, cols_odds)
+            squin.broadcast.qubit_loss(move_loss_prob, cols_evens_tail)
 
         # sqrt_y on column 6
-        squin.broadcast.sqrt_y(get_rows([6]))
-        squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([6])
-        )
+        squin.broadcast.sqrt_y(col6)
+        squin.broadcast.single_qubit_pauli_channel(local_px, local_py, local_pz, col6)
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([6]))
+            squin.broadcast.qubit_loss(local_loss_prob, col6)
 
         # CZ layer 2: controls=evens[:-1] (movers), targets=[3,5,6] (sitters)
-        squin.broadcast.cz(get_rows(evens[:-1]), get_rows([3, 5, 6]))
+        squin.broadcast.cz(cols_evens_head, cols_356)
         squin.broadcast.single_qubit_pauli_channel(
-            mover_px, mover_py, mover_pz, get_rows(evens[:-1])
+            mover_px, mover_py, mover_pz, cols_evens_head
         )
         squin.broadcast.single_qubit_pauli_channel(
-            sitter_px, sitter_py, sitter_pz, get_rows([3, 5, 6])
+            sitter_px, sitter_py, sitter_pz, cols_356
         )
         if loss:
-            squin.broadcast.qubit_loss(move_loss_prob, get_rows(evens[:-1]))
-            squin.broadcast.qubit_loss(sit_loss_prob, get_rows([3, 5, 6]))
+            squin.broadcast.qubit_loss(move_loss_prob, cols_evens_head)
+            squin.broadcast.qubit_loss(sit_loss_prob, cols_356)
 
         # sqrt_y on columns 2-6
-        squin.broadcast.sqrt_y(get_rows([2, 3, 4, 5, 6]))
+        squin.broadcast.sqrt_y(cols2_6)
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([2, 3, 4, 5, 6])
+            local_px, local_py, local_pz, cols2_6
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([2, 3, 4, 5, 6]))
+            squin.broadcast.qubit_loss(local_loss_prob, cols2_6)
 
         # CZ layer 3: controls=evens[:-1] (sitters), targets=odds (movers)
-        squin.broadcast.cz(get_rows(evens[:-1]), get_rows(odds))
+        squin.broadcast.cz(cols_evens_head, cols_odds)
         squin.broadcast.single_qubit_pauli_channel(
-            sitter_px, sitter_py, sitter_pz, get_rows(evens[:-1])
+            sitter_px, sitter_py, sitter_pz, cols_evens_head
         )
         squin.broadcast.single_qubit_pauli_channel(
-            mover_px, mover_py, mover_pz, get_rows(odds)
+            mover_px, mover_py, mover_pz, cols_odds
         )
         if loss:
-            squin.broadcast.qubit_loss(sit_loss_prob, get_rows(evens[:-1]))
-            squin.broadcast.qubit_loss(move_loss_prob, get_rows(odds))
+            squin.broadcast.qubit_loss(sit_loss_prob, cols_evens_head)
+            squin.broadcast.qubit_loss(move_loss_prob, cols_odds)
 
         # sqrt_y on [1, 2, 4]
-        squin.broadcast.sqrt_y(get_rows([1, 2, 4]))
+        squin.broadcast.sqrt_y(cols124)
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([1, 2, 4])
+            local_px, local_py, local_pz, cols124
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([1, 2, 4]))
+            squin.broadcast.qubit_loss(local_loss_prob, cols124)
 
         # X on column 3
-        squin.broadcast.x(get_rows([3]))
-        squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([3])
-        )
+        squin.broadcast.x(col3)
+        squin.broadcast.single_qubit_pauli_channel(local_px, local_py, local_pz, col3)
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([3]))
+            squin.broadcast.qubit_loss(local_loss_prob, col3)
 
         # Z on [1, 5]
-        squin.broadcast.z(get_rows([1, 5]))
-        squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, get_rows([1, 5])
-        )
+        squin.broadcast.z(cols15)
+        squin.broadcast.single_qubit_pauli_channel(local_px, local_py, local_pz, cols15)
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, get_rows([1, 5]))
+            squin.broadcast.qubit_loss(local_loss_prob, cols15)
 
         debug.info("End Steane7 Noisy Initialize")
 
