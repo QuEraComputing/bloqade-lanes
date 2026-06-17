@@ -185,23 +185,22 @@ def _resolve_target_bloch(
 
 def _counts_at_accepted_fraction(
     per_basis_tables: Mapping[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
-    global_weights: np.ndarray,
+    total_shots: int,
     accepted_fraction: float,
     *,
     basis_labels: Sequence[str],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Accumulate score-sorted counts until the requested fraction is reached."""
+    """Accumulate score-sorted counts until the all-shot fraction is reached."""
 
     if not 0.0 <= accepted_fraction <= 1.0:
         raise ValueError("accepted_fraction must be between 0 and 1.")
 
     zero_counts = np.zeros(len(basis_labels), dtype=np.int64)
     one_counts = np.zeros(len(basis_labels), dtype=np.int64)
-    total_accepted = int(np.sum(global_weights))
-    if total_accepted <= 0 or accepted_fraction == 0.0:
+    if total_shots <= 0 or accepted_fraction == 0.0:
         return zero_counts, one_counts
 
-    target_count = max(1, int(math.ceil(float(accepted_fraction) * total_accepted)))
+    target_count = max(1, int(math.ceil(float(accepted_fraction) * total_shots)))
     table_state = []
     for basis in basis_labels:
         scores, zeros, ones = per_basis_tables[basis]
@@ -600,6 +599,11 @@ class PostSelectionExperiment:
         self.postselection_exp_cache.thresholded_data = threshold_curve
         return threshold_curve
 
+    # NOTE: the maximum number of shots that you can "accept" is equal to the
+    # number of shots that pass decoding of the ancilla after all observables on ancilla
+    # are 0. If you wanted to truly have the ability to accept shots including those that
+    # DON'T pass ancilla postselection threshold, then you'd have to run your
+    # decoder on the output observable for ALL shots which is more expensive.
     def tomography_result(
         self,
         accepted_fraction: float,
@@ -612,10 +616,10 @@ class PostSelectionExperiment:
     ) -> TomographyResult:
         """Return tomography counts after confidence-ranked postselection.
 
-        ``accepted_fraction`` is interpreted relative to shots that have already
-        passed the factory/ancilla postselection stage. Because counts are
-        grouped by confidence score, the returned result may keep slightly more
-        than the requested fraction.
+        ``accepted_fraction`` is interpreted relative to all sampled shots,
+        matching the x-axis convention used by ``analysis_f_vs_fraction``.
+        Because counts are grouped by confidence score, the returned result may
+        keep slightly more than the requested fraction.
         """
 
         if self.postselection_exp_cache.decoded_results is None:
@@ -626,12 +630,12 @@ class PostSelectionExperiment:
         (
             per_basis_tables,
             _score_array,
-            score_weights,
-            _total_shots,
+            _score_weights,
+            total_shots,
         ) = decoded_results
         zero_counts, one_counts = _counts_at_accepted_fraction(
             per_basis_tables,
-            score_weights,
+            total_shots,
             accepted_fraction,
             basis_labels=basis_labels,
         )

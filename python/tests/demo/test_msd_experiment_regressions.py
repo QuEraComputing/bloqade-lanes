@@ -164,12 +164,12 @@ def test_tomography_result_accumulates_highest_confidence_groups_first():
     exp = _fake_experiment_with_decoded_results(decoded_results)
 
     tiny_fraction = exp.tomography_result(
-        1 / 21,
+        1 / 63,
         "wilson",
         basis_labels=("X", "Y", "Z"),
     )
     high_groups = exp.tomography_result(
-        6 / 21,
+        6 / 63,
         "wilson",
         basis_labels=("X", "Y", "Z"),
     )
