@@ -1,4 +1,4 @@
-from typing import Iterator, Literal, TypeVar
+from typing import Any, Iterator, Literal, TypeVar
 
 from kirin import ir, rewrite
 from kirin.dialects import debug, ilist
@@ -30,26 +30,80 @@ def steane7_transversal_map(address: AddressType) -> Iterator[AddressType] | Non
     return (address.replace(site_id=base + i) for i in range(7))
 
 
+N = TypeVar("N")
+
+BroadcastInitKernel = ir.Method[
+    [
+        ilist.IList[float, Any],
+        ilist.IList[float, Any],
+        ilist.IList[float, Any],
+        ilist.IList[ilist.IList[qubit.Qubit, Literal[7]], Any],
+    ],
+    None,
+]
+"""Broadcasted Steane [[7,1,3]] initialization kernel.
+
+Runs state-prep in parallel over ``N`` logical qubits: per-qubit ``theta``/
+``phi``/``lam`` lists and a list of ``N`` seven-qubit physical registers.
+"""
+
+
+@squin.kernel
+def steane7_initialize_broadcast(
+    theta: ilist.IList[float, N],
+    phi: ilist.IList[float, N],
+    lam: ilist.IList[float, N],
+    qubits: ilist.IList[ilist.IList[qubit.Qubit, Literal[7]], N],
+):
+
+    num_rows = len(qubits)
+    num_cols = len(qubits[0])
+
+    def _new_row(j: int):
+        def _get(i: int):
+            return qubits[i][j]
+
+        return ilist.map(_get, ilist.range(num_rows))
+
+    qubits_t = ilist.map(_new_row, ilist.range(num_cols))
+
+    def get_rows(indices):
+        def _inner(cumulant, i):
+            return cumulant + qubits_t[i]
+
+        return ilist.foldl(_inner, indices, ilist.IList([]))
+
+    debug.info("Begin Steane7 Initialize")
+    for i in range(len(theta)):
+        qubit = qubits[i][6]
+        squin.u3(theta[i], phi[i], lam[i], qubit)
+
+    evens = [0, 2, 4, 6]
+    odds = [1, 3, 5]
+
+    squin.broadcast.sqrt_y_adj(get_rows([0, 1, 2, 3, 4, 5]))
+    squin.broadcast.cz(get_rows(odds), get_rows(evens[1:]))
+    squin.broadcast.sqrt_y(get_rows([6]))
+    squin.broadcast.cz(get_rows(evens[:-1]), get_rows([3, 5, 6]))
+    squin.broadcast.sqrt_y(get_rows([2, 3, 4, 5, 6]))
+    squin.broadcast.cz(get_rows(evens[:-1]), get_rows(odds))
+    squin.broadcast.sqrt_y(get_rows([1, 2, 4]))
+    squin.broadcast.x(get_rows([3]))
+    squin.broadcast.z(get_rows([1, 5]))
+
+    debug.info("End Steane7 Initialize")
+
+
 @squin.kernel
 def steane7_initialize(
     theta: float, phi: float, lam: float, qubits: ilist.IList[qubit.Qubit, Literal[7]]
 ):
-    debug.info("Begin Steane7 Initialize")
-    squin.u3(theta, phi, lam, qubits[6])
-    squin.broadcast.sqrt_y_adj(qubits[:6])
-    evens = qubits[::2]  # [0, 2, 4, 6]
-    odds = qubits[1::2]  # [1, 3, 5]
-
-    # Fixed: CZ pairs should be (1,2), (3,4), (5,6) not (1,0), (3,2), (5,4)
-    squin.broadcast.cz(odds, evens[1:])
-    squin.sqrt_y(qubits[6])
-    squin.broadcast.cz(evens[:-1], ilist.IList([qubits[3], qubits[5], qubits[6]]))
-    squin.broadcast.sqrt_y(qubits[2:])
-    squin.broadcast.cz(evens[:-1], odds)
-    squin.broadcast.sqrt_y(ilist.IList([qubits[1], qubits[2], qubits[4]]))
-    squin.x(qubits[3])
-    squin.broadcast.z(ilist.IList([qubits[1], qubits[5]]))
-    debug.info("End Steane7 Initialize")
+    return steane7_initialize_broadcast(
+        ilist.IList([theta]),
+        ilist.IList([phi]),
+        ilist.IList([lam]),
+        ilist.IList([qubits]),
+    )
 
 
 def steane7_initialize_with_noise(
@@ -66,10 +120,7 @@ def steane7_initialize_with_noise(
     sitter_pz: float = 0.0,
     sit_loss_prob: float = 0.0,
     loss: bool = True,
-) -> tuple[
-    ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None],
-    ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Literal[7]]], None],
-]:
+) -> tuple[BroadcastInitKernel, BroadcastInitKernel]:
     """Return (clean_kernel, noisy_kernel) for Steane [[7,1,3]] initialization.
 
     The clean kernel is the ideal initialization circuit. The noisy kernel is
@@ -104,107 +155,131 @@ def steane7_initialize_with_noise(
     """
 
     @squin.kernel
-    def noisy_initialize(
-        theta: float,
-        phi: float,
-        lam: float,
-        qubits: ilist.IList[qubit.Qubit, Literal[7]],
+    def noisy_initialize_broadcast(
+        theta: ilist.IList[float, N],
+        phi: ilist.IList[float, N],
+        lam: ilist.IList[float, N],
+        qubits: ilist.IList[ilist.IList[qubit.Qubit, Literal[7]], N],
     ):
+
+        num_rows = len(qubits)
+        num_cols = len(qubits[0])
+
+        def _new_row(j: int):
+            def _get(i: int):
+                return qubits[i][j]
+
+            return ilist.map(_get, ilist.range(num_rows))
+
+        qubits_t = ilist.map(_new_row, ilist.range(num_cols))
+
+        def get_rows(indices):
+            def _inner(cumulant, i):
+                return cumulant + qubits_t[i]
+
+            return ilist.foldl(_inner, indices, ilist.IList([]))
+
         debug.info("Begin Steane7 Noisy Initialize")
 
-        # U3 on qubit 6
-        squin.u3(theta, phi, lam, qubits[6])
-        squin.single_qubit_pauli_channel(local_px, local_py, local_pz, qubits[6])
-        if loss:
-            squin.qubit_loss(local_loss_prob, qubits[6])
+        evens = [0, 2, 4, 6]
+        odds = [1, 3, 5]
 
-        # sqrt_y_adj on qubits 0-5
-        squin.broadcast.sqrt_y_adj(qubits[:6])
+        # U3 on column 6
+        for i in range(len(theta)):
+            squin.u3(theta[i], phi[i], lam[i], qubits[i][6])
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, qubits[:6]
+            local_px, local_py, local_pz, get_rows([6])
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, qubits[:6])
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([6]))
 
-        evens = qubits[::2]  # [0, 2, 4, 6]
-        odds = qubits[1::2]  # [1, 3, 5]
+        # sqrt_y_adj on columns 0-5
+        squin.broadcast.sqrt_y_adj(get_rows([0, 1, 2, 3, 4, 5]))
+        squin.broadcast.single_qubit_pauli_channel(
+            local_px, local_py, local_pz, get_rows([0, 1, 2, 3, 4, 5])
+        )
+        if loss:
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([0, 1, 2, 3, 4, 5]))
 
         # CZ layer 1: controls=odds (sitters), targets=evens[1:] (movers)
-        squin.broadcast.cz(odds, evens[1:])
+        squin.broadcast.cz(get_rows(odds), get_rows(evens[1:]))
         squin.broadcast.single_qubit_pauli_channel(
-            sitter_px, sitter_py, sitter_pz, odds
+            sitter_px, sitter_py, sitter_pz, get_rows(odds)
         )
         squin.broadcast.single_qubit_pauli_channel(
-            mover_px, mover_py, mover_pz, evens[1:]
+            mover_px, mover_py, mover_pz, get_rows(evens[1:])
         )
         if loss:
-            squin.broadcast.qubit_loss(sit_loss_prob, odds)
-            squin.broadcast.qubit_loss(move_loss_prob, evens[1:])
+            squin.broadcast.qubit_loss(sit_loss_prob, get_rows(odds))
+            squin.broadcast.qubit_loss(move_loss_prob, get_rows(evens[1:]))
 
-        # sqrt_y on qubit 6
-        squin.sqrt_y(qubits[6])
-        squin.single_qubit_pauli_channel(local_px, local_py, local_pz, qubits[6])
+        # sqrt_y on column 6
+        squin.broadcast.sqrt_y(get_rows([6]))
+        squin.broadcast.single_qubit_pauli_channel(
+            local_px, local_py, local_pz, get_rows([6])
+        )
         if loss:
-            squin.qubit_loss(local_loss_prob, qubits[6])
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([6]))
 
         # CZ layer 2: controls=evens[:-1] (movers), targets=[3,5,6] (sitters)
-        cz_targets = ilist.IList([qubits[3], qubits[5], qubits[6]])
-        squin.broadcast.cz(evens[:-1], cz_targets)
+        squin.broadcast.cz(get_rows(evens[:-1]), get_rows([3, 5, 6]))
         squin.broadcast.single_qubit_pauli_channel(
-            mover_px, mover_py, mover_pz, evens[:-1]
+            mover_px, mover_py, mover_pz, get_rows(evens[:-1])
         )
         squin.broadcast.single_qubit_pauli_channel(
-            sitter_px, sitter_py, sitter_pz, cz_targets
+            sitter_px, sitter_py, sitter_pz, get_rows([3, 5, 6])
         )
         if loss:
-            squin.broadcast.qubit_loss(move_loss_prob, evens[:-1])
-            squin.broadcast.qubit_loss(sit_loss_prob, cz_targets)
+            squin.broadcast.qubit_loss(move_loss_prob, get_rows(evens[:-1]))
+            squin.broadcast.qubit_loss(sit_loss_prob, get_rows([3, 5, 6]))
 
-        # sqrt_y on qubits 2-6
-        squin.broadcast.sqrt_y(qubits[2:])
+        # sqrt_y on columns 2-6
+        squin.broadcast.sqrt_y(get_rows([2, 3, 4, 5, 6]))
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, qubits[2:]
+            local_px, local_py, local_pz, get_rows([2, 3, 4, 5, 6])
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, qubits[2:])
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([2, 3, 4, 5, 6]))
 
         # CZ layer 3: controls=evens[:-1] (sitters), targets=odds (movers)
-        squin.broadcast.cz(evens[:-1], odds)
+        squin.broadcast.cz(get_rows(evens[:-1]), get_rows(odds))
         squin.broadcast.single_qubit_pauli_channel(
-            sitter_px, sitter_py, sitter_pz, evens[:-1]
+            sitter_px, sitter_py, sitter_pz, get_rows(evens[:-1])
         )
-        squin.broadcast.single_qubit_pauli_channel(mover_px, mover_py, mover_pz, odds)
+        squin.broadcast.single_qubit_pauli_channel(
+            mover_px, mover_py, mover_pz, get_rows(odds)
+        )
         if loss:
-            squin.broadcast.qubit_loss(sit_loss_prob, evens[:-1])
-            squin.broadcast.qubit_loss(move_loss_prob, odds)
+            squin.broadcast.qubit_loss(sit_loss_prob, get_rows(evens[:-1]))
+            squin.broadcast.qubit_loss(move_loss_prob, get_rows(odds))
 
         # sqrt_y on [1, 2, 4]
-        correction_qubits = ilist.IList([qubits[1], qubits[2], qubits[4]])
-        squin.broadcast.sqrt_y(correction_qubits)
+        squin.broadcast.sqrt_y(get_rows([1, 2, 4]))
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, correction_qubits
+            local_px, local_py, local_pz, get_rows([1, 2, 4])
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, correction_qubits)
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([1, 2, 4]))
 
-        # X on qubit 3
-        squin.x(qubits[3])
-        squin.single_qubit_pauli_channel(local_px, local_py, local_pz, qubits[3])
+        # X on column 3
+        squin.broadcast.x(get_rows([3]))
+        squin.broadcast.single_qubit_pauli_channel(
+            local_px, local_py, local_pz, get_rows([3])
+        )
         if loss:
-            squin.qubit_loss(local_loss_prob, qubits[3])
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([3]))
 
         # Z on [1, 5]
-        z_qubits = ilist.IList([qubits[1], qubits[5]])
-        squin.broadcast.z(z_qubits)
+        squin.broadcast.z(get_rows([1, 5]))
         squin.broadcast.single_qubit_pauli_channel(
-            local_px, local_py, local_pz, z_qubits
+            local_px, local_py, local_pz, get_rows([1, 5])
         )
         if loss:
-            squin.broadcast.qubit_loss(local_loss_prob, z_qubits)
+            squin.broadcast.qubit_loss(local_loss_prob, get_rows([1, 5]))
 
         debug.info("End Steane7 Noisy Initialize")
 
-    return steane7_initialize, noisy_initialize
+    return steane7_initialize_broadcast, noisy_initialize_broadcast
 
 
 class SpecializeGemini:
