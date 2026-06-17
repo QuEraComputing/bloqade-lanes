@@ -33,6 +33,7 @@
 # %% [markdown]
 # <img src="./star_demo_imgs/steane_qubit_diagram.png" width="400">
 
+# %%
 import io
 
 # For defining math.pi constants
@@ -49,6 +50,7 @@ from IPython.display import Image, display
 
 # For defining lists of gates in broadcast statements
 from kirin.dialects import ilist
+from matplotlib.axes import Axes
 
 from bloqade import squin
 
@@ -282,13 +284,13 @@ print(upper_fid)
 
 # %%
 def render_steane_code_qubit(
-    ax: plt.Axes | None = None, center: tuple[float, float] = (0, 0), figsize=(5, 5)
-) -> plt.Axes:
+    ax: Axes | None = None, center: tuple[float, float] = (0, 0), figsize=(5, 5)
+) -> Axes:
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
         ax.set_aspect("equal")
-        ax.set_xlim([-2 + center[0], 2 + center[0]])
-        ax.set_ylim([-2 + center[1], 2 + center[1]])
+        ax.set_xlim((-2 + center[0], 2 + center[0]))
+        ax.set_ylim((-2 + center[1], 2 + center[1]))
         ax.axis("off")
     RED = "#EF2F55"
     PURPLE = "#670EFF"

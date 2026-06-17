@@ -18,6 +18,7 @@
 # %% [markdown]
 # In this notebook, we demonstrate the STAR Rz gate, with k = 1 (to implement the STAR rotation, only single-qubit gates are applied).
 
+# %%
 # For defining constants and analysis
 import math
 
@@ -179,7 +180,7 @@ fidelity_estimate = fidelity_from_counts(
 )
 
 # %%
-star_bloch_vector
+print(star_bloch_vector)
 
 # %%
-fidelity_estimate
+print(fidelity_estimate)
