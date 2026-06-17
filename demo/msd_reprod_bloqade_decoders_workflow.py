@@ -60,6 +60,7 @@ from bloqade.decoders import TableDecoder  # noqa: E402
 from demo.msd_utils import (  # noqa: E402
     DecoderCurveOptions,
     MSDDecoderWorkflowConfig,
+    TableDecoderWithSimplerConfidence,
     build_injected_tomography_kernels,
     build_injected_tomography_tasks,
     build_mle_decoder_suite,
@@ -70,7 +71,6 @@ from demo.msd_utils import (  # noqa: E402
     evaluate_injected_baseline,
     plot_decoder_curves,
     sample_actual_data,
-    train_mld_decoder_suite,
 )
 from demo.msd_utils.domain.confidence import ConfidenceGurobiDecoder  # noqa: E402
 
@@ -111,8 +111,8 @@ config = MSDDecoderWorkflowConfig(
     num_logical_qubits=5,
     output_qubit=0,
     # Use prefix-prepare special tasks so MLD table-training data stays on a
-    # smaller special path. Actual/ranking/evaluation data uses CliffT below.
-    special_kernel_strategy="prefix_prepare",
+    # smaller special path. Actual/evaluation data uses CliffT below.
+    special_kernel_strategy="compiled_inverse_prefix",
     # Use CliffT for the noisy non-Clifford actual/evaluation sampling path.
     # The tsim detector sampler can hit a normalization-underflow assertion on
     # these circuits.
@@ -145,10 +145,13 @@ injected_tomography_tasks = build_injected_tomography_tasks(
 # ## Decoder Training
 
 # %%
-mld_decoders = train_mld_decoder_suite(
+mld_decoders = build_mle_decoder_suite(
     msd_tomography_tasks,
-    config,
-    table_decoder_cls=TableDecoder,
+    gurobi_decoder_cls=TableDecoderWithSimplerConfidence,
+    decoder_init_args={
+        "num_shots": config.mld_train_shots,
+        "step_size": None,
+    },
 )
 
 mle_decoders = build_mle_decoder_suite(

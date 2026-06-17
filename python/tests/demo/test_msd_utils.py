@@ -397,8 +397,9 @@ class _FakeDemMatrix:
 class _ConfidenceGurobi(ConfidenceDecoder):
     instances = []
 
-    def __init__(self, dem):
+    def __init__(self, dem, **kwargs):
         self.dem = dem
+        self.kwargs = kwargs
         self.instances.append(self)
 
     def _decode(self, detector_bits):
@@ -576,6 +577,7 @@ def test_workflow_mld_suite_trains_from_tomography_tasks():
 
 
 def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
+    _ConfidenceGurobi.instances = []
     monkeypatch.setattr(
         "demo.msd_utils.standard.dem.detector_error_model_to_check_matrices",
         lambda *args, **kwargs: _FakeDemMatrix(
@@ -592,10 +594,15 @@ def test_workflow_mle_suite_builds_per_basis_decoders(monkeypatch):
     decoders = build_mle_decoder_suite(
         tomography_tasks,
         gurobi_decoder_cls=_ConfidenceGurobi,
+        decoder_init_args={"num_shots": 7, "step_size": None},
     )
 
     assert set(decoders) == {"X"}
     assert decoders["X"].factory_score_mode == "confidence"
+    assert [decoder.kwargs for decoder in _ConfidenceGurobi.instances] == [
+        {"num_shots": 7, "step_size": None},
+        {"num_shots": 7, "step_size": None},
+    ]
 
 
 def test_workflow_evaluate_decoder_curves_supports_multiple_suites():
@@ -874,7 +881,11 @@ def test_sub_detector_error_model_composes_duplicate_projected_errors():
 def test_build_mle_decoders_uses_confidence_decoder_api():
     _ConfidenceGurobi.instances = []
 
-    adapter = build_mle_decoders(_FakeTask(), gurobi_decoder_cls=_ConfidenceGurobi)
+    adapter = build_mle_decoders(
+        _FakeTask(),
+        gurobi_decoder_cls=_ConfidenceGurobi,
+        decoder_init_args={"num_shots": 3},
+    )
     _, score = adapter.decode_factory(0)
     assert adapter.factory_score_mode == "confidence"
     assert score == pytest.approx(2.5)
@@ -883,6 +894,10 @@ def test_build_mle_decoders_uses_confidence_decoder_api():
     assert "error(0.1) D0" in str(full_dem)
     assert "error(0.2) D0 L0" in str(full_dem)
     assert str(factory_dem).startswith("error(0.3) D0 L0")
+    assert [decoder.kwargs for decoder in _ConfidenceGurobi.instances] == [
+        {"num_shots": 3},
+        {"num_shots": 3},
+    ]
 
 
 def test_streaming_sparse_mld_decoder_pair_matches_batch():

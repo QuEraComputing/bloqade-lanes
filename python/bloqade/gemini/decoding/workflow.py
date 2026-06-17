@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
-import stim
 from demo.msd_utils.standard.tomography import FidelitySummary
 
 from .baselines import injected_baseline
@@ -501,15 +500,20 @@ def build_mle_decoder_suite(
     *,
     # TODO: change this to type[ConfidenceDecoder] once pyright error on bloqade-decoders
     # for decode() signature from GurobiDecoder is fixed
-    gurobi_decoder_cls: Callable[[stim.DetectorErrorModel], object],
+    gurobi_decoder_cls: Callable[..., object],
+    decoder_init_args: Mapping[str, Any] | None = None,
     log: bool = True,
 ) -> dict[str, DecoderAdapter]:
-    """Build MLE decoders from all private MSD reference tasks.
+    """Build confidence-capable decoders from all private MSD reference tasks.
 
     Args:
         msd_tomography_tasks: MSD tomography tasks whose private reference tasks expose
             deterministic DEMs.
-        gurobi_decoder_cls: Confidence-capable Gurobi decoder implementation.
+        gurobi_decoder_cls: Confidence-capable decoder implementation. Despite
+            the historical name, this can be any decoder constructor compatible
+            with ``BaseDecoder`` and ``ConfidenceDecoder``.
+        decoder_init_args: Optional keyword arguments forwarded to each decoder
+            constructor.
         log: If true, print progress messages.
 
     Returns:
@@ -523,6 +527,7 @@ def build_mle_decoder_suite(
         decoders[basis] = build_mle_decoders(
             task,
             gurobi_decoder_cls=gurobi_decoder_cls,
+            decoder_init_args=decoder_init_args,
         )
     return decoders
 

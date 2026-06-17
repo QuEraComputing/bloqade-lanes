@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import cast
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 
 import numpy as np
-import stim
 from bloqade.decoders import BaseDecoder
 from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.standard.bit_packing import pack_boolean_array
@@ -20,15 +19,20 @@ def build_mle_decoders(
     *,
     # TODO: change this to type[ConfidenceDecoder] once pyright error on bloqade-decoders
     # for decode() signature from GurobiDecoder is fixed
-    gurobi_decoder_cls: Callable[[stim.DetectorErrorModel], object],
+    gurobi_decoder_cls: Callable[..., object],
+    decoder_init_args: Mapping[str, Any] | None = None,
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
 ) -> DecoderAdapter:
-    """Build full and factory MLE decoder adapters from a task DEM.
+    """Build full and factory confidence-decoder adapters from a task DEM.
 
     Args:
         task: Object exposing the full detector error model.
         gurobi_decoder_cls: Confidence-capable decoder class used for both the
-            full and factory DEMs.
+            full and factory DEMs. Despite the historical name, this can be any
+            decoder constructor compatible with ``BaseDecoder`` and
+            ``ConfidenceDecoder``.
+        decoder_init_args: Optional keyword arguments forwarded to each decoder
+            constructor.
         layout: Syndrome layout separating output and factory syndrome bits.
 
     Returns:
@@ -36,6 +40,7 @@ def build_mle_decoders(
         decoding.
     """
 
+    decoder_init_args = {} if decoder_init_args is None else dict(decoder_init_args)
     dem = task.detector_error_model
     full_dem = sub_detector_error_model(
         dem,
@@ -50,8 +55,11 @@ def build_mle_decoders(
 
     # TODO: get rid of these casts once pyright error on bloqade-decoders
     # for decode() signature from GurobiDecoder is fixed
-    full_decoder = cast(BaseDecoder, gurobi_decoder_cls(full_dem))
-    factory_decoder = cast(ConfidenceDecoder, gurobi_decoder_cls(factory_dem))
+    full_decoder = cast(BaseDecoder, gurobi_decoder_cls(full_dem, **decoder_init_args))
+    factory_decoder = cast(
+        ConfidenceDecoder,
+        gurobi_decoder_cls(factory_dem, **decoder_init_args),
+    )
     # TODO: this attribute should be defined by the MLE decoder class
     score_mode = str(getattr(factory_decoder, "confidence_score_mode", "confidence"))
 
