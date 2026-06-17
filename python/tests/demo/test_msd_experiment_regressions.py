@@ -29,6 +29,31 @@ from bloqade.gemini.decoding.postselection import DecoderAdapter  # noqa: E402
 from bloqade.gemini.decoding.sampling import BasisDataset  # noqa: E402
 
 
+class _FakeConfidenceDecoder(BaseDecoder, ConfidenceDecoder):
+    confidence_score_mode = "fake-frequency"
+    instances: list[_FakeConfidenceDecoder] = []
+
+    def __init__(
+        self,
+        dem: stim.DetectorErrorModel,
+        *,
+        confidence: float = 0.5,
+    ) -> None:
+        super().__init__(dem)
+        self.dem = dem
+        self.confidence = confidence
+        type(self).instances.append(self)
+
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        return np.zeros(self.dem.num_observables, dtype=np.bool_)
+
+    def decode_with_confidence(
+        self,
+        detector_bits: np.ndarray,
+    ) -> tuple[np.ndarray, np.float64]:
+        return self._decode(detector_bits), np.float64(self.confidence)
+
+
 def _fake_experiment_with_decoded_results(
     decoded_results: tuple[
         dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
@@ -179,6 +204,27 @@ def test_postselection_experiment_decode_and_analysis_use_cached_tables():
     assert curve["accepted_fraction"].shape == curve["fidelity"].shape
 
 
+def test_initialize_decoders_constructs_confidence_adapters_from_decoder_class():
+    _FakeConfidenceDecoder.instances.clear()
+    exp = object.__new__(PostSelectionExperiment)
+    exp.postselection_exp_cache = PostSelectionExperimentCache()
+    exp.postselection_exp_cache.dems = {"X": stim.DetectorErrorModel("""
+            error(0.1) D0 L0
+            error(0.2) D3 L1
+            """)}
+    exp.decoder = _FakeConfidenceDecoder
+    exp.decoder_init_args = {"confidence": 0.625}
+
+    adapters = exp.initialize_decoders()
+    factory_correction, score = adapters["X"].decode_factory(0)
+
+    assert len(_FakeConfidenceDecoder.instances) == 2
+    assert exp.postselection_exp_cache.decoders_with_confidence is adapters
+    assert factory_correction == (0,)
+    assert score == pytest.approx(0.625)
+    assert adapters["X"].factory_score_mode == "fake-frequency"
+
+
 def test_sparse_table_decoder_recomputes_correction_after_incremental_update():
     dem = stim.DetectorErrorModel("error(0.5) D0 L0\n")
     decoder = SparseTableDecoder.from_det_obs_shots(
@@ -211,6 +257,72 @@ def test_table_decoder_with_simpler_confidence_updates_uint32_counts():
     assert decoder._det_obs_counts.tolist() == [1, 0, 0, 2]
 
 
+def test_table_decoder_with_simpler_confidence_none_step_size_uses_one_batch(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    update_sizes: list[int] = []
+    original_update = TableDecoderWithSimplerConfidence.update_det_obs_counts
+
+    def track_update(
+        self: TableDecoderWithSimplerConfidence,
+        det_obs_shots: np.ndarray,
+    ) -> None:
+        update_sizes.append(det_obs_shots.shape[0])
+        original_update(self, det_obs_shots)
+
+    monkeypatch.setattr(
+        TableDecoderWithSimplerConfidence,
+        "update_det_obs_counts",
+        track_update,
+    )
+
+    decoder = TableDecoderWithSimplerConfidence(
+        stim.DetectorErrorModel(""),
+        num_shots=5,
+        step_size=None,
+    )
+
+    assert update_sizes == [5]
+    assert decoder._det_obs_counts.tolist() == [5]
+
+
+def test_table_decoder_with_simpler_confidence_decodes_with_frequency_score():
+    dem = stim.DetectorErrorModel("error(0.5) D0 L0\n")
+    decoder = TableDecoderWithSimplerConfidence(dem, num_shots=0)
+    decoder.update_det_obs_counts(
+        np.array(
+            [
+                [1, 0],
+                [1, 1],
+                [1, 1],
+                [1, 1],
+            ],
+            dtype=bool,
+        )
+    )
+
+    correction, confidence = decoder.decode_with_confidence(
+        np.array([1], dtype=np.bool_),
+    )
+
+    np.testing.assert_array_equal(correction, np.array([True]))
+    assert confidence == np.float64(0.75)
+    assert decoder.confidence_score_mode == "correction_frequency"
+
+
+def test_table_decoder_with_simpler_confidence_unseen_syndrome_has_nan_score():
+    dem = stim.DetectorErrorModel("error(0.5) D0 L0\n")
+    decoder = TableDecoderWithSimplerConfidence(dem, num_shots=0)
+    decoder.update_det_obs_counts(np.array([[1, 1]], dtype=bool))
+
+    correction, confidence = decoder.decode_with_confidence(
+        np.array([0], dtype=np.bool_),
+    )
+
+    np.testing.assert_array_equal(correction, np.array([False]))
+    assert np.isnan(confidence)
+
+
 def test_table_decoder_with_simpler_confidence_update_rejects_uint32_overflow():
     dem = stim.DetectorErrorModel("error(0.5) D0 L0\n")
     counts = np.zeros(4, dtype=np.uint32)
@@ -225,6 +337,8 @@ def test_confidence_decoder_interface_is_separate_from_base_decoder():
     assert not issubclass(ConfidenceDecoder, BaseDecoder)
     assert issubclass(ConfidenceGurobiDecoder, BaseDecoder)
     assert issubclass(ConfidenceGurobiDecoder, ConfidenceDecoder)
+    assert issubclass(TableDecoderWithSimplerConfidence, BaseDecoder)
+    assert issubclass(TableDecoderWithSimplerConfidence, ConfidenceDecoder)
     assert issubclass(TableDecoderWithConfidence, BaseDecoder)
     assert issubclass(TableDecoderWithConfidence, ConfidenceDecoder)
 

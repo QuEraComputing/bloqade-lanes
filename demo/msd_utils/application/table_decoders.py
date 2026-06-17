@@ -8,7 +8,10 @@ from typing import TypeAlias
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder, TableDecoder
-from demo.msd_utils.domain.confidence import TableDecoderWithConfidence
+from demo.msd_utils.domain.confidence import (
+    ConfidenceDecoder,
+    TableDecoderWithConfidence,
+)
 from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
     shots_to_counts,
@@ -126,12 +129,14 @@ class SparseTableDecoder(BaseDecoder):
         return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
 
 
-class TableDecoderWithSimplerConfidence(TableDecoder):
+class TableDecoderWithSimplerConfidence(TableDecoder, ConfidenceDecoder):
     """Dense table decoder that stores count tables as ``uint32``.
 
     When ``det_obs_counts`` is omitted, the table is trained by sampling the
     provided detector error model.
     """
+
+    confidence_score_mode = "correction_frequency"
 
     def __init__(
         self,
@@ -140,7 +145,7 @@ class TableDecoderWithSimplerConfidence(TableDecoder):
         *,
         num_shots: int = 10**8,
         seed: int | None = None,
-        step_size: int = 65536,
+        step_size: int | None = 65536,
     ) -> None:
         num_observables = dem.num_observables
         num_detectors = dem.num_detectors
@@ -160,6 +165,7 @@ class TableDecoderWithSimplerConfidence(TableDecoder):
 
         super().__init__(dem=dem, det_obs_counts=counts_table)
         self._det_obs_counts = _as_uint32_count_table(self._det_obs_counts)
+        self._correction_confidence: np.ndarray | None = None
 
         if should_train_from_dem:
             self._train_from_dem(
@@ -173,12 +179,14 @@ class TableDecoderWithSimplerConfidence(TableDecoder):
         *,
         num_shots: int,
         seed: int | None,
-        step_size: int,
+        step_size: int | None,
     ) -> None:
         if num_shots < 0:
             raise ValueError("num_shots must be non-negative.")
         if num_shots == 0:
             return
+        if step_size is None:
+            step_size = num_shots
         if step_size <= 0:
             raise ValueError("step_size must be positive.")
 
@@ -241,6 +249,55 @@ class TableDecoderWithSimplerConfidence(TableDecoder):
         self._det_obs_counts += step_counts.astype(_COUNT_DTYPE, copy=False)
         self._is_cached_df = False
         self._is_cached_correction = False
+        self._correction_confidence = None
+
+    def cache_correction(self) -> None:
+        """Build correction and per-detector confidence lookup tables."""
+
+        if self._is_cached_correction and self._correction_confidence is not None:
+            return
+
+        obs_counts = self._det_obs_counts.reshape(
+            2**self.num_observables,
+            2**self.num_detectors,
+        )
+        self._maximum_likelihood_correction = np.argmax(obs_counts, axis=0).reshape(-1)
+
+        max_counts = np.max(obs_counts, axis=0).astype(np.float64, copy=False)
+        total_counts = np.sum(obs_counts, axis=0, dtype=np.uint64)
+        confidence = np.full(total_counts.shape, np.nan, dtype=np.float64)
+        np.divide(
+            max_counts,
+            total_counts.astype(np.float64, copy=False),
+            out=confidence,
+            where=total_counts > 0,
+        )
+        # NOTE: this current implementation with cache both the correction AND the confidence
+        # even if you don't use it (simplifies the implementation a bit). In the future,
+        # if you don't want to use the confidence, maybe you can specify as a flag in the
+        # decoder constructor to not cache the confidence.
+        self._correction_confidence = confidence
+        self._is_cached_correction = True
+
+    def decode_with_confidence(
+        self,
+        detector_bits: np.ndarray,
+    ) -> tuple[np.ndarray, np.float64]:
+        """Decode one detector syndrome and return its empirical confidence."""
+
+        if detector_bits.ndim != 1:
+            raise ValueError(
+                "decode_with_confidence expects a single detector shot (1D array)."
+            )
+        correction = np.asarray(self.decode(detector_bits), dtype=np.bool_)
+        self.cache_correction()
+        assert self._correction_confidence is not None
+        packed = int(
+            pack_boolean_array(
+                np.asarray(detector_bits, dtype=np.uint8).reshape(1, -1)
+            )[0]
+        )
+        return correction, np.float64(self._correction_confidence[packed])
 
     # TODO: can implement batch decoding on a batch of det_obs_counts here with confidence (
     # calls the method decode_det_obs_counts in TableDecoder and also returns the batch of confidence scores)

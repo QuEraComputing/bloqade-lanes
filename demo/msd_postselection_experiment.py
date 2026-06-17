@@ -41,12 +41,8 @@ from demo.msd_utils.application.experiments import (
     magic_state_dist_steane,
     single_qubit_state_tomography,
 )
-from demo.msd_utils.application.experiments_helpers import (
-    construct_confidence_decoders_mld,
-    construct_confidence_decoders_mle,
-    construct_full_factory_decoders_mld,
-    construct_full_factory_decoders_mle,
-)
+from demo.msd_utils.application.table_decoders import TableDecoderWithSimplerConfidence
+from demo.msd_utils.domain.confidence import ConfidenceGurobiDecoder
 from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH
 
 from bloqade.gemini.decoding.workflow import plot_decoder_curves
@@ -60,7 +56,6 @@ from bloqade.gemini.decoding.workflow import plot_decoder_curves
 
 EVAL_SHOTS = 1_000_000
 MLD_TRAIN_SHOTS = 10_000_000
-MLD_RANK_TRAIN_SHOTS = 10_000_000
 MLD_BATCH_SIZE = None
 SIM_TYPE = "clifft"
 
@@ -102,13 +97,10 @@ def build_msd_mld_experiment() -> PostSelectionExperiment:
         main_cliff_circ,
         tomo_circs,
         MSD_VALID_FACTORY_TARGETS,
-        construct_confidence_decoders_mld,
-        construct_full_factory_decoders_mld,
+        TableDecoderWithSimplerConfidence,
         {
-            "mld_train_shots": MLD_TRAIN_SHOTS,
-            "mld_rank_train_shots": MLD_RANK_TRAIN_SHOTS,
-            "batch_size": MLD_BATCH_SIZE,
-            "sim_type": SIM_TYPE,
+            "num_shots": MLD_TRAIN_SHOTS,
+            "step_size": MLD_BATCH_SIZE,
         },
         target_bloch=DEFAULT_TARGET_BLOCH,
     )
@@ -120,10 +112,8 @@ def build_msd_mle_experiment() -> PostSelectionExperiment:
         main_cliff_circ,
         tomo_circs,
         MSD_VALID_FACTORY_TARGETS,
-        construct_confidence_decoders_mle,
-        construct_full_factory_decoders_mle,
-        # TODO: get rid of "sim_type" arg here and make target_bloch an empty numpy array.
-        {"sim_type": SIM_TYPE},
+        ConfidenceGurobiDecoder,
+        {},
         target_bloch=DEFAULT_TARGET_BLOCH,
     )
 
@@ -134,14 +124,11 @@ def build_injected_mld_experiment() -> PostSelectionExperiment:
         empty_logical_circuit(),
         tomo_circs,
         INJECTED_VALID_FACTORY_TARGETS,
-        construct_confidence_decoders_mld,
-        construct_full_factory_decoders_mld,
+        TableDecoderWithSimplerConfidence,
         {
             # TODO: in principle, reduce the number of arguments passed in here?
-            "mld_train_shots": MLD_TRAIN_SHOTS,
-            "mld_rank_train_shots": MLD_RANK_TRAIN_SHOTS,
-            "batch_size": MLD_BATCH_SIZE,
-            "sim_type": SIM_TYPE,
+            "num_shots": MLD_TRAIN_SHOTS,
+            "step_size": MLD_BATCH_SIZE,
         },
         target_bloch=DEFAULT_TARGET_BLOCH,
     )
@@ -174,7 +161,6 @@ def prepare_experiment(
     exp.dem_circuits(special_kernel_strategy=SPECIAL_KERNEL_STRATEGY)
     exp.dems()
     exp.initialize_decoders()
-    exp.prep_decoders()
     exp.make_tasks(device=GeminiLogicalSimulator())
     exp.get_samples(num_shots=eval_shots, chunk_size=None, sim_type=SIM_TYPE)
     exp.decode_and_postselect(decoder_name=decoder_name)
@@ -382,7 +368,13 @@ print("ylim:", ax.get_ylim())
 for i, collection in enumerate(ax.collections):
     try:
         paths = collection.get_paths()
-        ys = np.concatenate([p.vertices[:, 1] for p in paths if len(p.vertices)])
+        ys = np.concatenate(
+            [
+                np.asarray(p.vertices, dtype=float)[:, 1]
+                for p in paths
+                if np.asarray(p.vertices).size
+            ]
+        )
         print("collection", i, "y min/max:", np.nanmin(ys), np.nanmax(ys))
     except Exception as exc:
         print("collection", i, "could not inspect:", exc)

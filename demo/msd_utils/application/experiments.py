@@ -1,13 +1,16 @@
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Protocol, Sequence, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import numpy as np
 import stim
 import tsim
 from bloqade.decoders import BaseDecoder
+from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.domain.kernels import _build_tomography_primitives
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
+from demo.msd_utils.standard.bit_packing import pack_boolean_array
 from demo.msd_utils.standard.tomography import (
     DEFAULT_TARGET_BLOCH,
     FidelitySummary,
@@ -28,6 +31,7 @@ from bloqade.gemini.decoding.postselection import (
     DecoderAdapter,
     _build_generic_threshold_tables,
     _evaluate_cached_threshold_curve,
+    _make_decoder_adapter,
 )
 from bloqade.gemini.decoding.sampling import BasisDataset, run_task
 from bloqade.gemini.decoding.special_tasks import (
@@ -39,23 +43,7 @@ from bloqade.gemini.decoding.types import SquinKernel
 from bloqade.gemini.decoding.workflow import plot_decoder_curves
 from bloqade.gemini.device import GeminiLogicalSimulator
 
-
-class BaseDecoderFactory(Protocol):
-    def __call__(self, dem: stim.DetectorErrorModel, **kwargs: Any) -> BaseDecoder: ...
-
-
-# TODO: should this be ConfidenceDecoderFactory or DecoderAdaptersFactory?
-# TODO: simplify this abstraction to just take in the DEM. -- from stefan meeting.
-class DecoderAdaptersFactory(Protocol):
-    # TODO: specify the EXACT **kwargs to have?
-    def __call__(
-        self,
-        circuits_per_basis: Mapping[str, DemoTask],
-        full_factory_decoders_per_basis: Mapping[str, tuple[BaseDecoder, BaseDecoder]],
-        valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
-        target_bloch: np.ndarray,
-        **kwargs: Any,
-    ) -> dict[str, DecoderAdapter]: ...
+DecoderConstructor = Callable[..., BaseDecoder]
 
 
 @dataclass(frozen=True)
@@ -291,8 +279,6 @@ class PostSelectionExperimentCache:
 
     dem_circuits: Mapping[str, tsim.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
-    # decoders --> did we want this field? I think it is covered by the two fields below
-    decoders: Mapping[str, tuple[BaseDecoder, BaseDecoder]] | None
     decoders_with_confidence: Mapping[str, DecoderAdapter] | None
     # NOTE: not using fields initialized_decoders_postselection and initialized_decoders_final directly for this implementation
     # Q: should the decoders enforce the shape of the input?
@@ -323,7 +309,6 @@ class PostSelectionExperimentCache:
     def __init__(self):
         self.dem_circuits = None
         self.dems = None
-        self.decoders = None
         self.decoders_with_confidence = None
         self.raw_results = None
         self.decoded_results = None
@@ -345,14 +330,9 @@ class PostSelectionExperiment:
         # NOTE: again, I'm kind of cheating here because we can't really specify the shape of the numpy array in the dtype.
         # But this should be a 2D numpy array, where I have a list/array of possible valid postselection conditions.
         postselection_condition: np.ndarray,
-        # this implies that the table construction AND the ranking logic will ALL live in ConfidenceDecoder
-        # NOTE: now this is "decoders_postselection" instead of just "decoder_postselection"
-        # TODO: in the actual code, the user has to add code to specify the implementations of these guys
-        decoder_postselection: DecoderAdaptersFactory,
-        decoder_final: BaseDecoderFactory,
+        decoder: DecoderConstructor,
         # specifying these as a dictionary is reasonable? Use a mapping instead?
         decoder_init_args: dict[str, Any],
-        # NOTE: unfortunately, we need to supply "target_bloch" here to compute the ancilla scores
         target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     ):
         self.noncliff_prefix = noncliff_prefix
@@ -360,8 +340,7 @@ class PostSelectionExperiment:
         # NOTE: tomo_circs are currently not used; can supply these to build_decoder_kernel_bundle
         self.tomo_circs = tomo_circs
         self.postselection_condition = postselection_condition
-        self.decoder_postselection = decoder_postselection
-        self.decoder_final = decoder_final
+        self.decoder = decoder
         self.decoder_init_args = decoder_init_args
         self.target_bloch = target_bloch
 
@@ -449,11 +428,11 @@ class PostSelectionExperiment:
     # that outputs the decoders with confidences
     def initialize_decoders(
         self,
-    ) -> dict[str, tuple[BaseDecoder, BaseDecoder]]:
+    ) -> dict[str, DecoderAdapter]:
         dems_bases = self.postselection_exp_cache.dems
         if dems_bases is None:
             raise RuntimeError("dems must be called before initialize_decoders.")
-        decoders_bases = {}
+        decoders_bases: dict[str, DecoderAdapter] = {}
         # NOTE: there is a question of if we want to support multi-qubit tomography in this experiment. For now, probably not; if we did, we
         # would have to specify the number of output qubits and their locations and use that information to construct a custom SyndromeLayout.
         # Not sure what else would change if we had to support multi-qubit tomography. But tbh this experiment is pretty coupled to single qubit tomography atm
@@ -477,46 +456,42 @@ class PostSelectionExperiment:
             )
             # NOTE: this is important. We are sampling 2x to build the 2 decoders (not once); I think it is OK (so long as they approximate
             # the same table? but it IS more expensive)
-            full_decoder = self.decoder_final(full_dem, **self.decoder_init_args)
-            factory_decoder = self.decoder_final(factory_dem, **self.decoder_init_args)
-            decoders_bases[basis_label] = (full_decoder, factory_decoder)
-        self.postselection_exp_cache.decoders = decoders_bases
-        return decoders_bases
-
-    def prep_decoders(self) -> dict[str, DecoderAdapter]:
-        decoders_bases = self.postselection_exp_cache.decoders
-        if decoders_bases is None:
-            raise RuntimeError(
-                "initialize_decoders must be called before prep_decoders."
+            full_decoder = self.decoder(full_dem, **self.decoder_init_args)
+            factory_decoder = cast(
+                ConfidenceDecoder,
+                self.decoder(factory_dem, **self.decoder_init_args),
             )
-        # NOTE: have to construct the MSD circuit due to the way that MSD experiment calculates confidence, here
-        tomography_kernels = self.postselection_exp_cache.dem_kernels
-        actual_tasks = build_task_map(
-            self.simulator,
-            tomography_kernels.actual,
-            m2dets=None,
-            m2obs=None,
-            append_measurements=False,
-        )
-        # self.postselection_exp_cache.compiled_noncliff_tasks = actual_tasks
-        # actual_circuits = {
-        #     basis_label: act_task.tsim_circuit
-        #     for basis_label, act_task in actual_tasks.items()
-        # }
 
-        # TODO: deal with None possible type for 'decoders_bases'
-        conf_decoders = self.decoder_postselection(
-            actual_tasks,
-            decoders_bases,
-            valid_factory_targets=self.postselection_condition,
-            target_bloch=self.target_bloch,
-            **self.decoder_init_args,
-            layout=DEFAULT_SYNDROME_LAYOUT,
-        )
+            def make_factory_decode_impl(
+                factory: ConfidenceDecoder,
+            ) -> Callable[[np.ndarray], tuple[np.ndarray, float]]:
+                def factory_decode_impl(
+                    syndrome: np.ndarray,
+                ) -> tuple[np.ndarray, float]:
+                    correction, confidence = factory.decode_with_confidence(
+                        syndrome.astype(bool)
+                    )
+                    return np.asarray(correction, dtype=np.uint8), float(
+                        np.float64(confidence)
+                    )
 
-        self.postselection_exp_cache.decoders_with_confidence = conf_decoders
+                return factory_decode_impl
 
-        return conf_decoders
+            adapter = _make_decoder_adapter(
+                full_decoder=full_decoder,
+                factory_decoder=factory_decoder,
+                full_syndrome_length=full_dem.num_detectors,
+                factory_syndrome_length=factory_dem.num_detectors,
+                factory_decode_impl=make_factory_decode_impl(factory_decoder),
+                factory_score_mode=str(
+                    getattr(factory_decoder, "confidence_score_mode", "confidence")
+                ),
+            )
+            sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
+            adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
+            decoders_bases[basis_label] = adapter
+        self.postselection_exp_cache.decoders_with_confidence = decoders_bases
+        return decoders_bases
 
     def make_tasks(self, device: GeminiLogicalSimulator) -> dict[str, DemoTask]:
         tomography_kernels = self.postselection_exp_cache.dem_kernels
@@ -567,7 +542,7 @@ class PostSelectionExperiment:
         if actual_data is None:
             raise RuntimeError("get_samples must be called before decoding.")
         if decoder_map is None:
-            raise RuntimeError("prep_decoders must be called before decoding.")
+            raise RuntimeError("initialize_decoders must be called before decoding.")
         targets = _normalize_valid_factory_targets(self.postselection_condition)
         basis_labels = list(decoder_map.keys())
         # NOTE: hardcoded for now
