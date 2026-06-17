@@ -1,28 +1,26 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Any
 
 from bloqade.rewrite.passes import aggressive_unroll as agg
 from bloqade.squin.rewrite import SquinU3ToClifford
 from kirin import ir, rewrite
-from kirin.dialects import ilist, scf
+from kirin.dialects import scf
 from kirin.passes import TypeInfer
 
-from bloqade import qubit, squin
+from bloqade import squin
 from bloqade.lanes.analysis import atom
 from bloqade.lanes.arch.spec import ArchSpec
 from bloqade.lanes.dialects import move
 from bloqade.lanes.rewrite import move2squin
 from bloqade.lanes.rewrite.move2squin import (
+    LogicalInitKernel as LogicalInitKernel,
     LogicalNoiseModelABC as LogicalNoiseModelABC,
     NoiseModelABC as NoiseModelABC,
     SimpleLogicalNoiseModel as SimpleLogicalNoiseModel,
     SimpleNoiseModel as SimpleNoiseModel,
 )
 
-InitKernel = (
-    ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-)
+InitKernel = LogicalInitKernel | None
 
 
 @dataclass

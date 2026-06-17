@@ -24,6 +24,22 @@ from .base import AtomStateRewriter
 
 Len = TypeVar("Len")
 
+LogicalInitKernel = ir.Method[
+    [
+        ilist.IList[float, Any],
+        ilist.IList[float, Any],
+        ilist.IList[float, Any],
+        ilist.IList[ilist.IList[qubit.Qubit, Any], Any],
+    ],
+    None,
+]
+"""Broadcasted logical-initialization kernel.
+
+Applies the state-prep circuit in parallel over ``N`` qubit groups. Takes
+per-group ``theta``/``phi``/``lam`` lists and a list of ``N`` seven-qubit
+registers, rather than a single group's scalars and register.
+"""
+
 
 class NoiseModelABC(abc.ABC):
     """Abstract base class for noise models used during move-to-squin compilation.
@@ -72,10 +88,7 @@ class NoiseModelABC(abc.ABC):
 
     def get_logical_initialize(
         self,
-    ) -> tuple[
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None,
-    ]:
+    ) -> tuple[LogicalInitKernel | None, LogicalInitKernel | None]:
         """Return (clean_kernel, noisy_kernel) for logical initialization.
 
         The clean kernel is used by InsertGates for the noiseless initialization.
@@ -126,12 +139,8 @@ class SimpleNoiseModel(NoiseModelABC):
     local_rz_noise: ir.Method[[ilist.IList[qubit.Qubit, Any], float], None]
     global_r_noise: ir.Method[[ilist.IList[qubit.Qubit, Any], float, float], None]
     local_r_noise: ir.Method[[ilist.IList[qubit.Qubit, Any], float, float], None]
-    logical_initialize_clean: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-    ) = None
-    logical_initialize_noisy: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-    ) = None
+    logical_initialize_clean: LogicalInitKernel | None = None
+    logical_initialize_noisy: LogicalInitKernel | None = None
 
     def get_logical_initialize(self):
         return self.logical_initialize_clean, self.logical_initialize_noisy
@@ -174,10 +183,7 @@ class LogicalNoiseModelABC(NoiseModelABC):
     @abc.abstractmethod
     def get_logical_initialize(
         self,
-    ) -> tuple[
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
-    ]:
+    ) -> tuple[LogicalInitKernel, LogicalInitKernel]:
         """Return ``(clean_kernel, noisy_kernel)`` for logical initialization.
 
         Both kernels must be provided. The clean kernel is used by InsertGates.
@@ -200,10 +206,7 @@ class SimpleLogicalNoiseModel(LogicalNoiseModelABC, SimpleNoiseModel):
 
     def get_logical_initialize(
         self,
-    ) -> tuple[
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None],
-    ]:
+    ) -> tuple[LogicalInitKernel, LogicalInitKernel]:
         assert (
             self.logical_initialize_clean is not None
         ), "logical_initialize_clean must be set"
@@ -216,12 +219,8 @@ class SimpleLogicalNoiseModel(LogicalNoiseModelABC, SimpleNoiseModel):
     def from_simple(
         cls,
         noise_model: SimpleNoiseModel,
-        logical_initialize_clean: ir.Method[
-            [float, float, float, ilist.IList[qubit.Qubit, Any]], None
-        ],
-        logical_initialize_noisy: ir.Method[
-            [float, float, float, ilist.IList[qubit.Qubit, Any]], None
-        ],
+        logical_initialize_clean: LogicalInitKernel,
+        logical_initialize_noisy: LogicalInitKernel,
     ) -> "SimpleLogicalNoiseModel":
         """Create from an existing :class:`SimpleNoiseModel` plus init kernels."""
         return cls(
@@ -242,9 +241,7 @@ class SimpleLogicalNoiseModel(LogicalNoiseModelABC, SimpleNoiseModel):
 class InsertNoise(AtomStateRewriter):
     atom_state_map: ForwardFrame[atom.MoveExecution]
     noise_model: NoiseModelABC
-    initialize_noise_kernel: (
-        ir.Method[[float, float, float, ilist.IList[qubit.Qubit, Any]], None] | None
-    ) = None
+    initialize_noise_kernel: LogicalInitKernel | None = None
 
     def rewrite_Statement(self, node: ir.Statement) -> rewrite_abc.RewriteResult:
         if (trait := node.get_trait(move.EmitsState)) is None:
@@ -357,6 +354,10 @@ class InsertNoise(AtomStateRewriter):
             return rewrite_abc.RewriteResult()
 
         nodes_to_insert: list[ir.Statement] = [tau := py.Constant(math.tau)]
+        theta_rads: list[ir.SSAValue] = []
+        phi_rads: list[ir.SSAValue] = []
+        lam_rads: list[ir.SSAValue] = []
+        regs: list[ir.SSAValue] = []
         for theta, phi, lam, locations in zip(
             node.thetas, node.phis, node.lams, node.location_addresses
         ):
@@ -368,15 +369,26 @@ class InsertNoise(AtomStateRewriter):
             nodes_to_insert.append(phi_rad := py.Mult(tau.result, phi))
             nodes_to_insert.append(lam_rad := py.Mult(tau.result, lam))
             nodes_to_insert.append(reg_stmt := ilist.New(qubit_ssa))
-            inputs = (
-                theta_rad.result,
-                phi_rad.result,
-                lam_rad.result,
-                reg_stmt.result,
+            theta_rads.append(theta_rad.result)
+            phi_rads.append(phi_rad.result)
+            lam_rads.append(lam_rad.result)
+            regs.append(reg_stmt.result)
+
+        nodes_to_insert.append(thetas_reg := ilist.New(tuple(theta_rads)))
+        nodes_to_insert.append(phis_reg := ilist.New(tuple(phi_rads)))
+        nodes_to_insert.append(lams_reg := ilist.New(tuple(lam_rads)))
+        nodes_to_insert.append(qubits_reg := ilist.New(tuple(regs)))
+        nodes_to_insert.append(
+            func.Invoke(
+                (
+                    thetas_reg.result,
+                    phis_reg.result,
+                    lams_reg.result,
+                    qubits_reg.result,
+                ),
+                callee=self.initialize_noise_kernel,
             )
-            nodes_to_insert.append(
-                func.Invoke(inputs, callee=self.initialize_noise_kernel)
-            )
+        )
 
         for n in reversed(nodes_to_insert):
             n.insert_after(node)

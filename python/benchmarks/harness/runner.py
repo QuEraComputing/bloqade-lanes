@@ -164,11 +164,15 @@ class BenchmarkRunner:
                 logical_initialize=True,
             )
             move_mt = transversal_rewrites(move_mt)
+            # aggressive_unroll is required so the broadcasted state-prep loops
+            # (ilist.map/foldl in the init kernels) are fully unrolled; otherwise
+            # FidelityAnalysis cannot resolve the per-qubit noise channels behind
+            # the rolled loops and reports an inflated fidelity.
             physical_squin = MoveToSquinLogical(
                 arch_spec=placement_strategy.arch_spec,
                 noise_model=generate_logical_noise_model(),
                 add_noise=True,
-                aggressive_unroll=False,
+                aggressive_unroll=True,
             ).emit(move_mt)
             analysis = FidelityAnalysis(physical_squin.dialects)
             analysis.run(physical_squin)
