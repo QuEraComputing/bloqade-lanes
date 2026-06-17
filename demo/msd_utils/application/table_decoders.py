@@ -242,6 +242,9 @@ class TableDecoderWithSimplerConfidence(TableDecoder):
         self._is_cached_df = False
         self._is_cached_correction = False
 
+    # TODO: can implement batch decoding on a batch of det_obs_counts here with confidence (
+    # calls the method decode_det_obs_counts in TableDecoder and also returns the batch of confidence scores)
+
 
 TableDecoderClass: TypeAlias = (
     type[TableDecoder]
