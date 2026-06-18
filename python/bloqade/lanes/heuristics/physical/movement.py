@@ -76,6 +76,7 @@ class RustPlacementTraversal:
     restarts: int = 1
     lookahead: bool = False
     collect_entropy_trace: bool = False
+    seed: int = 0
 
 
 def _move_search_from_traversal(
@@ -97,6 +98,7 @@ def _move_search_from_traversal(
         max_movesets_per_group=traversal.max_movesets_per_group,
         max_goal_candidates=traversal.max_goal_candidates,
         collect_entropy_trace=collect_entropy_trace,
+        seed=traversal.seed,
     )
     return (
         _native.MoveSearch.entropy()

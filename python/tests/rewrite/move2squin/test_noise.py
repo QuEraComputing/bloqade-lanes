@@ -1,10 +1,11 @@
+import math
 from typing import Any
 
 from bloqade.test_utils import assert_nodes
 from bloqade.types import Qubit as Qubit
 from kirin import ir, rewrite
 from kirin.analysis import forward
-from kirin.dialects import func, ilist
+from kirin.dialects import func, ilist, py
 
 from bloqade import qubit, squin
 from bloqade.lanes.analysis import atom
@@ -62,6 +63,16 @@ def global_r_noise_kernel(
 @squin.kernel
 def local_r_noise_kernel(
     qubits: ilist.IList[qubit.Qubit, Any], theta: float, phi: float
+):
+    return
+
+
+@squin.kernel
+def initialize_noise_kernel(
+    theta: ilist.IList[float, Any],
+    phi: ilist.IList[float, Any],
+    lam: ilist.IList[float, Any],
+    qubits: ilist.IList[ilist.IList[qubit.Qubit, Any], Any],
 ):
     return
 
@@ -353,6 +364,93 @@ def test_insert_global_gate_noise():
             func.Invoke(
                 inputs=(reg.result, axis_angle, rotation_angle),
                 callee=global_r_noise_kernel,
+            ),
+        ]
+    )
+
+    assert_nodes(test_block, expected_block)
+
+
+def test_insert_physical_initialize_noise():
+    state = ir.TestValue()
+    theta = ir.TestValue()
+    phi = ir.TestValue()
+    lam = ir.TestValue()
+    test_block = ir.Block(
+        [
+            node := move.PhysicalInitialize(
+                current_state=state,
+                thetas=(theta, theta),
+                phis=(phi, phi),
+                lams=(lam, lam),
+                location_addresses=(
+                    (LocationAddress(0, 0),),
+                    (LocationAddress(1, 0),),
+                ),
+            )
+        ]
+    )
+
+    physical_ssa_values = {
+        0: (zero := ir.TestValue()),
+        1: (one := ir.TestValue()),
+    }
+    atom_state: Any = atom.AtomState(
+        data=atom.AtomStateData.new(
+            {
+                0: LocationAddress(0, 0),
+                1: LocationAddress(1, 0),
+            }
+        )
+    )
+    atom_state_map = forward.ForwardFrame(node, entries={node.result: atom_state})
+
+    rewrite.Walk(
+        noise.InsertNoise(
+            arch_spec=get_arch_spec(),
+            physical_ssa_values=physical_ssa_values,  # type: ignore
+            atom_state_map=atom_state_map,
+            noise_model=MODEL,
+            initialize_noise_kernel=initialize_noise_kernel,
+        )
+    ).rewrite(test_block)
+
+    # The noisy kernel is invoked once with the per-group angles and registers
+    # packed into ilists (broadcast over all logical qubits), inserted after the
+    # PhysicalInitialize node.
+    expected_block = ir.Block(
+        [
+            move.PhysicalInitialize(
+                current_state=state,
+                thetas=(theta, theta),
+                phis=(phi, phi),
+                lams=(lam, lam),
+                location_addresses=(
+                    (LocationAddress(0, 0),),
+                    (LocationAddress(1, 0),),
+                ),
+            ),
+            tau := py.Constant(math.tau),
+            theta_rad_0 := py.Mult(tau.result, theta),
+            phi_rad_0 := py.Mult(tau.result, phi),
+            lam_rad_0 := py.Mult(tau.result, lam),
+            zero_reg := ilist.New((zero,)),
+            theta_rad_1 := py.Mult(tau.result, theta),
+            phi_rad_1 := py.Mult(tau.result, phi),
+            lam_rad_1 := py.Mult(tau.result, lam),
+            one_reg := ilist.New((one,)),
+            thetas_reg := ilist.New((theta_rad_0.result, theta_rad_1.result)),
+            phis_reg := ilist.New((phi_rad_0.result, phi_rad_1.result)),
+            lams_reg := ilist.New((lam_rad_0.result, lam_rad_1.result)),
+            qubits_reg := ilist.New((zero_reg.result, one_reg.result)),
+            func.Invoke(
+                (
+                    thetas_reg.result,
+                    phis_reg.result,
+                    lams_reg.result,
+                    qubits_reg.result,
+                ),
+                callee=initialize_noise_kernel,
             ),
         ]
     )

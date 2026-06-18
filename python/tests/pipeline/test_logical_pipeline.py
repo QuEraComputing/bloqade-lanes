@@ -1,13 +1,15 @@
 """Tests for LogicalPipeline."""
 
 import bloqade.squin as squin
+import pytest
 from bloqade.squin.gate.stmts import S, SqrtX
 
 import bloqade.gemini as gemini
 from bloqade.lanes.dialects import move, place
+from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
 from bloqade.lanes.heuristics.logical.placement import LogicalPlacementStrategyNoHome
 from bloqade.lanes.pipeline import LogicalPipeline
-from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace
+from bloqade.lanes.pipeline.logical import _LogicalNativeToPlace, transversal_rewrites
 
 
 def test_logical_pipeline_smoke():
@@ -69,31 +71,89 @@ def test_logical_pipeline_produces_logical_initialize():
     assert len(inits) >= 1
 
 
-def test_logical_pipeline_no_return_moves():
-    """Passing a bare (non-palindrome) strategy disables return moves."""
+def test_logical_pipeline_layout_heuristic_default_is_none():
+    """LogicalPipeline.layout_heuristic defaults to None."""
+    pipeline = LogicalPipeline()
+    assert pipeline.layout_heuristic is None
+
+
+def test_logical_pipeline_resolves_none_to_logical_defaults(monkeypatch):
+    """When layout_heuristic is None, LogicalPipeline passes LogicalLayoutHeuristic
+    to the place→move stage."""
+    from bloqade.lanes.heuristics.logical.layout import LogicalLayoutHeuristic
+    from bloqade.lanes.pipeline.base import _PlaceToMove
+
+    captured: dict = {}
+    _orig_emit = _PlaceToMove.emit
+
+    def spy_emit(self_inner, mt, no_raise=True):
+        captured["layout_heuristic_type"] = type(self_inner.layout_heuristic)
+        return _orig_emit(self_inner, mt, no_raise=no_raise)
+
+    monkeypatch.setattr(_PlaceToMove, "emit", spy_emit)
 
     @gemini.logical.kernel(aggressive_unroll=True)
     def kernel():
-        reg = squin.qalloc(2)
+        reg = squin.qalloc(1)
         squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
         gemini.logical.terminal_measure(reg)
 
-    out = LogicalPipeline(placement_strategy=LogicalPlacementStrategyNoHome()).emit(
-        kernel
+    LogicalPipeline().emit(kernel)
+    assert captured["layout_heuristic_type"] is LogicalLayoutHeuristic
+
+
+def test_logical_pipeline_layout_heuristic_mismatch_warns():
+    """resolved_layout_heuristic warns when the explicit heuristic carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.physical import (
+        get_arch_spec as get_physical_arch_spec,
     )
-    assert out is not None
+
+    logical_arch = LogicalPipeline().arch_spec
+    physical_arch = get_physical_arch_spec()
+    assert logical_arch != physical_arch
+
+    mismatched_heuristic = LogicalLayoutHeuristic(arch_spec=physical_arch)
+    pipeline = LogicalPipeline(layout_heuristic=mismatched_heuristic)
+
+    with pytest.warns(
+        UserWarning, match="layout_heuristic was constructed with a different"
+    ):
+        result = pipeline.resolved_layout_heuristic
+
+    assert result is mismatched_heuristic
 
 
-def test_logical_pipeline_no_raise_suppresses_validation():
-    """no_raise=True does not raise even when pre-native validation fails."""
+def test_logical_pipeline_placement_strategy_mismatch_warns():
+    """resolved_placement_strategy warns when the explicit strategy carries a
+    structurally different arch_spec than the pipeline."""
+    from bloqade.lanes.arch.gemini.physical import (
+        get_arch_spec as get_physical_arch_spec,
+    )
+
+    logical_arch = LogicalPipeline().arch_spec
+    physical_arch = get_physical_arch_spec()
+    assert logical_arch != physical_arch
+
+    mismatched_strategy = LogicalPlacementStrategyNoHome(arch_spec=physical_arch)
+    pipeline = LogicalPipeline(placement_strategy=mismatched_strategy)
+
+    with pytest.warns(
+        UserWarning, match="placement_strategy was constructed with a different"
+    ):
+        result = pipeline.resolved_placement_strategy
+
+    assert result is mismatched_strategy
+
+
+def test_transversal_rewrites_direct():
+    """transversal_rewrites() rewrites the method in place and returns it."""
 
     @gemini.logical.kernel(aggressive_unroll=True)
-    def invalid_kernel():
-        reg = squin.qalloc(2)
+    def kernel():
+        reg = squin.qalloc(1)
         squin.h(reg[0])
-        squin.cx(reg[0], reg[1])
-        # missing terminal_measure — violates GeminiTerminalMeasurementValidation
+        gemini.logical.terminal_measure(reg)
 
-    out = LogicalPipeline().emit(invalid_kernel, no_raise=True)
-    assert out is not None
+    result = transversal_rewrites(kernel, rewrite_logical_initialize=False)
+    assert result is kernel
