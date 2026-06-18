@@ -78,6 +78,49 @@ def test_build_generic_threshold_tables_groups_counts_by_confidence_score():
     np.testing.assert_array_equal(per_basis["X"][2], np.array([0, 1]))
 
 
+def test_build_generic_threshold_tables_supports_empty_factory_postselection():
+    dataset = BasisDataset(
+        detectors=np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [0, 1, 0],
+            ],
+            dtype=np.uint8,
+        ),
+        observables=np.array([[0], [1], [0]], dtype=np.uint8),
+    )
+
+    def decode_factory(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
+        assert syndrome.shape == (0,)
+        return np.zeros(0, dtype=np.uint8), 1.0
+
+    def decode_full(_syndrome: np.ndarray) -> np.ndarray:
+        return np.array([0], dtype=np.uint8)
+
+    data = {basis: dataset for basis in ("X", "Y", "Z")}
+    decoders = {
+        basis: DecoderAdapter(
+            decode_factory=decode_factory,
+            decode_full=decode_full,
+        )
+        for basis in ("X", "Y", "Z")
+    }
+
+    per_basis, scores, weights, total_shots = _build_generic_threshold_tables(
+        data,
+        decoders,
+        targets=np.zeros((1, 0), dtype=np.uint8),
+        basis_labels=("X", "Y", "Z"),
+    )
+
+    assert total_shots == 9
+    np.testing.assert_array_equal(scores, np.array([1.0]))
+    np.testing.assert_array_equal(weights, np.array([9]))
+    np.testing.assert_array_equal(per_basis["X"][1], np.array([2]))
+    np.testing.assert_array_equal(per_basis["X"][2], np.array([1]))
+
+
 def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
     per_basis = {
         basis: (
@@ -145,3 +188,26 @@ def test_postselection_experiment_tomography_fraction_is_all_sampled_shots():
     assert result.fidelity_bloch(np.ones(3) / np.sqrt(3.0))["point"] == pytest.approx(
         (1.0 + np.sqrt(3.0)) / 2.0
     )
+
+
+def test_postselection_experiment_tomography_fraction_saturates_after_available_counts():
+    exp = object.__new__(PostSelectionExperiment)
+    exp.postselection_exp_cache = PostSelectionExperimentCache()
+    exp.postselection_exp_cache.decoded_results = (
+        {
+            basis: (
+                np.array([0.5], dtype=np.float64),
+                np.array([5], dtype=np.int64),
+                np.array([0], dtype=np.int64),
+            )
+            for basis in ("X", "Y", "Z")
+        },
+        np.array([0.5], dtype=np.float64),
+        np.array([15], dtype=np.int64),
+        300,
+    )
+
+    saturated = exp.tomography_result(accepted_fraction=1.0)
+    available = exp.tomography_result(accepted_fraction=0.05)
+
+    np.testing.assert_allclose(saturated.density_matrix, available.density_matrix)

@@ -25,6 +25,7 @@ class DecoderPrimitiveSet:
     state_injection_circuit: SquinKernel
     logical_circuit: SquinKernel
 
+    # TODO: remove "__getitem__" -- have one standard interface -- can delete this for first PR.
     def __getitem__(self, key: str) -> SquinKernel:
         return getattr(self, key)
 
@@ -45,6 +46,7 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
     def tomography_z(reg):
         return
 
+    # TODO: stick to X, Y, Z for now. Work with pauli strings by default.
     return {
         "tomography_x": tomography_x,
         "tomography_y": tomography_y,
@@ -79,6 +81,7 @@ def produce_tomography_kernels(
         Mapping from generated kernel names to generated Kirin kernels.
     """
 
+    # TODO: remove the current customization.
     def make_kernel(tomog_kernel: SquinKernel, generated_name: str) -> KirinKernel:
         def inner_tomog_kernel(reg):
             logical_kernel(reg)

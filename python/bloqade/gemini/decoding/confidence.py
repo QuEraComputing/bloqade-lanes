@@ -148,6 +148,7 @@ class ConfidenceGurobiDecoder(GurobiDecoder, ConfidenceDecoder):
             objective=objective_value,
         )
 
+    # TODO: make private
     def decode_with_logical_gap(
         self,
         detector_bits: npt.NDArray[np.bool_],

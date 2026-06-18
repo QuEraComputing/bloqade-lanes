@@ -29,6 +29,10 @@ def _as_uint32_count_table(counts: np.ndarray) -> np.ndarray:
 
 
 class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
+    # TODO: write expected breaking changes: no det_obs_counts in __init__ and in public API
+    # make private most stuff that other decoders don't have.
+    # TODO: breaking change -- datatype from 64 bits to 32 bits in TableDecoder.
+    # TODO: only expose decode_with_confidence.
     """Dense table decoder with empirical per-syndrome confidence."""
 
     def __init__(
@@ -95,6 +99,7 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
                 np.concatenate([det_samples, obs_samples], axis=1)
             )
 
+    # TODO: Make private?
     def update_det_obs_counts(self, det_obs_shots: np.ndarray) -> None:
         shots = np.asarray(det_obs_shots, dtype=np.uint8)
         expected_width = self.num_detectors + self.num_observables
@@ -114,6 +119,7 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
         self._is_cached_correction = False
         self._correction_confidence = None
 
+    # TODO: make private
     def cache_correction(self) -> None:
         """Cache maximum-likelihood corrections and their empirical confidence."""
 

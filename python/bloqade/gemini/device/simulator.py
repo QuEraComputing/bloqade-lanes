@@ -514,6 +514,7 @@ class GeminiLogicalSimulator:
             post_processing,
         ) = compile_task(logical_kernel, m2dets, m2obs)
 
+        # TODO: wrap with an if statement and check with Phil if we can refactor it properly.
         return GeminiLogicalSimulatorTask(
             logical_squin_kernel,
             self.noise_model,

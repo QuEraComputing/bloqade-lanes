@@ -55,17 +55,19 @@ def _counts_at_accepted_fraction(
         return zero_counts, one_counts
 
     target_count = max(1, int(math.ceil(float(accepted_fraction) * total_shots)))
-    table_state = []
+    basis_tables: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    table_indices: list[int] = []
     for basis in basis_labels:
         scores, zeros, ones = per_basis_tables[basis]
-        idx = len(scores) - 1
-        table_state.append([idx, scores, zeros, ones])
+        basis_tables.append((scores, zeros, ones))
+        table_indices.append(len(scores) - 1)
 
     kept = 0
     while kept < target_count:
         best_basis = -1
         best_score = -np.inf
-        for basis_index, (idx, scores, _zeros, _ones) in enumerate(table_state):
+        for basis_index, idx in enumerate(table_indices):
+            scores = basis_tables[basis_index][0]
             if idx >= 0 and float(scores[idx]) > best_score:
                 best_basis = basis_index
                 best_score = float(scores[idx])
@@ -73,23 +75,26 @@ def _counts_at_accepted_fraction(
         if best_basis < 0:
             break
 
-        idx, _scores, zeros, ones = table_state[best_basis]
+        idx = table_indices[best_basis]
+        _scores, zeros, ones = basis_tables[best_basis]
         zero = int(zeros[idx])
         one = int(ones[idx])
         zero_counts[best_basis] += zero
         one_counts[best_basis] += one
         kept += zero + one
-        table_state[best_basis][0] = idx - 1
+        table_indices[best_basis] = idx - 1
 
     return zero_counts, one_counts
 
 
 # TODO: fix the type-checks on this file; the type-checks aren't working for some reason
 def magic_state_dist_steane() -> DecoderPrimitiveSet:
+    # TODO: make it more precise-- keep the actual computation
     ideal_theta = 0.3041 * math.pi
     ideal_phi = 0.25 * math.pi
     ideal_lam = 0.0
 
+    # TODO: have offsets as parameters? -- defaults set to 0.
     theta_offset = 0.30
     phi_offset = 0.0
     lam_offset = 0.0
@@ -391,6 +396,7 @@ class PostSelectionExperiment:
             raise ValueError("postselection_condition must be a 2D array.")
         basis_labels = list(decoder_map.keys())
         progress_label = decoder_name
+        # decode per shot and store a simpler result.
         decoded_results_tuple = _build_generic_threshold_tables(
             actual_data,
             decoder_map,
@@ -437,6 +443,7 @@ class PostSelectionExperiment:
     # decoder on the output observable for ALL shots which is more expensive.
     def tomography_result(
         self,
+        # TODO: accepted fraction of shots after postselection.
         accepted_fraction: float,
         *,
         basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
