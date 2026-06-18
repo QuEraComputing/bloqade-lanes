@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import TypedDict
 
@@ -11,10 +12,15 @@ from scipy.special import logsumexp
 from scipy.stats import binomtest
 
 
-class PosteriorFidelitySummary(TypedDict):
-    """Posterior fidelity summary without the reconstructed Bloch vector."""
+class SimpleFidelitySummary(TypedDict):
+    """Minimal target-specific fidelity summary."""
 
     point: float
+
+
+class PosteriorFidelitySummary(SimpleFidelitySummary):
+    """Posterior fidelity summary without the reconstructed Bloch vector."""
+
     median: float
     low: float
     high: float
@@ -29,6 +35,63 @@ class FidelitySummary(PosteriorFidelitySummary):
 
 DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
 _DEFAULT_SIGN = np.array((1.0, 1.0, 1.0), dtype=np.float64)
+
+
+def _density_matrix_from_bloch(bloch: np.ndarray) -> np.ndarray:
+    """Construct a single-qubit density matrix from a Bloch vector."""
+
+    bloch = np.asarray(bloch, dtype=np.float64)
+    if bloch.shape != (3,):
+        raise ValueError("bloch must be a length-3 vector.")
+    x, y, z = bloch
+    return 0.5 * np.array(
+        [
+            [1.0 + z, x - 1j * y],
+            [x + 1j * y, 1.0 - z],
+        ],
+        dtype=np.complex128,
+    )
+
+
+@dataclass(frozen=True, init=False)
+class TomographyResult:
+    """Reconstructed single-qubit tomography result.
+
+    Args:
+        zero_counts: Number of logical-zero outcomes in the X, Y, and Z bases.
+        one_counts: Number of logical-one outcomes in the X, Y, and Z bases.
+    """
+
+    density_matrix: np.ndarray
+
+    def __init__(
+        self,
+        zero_counts: np.ndarray | Sequence[int],
+        one_counts: np.ndarray | Sequence[int],
+    ) -> None:
+        zero_arr = np.asarray(zero_counts, dtype=np.int64).reshape(-1)
+        one_arr = np.asarray(one_counts, dtype=np.int64).reshape(-1)
+        if zero_arr.shape != (3,) or one_arr.shape != (3,):
+            raise ValueError("zero_counts and one_counts must be length-3 arrays.")
+
+        totals = np.maximum(zero_arr + one_arr, 1)
+        expectations = (zero_arr - one_arr) / totals
+        bloch = expectations.astype(np.float64)
+
+        object.__setattr__(self, "density_matrix", _density_matrix_from_bloch(bloch))
+
+    def fidelity_bloch(
+        self,
+        target_bloch: np.ndarray | Sequence[float],
+    ) -> SimpleFidelitySummary:
+        """Compute fidelity with a pure target state from its Bloch vector."""
+
+        target_density_matrix = _density_matrix_from_bloch(
+            np.asarray(target_bloch, dtype=np.float64)
+        )
+        # NOTE: only works for pure states
+        point = float(np.real(np.trace(self.density_matrix @ target_density_matrix)))
+        return {"point": point}
 
 
 def _weighted_quantile(
@@ -353,6 +416,8 @@ __all__ = [
     "DEFAULT_TARGET_BLOCH",
     "FidelitySummary",
     "PosteriorFidelitySummary",
+    "SimpleFidelitySummary",
+    "TomographyResult",
     "expectation_conf_interval",
     "expectation_with_error_bar",
     "fidelity_from_counts",

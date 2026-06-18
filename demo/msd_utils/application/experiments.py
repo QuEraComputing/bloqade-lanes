@@ -1,6 +1,5 @@
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence, cast
 
 import numpy as np
@@ -11,12 +10,7 @@ from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.domain.kernels import _build_tomography_primitives
 from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
 from demo.msd_utils.standard.bit_packing import pack_boolean_array
-from demo.msd_utils.standard.tomography import (
-    DEFAULT_TARGET_BLOCH,
-    FidelitySummary,
-    expectation_with_error_bar,
-    posterior_fidelity_summary,
-)
+from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 
 from bloqade.gemini.decoding.constants import DEFAULT_BASIS_LABELS
 from bloqade.gemini.decoding.dem import sub_detector_error_model
@@ -44,143 +38,6 @@ from bloqade.gemini.decoding.workflow import plot_decoder_curves
 from bloqade.gemini.device import GeminiLogicalSimulator
 
 DecoderConstructor = Callable[..., BaseDecoder]
-
-
-@dataclass(frozen=True)
-class TomographyResult:
-    """Single-qubit tomography counts and reconstruction settings.
-
-    The result intentionally stores tomography information rather than a
-    target-specific fidelity. ``fidelity_bloch`` projects the reconstructed
-    Bloch estimate onto a requested target Bloch vector.
-    """
-
-    basis_labels: tuple[str, ...]
-    zero_counts: np.ndarray
-    one_counts: np.ndarray
-    method: Literal["wilson", "bayesian_bloch_ball"]
-    sign_vector: np.ndarray
-    binary_precision: int | None = None
-    max_grid_points: int = 1_500_000
-
-    @property
-    def total_counts(self) -> np.ndarray:
-        """Total accepted zero/one counts for each tomography basis."""
-
-        return self.zero_counts + self.one_counts
-
-    @property
-    def bloch(self) -> np.ndarray:
-        """Point-estimate Bloch vector in this result's sign convention."""
-
-        totals = np.maximum(self.total_counts, 1)
-        expectations = (self.zero_counts - self.one_counts) / totals
-        return expectations.astype(np.float64) * self.sign_vector
-
-    def fidelity_bloch(
-        self,
-        target_bloch_or_theta: Sequence[float] | np.ndarray | float,
-        phi: float | None = None,
-        z: float | None = None,
-    ) -> FidelitySummary:
-        """Project this tomography result onto a target Bloch vector.
-
-        Args:
-            target_bloch_or_theta: Either a length-3 target Bloch vector, the
-                target ``x`` coordinate when ``phi`` and ``z`` are also given,
-                or the Bloch-sphere polar angle ``theta`` when ``phi`` is given
-                and ``z`` is omitted.
-            phi: Either the target ``y`` coordinate, or the Bloch-sphere
-                azimuthal angle paired with ``theta``.
-            z: Optional target ``z`` coordinate.
-
-        Returns:
-            Fidelity summary for the requested target Bloch vector.
-        """
-
-        target = _resolve_target_bloch(target_bloch_or_theta, phi, z)
-        bloch = self.bloch
-        point = float(0.5 + 0.5 * np.dot(bloch, target))
-
-        if self.method == "wilson":
-            errors = []
-            for zero, one in zip(
-                self.zero_counts.tolist(),
-                self.one_counts.tolist(),
-                strict=True,
-            ):
-                _, err = expectation_with_error_bar(int(zero), int(one))
-                errors.append(err)
-            fidelity_err = 0.5 * float(
-                np.sqrt(np.sum((target * np.asarray(errors, dtype=np.float64)) ** 2))
-            )
-            low = point - fidelity_err
-            high = point + fidelity_err
-            median = point
-        elif self.method == "bayesian_bloch_ball":
-            posterior = posterior_fidelity_summary(
-                self.total_counts.astype(np.int64),
-                self.zero_counts.astype(np.int64),
-                target,
-                sign=self.sign_vector,
-                binary_precision=self.binary_precision,
-                max_grid_points=self.max_grid_points,
-            )
-            low = float(posterior["low"])
-            high = float(posterior["high"])
-            fidelity_err = float(posterior["error"])
-            median = float(posterior["median"])
-            point = float(posterior["point"])
-        else:
-            raise ValueError("method must be 'wilson' or 'bayesian_bloch_ball'.")
-
-        return {
-            "point": float(point),
-            "median": float(median),
-            "low": float(low),
-            "high": float(high),
-            "error": float(fidelity_err),
-            "bloch": (float(bloch[0]), float(bloch[1]), float(bloch[2])),
-        }
-
-
-def _resolve_target_bloch(
-    target_bloch_or_theta: Sequence[float] | np.ndarray | float,
-    phi: float | None,
-    z: float | None,
-) -> np.ndarray:
-    """Normalize target Bloch-vector inputs accepted by ``fidelity_bloch``."""
-
-    if phi is None and z is None:
-        target = np.asarray(target_bloch_or_theta, dtype=np.float64)
-        if target.shape != (3,):
-            raise ValueError("target_bloch must be a length-3 vector.")
-        return target
-
-    if phi is not None and z is not None:
-        x = np.asarray(target_bloch_or_theta, dtype=np.float64)
-        if x.shape != ():
-            raise ValueError("x coordinate must be scalar when y and z are given.")
-        return np.array(
-            [float(x), float(phi), float(z)],
-            dtype=np.float64,
-        )
-
-    if phi is None:
-        raise ValueError("phi must be provided when using Bloch-sphere angles.")
-    theta_array = np.asarray(target_bloch_or_theta, dtype=np.float64)
-    if theta_array.shape != ():
-        raise ValueError("theta must be scalar when using Bloch-sphere angles.")
-    theta = float(theta_array)
-    azimuth = float(phi)
-    return np.array(
-        [
-            math.sin(theta) * math.cos(azimuth),
-            math.sin(theta) * math.sin(azimuth),
-            math.cos(theta),
-        ],
-        dtype=np.float64,
-    )
 
 
 def _counts_at_accepted_fraction(
@@ -609,7 +466,6 @@ class PostSelectionExperiment:
         accepted_fraction: float,
         method: Literal["wilson", "bayesian_bloch_ball"],
         *,
-        sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
         basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
         binary_precision: int | None = None,
         max_grid_points: int = 1_500_000,
@@ -619,7 +475,9 @@ class PostSelectionExperiment:
         ``accepted_fraction`` is interpreted relative to all sampled shots,
         matching the x-axis convention used by ``analysis_f_vs_fraction``.
         Because counts are grouped by confidence score, the returned result may
-        keep slightly more than the requested fraction.
+        keep slightly more than the requested fraction. ``method`` is accepted
+        for compatibility with the curve APIs, but this result reconstructs a
+        point-estimate density matrix directly from zero/one counts.
         """
 
         if self.postselection_exp_cache.decoded_results is None:
@@ -640,13 +498,8 @@ class PostSelectionExperiment:
             basis_labels=basis_labels,
         )
         return TomographyResult(
-            basis_labels=tuple(basis_labels),
             zero_counts=zero_counts,
             one_counts=one_counts,
-            method=method,
-            sign_vector=np.asarray(sign_vector, dtype=np.float64),
-            binary_precision=binary_precision,
-            max_grid_points=max_grid_points,
         )
 
     def analysis_visualization(

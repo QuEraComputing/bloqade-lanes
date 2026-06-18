@@ -200,7 +200,6 @@ injected_mld_exp = prepare_experiment(
 tomo_result = msd_mld_exp.tomography_result(
     0.05,
     "wilson",
-    sign_vector=DISTILLED_SIGN_VECTOR,
     binary_precision=BINARY_PRECISION,
 )
 tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
@@ -245,7 +244,6 @@ injected_curve = injected_mld_exp.analysis_f_vs_fraction(
 injected_summary = injected_mld_exp.tomography_result(
     1.0,
     "wilson",
-    sign_vector=INJECTED_SIGN_VECTOR,
     binary_precision=BINARY_PRECISION,
 ).fidelity_bloch(DEFAULT_TARGET_BLOCH)
 

@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from demo.msd_utils.application.experiments import (  # noqa: E402
     PostSelectionExperiment,
     PostSelectionExperimentCache,
-    TomographyResult,
 )
 from demo.msd_utils.application.table_decoders import (  # noqa: E402
     SparseTableDecoder,
@@ -24,6 +23,7 @@ from demo.msd_utils.domain.confidence import (  # noqa: E402
     ConfidenceGurobiDecoder,
     TableDecoderWithConfidence,
 )
+from demo.msd_utils.standard.tomography import TomographyResult  # noqa: E402
 
 from bloqade.gemini.decoding.postselection import DecoderAdapter  # noqa: E402
 from bloqade.gemini.decoding.sampling import BasisDataset  # noqa: E402
@@ -116,26 +116,20 @@ def _fake_decoding_experiment() -> PostSelectionExperiment:
     return exp
 
 
-def test_tomography_result_fidelity_accepts_vector_coordinates_and_angles():
+def test_tomography_result_reconstructs_density_matrix_and_point_fidelity():
     result = TomographyResult(
-        basis_labels=("X", "Y", "Z"),
         zero_counts=np.array([3, 2, 1], dtype=np.int64),
         one_counts=np.array([1, 2, 3], dtype=np.int64),
-        method="wilson",
-        sign_vector=np.array([1.0, 1.0, 1.0]),
-        binary_precision=4,
     )
 
     by_vector = result.fidelity_bloch(np.array([1.0, 0.0, 0.0]))
-    by_coordinates = result.fidelity_bloch(1.0, 0.0, 0.0)
-    by_angles = result.fidelity_bloch(np.pi / 2.0, 0.0)
 
-    assert result.total_counts.tolist() == [4, 4, 4]
-    assert result.bloch.tolist() == pytest.approx([0.5, 0.0, -0.5])
+    np.testing.assert_allclose(
+        result.density_matrix,
+        np.array([[0.25, 0.25], [0.25, 0.75]], dtype=np.complex128),
+    )
     assert by_vector["point"] == pytest.approx(0.75)
-    assert by_coordinates["point"] == pytest.approx(by_vector["point"])
-    assert by_angles["point"] == pytest.approx(by_vector["point"])
-    assert by_vector["low"] <= by_vector["median"] <= by_vector["high"]
+    assert set(by_vector) == {"point"}
 
 
 def test_tomography_result_accumulates_highest_confidence_groups_first():
@@ -174,10 +168,14 @@ def test_tomography_result_accumulates_highest_confidence_groups_first():
         basis_labels=("X", "Y", "Z"),
     )
 
-    assert tiny_fraction.zero_counts.tolist() == [3, 0, 0]
-    assert tiny_fraction.one_counts.tolist() == [0, 0, 0]
-    assert high_groups.zero_counts.tolist() == [3, 2, 1]
-    assert high_groups.one_counts.tolist() == [0, 0, 0]
+    np.testing.assert_allclose(
+        tiny_fraction.density_matrix,
+        np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.complex128),
+    )
+    np.testing.assert_allclose(
+        high_groups.density_matrix,
+        np.array([[1.0, 0.5 - 0.5j], [0.5 + 0.5j, 0.0]], dtype=np.complex128),
+    )
 
 
 def test_postselection_experiment_decode_and_analysis_use_cached_tables():
