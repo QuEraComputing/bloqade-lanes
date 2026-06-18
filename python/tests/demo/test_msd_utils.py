@@ -56,7 +56,6 @@ from demo.msd_utils import (
     expectation_with_error_bar,
     fidelity_from_counts,
     fidelity_from_zero_one_counts,
-    infer_distilled_sign_vector,
     infer_factory_target,
     injected_baseline,
     naive_distilled_summary,
@@ -102,7 +101,6 @@ def test_fidelity_from_zero_one_counts_matches_array_counts():
         x_bits,
         y_bits,
         z_bits,
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 1.0, 0.0], dtype=np.float64),
     )
     from_counts = fidelity_from_zero_one_counts(
@@ -112,7 +110,6 @@ def test_fidelity_from_zero_one_counts_matches_array_counts():
         3,
         1,
         3,
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 1.0, 0.0], dtype=np.float64),
     )
 
@@ -213,7 +210,6 @@ def test_mld_confidence_supports_empty_factory_stage():
         {basis: dataset for basis in basis_labels},
         valid_factory_targets=np.zeros((1, 0), dtype=np.uint8),
         basis_labels=basis_labels,
-        sign_vector=(1.0, 1.0, 1.0),
         target_bloch=np.array([1.0, 1.0, 1.0], dtype=np.float64) / np.sqrt(3.0),
         layout=layout,
     )
@@ -238,7 +234,6 @@ def test_mld_confidence_supports_empty_factory_stage():
         threshold_points=2,
         metric="empty-factory",
         valid_factory_targets=np.zeros((1, 0), dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         target_bloch=np.array([1.0, 1.0, 1.0], dtype=np.float64) / np.sqrt(3.0),
         basis_labels=basis_labels,
         min_accepted_per_basis=1,
@@ -496,7 +491,6 @@ def _workflow_config(
         num_logical_qubits=5,
         binary_precision=4,
         basis_labels=("X", "Y", "Z"),
-        sign_vector=(1.0, 1.0, 1.0),
         layout=layout,
     )
 
@@ -748,31 +742,6 @@ def test_infer_factory_target_selects_branch_near_expected_acceptance():
     assert target.tolist() == [0]
 
 
-def test_infer_distilled_sign_vector_aligns_noiseless_bloch_vector():
-    task_map = _basis_task_map(
-        {
-            "X": [0, 0, 0, 0],
-            "Y": [1, 1, 1, 1],
-            "Z": [0, 0, 0, 0],
-        },
-        factory_bits_by_basis={
-            "X": [0, 0, 0, 0],
-            "Y": [0, 0, 0, 0],
-            "Z": [0, 0, 0, 0],
-        },
-    )
-
-    sign = infer_distilled_sign_vector(
-        task_map,
-        valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        shots=4,
-        basis_labels=("X", "Y", "Z"),
-        target_bloch=DEFAULT_TARGET_BLOCH,
-    )
-
-    assert sign.tolist() == [1.0, -1.0, 1.0]
-
-
 def test_naive_injected_summary_postselects_zero_detectors():
     detector_rows = np.array([[0], [1], [0], [1]], dtype=np.uint8)
     task_map = _basis_task_map(
@@ -782,7 +751,6 @@ def test_naive_injected_summary_postselects_zero_detectors():
 
     summary = naive_injected_summary(
         task_map,
-        sign_vector=(1.0, 1.0, 1.0),
         shots=4,
         require_zero_detectors=True,
         basis_labels=("X", "Y", "Z"),
@@ -807,7 +775,6 @@ def test_naive_distilled_summary_postselects_factory_targets():
     summary = naive_distilled_summary(
         task_map,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         shots=4,
         basis_labels=("X", "Y", "Z"),
         min_accepted_per_basis=1,
@@ -826,12 +793,11 @@ def test_injected_baseline_raw_path_uses_observable_bits_directly():
         task_map,
         eval_shots=4,
         table_decoder_cls=SparseTableDecoder,
-        sign_vector=(1.0, -1.0, 1.0),
         raw=True,
         basis_labels=("X", "Y", "Z"),
     )
 
-    assert summary["bloch"] == pytest.approx((1.0, 1.0, 1.0))
+    assert summary["bloch"] == pytest.approx((1.0, -1.0, 1.0))
 
 
 def test_table_decoder_with_confidence_returns_syndrome_score():
@@ -981,7 +947,6 @@ def test_streaming_mld_ancilla_scores_match_batch():
         ranking_data,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
         basis_labels=("X", "Y", "Z"),
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
         layout=layout,
     )
@@ -991,7 +956,6 @@ def test_streaming_mld_ancilla_scores_match_batch():
         32,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
         basis_labels=("X", "Y", "Z"),
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
         layout=layout,
         chunk_size=7,
@@ -1044,7 +1008,6 @@ def test_evaluate_curve_returns_monotone_acceptance():
         threshold_points=3,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
     )
 
@@ -1111,7 +1074,6 @@ def test_evaluate_curve_cached_generic_threshold_matches_legacy_loop():
         threshold_points=5,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
         basis_labels=("X", "Y", "Z"),
         min_accepted_per_basis=1,
@@ -1194,7 +1156,6 @@ def test_evaluate_curve_cached_generic_threshold_matches_legacy_loop():
                 corrected["Y"],
                 corrected["Z"],
                 256,
-                sign_vector=(1.0, -1.0, 1.0),
                 target_bloch=np.array([0.0, 0.0, 1.0], dtype=np.float64),
                 uncertainty_backend="wilson",
             )
@@ -1263,7 +1224,6 @@ def test_evaluate_mld_curve_uses_cumulative_pattern_ordering():
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
         binary_precision=4,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
     )
 
@@ -1318,7 +1278,6 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
         {"X": make_adapter(), "Y": make_adapter(), "Z": make_adapter()},
         binary_precision=4,
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
     )
 
@@ -1329,7 +1288,6 @@ def test_evaluate_curve_pattern_rank_matches_legacy_mld_ordering():
         threshold_points=4,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
         selection_mode="pattern_rank",
     )
@@ -1399,7 +1357,6 @@ def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
         threshold_points=3,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
         threshold_policy="quantile",
     )
@@ -1415,7 +1372,6 @@ def test_evaluate_curve_sparse_mld_threshold_matches_generic_threshold_path():
         threshold_points=3,
         metric="test",
         valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        sign_vector=(1.0, 1.0, 1.0),
         min_accepted_per_basis=1,
         threshold_policy="quantile",
     )

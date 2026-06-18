@@ -462,7 +462,6 @@ def _evaluate_cached_threshold_curve(
     score_weights: np.ndarray | None = None,
     binary_precision: int | None,
     threshold_points: int,
-    sign_vector: Sequence[float],
     target_bloch: np.ndarray,
     basis_labels: Sequence[str],
     min_accepted_per_basis: int,
@@ -537,7 +536,6 @@ def _evaluate_cached_threshold_curve(
             counts_by_basis["Z"][0],
             counts_by_basis["Z"][1],
             binary_precision,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             uncertainty_backend=uncertainty_backend,
             max_grid_points=max_grid_points,
@@ -575,7 +573,6 @@ def evaluate_curve(
     threshold_points: int,
     metric: str,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
-    sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
@@ -596,7 +593,6 @@ def evaluate_curve(
             threshold policies.
         metric: Human-readable metric name used in error messages.
         valid_factory_targets: Valid corrected factory observable patterns.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         target_bloch: Target Bloch vector for fidelity calculation.
         basis_labels: Tomography basis labels to evaluate.
         min_accepted_per_basis: Minimum accepted samples required per basis.
@@ -618,7 +614,6 @@ def evaluate_curve(
             decoder_map,
             binary_precision=binary_precision,
             valid_factory_targets=valid_factory_targets,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             basis_labels=basis_labels,
             min_accepted_per_basis=min_accepted_per_basis,
@@ -650,7 +645,6 @@ def evaluate_curve(
             score_weights=score_weights,
             binary_precision=binary_precision,
             threshold_points=threshold_points,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             basis_labels=basis_labels,
             min_accepted_per_basis=min_accepted_per_basis,
@@ -674,7 +668,6 @@ def evaluate_mld_curve(
     *,
     binary_precision: int | None = None,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
-    sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
@@ -689,7 +682,6 @@ def evaluate_mld_curve(
         decoder_map: Basis-labeled MLD decoder adapters.
         binary_precision: Precision used by Bayesian tomography scoring.
         valid_factory_targets: Valid corrected factory observable patterns.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         target_bloch: Target Bloch vector for fidelity calculation.
         basis_labels: Tomography basis labels to evaluate.
         min_accepted_per_basis: Minimum accepted samples required per basis.
@@ -789,7 +781,6 @@ def evaluate_mld_curve(
             np.asarray(cumulative_bits["Y"], dtype=np.uint8),
             np.asarray(cumulative_bits["Z"], dtype=np.uint8),
             binary_precision,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             uncertainty_backend=uncertainty_backend,
             max_grid_points=max_grid_points,

@@ -59,8 +59,6 @@ THRESHOLD_POINTS = 12
 MIN_ACCEPTED_PER_BASIS = 1
 SPECIAL_KERNEL_STRATEGY = "prefix_prepare"
 
-DISTILLED_SIGN_VECTOR = (1.0, -1.0, 1.0)
-INJECTED_SIGN_VECTOR = (1.0, -1.0, 1.0)
 
 MSD_VALID_FACTORY_TARGETS = np.zeros((1, 4), dtype=np.uint8)
 INJECTED_VALID_FACTORY_TARGETS = np.zeros((1, 0), dtype=np.uint8)
@@ -188,7 +186,6 @@ injected_mld_exp = prepare_experiment(
 tomo_result = msd_mld_exp.tomography_result(
     0.05,
     "wilson",
-    sign_vector=DISTILLED_SIGN_VECTOR,
     binary_precision=BINARY_PRECISION,
 )
 tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
@@ -199,7 +196,6 @@ tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
 # %%
 msd_mld_curve = msd_mld_exp.analysis_f_vs_fraction(
     binary_precision=BINARY_PRECISION,
-    sign_vector=DISTILLED_SIGN_VECTOR,
     target_bloch=DEFAULT_TARGET_BLOCH,
     threshold_points=THRESHOLD_POINTS,
     min_accepted_per_basis=MIN_ACCEPTED_PER_BASIS,
@@ -210,7 +206,6 @@ msd_mle_curve = None
 if msd_mle_exp is not None:
     msd_mle_curve = msd_mle_exp.analysis_f_vs_fraction(
         binary_precision=BINARY_PRECISION,
-        sign_vector=DISTILLED_SIGN_VECTOR,
         target_bloch=DEFAULT_TARGET_BLOCH,
         threshold_points=THRESHOLD_POINTS,
         min_accepted_per_basis=MIN_ACCEPTED_PER_BASIS,
@@ -219,7 +214,6 @@ if msd_mle_exp is not None:
 
 injected_curve = injected_mld_exp.analysis_f_vs_fraction(
     binary_precision=BINARY_PRECISION,
-    sign_vector=INJECTED_SIGN_VECTOR,
     target_bloch=DEFAULT_TARGET_BLOCH,
     threshold_points=THRESHOLD_POINTS,
     min_accepted_per_basis=MIN_ACCEPTED_PER_BASIS,
@@ -229,7 +223,6 @@ injected_curve = injected_mld_exp.analysis_f_vs_fraction(
 injected_summary = injected_mld_exp.tomography_result(
     1.0,
     "wilson",
-    sign_vector=INJECTED_SIGN_VECTOR,
     binary_precision=BINARY_PRECISION,
 ).fidelity_bloch(DEFAULT_TARGET_BLOCH)
 

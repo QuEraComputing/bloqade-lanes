@@ -9,7 +9,6 @@ from demo.msd_utils.standard.tomography import (
     DEFAULT_TARGET_BLOCH,
     FidelitySummary,
     fidelity_from_counts,
-    logical_expectation,
 )
 
 from .constants import (
@@ -25,8 +24,6 @@ from .sampling import SimulatorTask, run_task
 from .types import TableDecoderClass
 
 
-# TODO: technically maybe we don't need these cases where we
-# infer the sign vector. Ideally, this should be fixed/taken care of by the user..
 def infer_factory_target(
     task_map: Mapping[str, SimulatorTask],
     *,
@@ -64,69 +61,12 @@ def infer_factory_target(
     return np.asarray(ranked[0][0], dtype=np.uint8)
 
 
-def infer_distilled_sign_vector(
-    task_map: Mapping[str, SimulatorTask],
-    *,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
-    shots: int = 12_000,
-    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-) -> np.ndarray:
-    """Infer the sign convention aligning accepted outputs to a target state.
-
-    Args:
-        task_map: Basis-labeled task map to sample without noise.
-        valid_factory_targets: Valid corrected factory observable patterns.
-        shots: Number of noiseless shots to sample per basis.
-        basis_labels: Basis labels to evaluate.
-        target_bloch: Target Bloch vector used to choose the sign convention.
-
-    Returns:
-        Three-element sign vector for X/Y/Z tomography.
-    """
-
-    targets = _normalize_valid_factory_targets(valid_factory_targets)
-    corrected: dict[str, np.ndarray] = {}
-    for basis in basis_labels:
-        data = run_task(task_map[basis], shots, with_noise=False)
-        mask = _ancilla_matches_valid_targets(data.observables[:, 1:], targets)
-        corrected[basis] = data.observables[mask, 0].astype(np.uint8)
-
-    raw_bloch = np.array(
-        [
-            logical_expectation(corrected["X"]),
-            logical_expectation(corrected["Y"]),
-            logical_expectation(corrected["Z"]),
-        ]
-    )
-
-    sign_candidates = [
-        np.array([sx, sy, sz], dtype=np.float64)
-        for sx in (-1.0, 1.0)
-        for sy in (-1.0, 1.0)
-        for sz in (-1.0, 1.0)
-    ]
-    scored = sorted(
-        (
-            (float(np.dot(raw_bloch * sign, target_bloch)), sign)
-            for sign in sign_candidates
-        ),
-        key=lambda item: item[0],
-        reverse=True,
-    )
-
-    print("Noiseless accepted-branch Bloch:", raw_bloch)
-    print("Chosen distilled sign vector:", scored[0][1], "score:", scored[0][0])
-    return scored[0][1]
-
-
 # NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook
 # (for naive postselection) -- ideally, customize decoders path to take in a
 # decoder that just postselects on 0
 def naive_injected_summary(
     task_map: Mapping[str, SimulatorTask],
     *,
-    sign_vector: Sequence[float],
     binary_precision: int | None = None,
     shots: int,
     require_zero_detectors: bool = False,
@@ -139,7 +79,6 @@ def naive_injected_summary(
 
     Args:
         task_map: Basis-labeled injected task map.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         binary_precision: Precision used by Bayesian tomography scoring.
         shots: Number of shots to sample per basis.
         require_zero_detectors: Whether to postselect on all detector bits zero.
@@ -173,7 +112,6 @@ def naive_injected_summary(
             corrected["Y"],
             corrected["Z"],
             binary_precision,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             max_grid_points=max_grid_points,
         ),
@@ -189,7 +127,6 @@ def naive_distilled_summary(
     task_map: Mapping[str, SimulatorTask],
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
-    sign_vector: Sequence[float],
     binary_precision: int | None = None,
     shots: int,
     require_zero_ancilla_detectors: bool = False,
@@ -203,7 +140,6 @@ def naive_distilled_summary(
     Args:
         task_map: Basis-labeled distilled task map.
         valid_factory_targets: Valid factory observable patterns.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         binary_precision: Precision used by Bayesian tomography scoring.
         shots: Number of shots to sample per basis.
         require_zero_ancilla_detectors: Whether to also require zero factory
@@ -244,7 +180,6 @@ def naive_distilled_summary(
             corrected["Y"],
             corrected["Z"],
             binary_precision,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             max_grid_points=max_grid_points,
         ),
@@ -262,7 +197,6 @@ def injected_baseline(
     eval_shots: int,
     binary_precision: int | None = None,
     table_decoder_cls: TableDecoderClass,
-    sign_vector: Sequence[float],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     raw: bool = False,
     training_task_map: Mapping[str, SimulatorTask] | None = None,
@@ -278,7 +212,6 @@ def injected_baseline(
         eval_shots: Number of shots to sample per basis.
         binary_precision: Precision used by Bayesian tomography scoring.
         table_decoder_cls: Table decoder class used when ``raw`` is false.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         target_bloch: Target Bloch vector for fidelity calculation.
         raw: If true, skip decoder training and use raw observable bits.
         training_task_map: Optional separate task map used for decoder training.
@@ -337,7 +270,6 @@ def injected_baseline(
         corrected["Y"],
         corrected["Z"],
         binary_precision,
-        sign_vector=sign_vector,
         target_bloch=target_bloch,
         uncertainty_backend=uncertainty_backend,
         max_grid_points=max_grid_points,

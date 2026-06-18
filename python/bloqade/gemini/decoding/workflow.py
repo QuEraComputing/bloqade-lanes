@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
-from demo.msd_utils.standard.tomography import FidelitySummary
+from demo.msd_utils.standard.tomography import FidelitySummary, SimpleFidelitySummary
 
 from .baselines import injected_baseline
 from .constants import DEFAULT_BASIS_LABELS
@@ -77,7 +77,6 @@ class DecoderWorkflowConfig:
             Gemini logical kernels already include the measurement/postprocessing
             structure expected by the workflow.
         basis_labels: Tomography basis labels.
-        sign_vector: Per-axis sign convention for reconstructed fidelities.
         layout: Syndrome layout used to split output/factory bits.
         log: Whether high-level workflow helpers should print progress
             messages.
@@ -104,7 +103,6 @@ class DecoderWorkflowConfig:
     )
     append_measurements: bool = False
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS
-    sign_vector: Sequence[float] = (1.0, 1.0, 1.0)
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT
     log: bool = True
 
@@ -112,16 +110,12 @@ class DecoderWorkflowConfig:
         target = np.asarray(self.target_bloch_vector, dtype=np.float64)
         if target.shape != (3,):
             raise ValueError("target_bloch_vector must contain exactly three values.")
-        sign = np.asarray(self.sign_vector, dtype=np.float64)
-        if sign.shape != (3,):
-            raise ValueError("sign_vector must contain exactly three values.")
         if self.mld_train_shots < 0 or self.eval_shots < 0:
             raise ValueError("mld_train_shots and eval_shots must be non-negative.")
         if self.mld_rank_train_shots is not None and self.mld_rank_train_shots < 0:
             raise ValueError("mld_rank_train_shots must be non-negative.")
 
         object.__setattr__(self, "target_bloch_vector", target)
-        object.__setattr__(self, "sign_vector", tuple(float(x) for x in sign))
         object.__setattr__(
             self,
             "valid_factory_targets",
@@ -459,7 +453,6 @@ def train_mld_decoder_suite(
         ranking_data,
         valid_factory_targets=config.valid_factory_targets,
         basis_labels=config.basis_labels,
-        sign_vector=config.sign_vector,
         target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
         binary_precision=config.binary_precision,
         uncertainty_backend=config.uncertainty_backend,
@@ -629,7 +622,6 @@ def evaluate_decoder_curves(
             threshold_points=options.threshold_points,
             metric=label,
             valid_factory_targets=config.valid_factory_targets,
-            sign_vector=config.sign_vector,
             target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
             basis_labels=config.basis_labels,
             min_accepted_per_basis=options.min_accepted_per_basis,
@@ -676,7 +668,6 @@ def evaluate_injected_baseline(
         eval_shots=config.eval_shots,
         binary_precision=config.binary_precision,
         table_decoder_cls=table_decoder_cls,
-        sign_vector=config.sign_vector,
         target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
         raw=raw,
         training_task_map=None if raw else injected_tomography_tasks._special,
@@ -690,7 +681,7 @@ def evaluate_injected_baseline(
 def plot_decoder_curves(
     curves: Mapping[str, Mapping[str, np.ndarray]],
     *,
-    injected_summary: FidelitySummary | None = None,
+    injected_summary: FidelitySummary | SimpleFidelitySummary | None = None,
     min_accepted_fraction: float = 0.04,
     ax: "Axes | None" = None,
     title: str | None = None,
@@ -736,9 +727,7 @@ def plot_decoder_curves(
             )
 
     if injected_summary is not None:
-        median = float(injected_summary["median"])
-        low = float(injected_summary["low"])
-        high = float(injected_summary["high"])
+        median = float(injected_summary.get("median", injected_summary["point"]))
         ax.axhline(
             median,
             linestyle="--",
@@ -746,7 +735,10 @@ def plot_decoder_curves(
             color="black",
             label="Injected baseline",
         )
-        ax.axhspan(low, high, color="black", alpha=0.08)
+        if "low" in injected_summary and "high" in injected_summary:
+            low = float(injected_summary["low"])
+            high = float(injected_summary["high"])
+            ax.axhspan(low, high, color="black", alpha=0.08)
 
     ax.set_xscale("log")
     ax.set_xlim(left=min_accepted_fraction)

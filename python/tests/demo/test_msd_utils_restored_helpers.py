@@ -59,7 +59,6 @@ def test_tomography_fidelity_from_zero_one_counts_matches_array_counts():
         x_bits,
         y_bits,
         z_bits,
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 1.0, 0.0], dtype=np.float64),
     )
     from_counts = fidelity_from_zero_one_counts(
@@ -69,7 +68,6 @@ def test_tomography_fidelity_from_zero_one_counts_matches_array_counts():
         3,
         1,
         3,
-        sign_vector=(1.0, -1.0, 1.0),
         target_bloch=np.array([0.0, 1.0, 0.0], dtype=np.float64),
     )
 

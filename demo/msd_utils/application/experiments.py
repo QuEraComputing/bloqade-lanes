@@ -420,7 +420,6 @@ class PostSelectionExperiment:
         binary_precision: int | None = None,
         *,
         # tomography args
-        sign_vector: Sequence[float],
         target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
         basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
         max_grid_points: int = 1_500_000,
@@ -444,7 +443,6 @@ class PostSelectionExperiment:
             score_weights=score_weights,
             binary_precision=binary_precision,
             threshold_points=threshold_points,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             basis_labels=basis_labels,
             min_accepted_per_basis=min_accepted_per_basis,

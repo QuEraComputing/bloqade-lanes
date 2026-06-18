@@ -186,7 +186,6 @@ def test_postselection_experiment_decode_and_analysis_use_cached_tables():
     )
     curve = exp.analysis_f_vs_fraction(
         binary_precision=4,
-        sign_vector=(1.0, 1.0, 1.0),
         target_bloch=np.array([1.0, 0.0, 0.0], dtype=np.float64),
         basis_labels=("X", "Y", "Z"),
         threshold_points=2,

@@ -34,7 +34,6 @@ class FidelitySummary(PosteriorFidelitySummary):
 
 
 DEFAULT_TARGET_BLOCH = np.ones(3, dtype=np.float64) / np.sqrt(3.0)
-_DEFAULT_SIGN = np.array((1.0, 1.0, 1.0), dtype=np.float64)
 
 
 def _density_matrix_from_bloch(bloch: np.ndarray) -> np.ndarray:
@@ -207,7 +206,6 @@ def posterior_fidelity_summary(
     k: np.ndarray,
     target_bloch: np.ndarray,
     *,
-    sign: np.ndarray = _DEFAULT_SIGN,
     binary_precision: int | None = None,
     max_grid_points: int = 1_500_000,
 ) -> PosteriorFidelitySummary:
@@ -244,7 +242,7 @@ def posterior_fidelity_summary(
         return {"point": 0.5, "median": 0.5, "low": 0.5, "high": 0.5, "error": 0.0}
 
     weights = np.exp(log_weights[finite] - logsumexp(log_weights[finite]))
-    corrected_points = points[finite] * np.asarray(sign, dtype=np.float64)
+    corrected_points = points[finite]
     target = np.asarray(target_bloch, dtype=np.float64)
     fidelities = np.clip(
         0.5 + np.sum(corrected_points * target.reshape(1, 3), axis=1) / 2.0,
@@ -319,7 +317,6 @@ def fidelity_from_counts(
     z_bits: np.ndarray,
     binary_precision: int | None = None,
     *,
-    sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
@@ -341,7 +338,6 @@ def fidelity_from_counts(
         z_zero,
         z_one,
         binary_precision,
-        sign_vector=sign_vector,
         target_bloch=target_bloch,
         uncertainty_backend=uncertainty_backend,
         max_grid_points=max_grid_points,
@@ -357,21 +353,19 @@ def fidelity_from_zero_one_counts(
     z_one: int,
     binary_precision: int | None = None,
     *,
-    sign_vector: Sequence[float] = (1.0, 1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     uncertainty_backend: str = "wilson",
     max_grid_points: int = 1_500_000,
 ) -> FidelitySummary:
     """Compute a single-qubit fidelity summary from X/Y/Z zero/one counts."""
 
-    sign = np.asarray(sign_vector, dtype=np.float64)
     target = np.asarray(target_bloch, dtype=np.float64)
 
     ex, ex_err = expectation_with_error_bar(x_zero, x_one)
     ey, ey_err = expectation_with_error_bar(y_zero, y_one)
     ez, ez_err = expectation_with_error_bar(z_zero, z_one)
 
-    bloch = np.array([ex, ey, ez], dtype=np.float64) * sign
+    bloch = np.array([ex, ey, ez], dtype=np.float64)
     point = 0.5 + float(np.dot(bloch, target)) / 2.0
     if uncertainty_backend == "wilson":
         fidelity_err = 0.5 * float(
@@ -389,7 +383,6 @@ def fidelity_from_zero_one_counts(
             np.array([x_zero + x_one, y_zero + y_one, z_zero + z_one], dtype=np.int64),
             np.array([x_zero, y_zero, z_zero], dtype=np.int64),
             target,
-            sign=sign,
             binary_precision=binary_precision,
             max_grid_points=max_grid_points,
         )

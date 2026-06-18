@@ -269,7 +269,6 @@ def estimate_mld_ancilla_scores(
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-    sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     binary_precision: int | None = 4,
     uncertainty_backend: str = "wilson",
@@ -283,7 +282,6 @@ def estimate_mld_ancilla_scores(
         ranking_data_by_basis: Mapping from basis label to sampled ranking data.
         valid_factory_targets: Valid corrected factory observable patterns.
         basis_labels: Tomography basis labels to evaluate.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         target_bloch: Target Bloch vector for fidelity scoring.
         binary_precision: Precision used by Bayesian tomography scoring.
         uncertainty_backend: Fidelity uncertainty backend.
@@ -338,7 +336,6 @@ def estimate_mld_ancilla_scores(
         corrected_by_pattern,
         ancilla_detectors=ancilla_detectors,
         basis_labels=basis_labels,
-        sign_vector=sign_vector,
         target_bloch=target_bloch,
         binary_precision=binary_precision,
         uncertainty_backend=uncertainty_backend,
@@ -350,7 +347,6 @@ def _mld_scores_from_pattern_counts(
     *,
     ancilla_detectors: int | None,
     basis_labels: Sequence[str],
-    sign_vector: Sequence[float],
     target_bloch: np.ndarray,
     binary_precision: int | None = 4,
     uncertainty_backend: str = "wilson",
@@ -387,7 +383,6 @@ def _mld_scores_from_pattern_counts(
             int(counts_z[0]),
             int(counts_z[1]),
             binary_precision=binary_precision,
-            sign_vector=sign_vector,
             target_bloch=target_bloch,
             uncertainty_backend=uncertainty_backend,
         )["point"]
@@ -517,7 +512,6 @@ def estimate_mld_ancilla_scores_from_tasks(
     *,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-    sign_vector: Sequence[float] = (1.0, -1.0, 1.0),
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     binary_precision: int | None = 4,
     uncertainty_backend: str = "wilson",
@@ -536,7 +530,6 @@ def estimate_mld_ancilla_scores_from_tasks(
         shots: Number of ranking shots to sample per basis.
         valid_factory_targets: Valid corrected factory observable patterns.
         basis_labels: Tomography basis labels to evaluate.
-        sign_vector: Per-axis sign convention for fidelity reconstruction.
         target_bloch: Target Bloch vector for fidelity scoring.
         binary_precision: Precision used by Bayesian tomography scoring.
         uncertainty_backend: Fidelity uncertainty backend.
@@ -609,7 +602,6 @@ def estimate_mld_ancilla_scores_from_tasks(
         corrected_by_pattern,
         ancilla_detectors=ancilla_detectors,
         basis_labels=basis_labels,
-        sign_vector=sign_vector,
         target_bloch=target_bloch,
         binary_precision=binary_precision,
         uncertainty_backend=uncertainty_backend,
