@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
 
@@ -18,14 +17,6 @@ if TYPE_CHECKING:
     from clifft import Program, SampleResult
 
 
-# TODO: ideally, not sure if we even want this ObservableFrame class.
-class ObservableFrame(str, Enum):
-    """Observable-frame normalization modes for demo tasks."""
-
-    RAW = "raw"
-    NOISELESS_REFERENCE_FLIPS = "noiseless_reference_flips"
-
-
 def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
     """Return Stim text with instruction tags stripped for CliffT parsing."""
 
@@ -39,22 +30,13 @@ def _clifft_compatible_stim_text(circuit: tsim_backend.Circuit) -> str:
 
 @dataclass
 class DemoTask(Generic[RetType]):
-    """Task wrapper adding observable-frame metadata and CliffT sampling.
+    """Task wrapper adding CliffT sampling to a Gemini simulator task.
 
     Args:
         task: Underlying Gemini logical simulator task.
-        observable_frame: Observable normalization mode applied by sampling
-            helpers.
-        observable_reference: Optional cached noiseless observable reference
-            used for rebasing special tasks.
-        metadata: Implementation metadata used by special task construction.
     """
 
     task: GeminiLogicalSimulatorTask[RetType]
-    observable_frame: ObservableFrame = ObservableFrame.RAW
-    observable_reference: np.ndarray | None = None
-    # TODO: this is SOLELY to pass down the "special" logical kernel for the "prefix_prepare" path.
-    metadata: dict[str, object] = field(default_factory=dict)
 
     def __getattr__(self, name: str) -> object:
         return getattr(self.task, name)
@@ -177,8 +159,38 @@ class DemoTask(Generic[RetType]):
         *,
         run_detectors: bool = False,
         sim_type: str = "tsim",
+        batch_size: int | None = None,
         seed: int | None = None,
     ) -> Result[RetType] | DetectorResult:
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError("batch_size must be positive when provided.")
+        if batch_size is not None and batch_size < shots:
+            if not run_detectors:
+                raise ValueError("batch_size is only supported for detector sampling.")
+            det_chunks: list[np.ndarray] = []
+            obs_chunks: list[np.ndarray] = []
+            remaining = int(shots)
+            while remaining > 0:
+                batch = min(int(batch_size), remaining)
+                detectors, observables = self.sample_detector_observables(
+                    batch,
+                    with_noise=with_noise,
+                    sim_type=sim_type,
+                    seed=seed,
+                )
+                det_chunks.append(detectors)
+                obs_chunks.append(observables)
+                remaining -= batch
+
+            fidelity_min, fidelity_max = self.task.fidelity_bounds()
+            return DetectorResult(
+                _detector_error_model=self.task.detector_error_model,
+                _fidelity_min=fidelity_min,
+                _fidelity_max=fidelity_max,
+                _detectors=np.concatenate(det_chunks, axis=0).astype(bool).tolist(),
+                _observables=np.concatenate(obs_chunks, axis=0).astype(bool).tolist(),
+            )
+
         if sim_type == "tsim":
             return self.task.run(
                 shots,
@@ -229,6 +241,32 @@ class DemoTask(Generic[RetType]):
             np.asarray(sample_result.observables, dtype=np.uint8),
         )
 
+    def sample_detector_observables(
+        self,
+        shots: int,
+        *,
+        with_noise: bool = True,
+        sim_type: str = "tsim",
+        seed: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Sample detector and observable arrays without Python list roundtrips."""
+
+        if sim_type == "clifft":
+            return self.sample_clifft_det_obs(
+                shots,
+                with_noise=with_noise,
+                seed=seed,
+            )
+        if sim_type != "tsim":
+            raise ValueError(
+                f"sim_type is {sim_type}; currently, the only supported simulator "
+                "backends are 'tsim' and 'clifft'"
+            )
+        result = self.task.run(shots, with_noise=with_noise, run_detectors=True)
+        return (
+            np.asarray(result.detectors, dtype=np.uint8),
+            np.asarray(result.observables, dtype=np.uint8),
+        )
+
 
 GeminiDecoderTask = DemoTask
-_ObservableFrame = ObservableFrame

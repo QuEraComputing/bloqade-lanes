@@ -41,7 +41,7 @@ from demo.msd_utils.application.experiments import (
     magic_state_dist_steane,
     single_qubit_state_tomography,
 )
-from demo.msd_utils.application.table_decoders import TableDecoderWithSimplerConfidence
+from demo.msd_utils.application.table_decoders import TableDecoderWithConfidence
 from demo.msd_utils.domain.confidence import ConfidenceGurobiDecoder
 from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH
 
@@ -58,11 +58,6 @@ EVAL_SHOTS = 1_000_000
 MLD_TRAIN_SHOTS = 10_000_000
 MLD_BATCH_SIZE = None
 SIM_TYPE = "clifft"
-
-BINARY_PRECISION = 4
-THRESHOLD_POINTS = 24
-MIN_ACCEPTED_PER_BASIS = 50
-SPECIAL_KERNEL_STRATEGY = "prefix_prepare"
 
 MSD_VALID_FACTORY_TARGETS = np.array([[1, 0, 1, 1]], dtype=np.uint8)
 INJECTED_VALID_FACTORY_TARGETS = np.zeros((1, 0), dtype=np.uint8)
@@ -92,14 +87,12 @@ def build_msd_mld_experiment() -> PostSelectionExperiment:
     return PostSelectionExperiment(
         noncliff_prefix,
         main_cliff_circ,
-        tomo_circs,
         MSD_VALID_FACTORY_TARGETS,
-        TableDecoderWithSimplerConfidence,
+        TableDecoderWithConfidence,
         {
             "num_shots": MLD_TRAIN_SHOTS,
             "step_size": MLD_BATCH_SIZE,
         },
-        target_bloch=DEFAULT_TARGET_BLOCH,
     )
 
 
@@ -107,11 +100,9 @@ def build_msd_mle_experiment() -> PostSelectionExperiment:
     return PostSelectionExperiment(
         noncliff_prefix,
         main_cliff_circ,
-        tomo_circs,
         MSD_VALID_FACTORY_TARGETS,
         ConfidenceGurobiDecoder,
         {},
-        target_bloch=DEFAULT_TARGET_BLOCH,
     )
 
 
@@ -119,15 +110,12 @@ def build_injected_mld_experiment() -> PostSelectionExperiment:
     return PostSelectionExperiment(
         noncliff_prefix,
         empty_logical_circuit(),
-        tomo_circs,
         INJECTED_VALID_FACTORY_TARGETS,
-        TableDecoderWithSimplerConfidence,
+        TableDecoderWithConfidence,
         {
-            # TODO: in principle, reduce the number of arguments passed in here?
             "num_shots": MLD_TRAIN_SHOTS,
             "step_size": MLD_BATCH_SIZE,
         },
-        target_bloch=DEFAULT_TARGET_BLOCH,
     )
 
 
@@ -152,10 +140,9 @@ def prepare_experiment(
 ) -> PostSelectionExperiment:
     exp.kernels(
         num_logical_qubits=num_logical_qubits,
-        output_qubit=0,
-        special_kernel_strategy=SPECIAL_KERNEL_STRATEGY,
+        tomography_kernels=tomo_circs,
     )
-    exp.dem_circuits(special_kernel_strategy=SPECIAL_KERNEL_STRATEGY)
+    exp.dem_circuits()
     exp.dems()
     exp.initialize_decoders()
     exp.make_tasks(device=GeminiLogicalSimulator())
@@ -196,8 +183,6 @@ injected_mld_exp = prepare_experiment(
 
 tomo_result = msd_mld_exp.tomography_result(
     0.05,
-    "wilson",
-    binary_precision=BINARY_PRECISION,
 )
 tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
 
@@ -210,35 +195,21 @@ tomo_result.fidelity_bloch(DEFAULT_TARGET_BLOCH)
 
 
 msd_mld_curve = msd_mld_exp.analysis_f_vs_fraction(
-    binary_precision=BINARY_PRECISION,
     target_bloch=DEFAULT_TARGET_BLOCH,
-    threshold_points=THRESHOLD_POINTS,
-    min_accepted_per_basis=MIN_ACCEPTED_PER_BASIS,
-    uncertainty_backend="wilson",
 )
 
 msd_mle_curve = None
 if msd_mle_exp is not None:
     msd_mle_curve = msd_mle_exp.analysis_f_vs_fraction(
-        binary_precision=BINARY_PRECISION,
         target_bloch=DEFAULT_TARGET_BLOCH,
-        threshold_points=THRESHOLD_POINTS,
-        min_accepted_per_basis=MIN_ACCEPTED_PER_BASIS,
-        uncertainty_backend="wilson",
     )
 
 injected_curve = injected_mld_exp.analysis_f_vs_fraction(
-    binary_precision=BINARY_PRECISION,
     target_bloch=DEFAULT_TARGET_BLOCH,
-    threshold_points=THRESHOLD_POINTS,
-    min_accepted_per_basis=MIN_ACCEPTED_PER_BASIS,
-    uncertainty_backend="wilson",
 )
 
 injected_summary = injected_mld_exp.tomography_result(
     1.0,
-    "wilson",
-    binary_precision=BINARY_PRECISION,
 ).fidelity_bloch(DEFAULT_TARGET_BLOCH)
 
 
@@ -301,12 +272,7 @@ def summarize_curve(name, curve):
     for key in [
         "accepted_fraction",
         "fidelity",
-        "credible",
-        "low",
-        "high",
-        "median",
         "point",
-        "error",
     ]:
         if key not in curve:
             continue
@@ -322,19 +288,6 @@ def summarize_curve(name, curve):
             "max=",
             np.nanmax(arr) if arr.size else None,
         )
-
-    credible = np.asarray(curve.get("credible", []), dtype=float)
-    accepted = np.asarray(curve.get("accepted_fraction", []), dtype=float)
-    fidelity = np.asarray(curve.get("fidelity", []), dtype=float)
-
-    if credible.shape == (len(accepted), 2) and len(accepted):
-        idx = int(np.nanargmin(credible[:, 0]))
-        print("lowest credible interval row:")
-        print("  idx:", idx)
-        print("  accepted:", accepted[idx])
-        print("  fidelity:", fidelity[idx])
-        print("  low:", credible[idx, 0])
-        print("  high:", credible[idx, 1])
 
 
 summarize_curve("MLD", msd_mld_curve)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Callable, Protocol, TypeVar
 
 import numpy as np
@@ -11,21 +10,18 @@ from bloqade.decoders import BaseDecoder
 from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
-    packed_bits_to_int,
     packed_pattern_targets,
     unpack_packed_bits,
 )
 from demo.msd_utils.standard.tomography import (
     DEFAULT_TARGET_BLOCH,
-    fidelity_from_counts,
-    fidelity_from_zero_one_counts,
+    TomographyResult,
 )
 
 from .constants import DEFAULT_BASIS_LABELS
 from .layout import (
     DEFAULT_SYNDROME_LAYOUT,
     SyndromeLayout,
-    _ancilla_matches_valid_targets,
     _normalize_valid_factory_targets,
     split_factory_bits,
 )
@@ -68,71 +64,25 @@ class DecoderAdapter:
         full_decoder: Decoder used for full detector syndromes, if retained.
         factory_decoder: Confidence decoder used for factory syndromes, if
             retained.
-        decode_factory: Callable from packed factory syndrome to
+        decode_factory: Callable from factory syndrome bits to
             ``(factory_correction, confidence_score)``.
-        decode_full: Callable from packed full syndrome to output correction.
-        factory_score_mode: Label for the factory confidence score.
+        decode_full: Callable from full syndrome bits to output correction.
     """
 
     # NOTE: full_decoder and factory_decoder fields might not be strictly needed; can maybe remove them (and core functionality is preserved.)
     full_decoder: BaseDecoder | None
     factory_decoder: ConfidenceDecoder | None
-    decode_factory: Callable[[int], tuple[tuple[int, ...], float]]
-    decode_full: Callable[[int], tuple[int, ...]]
-    # Names the score returned by decode_factory so callers can label plots/logs.
-    factory_score_mode: str
-    # NOTE, mtg: add the name of the decoder?
-
-
-def _make_decoder_adapter(
-    *,
-    full_decoder: BaseDecoder,
-    factory_decoder: ConfidenceDecoder,
-    full_syndrome_length: int,
-    factory_syndrome_length: int,
-    factory_decode_impl: Callable[[np.ndarray], tuple[np.ndarray, float]],
-    factory_score_mode: str,
-) -> DecoderAdapter:
-    """Create a decoder adapter with integer-keyed cached decode functions."""
-
-    # NOTE: the reason why we have to pack/unpack these bits is because lru_cache doesn't work for numpy arrays
-    # but works for ints. So that's why the signature here for decode_factory takes in an int for the syndrome.
-    @lru_cache(maxsize=None)
-    def decode_factory(packed_syndrome: int):
-        syndrome = unpack_packed_bits(
-            int(packed_syndrome),
-            factory_syndrome_length,
-        ).astype(bool)
-        correction, score = factory_decode_impl(syndrome)
-        return tuple(
-            int(x) for x in np.asarray(correction, dtype=np.uint8).tolist()
-        ), float(score)
-
-    @lru_cache(maxsize=None)
-    def decode_full(packed_syndrome: int):
-        syndrome = unpack_packed_bits(
-            int(packed_syndrome),
-            full_syndrome_length,
-        ).astype(bool)
-        correction = np.asarray(full_decoder.decode(syndrome), dtype=np.uint8)
-        return tuple(int(x) for x in correction.tolist())
-
-    return DecoderAdapter(
-        full_decoder=full_decoder,
-        factory_decoder=factory_decoder,
-        decode_factory=decode_factory,
-        decode_full=decode_full,
-        factory_score_mode=factory_score_mode,
-    )
+    decode_factory: Callable[[np.ndarray], tuple[np.ndarray, float]]
+    decode_full: Callable[[np.ndarray], np.ndarray]
 
 
 def _call_decoder_fn(
-    fn: Callable[[int], DecodeResult],
+    fn: Callable[[np.ndarray], DecodeResult],
     bits: np.ndarray,
 ) -> DecodeResult:
-    """Pack syndrome bits and call an integer-keyed decoder function."""
+    """Call a decoder function with boolean syndrome bits."""
 
-    return fn(packed_bits_to_int(bits))
+    return fn(np.asarray(bits, dtype=np.bool_))
 
 
 # TODO: refactor this; probably reused logic from quantile logic in
@@ -310,7 +260,6 @@ def _build_generic_threshold_tables(
     *,
     targets: np.ndarray,
     basis_labels: Sequence[str],
-    layout: SyndromeLayout,
     progress_label: str | None = None,
 ) -> tuple[
     dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
@@ -343,7 +292,10 @@ def _build_generic_threshold_tables(
         for basis in basis_labels:
             dataset = actual_data[basis]
             total_shots += len(dataset.observables)
-            packed_dataset = _pack_threshold_dataset(dataset, layout=layout)
+            packed_dataset = _pack_threshold_dataset(
+                dataset,
+                layout=DEFAULT_SYNDROME_LAYOUT,
+            )
             progress_bar = progress_bars.get(basis)
 
             def update_basis_progress(advance: int) -> None:
@@ -460,52 +412,33 @@ def _evaluate_cached_threshold_curve(
     score_array: np.ndarray,
     *,
     score_weights: np.ndarray | None = None,
-    binary_precision: int | None,
-    threshold_points: int,
+    threshold_points: int = 64,
     target_bloch: np.ndarray,
     basis_labels: Sequence[str],
-    min_accepted_per_basis: int,
-    threshold_policy: str,
+    min_accepted_per_basis: int = 50,
     total_shots: int,
-    uncertainty_backend: str,
-    max_grid_points: int,
 ) -> dict[str, np.ndarray]:
     """Evaluate a fidelity curve from precomputed score/count tables."""
 
     if len(score_array) == 0:
         raise RuntimeError("No factory-accepted shots found for threshold sweep")
 
-    if threshold_policy == "quantile":
-        if score_weights is None:
-            thresholds = np.unique(
-                np.quantile(score_array, np.linspace(0.0, 1.0, threshold_points))
-            )
-        else:
-            thresholds = np.unique(
-                _weighted_quantiles_from_counts(
-                    score_array,
-                    score_weights,
-                    np.linspace(0.0, 1.0, threshold_points),
-                )
-            )
-    elif threshold_policy == "unique_values":
-        thresholds = np.unique(score_array)
-    elif threshold_policy == "linear_range":
-        score_min = float(np.min(score_array))
-        score_max = float(np.max(score_array))
-        if np.isclose(score_min, score_max):
-            thresholds = np.array([score_min], dtype=np.float64)
-        else:
-            thresholds = np.linspace(score_min, score_max, threshold_points)
+    if score_weights is None:
+        thresholds = np.unique(
+            np.quantile(score_array, np.linspace(0.0, 1.0, threshold_points))
+        )
     else:
-        raise ValueError(
-            "threshold_policy must be 'quantile', 'unique_values', or 'linear_range'."
+        thresholds = np.unique(
+            _weighted_quantiles_from_counts(
+                score_array,
+                score_weights,
+                np.linspace(0.0, 1.0, threshold_points),
+            )
         )
 
     accepted_fractions = []
     fidelities = []
     point_fidelities = []
-    credibility = []
 
     for threshold in thresholds:
         counts_by_basis: dict[str, tuple[int, int]] = {}
@@ -527,41 +460,36 @@ def _evaluate_cached_threshold_curve(
         ):
             continue
 
-        # TODO: generalize beyond just single-qubit tomography?
-        summary = fidelity_from_zero_one_counts(
-            counts_by_basis["X"][0],
-            counts_by_basis["X"][1],
-            counts_by_basis["Y"][0],
-            counts_by_basis["Y"][1],
-            counts_by_basis["Z"][0],
-            counts_by_basis["Z"][1],
-            binary_precision,
-            target_bloch=target_bloch,
-            uncertainty_backend=uncertainty_backend,
-            max_grid_points=max_grid_points,
+        zero_counts = np.array(
+            [counts_by_basis[basis][0] for basis in basis_labels],
+            dtype=np.int64,
         )
+        one_counts = np.array(
+            [counts_by_basis[basis][1] for basis in basis_labels],
+            dtype=np.int64,
+        )
+        summary = TomographyResult(
+            zero_counts=zero_counts,
+            one_counts=one_counts,
+        ).fidelity_bloch(target_bloch)
         accepted_fractions.append(total_kept / total_shots)
         point_fidelities.append(summary["point"])
-        fidelities.append(summary["median"])
-        credibility.append((summary["low"], summary["high"]))
+        fidelities.append(summary["point"])
 
     accepted_array = np.asarray(accepted_fractions, dtype=np.float64)
     fidelity_array = np.asarray(fidelities, dtype=np.float64)
     point_fidelity_array = np.asarray(point_fidelities, dtype=np.float64)
-    credible_array = np.asarray(credibility, dtype=np.float64)
 
     if len(accepted_array) > 0:
         order = np.argsort(accepted_array)
         accepted_array = accepted_array[order]
         fidelity_array = fidelity_array[order]
         point_fidelity_array = point_fidelity_array[order]
-        credible_array = credible_array[order]
 
     return {
         "accepted_fraction": accepted_array,
         "fidelity": fidelity_array,
         "point_fidelity": point_fidelity_array,
-        "credible": credible_array,
     }
 
 
@@ -569,60 +497,15 @@ def evaluate_curve(
     actual_data: Mapping[str, BasisDataset],
     decoder_map: Mapping[str, DecoderAdapter],
     *,
-    binary_precision: int | None = None,
-    threshold_points: int,
+    threshold_points: int = 64,
     metric: str,
     valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
     target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
     min_accepted_per_basis: int = 50,
-    threshold_policy: str = "quantile",
-    selection_mode: str = "threshold",
-    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
-    uncertainty_backend: str = "wilson",
-    max_grid_points: int = 1_500_000,
     progress_label: str | None = None,
 ) -> dict[str, np.ndarray]:
-    """Evaluate a postselection curve for decoder confidence thresholds.
-
-    Args:
-        actual_data: Basis-labeled detector/observable samples to evaluate.
-        decoder_map: Basis-labeled decoder adapters.
-        binary_precision: Precision used by Bayesian tomography scoring.
-        threshold_points: Number of thresholds to evaluate for continuous
-            threshold policies.
-        metric: Human-readable metric name used in error messages.
-        valid_factory_targets: Valid corrected factory observable patterns.
-        target_bloch: Target Bloch vector for fidelity calculation.
-        basis_labels: Tomography basis labels to evaluate.
-        min_accepted_per_basis: Minimum accepted samples required per basis.
-        threshold_policy: Threshold selection policy.
-        selection_mode: ``"threshold"`` or ``"pattern_rank"``.
-        layout: Syndrome layout separating output and factory bits.
-        uncertainty_backend: Fidelity uncertainty backend.
-        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
-        progress_label: Optional Rich progress label shown while decoding
-            actual-data syndromes.
-
-    Returns:
-        Dictionary containing accepted fractions, fidelities, and intervals.
-    """
-
-    if selection_mode == "pattern_rank":
-        return evaluate_mld_curve(
-            actual_data,
-            decoder_map,
-            binary_precision=binary_precision,
-            valid_factory_targets=valid_factory_targets,
-            target_bloch=target_bloch,
-            basis_labels=basis_labels,
-            min_accepted_per_basis=min_accepted_per_basis,
-            layout=layout,
-            uncertainty_backend=uncertainty_backend,
-            max_grid_points=max_grid_points,
-        )
-    if selection_mode != "threshold":
-        raise ValueError("selection_mode must be 'threshold' or 'pattern_rank'.")
+    """Evaluate a quantile-threshold postselection curve."""
 
     targets = _normalize_valid_factory_targets(valid_factory_targets)
     (
@@ -635,7 +518,6 @@ def evaluate_curve(
         decoder_map,
         targets=targets,
         basis_labels=basis_labels,
-        layout=layout,
         progress_label=progress_label,
     )
     try:
@@ -643,155 +525,13 @@ def evaluate_curve(
             per_basis_tables,
             score_array,
             score_weights=score_weights,
-            binary_precision=binary_precision,
             threshold_points=threshold_points,
             target_bloch=target_bloch,
             basis_labels=basis_labels,
             min_accepted_per_basis=min_accepted_per_basis,
-            threshold_policy=threshold_policy,
             total_shots=total_shots,
-            uncertainty_backend=uncertainty_backend,
-            max_grid_points=max_grid_points,
         )
     except RuntimeError as exc:
         raise RuntimeError(
             f"No factory-accepted shots found for {metric} threshold sweep"
         ) from exc
-
-
-# This is SPECIFICALLY for the pattern rank case where we don't compute explicit
-# thresholds, but rather literally have the points plotted on the curve based on
-# MLD fidelity.
-def evaluate_mld_curve(
-    actual_data: Mapping[str, BasisDataset],
-    decoder_map: Mapping[str, DecoderAdapter],
-    *,
-    binary_precision: int | None = None,
-    valid_factory_targets: np.ndarray | Sequence[Sequence[int]] | Sequence[int],
-    target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
-    basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-    min_accepted_per_basis: int = 50,
-    layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT,
-    uncertainty_backend: str = "wilson",
-    max_grid_points: int = 1_500_000,
-) -> dict[str, np.ndarray]:
-    """Evaluate the MLD pattern-rank postselection curve.
-
-    Args:
-        actual_data: Basis-labeled detector/observable samples to evaluate.
-        decoder_map: Basis-labeled MLD decoder adapters.
-        binary_precision: Precision used by Bayesian tomography scoring.
-        valid_factory_targets: Valid corrected factory observable patterns.
-        target_bloch: Target Bloch vector for fidelity calculation.
-        basis_labels: Tomography basis labels to evaluate.
-        min_accepted_per_basis: Minimum accepted samples required per basis.
-        layout: Syndrome layout separating output and factory bits.
-        uncertainty_backend: Fidelity uncertainty backend.
-        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
-
-    Returns:
-        Dictionary containing accepted fractions, fidelities, and intervals.
-    """
-
-    targets = _normalize_valid_factory_targets(valid_factory_targets)
-    pattern_counts_by_basis: dict[str, dict[int, int]] = {}
-    corrected_bits_by_basis: dict[str, dict[int, list[int]]] = {}
-    pattern_scores: dict[int, float] = {}
-    total_shots = 0
-
-    for basis in basis_labels:
-        dataset = actual_data[basis]
-        total_shots += len(dataset.observables)
-        anc_det, anc_obs = split_factory_bits(
-            dataset.detectors,
-            dataset.observables,
-            layout=layout,
-        )
-        decode_factory = decoder_map[basis].decode_factory
-        decode_full = decoder_map[basis].decode_full
-
-        pattern_counts = defaultdict(int)
-        corrected_bits = defaultdict(list)
-
-        for det, obs, a_det, a_obs in zip(
-            dataset.detectors,
-            dataset.observables,
-            anc_det,
-            anc_obs,
-            strict=True,
-        ):
-            packed = int(pack_boolean_array(a_det)[0])
-            pattern_counts[packed] += 1
-
-            anc_flip, score = _call_decoder_fn(decode_factory, a_det)
-            anc_flip = np.asarray(anc_flip, dtype=np.uint8)
-            if np.isfinite(score):
-                existing = pattern_scores.get(packed)
-                if existing is None:
-                    pattern_scores[packed] = float(score)
-                elif not np.isclose(existing, score, rtol=1e-9, atol=1e-12):
-                    raise ValueError(
-                        f"Inconsistent MLD score for ancilla detector pattern {packed}."
-                    )
-            if not _ancilla_matches_valid_targets(a_obs ^ anc_flip, targets):
-                continue
-
-            full_flip = np.asarray(_call_decoder_fn(decode_full, det), dtype=np.uint8)
-            corrected_bits[packed].append(int(obs[0] ^ full_flip[0]))
-
-        pattern_counts_by_basis[basis] = dict(pattern_counts)
-        corrected_bits_by_basis[basis] = corrected_bits
-
-    all_patterns = sorted(
-        set().union(*(pattern_counts_by_basis[basis].keys() for basis in basis_labels))
-    )
-    ranked_patterns = []
-    for pattern in all_patterns:
-        score = pattern_scores.get(pattern)
-        if score is None or not np.isfinite(score):
-            continue
-        total_count = sum(
-            pattern_counts_by_basis[basis].get(pattern, 0) for basis in basis_labels
-        )
-        if total_count <= 0:
-            continue
-        ranked_patterns.append((pattern, float(score), total_count))
-
-    ranked_patterns.sort(key=lambda row: (row[1], row[2]), reverse=True)
-
-    cumulative_bits = {basis: [] for basis in basis_labels}
-    accepted_fractions = []
-    fidelities = []
-    credibility = []
-
-    for pattern, _score, _count in ranked_patterns:
-        for basis in basis_labels:
-            cumulative_bits[basis].extend(
-                corrected_bits_by_basis[basis].get(pattern, ())
-            )
-
-        if (
-            min(len(cumulative_bits[basis]) for basis in basis_labels)
-            < min_accepted_per_basis
-        ):
-            continue
-
-        summary = fidelity_from_counts(
-            np.asarray(cumulative_bits["X"], dtype=np.uint8),
-            np.asarray(cumulative_bits["Y"], dtype=np.uint8),
-            np.asarray(cumulative_bits["Z"], dtype=np.uint8),
-            binary_precision,
-            target_bloch=target_bloch,
-            uncertainty_backend=uncertainty_backend,
-            max_grid_points=max_grid_points,
-        )
-        total_kept = sum(len(cumulative_bits[basis]) for basis in basis_labels)
-        accepted_fractions.append(total_kept / total_shots)
-        fidelities.append(summary["median"])
-        credibility.append((summary["low"], summary["high"]))
-
-    return {
-        "accepted_fraction": np.asarray(accepted_fractions, dtype=np.float64),
-        "fidelity": np.asarray(fidelities, dtype=np.float64),
-        "credible": np.asarray(credibility, dtype=np.float64),
-    }

@@ -7,7 +7,7 @@ import tsim as tsim_backend
 from bloqade.decoders import TableDecoder
 from demo.msd_utils.application.table_decoders import (
     SparseTableDecoder,
-    TableDecoderWithSimplerConfidence,
+    TableDecoderWithConfidence,
 )
 from kirin import ir
 
@@ -16,9 +16,7 @@ SquinKernel: TypeAlias = KirinKernel
 TsimCircuit: TypeAlias = tsim_backend.Circuit
 MeasurementMap: TypeAlias = list[list[int]]
 TableDecoderClass: TypeAlias = (
-    type[TableDecoder]
-    | type[SparseTableDecoder]
-    | type[TableDecoderWithSimplerConfidence]
+    type[TableDecoder] | type[SparseTableDecoder] | type[TableDecoderWithConfidence]
 )
 
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Literal
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 from kirin.dialects import ilist
 
@@ -12,10 +12,8 @@ from .kernels import (
     DecoderPrimitiveSet,
     _build_tomography_primitives,
     _kernels_by_tomography_basis,
-    _squin_return_none,
     produce_tomography_kernels,
 )
-from .special_tasks import _attach_special_circuit_kernel
 from .types import KirinKernel
 
 
@@ -27,18 +25,14 @@ def _default_post_processing():
 
 @dataclass(frozen=True)
 class TomographyKernels:
-    # TODO, mtg: make things specific in the beginning.
-    """Actual tomography kernels plus private decoder-reference kernels.
+    """Basis-labeled tomography kernels.
 
     Attributes:
         actual: Basis-labeled kernels for the full noisy/input-prepared logical
             circuit.
-        _special: Private basis-labeled kernels used internally for
-            special/reference task construction.
     """
 
     actual: dict[str, KirinKernel]
-    _special: dict[str, KirinKernel] = field(repr=False)
 
 
 # NOTE: this is basically what the user would "instantiate" for this specific
@@ -87,46 +81,31 @@ def build_msd_primitives(
 
 def build_decoder_kernel_bundle(
     primitive_set: DecoderPrimitiveSet,
-    # TODO: get rid of logical qubits argument here?
     num_logical_qubits: int = 5,
-    output_qubit: int = 0,
-    # TODO: have to pass down special_kernel_strategy here?
-    special_kernel_strategy: Literal[
-        "prefix_prepare", "compiled_inverse_prefix"
-    ] = "prefix_prepare",
+    tomography_kernels: Mapping[str, KirinKernel] | None = None,
 ) -> TomographyKernels:
-    """Build tomography kernels for actual and special MSD tasks.
+    """Build basis-labeled MSD tomography kernels.
 
     Args:
         primitive_set: Primitive state-injection and logical-circuit kernels.
         num_logical_qubits: Number of logical qubits in the MSD logical circuit.
-        output_qubit: Logical qubit measured as the output state.
-        special_kernel_strategy: Strategy expected for the special task path.
+        tomography_kernels: Optional tomography operations keyed by basis.
 
     Returns:
         A ``TomographyKernels`` containing basis-labeled kernel maps.
-
-    Raises:
-        ValueError: If ``special_kernel_strategy`` is unsupported.
     """
 
-    if special_kernel_strategy not in {"prefix_prepare", "compiled_inverse_prefix"}:
-        raise ValueError(
-            "special_kernel_strategy must be 'prefix_prepare' or "
-            "'compiled_inverse_prefix'."
-        )
-
-    tomography_primitives = _build_tomography_primitives(output_qubit=output_qubit)
+    tomography_primitives = (
+        dict(tomography_kernels)
+        if tomography_kernels is not None
+        else _build_tomography_primitives(output_qubit=0)
+    )
     state_injection_circuit = primitive_set.state_injection_circuit
     logical_circuit = primitive_set.logical_circuit
 
     @squin.kernel
     def actual_logical_kernel(reg):
         state_injection_circuit(reg)
-        logical_circuit(reg)
-
-    @squin.kernel
-    def special_logical_kernel(reg):
         logical_circuit(reg)
 
     default_post_processing = _default_post_processing()
@@ -137,44 +116,8 @@ def build_decoder_kernel_bundle(
         default_post_processing,
         "msd_actual",
     )
-    special_task_kernels = produce_tomography_kernels(
-        num_logical_qubits,
-        special_logical_kernel,
-        tomography_primitives,
-        default_post_processing,
-        "msd_special",
-    )
-    special_circuit_sources = _kernels_by_tomography_basis(
-        produce_tomography_kernels(
-            num_logical_qubits,
-            special_logical_kernel,
-            tomography_primitives,
-            _squin_return_none,
-            "msd_special_circuit",
-            supply_reg=False,
-        )
-    )
 
-    actual = _kernels_by_tomography_basis(actual_kernels)
-    if special_kernel_strategy == "prefix_prepare":
-        # TODO: think about a cleaner way to pass down this information? Do I have to pass down this "special_kernel_{x, y, z}"?
-        special = {
-            basis: _attach_special_circuit_kernel(
-                kernel,
-                special_circuit_sources[basis],
-                num_qubits=num_logical_qubits,
-            )
-            for basis, kernel in _kernels_by_tomography_basis(
-                special_task_kernels
-            ).items()
-        }
-    else:
-        special = dict(actual)
-
-    return TomographyKernels(
-        actual=actual,
-        _special=special,
-    )
+    return TomographyKernels(actual=_kernels_by_tomography_basis(actual_kernels))
 
 
 def build_injected_kernel_bundle(
@@ -214,7 +157,6 @@ def build_injected_kernel_bundle(
 
     return TomographyKernels(
         actual=_kernels_by_tomography_basis(injected_kernels),
-        _special=build_injected_decoder_kernel_map(output_qubit=output_qubit),
     )
 
 

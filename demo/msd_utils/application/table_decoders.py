@@ -8,10 +8,7 @@ from typing import TypeAlias
 import numpy as np
 import stim
 from bloqade.decoders import BaseDecoder, TableDecoder
-from demo.msd_utils.domain.confidence import (
-    ConfidenceDecoder,
-    TableDecoderWithConfidence,
-)
+from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
     shots_to_counts,
@@ -129,7 +126,7 @@ class SparseTableDecoder(BaseDecoder):
         return unpack_packed_bits(obs, self.num_observables).astype(np.bool_)
 
 
-class TableDecoderWithSimplerConfidence(TableDecoder, ConfidenceDecoder):
+class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
     """Dense table decoder that stores count tables as ``uint32``.
 
     When ``det_obs_counts`` is omitted, the table is trained by sampling the
@@ -195,7 +192,7 @@ class TableDecoderWithSimplerConfidence(TableDecoder, ConfidenceDecoder):
         except ImportError as e:
             raise ImportError(
                 "The tqdm package is required for "
-                "TableDecoderWithSimplerConfidence DEM training. "
+                "TableDecoderWithConfidence DEM training. "
                 'Install it via: pip install "tqdm"'
             ) from e
 
@@ -304,9 +301,7 @@ class TableDecoderWithSimplerConfidence(TableDecoder, ConfidenceDecoder):
 
 
 TableDecoderClass: TypeAlias = (
-    type[TableDecoder]
-    | type[SparseTableDecoder]
-    | type[TableDecoderWithSimplerConfidence]
+    type[TableDecoder] | type[SparseTableDecoder] | type[TableDecoderWithConfidence]
 )
 
 
@@ -314,6 +309,5 @@ __all__ = [
     "SparseTableDecoder",
     "TableDecoder",
     "TableDecoderClass",
-    "TableDecoderWithSimplerConfidence",
     "TableDecoderWithConfidence",
 ]

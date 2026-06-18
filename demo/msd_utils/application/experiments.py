@@ -1,6 +1,6 @@
 import math
 from collections.abc import Callable
-from typing import Any, Literal, Mapping, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
 import numpy as np
 import stim
@@ -8,8 +8,6 @@ import tsim
 from bloqade.decoders import BaseDecoder
 from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.domain.kernels import _build_tomography_primitives
-from demo.msd_utils.domain.layout import _normalize_valid_factory_targets
-from demo.msd_utils.standard.bit_packing import pack_boolean_array
 from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 
 from bloqade.gemini.decoding.constants import DEFAULT_BASIS_LABELS
@@ -25,7 +23,6 @@ from bloqade.gemini.decoding.postselection import (
     DecoderAdapter,
     _build_generic_threshold_tables,
     _evaluate_cached_threshold_curve,
-    _make_decoder_adapter,
 )
 from bloqade.gemini.decoding.sampling import BasisDataset, run_task
 from bloqade.gemini.decoding.special_tasks import (
@@ -131,7 +128,7 @@ class PostSelectionExperimentCache:
     # ^ so this comes to whether we use tuples of the things OR we do mappings. Let's just do mappings; it's more flexible.
     # Maybe it doesn't need to be this flexible (we can use tuples of a certain length), but right now the lower-level code uses mappings
     # so it's easier to implement for now.
-    dem_kernels: TomographyKernels
+    dem_kernels: TomographyKernels | None
 
     dem_circuits: Mapping[str, tsim.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
@@ -163,6 +160,7 @@ class PostSelectionExperimentCache:
     hardware_tasks: Mapping[str, DemoTask] | None
 
     def __init__(self):
+        self.dem_kernels = None
         self.dem_circuits = None
         self.dems = None
         self.decoders_with_confidence = None
@@ -182,23 +180,18 @@ class PostSelectionExperiment:
         self,
         noncliff_prefix: SquinKernel,
         main_cliff_circ: SquinKernel,
-        tomo_circs: Mapping[str, SquinKernel],
         # NOTE: again, I'm kind of cheating here because we can't really specify the shape of the numpy array in the dtype.
         # But this should be a 2D numpy array, where I have a list/array of possible valid postselection conditions.
         postselection_condition: np.ndarray,
         decoder: DecoderConstructor,
         # specifying these as a dictionary is reasonable? Use a mapping instead?
-        decoder_init_args: dict[str, Any],
-        target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
+        decoder_init_args: dict[str, Any] | None = None,
     ):
         self.noncliff_prefix = noncliff_prefix
         self.main_cliff_circ = main_cliff_circ
-        # NOTE: tomo_circs are currently not used; can supply these to build_decoder_kernel_bundle
-        self.tomo_circs = tomo_circs
         self.postselection_condition = postselection_condition
         self.decoder = decoder
-        self.decoder_init_args = decoder_init_args
-        self.target_bloch = target_bloch
+        self.decoder_init_args = {} if decoder_init_args is None else decoder_init_args
 
         self.postselection_exp_cache = PostSelectionExperimentCache()
         # NOTE: hardcoding this for now (I guess) to support having some interface for adding noise to the circuit and compiling it down?
@@ -215,25 +208,22 @@ class PostSelectionExperiment:
     def kernels(
         self,
         num_logical_qubits: int = 5,
-        output_qubit: int = 0,
-        special_kernel_strategy: Literal[
-            "prefix_prepare", "compiled_inverse_prefix"
-        ] = "prefix_prepare",
+        *,
+        tomography_kernels: Mapping[str, SquinKernel],
     ) -> TomographyKernels:
         # TODO: change the name of DecoderPrimitiveSet --> whole_circuit
         decoder_primitive_set = DecoderPrimitiveSet(
             state_injection_circuit=self.noncliff_prefix,
             logical_circuit=self.main_cliff_circ,
         )
-        tomography_kernels = build_decoder_kernel_bundle(
+        kernel_bundle = build_decoder_kernel_bundle(
             decoder_primitive_set,
             num_logical_qubits,
-            output_qubit,
-            special_kernel_strategy,
+            tomography_kernels=tomography_kernels,
         )
-        self.postselection_exp_cache.dem_kernels = tomography_kernels
+        self.postselection_exp_cache.dem_kernels = kernel_bundle
         # Assumes that there is some way of getting the num_logical_qubits.
-        return tomography_kernels
+        return kernel_bundle
 
     # TODO: split up the kernels and DEM kernels functions
     # NOTE: both to construct the kernels, AND to actually get the tasks, we need to call SPECIAL_KERNEL_STRATEGY.
@@ -241,25 +231,21 @@ class PostSelectionExperiment:
     # ^ split up dem_circuits functions to expose the kernels or the circuits or both?-- play with it?
     def dem_circuits(
         self,
-        special_kernel_strategy: Literal[
-            "prefix_prepare", "compiled_inverse_prefix"
-        ] = "prefix_prepare",
     ) -> dict[str, tsim.Circuit]:
         tomography_kernels = self.postselection_exp_cache.dem_kernels
-        special_tasks = build_task_map(
+        if tomography_kernels is None:
+            raise RuntimeError("kernels must be called before dem_circuits.")
+        dem_tasks = build_task_map(
             self.simulator,
-            tomography_kernels._special,
+            tomography_kernels.actual,
             m2dets=None,
             m2obs=None,
             append_measurements=False,
         )
-        special_tasks = apply_special_tsim_circuit_strategy(
-            special_tasks,
-            special_kernel_strategy,
-        )
+        dem_tasks = apply_special_tsim_circuit_strategy(dem_tasks)
         special_tsim_circuits = cast(
             dict[str, tsim.Circuit],
-            {basis: task.tsim_circuit for basis, task in special_tasks.items()},
+            {basis: task.tsim_circuit for basis, task in dem_tasks.items()},
         )
         self.postselection_exp_cache.dem_circuits = special_tsim_circuits
         # again, check that values are returned in-order
@@ -318,10 +304,10 @@ class PostSelectionExperiment:
                 self.decoder(factory_dem, **self.decoder_init_args),
             )
 
-            def make_factory_decode_impl(
+            def make_decode_factory(
                 factory: ConfidenceDecoder,
             ) -> Callable[[np.ndarray], tuple[np.ndarray, float]]:
-                def factory_decode_impl(
+                def decode_factory(
                     syndrome: np.ndarray,
                 ) -> tuple[np.ndarray, float]:
                     correction, confidence = factory.decode_with_confidence(
@@ -331,26 +317,33 @@ class PostSelectionExperiment:
                         np.float64(confidence)
                     )
 
-                return factory_decode_impl
+                return decode_factory
 
-            adapter = _make_decoder_adapter(
+            def make_decode_full(
+                decoder: BaseDecoder,
+            ) -> Callable[[np.ndarray], np.ndarray]:
+                def decode_full(syndrome: np.ndarray) -> np.ndarray:
+                    return np.asarray(
+                        decoder.decode(syndrome.astype(bool)),
+                        dtype=np.uint8,
+                    )
+
+                return decode_full
+
+            adapter = DecoderAdapter(
                 full_decoder=full_decoder,
                 factory_decoder=factory_decoder,
-                full_syndrome_length=full_dem.num_detectors,
-                factory_syndrome_length=factory_dem.num_detectors,
-                factory_decode_impl=make_factory_decode_impl(factory_decoder),
-                factory_score_mode=str(
-                    getattr(factory_decoder, "confidence_score_mode", "confidence")
-                ),
+                decode_factory=make_decode_factory(factory_decoder),
+                decode_full=make_decode_full(full_decoder),
             )
-            sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
-            adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
             decoders_bases[basis_label] = adapter
         self.postselection_exp_cache.decoders_with_confidence = decoders_bases
         return decoders_bases
 
     def make_tasks(self, device: GeminiLogicalSimulator) -> dict[str, DemoTask]:
         tomography_kernels = self.postselection_exp_cache.dem_kernels
+        if tomography_kernels is None:
+            raise RuntimeError("kernels must be called before make_tasks.")
         actual_tasks = build_task_map(
             device,
             tomography_kernels.actual,
@@ -399,17 +392,16 @@ class PostSelectionExperiment:
             raise RuntimeError("get_samples must be called before decoding.")
         if decoder_map is None:
             raise RuntimeError("initialize_decoders must be called before decoding.")
-        targets = _normalize_valid_factory_targets(self.postselection_condition)
+        targets = np.asarray(self.postselection_condition, dtype=np.uint8)
+        if targets.ndim != 2:
+            raise ValueError("postselection_condition must be a 2D array.")
         basis_labels = list(decoder_map.keys())
-        # NOTE: hardcoded for now
-        layout = DEFAULT_SYNDROME_LAYOUT
         progress_label = decoder_name
         decoded_results_tuple = _build_generic_threshold_tables(
             actual_data,
             decoder_map,
             targets=targets,
             basis_labels=basis_labels,
-            layout=layout,
             progress_label=progress_label,
         )
         self.postselection_exp_cache.decoded_results = decoded_results_tuple
@@ -417,17 +409,11 @@ class PostSelectionExperiment:
 
     def analysis_f_vs_fraction(
         self,
-        binary_precision: int | None = None,
         *,
-        # tomography args
         target_bloch: np.ndarray = DEFAULT_TARGET_BLOCH,
         basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-        max_grid_points: int = 1_500_000,
-        uncertainty_backend: str = "wilson",
-        # curve args
-        threshold_points: int,
+        threshold_points: int = 64,
         min_accepted_per_basis: int = 50,
-        threshold_policy: str = "quantile",
     ) -> dict[str, np.ndarray]:
         if self.postselection_exp_cache.decoded_results is None:
             raise RuntimeError("decode_and_postselect must be called before analysis.")
@@ -441,15 +427,11 @@ class PostSelectionExperiment:
             per_basis_tables,
             score_array,
             score_weights=score_weights,
-            binary_precision=binary_precision,
             threshold_points=threshold_points,
             target_bloch=target_bloch,
             basis_labels=basis_labels,
             min_accepted_per_basis=min_accepted_per_basis,
-            threshold_policy=threshold_policy,
             total_shots=total_shots,
-            uncertainty_backend=uncertainty_backend,
-            max_grid_points=max_grid_points,
         )
         self.postselection_exp_cache.thresholded_data = threshold_curve
         return threshold_curve
@@ -462,20 +444,15 @@ class PostSelectionExperiment:
     def tomography_result(
         self,
         accepted_fraction: float,
-        method: Literal["wilson", "bayesian_bloch_ball"],
         *,
         basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS,
-        binary_precision: int | None = None,
-        max_grid_points: int = 1_500_000,
     ) -> TomographyResult:
         """Return tomography counts after confidence-ranked postselection.
 
         ``accepted_fraction`` is interpreted relative to all sampled shots,
         matching the x-axis convention used by ``analysis_f_vs_fraction``.
         Because counts are grouped by confidence score, the returned result may
-        keep slightly more than the requested fraction. ``method`` is accepted
-        for compatibility with the curve APIs, but this result reconstructs a
-        point-estimate density matrix directly from zero/one counts.
+        keep slightly more than the requested fraction.
         """
 
         if self.postselection_exp_cache.decoded_results is None:

@@ -8,7 +8,7 @@ from typing import ContextManager, Protocol
 
 import numpy as np
 from bloqade.decoders import BaseDecoder
-from demo.msd_utils.domain.confidence import TableDecoderWithConfidence
+from demo.msd_utils.domain.confidence import ConfidenceDecoder
 from demo.msd_utils.standard.bit_packing import (
     pack_boolean_array,
     packed_pattern_targets,
@@ -28,7 +28,6 @@ from .layout import (
 )
 from .postselection import (
     DecoderAdapter,
-    _make_decoder_adapter,
     _pack_threshold_dataset,
 )
 from .sampling import BasisDataset, SimulatorTask, _iter_task_datasets
@@ -40,6 +39,30 @@ class _ProgressBar(Protocol):
 
     def update(self, n: int | float = 1) -> object:
         """Advance the progress bar."""
+
+
+@dataclass(frozen=True)
+class _SyndromeScoreDecoder(BaseDecoder, ConfidenceDecoder):
+    """Private compatibility wrapper for legacy MLD score tables."""
+
+    decoder: BaseDecoder
+    syndrome_confidence: np.ndarray
+
+    def _decode(self, detector_bits: np.ndarray) -> np.ndarray:
+        return np.asarray(self.decoder.decode(detector_bits), dtype=np.bool_)
+
+    def decode_with_confidence(
+        self,
+        detector_bits: np.ndarray,
+    ) -> tuple[np.ndarray, np.float64]:
+        correction = self.decode(detector_bits)
+        packed = int(pack_boolean_array(np.asarray(detector_bits, dtype=np.uint8))[0])
+        score = (
+            float(self.syndrome_confidence[packed])
+            if packed < len(self.syndrome_confidence)
+            else float("nan")
+        )
+        return correction, np.float64(score)
 
 
 def _select_output_observables(
@@ -639,22 +662,23 @@ def build_mld_decoders_from_pair(
             "Ancilla score table has the wrong size for this decoder pair."
         )
 
-    wrapped_factory_decoder = TableDecoderWithConfidence(
+    wrapped_factory_decoder = _SyndromeScoreDecoder(
         decoder=factory_decoder,
         syndrome_confidence=np.asarray(ancilla_scores, dtype=np.float64),
     )
 
-    def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
+    def decode_factory(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
         correction, score = wrapped_factory_decoder.decode_with_confidence(
             syndrome.astype(bool)
         )
         return np.asarray(correction, dtype=np.uint8), float(score)
 
-    return _make_decoder_adapter(
+    def decode_full(syndrome: np.ndarray) -> np.ndarray:
+        return np.asarray(full_decoder.decode(syndrome.astype(bool)), dtype=np.uint8)
+
+    return DecoderAdapter(
         full_decoder=full_decoder,
         factory_decoder=wrapped_factory_decoder,
-        full_syndrome_length=full_syndrome_length,
-        factory_syndrome_length=factory_syndrome_length,
-        factory_decode_impl=factory_decode_impl,
-        factory_score_mode=wrapped_factory_decoder.confidence_score_mode,
+        decode_factory=decode_factory,
+        decode_full=decode_full,
     )

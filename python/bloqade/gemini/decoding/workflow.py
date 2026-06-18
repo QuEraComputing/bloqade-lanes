@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from demo.msd_utils.standard.tomography import FidelitySummary, SimpleFidelitySummary
@@ -68,10 +68,6 @@ class DecoderWorkflowConfig:
             all requested shots in one call.
         mld_rank_train_shots: Optional separate shot count for MLD ranking data.
             Defaults to ``mld_train_shots`` when omitted.
-        binary_precision: Bayesian tomography grid precision.
-        uncertainty_backend: Fidelity uncertainty backend.
-        max_grid_points: Maximum adaptive grid size for Bayesian tomography.
-        special_kernel_strategy: Special-task circuit prefix strategy.
         append_measurements: Whether to pass measurement maps into Gemini task
             construction. The MSD demos use ``False`` because the generated
             Gemini logical kernels already include the measurement/postprocessing
@@ -95,12 +91,6 @@ class DecoderWorkflowConfig:
     sim_type: str = "tsim"
     chunk_size: int | None = None
     mld_rank_train_shots: int | None = None
-    binary_precision: int | None = None
-    uncertainty_backend: str = "wilson"
-    max_grid_points: int = 1_500_000
-    special_kernel_strategy: Literal["prefix_prepare", "compiled_inverse_prefix"] = (
-        "compiled_inverse_prefix"
-    )
     append_measurements: bool = False
     basis_labels: Sequence[str] = DEFAULT_BASIS_LABELS
     layout: SyndromeLayout = DEFAULT_SYNDROME_LAYOUT
@@ -133,16 +123,15 @@ class DecoderWorkflowConfig:
 
 @dataclass(frozen=True)
 class TomographyTasks:
-    """Actual simulator tasks plus private decoder-reference tasks.
+    """Actual simulator tasks plus decoder-reference tasks.
 
     Attributes:
         actual: Basis-labeled tasks for noisy/evaluation data.
-        _special: Private basis-labeled tasks for decoder training or
-            reference data.
+        reference: Basis-labeled deterministic-reference tasks for decoder DEMs.
     """
 
     actual: dict[str, DemoTask]
-    _special: dict[str, DemoTask] = field(repr=False)
+    reference: dict[str, DemoTask]
 
 
 @dataclass(frozen=True)
@@ -151,16 +140,10 @@ class DecoderCurveOptions:
 
     Args:
         threshold_points: Number of threshold points to evaluate.
-        threshold_policy: Threshold selection policy passed to
-            ``evaluate_curve``.
-        selection_mode: Curve selection mode, either ``"threshold"`` or
-            ``"pattern_rank"``.
         min_accepted_per_basis: Minimum accepted samples per basis.
     """
 
     threshold_points: int = 64
-    threshold_policy: str = "quantile"
-    selection_mode: str = "threshold"
     min_accepted_per_basis: int = 50
 
 
@@ -249,8 +232,6 @@ def build_msd_tomography_kernels(
     return build_decoder_kernel_bundle(
         config.decoder_primitive_set,
         num_logical_qubits=config.num_logical_qubits,
-        output_qubit=config.output_qubit,
-        special_kernel_strategy=config.special_kernel_strategy,
     )
 
 
@@ -317,19 +298,15 @@ def build_msd_tomography_tasks(
         m2obs=m2obs,
         append_measurements=config.append_measurements,
     )
-    special = build_task_map(
+    reference = build_task_map(
         simulator,
-        tomography_kernels._special,
+        tomography_kernels.actual,
         m2dets=m2dets,
         m2obs=m2obs,
         append_measurements=config.append_measurements,
     )
-    special = apply_special_tsim_circuit_strategy(
-        special,
-        config.special_kernel_strategy,
-        normalize_observable_reference=True,
-    )
-    return TomographyTasks(actual=actual, _special=special)
+    reference = apply_special_tsim_circuit_strategy(reference)
+    return TomographyTasks(actual=actual, reference=reference)
 
 
 def build_injected_tomography_tasks(
@@ -359,22 +336,22 @@ def build_injected_tomography_tasks(
         print("Building injected simulator tasks...")
 
     m2dets, m2obs = build_measurement_maps(1)
-    return TomographyTasks(
-        actual=build_task_map(
-            simulator,
-            tomography_kernels.actual,
-            m2dets=m2dets,
-            m2obs=m2obs,
-            append_measurements=config.append_measurements,
-        ),
-        _special=build_task_map(
-            simulator,
-            tomography_kernels._special,
-            m2dets=m2dets,
-            m2obs=m2obs,
-            append_measurements=config.append_measurements,
-        ),
+    actual = build_task_map(
+        simulator,
+        tomography_kernels.actual,
+        m2dets=m2dets,
+        m2obs=m2obs,
+        append_measurements=config.append_measurements,
     )
+    reference = build_task_map(
+        simulator,
+        tomography_kernels.actual,
+        m2dets=m2dets,
+        m2obs=m2obs,
+        append_measurements=config.append_measurements,
+    )
+    reference = apply_special_tsim_circuit_strategy(reference)
+    return TomographyTasks(actual=actual, reference=reference)
 
 
 def train_mld_decoder_suite(
@@ -408,7 +385,7 @@ def train_mld_decoder_suite(
                 f"with {config.mld_train_shots:,} shots..."
             )
         training_data[basis] = _sample_task_with_progress(
-            msd_tomography_tasks._special[basis],
+            msd_tomography_tasks.reference[basis],
             config.mld_train_shots,
             description=f"MLD {basis}: table-training samples",
             with_noise=True,
@@ -454,8 +431,6 @@ def train_mld_decoder_suite(
         valid_factory_targets=config.valid_factory_targets,
         basis_labels=config.basis_labels,
         target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
-        binary_precision=config.binary_precision,
-        uncertainty_backend=config.uncertainty_backend,
         layout=config.layout,
     )
     if log:
@@ -514,7 +489,7 @@ def build_mle_decoder_suite(
     """
 
     decoders: dict[str, DecoderAdapter] = {}
-    for basis, task in msd_tomography_tasks._special.items():
+    for basis, task in msd_tomography_tasks.reference.items():
         if log:
             print(f"Building MLE decoder for {basis}...")
         decoders[basis] = build_mle_decoders(
@@ -618,18 +593,12 @@ def evaluate_decoder_curves(
         curves[label] = evaluate_curve(
             actual_data,
             decoder_map,
-            binary_precision=config.binary_precision,
             threshold_points=options.threshold_points,
             metric=label,
             valid_factory_targets=config.valid_factory_targets,
             target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
             basis_labels=config.basis_labels,
             min_accepted_per_basis=options.min_accepted_per_basis,
-            threshold_policy=options.threshold_policy,
-            selection_mode=options.selection_mode,
-            layout=config.layout,
-            uncertainty_backend=config.uncertainty_backend,
-            max_grid_points=config.max_grid_points,
             progress_label=progress_label,
         )
     return curves
@@ -666,15 +635,12 @@ def evaluate_injected_baseline(
     return injected_baseline(
         injected_tomography_tasks.actual,
         eval_shots=config.eval_shots,
-        binary_precision=config.binary_precision,
         table_decoder_cls=table_decoder_cls,
         target_bloch=np.asarray(config.target_bloch_vector, dtype=np.float64),
         raw=raw,
-        training_task_map=None if raw else injected_tomography_tasks._special,
+        training_task_map=None if raw else injected_tomography_tasks.reference,
         basis_labels=config.basis_labels,
-        uncertainty_backend=config.uncertainty_backend,
         sim_type=config.sim_type,
-        max_grid_points=config.max_grid_points,
     )
 
 
@@ -714,17 +680,9 @@ def plot_decoder_curves(
     for label, curve in curves.items():
         accepted = np.asarray(curve["accepted_fraction"], dtype=np.float64)
         fidelity = np.asarray(curve["fidelity"], dtype=np.float64)
-        credible = np.asarray(curve["credible"], dtype=np.float64)
         if len(accepted) == 0:
             continue
         ax.plot(accepted, fidelity, marker="o", linewidth=1.5, label=label)
-        if credible.shape == (len(accepted), 2):
-            ax.fill_between(
-                accepted,
-                credible[:, 0],
-                credible[:, 1],
-                alpha=0.15,
-            )
 
     if injected_summary is not None:
         median = float(injected_summary.get("median", injected_summary["point"]))
@@ -735,10 +693,6 @@ def plot_decoder_curves(
             color="black",
             label="Injected baseline",
         )
-        if "low" in injected_summary and "high" in injected_summary:
-            low = float(injected_summary["low"])
-            high = float(injected_summary["high"])
-            ax.axhspan(low, high, color="black", alpha=0.08)
 
     ax.set_xscale("log")
     ax.set_xlim(left=min_accepted_fraction)

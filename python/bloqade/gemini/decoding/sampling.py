@@ -6,7 +6,7 @@ from typing import Literal, Protocol, overload
 
 import numpy as np
 
-from .tasks import DemoTask, ObservableFrame
+from .tasks import DemoTask
 
 
 @dataclass(frozen=True)
@@ -95,133 +95,6 @@ def _run_simulator_task(
 # we are currently calling a clifft method that returns np.array's directly.
 # To change this, we'd need to change the task.run() interface/the DetectorResult
 # return type.
-def _sample_task_raw(
-    task: SimulatorTask,
-    shots: int,
-    *,
-    with_noise: bool = True,
-    chunk_size: int | None = None,
-    sim_type: str = "tsim",
-) -> BasisDataset:
-    """Sample detector and observable arrays without observable-frame rebasing."""
-
-    if isinstance(task, DemoTask) and sim_type == "clifft":
-        if chunk_size is None or shots <= chunk_size:
-            detectors, observables = task.sample_clifft_det_obs(
-                shots,
-                with_noise=with_noise,
-            )
-            return BasisDataset(detectors=detectors, observables=observables)
-
-        det_chunks = []
-        obs_chunks = []
-        remaining = shots
-        while remaining > 0:
-            batch = min(chunk_size, remaining)
-            detectors, observables = task.sample_clifft_det_obs(
-                batch,
-                with_noise=with_noise,
-            )
-            det_chunks.append(detectors)
-            obs_chunks.append(observables)
-            remaining -= batch
-
-        return BasisDataset(
-            detectors=np.concatenate(det_chunks, axis=0),
-            observables=np.concatenate(obs_chunks, axis=0),
-        )
-
-    if chunk_size is None or shots <= chunk_size:
-        result = _run_simulator_task(
-            task,
-            shots,
-            with_noise=with_noise,
-            run_detectors=True,
-            sim_type=sim_type,
-        )
-        return BasisDataset(
-            detectors=np.asarray(result.detectors, dtype=np.uint8),
-            observables=np.asarray(result.observables, dtype=np.uint8),
-        )
-
-    det_chunks = []
-    obs_chunks = []
-    remaining = shots
-    while remaining > 0:
-        batch = min(chunk_size, remaining)
-        result = _run_simulator_task(
-            task,
-            batch,
-            with_noise=with_noise,
-            run_detectors=True,
-            sim_type=sim_type,
-        )
-        det_chunks.append(np.asarray(result.detectors, dtype=np.uint8))
-        obs_chunks.append(np.asarray(result.observables, dtype=np.uint8))
-        remaining -= batch
-
-    return BasisDataset(
-        detectors=np.concatenate(det_chunks, axis=0),
-        observables=np.concatenate(obs_chunks, axis=0),
-    )
-
-
-def _compute_observable_reference(
-    task: DemoTask,
-    *,
-    shots: int = 64,
-    sim_type: str = "tsim",
-) -> np.ndarray:
-    """Compute the deterministic noiseless observable reference for a task."""
-
-    if task.observable_reference is not None:
-        return np.asarray(task.observable_reference, dtype=np.uint8)
-
-    reference_result = _run_simulator_task(
-        task,
-        shots,
-        with_noise=False,
-        run_detectors=True,
-        sim_type=sim_type,
-    )
-    reference_obs = np.asarray(reference_result.observables, dtype=np.uint8)
-    unique_rows = np.unique(reference_obs, axis=0)
-    if len(unique_rows) != 1:
-        raise RuntimeError(
-            "Expected a deterministic noiseless observable reference row for this task."
-        )
-    task.observable_reference = unique_rows[0].copy()
-    return np.asarray(task.observable_reference, dtype=np.uint8)
-
-
-def _rebase_dataset_observables(
-    dataset: BasisDataset,
-    reference: np.ndarray,
-) -> BasisDataset:
-    """XOR dataset observables by a reference observable row."""
-
-    return BasisDataset(
-        detectors=dataset.detectors,
-        observables=dataset.observables ^ reference.reshape(1, -1),
-    )
-
-
-def _normalize_observable_frame(
-    task: SimulatorTask,
-    dataset: BasisDataset,
-    *,
-    sim_type: str = "tsim",
-) -> BasisDataset:
-    """Apply task-specific observable-frame normalization to sampled data."""
-
-    if not isinstance(task, DemoTask):
-        return dataset
-    if task.observable_frame != ObservableFrame.NOISELESS_REFERENCE_FLIPS:
-        return dataset
-    reference = _compute_observable_reference(task, sim_type=sim_type)
-    return _rebase_dataset_observables(dataset, reference)
-
-
 def _iter_task_datasets(
     task: SimulatorTask,
     shots: int,
@@ -240,13 +113,16 @@ def _iter_task_datasets(
 
     if chunk_size is None:
         chunk_size = remaining
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive when provided.")
 
     while remaining > 0:
         batch = min(int(chunk_size), remaining)
-        if isinstance(task, DemoTask) and sim_type == "clifft":
-            detectors, observables = task.sample_clifft_det_obs(
+        if isinstance(task, DemoTask):
+            detectors, observables = task.sample_detector_observables(
                 batch,
                 with_noise=with_noise,
+                sim_type=sim_type,
             )
             dataset = BasisDataset(detectors=detectors, observables=observables)
         else:
@@ -261,7 +137,7 @@ def _iter_task_datasets(
                 detectors=np.asarray(result.detectors, dtype=np.uint8),
                 observables=np.asarray(result.observables, dtype=np.uint8),
             )
-        yield _normalize_observable_frame(task, dataset, sim_type=sim_type)
+        yield dataset
         remaining -= batch
 
 
@@ -289,16 +165,32 @@ def run_task(
         A ``BasisDataset`` containing detector and observable arrays.
     """
 
-    # TODO: remove _normalize_observable_frame and _sample_task_raw
-    # TODO: do task.run()
-    return _normalize_observable_frame(
-        task,
-        _sample_task_raw(
+    if isinstance(task, DemoTask) and (chunk_size is None or shots <= chunk_size):
+        detectors, observables = task.sample_detector_observables(
+            shots,
+            with_noise=with_noise,
+            sim_type=sim_type,
+        )
+        return BasisDataset(detectors=detectors, observables=observables)
+
+    datasets = list(
+        _iter_task_datasets(
             task,
             shots,
             with_noise=with_noise,
             chunk_size=chunk_size,
             sim_type=sim_type,
+        )
+    )
+    if not datasets:
+        return BasisDataset(
+            detectors=np.zeros((0, 0), dtype=np.uint8),
+            observables=np.zeros((0, 0), dtype=np.uint8),
+        )
+    return BasisDataset(
+        detectors=np.concatenate([dataset.detectors for dataset in datasets], axis=0),
+        observables=np.concatenate(
+            [dataset.observables for dataset in datasets],
+            axis=0,
         ),
-        sim_type=sim_type,
     )

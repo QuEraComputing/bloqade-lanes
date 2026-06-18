@@ -6,11 +6,10 @@ from typing import Any, cast
 import numpy as np
 from bloqade.decoders import BaseDecoder
 from demo.msd_utils.domain.confidence import ConfidenceDecoder
-from demo.msd_utils.standard.bit_packing import pack_boolean_array
 
 from .dem import sub_detector_error_model
 from .layout import DEFAULT_SYNDROME_LAYOUT, SyndromeLayout
-from .postselection import DecoderAdapter, _make_decoder_adapter
+from .postselection import DecoderAdapter
 from .types import DetectorErrorModelTask
 
 
@@ -60,23 +59,19 @@ def build_mle_decoders(
         ConfidenceDecoder,
         gurobi_decoder_cls(factory_dem, **decoder_init_args),
     )
-    # TODO: this attribute should be defined by the MLE decoder class
-    score_mode = str(getattr(factory_decoder, "confidence_score_mode", "confidence"))
 
-    def factory_decode_impl(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
+    def decode_factory(syndrome: np.ndarray) -> tuple[np.ndarray, float]:
         correction, confidence = factory_decoder.decode_with_confidence(
             syndrome.astype(bool)
         )
         return np.asarray(correction, dtype=np.uint8), float(np.float64(confidence))
 
-    adapter = _make_decoder_adapter(
+    def decode_full(syndrome: np.ndarray) -> np.ndarray:
+        return np.asarray(full_decoder.decode(syndrome.astype(bool)), dtype=np.uint8)
+
+    return DecoderAdapter(
         full_decoder=full_decoder,
         factory_decoder=factory_decoder,
-        full_syndrome_length=full_dem.num_detectors,
-        factory_syndrome_length=factory_dem.num_detectors,
-        factory_decode_impl=factory_decode_impl,
-        factory_score_mode=score_mode,
+        decode_factory=decode_factory,
+        decode_full=decode_full,
     )
-    sample_syndrome = np.zeros(factory_dem.num_detectors, dtype=np.uint8)
-    adapter.decode_factory(int(pack_boolean_array(sample_syndrome)[0]))
-    return adapter
