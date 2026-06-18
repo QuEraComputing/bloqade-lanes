@@ -219,7 +219,7 @@ class ExecuteCZReturn(ExecuteCZ):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.return_move_layers = tuple(
+        compiler_reverse = tuple(
             tuple(lane.reverse() for lane in reversed(layer))
             for layer in reversed(self.move_layers)
         )
