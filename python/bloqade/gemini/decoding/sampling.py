@@ -289,7 +289,7 @@ def run_task(
         A ``BasisDataset`` containing detector and observable arrays.
     """
 
-    # TODO: remove _normalize_observable_frame and _sample_task_rawå
+    # TODO: remove _normalize_observable_frame and _sample_task_raw
     # TODO: do task.run()
     return _normalize_observable_frame(
         task,
