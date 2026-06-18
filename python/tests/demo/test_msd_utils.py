@@ -43,8 +43,6 @@ def test_decoder_adapter_accepts_array_callables_without_score_mode():
         return np.array([int(np.any(bits))], dtype=np.uint8)
 
     adapter = DecoderAdapter(
-        full_decoder=None,
-        factory_decoder=None,
         decode_factory=decode_factory,
         decode_full=decode_full,
     )

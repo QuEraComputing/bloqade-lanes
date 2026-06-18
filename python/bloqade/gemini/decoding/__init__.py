@@ -1,132 +1,59 @@
-from __future__ import annotations
-
-from importlib import import_module
-from typing import Any
-
 # pyright: reportUnsupportedDunderAll=false
 
+"""Notebook-focused Gemini decoding helpers."""
 
-_EXPORTS = {
-    "BasisDataset": ".sampling",
-    "DEFAULT_BASIS_LABELS": ".constants",
-    "DEFAULT_IDEAL_FACTORY_ACCEPTANCE": ".constants",
-    "DEFAULT_SYNDROME_LAYOUT": ".layout",
-    "DEFAULT_TARGET_BLOCH": ".constants",
-    "DecoderAdapter": ".postselection",
-    "DecoderCurveOptions": ".workflow",
-    "DecoderPrimitiveSet": ".kernels",
-    "DecoderWorkflowConfig": ".workflow",
-    "DemoTask": ".tasks",
-    "DetectorObservableResult": ".sampling",
-    "DetectorErrorModelTask": ".types",
-    "GeminiDecoderTask": ".tasks",
-    "KirinKernel": ".types",
-    "MSDDecoderWorkflowConfig": ".workflow",
-    "MeasurementMap": ".types",
-    "SimulatorTask": ".sampling",
-    "SquinKernel": ".types",
-    "SyndromeLayout": ".layout",
-    "TableDecoderClass": ".types",
-    "TomographyKernels": ".msd",
-    "TomographyTasks": ".workflow",
-    "TsimCircuit": ".types",
-    "apply_special_tsim_circuit_strategy": ".special_tasks",
-    "build_decoder_kernel_bundle": ".msd",
-    "build_injected_decoder_kernel_map": ".msd",
-    "build_injected_kernel_bundle": ".msd",
-    "build_injected_tomography_kernels": ".workflow",
-    "build_injected_tomography_tasks": ".workflow",
-    "build_measurement_maps": ".measurement_maps",
-    "build_mld_decoders_from_pair": ".mld",
-    "build_mle_decoder_suite": ".workflow",
-    "build_mle_decoders": ".mle",
-    "build_msd_primitives": ".msd",
-    "build_msd_tomography_kernels": ".workflow",
-    "build_msd_tomography_tasks": ".workflow",
-    "build_task_map": ".special_tasks",
-    "estimate_mld_ancilla_scores": ".mld",
-    "estimate_mld_ancilla_scores_from_tasks": ".mld",
-    "evaluate_curve": ".postselection",
-    "evaluate_decoder_curves": ".workflow",
-    "evaluate_injected_baseline": ".workflow",
-    "infer_factory_target": ".baselines",
-    "injected_baseline": ".baselines",
-    "naive_distilled_summary": ".baselines",
-    "naive_injected_summary": ".baselines",
-    "plot_decoder_curves": ".workflow",
-    "produce_tomography_kernels": ".kernels",
-    "run_task": ".sampling",
-    "sample_actual_data": ".workflow",
-    "split_factory_bits": ".layout",
-    "sub_detector_error_model": ".dem",
-    "train_mld_decoder_pair": ".mld",
-    "train_mld_decoder_pair_from_task": ".mld",
-    "train_mld_decoder_suite": ".workflow",
-}
+from bloqade.gemini.decoding.constants import (
+    DEFAULT_BASIS_LABELS,
+)
+from bloqade.gemini.decoding.dem import sub_detector_error_model
+from bloqade.gemini.decoding.kernels import DecoderPrimitiveSet
+from bloqade.gemini.decoding.layout import (
+    DEFAULT_SYNDROME_LAYOUT,
+    SyndromeLayout,
+    split_factory_bits,
+)
+from bloqade.gemini.decoding.measurement_maps import build_measurement_maps
+from bloqade.gemini.decoding.msd import (
+    TomographyKernels,
+    build_decoder_kernel_bundle,
+    build_msd_primitives,
+)
+from bloqade.gemini.decoding.postselection import DecoderAdapter
+from bloqade.gemini.decoding.sampling import BasisDataset, run_task
+from bloqade.gemini.decoding.special_tasks import (
+    apply_special_tsim_circuit_strategy,
+    build_task_map,
+)
+from bloqade.gemini.decoding.tasks import DemoTask, GeminiDecoderTask
+from bloqade.gemini.decoding.types import (
+    KirinKernel,
+    MeasurementMap,
+    SquinKernel,
+    TsimCircuit,
+)
+from bloqade.gemini.decoding.workflow import plot_decoder_curves
 
 __all__ = [
     "BasisDataset",
     "DEFAULT_BASIS_LABELS",
-    "DEFAULT_IDEAL_FACTORY_ACCEPTANCE",
     "DEFAULT_SYNDROME_LAYOUT",
-    "DEFAULT_TARGET_BLOCH",
     "DecoderAdapter",
-    "DecoderCurveOptions",
     "DecoderPrimitiveSet",
-    "DecoderWorkflowConfig",
     "DemoTask",
-    "DetectorErrorModelTask",
-    "DetectorObservableResult",
     "GeminiDecoderTask",
     "KirinKernel",
-    "MSDDecoderWorkflowConfig",
     "MeasurementMap",
-    "SimulatorTask",
     "SquinKernel",
     "SyndromeLayout",
-    "TableDecoderClass",
     "TomographyKernels",
-    "TomographyTasks",
     "TsimCircuit",
     "apply_special_tsim_circuit_strategy",
     "build_decoder_kernel_bundle",
-    "build_injected_decoder_kernel_map",
-    "build_injected_kernel_bundle",
-    "build_injected_tomography_kernels",
-    "build_injected_tomography_tasks",
     "build_measurement_maps",
-    "build_mld_decoders_from_pair",
-    "build_mle_decoder_suite",
-    "build_mle_decoders",
     "build_msd_primitives",
-    "build_msd_tomography_kernels",
-    "build_msd_tomography_tasks",
     "build_task_map",
-    "estimate_mld_ancilla_scores",
-    "estimate_mld_ancilla_scores_from_tasks",
-    "evaluate_curve",
-    "evaluate_decoder_curves",
-    "evaluate_injected_baseline",
-    "infer_factory_target",
-    "injected_baseline",
-    "naive_distilled_summary",
-    "naive_injected_summary",
     "plot_decoder_curves",
-    "produce_tomography_kernels",
     "run_task",
-    "sample_actual_data",
     "split_factory_bits",
     "sub_detector_error_model",
-    "train_mld_decoder_pair",
-    "train_mld_decoder_pair_from_task",
-    "train_mld_decoder_suite",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    if name not in _EXPORTS:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = import_module(_EXPORTS[name], __name__)
-    value = getattr(module, name)
-    globals()[name] = value
-    return value

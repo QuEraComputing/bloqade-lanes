@@ -1,13 +1,7 @@
-"""Compatibility type aliases for migrated MSD utilities."""
+"""Small type facade for the notebook-focused MSD utilities."""
 
-from demo.msd_utils.standard.tomography import (
-    FidelitySummary,
-    PosteriorFidelitySummary,
-    SimpleFidelitySummary,
-    TomographyResult,
-)
+from demo.msd_utils.standard.tomography import SimpleFidelitySummary, TomographyResult
 
-from bloqade.gemini.decoding.sampling import DetectorObservableResult, SimulatorTask
 from bloqade.gemini.decoding.types import (
     DetectorErrorModelTask,
     KirinKernel,
@@ -19,13 +13,9 @@ from bloqade.gemini.decoding.types import (
 
 __all__ = [
     "DetectorErrorModelTask",
-    "DetectorObservableResult",
-    "FidelitySummary",
     "KirinKernel",
     "MeasurementMap",
-    "PosteriorFidelitySummary",
     "SimpleFidelitySummary",
-    "SimulatorTask",
     "SquinKernel",
     "TableDecoderClass",
     "TomographyResult",

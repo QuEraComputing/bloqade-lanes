@@ -1,8 +1,5 @@
-"""Compatibility re-exports for postselection curve helpers."""
+"""Re-export the notebook decoder adapter type."""
 
-from bloqade.gemini.decoding.postselection import (
-    DecoderAdapter,
-    evaluate_curve,
-)
+from bloqade.gemini.decoding.postselection import DecoderAdapter
 
-__all__ = ["DecoderAdapter", "evaluate_curve"]
+__all__ = ["DecoderAdapter"]

@@ -1,169 +1,33 @@
-"""Compatibility facade for magic-state distillation utilities."""
-
-from __future__ import annotations
-
-from importlib import import_module
-from typing import Any
-
 # pyright: reportUnsupportedDunderAll=false
 
-_EXPORTS = {
-    "BasisDataset": "bloqade.gemini.decoding",
-    "DEFAULT_BASIS_LABELS": "bloqade.gemini.decoding",
-    "DEFAULT_IDEAL_FACTORY_ACCEPTANCE": "bloqade.gemini.decoding",
-    "DEFAULT_SYNDROME_LAYOUT": "bloqade.gemini.decoding",
-    "DEFAULT_TARGET_BLOCH": "demo.msd_utils.standard.tomography",
-    "DecoderAdapter": "bloqade.gemini.decoding",
-    "DecoderCurveOptions": "bloqade.gemini.decoding",
-    "DecoderPrimitiveSet": "bloqade.gemini.decoding",
-    "DecoderWorkflowConfig": "bloqade.gemini.decoding",
-    "DemoTask": "bloqade.gemini.decoding",
-    "ConfidenceDecoder": "demo.msd_utils.domain.confidence",
-    "ConfidenceGurobiDecoder": "demo.msd_utils.domain.confidence",
-    "DetectorErrorModelTask": "bloqade.gemini.decoding",
-    "DetectorObservableResult": "bloqade.gemini.decoding",
-    "FidelitySummary": "demo.msd_utils.standard.tomography",
-    "KirinKernel": "bloqade.gemini.decoding",
-    "MSDDecoderWorkflowConfig": "bloqade.gemini.decoding",
-    "MeasurementMap": "bloqade.gemini.decoding",
-    "PosteriorFidelitySummary": "demo.msd_utils.standard.tomography",
-    "PostSelectionExperiment": "demo.msd_utils.application.experiments",
-    "SimpleFidelitySummary": "demo.msd_utils.standard.tomography",
-    "SimulatorTask": "bloqade.gemini.decoding",
-    "SparseTableDecoder": "demo.msd_utils.application.table_decoders",
-    "SquinKernel": "bloqade.gemini.decoding",
-    "SyndromeLayout": "bloqade.gemini.decoding",
-    "TableDecoderClass": "demo.msd_utils.application.table_decoders",
-    "TableDecoderWithConfidence": "demo.msd_utils.application.table_decoders",
-    "TomographyKernels": "bloqade.gemini.decoding",
-    "TomographyResult": "demo.msd_utils.standard.tomography",
-    "TomographyTasks": "bloqade.gemini.decoding",
-    "TsimCircuit": "bloqade.gemini.decoding",
-    "apply_special_tsim_circuit_strategy": "bloqade.gemini.decoding",
-    "build_decoder_kernel_bundle": "bloqade.gemini.decoding",
-    "build_injected_decoder_kernel_map": "bloqade.gemini.decoding",
-    "build_injected_kernel_bundle": "bloqade.gemini.decoding",
-    "build_injected_tomography_kernels": "bloqade.gemini.decoding",
-    "build_injected_tomography_tasks": "bloqade.gemini.decoding",
-    "build_measurement_maps": "bloqade.gemini.decoding",
-    "build_mld_decoders_from_pair": "bloqade.gemini.decoding",
-    "build_mle_decoder_suite": "bloqade.gemini.decoding",
-    "build_mle_decoders": "bloqade.gemini.decoding",
-    "build_msd_primitives": "bloqade.gemini.decoding",
-    "build_msd_tomography_kernels": "bloqade.gemini.decoding",
-    "build_msd_tomography_tasks": "bloqade.gemini.decoding",
-    "build_task_map": "bloqade.gemini.decoding",
-    "empty_logical_circuit": "demo.msd_utils.application.experiments",
-    "estimate_mld_ancilla_scores": "bloqade.gemini.decoding",
-    "estimate_mld_ancilla_scores_from_tasks": "bloqade.gemini.decoding",
-    "evaluate_curve": "bloqade.gemini.decoding",
-    "evaluate_decoder_curves": "bloqade.gemini.decoding",
-    "evaluate_injected_baseline": "bloqade.gemini.decoding",
-    "expectation_conf_interval": "demo.msd_utils.standard.tomography",
-    "expectation_with_error_bar": "demo.msd_utils.standard.tomography",
-    "fidelity_from_counts": "demo.msd_utils.standard.tomography",
-    "fidelity_from_zero_one_counts": "demo.msd_utils.standard.tomography",
-    "infer_factory_target": "bloqade.gemini.decoding",
-    "injected_baseline": "bloqade.gemini.decoding",
-    "logical_expectation": "demo.msd_utils.standard.tomography",
-    "naive_distilled_summary": "bloqade.gemini.decoding",
-    "naive_injected_summary": "bloqade.gemini.decoding",
-    "pack_boolean_array": "demo.msd_utils.standard.bit_packing",
-    "packed_bits_to_int": "demo.msd_utils.standard.bit_packing",
-    "plot_decoder_curves": "bloqade.gemini.decoding",
-    "posterior_fidelity_summary": "demo.msd_utils.standard.tomography",
-    "produce_tomography_kernels": "bloqade.gemini.decoding",
-    "run_task": "bloqade.gemini.decoding",
-    "sample_actual_data": "bloqade.gemini.decoding",
-    "split_factory_bits": "bloqade.gemini.decoding",
-    "sub_detector_error_model": "demo.msd_utils.standard.dem",
-    "train_mld_decoder_pair": "bloqade.gemini.decoding",
-    "train_mld_decoder_pair_from_task": "bloqade.gemini.decoding",
-    "train_mld_decoder_suite": "bloqade.gemini.decoding",
-    "unpack_packed_bits": "demo.msd_utils.standard.bit_packing",
-}
+"""Small facade for the MSD postselection notebook."""
+
+from demo.msd_utils.application.experiments import PostSelectionExperiment
+from demo.msd_utils.application.table_decoders import TableDecoderWithConfidence
+from demo.msd_utils.standard.tomography import TomographyResult
+
+from bloqade.gemini.decoding.kernels import DecoderPrimitiveSet
+from bloqade.gemini.decoding.msd import (
+    TomographyKernels,
+    build_decoder_kernel_bundle,
+    build_msd_primitives,
+)
+from bloqade.gemini.decoding.postselection import DecoderAdapter
+from bloqade.gemini.decoding.sampling import BasisDataset, run_task
+from bloqade.gemini.decoding.tasks import DemoTask
+from bloqade.gemini.decoding.workflow import plot_decoder_curves
 
 __all__ = [
     "BasisDataset",
-    "DEFAULT_BASIS_LABELS",
-    "DEFAULT_IDEAL_FACTORY_ACCEPTANCE",
-    "DEFAULT_SYNDROME_LAYOUT",
-    "DEFAULT_TARGET_BLOCH",
     "DecoderAdapter",
-    "DecoderCurveOptions",
     "DecoderPrimitiveSet",
-    "DecoderWorkflowConfig",
     "DemoTask",
-    "ConfidenceDecoder",
-    "ConfidenceGurobiDecoder",
-    "DetectorErrorModelTask",
-    "DetectorObservableResult",
-    "FidelitySummary",
-    "KirinKernel",
-    "MSDDecoderWorkflowConfig",
-    "MeasurementMap",
-    "PosteriorFidelitySummary",
     "PostSelectionExperiment",
-    "SimpleFidelitySummary",
-    "SimulatorTask",
-    "SparseTableDecoder",
-    "SquinKernel",
-    "SyndromeLayout",
-    "TableDecoderClass",
     "TableDecoderWithConfidence",
     "TomographyKernels",
     "TomographyResult",
-    "TomographyTasks",
-    "TsimCircuit",
-    "apply_special_tsim_circuit_strategy",
     "build_decoder_kernel_bundle",
-    "build_injected_decoder_kernel_map",
-    "build_injected_kernel_bundle",
-    "build_injected_tomography_kernels",
-    "build_injected_tomography_tasks",
-    "build_measurement_maps",
-    "build_mld_decoders_from_pair",
-    "build_mle_decoder_suite",
-    "build_mle_decoders",
     "build_msd_primitives",
-    "build_msd_tomography_kernels",
-    "build_msd_tomography_tasks",
-    "build_task_map",
-    "empty_logical_circuit",
-    "estimate_mld_ancilla_scores",
-    "estimate_mld_ancilla_scores_from_tasks",
-    "evaluate_curve",
-    "evaluate_decoder_curves",
-    "evaluate_injected_baseline",
-    "expectation_conf_interval",
-    "expectation_with_error_bar",
-    "fidelity_from_counts",
-    "fidelity_from_zero_one_counts",
-    "infer_factory_target",
-    "injected_baseline",
-    "logical_expectation",
-    "naive_distilled_summary",
-    "naive_injected_summary",
-    "pack_boolean_array",
-    "packed_bits_to_int",
     "plot_decoder_curves",
-    "posterior_fidelity_summary",
-    "produce_tomography_kernels",
     "run_task",
-    "sample_actual_data",
-    "split_factory_bits",
-    "sub_detector_error_model",
-    "train_mld_decoder_pair",
-    "train_mld_decoder_pair_from_task",
-    "train_mld_decoder_suite",
-    "unpack_packed_bits",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    if name not in _EXPORTS:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = import_module(_EXPORTS[name])
-    value = getattr(module, name)
-    globals()[name] = value
-    return value

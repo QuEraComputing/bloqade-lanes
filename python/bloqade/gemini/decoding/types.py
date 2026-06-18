@@ -4,20 +4,14 @@ from typing import Any, Protocol, TypeAlias
 
 import stim
 import tsim as tsim_backend
-from bloqade.decoders import TableDecoder
-from demo.msd_utils.application.table_decoders import (
-    SparseTableDecoder,
-    TableDecoderWithConfidence,
-)
+from demo.msd_utils.application.table_decoders import TableDecoderWithConfidence
 from kirin import ir
 
 KirinKernel: TypeAlias = ir.Method[..., Any]
 SquinKernel: TypeAlias = KirinKernel
 TsimCircuit: TypeAlias = tsim_backend.Circuit
 MeasurementMap: TypeAlias = list[list[int]]
-TableDecoderClass: TypeAlias = (
-    type[TableDecoder] | type[SparseTableDecoder] | type[TableDecoderWithConfidence]
-)
+TableDecoderClass: TypeAlias = type[TableDecoderWithConfidence]
 
 
 class DetectorErrorModelTask(Protocol):

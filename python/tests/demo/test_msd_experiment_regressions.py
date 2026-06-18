@@ -18,7 +18,6 @@ from bloqade.gemini.decoding.postselection import (  # noqa: E402
     DecoderAdapter,
     _build_generic_threshold_tables,
     _evaluate_cached_threshold_curve,
-    evaluate_curve,
 )
 from bloqade.gemini.decoding.sampling import BasisDataset  # noqa: E402
 
@@ -55,8 +54,6 @@ def _adapter() -> DecoderAdapter:
         return np.array([0], dtype=np.uint8)
 
     return DecoderAdapter(
-        full_decoder=None,
-        factory_decoder=None,
         decode_factory=decode_factory,
         decode_full=decode_full,
     )
@@ -105,23 +102,6 @@ def test_evaluate_cached_threshold_curve_returns_point_estimate_only():
     assert set(curve) == {"accepted_fraction", "fidelity", "point_fidelity"}
     assert "credible" not in curve
     assert np.all(curve["fidelity"] == curve["point_fidelity"])
-
-
-def test_evaluate_curve_uses_decoder_adapter_callables():
-    data = {basis: _dataset() for basis in ("X", "Y", "Z")}
-    decoders = {basis: _adapter() for basis in ("X", "Y", "Z")}
-
-    curve = evaluate_curve(
-        data,
-        decoders,
-        metric="fake",
-        valid_factory_targets=np.array([[0]], dtype=np.uint8),
-        threshold_points=2,
-        min_accepted_per_basis=1,
-    )
-
-    assert len(curve["accepted_fraction"]) >= 1
-    assert "credible" not in curve
 
 
 def test_postselection_experiment_decode_and_tomography_result_with_cached_data():

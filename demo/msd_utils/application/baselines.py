@@ -1,15 +1,7 @@
-"""Compatibility re-exports for Gemini decoding baseline helpers."""
+"""Legacy baseline helpers removed for the notebook-focused prototype."""
 
-from bloqade.gemini.decoding.baselines import (
-    infer_factory_target,
-    injected_baseline,
-    naive_distilled_summary,
-    naive_injected_summary,
-)
+# NOTE: is NOT used in the decoders notebook, but is used in the reprod notebook
+# (for naive postselection) -- ideally, customize decoders path to take in a
+# decoder that just postselects on 0
 
-__all__ = [
-    "infer_factory_target",
-    "injected_baseline",
-    "naive_distilled_summary",
-    "naive_injected_summary",
-]
+__all__: list[str] = []

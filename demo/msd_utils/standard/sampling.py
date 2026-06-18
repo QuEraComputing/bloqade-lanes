@@ -1,19 +1,5 @@
-"""Compatibility re-exports for Gemini decoding sampling helpers."""
+"""Sampling helpers used by the MSD postselection notebook."""
 
-from bloqade.gemini.decoding.sampling import (
-    BasisDataset,
-    DetectorObservableResult,
-    SimulatorTask,
-    _iter_task_datasets,
-    _run_simulator_task,
-    run_task,
-)
+from bloqade.gemini.decoding.sampling import BasisDataset, run_task
 
-__all__ = [
-    "BasisDataset",
-    "DetectorObservableResult",
-    "SimulatorTask",
-    "_iter_task_datasets",
-    "_run_simulator_task",
-    "run_task",
-]
+__all__ = ["BasisDataset", "run_task"]

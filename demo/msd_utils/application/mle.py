@@ -1,5 +1,6 @@
-"""Compatibility re-export for Gemini MLE decoder construction."""
+"""Legacy MLE helpers removed for the notebook-focused prototype."""
 
-from bloqade.gemini.decoding.mle import build_mle_decoders
+# TODO: change this to type[ConfidenceDecoder] once pyright error on bloqade-decoders
+# for decode() signature from GurobiDecoder is fixed
 
-__all__ = ["build_mle_decoders"]
+__all__: list[str] = []

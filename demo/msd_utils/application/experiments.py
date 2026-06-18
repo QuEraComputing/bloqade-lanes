@@ -129,7 +129,6 @@ class PostSelectionExperimentCache:
     # Maybe it doesn't need to be this flexible (we can use tuples of a certain length), but right now the lower-level code uses mappings
     # so it's easier to implement for now.
     dem_kernels: TomographyKernels | None
-
     dem_circuits: Mapping[str, tsim.Circuit] | None
     dems: Mapping[str, stim.DetectorErrorModel] | None
     decoders_with_confidence: Mapping[str, DecoderAdapter] | None
@@ -154,9 +153,7 @@ class PostSelectionExperimentCache:
         ]
         | None
     )
-
     thresholded_data: Mapping[str, np.ndarray] | None
-
     hardware_tasks: Mapping[str, DemoTask] | None
 
     def __init__(self):
@@ -173,7 +170,6 @@ class PostSelectionExperimentCache:
 # TODO: should inherit from some "abstract" experiment workflow class?
 # ^^ what methods should this "abstract" experiment workflow class have???
 class PostSelectionExperiment:
-
     # TODO: have to specify the number of logical qubits and number of output qubits here? We can't call put the number of qubits
     # in a kernel because then it makes it hard to compose kernels (e.g., for tomography)
     def __init__(
@@ -243,10 +239,10 @@ class PostSelectionExperiment:
             append_measurements=False,
         )
         dem_tasks = apply_special_tsim_circuit_strategy(dem_tasks)
-        special_tsim_circuits = cast(
-            dict[str, tsim.Circuit],
-            {basis: task.tsim_circuit for basis, task in dem_tasks.items()},
-        )
+        special_tsim_circuits: dict[str, tsim.Circuit] = {
+            basis: cast(tsim.Circuit, task.tsim_circuit)
+            for basis, task in dem_tasks.items()
+        }
         self.postselection_exp_cache.dem_circuits = special_tsim_circuits
         # again, check that values are returned in-order
         return special_tsim_circuits
@@ -331,8 +327,6 @@ class PostSelectionExperiment:
                 return decode_full
 
             adapter = DecoderAdapter(
-                full_decoder=full_decoder,
-                factory_decoder=factory_decoder,
                 decode_factory=make_decode_factory(factory_decoder),
                 decode_full=make_decode_full(full_decoder),
             )
