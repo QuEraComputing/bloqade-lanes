@@ -802,9 +802,15 @@ class LogicalPlacementStrategyNoHome(LogicalPlacementMethods, PlacementStrategyA
         if len(qubits) != len(state.layout):
             return AtomState.bottom()
 
+        # Order layout/zone_maps/move_count by the measurement order ``qubits``
+        # so each emitted measurement result lines up with the location of the
+        # qubit it measures. ``qubits`` is identity for un-merged blocks but a
+        # permutation once StaticPlacement blocks are merged (always_merge),
+        # which remaps qubit indices; reading state.layout positionally would
+        # then pair a result with the wrong patch.
         return ExecuteMeasure(
             occupied=state.occupied,
-            layout=state.layout,
-            move_count=state.move_count,
-            zone_maps=tuple(ZoneAddress(loc.zone_id) for loc in state.layout),
+            layout=tuple(state.layout[i] for i in qubits),
+            move_count=tuple(state.move_count[i] for i in qubits),
+            zone_maps=tuple(ZoneAddress(state.layout[i].zone_id) for i in qubits),
         )
