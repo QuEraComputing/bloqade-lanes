@@ -52,12 +52,6 @@ def _build_tomography_primitives(*, output_qubit: int) -> dict[str, SquinKernel]
     }
 
 
-def _squin_return_none(reg):
-    """Return no value from a generated Squin kernel."""
-
-    return
-
-
 def produce_tomography_kernels(
     num_qubits: int,
     logical_kernel: KirinKernel,

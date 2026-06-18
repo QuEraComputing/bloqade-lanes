@@ -15,9 +15,7 @@ from demo.msd_utils.application.table_decoders import (  # noqa: E402
 from demo.msd_utils.domain.confidence import ConfidenceDecoder  # noqa: E402
 from demo.msd_utils.standard.bit_packing import (  # noqa: E402
     pack_boolean_array,
-    packed_bits_to_int,
     shots_to_counts,
-    unpack_boolean_array,
     unpack_packed_bits,
 )
 from demo.msd_utils.standard.tomography import TomographyResult  # noqa: E402
@@ -41,8 +39,6 @@ def test_bit_packing_helpers_round_trip_little_endian_bits():
     packed = pack_boolean_array(bits)
 
     assert packed.tolist() == [0b101, 0b110]
-    np.testing.assert_array_equal(unpack_boolean_array(packed, 3), bits.astype(bool))
-    assert packed_bits_to_int([1, 0, 1, 1]) == 0b1101
     np.testing.assert_array_equal(
         unpack_packed_bits(0b1101, 4),
         np.array([1, 0, 1, 1], dtype=np.uint8),

@@ -17,8 +17,6 @@ from bloqade.decoders import GurobiDecoder
 class ConfidenceDecoder(ABC):
     """Decoder interface for a correction plus a scalar confidence score."""
 
-    confidence_score_mode = "confidence"
-
     @abstractmethod
     def decode_with_confidence(
         self,
@@ -30,7 +28,6 @@ class ConfidenceDecoder(ABC):
 class ConfidenceGurobiDecoder(GurobiDecoder, ConfidenceDecoder):
     """Gurobi MLE decoder with logical-gap confidence."""
 
-    confidence_score_mode = "logical_gap"
     _env: ClassVar[object | None] = None
 
     class _ConfidenceSolveResult(NamedTuple):

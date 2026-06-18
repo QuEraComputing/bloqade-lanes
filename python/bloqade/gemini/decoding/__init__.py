@@ -6,10 +6,6 @@ from bloqade.gemini.decoding.confidence import (
     ConfidenceDecoder,
     ConfidenceGurobiDecoder,
 )
-from bloqade.gemini.decoding.constants import (
-    DEFAULT_BASIS_LABELS,
-)
-from bloqade.gemini.decoding.dem import sub_detector_error_model
 from bloqade.gemini.decoding.experiments import (
     PostSelectionExperiment,
     PostSelectionExperimentCache,
@@ -23,7 +19,6 @@ from bloqade.gemini.decoding.layout import (
     SyndromeLayout,
     split_factory_bits,
 )
-from bloqade.gemini.decoding.measurement_maps import build_measurement_maps
 from bloqade.gemini.decoding.msd import (
     TomographyKernels,
     build_decoder_kernel_bundle,
@@ -36,8 +31,8 @@ from bloqade.gemini.decoding.special_tasks import (
     build_task_map,
 )
 from bloqade.gemini.decoding.table_decoders import TableDecoderWithConfidence
-from bloqade.gemini.decoding.tasks import DemoTask, GeminiDecoderTask
-from bloqade.gemini.decoding.tomography import TomographyResult
+from bloqade.gemini.decoding.tasks import DemoTask
+from bloqade.gemini.decoding.tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 from bloqade.gemini.decoding.types import (
     KirinKernel,
     MeasurementMap,
@@ -50,12 +45,11 @@ __all__ = [
     "BasisDataset",
     "ConfidenceDecoder",
     "ConfidenceGurobiDecoder",
-    "DEFAULT_BASIS_LABELS",
     "DEFAULT_SYNDROME_LAYOUT",
+    "DEFAULT_TARGET_BLOCH",
     "DecoderAdapter",
     "DecoderPrimitiveSet",
     "DemoTask",
-    "GeminiDecoderTask",
     "KirinKernel",
     "MeasurementMap",
     "PostSelectionExperiment",
@@ -68,7 +62,6 @@ __all__ = [
     "TsimCircuit",
     "apply_special_tsim_circuit_strategy",
     "build_decoder_kernel_bundle",
-    "build_measurement_maps",
     "build_msd_primitives",
     "build_task_map",
     "empty_logical_circuit",
@@ -77,5 +70,4 @@ __all__ = [
     "run_task",
     "single_qubit_state_tomography",
     "split_factory_bits",
-    "sub_detector_error_model",
 ]

@@ -2,10 +2,8 @@
 
 from bloqade.gemini.decoding.tasks import (
     DemoTask,
-    GeminiDecoderTask,
 )
 
 __all__ = [
     "DemoTask",
-    "GeminiDecoderTask",
 ]

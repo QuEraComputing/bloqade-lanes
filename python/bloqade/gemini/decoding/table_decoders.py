@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import TypeAlias
 
 import numpy as np
 import stim
@@ -167,6 +166,4 @@ class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
     # calls the method decode_det_obs_counts in TableDecoder and also returns the batch of confidence scores)
 
 
-TableDecoderClass: TypeAlias = type[TableDecoderWithConfidence]
-
-__all__ = ["TableDecoderClass", "TableDecoderWithConfidence"]
+__all__ = ["TableDecoderWithConfidence"]

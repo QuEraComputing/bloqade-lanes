@@ -110,4 +110,4 @@ class DemoTask:
         )
 
 
-GeminiDecoderTask = DemoTask
+__all__ = ["DemoTask"]
