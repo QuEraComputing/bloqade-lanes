@@ -5,16 +5,16 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from demo.msd_utils.standard.bit_packing import (
+
+from .bit_packing import (
     pack_boolean_array,
     packed_pattern_targets,
     unpack_packed_bits,
 )
-from demo.msd_utils.standard.tomography import DEFAULT_TARGET_BLOCH, TomographyResult
-
 from .constants import DEFAULT_BASIS_LABELS
 from .layout import DEFAULT_SYNDROME_LAYOUT, split_factory_bits
 from .sampling import BasisDataset
+from .tomography import DEFAULT_TARGET_BLOCH, TomographyResult
 
 
 @dataclass(frozen=True)

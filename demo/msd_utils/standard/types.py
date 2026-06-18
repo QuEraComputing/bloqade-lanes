@@ -1,7 +1,6 @@
-"""Small type facade for the notebook-focused MSD utilities."""
+"""Compatibility type facade for notebook-focused MSD utilities."""
 
-from demo.msd_utils.standard.tomography import SimpleFidelitySummary, TomographyResult
-
+from bloqade.gemini.decoding.tomography import SimpleFidelitySummary, TomographyResult
 from bloqade.gemini.decoding.types import (
     DetectorErrorModelTask,
     KirinKernel,

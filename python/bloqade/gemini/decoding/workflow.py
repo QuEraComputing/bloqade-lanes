@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from typing import cast
 
 import numpy as np
-from demo.msd_utils.standard.tomography import SimpleFidelitySummary
+
+from .tomography import SimpleFidelitySummary
 
 
 def plot_decoder_curves(
