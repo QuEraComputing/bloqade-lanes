@@ -28,10 +28,14 @@ def _as_uint32_count_table(counts: np.ndarray) -> np.ndarray:
     return arr.astype(_COUNT_DTYPE, copy=False)
 
 
+# NOTE: when we migrate TableDecoderWithConfidence, we will add a shim import
+# from bloqade.decoders import TableDecoderWithConfidence
+# as well as a deprecation warning saying that this is not the "preferred" import path and that users should import from bloqade.decoders.
+# NOTE (breaking change): for the TableDecoder constructor in bloqade.decoders, we expect a breaking change to not feed in det_obs_counts in the __init__ in TableDecoder.
+# ^ For the public API for decoders, we just want Decoder(dem).
+# NOTE (breaking change): we expect to convert the datatype from int64 to uint32 in TableDecoder for space savings.
 class TableDecoderWithConfidence(TableDecoder, ConfidenceDecoder):
-    # TODO: write expected breaking changes: no det_obs_counts in __init__ and in public API
     # make private most stuff that other decoders don't have.
-    # TODO: breaking change -- datatype from 64 bits to 32 bits in TableDecoder.
     # TODO: only expose decode_with_confidence.
     """Dense table decoder with empirical per-syndrome confidence."""
 
