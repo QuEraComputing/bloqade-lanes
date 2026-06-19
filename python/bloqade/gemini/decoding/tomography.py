@@ -49,6 +49,7 @@ class TomographyResult:
         bloch = ((zero_arr - one_arr) / totals).astype(np.float64)
         object.__setattr__(self, "density_matrix", _density_matrix_from_bloch(bloch))
 
+    # NOTE: if you want to add more generic methods for fidelity, to density matrices, just define a new method "fidelity_to_density_mat".
     def fidelity_bloch(
         self,
         target_bloch: np.ndarray | Sequence[float],
